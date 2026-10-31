@@ -50,7 +50,7 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const TermReader& reader);
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const IndexReader& index,
-                                            field_id field);
+                                            field_id field, DictRef dict);
 
 struct CompiledPhrase {
   static constexpr uint32_t kMaxBits = 64;

@@ -241,7 +241,7 @@ class SubReaderMock final : public irs::SubReader {
     return {};
   }
 
-  const irs::TermReader* field(irs::field_id) const final {
+  const irs::MultiTermDict* dicts(irs::field_id) const final {
     EXPECT_FALSE(true);
     return nullptr;
   }

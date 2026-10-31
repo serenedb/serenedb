@@ -58,7 +58,7 @@ constexpr duckdb::field_id_t kFieldId = 0;
 constexpr duckdb::field_id_t kFieldFirstSlot = 1;
 
 constexpr std::array<const char*, kFieldSlots> kSlotTags{
-  "sql_null", "json_null", "false", "true", "numeric", "string",
+  "sql_null", "json_null", "null_element", "false", "true", "numeric", "string",
 };
 
 constexpr duckdb::field_id_t SlotProperty(size_t slot) noexcept {
@@ -264,18 +264,17 @@ void ReadField(duckdb::BinaryDeserializer& in, std::vector<FieldHead>& fields) {
   }
   const auto first = fields.size();
   for (size_t slot = 0; slot != kFieldSlots; ++slot) {
-    in.ReadOptionalObject(
-      SlotProperty(slot), kSlotTags[slot],
-      [&](duckdb::BinaryDeserializer& object) {
-        auto& head = fields.emplace_back();
-        head.id = id;
-        head.slot = static_cast<FieldSlot>(slot);
-        if (IsKeyed(head.slot)) {
-          ReadDict(object, head);
-        } else {
-          ReadPostings(object, head);
-        }
-      });
+    in.ReadOptionalObject(SlotProperty(slot), kSlotTags[slot],
+                          [&](duckdb::BinaryDeserializer& object) {
+                            auto& head = fields.emplace_back();
+                            head.id = id;
+                            head.slot = static_cast<FieldSlot>(slot);
+                            if (IsKeyed(head.slot)) {
+                              ReadDict(object, head);
+                            } else {
+                              ReadPostings(object, head);
+                            }
+                          });
   }
   if (fields.size() == first) {
     Corrupted("empty field", id);
@@ -330,8 +329,8 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                 });
   WriteOptionalBytes(out, kTermsInlineStarts, "inline_starts",
                      terms.inline_starts);
-  out.WritePropertyWithDefault<uint32_t>(
-    kTermsOrdinalBytes, "ordinal_bytes", terms.ordinal_bytes, 1);
+  out.WritePropertyWithDefault<uint32_t>(kTermsOrdinalBytes, "ordinal_bytes",
+                                         terms.ordinal_bytes, 1);
 }
 
 TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {

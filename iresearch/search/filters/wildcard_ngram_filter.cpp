@@ -80,9 +80,11 @@ std::string LikeRegexp(std::string_view pattern) {
   return regex;
 }
 
-ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
+ByPhrase MakePhraseFilter(const ByWildcardNGram& filter,
+                          const ByPhraseOptions& part) {
   ByPhrase phrase;
-  *phrase.mutable_field_id() = field;
+  *phrase.mutable_field_id() = filter.field_id();
+  *phrase.mutable_dict() = filter.dict();
   *phrase.mutable_options() = part;
   return phrase;
 }
@@ -166,7 +168,11 @@ class GramQueryPreparer {
  public:
   GramQueryPreparer(const ByWildcardNGram& filter, const SubReader& segment,
                     const PrepareContext& ctx, const PrepareContext& sub_ctx)
-    : _filter{filter}, _segment{segment}, _ctx{ctx}, _sub_ctx{sub_ctx} {}
+    : _filter{filter},
+      _segment{segment},
+      _reader{segment.field(filter.field_id(), filter.dict())},
+      _ctx{ctx},
+      _sub_ctx{sub_ctx} {}
 
   QueryBuilder::ptr Prepare(const GramQuery& query) {
     switch (query.kind) {
@@ -212,15 +218,14 @@ class GramQueryPreparer {
     if (grams.size() == 1) {
       const auto& part = grams.begin()->part;
       if (const auto* prefix = std::get_if<ByPrefixOptions>(&part)) {
-        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
+        return ByPrefix::PrepareSegment(_segment, _sub_ctx, _reader,
                                         prefix->term);
       }
-      return ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
-                                    FieldSlot::String,
+      return ByTerm::PrepareSegment(_segment, _sub_ctx, _reader,
                                     std::get<ByTermOptions>(part).term);
     }
     if (_filter.options().has_pos) {
-      return MakePhraseFilter(_filter.field_id(), grams)
+      return MakePhraseFilter(_filter, grams)
         .PrepareSegment(_segment, _sub_ctx);
     }
     auto builder = MakeBuilder(0);
@@ -231,8 +236,7 @@ class GramQueryPreparer {
   void AddGrams(BooleanBuilder& builder, const ByPhraseOptions& grams) {
     for (const auto& gram : grams) {
       builder.Add(
-        ByTerm::PrepareSegment(_segment, _sub_ctx, _filter.field_id(),
-                               FieldSlot::String,
+        ByTerm::PrepareSegment(_segment, _sub_ctx, _reader,
                                std::get<ByTermOptions>(gram.part).term),
         Occur::Must);
     }
@@ -248,6 +252,7 @@ class GramQueryPreparer {
 
   const ByWildcardNGram& _filter;
   const SubReader& _segment;
+  const TermReader* _reader;
   const PrepareContext& _ctx;
   const PrepareContext& _sub_ctx;
   size_t _next{0};

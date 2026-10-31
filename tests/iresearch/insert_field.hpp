@@ -94,7 +94,8 @@ template<typename FieldT>
 bool InsertField(irs::SegmentWriter& writer, irs::doc_id_t doc,
                  FieldT&& field) {
   return writer.WithField(
-    field.Id(), field.GetIndexFeatures(), [&](irs::FieldInverter& fld) {
+    field.Id(), irs::FieldSlot::String, field.GetIndexFeatures(),
+    [&](irs::FieldInverter& fld) {
       fld.Configure(field.GetTokens().Traits());
       return InsertFieldImpl(doc, field,
                              [&](irs::TokenBatch& batch, auto& runs) {

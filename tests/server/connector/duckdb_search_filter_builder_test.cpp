@@ -43,7 +43,6 @@
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
@@ -148,10 +147,9 @@ struct ColumnSpec {
   uint64_t id;
   duckdb::LogicalType type;
   std::string name;
-  // Production allocates a distinct null-marker field per indexed column;
-  // scoped negation and IS NULL only engage when one exists. Tests that pin
-  // those shapes opt in.
-  uint64_t null_field = 0;
+  // Scoped negation and IS NULL only engage on columns that can hold NULL.
+  // Tests that pin those shapes opt in.
+  bool nullable = false;
 };
 
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
@@ -227,11 +225,8 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 
 // Expected-filter builders (ported from velox test suite).
 // The test's ColumnGetter returns a `SearchColumnInfo` with the column id
-// stored as `field_id` and no per-kind ids set. With the field_id-only
-// rewrite, the production filter builder's `PickPerKindFieldId` falls
-// back to the entry's primary `field_id`, so the expected
-// `mutable_field_id()` is simply the catalog column id cast to
-// `irs::field_id`.
+// stored as `field_id`; every value kind lives in a slot of that field, so
+// the expected `mutable_field_id()` is the catalog column id.
 constexpr irs::field_id ExpectedFieldId(uint64_t column_id) {
   return static_cast<irs::field_id>(column_id);
 }
@@ -310,10 +305,22 @@ class TermRef {
 };
 
 template<typename T>
+irs::DictRef ExpectedDict(const T& value) {
+  if constexpr (std::is_same_v<T, bool>) {
+    return {.kind = irs::BoolKind(value)};
+  } else if constexpr (std::is_same_v<T, std::string_view> ||
+                       std::is_same_v<T, std::string>) {
+    return {.kind = irs::ValueKind::Text};
+  } else {
+    return {.kind = irs::ValueKind::Numeric};
+  }
+}
+
+template<typename T>
 irs::bstring ExpectedTerm(const T& value) {
   irs::bstring term;
   if constexpr (std::is_same_v<T, bool>) {
-    term.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value)));
+    term.assign(irs::kSlotTerm);
   } else if constexpr (std::is_same_v<T, std::string_view> ||
                        std::is_same_v<T, std::string>) {
     term.assign(irs::ViewCast<irs::byte_type>(std::string_view{value}));
@@ -346,6 +353,7 @@ const irs::Scorer* ExpectedScorer() noexcept {
 template<typename T, typename Filter>
 TermRef AddTermFilter(Filter&& root, uint64_t column, const T& value) {
   return {ToTarget(root), irs::TermClause{.field = ExpectedFieldId(column),
+                                          .dict = ExpectedDict(value),
                                           .scorer = ExpectedScorer<T>(),
                                           .term = ExpectedTerm(value)}};
 }
@@ -405,12 +413,11 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
 }
 
 template<typename Filter>
-TermRef AddNullFilter(Filter&& root, uint64_t null_field) {
+TermRef AddNullFilter(Filter&& root, uint64_t column) {
   return {ToTarget(root),
-          irs::TermClause{.field = ExpectedFieldId(null_field),
-                          .scorer = &irs::ForceConstScore(),
-                          .term = irs::bstring{
-                            irs::ViewCast<irs::byte_type>(irs::kNullTerm)}}};
+          irs::TermClause{.field = ExpectedFieldId(column),
+                          .dict = {.kind = irs::ValueKind::Null},
+                          .scorer = &irs::ForceConstScore()}};
 }
 
 template<typename Filter>
@@ -619,8 +626,9 @@ irs::BooleanFilter& AddTermsFilter(Filter&& root, uint64_t column,
   for (const auto& value : values) {
     terms.emplace_back(ExpectedTerm(value));
   }
-  auto& node = sdb::connector::AddTermSet(
-    ToTarget(root), ExpectedFieldId(column), terms, min_match);
+  auto& node =
+    sdb::connector::AddTermSet(ToTarget(root), ExpectedFieldId(column),
+                               ExpectedDict(values.front()), terms, min_match);
   node.SetScorer(ExpectedScorer<T>());
   return node;
 }
@@ -752,10 +760,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
       const auto phys = projected[local].GetPrimaryIndex();
       return SearchColumnInfo{
         .field_id = static_cast<irs::field_id>(columns[phys].id),
-        .null_field_id =
-          columns[phys].null_field
-            ? static_cast<irs::field_id>(columns[phys].null_field)
-            : irs::field_limits::invalid(),
+        .nullable = columns[phys].nullable,
         .logical_type = columns[phys].type,
         .tokenizer = analyzer_provider(columns[phys].id)};
     };
@@ -1236,8 +1241,8 @@ void AddInetRange(BoolTarget target, irs::bstring min, irs::BoundType min_type,
 }
 
 void AddInetTerm(BoolTarget target, irs::bstring term) {
-  sdb::connector::AddTerm(target, ExpectedFieldId(1), term, irs::kNoBoost,
-                          &irs::ForceConstScore());
+  sdb::connector::AddTerm(target, ExpectedFieldId(1), irs::DictRef{}, term,
+                          irs::kNoBoost, &irs::ForceConstScore());
 }
 
 std::vector<ColumnSpec> InetColumns() {
@@ -1743,9 +1748,9 @@ TEST_F(SearchFilterBuilderTest, test_IsNull) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "optional_field",
-                                   .null_field = 41}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
-  AddNullFilter(expected, 41);
+  AddNullFilter(expected, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE optional_field IS NULL",
                columns, true);
 }
@@ -1754,7 +1759,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullString) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "description",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddNullFilter(expected, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE description IS NULL", columns,
@@ -1765,7 +1770,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNull) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
   AddNullFilter(not_filter, 1);
@@ -1777,7 +1782,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNotNull) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddNullFilter(expected, 1);
   AssertFilter(expected,
@@ -1789,7 +1794,7 @@ TEST_F(SearchFilterBuilderTest, test_NotIsNull) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto not_filter = AddNegation(expected);
   AddNullFilter(not_filter, 1);
@@ -1802,7 +1807,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullWithAnd) {
     {.id = 1,
      .type = duckdb::LogicalType::INTEGER,
      .name = "deleted_at",
-     .null_field = 1},
+     .nullable = true},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "status"}};
   irs::BooleanFilter expected;
   AddNullFilter(expected, 1);
@@ -1817,7 +1822,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullWithOr) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "count",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
   AddNullFilter(or_filter, 1);
@@ -1830,7 +1835,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullLargeColumnId) {
   std::vector<ColumnSpec> columns{{.id = 16384,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "extra_data",
-                                   .null_field = 16384}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddNullFilter(expected, 16384);
   AssertFilter(expected, "SELECT * FROM foo WHERE extra_data IS NULL", columns,
@@ -1842,7 +1847,7 @@ TEST_F(SearchFilterBuilderTest, test_IsNullOrNotInside) {
     {.id = 1,
      .type = duckdb::LogicalType::INTEGER,
      .name = "field1",
-     .null_field = 1},
+     .nullable = true},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "field2"}};
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
@@ -1861,7 +1866,7 @@ TEST_F(SearchFilterBuilderTest, test_ComplexWithInAndNull) {
     {.id = 2,
      .type = duckdb::LogicalType::INTEGER,
      .name = "priority",
-     .null_field = 2}};
+     .nullable = true}};
   irs::BooleanFilter expected;
   AddTermsFilter<int32_t>(expected, 1, {1, 2, 3});
   auto or_filter = AddDisjunction(expected);
@@ -1881,7 +1886,7 @@ TEST_F(SearchFilterBuilderTest, test_Like) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddLikeFilter(expected, 1, "%foo_");
   AssertFilter(expected, "SELECT * FROM foo WHERE required_field LIKE '%foo_'",
@@ -1892,7 +1897,7 @@ TEST_F(SearchFilterBuilderTest, test_LikeOp) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddLikeFilter(expected, 1, "%foo_");
   AssertFilter(expected, "SELECT * FROM foo WHERE required_field ~~ '%foo_'",
@@ -1906,7 +1911,7 @@ TEST_F(SearchFilterBuilderTest, test_LikeCustomEscape) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddLikeFilter(expected, 1, "\\%\\!foo_");
   AssertFilter(
@@ -1922,7 +1927,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQLikeEscape) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddLikeFilter(expected, 1, "\\%!foo_");
   AssertFilter(expected,
@@ -1934,7 +1939,7 @@ TEST_F(SearchFilterBuilderTest, test_NotLike) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto not_or = AddNegation(expected);
   AddLikeFilter(not_or, 1, "%bar_");
@@ -1948,17 +1953,17 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_Numeric_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
-                                   .null_field = 7},
+                                   .nullable = true},
                                   {.id = 2,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "a",
-                                   .null_field = 8}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto negation = AddNegation(expected);
   AddTermFilter<int32_t>(negation, 1, 6);
   AddTermFilter<int32_t>(negation, 2, 7);
-  AddNullFilter(negation, 7);
-  AddNullFilter(negation, 8);
+  AddNullFilter(negation, 1);
+  AddNullFilter(negation, 2);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR a = 7)",
                columns, true);
 }
@@ -1967,19 +1972,19 @@ TEST_F(SearchFilterBuilderTest, test_NotAndGroup_Nullable_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
-                                   .null_field = 7},
+                                   .nullable = true},
                                   {.id = 2,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "a",
-                                   .null_field = 8}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
   auto not_c = AddNegation(AddConjunction(or_filter));
   AddTermFilter<int32_t>(not_c, 1, 6);
-  AddNullFilter(not_c, 7);
+  AddNullFilter(not_c, 1);
   auto not_a = AddNegation(AddConjunction(or_filter));
   AddTermFilter<int32_t>(not_a, 2, 7);
-  AddNullFilter(not_a, 8);
+  AddNullFilter(not_a, 2);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 AND a = 7)",
                columns, true);
 }
@@ -1988,11 +1993,11 @@ TEST_F(SearchFilterBuilderTest, test_NotTerm_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "opt",
-                                   .null_field = 7}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto not_or = AddNegation(expected);
   AddTermFilter<std::string_view>(not_or, 1, std::string_view{"x"});
-  AddNullFilter(not_or, 7);
+  AddNullFilter(not_or, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE opt != 'x'", columns, true);
 }
 
@@ -2000,12 +2005,12 @@ TEST_F(SearchFilterBuilderTest, test_NotIn_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "opt",
-                                   .null_field = 7}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto not_or = AddNegation(expected);
   AddTermsFilter<std::string_view>(
     not_or, 1, {std::string_view{"x"}, std::string_view{"y"}});
-  AddNullFilter(not_or, 7);
+  AddNullFilter(not_or, 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE opt NOT IN ('x', 'y')",
                columns, true);
 }
@@ -2014,7 +2019,7 @@ TEST_F(SearchFilterBuilderTest, test_NotIn_NullElement_Empty) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "opt",
-                                   .null_field = 7}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddChild<irs::Empty>(expected);
   AssertFilter(expected, "SELECT * FROM foo WHERE opt NOT IN ('x', 'y', NULL)",
@@ -2025,15 +2030,15 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_NullLiteral_Empty) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
-                                   .null_field = 7},
+                                   .nullable = true},
                                   {.id = 2,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "a",
-                                   .null_field = 8}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddChild<irs::Empty>(expected);
   AddTermFilter<int32_t>(AddNegation(expected), 2, 7);
-  AddNullFilter(AddNegation(expected), 8);
+  AddNullFilter(AddNegation(expected), 2);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT (c IN (1, 2, NULL) OR a = 7)",
                columns, true);
@@ -2043,10 +2048,10 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_NonStrictMember_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
-                                   .null_field = 7}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddTermFilter<int32_t>(AddNegation(expected), 1, 6);
-  AddNullFilter(AddNegation(expected), 7);
+  AddNullFilter(AddNegation(expected), 1);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR c IS NULL)",
                columns, true);
 }
@@ -2055,19 +2060,19 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_IndexOnly_Nullable_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "t",
-                                   .null_field = 7},
+                                   .nullable = true},
                                   {.id = 2,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
-                                   .null_field = 8}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   auto or_filter = AddDisjunction(expected);
   auto not_t = AddNegation(AddConjunction(or_filter));
   AddTermFilter<std::string_view>(not_t, 1, std::string_view{"x"});
-  AddNullFilter(not_t, 7);
+  AddNullFilter(not_t, 1);
   auto not_c = AddNegation(AddConjunction(or_filter));
   AddTermFilter<int32_t>(not_c, 2, 6);
-  AddNullFilter(not_c, 8);
+  AddNullFilter(not_c, 2);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (t @@ 'x' AND c = 6)",
                columns, true, IdentityAnalyzerProvider);
 }
@@ -2076,7 +2081,7 @@ TEST_F(SearchFilterBuilderTest, test_LikeWithFunc) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AddLikeFilter(expected, 1, "!!!%FOO_");
   AssertFilter(expected,
@@ -2089,7 +2094,7 @@ TEST_F(SearchFilterBuilderTest, test_LikeNotConst) {
     {.id = 1,
      .type = duckdb::LogicalType::VARCHAR,
      .name = "required_field",
-     .null_field = 1},
+     .nullable = true},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "value_field"}};
   irs::BooleanFilter expected;
   AssertFilter(expected,
@@ -2113,7 +2118,7 @@ TEST_F(SearchFilterBuilderTest, test_LikeWithNotIdentity) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "required_field",
-                                   .null_field = 1}};
+                                   .nullable = true}};
   irs::BooleanFilter expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
@@ -2476,18 +2481,27 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
-  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via the boolean term
-  // encoding.
+  // LESS_EQUAL on a BOOLEAN column is the union of the value slots it admits.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::BooleanFilter expected;
-  auto& range = AddChild<irs::ByRange>(expected);
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
-  opts.max_type = irs::BoundType::Inclusive;
+  auto either = AddDisjunction(expected);
+  AddTermFilter<bool>(either, 1, false);
+  AddTermFilter<bool>(either, 1, true);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_le(true)", columns,
                true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLess_BooleanColumn) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
+  irs::BooleanFilter expected;
+  AddTermFilter<bool>(expected, 1, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_lt(true)", columns,
+               true);
+  irs::BooleanFilter none;
+  AddChild<irs::Empty>(none);
+  AssertFilter(none, "SELECT * FROM foo WHERE b @@ ts_gt(true)", columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_TypeMismatchVarcharVsInt) {
@@ -4365,7 +4379,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   expected.Add(irs::CreateByRegexp(
-                 ExpectedFieldId(1),
+                 ExpectedFieldId(1), irs::DictRef{},
                  irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"})),
                irs::Occur::MustNot);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')",
@@ -4430,17 +4444,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBool) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::BooleanFilter expected;
-  auto& range = AddChild<irs::ByRange>(expected);
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
-  opts.min_type = irs::BoundType::Inclusive;
-  opts.max.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(true)));
-  opts.max_type = irs::BoundType::Inclusive;
+  auto either = AddDisjunction(expected);
+  AddTermFilter<bool>(either, 1, false);
+  AddTermFilter<bool>(either, 1, true);
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, true, true, true)", columns,
     true);
+  irs::BooleanFilter only_true;
+  AddTermFilter<bool>(only_true, 1, true);
+  AssertFilter(
+    only_true,
+    "SELECT * FROM foo WHERE b @@ ts_between(false, true, false, true)",
+    columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBothNullMatchesAll) {
@@ -4644,15 +4660,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeDouble) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeBoolOpenRight) {
-  // Open-right BOOLEAN range: just `false` (or unbounded above).
+  // Open-right BOOLEAN range from `false`: both values.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::BooleanFilter expected;
-  auto& range = AddChild<irs::ByRange>(expected);
-  *range.mutable_field_id() = ExpectedFieldId(1);
-  auto& opts = range.mutable_options()->range;
-  opts.min.assign(irs::ViewCast<irs::byte_type>(irs::BooleanTerm(false)));
-  opts.min_type = irs::BoundType::Inclusive;
+  auto either = AddDisjunction(expected);
+  AddTermFilter<bool>(either, 1, false);
+  AddTermFilter<bool>(either, 1, true);
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ ts_between(false, NULL, true, false)",

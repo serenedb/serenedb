@@ -112,7 +112,7 @@ void FromLevenshtein(BoolTarget filter, const FilterContext& ctx,
   auto& edit_filter =
     AddMaybeNegated<irs::ByEditDistance>(filter, ctx, column_info);
   edit_filter.SetBoost(ctx.boost);
-  *edit_filter.mutable_field_id() = column_info.field_id;
+  SetField(edit_filter, column_info);
   FillByEditDistanceOptions(
     args, *edit_filter.mutable_options(),
     column_info.levenshtein_max_terms.value_or(ctx.levenshtein_max_terms));

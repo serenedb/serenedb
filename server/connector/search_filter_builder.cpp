@@ -176,17 +176,17 @@ bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                    irs::TermClause& out) {
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
       type_id == duckdb::LogicalTypeId::BLOB) {
-    out.slot = irs::FieldSlot::String;
+    out.dict.kind = irs::ValueKind::Text;
     out.term.assign(AsRawBytes(value));
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.slot = irs::BoolSlot(value.GetValue<bool>());
+    out.dict.kind = irs::BoolKind(value.GetValue<bool>());
     out.term.clear();
     return true;
   }
   if (IsNumericTypeId(type_id)) {
-    out.slot = irs::FieldSlot::Numeric;
+    out.dict.kind = irs::ValueKind::Numeric;
     WithNumericValue(type_id, value, [&](auto v) {
       irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
       out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
@@ -218,6 +218,7 @@ absl::Status SetupTermClause(irs::TermClause& clause,
   }
 
   clause.field = column_info.field_id;
+  clause.dict.layout = column_info.layout;
   return absl::OkStatus();
 }
 
@@ -384,36 +385,53 @@ const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
   return *cur;
 }
 
-void AddNullMarkerTerm(BoolTarget parent, irs::field_id field) {
-  AddTerm(parent, field, irs::FieldSlot::SqlNull, irs::kSlotTerm, irs::kNoBoost,
-          &irs::ForceConstScore());
+NullMarker NullMarkerOf(const SearchColumnInfo& info) {
+  return {
+    .field = info.field_id,
+    .layout = info.layout,
+    .json_null =
+      info.layout == irs::DictLayout::Json && !info.logical_type.IsJSONType(),
+  };
 }
 
-void AddBoolSlots(BoolTarget parent, const SearchColumnInfo& info,
-                  bool accept_false, bool accept_true, irs::score_t boost) {
+void AddNullMarkers(BoolTarget parent, const NullMarker& marker) {
+  const auto add = [&](irs::ValueKind kind) {
+    AddTerm(parent, marker.field, {.layout = marker.layout, .kind = kind},
+            irs::kSlotTerm, irs::kNoBoost, &irs::ForceConstScore());
+  };
+  add(irs::ValueKind::Null);
+  if (marker.layout == irs::DictLayout::Array) {
+    add(irs::ValueKind::NullElement);
+  }
+  if (marker.json_null) {
+    add(irs::ValueKind::JsonNull);
+  }
+}
+
+void AddBools(BoolTarget parent, const SearchColumnInfo& info,
+              bool accept_false, bool accept_true, irs::score_t boost) {
   const auto* scorer = LeafScorer(info);
   if (!accept_false && !accept_true) {
     AddFilter<irs::Empty>(parent);
     return;
   }
   if (accept_false != accept_true) {
-    AddTerm(parent, info.field_id, irs::BoolSlot(accept_true), irs::kSlotTerm,
-            boost, scorer);
+    AddTerm(parent, info.field_id, DictOf(info, irs::BoolKind(accept_true)),
+            irs::kSlotTerm, boost, scorer);
     return;
   }
   auto& node = AddFilter<irs::BooleanFilter>(parent);
   const BoolTarget either{&node, irs::Occur::Should};
-  AddTerm(either, info.field_id, irs::FieldSlot::False, irs::kSlotTerm,
-          irs::kNoBoost, scorer);
-  AddTerm(either, info.field_id, irs::FieldSlot::True, irs::kSlotTerm,
-          irs::kNoBoost, scorer);
+  AddTerm(either, info.field_id, DictOf(info, irs::ValueKind::False),
+          irs::kSlotTerm, irs::kNoBoost, scorer);
+  AddTerm(either, info.field_id, DictOf(info, irs::ValueKind::True),
+          irs::kSlotTerm, irs::kNoBoost, scorer);
   SetMinMatch(node, 1);
   node.SetBoost(boost);
 }
 
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                               irs::FieldSlot slot,
-                               std::span<irs::bstring> terms,
+                               irs::DictRef dict, std::span<irs::bstring> terms,
                                size_t min_match) {
   auto& node = AddFilter<irs::BooleanFilter>(parent);
   absl::c_sort(terms);
@@ -424,7 +442,7 @@ irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
   const auto occur = all ? irs::Occur::Must : irs::Occur::Should;
   for (auto& term : terms) {
     node.Add(
-      irs::TermClause{.field = field, .slot = slot, .term = std::move(term)},
+      irs::TermClause{.field = field, .dict = dict, .term = std::move(term)},
       occur);
   }
   if (!all) {
@@ -442,10 +460,13 @@ namespace {
 
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
-                            std::vector<irs::field_id>& markers) {
+                            std::vector<NullMarker>& markers) {
   if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
-    if (info->nullable && !absl::c_linear_search(markers, info->field_id)) {
-      markers.push_back(info->field_id);
+    if (info->nullable) {
+      const auto marker = NullMarkerOf(*info);
+      if (!absl::c_linear_search(markers, marker)) {
+        markers.push_back(marker);
+      }
     }
     return;
   }
@@ -637,10 +658,10 @@ absl::Status FromNullAwareMinMatchGroup(BoolTarget parent,
     if (auto s = FromExpression(alternative, ctx, *branch); !s.ok()) {
       ThrowUnclaimedModifier("::min_match", s, kMinMatchUnclaimedHint);
     }
-    std::vector<irs::field_id> markers;
+    std::vector<NullMarker> markers;
     CollectNullableMarkers(ctx, *branch, markers);
-    for (const auto marker : markers) {
-      AddNullMarkerTerm(alternative, marker);
+    for (const auto& marker : markers) {
+      AddNullMarkers(alternative, marker);
     }
     SetMinMatch(*alternative.node, 1);
   }
@@ -653,7 +674,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
                        bool is_and) {
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
-  std::vector<irs::field_id> markers;
+  std::vector<NullMarker> markers;
   // A conjunction fills `Must`, a disjunction `Should` -- and a disjunction
   // is closed with its threshold once it holds the clauses it counts.
   const auto open = [](BoolTarget into, bool is_union) {
@@ -691,7 +712,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
         if (!group) {
           return false;
         }
-        std::vector<irs::field_id> group_markers;
+        std::vector<NullMarker> group_markers;
         CollectNullableMarkers(ctx, *child, group_markers);
         return !group_markers.empty();
       });
@@ -751,8 +772,8 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
       return s;
     }
   }
-  for (const auto marker : markers) {
-    AddNullMarkerTerm(group, marker);
+  for (const auto& marker : markers) {
+    AddNullMarkers(group, marker);
   }
   if (group_is_union) {
     SetMinMatch(*group.node, 1);
@@ -773,9 +794,29 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
     return absl::InvalidArgumentError(
       "IS NULL over a column that has no NULL rows in the index");
   }
-  AddTerm(ctx.negated ? Negate(filter) : filter, column_info->field_id,
-          irs::FieldSlot::SqlNull, irs::kSlotTerm, ctx.boost,
+  const auto field = column_info->field_id;
+  const auto sql_null = DictOf(*column_info, irs::ValueKind::Null);
+  if (!NullMarkerOf(*column_info).json_null) {
+    AddTerm(ctx.negated ? Negate(filter) : filter, field, sql_null,
+            irs::kSlotTerm, ctx.boost, &irs::ForceConstScore());
+    return absl::OkStatus();
+  }
+  const auto json_null = DictOf(*column_info, irs::ValueKind::JsonNull);
+  if (ctx.negated) {
+    const auto target = Negate(filter);
+    AddTerm(target, field, sql_null, irs::kSlotTerm, irs::kNoBoost,
+            &irs::ForceConstScore());
+    AddTerm(target, field, json_null, irs::kSlotTerm, irs::kNoBoost,
+            &irs::ForceConstScore());
+    return absl::OkStatus();
+  }
+  const auto either = AddGroup(filter, irs::Occur::Should);
+  AddTerm(either, field, sql_null, irs::kSlotTerm, irs::kNoBoost,
           &irs::ForceConstScore());
+  AddTerm(either, field, json_null, irs::kSlotTerm, irs::kNoBoost,
+          &irs::ForceConstScore());
+  SetMinMatch(*either.node, 1);
+  either.node->SetBoost(ctx.boost);
   return absl::OkStatus();
 }
 
@@ -995,8 +1036,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   auto type_id = column_info->logical_type.id();
 
   auto setup_base_filter = [&](auto& range_filter) -> decltype(auto) {
-    *range_filter.mutable_field_id() = column_info->field_id;
-    *range_filter.mutable_slot() = ValueSlot(type_id);
+    SetField(range_filter, *column_info, ValueKindOf(type_id));
     range_filter.SetBoost(ctx.boost);
     SetLeafScorer(range_filter, *column_info);
     switch (op) {
@@ -1034,16 +1074,16 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     const bool value = const_val->GetValue<bool>();
     switch (op) {
       case ComparisonOp::Lt:
-        AddBoolSlots(filter, *column_info, value, false, ctx.boost);
+        AddBools(filter, *column_info, value, false, ctx.boost);
         break;
       case ComparisonOp::Le:
-        AddBoolSlots(filter, *column_info, true, value, ctx.boost);
+        AddBools(filter, *column_info, true, value, ctx.boost);
         break;
       case ComparisonOp::Gt:
-        AddBoolSlots(filter, *column_info, false, !value, ctx.boost);
+        AddBools(filter, *column_info, false, !value, ctx.boost);
         break;
       case ComparisonOp::Ge:
-        AddBoolSlots(filter, *column_info, !value, true, ctx.boost);
+        AddBools(filter, *column_info, !value, true, ctx.boost);
         break;
       default:
         SDB_UNREACHABLE();
@@ -1207,9 +1247,10 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
     auto& node = AddFilter<irs::BooleanFilter>(target);
     for (const bool value : {false, true}) {
       if (seen[value]) {
-        node.Add(irs::TermClause{.field = column_info->field_id,
-                                 .slot = irs::BoolSlot(value)},
-                 irs::Occur::Should);
+        node.Add(
+          irs::TermClause{.field = column_info->field_id,
+                          .dict = DictOf(*column_info, irs::BoolKind(value))},
+          irs::Occur::Should);
       }
     }
     SetMinMatch(node, 1);
@@ -1227,8 +1268,9 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
     }
     terms.push_back(std::move(clause.term));
   }
-  auto& node = AddTermSet(target, column_info->field_id, ValueSlot(type_id),
-                          terms, /*min_match=*/1);
+  auto& node = AddTermSet(target, column_info->field_id,
+                          DictOf(*column_info, ValueKindOf(type_id)), terms,
+                          /*min_match=*/1);
   node.SetBoost(ctx.boost);
   node.SetScorer(LeafScorer(*column_info));
   return absl::OkStatus();
@@ -2279,8 +2321,10 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
 void UnwrapElementType(SearchColumnInfo& info) {
   if (info.logical_type.id() == duckdb::LogicalTypeId::LIST) {
     info.logical_type = duckdb::ListType::GetChildType(info.logical_type);
+    info.layout = irs::DictLayout::Array;
   } else if (info.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
     info.logical_type = duckdb::ArrayType::GetChildType(info.logical_type);
+    info.layout = irs::DictLayout::Array;
   }
 }
 
@@ -2357,11 +2401,7 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
     return nullptr;
   }
 
-  if (info->logical_type.id() == duckdb::LogicalTypeId::LIST) {
-    info->logical_type = duckdb::ListType::GetChildType(info->logical_type);
-  } else if (info->logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
-    info->logical_type = duckdb::ArrayType::GetChildType(info->logical_type);
-  }
+  UnwrapElementType(*info);
 
   if (matched_unwrapped && unwrapped.override_type) {
     const auto& cast_type = *unwrapped.override_type;
@@ -2371,7 +2411,7 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
       }
     } else if (cast_type.id() != info->logical_type.id()) {
       if (IsNumericTypeId(cast_type.id())) {
-        if (!info->json_leaves) {
+        if (info->layout != irs::DictLayout::Json) {
           return nullptr;
         }
         info->logical_type = duckdb::LogicalType::DOUBLE;

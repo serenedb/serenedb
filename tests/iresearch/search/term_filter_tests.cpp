@@ -53,9 +53,11 @@ namespace {
 [[maybe_unused]] inline constexpr irs::field_id kEmptyFieldId =
   irs::field_limits::invalid();
 
-irs::ByTerm MakeFilter(irs::field_id field, const std::string_view term) {
+irs::ByTerm MakeFilter(irs::field_id field, const std::string_view term,
+                       irs::ValueKind kind = irs::ValueKind::Text) {
   irs::ByTerm q;
   *q.mutable_field_id() = field;
+  q.mutable_dict()->kind = kind;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }
@@ -266,7 +268,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(20));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term));
+      irs::ByTerm query =
+        MakeFilter(kSeqId, irs::ViewCast<char>(term), irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -291,7 +294,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT32_C(21));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term));
+      irs::ByTerm query =
+        MakeFilter(kSeqId, irs::ViewCast<char>(term), irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -316,7 +320,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)90.564);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -341,7 +346,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)90.564f);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -366,7 +372,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)100.);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -391,7 +398,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)100.f);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -415,7 +423,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term = irs::numeric_utils::EncodeNumericTerm(stream_buf, 100);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 
@@ -440,7 +449,8 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(100));
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term));
+      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
+                                     irs::ValueKind::Numeric);
 
       tests::PreparedFilter prepared{query, rdr, nullptr, counter};
 

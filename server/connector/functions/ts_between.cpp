@@ -179,7 +179,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = column_info.field_id;
+    SetField(range, column_info);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
@@ -202,14 +202,13 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
       }
       return inclusive ? value <= bound : value < bound;
     };
-    AddBoolSlots(MaybeNegated(parent, ctx, column_info), column_info,
-                 accepts(false), accepts(true), ctx.boost);
+    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
+             accepts(false), accepts(true), ctx.boost);
     return;
   }
 
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  *range.mutable_field_id() = column_info.field_id;
-  *range.mutable_slot() = irs::FieldSlot::Numeric;
+  SetField(range, column_info, irs::ValueKind::Numeric);
   range.SetBoost(ctx.boost);
   SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
@@ -300,7 +299,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = column_info.field_id;
+    SetField(range, column_info);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     *range.mutable_options() = std::move(options);
@@ -320,13 +319,12 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
       }
       return true;
     };
-    AddBoolSlots(MaybeNegated(parent, ctx, column_info), column_info,
-                 accepts(false), accepts(true), ctx.boost);
+    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
+             accepts(false), accepts(true), ctx.boost);
   } else {
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = column_info.field_id;
-    *range.mutable_slot() = irs::FieldSlot::Numeric;
+    SetField(range, column_info, irs::ValueKind::Numeric);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();

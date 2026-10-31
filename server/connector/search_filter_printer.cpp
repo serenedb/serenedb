@@ -135,15 +135,19 @@ std::string TermValue(const bstring& term, Kind kind) {
   return TermValue(bytes_view{term}, kind);
 }
 
-std::string ClauseValue(const TermClause& clause, Kind kind) {
-  switch (clause.slot) {
-    case FieldSlot::False:
+std::string DictTermValue(DictRef dict, bytes_view term, Kind kind) {
+  switch (dict.kind) {
+    case ValueKind::False:
       return "false";
-    case FieldSlot::True:
+    case ValueKind::True:
       return "true";
     default:
-      return TermValue(clause.term, kind);
+      return TermValue(term, kind);
   }
+}
+
+std::string ClauseValue(const TermClause& clause, Kind kind) {
+  return DictTermValue(clause.dict, clause.term, kind);
 }
 
 template<typename T>
@@ -282,11 +286,11 @@ struct FilterPrinter {
   const FieldNameResolver& name_of;
   const FieldKindResolver& kind_of;
 
-  std::string FieldName(field_id fid, FieldSlot slot) const {
-    return name_of(sdb::connector::ColumnId{fid}, slot);
+  std::string FieldName(field_id fid, DictRef dict) const {
+    return name_of(sdb::connector::ColumnId{fid}, dict);
   }
-  Kind FieldKind(field_id fid, FieldSlot slot) const {
-    return kind_of(sdb::connector::ColumnId{fid}, slot);
+  Kind FieldKind(field_id fid, DictRef dict) const {
+    return kind_of(sdb::connector::ColumnId{fid}, dict);
   }
 
   std::string PhraseParts(const ByPhraseOptions& options) const {
@@ -358,9 +362,9 @@ struct FilterPrinter {
       i = j;
       ExplainNode leaves{"Terms"};
       const auto field = run.front().field;
-      const auto slot = run.front().slot;
-      leaves.attributes["Field"] = FieldName(field, slot);
-      const auto kind = FieldKind(field, slot);
+      const auto dict = run.front().dict;
+      leaves.attributes["Field"] = FieldName(field, dict);
+      const auto kind = FieldKind(field, dict);
       SDB_ASSERT(kind != Kind::Null || run.size() == 1);
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
           Explicit(run.front().scorer)) {
@@ -443,31 +447,31 @@ struct FilterPrinter {
     if (type == Type<ByTerm>::id()) {
       const auto& f = downCast<const ByTerm>(filter);
       ExplainNode node{"Term"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
-      node.attributes["Value"] =
-        TermValue(f.options().term, FieldKind(f.field_id(), f.slot()));
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
+      node.attributes["Value"] = DictTermValue(
+        f.dict(), f.options().term, FieldKind(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByRange>::id()) {
       const auto& f = downCast<const ByRange>(filter);
       ExplainNode node{"Range"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
-        RangeValue(f.options().range, FieldKind(f.field_id(), f.slot()));
+        RangeValue(f.options().range, FieldKind(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByGranularRange>::id()) {
       const auto& f = downCast<const ByGranularRange>(filter);
       ExplainNode node{"Granular Range"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
-        RangeValue(f.options().range, FieldKind(f.field_id(), f.slot()));
+        RangeValue(f.options().range, FieldKind(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByNGramSimilarity>::id()) {
       const auto& f = downCast<const ByNGramSimilarity>(filter);
       ExplainNode node{"NGram Similarity"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["NGrams"] = NGramList(f);
       node.attributes["Threshold"] = absl::StrCat(f.options().threshold);
       return node;
@@ -481,7 +485,7 @@ struct FilterPrinter {
       const auto& f = downCast<const LevenshteinAutomatonFilter>(filter);
       const auto& o = f.options();
       ExplainNode node{"Levenshtein"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Target"] = TermToString(o.target);
       node.attributes["Max Terms"] = o.with_ties
                                        ? absl::StrCat(o.max_terms, " with ties")
@@ -491,16 +495,16 @@ struct FilterPrinter {
     if (type == Type<ByPrefix>::id()) {
       const auto& f = downCast<const ByPrefix>(filter);
       ExplainNode node{"Starts With"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Prefix"] =
-        PrefixValue(f.options().term, FieldKind(f.field_id(), f.slot()));
+        PrefixValue(f.options().term, FieldKind(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByPrefixes>::id()) {
       const auto& f = downCast<const ByPrefixes>(filter);
       ExplainNode node{"Starts With Any"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
-      const auto kind = FieldKind(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
+      const auto kind = FieldKind(f.field_id(), f.dict());
       const auto prefixes = f.options().Prefixes();
       node.attributes["Prefixes"] =
         prefixes.empty()
@@ -537,7 +541,7 @@ struct FilterPrinter {
     if (type == Type<AutomatonFilter>::id()) {
       const auto& f = downCast<const AutomatonFilter>(filter);
       ExplainNode node{"Automaton"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       const auto& options = f.options();
       node.attributes["Pattern"] =
         options.kind == PatternKind::Union
@@ -549,7 +553,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByWildcardNGram>(filter);
       const auto& options = f.options();
       ExplainNode node{"Wildcard NGram"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Pattern"] = TermToString(options.pattern);
       node.attributes["Syntax"] =
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
@@ -567,7 +571,7 @@ struct FilterPrinter {
     if (type == Type<ByPhrase>::id()) {
       const auto& f = downCast<const ByPhrase>(filter);
       ExplainNode node{"Phrase"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Parts"] = PhraseParts(f.options());
       if (const auto separator = f.options().word_separator();
           !separator.empty()) {
@@ -585,7 +589,7 @@ struct FilterPrinter {
     if (type == Type<GeoFilter>::id()) {
       const auto& f = downCast<const GeoFilter>(filter);
       ExplainNode node{"Geo"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
       node.attributes["Shape"].assign(
         GeoShapeTypeName(f.options().shape.type()));
@@ -595,7 +599,7 @@ struct FilterPrinter {
     if (type == Type<GeoDistanceFilter>::id()) {
       const auto& f = downCast<const GeoDistanceFilter>(filter);
       ExplainNode node{"Geo Distance"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] = GeoDistanceRange(f);
       node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
@@ -604,7 +608,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByRadius>(filter);
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
@@ -617,7 +621,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByVectorExact>(filter);
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
-      node.attributes["Field"] = FieldName(f.field_id(), f.slot());
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
@@ -633,14 +637,14 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::connector::ColumnId id, FieldSlot slot) {
-  if (slot == FieldSlot::String) {
+std::string IdentityField(sdb::connector::ColumnId id, DictRef dict) {
+  if (dict.kind == ValueKind::Text) {
     return absl::StrCat(id);
   }
-  return absl::StrCat(id, "(", magic_enum::enum_name(slot), ")");
+  return absl::StrCat(id, "(", magic_enum::enum_name(dict.kind), ")");
 }
 
-Kind UnknownKind(sdb::connector::ColumnId, FieldSlot) {
+Kind UnknownKind(sdb::connector::ColumnId, DictRef) {
   return Kind::Unsupported;
 }
 

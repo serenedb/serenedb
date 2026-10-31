@@ -423,9 +423,12 @@ const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
         _field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
+    const auto* dicts = it.reader->dicts(id);
+    if (!dicts) {
+      continue;
+    }
     for (; it.slot != kFieldSlots; ++it.slot) {
-      if (const auto* terms =
-            it.reader->field(id, static_cast<FieldSlot>(it.slot))) {
+      if (const auto* terms = dicts->At(static_cast<FieldSlot>(it.slot))) {
         return terms;
       }
     }
@@ -524,9 +527,13 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
     if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
+    const auto* dicts = reader.dicts(id);
+    if (!dicts) {
+      continue;
+    }
     for (size_t i = 0; i != kFieldSlots; ++i) {
       const auto slot = static_cast<FieldSlot>(i);
-      const auto* term_reader = reader.field(id, slot);
+      const auto* term_reader = dicts->At(slot);
       if (!term_reader) {
         continue;
       }
@@ -633,7 +640,9 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   for (const auto& src : sources) {
     const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
-      if (const auto* source_terms = src.reader->field(id);
+      const auto* dicts = src.reader->dicts(id);
+      if (const auto* source_terms =
+            dicts ? dicts->At(FieldSlot::String) : nullptr;
           source_terms && field_limits::valid(source_terms->meta().norm)) {
         reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }

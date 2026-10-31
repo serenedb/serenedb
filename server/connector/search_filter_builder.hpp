@@ -26,6 +26,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <iresearch/index/multi_term_dict.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -64,9 +65,7 @@ struct SearchColumnInfo {
   // logic holds; IS NULL claims match them; cleared keeps negations plain
   // acceptor shapes and declines IS NULL claims.
   bool nullable = false;
-  // A JSON expression indexed leaf by leaf: its numbers, booleans and JSON
-  // nulls are in their own slots of `field_id`.
-  bool json_leaves = false;
+  irs::DictLayout layout = irs::DictLayout::Scalar;
   irs::field_id text = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -180,13 +179,26 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
   return ref;
 }
 
+inline irs::DictRef DictOf(const SearchColumnInfo& info,
+                           irs::ValueKind kind = irs::ValueKind::Text) {
+  return {.layout = info.layout, .kind = kind};
+}
+
+template<typename Filter>
+Filter& SetField(Filter& filter, const SearchColumnInfo& info,
+                 irs::ValueKind kind = irs::ValueKind::Text) {
+  *filter.mutable_field_id() = info.field_id;
+  *filter.mutable_dict() = DictOf(info, kind);
+  return filter;
+}
+
 // A term clause, which the node stores rather than the `ByTerm` it came as.
-inline void AddTerm(BoolTarget parent, irs::field_id field, irs::FieldSlot slot,
+inline void AddTerm(BoolTarget parent, irs::field_id field, irs::DictRef dict,
                     irs::bytes_view term, irs::score_t boost = irs::kNoBoost,
                     const irs::Scorer* scorer = nullptr) {
   parent.Add(irs::TermClause{
     .field = field,
-    .slot = slot,
+    .dict = dict,
     .scorer = scorer,
     .term = irs::bstring{term},
     .boost = boost,
@@ -212,14 +224,24 @@ inline BoolTarget AddGroup(BoolTarget parent, irs::Occur occur) {
   return {&AddFilter<irs::BooleanFilter>(parent), occur};
 }
 
-void AddNullMarkerTerm(BoolTarget parent, irs::field_id field);
+struct NullMarker {
+  irs::field_id field = irs::field_limits::invalid();
+  irs::DictLayout layout = irs::DictLayout::Scalar;
+  bool json_null = false;
+
+  bool operator==(const NullMarker&) const = default;
+};
+
+NullMarker NullMarkerOf(const SearchColumnInfo& info);
+
+void AddNullMarkers(BoolTarget parent, const NullMarker& marker);
 
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single
 // field. Every term required is the `Must` bucket and no threshold at all;
 // anything less is `Should` counted to `k`.
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                               irs::FieldSlot slot,
-                               std::span<irs::bstring> terms, size_t min_match);
+                               irs::DictRef dict, std::span<irs::bstring> terms,
+                               size_t min_match);
 
 // What a negated clause is added to. Under a conjunction the node's own
 // `MustNot` bucket is the negation, and nothing has to be allocated for it;
@@ -233,10 +255,11 @@ inline BoolTarget Negate(BoolTarget parent) {
 
 // SQL three-valued logic: a NULL row satisfies no comparison, but a bare
 // negation runs against ALL live docs and would readmit rows without a token
-// in the negated column. Scoped negation excludes the column's SQL NULL
-// docs alongside the negated set -- `must_not` is a union, so they share one
-// bucket; the and_null_exclusion optimizer rule prunes the branch wherever a
-// positive same-column conjunct already rejects those rows.
+// in the negated column. Scoped negation excludes the docs where the column
+// compares UNKNOWN (its SQL NULL rows, an array's NULL elements, a cast JSON
+// leaf's JSON nulls) alongside the negated set -- `must_not` is a union, so
+// they share one bucket; the and_null_exclusion optimizer rule prunes the
+// branch wherever a positive same-column conjunct already rejects those rows.
 // A node is what it includes, less what it excludes, so nothing included is
 // nothing to exclude from. SQL negation excludes from every row, which is an
 // include side of `All` -- said explicitly here rather than left implicit in a
@@ -265,7 +288,7 @@ inline BoolTarget NegateScoped(BoolTarget parent,
                                const SearchColumnInfo& info) {
   const auto target = Negate(parent);
   if (info.nullable) {
-    AddNullMarkerTerm(target, info.field_id);
+    AddNullMarkers(target, NullMarkerOf(info));
   }
   return target;
 }
@@ -286,10 +309,10 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
 
-inline irs::FieldSlot ValueSlot(duckdb::LogicalTypeId type_id) {
+inline irs::ValueKind ValueKindOf(duckdb::LogicalTypeId type_id) {
   return term_dict::IsNumeric(term_dict::Classify(type_id))
-           ? irs::FieldSlot::Numeric
-           : irs::FieldSlot::String;
+           ? irs::ValueKind::Numeric
+           : irs::ValueKind::Text;
 }
 
 // True when the expression tree contains an optimizer-claimed index-only

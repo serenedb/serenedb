@@ -103,8 +103,7 @@ class ByRange : public FilterWithField<ByRangeOptions> {
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const irs::field_id field,
-                                          FieldSlot slot,
+                                          const TermReader* reader,
                                           const options_type::range_type& rng,
                                           score_t boost);
 

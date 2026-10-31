@@ -133,8 +133,8 @@ struct WithoutColumns final : irs::SubReader {
   std::span<const irs::field_id> field_ids() const final {
     return segment.field_ids();
   }
-  const irs::TermReader* field(irs::field_id id) const final {
-    return segment.field(id);
+  const irs::MultiTermDict* dicts(irs::field_id id) const final {
+    return segment.dicts(id);
   }
   irs::NormReader::ptr norms(irs::field_id id) const final {
     return segment.norms(id);

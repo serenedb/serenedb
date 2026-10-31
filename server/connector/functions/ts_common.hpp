@@ -173,10 +173,10 @@ Filter& AddMaybeNegated(BoolTarget parent, const FilterContext& ctx,
                            std::forward<Args>(args)...);
 }
 
-// A boolean comparison is the union of the value slots it accepts: `b = v`
-// is one slot, `b <> v` the other, an ordering one, both or none.
-void AddBoolSlots(BoolTarget parent, const SearchColumnInfo& info,
-                  bool accept_false, bool accept_true, irs::score_t boost);
+// A boolean comparison is the union of the values it accepts: `b = v` is
+// one value, `b <> v` the other, an ordering one, both or none.
+void AddBools(BoolTarget parent, const SearchColumnInfo& info,
+              bool accept_false, bool accept_true, irs::score_t boost);
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 
@@ -266,8 +266,8 @@ using TokenGroups = std::vector<std::vector<irs::bstring>>;
 
 void AppendTokenGroups(std::span<const duckdb::string_t> terms,
                        std::span<const uint32_t> pos, TokenGroups& groups);
-void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
-                    size_t min_match, irs::score_t boost,
+void AddTokenGroups(BoolTarget parent, irs::field_id field, irs::DictRef dict,
+                    TokenGroups& groups, size_t min_match, irs::score_t boost,
                     const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,

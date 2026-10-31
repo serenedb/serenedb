@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <array>
@@ -32,7 +33,6 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -382,15 +382,17 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    auto int32_terms = segment.field(connector::ColumnId{1});
+    constexpr irs::DictRef kNumeric{.kind = irs::ValueKind::Numeric};
+    auto int32_terms = segment.field(connector::ColumnId{1}, kNumeric);
     ASSERT_NE(nullptr, int32_terms);
     auto varchar_terms = segment.field(connector::ColumnId{2});
     ASSERT_NE(nullptr, varchar_terms);
-    auto bool_terms = segment.field(connector::ColumnId{3});
+    auto bool_terms = segment.field(connector::ColumnId{3},
+                                    irs::DictRef{.kind = irs::BoolKind(col3)});
     ASSERT_NE(nullptr, bool_terms);
-    auto real_terms = segment.field(connector::ColumnId{4});
+    auto real_terms = segment.field(connector::ColumnId{4}, kNumeric);
     ASSERT_NE(nullptr, real_terms);
-    auto big_terms = segment.field(connector::ColumnId{5});
+    auto big_terms = segment.field(connector::ColumnId{5}, kNumeric);
     ASSERT_NE(nullptr, big_terms);
 
     irs::byte_type num_buf[irs::numeric_utils::kNumericTermMaxSize];
@@ -415,8 +417,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     auto big_postings =
       MaskPostings(segment, big_term_itr->postings(irs::IndexFeatures::None));
     auto bool_term_itr = bool_terms->iterator();
-    ASSERT_TRUE(bool_term_itr->seek(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(col3))));
+    ASSERT_TRUE(bool_term_itr->seek(irs::kSlotTerm));
     auto bool_postings =
       MaskPostings(segment, bool_term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(int32_postings->Next()));
@@ -492,16 +493,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   const std::vector<std::string_view> string_data{std::string_view{"foo", 3},
                                                   std::string_view{"bar", 3}};
 
-  // Distinct IS-NULL marker field ids so the value and null fields land in
-  // different term-dict slots (the production shape after per-kind id
-  // allocation). Without this, the test would only exercise the legacy
-  // fallback where null_field_id collapses onto the value field.
-  constexpr irs::field_id kVarcharNullsFieldId = 100;
-  constexpr irs::field_id kUnknownNullsFieldId = 101;
   catalog::InvertedIndexField varchar_entry;
-  varchar_entry.null_field_id = kVarcharNullsFieldId;
   catalog::InvertedIndexField unknown_entry;
-  unknown_entry.null_field_id = kUnknownNullsFieldId;
   EntryInfoProvider entry_provider =
     [varchar_field = col_id[0], unknown_field = col_id[1], &varchar_entry,
      &unknown_entry](irs::field_id id) -> const catalog::InvertedIndexField* {
@@ -568,15 +561,12 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   };
   auto varchar_terms = segment.field(connector::ColumnId{1});
   ASSERT_NE(nullptr, varchar_terms);
-  auto varchar_nulls = segment.field(kVarcharNullsFieldId);
+  constexpr irs::DictRef kNull{.kind = irs::ValueKind::Null};
+  auto varchar_nulls = segment.field(connector::ColumnId{1}, kNull);
   ASSERT_NE(nullptr, varchar_nulls);
-  // VARCHAR-typed value field has its own slot; the IS-NULL marker lands in
-  // a separate slot keyed by the entry's null_field_id.
-  ASSERT_NE(varchar_terms, varchar_nulls);
-  auto unknown_terms = segment.field(kUnknownNullsFieldId);
+  auto unknown_terms = segment.field(connector::ColumnId{2}, kNull);
   ASSERT_NE(nullptr, unknown_terms);
-  // SQLNULL kind: no value-side terms, only the null marker. The value-side
-  // connector::ColumnId{2} slot is never created.
+  // SQLNULL kind: no value terms, only the SQL NULL slot.
   ASSERT_EQ(nullptr, segment.field(connector::ColumnId{2}));
 
   // Row 1   foo, NULL
@@ -677,6 +667,75 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
       irs::doc_limits::valid(SeekPostings(*unknown_postings, row_doc_id)));
     ASSERT_EQ(unknown_postings->Value(), row_doc_id);
   }
+}
+
+TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
+  auto trx = _data_writer->GetBatch();
+
+  const connector::ColumnId col_id{1};
+  catalog::InvertedIndexField list_entry;
+  EntryInfoProvider entry_provider =
+    [&](irs::field_id id) -> const catalog::InvertedIndexField* {
+    return id == col_id ? &list_entry : nullptr;
+  };
+  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider,
+                                    std::vector<connector::ColumnId>{col_id},
+                                    std::move(entry_provider)};
+  const auto rk = KeyTerms({"pk1", "pk2", "pk3", "pk4"});
+  auto pk_vec =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
+  sink.Init(4, PkChunk{.key_terms = rk, .column = &pk_vec});
+
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  const duckdb::Value null_element{duckdb::LogicalType::VARCHAR};
+  duckdb::Vector vec{type, 4};
+  vec.SetValue(
+    0, duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, {duckdb::Value{"a"}}));
+  vec.SetValue(1, duckdb::Value{type});
+  vec.SetValue(2, duckdb::Value::LIST(duckdb::LogicalType::VARCHAR,
+                                      {duckdb::Value{"b"}, null_element}));
+  vec.SetValue(3, duckdb::Value::LIST(duckdb::LogicalType::VARCHAR,
+                                      {null_element, null_element}));
+  sink.SwitchColumn(ColumnDescriptor{col_id, type}, vec, 4);
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->RefreshCommit();
+
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
+  ASSERT_EQ(1, reader.size());
+  auto& segment = reader[0];
+  const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
+  ASSERT_NE(nullptr, pk_column);
+  irs::ReadContext pk_ctx{*segment.GetColReader()};
+  const auto pks_of = [&](irs::ValueKind kind, std::string_view term) {
+    std::vector<int64_t> pks;
+    const auto* dict = segment.field(
+      col_id, irs::DictRef{.layout = irs::DictLayout::Array, .kind = kind});
+    if (!dict) {
+      return pks;
+    }
+    auto it = dict->iterator();
+    if (term.empty() ? !it->next()
+                     : !it->seek(irs::ViewCast<irs::byte_type>(term))) {
+      return pks;
+    }
+    auto docs = Docs(it->postings(irs::IndexFeatures::None));
+    for (auto doc = docs->Next(); !irs::doc_limits::eof(doc);
+         doc = docs->Next()) {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      pks.push_back(duckdb::FlatVector::GetData<int64_t>(out)[0]);
+    }
+    absl::c_sort(pks);
+    return pks;
+  };
+  EXPECT_EQ((std::vector<int64_t>{1}), pks_of(irs::ValueKind::Text, "a"));
+  EXPECT_EQ((std::vector<int64_t>{3}), pks_of(irs::ValueKind::Text, "b"));
+  EXPECT_EQ((std::vector<int64_t>{2}), pks_of(irs::ValueKind::Null, {}));
+  EXPECT_EQ((std::vector<int64_t>{3, 4}),
+            pks_of(irs::ValueKind::NullElement, {}));
 }
 
 // Corner case: string with leading null byte is preserved verbatim in the

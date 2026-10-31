@@ -745,8 +745,8 @@ TEST_P(Format10TestCase, ires336) {
     irs::IdxWriter idx{*dir, segment_name};
     irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
-    fw.prepare(flush_state);
-    fw.write(term_reader);
+    fw.prepare(flush_state, 1);
+    fw.write(irs::FieldSlot::String, term_reader);
     fw.end();
     idx.Commit();
   }
@@ -760,7 +760,9 @@ TEST_P(Format10TestCase, ires336) {
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  const auto* field = fr->field({.id = field_meta.id});
+  const auto* dicts = fr->dicts(field_meta.id);
+  ASSERT_NE(nullptr, dicts);
+  const auto* field = dicts->At(irs::FieldSlot::String);
   ASSERT_NE(nullptr, field);
   auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));

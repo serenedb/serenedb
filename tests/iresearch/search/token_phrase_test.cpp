@@ -1208,7 +1208,8 @@ void ExpectDeferredLikeInline(const Index& index,
   const auto candidates = index.Docs(*conjunction);
   ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
   EXPECT_TRUE(std::ranges::includes(candidates, expected));
-  const auto stats = irs::PhraseWordStats(options, index.Reader(), kPlainId);
+  const auto stats =
+    irs::PhraseWordStats(options, index.Reader(), kPlainId, irs::DictRef{});
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
     irs::CompiledPhrase compiled{options, {}, stats};
@@ -1500,7 +1501,8 @@ TEST(TokenPhraseFilterTest, parts_conjunction_keeps_one_clause_per_word) {
 
 TEST(TokenPhraseFilterTest, part_filter_of_every_kind) {
   const auto term = irs::PartFilter(
-    kPlainId, irs::ByTermOptions{.term = irs::bstring{Bytes("fox")}}, false);
+    kPlainId, irs::DictRef{},
+    irs::ByTermOptions{.term = irs::bstring{Bytes("fox")}}, false);
   ASSERT_EQ(irs::Type<irs::ByTerm>::id(), term->type());
   EXPECT_EQ(Bytes("fox"),
             irs::utils::downCast<irs::ByTerm>(*term).options().term);
@@ -1508,19 +1510,20 @@ TEST(TokenPhraseFilterTest, part_filter_of_every_kind) {
   irs::TermSetOptions set;
   set.terms.emplace(Bytes("fox"));
   set.terms.emplace(Bytes("box"));
-  const auto any = irs::PartFilter(kPlainId, set, true);
+  const auto any = irs::PartFilter(kPlainId, irs::DictRef{}, set, true);
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), any->type());
   const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(*any);
   EXPECT_EQ(2U, boolean.Terms(irs::Occur::Should).size());
   EXPECT_EQ(irs::ScoreMergeType::Max, boolean.MergeType());
 
-  const auto none = irs::PartFilter(kPlainId, irs::TermSetOptions{}, false);
+  const auto none =
+    irs::PartFilter(kPlainId, irs::DictRef{}, irs::TermSetOptions{}, false);
   EXPECT_EQ(irs::Type<irs::Empty>::id(), none->type());
 
   irs::ByRangeOptions range;
   range.range.min = irs::bstring{Bytes("b")};
   range.range.max = irs::bstring{Bytes("d")};
-  const auto between = irs::PartFilter(kPlainId, range, false);
+  const auto between = irs::PartFilter(kPlainId, irs::DictRef{}, range, false);
   ASSERT_EQ(irs::Type<irs::ByRange>::id(), between->type());
   EXPECT_EQ(range, irs::utils::downCast<irs::ByRange>(*between).options());
 }
@@ -1654,7 +1657,9 @@ TEST(TokenPhraseIndexTest, standalone_patterns_skip_shingles) {
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
   phrase.set_word_separator(Bytes("_"));
   const irs::CompiledPhrase compiled{
-    phrase, {}, irs::PhraseWordStats(phrase, index.Reader(), kPlainId)};
+    phrase,
+    {},
+    irs::PhraseWordStats(phrase, index.Reader(), kPlainId, irs::DictRef{})};
   irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
     irs::PhraseVerdict verdict;
@@ -1711,8 +1716,8 @@ TEST(TokenPhraseIndexTest, word_stats_sum_every_segment) {
     docs, std::type_identity<DenseWords>{}, {.segment_docs = 2}};
   ASSERT_EQ(10U, index.Reader().size());
   ASSERT_EQ(nullptr, index.Reader()[0].field(kPlainId));
-  const auto stats =
-    irs::PhraseWordStats(Phrase("quick brown"), index.Reader(), kPlainId);
+  const auto stats = irs::PhraseWordStats(Phrase("quick brown"), index.Reader(),
+                                          kPlainId, irs::DictRef{});
   ASSERT_EQ(2U, stats.size());
   for (const auto& stat : stats) {
     EXPECT_EQ(17U, stat.docs);
@@ -1723,10 +1728,10 @@ TEST(TokenPhraseIndexTest, word_stats_sum_every_segment) {
 TEST(TokenPhraseIndexTest, word_stats_follow_the_shingle_words) {
   const std::vector<std::string> docs{"quick brown fox", "quick fox", "fox"};
   const Index index{docs, std::type_identity<DenseWords>{}};
-  const auto stats =
-    irs::PhraseWordStats(QuickBrownFoxShingles(), index.Reader(), kPlainId);
-  const auto words =
-    irs::PhraseWordStats(Phrase("quick brown fox"), index.Reader(), kPlainId);
+  const auto stats = irs::PhraseWordStats(
+    QuickBrownFoxShingles(), index.Reader(), kPlainId, irs::DictRef{});
+  const auto words = irs::PhraseWordStats(
+    Phrase("quick brown fox"), index.Reader(), kPlainId, irs::DictRef{});
   ASSERT_EQ(3U, stats.size());
   ASSERT_EQ(words.size(), stats.size());
   for (size_t i = 0; i != stats.size(); ++i) {

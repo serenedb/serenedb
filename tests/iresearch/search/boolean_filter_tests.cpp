@@ -172,7 +172,7 @@ struct SegmentReaderMock final : irs::SubReader {
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final { return {}; }
-  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  const irs::MultiTermDict* dicts(irs::field_id) const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const final { return {}; }
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
   irs::SegmentInfo _meta;

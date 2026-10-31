@@ -108,7 +108,7 @@ class KeysReader final : public irs::BasicTermReader {
     return irs::memory::make_managed<irs::TermOnlyIterator, KeysIterator>(
       _keys);
   }
-  irs::FieldKey key() const final { return {.id = 1}; }
+  irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final {
     const auto width = _keys.front().size();
     return {
@@ -180,8 +180,8 @@ void Write(Data& data) {
   irs::IdxWriter idx{*data.dir, "segment"};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
-  writer.prepare(state);
-  writer.write(KeysReader{data.keys});
+  writer.prepare(state, 1);
+  writer.write(irs::FieldSlot::String, KeysReader{data.keys});
   writer.end();
   idx.Commit();
 }
@@ -197,7 +197,7 @@ void Open(Data& data) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
-  data.field = data.fields->field({.id = 1});
+  data.field = data.fields->dicts(1)->At(irs::FieldSlot::String);
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
   std::vector<bytes_view> separators;

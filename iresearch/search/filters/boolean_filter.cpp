@@ -208,7 +208,7 @@ void BooleanFilter::Add(Filter::ptr filter, Occur occur) {
   if (filter->type() == irs::Type<ByTerm>::id()) {
     auto& term = irs::utils::downCast<ByTerm>(*filter);
     Add(TermClause{.field = term.field_id(),
-                   .slot = term.slot(),
+                   .dict = term.dict(),
                    .scorer = term.GetScorer(),
                    .term = std::move(term.mutable_options()->term),
                    .boost = term.GetBoost()},
@@ -400,9 +400,9 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
       advance();
       if (!opened || !SameField(*opened, run.front())) {
         opened = &run.front();
-        reader = segment.field(opened->field, opened->slot);
+        reader = segment.field(opened->field, opened->dict);
       }
-      if (reader == nullptr) {
+      if (!reader) {
         for (size_t i = 0; i != run.size(); ++i) {
           builder.AddTerm(nullptr, kNoPosting, kNoBoost, occur, {});
         }

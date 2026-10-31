@@ -137,12 +137,16 @@ SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::bool = true;
 pk
 3
 
-# Expression source: null leaf
+# Expression source: a JSON null leaf is the JSON value null, not SQL NULL
 query
 SELECT pk FROM m_jv_expr_kw WHERE (j->'val') IS NULL;
 ----
 pk
-4
+
+query
+SELECT pk FROM m_jv WHERE (j->'val') IS NULL;
+----
+pk
 
 
 # ============================================================================

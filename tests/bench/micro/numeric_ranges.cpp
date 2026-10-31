@@ -156,11 +156,10 @@ class TermsReader final : public irs::BasicTermReader {
     return irs::memory::make_managed<irs::TermOnlyIterator, TermsIterator>(
       *_terms);
   }
-  irs::FieldKey key() const final { return {.id = 1}; }
+  irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final {
     const bool adaptive = _ladder == Ladder::Adaptive;
     return {
-      .ranges = adaptive,
       .key_width =
         adaptive ? static_cast<uint32_t>(_terms->keys.front().size()) : 0,
     };
@@ -180,8 +179,8 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder) {
   irs::IdxWriter idx{dir, "segment"};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
-  writer.prepare(state);
-  writer.write(TermsReader{terms, ladder});
+  writer.prepare(state, 1);
+  writer.write(irs::FieldSlot::Numeric, TermsReader{terms, ladder});
   writer.end();
   idx.Commit();
 }
@@ -376,7 +375,7 @@ const Data& Load(const Shape& shape, Ladder ladder) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data->fields->prepare(irs::ReaderState{
     .dir = data->dir.get(), .meta = &kMeta, .idx = data->idx.get()});
-  data->field = data->fields->field({.id = 1});
+  data->field = data->fields->dicts(1)->At(irs::FieldSlot::Numeric);
   data->error = Validate(*data);
   gData = std::move(data);
   return *gData;

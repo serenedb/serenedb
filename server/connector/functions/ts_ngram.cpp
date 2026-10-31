@@ -83,7 +83,7 @@ void FromNGram(BoolTarget filter, const FilterContext& ctx,
   auto& ngram =
     AddMaybeNegated<irs::ByNGramSimilarity>(filter, ctx, column_info);
   ngram.SetBoost(ctx.boost);
-  *ngram.mutable_field_id() = column_info.field_id;
+  SetField(ngram, column_info);
   ngram.mutable_options()->threshold = threshold;
   auto& analyzer = ctx.tokenizer;
   irs::ValueAnalyzer value_analyzer;

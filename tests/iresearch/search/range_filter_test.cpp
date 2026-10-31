@@ -52,6 +52,7 @@ irs::ByRange MakeFilter(irs::field_id field, const irs::bytes_view& min,
                         irs::BoundType max_type) {
   irs::ByRange filter;
   *filter.mutable_field_id() = field;
+  filter.mutable_dict()->kind = irs::ValueKind::Numeric;
 
   auto& range = filter.mutable_options()->range;
   range.min = min;
@@ -999,6 +1000,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      filter.mutable_dict()->kind = irs::ValueKind::Numeric;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1020,6 +1022,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      filter.mutable_dict()->kind = irs::ValueKind::Numeric;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
       filter.SetScorer(sort.get());
@@ -1038,6 +1041,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      filter.mutable_dict()->kind = irs::ValueKind::Numeric;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1206,7 +1210,8 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
   // field stats are summed across every segment that has the field
   uint64_t expected_docs_with_field = 0;
   for (const auto& segment : rdr) {
-    if (const auto* field = segment.field(kValueFieldId)) {
+    if (const auto* field = segment.field(
+          kValueFieldId, irs::DictRef{.kind = irs::ValueKind::Numeric})) {
       expected_docs_with_field += field->docs_count();
     }
   }
@@ -1233,6 +1238,7 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
 
   irs::ByRange filter;
   *filter.mutable_field_id() = kValueFieldId;
+  filter.mutable_dict()->kind = irs::ValueKind::Numeric;
   filter.mutable_options()->range.min =
     irs::numeric_utils::numeric_traits<double_t>::ninf();
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1274,6 +1280,7 @@ TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
 
   irs::ByRange filter;
   *filter.mutable_field_id() = kValueFieldId;
+  filter.mutable_dict()->kind = irs::ValueKind::Numeric;
   filter.mutable_options()->range.min = min_term;
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
   filter.mutable_options()->range.max =

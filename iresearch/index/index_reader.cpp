@@ -49,7 +49,7 @@ struct EmptySubReader final : SubReader {
   lead::Node::ptr docs_iterator() const final {
     return memory::to_managed<lead::Node>(kEmptyDocs);
   }
-  const irs::TermReader* field(field_id) const final { return nullptr; }
+  const MultiTermDict* dicts(field_id) const final { return nullptr; }
   std::span<const field_id> field_ids() const final { return {}; }
 };
 

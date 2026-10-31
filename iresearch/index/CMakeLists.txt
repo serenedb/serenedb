@@ -15,6 +15,7 @@ target_sources(
         inverter/fields_inverter.cpp
         iterators.cpp
         merge_writer.cpp
+        multi_term_dict.cpp
         norm.cpp
         segment_reader.cpp
         segment_reader_impl.cpp

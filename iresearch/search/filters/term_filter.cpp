@@ -37,10 +37,8 @@ namespace irs {
 
 QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
                                          const PrepareContext& ctx,
-                                         const irs::field_id field,
-                                         FieldSlot slot,
+                                         const TermReader* reader,
                                          const bytes_view term) {
-  const auto* reader = segment.field(field, slot);
   if (!reader) {
     return QueryBuilder::Empty();
   }

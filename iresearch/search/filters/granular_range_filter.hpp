@@ -51,14 +51,16 @@ void SetGranularNumericTerm(bstring& boundary, T value) {
 
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  ByGranularRange() noexcept { SetScorer(&DefaultConstScore()); }
+  ByGranularRange() noexcept {
+    SetScorer(&DefaultConstScore());
+    mutable_dict()->kind = ValueKind::Numeric;
+  }
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const irs::field_id field,
-                                          FieldSlot slot,
+                                          const TermReader* reader,
                                           const options_type& options);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

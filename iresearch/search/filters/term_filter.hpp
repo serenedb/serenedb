@@ -51,12 +51,12 @@ class ByTerm : public FilterWithField<ByTermOptions> {
                                    const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= GetBoost();
-    return PrepareSegment(segment, sub_ctx, field_id(), slot(), options().term);
+    return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
+                          options().term);
   }
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const irs::field_id field,
-                                          FieldSlot slot,
+                                          const TermReader* reader,
                                           const bytes_view term);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

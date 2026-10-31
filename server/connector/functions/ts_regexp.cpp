@@ -95,7 +95,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     auto& rf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     rf.SetBoost(ctx.boost);
     rf.SetScorer(&irs::ForceConstScore());
-    *rf.mutable_field_id() = column_info.field_id;
+    SetField(rf, column_info);
     auto* opts = rf.mutable_options();
     *opts = {
       irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
@@ -111,7 +111,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto regexp = irs::CreateByRegexp(
-    column_info.field_id,
+    column_info.field_id, DictOf(column_info),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
     ctx.boost);
   if (!ctx.negated) {

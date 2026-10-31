@@ -379,19 +379,20 @@ void SearchSinkInsertBaseImpl::WriteColumnBlock(irs::field_id null_id,
   }
 }
 
-void SearchSinkInsertBaseImpl::FinishColumnBlocks(irs::field_id null_id,
-                                                  irs::FieldSlot slot) {
-  if (_null_docs.empty()) {
+void SearchSinkInsertBaseImpl::FinishColumnBlocks(
+  irs::field_id null_id, irs::FieldSlot slot,
+  std::vector<irs::doc_id_t>& docs) {
+  if (docs.empty()) {
     return;
   }
   if (irs::field_limits::valid(null_id)) {
     InvertSlots(null_id, [&](irs::PostingSlots& slots) {
-      for (const auto doc : _null_docs) {
+      for (const auto doc : docs) {
         slots.Push(slot, doc);
       }
     });
   }
-  _null_docs.clear();
+  docs.clear();
 }
 
 void SearchSinkInsertBaseImpl::WriteAnalyzedColumn(const Field& field,
@@ -587,6 +588,7 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
       ? duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(parent_fmt)
       : nullptr;
   _null_docs.clear();
+  _null_element_docs.clear();
 
   const auto for_each_row = [&](auto&& on_row) {
     const irs::doc_id_t first_doc = _document->DocId();
@@ -614,7 +616,7 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
         return true;
       },
       [&](uint32_t) {
-        _null_docs.push_back(doc);
+        _null_element_docs.push_back(doc);
         return true;
       });
   };
@@ -681,7 +683,8 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
       });
     });
   }
-  FinishColumnBlocks(null_id, irs::FieldSlot::SqlNull);
+  FinishColumnBlocks(null_id, irs::FieldSlot::SqlNull, _null_docs);
+  FinishColumnBlocks(null_id, irs::FieldSlot::NullElement, _null_element_docs);
 }
 
 bool SearchSinkInsertBaseImpl::DispatchListBatch(
@@ -804,7 +807,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
       });
     });
   }
-  FinishColumnBlocks(id, irs::FieldSlot::JsonNull);
+  FinishColumnBlocks(id, irs::FieldSlot::JsonNull, _null_docs);
 }
 
 void SearchSinkInsertBaseImpl::RejectJsonComposites(const duckdb::Vector& vec,
@@ -879,8 +882,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   const bool may_have_nulls = kind == duckdb::LogicalTypeId::SQLNULL ||
                               is_list_or_array ||
                               _vec_fmt.unified.validity.CanHaveNull();
-  _null_id =
-    entry && may_have_nulls ? field_id : irs::field_limits::invalid();
+  _null_id = entry && may_have_nulls ? field_id : irs::field_limits::invalid();
 
   const auto append_stored = [&] {
     if (is_stored) {

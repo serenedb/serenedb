@@ -855,7 +855,7 @@ void FieldReader::prepare(const ReaderState& state) {
     }
     const auto& field =
       _fields.emplace_back(*this, head, prefix, *_in, separators);
-    _by_id[head.id][static_cast<size_t>(head.slot)] = &field;
+    _by_id[head.id].Add(head.slot, field);
     if (_ids.empty() || _ids.back() != head.id) {
       _ids.push_back(head.id);
     }
@@ -874,10 +874,9 @@ const byte_type* FieldReader::KeepInline(bytes_view bytes) {
   return _single_inline.data() + at;
 }
 
-const TermReader* FieldReader::field(field_id id, FieldSlot slot) const {
+const MultiTermDict* FieldReader::dicts(field_id id) const {
   const auto it = _by_id.find(id);
-  return it == _by_id.end() ? nullptr
-                            : it->second[static_cast<size_t>(slot)];
+  return it == _by_id.end() ? nullptr : &it->second;
 }
 
 }  // namespace irs::term_dict

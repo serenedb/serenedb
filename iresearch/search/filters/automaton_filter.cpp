@@ -52,7 +52,7 @@ field_visitor AutomatonFilter::visitor(TermAcceptorSource::ptr source) {
 QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(options().source);
-  const auto* reader = segment.field(field_id(), slot());
+  const auto* reader = segment.field(field_id(), dict());
   if (!reader) {
     return QueryBuilder::Empty();
   }

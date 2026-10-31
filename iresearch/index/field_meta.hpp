@@ -39,14 +39,15 @@ namespace irs {
 enum class FieldSlot : uint8_t {
   SqlNull = 0,
   JsonNull = 1,
-  False = 2,
-  True = 3,
-  Numeric = 4,
-  String = 5,
+  NullElement = 2,
+  False = 3,
+  True = 4,
+  Numeric = 5,
+  String = 6,
 };
 
-inline constexpr size_t kFieldSlots = 6;
-inline constexpr size_t kPostingSlots = 4;
+inline constexpr size_t kFieldSlots = 7;
+inline constexpr size_t kPostingSlots = 5;
 inline constexpr size_t kKeyedSlots = kFieldSlots - kPostingSlots;
 
 constexpr bool IsKeyed(FieldSlot slot) noexcept {

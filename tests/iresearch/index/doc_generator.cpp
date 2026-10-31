@@ -33,13 +33,13 @@
 #include <iresearch/analysis/numeric_terms.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
-#include "typed_terms.hpp"
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <numeric>
 #include <sstream>
 
+#include "typed_terms.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "utils/write_helpers.hpp"
 
@@ -175,10 +175,11 @@ std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
 }
 
 bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<int64_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<int64_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool LongField::Write(irs::DataOutput& out) const {
@@ -191,10 +192,11 @@ std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
 }
 
 bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<int32_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<int32_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool IntField::Write(irs::DataOutput& out) const {
@@ -207,10 +209,11 @@ std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
 }
 
 bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<double_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<double_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool DoubleField::Write(irs::DataOutput& out) const {
@@ -223,10 +226,11 @@ std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
 }
 
 bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<float_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<float_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool FloatField::Write(irs::DataOutput& out) const {

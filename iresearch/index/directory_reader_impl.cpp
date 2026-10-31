@@ -75,7 +75,7 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     live_docs_count += segment.live_docs_count;
 
     for (const auto id : reader.field_ids()) {
-      const auto* field = reader.field(id, FieldSlot::String);
+      const auto* field = reader.field(id, DictRef{});
       if (!field || field->size() == 0) {
         continue;
       }

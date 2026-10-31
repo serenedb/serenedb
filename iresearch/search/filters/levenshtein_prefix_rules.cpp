@@ -45,6 +45,7 @@ struct LevenshteinPrefixFusionRule {
 struct PrefixEntry {
   const Filter* node;
   field_id field;
+  DictRef dict;
   bytes_view term;
   const Scorer* scorer;
   score_t boost;
@@ -63,7 +64,7 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
       if (ctx.HasAnalyzer(prefix.field_id())) {
         continue;
       }
-      prefixes.emplace_back(children[i].get(), prefix.field_id(),
+      prefixes.emplace_back(children[i].get(), prefix.field_id(), prefix.dict(),
                             prefix.options().term, children[i]->GetScorer(),
                             prefix.GetBoost());
     }
@@ -89,7 +90,7 @@ bool LevenshteinPrefixFusionRule::Apply(Filter::ptr& slot,
 
     const PrefixEntry* best = nullptr;
     for (const auto& entry : prefixes) {
-      if (entry.field != filter.field_id() ||
+      if (entry.field != filter.field_id() || entry.dict != filter.dict() ||
           (scores && entry.scorer != child->GetScorer()) ||
           !bytes_view{target}.starts_with(entry.term)) {
         continue;

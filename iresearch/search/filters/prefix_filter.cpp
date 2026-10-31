@@ -138,14 +138,14 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().term);
+  return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
+                        options().term);
 }
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx,
-                                           const irs::field_id field,
+                                           const TermReader* reader,
                                            const bytes_view term) {
-  const auto* reader = segment.field(field, FieldSlot::String);
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -191,7 +191,7 @@ TermIterator::ptr ByPrefix::CompileTermIterator(
 
 QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
                                              const PrepareContext& ctx) const {
-  const auto* reader = segment.field(field_id(), slot());
+  const auto* reader = segment.field(field_id(), dict());
   if (!reader) {
     return QueryBuilder::Empty();
   }

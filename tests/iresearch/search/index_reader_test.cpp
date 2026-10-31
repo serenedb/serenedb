@@ -692,11 +692,13 @@ TEST(segment_reader_test, open) {
       // check field
       {
         constexpr irs::field_id id = kSeq;  // "seq"
-        auto field = rdr->field(id);
+        constexpr irs::DictRef kNumeric{.kind = irs::ValueKind::Numeric};
+        auto field = rdr->field(id, kNumeric);
+        ASSERT_NE(nullptr, field);
         ASSERT_EQ(id, field->meta().id);
 
         // check terms
-        auto terms = rdr->field(id);
+        auto terms = rdr->field(id, kNumeric);
         ASSERT_NE(nullptr, terms);
       }
 

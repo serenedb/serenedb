@@ -67,7 +67,8 @@ Filter::ptr PartsConjunction(const ByPhrase& phrase,
   bool all_unscored = once;
   auto conjunction = std::make_unique<BooleanFilter>();
   for (const auto& info : phrase.options()) {
-    auto part = PartFilter(phrase.field_id(), info.part, constant);
+    auto part =
+      PartFilter(phrase.field_id(), phrase.dict(), info.part, constant);
     if (once && ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
       part->SetScorer(&Unscored::Instance());
     } else {

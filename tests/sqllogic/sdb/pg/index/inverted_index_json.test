@@ -391,6 +391,22 @@ id
 7
 
 query
+EXPLAIN SELECT id FROM prim_types_idx WHERE (content->'val') IS NULL;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: prim_types_idx                 │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Term ────────────────────────────╮ │
+│ │ Field: ("content" -> 'val')(null) │ │
+│ │ Value:                            │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
 SELECT id FROM prim_types WHERE (content->'val') IS NOT NULL ORDER BY id;
 ----
 id

@@ -145,7 +145,6 @@ class FieldInverter : util::Noncopyable {
       });
   }
 
-
   bool InvertKeywordBlock(const duckdb::UnifiedVectorFormat& fmt,
                           uint32_t count, doc_id_t first_doc) {
     const auto* data =
@@ -805,10 +804,12 @@ class PostingSlots : util::Noncopyable {
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
+        DocList{ManagedTypedAllocator<doc_id_t>{rm}},
       }} {}
 
   void Push(FieldSlot slot, doc_id_t doc) {
-    auto& docs = At(slot);
+    SDB_ASSERT(!IsKeyed(slot));
+    auto& docs = _docs[static_cast<size_t>(slot)];
     SDB_ASSERT(docs.empty() || docs.back() <= doc);
     if (docs.empty() || docs.back() != doc) {
       docs.push_back(doc);
@@ -839,7 +840,8 @@ class PostingSlots : util::Noncopyable {
   }
 
   std::span<const doc_id_t> Docs(FieldSlot slot) const noexcept {
-    const auto& docs = At(slot);
+    SDB_ASSERT(!IsKeyed(slot));
+    const auto& docs = _docs[static_cast<size_t>(slot)];
     return {docs.data(), docs.size()};
   }
 
@@ -858,11 +860,6 @@ class PostingSlots : util::Noncopyable {
 
  private:
   using DocList = ManagedVector<doc_id_t>;
-
-  auto& At(this auto& self, FieldSlot slot) noexcept {
-    SDB_ASSERT(!IsKeyed(slot));
-    return self._docs[static_cast<size_t>(slot)];
-  }
 
   std::array<DocList, kPostingSlots> _docs;
 };
@@ -889,8 +886,8 @@ class FieldsInverter : util::Noncopyable {
     }
 
     auto& field =
-      _fields.emplace_back(id, slot, _arena, _term_ids, _mem.rm,
-                           index_features, _col_writer, _field_options);
+      _fields.emplace_back(id, slot, _arena, _term_ids, _mem.rm, index_features,
+                           _col_writer, _field_options);
     keyed.field = &field;
     if (keyed.last_terms) {
       field.ReserveTerms(keyed.last_terms, keyed.unique);
@@ -955,9 +952,10 @@ class FieldsInverter : util::Noncopyable {
   using FieldsMap = irs::containers::FlatHashMap<field_id, Entry>;
 
   size_t FieldsMemory() const noexcept {
-    size_t size = _fields_map.size() * sizeof(FieldsMap::value_type) +
-                  _fields.size() * sizeof(FieldInverter) +
-                  _slots.size() * sizeof(PostingSlots);
+    size_t size =
+      (_fields.size() + _slots.size()) * sizeof(FieldsMap::value_type) +
+      _fields.size() * sizeof(FieldInverter) +
+      _slots.size() * sizeof(PostingSlots);
     for (const auto& field : _fields) {
       size += field.Memory();
     }

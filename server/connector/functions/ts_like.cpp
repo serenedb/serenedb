@@ -63,7 +63,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
     auto& wf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     wf.SetBoost(ctx.boost);
     wf.SetScorer(&irs::ForceConstScore());
-    *wf.mutable_field_id() = column_info.field_id;
+    SetField(wf, column_info);
     auto* opts = wf.mutable_options();
     *opts = {
       pattern,
@@ -78,7 +78,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto wildcard = irs::CreateByWildcard(
-    column_info.field_id,
+    column_info.field_id, DictOf(column_info),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(wildcard));

@@ -34,6 +34,8 @@
 
 namespace sdb::connector {
 
+constexpr irs::DictRef kNullDict{.kind = irs::ValueKind::Null};
+
 struct TsDictLocalState final : public ScanLocalState {
   struct FieldState {
     irs::field_id field_id = irs::field_limits::invalid();
@@ -461,8 +463,7 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
       const bool known =
         !count_all && slot->Nulls().load(std::memory_order_relaxed) != 0;
       const auto* nulls =
-        known ? nullptr
-              : _seg->field(_field->field_id, irs::FieldSlot::SqlNull);
+        known ? nullptr : _seg->field(_field->field_id, kNullDict);
       if (nulls) {
         slot->Nulls().fetch_add(NullDocs(*nulls, count_all),
                                 std::memory_order_relaxed);
@@ -582,7 +583,7 @@ bool TsDictLocalState::NextField() {
     _term_ordinal = 0;
     _counts = nullptr;
     _reader = nullptr;
-    if (const auto* reader = _seg->field(field.field_id, irs::FieldSlot::String);
+    if (const auto* reader = _seg->field(field.field_id, irs::DictRef{});
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
@@ -690,7 +691,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
-  const auto* reader = _seg->field(field.field_id, irs::FieldSlot::SqlNull);
+  const auto* reader = _seg->field(field.field_id, kNullDict);
   if (!reader) {
     return 0;
   }
@@ -747,8 +748,7 @@ void BuildTsDictCounts(ScanGlobalState& g) {
     auto& per_field = g.ts_dict_counts[seg];
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
-      const auto* terms =
-        reader[seg].field(reqs[i].field_id, irs::FieldSlot::String);
+      const auto* terms = reader[seg].field(reqs[i].field_id, irs::DictRef{});
       per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }

@@ -67,6 +67,8 @@ A `TEXT[]` / `VARCHAR[]` column is indexed element-by-element: a row matches if 
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_004" />
 
+An array that holds a `NULL` element is not itself `NULL`: `tags IS NULL` matches only rows whose array is `NULL`, and `tags IS NOT NULL` matches every other row, the same way as without the index.
+
 ## Sizing and cost
 
 The index only stores what you ask it to -- keep it lean:

@@ -219,14 +219,14 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
 
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
                                             const IndexReader& index,
-                                            field_id field) {
+                                            field_id field, DictRef dict) {
   std::vector<PhraseWordStat> words;
   if (!IsAnchored(phrase)) {
     return words;
   }
   words.resize(WordCount(phrase));
   for (const auto& segment : index) {
-    if (const auto* reader = segment.field(field, FieldSlot::String)) {
+    if (const auto* reader = segment.field(field, dict)) {
       AddWordStats(phrase, *reader, words);
     }
   }

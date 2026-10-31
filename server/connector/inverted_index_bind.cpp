@@ -787,7 +787,6 @@ void EnsureId(irs::field_id& id, FieldIdSource next_id) {
 
 void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
                             const irs::analysis::Tokenizer& analyzer,
-                            const duckdb::LogicalType& value_type,
                             FieldIdSource next_id,
                             catalog::InvertedIndexField& entry) {
   entry.features = dict.GetFeatures();
@@ -1094,7 +1093,7 @@ void ApplyOpclassToEntry(
   }
   auto analyzer = dict->Acquire(context);
   ValidateTokenizerVsColumn(label, value_type, *analyzer);
-  FillEntryFromTokenizer(*dict, *analyzer, value_type, next_id, entry);
+  FillEntryFromTokenizer(*dict, *analyzer, next_id, entry);
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query
     // re-parses the column -- which only works if it is in the columnstore.
@@ -1106,8 +1105,8 @@ void ApplyOpclassToEntry(
 // Field ids of the keys that are not bare columns. A bare column indexes under
 // its own column id; an expression has none, so it takes a slot from the
 // synthetic range, which no relation column can ever collide with. Stride 8
-// covers the per-kind JSON leaves and the synthetic geo column allocated with
-// it -- allocated together, so either all valid or all invalid.
+// leaves room for the ids allocated with the key, such as its synthetic
+// column.
 constexpr irs::field_id kExpressionFieldStride = 8;
 
 constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {

@@ -112,7 +112,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
-        ASSERT_NE(nullptr, field);
+        if (!field) {
+          continue;
+        }
         SCOPED_TRACE(testing::Message("Field: ") << field_id);
 
         const auto expected = BruteForce(acceptor, *field);
@@ -132,7 +134,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
-        ASSERT_NE(nullptr, field);
+        if (!field) {
+          continue;
+        }
         SCOPED_TRACE(testing::Message("Field: ") << field_id);
         std::vector<irs::bstring> walked;
         for (auto it = field->iterator(acceptor); it->next();) {
@@ -266,7 +270,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
-        ASSERT_NE(nullptr, field);
+        if (!field) {
+          continue;
+        }
         SCOPED_TRACE(testing::Message("Field: ") << field_id);
 
         auto expected_terms = field->iterator();
@@ -353,7 +359,9 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
-        ASSERT_NE(nullptr, field);
+        if (!field) {
+          continue;
+        }
         SCOPED_TRACE(testing::Message("Field: ") << field_id);
 
         std::vector<irs::bstring> expected;
@@ -433,7 +441,9 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = segment.field(field_id);
-      ASSERT_NE(nullptr, field);
+      if (!field) {
+        continue;
+      }
       auto walk = field->iterator(*dfa);
       ASSERT_NE(nullptr, walk);
       const auto* payload = irs::get<irs::PayAttr>(*walk);
@@ -545,7 +555,9 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
       for (auto& segment : *reader.GetImpl()) {
         for (auto field_id : segment.field_ids()) {
           const auto* field = segment.field(field_id);
-          ASSERT_NE(nullptr, field);
+          if (!field) {
+            continue;
+          }
           auto bounded_walk = field->iterator(bounded);
           auto unbounded_walk = field->iterator(unbounded);
           ASSERT_NE(nullptr, bounded_walk);
@@ -655,7 +667,9 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = segment.field(field_id);
-      ASSERT_NE(nullptr, field);
+      if (!field) {
+        continue;
+      }
       SCOPED_TRACE(testing::Message("Field: ") << field_id);
 
       const irs::RegexpAcceptor driver_acceptor{
@@ -678,7 +692,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
         irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                irs::PatternKind::Wildcard),
         irs::TermBounds{},
-        irs::CreateByWildcard(field_id,
+        irs::CreateByWildcard(field_id, irs::DictRef{},
                               irs::ViewCast<irs::byte_type>(kResidual)));
       ASSERT_TRUE(source->ok());
 
@@ -716,7 +730,9 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
       const auto* field = segment.field(field_id);
-      ASSERT_NE(nullptr, field);
+      if (!field) {
+        continue;
+      }
       SCOPED_TRACE(testing::Message("Field: ") << field_id);
 
       const irs::RegexpAcceptor driver_acceptor{
@@ -738,7 +754,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
       {
         auto source = irs::MakeConjunctionSource(
           nullptr, bounds,
-          irs::CreateByWildcard(field_id,
+          irs::CreateByWildcard(field_id, irs::DictRef{},
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);
@@ -751,7 +767,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
           irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                  irs::PatternKind::Wildcard),
           bounds,
-          irs::CreateByWildcard(field_id,
+          irs::CreateByWildcard(field_id, irs::DictRef{},
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);
@@ -890,7 +906,9 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
     for (auto& segment : *reader.GetImpl()) {
       for (auto field_id : segment.field_ids()) {
         const auto* field = segment.field(field_id);
-        ASSERT_NE(nullptr, field);
+        if (!field) {
+          continue;
+        }
         std::vector<std::pair<irs::bstring, irs::byte_type>> walked;
         auto walk = field->iterator(*fuzzy);
         const auto* walk_payload = irs::get<irs::PayAttr>(*walk);

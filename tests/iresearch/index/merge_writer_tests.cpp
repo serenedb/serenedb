@@ -40,6 +40,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
+#include "postings_cursor.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {
@@ -60,6 +61,7 @@ inline constexpr irs::field_id kDocDoubleId = tests::FieldIdFor("doc_double");
 inline constexpr irs::field_id kDocFloatId = tests::FieldIdFor("doc_float");
 inline constexpr irs::field_id kDocIntId = tests::FieldIdFor("doc_int");
 inline constexpr irs::field_id kDocLongId = tests::FieldIdFor("doc_long");
+inline constexpr irs::DictRef kNumeric{.kind = irs::ValueKind::Numeric};
 inline constexpr irs::field_id kDocStringId = tests::FieldIdFor("doc_string");
 inline constexpr irs::field_id kDocTextId = tests::FieldIdFor("doc_text");
 inline constexpr irs::field_id kFooId = tests::FieldIdFor("foo");
@@ -279,7 +281,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
                                 &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(33, segment->docs_count());
     ASSERT_EQ(33, segment->field(kNameId)->docs_count());
-    ASSERT_EQ(33, segment->field(kSeqId)->docs_count());
+    ASSERT_EQ(33, segment->field(kSeqId, kNumeric)->docs_count());
     ASSERT_EQ(33, segment->field(kSameId)->docs_count());
     ASSERT_EQ(13, segment->field(kDuplicatedId)->docs_count());
   }
@@ -766,8 +768,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
-  auto docs_count = [](const irs::SubReader& segment, irs::field_id field) {
-    auto* reader = segment.field(field);
+  auto docs_count = [](const irs::SubReader& segment, irs::field_id field,
+                       irs::FieldSlot slot = irs::FieldSlot::String) {
+    const auto* dicts = segment.dicts(field);
+    const auto* reader = dicts ? dicts->At(slot) : nullptr;
     return reader ? reader->docs_count() : 0;
   };
 
@@ -836,7 +840,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field(kDocDoubleId);
+      auto terms = segment.field(kDocDoubleId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
@@ -849,7 +853,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocDoubleId));
+      ASSERT_EQ(2, docs_count(segment, kDocDoubleId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -858,7 +862,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate float field
     {
-      auto terms = segment.field(kDocFloatId);
+      auto terms = segment.field(kDocFloatId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
@@ -871,7 +875,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocFloatId));
+      ASSERT_EQ(2, docs_count(segment, kDocFloatId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -880,7 +884,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate int field
     {
-      auto terms = segment.field(kDocIntId);
+      auto terms = segment.field(kDocIntId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
@@ -893,7 +897,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocIntId));
+      ASSERT_EQ(2, docs_count(segment, kDocIntId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -902,7 +906,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate long field
     {
-      auto terms = segment.field(kDocLongId);
+      auto terms = segment.field(kDocLongId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
@@ -915,7 +919,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocLongId));
+      ASSERT_EQ(2, docs_count(segment, kDocLongId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -1024,7 +1028,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field(kDocDoubleId);
+      auto terms = segment.field(kDocDoubleId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
@@ -1036,7 +1040,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocDoubleId));
+      ASSERT_EQ(1, docs_count(segment, kDocDoubleId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1045,7 +1049,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate float field
     {
-      auto terms = segment.field(kDocFloatId);
+      auto terms = segment.field(kDocFloatId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
@@ -1057,7 +1061,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocFloatId));
+      ASSERT_EQ(1, docs_count(segment, kDocFloatId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1066,7 +1070,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate int field
     {
-      auto terms = segment.field(kDocIntId);
+      auto terms = segment.field(kDocIntId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
@@ -1078,7 +1082,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocIntId));
+      ASSERT_EQ(1, docs_count(segment, kDocIntId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1087,7 +1091,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate long field
     {
-      auto terms = segment.field(kDocLongId);
+      auto terms = segment.field(kDocLongId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
@@ -1099,7 +1103,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocLongId));
+      ASSERT_EQ(1, docs_count(segment, kDocLongId, irs::FieldSlot::Numeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1238,7 +1242,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate double field
   {
-    auto terms = segment->field(kDocDoubleId);
+    auto terms = segment->field(kDocDoubleId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::DoubleField().GetIndexFeatures();
@@ -1252,7 +1256,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((double_t)(2.718281828 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId));
+    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId, irs::FieldSlot::Numeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1261,7 +1265,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate float field
   {
-    auto terms = segment->field(kDocFloatId);
+    auto terms = segment->field(kDocFloatId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::FloatField().GetIndexFeatures();
@@ -1275,7 +1279,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((float_t)(3.1415926535 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocFloatId));
+    ASSERT_EQ(3, docs_count(*segment, kDocFloatId, irs::FieldSlot::Numeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1284,7 +1288,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate int field
   {
-    auto terms = segment->field(kDocIntId);
+    auto terms = segment->field(kDocIntId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::IntField().GetIndexFeatures();
@@ -1298,7 +1302,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm(42 * 2)].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocIntId));
+    ASSERT_EQ(3, docs_count(*segment, kDocIntId, irs::FieldSlot::Numeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1307,7 +1311,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate long field
   {
-    auto terms = segment->field(kDocLongId);
+    auto terms = segment->field(kDocLongId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::LongField().GetIndexFeatures();
@@ -1321,7 +1325,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((int64_t)12345 * 2)].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocLongId));
+    ASSERT_EQ(3, docs_count(*segment, kDocLongId, irs::FieldSlot::Numeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -2123,6 +2127,120 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
 
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   GTEST_SKIP() << "sorted-index merge path not supported";
+}
+
+TEST_P(MergeWriterTestCase, merges_every_slot) {
+  constexpr irs::field_id kField = 1;
+  constexpr irs::field_id kOther = 2;
+  constexpr uint32_t kDocs = 4;
+  const auto keyword = [](size_t segment, uint32_t i) {
+    return absl::StrCat("s", segment, "-", i);
+  };
+
+  irs::MemoryDirectory data_dir;
+  {
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 2; ++segment) {
+      auto trx = writer->GetBatch();
+      {
+        auto doc = trx.Insert(false, kDocs);
+        ASSERT_TRUE(doc);
+        const auto d = doc.DocId();
+        ASSERT_TRUE(doc.WithPostingSlots(kField, [&](irs::PostingSlots& slots) {
+          slots.Push(irs::FieldSlot::SqlNull, d);
+          slots.Push(irs::FieldSlot::NullElement, d);
+          slots.Push(irs::FieldSlot::JsonNull, d + 1);
+          slots.Push(irs::FieldSlot::False, d + 2);
+          slots.Push(irs::FieldSlot::True, d + 3);
+        }));
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::FieldSlot::Numeric, irs::IndexFeatures::None,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertNumerics<int64_t>([&](auto&& emit) {
+              for (uint32_t i = 1; i != kDocs; ++i) {
+                emit(static_cast<int64_t>(segment * 10 + i), d + i);
+              }
+            });
+          }));
+        std::vector<std::string> values;
+        for (uint32_t i = 0; i != kDocs; ++i) {
+          values.push_back(keyword(segment, i));
+        }
+        for (const auto id : {kField, kOther}) {
+          ASSERT_TRUE(doc.WithField(
+            id, irs::FieldSlot::String, irs::IndexFeatures::None,
+            [&](irs::FieldInverter& fld) {
+              return fld.InvertKeywords([&](auto&& emit) {
+                for (uint32_t i = 0; i != kDocs; ++i) {
+                  emit(duckdb::string_t{values[i].data(), static_cast<uint32_t>(
+                                                            values[i].size())},
+                       d + i);
+                }
+              });
+            }));
+        }
+      }
+      ASSERT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+    auto removal = std::make_unique<irs::ByTerm>();
+    *removal->mutable_field_id() = kOther;
+    removal->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{keyword(1, 1)});
+    tests::Remove(*writer, irs::Filter::ptr{std::move(removal)});
+    writer->RefreshCommit();
+  }
+
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::MemoryDirectory dir;
+  irs::SegmentMeta index_segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto segment = irs::SegmentReaderImpl::Open(
+    dir, index_segment,
+    irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
+  ASSERT_EQ(2 * kDocs - 1, segment->docs_count());
+
+  const auto docs_of = [&](irs::field_id id, irs::FieldSlot slot) {
+    std::vector<irs::doc_id_t> docs;
+    const auto* dicts = segment->dicts(id);
+    const auto* terms = dicts ? dicts->At(slot) : nullptr;
+    EXPECT_NE(nullptr, terms);
+    if (!terms) {
+      return docs;
+    }
+    EXPECT_EQ(slot, terms->meta().slot);
+    auto it = terms->iterator();
+    while (it->next()) {
+      auto postings = ::tests::Docs(it->postings(irs::IndexFeatures::None));
+      for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+           doc = postings->Next()) {
+        docs.push_back(doc);
+      }
+    }
+    absl::c_sort(docs);
+    return docs;
+  };
+  using Docs = std::vector<irs::doc_id_t>;
+  EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::FieldSlot::SqlNull));
+  EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::FieldSlot::NullElement));
+  EXPECT_EQ((Docs{2}), docs_of(kField, irs::FieldSlot::JsonNull));
+  EXPECT_EQ((Docs{3, 6}), docs_of(kField, irs::FieldSlot::False));
+  EXPECT_EQ((Docs{4, 7}), docs_of(kField, irs::FieldSlot::True));
+  EXPECT_EQ((Docs{2, 3, 4, 6, 7}), docs_of(kField, irs::FieldSlot::Numeric));
+  EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
+            docs_of(kField, irs::FieldSlot::String));
+  EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
+            docs_of(kOther, irs::FieldSlot::String));
+  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::FieldSlot::SqlNull));
+  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::FieldSlot::Numeric));
 }
 
 INSTANTIATE_TEST_SUITE_P(merge_writer_test, MergeWriterTestCase,

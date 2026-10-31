@@ -184,11 +184,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::score_t boost = 1.5f;
       irs::ByGranularRange q;
-      *q.mutable_field_id() = kName;
-      SetGranularTerm(q.mutable_options()->range.min,
-                      irs::ViewCast<irs::byte_type>(std::string_view("A")));
-      SetGranularTerm(q.mutable_options()->range.max,
-                      irs::ViewCast<irs::byte_type>(std::string_view("M")));
+      *q.mutable_field_id() = kValue;
+      irs::SetGranularNumericTerm(q.mutable_options()->range.min, int32_t{1});
+      irs::SetGranularNumericTerm(q.mutable_options()->range.max,
+                                  int32_t{10000});
       q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
       q.SetBoost(boost);
@@ -1282,11 +1281,13 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
         auto& map =
           pks.emplace_back(segment.docs_count() + irs::doc_limits::min(), -1);
         for (const auto id : kFields) {
-          const auto* numeric = segment.field(id);
+          const auto* numeric =
+            segment.field(id, irs::DictRef{.kind = irs::ValueKind::Numeric});
           ASSERT_NE(nullptr, numeric);
-          ASSERT_TRUE(numeric->meta().ranges);
+          ASSERT_EQ(irs::FieldSlot::Numeric, numeric->meta().slot);
         }
-        const auto* terms = segment.field(kPk);
+        const auto* terms =
+          segment.field(kPk, irs::DictRef{.kind = irs::ValueKind::Numeric});
         ASSERT_NE(nullptr, terms);
         auto it = terms->iterator();
         while (it->next()) {

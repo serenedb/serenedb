@@ -254,7 +254,7 @@ class MockTermReader final : public irs::BasicTermReader {
     return irs::memory::to_managed<irs::TermOnlyIterator>(_it);
   }
   const irs::FieldMeta& meta() const { return _meta; }
-  irs::FieldKey key() const final { return irs::KeyOf(meta()); }
+  irs::field_id id() const final { return meta().id; }
   irs::FieldProperties properties() const final { return meta(); }
 
   mutable BatchingTermIterator _it;

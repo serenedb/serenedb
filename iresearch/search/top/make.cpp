@@ -53,7 +53,30 @@ Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
     });
 }
 
+template<typename Query>
+UnionMember::ptr MakeAnyPhraseMember(const Query& query, const Context& ctx) {
+  return irs::detail::ResolveMatch(
+    query, [&]<irs::detail::PhraseMatch M> -> UnionMember::ptr {
+      if constexpr (M != irs::detail::PhraseMatch::Slop) {
+        return MakePhraseMember<M>(query, ctx);
+      } else {
+        return {};
+      }
+    });
+}
+
 }  // namespace
+
+UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
+                                 const Context& ctx) {
+  if (query.Kind() != QueryKind::Phrase) {
+    return {};
+  }
+  if (utils::downCast<PhraseQuery>(query).state.Fixed()) {
+    return MakeAnyPhraseMember(utils::downCast<FixedPhraseQuery>(query), ctx);
+  }
+  return MakeAnyPhraseMember(utils::downCast<VariadicPhraseQuery>(query), ctx);
+}
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
 

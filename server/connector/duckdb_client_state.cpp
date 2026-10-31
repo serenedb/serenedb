@@ -61,32 +61,6 @@
 #include "query/config.h"
 
 namespace sdb::connector {
-namespace {
-
-void RequireConnectForUse(duckdb::ClientContext& context,
-                          const duckdb::Value& target) {
-  const auto entry = duckdb::CatalogSearchEntry::Parse(target.ToString());
-  auto database = entry.GetCatalog();
-  if (database.empty()) {
-    if (duckdb::Catalog::GetSchema(context, duckdb::Identifier{},
-                                   entry.GetSchema(),
-                                   duckdb::OnEntryNotFound::RETURN_NULL)) {
-      return;
-    }
-    database = entry.GetSchema();
-  }
-  auto catalog = duckdb::Catalog::GetCatalogEntry(context, database);
-  if (catalog &&
-      catalog->GetCatalogType() == catalog::SereneDBCatalog::kStorageType &&
-      !context.CanSeeDatabase(catalog->GetAttached())) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for database \"",
-                            database.GetIdentifierName(), "\""),
-                    ERR_DETAIL("User does not have CONNECT privilege."));
-  }
-}
-
-}  // namespace
 
 SereneDBClientState& SereneDBClientState::Register(
   duckdb::ClientContext& client_ctx,
@@ -145,9 +119,6 @@ SereneDBClientState& SereneDBClientState::Register(
         scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
       }
       RequireSuperuserToSet(ctx, canonical, scope, new_value);
-      if (new_value && canonical == "schema") {
-        RequireConnectForUse(ctx, *new_value);
-      }
       const bool global = scope == duckdb::SetScope::GLOBAL;
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the
@@ -450,6 +421,7 @@ ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
 void SetDefaultSearchPath(duckdb::ClientContext& context,
                           std::string_view database) {
   const duckdb::Identifier catalog{database};
+  context.client_data->default_database = catalog;
   std::vector<duckdb::CatalogSearchEntry> paths{
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"$user"}},
     duckdb::CatalogSearchEntry{catalog, duckdb::Identifier{"public"}},

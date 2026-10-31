@@ -1,0 +1,291 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS edcp_vedernikoff;
+
+
+statement ok
+CREATE ROLE edcp_vedernikoff LOGIN PASSWORD 'edcp_pw';
+
+
+statement ok
+CREATE DATABASE edcp_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_remote (a integer);
+
+
+statement ok
+INSERT INTO edcp_other_${__DATABASE__}.public.edcp_remote VALUES (1);
+
+
+statement ok
+GRANT SELECT ON edcp_other_${__DATABASE__}.public.edcp_remote TO edcp_vedernikoff;
+
+
+statement ok
+CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_owned (a integer);
+
+
+statement ok
+ALTER TABLE edcp_other_${__DATABASE__}.public.edcp_owned OWNER TO edcp_vedernikoff;
+
+
+statement ok
+CREATE VIEW edcp_other_${__DATABASE__}.public.edcp_foreign_view AS SELECT 1 AS x;
+
+
+statement ok
+CREATE SCHEMA edcp_other_${__DATABASE__}.edcp_kept;
+
+
+statement ok
+ALTER SCHEMA edcp_other_${__DATABASE__}.edcp_kept OWNER TO edcp_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA edcp_other_${__DATABASE__}.edcp_foreign_schema;
+
+
+statement ok
+GRANT CREATE ON SCHEMA edcp_other_${__DATABASE__}.public TO edcp_vedernikoff;
+
+
+statement ok
+GRANT CREATE ON DATABASE edcp_other_${__DATABASE__} TO edcp_vedernikoff;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE edcp_other_${__DATABASE__} FROM PUBLIC;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SELECT * FROM edcp_other_${__DATABASE__}.public.edcp_remote;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SET search_path TO edcp_other_${__DATABASE__}.public;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SET search_path TO public, edcp_other_${__DATABASE__}.public;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SELECT * FROM edcp_remote;
+----
+db error: ERROR: Table with name edcp_remote does not exist!<slt:ignore>
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+DROP TABLE edcp_other_${__DATABASE__}.public.edcp_owned;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+DROP TABLE IF EXISTS edcp_other_${__DATABASE__}.public.edcp_missing;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made (a integer);
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made AS SELECT 1 AS a;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE VIEW edcp_other_${__DATABASE__}.public.edcp_made_view AS SELECT 1 AS x;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE OR REPLACE VIEW edcp_other_${__DATABASE__}.public.edcp_foreign_view AS SELECT 2 AS x;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE SEQUENCE edcp_other_${__DATABASE__}.public.edcp_made_seq;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE SCHEMA edcp_other_${__DATABASE__}.edcp_made_schema;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+ALTER SCHEMA edcp_other_${__DATABASE__}.edcp_kept RENAME TO edcp_renamed;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+ALTER SCHEMA edcp_other_${__DATABASE__}.edcp_foreign_schema RENAME TO edcp_renamed;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+DROP SCHEMA edcp_other_${__DATABASE__}.edcp_kept;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+query
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'edcp_other_${__DATABASE__}' AND schema_name = 'public' ORDER BY 1;
+----
+table_name
+edcp_owned
+edcp_remote
+
+
+query
+SELECT schema_name FROM duckdb_schemas() WHERE database_name = 'edcp_other_${__DATABASE__}' AND schema_name LIKE 'edcp_%' ORDER BY 1;
+----
+schema_name
+edcp_foreign_schema
+edcp_kept
+
+
+statement ok
+GRANT CONNECT ON DATABASE edcp_other_${__DATABASE__} TO edcp_vedernikoff;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+SET search_path TO edcp_other_${__DATABASE__}.public;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+query
+SELECT a FROM edcp_remote;
+----
+a
+1
+
+
+statement ok
+REVOKE CONNECT ON DATABASE edcp_other_${__DATABASE__} FROM edcp_vedernikoff;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SELECT a FROM edcp_remote;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TABLE edcp_made (a integer);
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+statement ok
+GRANT CONNECT ON DATABASE edcp_other_${__DATABASE__} TO edcp_vedernikoff;
+
+
+statement ok
+REVOKE TEMPORARY ON DATABASE ${__DATABASE__} FROM PUBLIC;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TEMPORARY TABLE edcp_scratch (a integer);
+----
+db error: ERROR: permission denied to create temporary tables in database "<slt:ignore>"
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+RESET search_path;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TEMPORARY TABLE edcp_scratch (a integer);
+----
+db error: ERROR: permission denied to create temporary tables in database "<slt:ignore>"
+
+
+statement ok
+GRANT TEMPORARY ON DATABASE ${__DATABASE__} TO PUBLIC;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+DROP TABLE edcp_other_${__DATABASE__}.public.edcp_owned;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made (a integer);
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+DROP TABLE edcp_other_${__DATABASE__}.public.edcp_made;
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement ok
+DROP SCHEMA edcp_other_${__DATABASE__}.edcp_kept;
+
+
+statement ok
+DROP DATABASE edcp_other_${__DATABASE__};
+
+
+statement ok
+DROP ROLE edcp_vedernikoff;

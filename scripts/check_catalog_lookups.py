@@ -34,7 +34,6 @@ ALLOWED = {
     f"{PLANNER}/operator/logical_update.cpp": 1,
     f"{PLANNER}/statement_preprocessor.cpp": 2,
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
-    f"{SERVER}/connector/duckdb_client_state.cpp": 1,
     f"{SERVER}/connector/duckdb_physical_create_index.cpp": 1,
     f"{SERVER}/connector/functions/jobs.cpp": 1,
     f"{SERVER}/connector/index_source_external_lookup.cpp": 1,

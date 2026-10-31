@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/phrase_union_member.hpp"
 #include "iresearch/search/top/pruned_phrase.hpp"
 
 namespace irs::top {
@@ -53,8 +54,36 @@ Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
     });
 }
 
+template<irs::detail::PhraseMatch M, typename Query>
+UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx) {
+  static_assert(M != irs::detail::PhraseMatch::Slop);
+  if (!query.state.boosts.empty() || !query.state.reader) {
+    return {};
+  }
+  const auto record = query.Stats(ScoredOf(ctx));
+  if (!record.stats) {
+    return {};
+  }
+  const irs::detail::ScoreArgs args{.scorer = record.scorer,
+                                    .stats = record.stats,
+                                    .fetcher = &ctx.fetcher,
+                                    .boost = query.Boost()};
+  return irs::detail::BuildPhrase<M, true, false, false>(
+    query, [&]<typename Slots>(auto&&... rest) -> UnionMember::ptr {
+      auto member = memory::make_managed<PhraseUnionMember<Slots>>(
+        query.Segment(), *query.state.reader, args,
+        std::forward<decltype(rest)>(rest)...);
+      if (!member->Bounded()) {
+        return {};
+      }
+      return member;
+    });
+}
+
 }  // namespace irs::top
 
-#define IRS_TOP_PHRASE_PRUNED(Query, Match)                             \
-  template Root::ptr MakePhrasePruned<irs::detail::PhraseMatch::Match>( \
+#define IRS_TOP_PHRASE_PRUNED(Query, Match)                                    \
+  template Root::ptr MakePhrasePruned<irs::detail::PhraseMatch::Match>(        \
+    const Query&, const Context&);                                             \
+  template UnionMember::ptr MakePhraseMember<irs::detail::PhraseMatch::Match>( \
     const Query&, const Context&)

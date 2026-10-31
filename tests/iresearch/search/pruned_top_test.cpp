@@ -177,16 +177,16 @@ irs::Filter::ptr PrefixOf(std::string_view prefix) {
   return filter;
 }
 
-irs::ByPhrase PhraseOf(std::span<const std::string_view> parts) {
-  irs::ByPhrase filter;
-  *filter.mutable_field_id() = kBodyId;
+irs::Filter::ptr PhraseOf(std::span<const std::string_view> parts) {
+  auto filter = std::make_unique<irs::ByPhrase>();
+  *filter->mutable_field_id() = kBodyId;
   for (const auto part : parts) {
     if (part.ends_with('*')) {
-      filter.mutable_options()->push_back<irs::ByPrefixOptions>().term =
+      filter->mutable_options()->push_back<irs::ByPrefixOptions>().term =
         irs::bstring{
           irs::ViewCast<irs::byte_type>(part.substr(0, part.size() - 1))};
     } else {
-      filter.mutable_options()->push_back<irs::ByTermOptions>().term =
+      filter->mutable_options()->push_back<irs::ByTermOptions>().term =
         irs::bstring{irs::ViewCast<irs::byte_type>(part)};
     }
   }
@@ -521,7 +521,42 @@ TEST_P(PrunedTopTest, phrases_bound_candidates_before_reading_dense_terms) {
          {"town", "of"},
        }) {
     SCOPED_TRACE(absl::StrJoin(parts, " "));
-    CheckRanking(PhraseOf(parts));
+    CheckRanking(*PhraseOf(parts));
+  }
+}
+
+TEST_P(PrunedTopTest, unions_with_phrases) {
+  Build(PhrasesText);
+  struct Union {
+    std::vector<std::vector<std::string_view>> phrases;
+    std::vector<std::string_view> terms;
+    std::vector<std::string_view> excluded;
+  };
+  for (const auto& shape : std::vector<Union>{
+         {{{"harbor", "town"}}, {"of"}, {}},
+         {{{"medal", "of", "honor"}, {"harbor", "town"}}, {"town"}, {}},
+         {{{"visit", "port*"}}, {"pad"}, {}},
+         {{{"harbor", "town"}, {"medal", "of", "honor"}}, {}, {}},
+         {{{"harb*", "town"}}, {"of", "medal"}, {}},
+         {{{"harbor", "town"}}, {"of", "honor"}, {"medal"}},
+       }) {
+    irs::BooleanFilter filter;
+    std::vector<std::string> trace;
+    for (const auto& parts : shape.phrases) {
+      filter.Add(PhraseOf(parts), irs::Occur::Should);
+      trace.push_back(absl::StrCat("\"", absl::StrJoin(parts, " "), "\""));
+    }
+    for (const auto term : shape.terms) {
+      filter.Add(Clause(term), irs::Occur::Should);
+      trace.emplace_back(term);
+    }
+    for (const auto term : shape.excluded) {
+      filter.Add(Clause(term), irs::Occur::MustNot);
+      trace.push_back(absl::StrCat("-", term));
+    }
+    filter.SetMinShouldMatch(1);
+    SCOPED_TRACE(absl::StrJoin(trace, " "));
+    CheckRanking(filter);
   }
 }
 

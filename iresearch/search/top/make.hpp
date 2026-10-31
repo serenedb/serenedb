@@ -40,6 +40,7 @@
 #include "iresearch/search/top/posting_pruned_disj.hpp"
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
+#include "iresearch/search/top/union_member.hpp"
 #include "iresearch/search/top/walk.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -82,6 +83,11 @@ Root::ptr MakeEmpty();
 template<irs::detail::PhraseMatch M, typename Query>
 Root::ptr MakePhrasePruned(const Query& query, const Context& ctx);
 
+template<irs::detail::PhraseMatch M, typename Query>
+UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx);
+
+UnionMember::ptr MakeUnionMember(const QueryBuilder& query, const Context& ctx);
+
 Root::ptr MakeTokenPhrasePruned(const TokenPhraseQuery& query,
                                 const Context& ctx);
 
@@ -119,6 +125,35 @@ Root::ptr MakePrunedDisjunction(
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge, uint32_t min_match);
 
+template<bool kExcludes, typename Leaf, typename Init>
+Root::ptr MakeDisjunctionOf(
+  Init& init, size_t size, uint64_t postings,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx) {
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  if constexpr (kExcludes) {
+    if (!excludes.empty() || !exclude_filters.empty()) {
+      const auto candidates =
+        std::min<uint64_t>(postings, segment.docs_count());
+      return irs::detail::BuildBlockExcludes<Root::ptr>(
+        excludes, exclude_filters, nullptr, segment, candidates, candidates,
+        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          return irs::detail::MakeRemovable(
+            std::type_identity<Exclude>{},
+            std::forward<decltype(negated)>(negated),
+            [&]<typename Removable>(auto&& args) -> Root::ptr {
+              return MakeShape<PrunedDisjunction, Leaf, Removable>(
+                ctx, size, docs_count, init,
+                std::forward<decltype(args)>(args));
+            });
+        });
+    }
+  }
+  return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
+    ctx, size, docs_count, init, std::forward_as_tuple());
+}
+
 template<bool kExcludes, typename Term>
 Root::ptr MakePrunedDisjunction(
   std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
@@ -129,7 +164,7 @@ Root::ptr MakePrunedDisjunction(
   SDB_ASSERT(terms.size() + filters.size() > 1);
   SDB_ASSERT(min_match != 0);
   SDB_ASSERT(kExcludes || (excludes.empty() && exclude_filters.empty()));
-  if (merge != ScoreMergeType::Sum || !filters.empty() ||
+  if (merge != ScoreMergeType::Sum ||
       uniformity != irs::detail::Terms::Bounded || min_match != 1) {
     return {};
   }
@@ -141,6 +176,48 @@ Root::ptr MakePrunedDisjunction(
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
+  const auto args_of = [&](const irs::detail::PostingClause& posting) {
+    return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
+                                  .stats = posting.stats.stats,
+                                  .fetcher = &ctx.fetcher,
+                                  .boost = posting.boost};
+  };
+  if (!filters.empty()) {
+    std::vector<UnionMember::ptr> members;
+    std::vector<uint32_t> costs;
+    members.reserve(terms.size() + filters.size());
+    costs.reserve(terms.size() + filters.size());
+    uint64_t postings = 0;
+    for (size_t i = 0; i != terms.size(); ++i) {
+      const auto posting =
+        irs::detail::ClauseOf(terms[i], field, scorer, boost);
+      const auto& own = *posting.state.reader;
+      const auto* const doc = irs::detail::DocOf(own);
+      members.push_back(irs::detail::ResolveInput(
+        *doc, [&]<typename Input> -> UnionMember::ptr {
+          return memory::make_managed<TermUnionMember<Input>>(
+            posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
+            own, args_of(posting));
+        }));
+      costs.push_back(posting.state.cookie.docs_count);
+      postings += costs.back();
+    }
+    for (const auto& filter : filters) {
+      auto member = MakeUnionMember(*filter, ctx);
+      if (!member) {
+        return {};
+      }
+      members.push_back(std::move(member));
+      costs.push_back(filter->EstimateMax());
+      postings += costs.back();
+    }
+    const auto init = [&](ErasedUnionLeaf& leaf, size_t i) {
+      leaf.Reset(std::move(members[i]));
+      return costs[i];
+    };
+    return MakeDisjunctionOf<kExcludes, ErasedUnionLeaf>(
+      init, members.size(), postings, excludes, exclude_filters, segment, ctx);
+  }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
@@ -151,34 +228,12 @@ Root::ptr MakePrunedDisjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   segment, own, args_of(posting));
       return posting.state.cookie.docs_count;
     };
-    const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    if constexpr (kExcludes) {
-      if (!excludes.empty() || !exclude_filters.empty()) {
-        const auto candidates =
-          std::min<uint64_t>(irs::detail::SumDocs(terms), segment.docs_count());
-        return irs::detail::BuildBlockExcludes<Root::ptr>(
-          excludes, exclude_filters, nullptr, segment, candidates, candidates,
-          [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-            return irs::detail::MakeRemovable(
-              std::type_identity<Exclude>{},
-              std::forward<decltype(negated)>(negated),
-              [&]<typename Removable>(auto&& args) -> Root::ptr {
-                return MakeShape<PrunedDisjunction, Leaf, Removable>(
-                  ctx, terms.size(), docs_count, init,
-                  std::forward<decltype(args)>(args));
-              });
-          });
-      }
-    }
-    return MakeShape<PrunedDisjunction, Leaf, utils::Empty>(
-      ctx, terms.size(), docs_count, init, std::forward_as_tuple());
+    return MakeDisjunctionOf<kExcludes, Leaf>(
+      init, terms.size(), irs::detail::SumDocs(terms), excludes,
+      exclude_filters, segment, ctx);
   });
 }
 

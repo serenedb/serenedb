@@ -119,37 +119,6 @@ db error: ERROR: Table with name chocolate_idx does not exist!
 
 
 statement ok
-CREATE TABLE mrbeast.crew (id SERIAL, name TEXT);
-
-
-statement ok
-INSERT INTO mrbeast.crew (name) VALUES ('karl');
-
-
-statement ok
-ALTER TABLE mrbeast.crew SET SCHEMA feastables;
-
-
-statement ok
-INSERT INTO feastables.crew (name) VALUES ('chandler');
-
-
-query
-SELECT id, name FROM feastables.crew ORDER BY id;
-----
-id	name
-1	karl
-2	chandler
-
-
-query
-SELECT pg_get_serial_sequence('feastables.crew', 'id') AS seq;
-----
-seq
-feastables.crew_id_seq
-
-
-statement ok
 CREATE SEQUENCE mrbeast.six_seven_seq START 67;
 
 

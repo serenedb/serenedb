@@ -20,7 +20,7 @@ CAUSES = {
     "ri_triggers": "SereneDB checks foreign keys without internal triggers",
     "serial_sequence": "serial creates a bigint sequence where PostgreSQL creates an integer one",
     "server_credentials": "pg_foreign_server shows options that carry credentials, so only a superuser reads it",
-    "system_columns": "Tables lack PostgreSQL's system columns",
+    "system_columns": "pg_attribute lists no system columns",
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "toast": "SereneDB has no TOAST tables",
     "typmod": "Type modifiers of view, composite type and expression columns are dropped or rejected",
@@ -409,8 +409,8 @@ ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C", column_na
 check(pg_class(MAIN))
 check(pg_attribute(MAIN))
 check(pg_attribute_types(MAIN, """
-  AND attname::text @NOT IN ('c_char', 'c_numeric_plain', 'c_varchar', 'city', 'code', 'email', 'sku', 'status',
-    'total')"""), "typmod", "numeric", "aggregate_type")
+  AND attname::text @NOT IN ('c_varchar', 'city', 'code', 'email', 'sku', 'total')"""), "typmod", "numeric",
+      "aggregate_type")
 check(pg_type(MAIN))
 check(f'''SELECT oid, {TYPE_COLUMNS}
 FROM pg_catalog.pg_type
@@ -507,13 +507,12 @@ ORDER BY table_schema::text COLLATE "C", table_name::text COLLATE "C"''', "updat
 check(columns(MAIN, """
   AND (table_schema, table_name, column_name) @NOT IN (('public', 'active_customers', 'id'),
     ('public', 'active_customers', 'email'), ('public', 'active_customers', 'name'),
-    ('app', 'all_types', 'c_numeric_plain'), ('app', 'order_totals', 'total'))"""),
+    ('app', 'order_totals', 'total'))"""),
       "updatable_views", "numeric", "aggregate_type")
 check(column_types(MAIN, """
-  AND (table_name, column_name) @NOT IN (('all_types', 'c_char'), ('all_types', 'c_text'), ('all_types', 'c_varchar'),
-    ('unique_tab', 'code'), ('active_customers', 'email'), ('customers', 'email'), ('customers', 'id'),
-    ('customers', 'mood'), ('order_items', 'sku'), ('orders', 'id'), ('orders', 'ordered_on'), ('orders', 'status'),
-    ('orders', 'ticket'))"""), "typmod", "deparse")
+  AND (table_name, column_name) @NOT IN (('all_types', 'c_text'), ('active_customers', 'email'), ('customers', 'id'),
+    ('customers', 'mood'), ('orders', 'id'), ('orders', 'ordered_on'), ('orders', 'status'), ('orders', 'ticket'))"""),
+      "typmod", "deparse")
 check(f'''SELECT {db("table_catalog")}, table_schema, table_name, check_option, is_trigger_updatable,
   is_trigger_deletable, is_trigger_insertable_into
 FROM information_schema.views
@@ -879,9 +878,8 @@ check(r'''SELECT q.relname, q.attrelid::regclass::text AS attrelid, q.attname, q
   q.attfdwoptions, (q.attmissingval)::text AS attmissingval, q.def_value, q.description, q.objid FROM (
 SELECT c.relname,a.*,pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, true) as def_value,dsc.description,dep.objid FROM pg_catalog.pg_attribute a INNER JOIN pg_catalog.pg_class c ON (a.attrelid=c.oid) LEFT OUTER JOIN pg_catalog.pg_attrdef ad ON (a.attrelid=ad.adrelid AND a.attnum = ad.adnum) LEFT OUTER JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid) LEFT OUTER JOIN pg_depend dep on dep.refobjid = a.attrelid AND dep.deptype = 'i' and dep.refobjsubid = a.attnum and dep.classid = dep.refclassid WHERE NOT a.attisdropped AND c.relkind not in ('i','I','c') AND c.relnamespace='app'::regnamespace::oid ORDER BY a.attnum
 ) q
-WHERE @NOT (q.attnum < 1 OR (q.relname, q.attname) IN (('all_types', 'c_char'), ('all_types', 'c_numeric_plain'),
-    ('all_types', 'c_text'), ('all_types', 'c_varchar'), ('order_totals', 'total'), ('unique_tab', 'code')))
-ORDER BY q.relname::text COLLATE "C", q.attname::text COLLATE "C"''', "typmod", "numeric", "aggregate_type", "deparse",
+WHERE @NOT (q.attnum < 1 OR (q.relname, q.attname) IN (('all_types', 'c_text'), ('order_totals', 'total')))
+ORDER BY q.relname::text COLLATE "C", q.attname::text COLLATE "C"''', "numeric", "aggregate_type", "deparse",
       "system_columns")
 
 DBEAVER_CONSTRAINTS = ("SELECT c.oid,c.*,t.relname as tabrelname,rt.relnamespace as refnamespace,d.description, case when "
@@ -1141,7 +1139,7 @@ def pgjdbc_columns(schema, table):
 
 
 for schema, table, differing, causes in (
-        ("app", "all_types", "('c_char', 'c_numeric_plain', 'c_text', 'c_varchar')", ("typmod", "numeric", "deparse")),
+        ("app", "all_types", "('c_text')", ("deparse",)),
         ("public", "active_customers", "('email')", ("typmod",))):
     check(f'''SELECT q.nspname, q.relname, q.attname, q.atttypid::regtype::text AS atttypid, q.attnotnull, q.atttypmod, q.attlen,
   q.typtypmod, q.attnum, q.attidentity, q.attgenerated, q.adsrc, q.description, q.typbasetype, q.typtype FROM (
@@ -1604,7 +1602,7 @@ check(psql_relation("public.active_customers"))
 check(psql_columns("public.active_customers", PSQL_COLUMNS, """
 WHERE q.attname @NOT IN ('email')"""), "typmod")
 for relation, differing, causes in (
-        ("app.all_types", "('c_char', 'c_numeric_plain', 'c_text', 'c_varchar')", ("typmod", "numeric", "deparse")),
+        ("app.all_types", "('c_text')", ("deparse",)),
         ("public.customers", "('id', 'mood')", ("deparse",)),
         ("public.order_items", "", ()),
         ("public.orders", "", ())):

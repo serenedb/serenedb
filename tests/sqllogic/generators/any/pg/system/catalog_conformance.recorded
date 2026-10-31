@@ -2514,7 +2514,7 @@ d89036df01be5d74
 	plain_seq	last_value	8	1	0	t	d	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	plain_seq	log_cnt	8	2	0	t	d	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	plain_seq	is_called	1	3	0	t	c	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
-1bca0320d625ae38
+97ad7cf89abab96e
 	attrelid	attnum	atttypid	atttypmod
 	active_customers	1	integer	-1
 	active_customers	3	text	-1
@@ -2524,6 +2524,8 @@ d89036df01be5d74
 	app.all_types	2	integer	-1
 	app.all_types	3	bigint	-1
 	app.all_types	4	numeric	655366
+	app.all_types	5	numeric	-1
+	app.all_types	7	character	7
 	app.all_types	8	text	-1
 	app.all_types	9	boolean	-1
 	app.all_types	10	date	-1
@@ -2574,6 +2576,7 @@ d89036df01be5d74
 	orders	1	bigint	-1
 	orders	2	integer	-1
 	orders	3	numeric	655366
+	orders	4	character varying	24
 	orders	5	text	-1
 	orders	6	date	-1
 	orders	7	bigint	-1
@@ -2586,13 +2589,11 @@ d89036df01be5d74
 	plain_seq	1	bigint	-1
 	plain_seq	2	bigint	-1
 	plain_seq	3	boolean	-1
-3635fe6942d8edba
+2587187411486290
 	attrelid	attnum	atttypid	atttypmod
 	active_customers	2	character varying	54
 	app.address	2	character varying	44
-	app.all_types	5	numeric	-1
 	app.all_types	6	character varying	54
-	app.all_types	7	character	7
 	app.all_types_varchar_idx	1	character varying	54
 	app.order_totals	2	numeric	-1
 	app.unique_tab	2	character varying	14
@@ -2602,14 +2603,11 @@ d89036df01be5d74
 	customers_name_email_idx	2	character varying	54
 	order_items	3	character varying	34
 	order_items_sku_idx	1	character varying	34
-	orders	4	character varying	24
-45c95544485821ca
+0b942c7106772115
 	attrelid	attnum	atttypid	atttypmod
 	active_customers	2	text	-1
 	app.address	2	text	-1
-	app.all_types	5	numeric	-1
 	app.all_types	6	character varying	54
-	app.all_types	7	character	7
 	app.all_types_varchar_idx	1	text	-1
 	app.order_totals	2	numeric	2490374
 	app.unique_tab	2	character varying	14
@@ -2619,7 +2617,6 @@ d89036df01be5d74
 	customers_name_email_idx	2	text	-1
 	order_items	3	character varying	34
 	order_items_sku_idx	1	text	-1
-	orders	4	character varying	24
 ae69a754622ae65c
 	oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typsubscript	typelem	typarray	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation	typdefault	typacl
 	active_customers	active_customers	public	postgres	-1	f	c	C	f	t	,	active_customers	-	-	active_customers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
@@ -3603,7 +3600,7 @@ aee8450f182fc382
 83f9e6048f927787
 	table_catalog	table_schema	table_name	table_type	self_referencing_column_name	reference_generation	user_defined_type_catalog	user_defined_type_schema	user_defined_type_name	is_insertable_into	is_typed	commit_action
 	db	public	active_customers	VIEW	NULL	NULL	NULL	NULL	NULL	NO	NO	NULL
-9f4d8fdf557a69f9
+d05b86ba9255971e
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
 	db	app	all_types	c_bool	9	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	9	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_bytea	19	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	19	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
@@ -3619,6 +3616,7 @@ aee8450f182fc382
 	db	app	all_types	c_json	18	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	18	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_mood	22	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	app	NULL	NULL	NULL	NULL	22	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_numeric	4	YES	10	10	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	4	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
+	db	app	all_types	c_numeric_plain	5	YES	NULL	10	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	5	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_text	8	NO	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	8	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_text_arr	21	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	21	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	all_types	c_time	11	YES	NULL	NULL	NULL	6	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	11	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
@@ -3654,24 +3652,23 @@ aee8450f182fc382
 	db	public	orders	ordered_on	6	YES	NULL	NULL	NULL	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	6	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	public	orders	status	4	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	4	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	public	orders	ticket	7	YES	64	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	7	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
-d2f4e654a0a250bb
+6ad0fd110572db9c
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
-	db	app	all_types	c_numeric_plain	5	YES	NULL	10	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	5	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	order_totals	total	2	YES	NULL	10	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	email	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	public	active_customers	id	1	YES	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	public	active_customers	name	3	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	3	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
-cd9b8437a543cd87
+1d1d74ab3a4448d5
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
-	db	app	all_types	c_numeric_plain	5	YES	NULL	10	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	5	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	order_totals	total	2	YES	38	10	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	email	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	id	1	YES	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	name	3	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	3	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
-5cd6aba8c5933a04
+25787baebae398a8
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
 	app	all_types	c_bool	NULL	boolean	NULL	NULL	bool
 	app	all_types	c_bytea	NULL	bytea	NULL	NULL	bytea
+	app	all_types	c_char	NULL	character	3	12	bpchar
 	app	all_types	c_date	NULL	date	NULL	NULL	date
 	app	all_types	c_float4	NULL	real	NULL	NULL	float4
 	app	all_types	c_float8	NULL	double precision	NULL	NULL	float8
@@ -3689,6 +3686,7 @@ cd9b8437a543cd87
 	app	all_types	c_ts	NULL	timestamp without time zone	NULL	NULL	timestamp
 	app	all_types	c_tstz	NULL	timestamp with time zone	NULL	NULL	timestamptz
 	app	all_types	c_uuid	NULL	uuid	NULL	NULL	uuid
+	app	all_types	c_varchar	NULL	character varying	50	200	varchar
 	app	child_tab	id	NULL	integer	NULL	NULL	int4
 	app	child_tab	unique_id	NULL	bigint	NULL	NULL	int8
 	app	json_tab	doc	NULL	json	NULL	NULL	json
@@ -3696,47 +3694,40 @@ cd9b8437a543cd87
 	app	order_totals	customer_id	NULL	integer	NULL	NULL	int4
 	app	order_totals	n	NULL	bigint	NULL	NULL	int8
 	app	order_totals	total	NULL	numeric	NULL	NULL	numeric
+	app	unique_tab	code	NULL	character varying	10	40	varchar
 	app	unique_tab	id	NULL	bigint	NULL	NULL	int8
 	app	unique_tab	qty	NULL	integer	NULL	NULL	int4
 	public	active_customers	id	NULL	integer	NULL	NULL	int4
 	public	active_customers	name	NULL	text	NULL	1073741824	text
 	public	customers	active	true	boolean	NULL	NULL	bool
 	public	customers	created	now()	timestamp with time zone	NULL	NULL	timestamptz
+	public	customers	email	NULL	character varying	50	200	varchar
 	public	customers	home	NULL	USER-DEFINED	NULL	NULL	address
 	public	customers	name	NULL	text	NULL	1073741824	text
 	public	order_items	line	NULL	integer	NULL	NULL	int4
 	public	order_items	order_id	NULL	bigint	NULL	NULL	int8
 	public	order_items	price	NULL	numeric	NULL	NULL	numeric
 	public	order_items	qty	NULL	integer	NULL	NULL	int4
+	public	order_items	sku	NULL	character varying	30	120	varchar
 	public	orders	amount	0	numeric	NULL	NULL	numeric
 	public	orders	customer_id	NULL	integer	NULL	NULL	int4
 	public	orders	note	NULL	text	NULL	1073741824	text
-037858f61b6f1ae0
+53d88e67a970321c
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
-	app	all_types	c_char	NULL	character	3	12	bpchar
 	app	all_types	c_text	'x'::text	text	NULL	1073741824	text
-	app	all_types	c_varchar	NULL	character varying	50	200	varchar
-	app	unique_tab	code	NULL	character varying	10	40	varchar
 	public	active_customers	email	NULL	character varying	50	200	varchar
-	public	customers	email	NULL	character varying	50	200	varchar
 	public	customers	id	nextval('customers_id_seq'::regclass)	integer	NULL	NULL	int4
 	public	customers	mood	'ok'::app.mood	USER-DEFINED	NULL	NULL	mood
-	public	order_items	sku	NULL	character varying	30	120	varchar
 	public	orders	id	nextval('orders_id_seq'::regclass)	bigint	NULL	NULL	int8
 	public	orders	ordered_on	CURRENT_DATE	date	NULL	NULL	date
 	public	orders	status	'new'::character varying	character varying	20	80	varchar
 	public	orders	ticket	nextval('app.ticket_seq'::regclass)	bigint	NULL	NULL	int8
-348027b8d0e7fbf9
+6a61019c59b0e6e0
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
-	app	all_types	c_char	NULL	character	3	12	bpchar
 	app	all_types	c_text	'x'	text	NULL	1073741824	text
-	app	all_types	c_varchar	NULL	character varying	50	200	varchar
-	app	unique_tab	code	NULL	character varying	10	40	varchar
 	public	active_customers	email	NULL	text	NULL	1073741824	text
-	public	customers	email	NULL	character varying	50	200	varchar
 	public	customers	id	nextval('customers_id_seq')	integer	NULL	NULL	int4
 	public	customers	mood	'ok'	USER-DEFINED	NULL	NULL	mood
-	public	order_items	sku	NULL	character varying	30	120	varchar
 	public	orders	id	nextval('orders_id_seq')	bigint	NULL	NULL	int8
 	public	orders	ordered_on	current_date	date	NULL	NULL	date
 	public	orders	status	'new'	character varying	20	80	varchar
@@ -4468,10 +4459,11 @@ d39e254dd9ef4592
 ac41ea5997a348ad
 	oid	ns	name	kind	basetype	elemtype	elemdelim	range_subtype	attrtypoids	attrnames	depth	basetype_name	elemtype_name	range_subtype_name
 	app.address	app	address	c	NULL	0	NULL	NULL	{25,25,23}	{street,city,zip}	0	NULL	-	NULL
-4cb46198780c37e7
+d320a3574e80c924
 	relname	attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval	def_value	description	objid
 	all_types	app.all_types	c_bool	boolean	1	9	-1	0	t	c	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_bytea	bytea	-1	19	-1	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	all_types	app.all_types	c_char	character	-1	7	7	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_date	date	4	10	-1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_float4	real	4	15	-1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_float8	double precision	8	16	-1	0	t	d	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -4483,11 +4475,13 @@ ac41ea5997a348ad
 	all_types	app.all_types	c_json	json	-1	18	-1	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_mood	app.mood	4	22	-1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_numeric	numeric	-1	4	655366	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	all_types	app.all_types	c_numeric_plain	numeric	-1	5	-1	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_text_arr	text[]	-1	21	-1	1	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_time	time without time zone	8	11	-1	0	t	d	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_ts	timestamp without time zone	8	12	-1	0	t	d	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_tstz	timestamp with time zone	8	13	-1	0	t	d	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_uuid	uuid	16	17	-1	0	f	c	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	all_types	app.all_types	c_varchar	character varying	-1	6	54	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	child_tab	app.child_tab	id	integer	4	1	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	child_tab	app.child_tab	unique_id	bigint	8	2	-1	0	t	d	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	json_tab	app.json_tab	doc	json	-1	2	-1	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -4497,14 +4491,12 @@ ac41ea5997a348ad
 	ticket_seq	app.ticket_seq	is_called	boolean	1	3	-1	0	t	c	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	ticket_seq	app.ticket_seq	last_value	bigint	8	1	-1	0	t	d	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	ticket_seq	app.ticket_seq	log_cnt	bigint	8	2	-1	0	t	d	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	unique_tab	app.unique_tab	code	character varying	-1	2	14	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	id	bigint	8	1	-1	0	t	d	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	qty	integer	4	3	-1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-990c237772374011
+be186e39d9cb8d7c
 	relname	attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval	def_value	description	objid
-	all_types	app.all_types	c_char	character	-1	7	7	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	all_types	app.all_types	c_numeric_plain	numeric	-1	5	-1	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_text	text	-1	8	-1	0	f	i	x	(empty)	t	t	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	'x'::text	NULL	NULL
-	all_types	app.all_types	c_varchar	character varying	-1	6	54	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	cmax	cid	4	-5	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	cmin	cid	4	-3	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	ctid	tid	6	-1	-1	0	f	s	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -4532,19 +4524,14 @@ ac41ea5997a348ad
 	ticket_seq	app.ticket_seq	xmin	xid	4	-2	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	cmax	cid	4	-5	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	cmin	cid	4	-3	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	unique_tab	app.unique_tab	code	character varying	-1	2	14	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	ctid	tid	6	-1	-1	0	f	s	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	tableoid	oid	4	-6	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	xmax	xid	4	-4	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	unique_tab	app.unique_tab	xmin	xid	4	-2	-1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-294d93495d23b659
+3a2791d68bf37716
 	relname	attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval	def_value	description	objid
-	all_types	app.all_types	c_char	character	-1	7	7	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	all_types	app.all_types	c_numeric_plain	numeric	-1	5	-1	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_text	text	-1	8	-1	0	f	i	x	(empty)	t	t	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	'x'	NULL	NULL
-	all_types	app.all_types	c_varchar	character varying	-1	6	54	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	order_totals	app.order_totals	total	numeric	-1	2	2490374	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	unique_tab	app.unique_tab	code	character varying	-1	2	14	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 3dabd4cd352a6539
 	oid	oid	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	confdelsetcols	conexclop	conbin	tabrelname	refnamespace	description
 	customers_email_key	customers_email_key	customers_email_key	2200	u	f	f	t	t	customers	0	customers_email_key	0	-	_	_	_	t	0	t	f	{2}	NULL	NULL	NULL	f	customers	NULL	NULL
@@ -5068,10 +5055,11 @@ d8fb8bdf8be85938
 	customers	customers	0	0	f	public	2200	f	Customer master	f	f
 	order_items	order_items	0	0	f	public	2200	f	NULL	f	f
 	orders	orders	0	0	f	public	2200	f	NULL	f	f
-08e755e73a4bab07
+9bc44051e135951b
 	nspname	relname	attname	atttypid	attnotnull	atttypmod	attlen	typtypmod	attnum	attidentity	attgenerated	adsrc	description	typbasetype	typtype
 	app	all_types	c_bool	boolean	f	-1	1	-1	9	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_bytea	bytea	f	-1	-1	-1	19	NULL	NULL	NULL	NULL	0	b
+	app	all_types	c_char	character	f	7	-1	-1	7	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_date	date	f	-1	4	-1	10	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_float4	real	f	-1	4	-1	15	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_float8	double precision	f	-1	8	-1	16	NULL	NULL	NULL	NULL	0	b
@@ -5083,23 +5071,19 @@ d8fb8bdf8be85938
 	app	all_types	c_json	json	f	-1	-1	-1	18	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_mood	app.mood	f	-1	4	-1	22	NULL	NULL	NULL	NULL	0	e
 	app	all_types	c_numeric	numeric	f	655366	-1	-1	4	NULL	NULL	NULL	NULL	0	b
+	app	all_types	c_numeric_plain	numeric	f	-1	-1	-1	5	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_text_arr	text[]	f	-1	-1	-1	21	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_time	time without time zone	f	-1	8	-1	11	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_ts	timestamp without time zone	f	-1	8	-1	12	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_tstz	timestamp with time zone	f	-1	8	-1	13	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_uuid	uuid	f	-1	16	-1	17	NULL	NULL	NULL	NULL	0	b
-308e5bc4257e3652
+	app	all_types	c_varchar	character varying	f	54	-1	-1	6	NULL	NULL	NULL	NULL	0	b
+abcc56d59a111672
 	nspname	relname	attname	atttypid	attnotnull	atttypmod	attlen	typtypmod	attnum	attidentity	attgenerated	adsrc	description	typbasetype	typtype
-	app	all_types	c_char	character	f	7	-1	-1	7	NULL	NULL	NULL	NULL	0	b
-	app	all_types	c_numeric_plain	numeric	f	-1	-1	-1	5	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_text	text	t	-1	-1	-1	8	NULL	NULL	'x'::text	NULL	0	b
-	app	all_types	c_varchar	character varying	f	54	-1	-1	6	NULL	NULL	NULL	NULL	0	b
-09fa03f9f7b650fc
+56dafbda41ecb7b3
 	nspname	relname	attname	atttypid	attnotnull	atttypmod	attlen	typtypmod	attnum	attidentity	attgenerated	adsrc	description	typbasetype	typtype
-	app	all_types	c_char	character	f	7	-1	-1	7	NULL	NULL	NULL	NULL	0	b
-	app	all_types	c_numeric_plain	numeric	f	-1	-1	-1	5	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_text	text	t	-1	-1	-1	8	NULL	NULL	'x'	NULL	0	b
-	app	all_types	c_varchar	character varying	f	54	-1	-1	6	NULL	NULL	NULL	NULL	0	b
 5392a03c4f5d9c32
 	nspname	relname	attname	atttypid	attnotnull	atttypmod	attlen	typtypmod	attnum	attidentity	attgenerated	adsrc	description	typbasetype	typtype
 	public	active_customers	id	integer	f	-1	4	-1	1	NULL	NULL	NULL	NULL	0	b
@@ -6054,10 +6038,11 @@ a98335174ff89eb2
 8aa000cb3b94e827
 	relchecks	relkind	relhasindex	relhasrules	relhastriggers	relrowsecurity	relforcerowsecurity	relhasoids	relispartition	?column?	reltablespace	reloftype	relpersistence	relreplident	amname
 	0	r	t	f	f	f	f	f	f	(empty)	0	(empty)	p	d	heap
-615d6649f5b6dee9
+e2ee8f782bc1dcfc
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated
 	c_bool	boolean	NULL	f	NULL	(empty)	(empty)
 	c_bytea	bytea	NULL	f	NULL	(empty)	(empty)
+	c_char	character(3)	NULL	f	NULL	(empty)	(empty)
 	c_date	date	NULL	f	NULL	(empty)	(empty)
 	c_float4	real	NULL	f	NULL	(empty)	(empty)
 	c_float8	double precision	NULL	f	NULL	(empty)	(empty)
@@ -6069,23 +6054,19 @@ a98335174ff89eb2
 	c_json	json	NULL	f	NULL	(empty)	(empty)
 	c_mood	app.mood	NULL	f	NULL	(empty)	(empty)
 	c_numeric	numeric(10,2)	NULL	f	NULL	(empty)	(empty)
+	c_numeric_plain	numeric	NULL	f	NULL	(empty)	(empty)
 	c_text_arr	text[]	NULL	f	NULL	(empty)	(empty)
 	c_time	time without time zone	NULL	f	NULL	(empty)	(empty)
 	c_ts	timestamp without time zone	NULL	f	NULL	(empty)	(empty)
 	c_tstz	timestamp with time zone	NULL	f	NULL	(empty)	(empty)
 	c_uuid	uuid	NULL	f	NULL	(empty)	(empty)
-6111732f12764f0e
+	c_varchar	character varying(50)	NULL	f	NULL	(empty)	(empty)
+0ea03cd0fb4261bf
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated
-	c_char	character(3)	NULL	f	NULL	(empty)	(empty)
-	c_numeric_plain	numeric	NULL	f	NULL	(empty)	(empty)
 	c_text	text	'x'::text	t	NULL	(empty)	(empty)
-	c_varchar	character varying(50)	NULL	f	NULL	(empty)	(empty)
-c7e9f8bd611dea30
+8b67d15d0b445073
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated
-	c_char	character(3)	NULL	f	NULL	(empty)	(empty)
-	c_numeric_plain	numeric	NULL	f	NULL	(empty)	(empty)
 	c_text	text	'x'	t	NULL	(empty)	(empty)
-	c_varchar	character varying(50)	NULL	f	NULL	(empty)	(empty)
 f689f3e3165bb6d6
 	relname	indisprimary	indisunique	indisclustered	indisvalid	pg_get_indexdef	pg_get_constraintdef	contype	condeferrable	condeferred	indisreplident	reltablespace
 	all_types_pkey	t	t	f	t	CREATE UNIQUE INDEX all_types_pkey ON app.all_types USING btree (c_int8)	PRIMARY KEY (c_int8)	p	f	f	f	0

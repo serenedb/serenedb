@@ -211,7 +211,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | power            | Yes           | On `numeric`, returns `double precision`                                |
 | radians          | Yes           |                                                                         |
 | round            | Yes           |                                                                         |
-| scale            | Yes           | The scale of the column type: `numeric` without a scale has three fractional digits |
+| scale            | Yes           | The scale of the column type: `numeric` without a scale has ten fractional digits |
 | sign             | Yes           | Returns `smallint`                                                      |
 | sqrt             | Yes           | On `numeric`, returns `double precision`                                |
 | trim_scale       | Partial       | Trims a constant; a column's value keeps the scale of its type          |

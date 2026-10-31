@@ -1162,12 +1162,9 @@ class Enforcer {
     if (IsRename(info)) {
       RequireSchemaCreate(entry->ParentSchema(_context));
     }
-    if (info.type == duckdb::AlterType::ALTER_TABLE &&
-        info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
-          duckdb::AlterTableType::SET_SCHEMA) {
+    if (auto new_schema = info.GetNewSchema()) {
       if (auto target = duckdb::Catalog::GetSchema(
-            _context, info.GetQualifiedName().Catalog(),
-            info.Cast<duckdb::SetSchemaInfo>().new_schema,
+            _context, info.GetQualifiedName().Catalog(), *new_schema,
             duckdb::OnEntryNotFound::RETURN_NULL)) {
         RequireSchemaCreate(*target);
       }

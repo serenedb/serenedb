@@ -1628,6 +1628,7 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
 
   RegisterScalarAlias(loader, "json_array", "json_build_array");
   RegisterScalarAlias(loader, "json_object", "json_build_object");
+  RegisterScalarAlias(loader, "to_json", "to_jsonb");
 
   const auto texts = duckdb::LogicalType::LIST(VARCHAR);
   for (auto function : {

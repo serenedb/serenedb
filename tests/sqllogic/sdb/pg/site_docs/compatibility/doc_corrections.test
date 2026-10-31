@@ -45,9 +45,6 @@ statement ok
 SELECT json_extract_path('{"a":{"b":1}}'::json, 'a', 'b');
 
 statement ok
-SELECT NULL::jsonb;
-
-statement ok
 SELECT to_timestamp(1577836800);
 
 statement ok

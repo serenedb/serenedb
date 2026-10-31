@@ -43,7 +43,7 @@ Unlike variable-length integer implementations in other systems, there are limit
 
 ## Fixed-Point Decimals
 
-The data type `DECIMAL(WIDTH, SCALE)` (also available under the alias `NUMERIC(WIDTH, SCALE)`) represents an exact fixed-point decimal value. When creating a value of type `DECIMAL`, the `WIDTH` and `SCALE` can be specified to define which size of decimal values can be held in the field. The `WIDTH` field determines how many digits can be held, and the `scale` determines the number of digits after the decimal point. For example, the type `DECIMAL(3, 2)` can fit the value `1.23`, but cannot fit the value `12.3` or the value `1.234`. The default `WIDTH` and `SCALE` is `DECIMAL(18, 3)`, if none are specified.
+The data type `DECIMAL(WIDTH, SCALE)` (also available under the alias `NUMERIC(WIDTH, SCALE)`) represents an exact fixed-point decimal value. When creating a value of type `DECIMAL`, the `WIDTH` and `SCALE` can be specified to define which size of decimal values can be held in the field. The `WIDTH` field determines how many digits can be held, and the `scale` determines the number of digits after the decimal point. For example, the type `DECIMAL(3, 2)` can fit the value `1.23`, but cannot fit the value `12.3` or the value `1.234`. The default `WIDTH` and `SCALE` is `DECIMAL(38, 10)`, if none are specified.
 
 A value with more digits after the decimal point than `SCALE` is rounded half away from zero. A value that does not fit, and an infinity, fail with SQLSTATE `22003` (`numeric_value_out_of_range`), and text that is not a number with `22P02` (`invalid_text_representation`). `DECIMAL` has no `NaN`: converting `'NaN'` or a floating-point `NaN` fails with `0A000` (`feature_not_supported`).
 

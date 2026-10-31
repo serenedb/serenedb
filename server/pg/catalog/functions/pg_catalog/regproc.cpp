@@ -21,6 +21,7 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -939,7 +940,7 @@ int32_t TypmodIn(uint64_t oid, std::span<const std::string> texts,
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
       ERR_MSG("type modifier is not allowed for type \"", display, "\""));
   }
-  std::vector<int32_t> typmods;
+  absl::InlinedVector<int32_t, 2> typmods;
   typmods.reserve(texts.size());
   for (const auto& text : texts) {
     typmods.emplace_back(TypmodValue(text));

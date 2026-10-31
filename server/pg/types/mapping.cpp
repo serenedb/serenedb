@@ -21,7 +21,7 @@
 #include "pg/types/mapping.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/match.h>
+#include <absl/container/inlined_vector.h>
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
@@ -192,11 +192,11 @@ const duckdb::TypeExpression* AsTypeExpression(
 
 bool Names(const duckdb::TypeExpression& type, std::string_view name) {
   return type.GetCatalog().empty() && type.GetSchema().empty() &&
-         absl::EqualsIgnoreCase(type.GetTypeName().GetIdentifierName(), name);
+         type.GetTypeName() == name;
 }
 
 int32_t DeclaredTypmod(const duckdb::TypeExpression& type, int32_t oid) {
-  std::vector<std::string> texts;
+  absl::InlinedVector<std::string, 2> texts;
   for (const auto& modifier : type.GetChildren()) {
     texts.emplace_back(modifier->ToString());
   }

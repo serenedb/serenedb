@@ -96,8 +96,8 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
       compression.emplace(
         column.Oid(),
-        irs::ColumnOptions{.compression = column.CompressionType(),
-                           .compression_level = column.CompressionLevel()});
+        catalog::DeclaredCodec{.type = column.CompressionType(),
+                               .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -347,7 +347,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
       }
       auto& declared = declared_compression[key.column_id];
       if (own_codec) {
-        declared.compression = options.compression;
+        declared.type = options.compression;
         declared.compression_level = options.compression_level;
       }
       declared.hyperloglog = declared.hyperloglog || options.hyperloglog;

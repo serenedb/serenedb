@@ -1,89 +1,53 @@
-statement error
-SELECT 67 / 0;
-----
-db error: ERROR: division by zero
-
-
 statement error (22012)
 SELECT 67 / 0;
 
-statement error (22012)
-SELECT 67::numeric / 0;
 
 statement error (22012)
-SELECT 67::float8 / 0;
-
-
-statement error
 SELECT 67 % 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::bigint / 0::bigint;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::smallint % 0::smallint;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT mod(67, 0);
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::numeric / 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::numeric % 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 6.7 / 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::float8 / 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 67::float4 / 0::float4;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT 0::float8 / 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT '-Infinity'::float8 / 0;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT interval '67 days' / 0;
-----
-db error: ERROR: division by zero
 
 
 skipif serenedb
@@ -144,16 +108,12 @@ statement ok
 UPDATE beast_div SET y = 0, i = 0 WHERE x = 6767;
 
 
-statement error
+statement error (22012)
 SELECT sum(x / y) FROM beast_div;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT sum(n / y) FROM beast_div;
-----
-db error: ERROR: division by zero
 
 
 onlyif postgres
@@ -164,16 +124,12 @@ db error: ERROR: operator does not exist: double precision % double precision<sl
 
 
 onlyif serenedb
-statement error
+statement error (22012)
 SELECT sum(x % y) FROM beast_div;
-----
-db error: ERROR: division by zero
 
 
-statement error
+statement error (22012)
 SELECT sum(i / i) FROM beast_div;
-----
-db error: ERROR: division by zero
 
 
 query

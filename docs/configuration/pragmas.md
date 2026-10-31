@@ -351,7 +351,7 @@ Over the PostgreSQL wire protocol (for example via `psql` or any PostgreSQL driv
 
 ## IEEE Floating-Point Operation Semantics
 
-A floating-point division by zero fails with `division by zero`, as in PostgreSQL; with `error_on_division_by_zero` off, it returns `NULL`:
+A floating-point division by zero fails with a `Division by zero` error, as in PostgreSQL; with `error_on_division_by_zero` off, it returns `NULL`:
 
 <SqlLogicTest id="configuration/pragmas/example_071" />
 

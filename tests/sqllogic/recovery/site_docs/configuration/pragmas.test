@@ -545,7 +545,7 @@ Did you mean "<slt:ignore>"?
 statement error
 SELECT 1.0 / 0.0 AS a;
 ----
-db error: ERROR: division by zero
+db error: ERROR: Division by zero in expression (1 // 0). Use TRY(...) to return NULL for this expression, or SET error_on_division_by_zero=false to return NULL for all divisions by zero.
 
 
 # DOCS_TEST: example_064

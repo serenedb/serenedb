@@ -856,7 +856,7 @@ Even where a feature is supported, SereneDB intentionally diverges from PostgreS
 
 ### Floating-Point Arithmetic
 
-A division by zero raises `division by zero`, as in PostgreSQL, and operations involving infinity values follow the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) on both engines. One case differs: `'NaN'::float8 / 0` raises the error too, where PostgreSQL returns `NaN`. [`SET ieee_floating_point_ops = true`](../configuration/pragmas.md#ieee-floating-point-operation-semantics) makes a division by zero return `Infinity`, `NaN` or `-Infinity` instead. In SereneDB:
+A division by zero raises a `Division by zero` error with SQLSTATE `22012`, as in PostgreSQL, and operations involving infinity values follow the [IEEE Standard for Floating-Point Arithmetic (IEEE 754)](https://en.wikipedia.org/wiki/IEEE_754) on both engines. One case differs: `'NaN'::float8 / 0` raises the error too, where PostgreSQL returns `NaN`. [`SET ieee_floating_point_ops = true`](../configuration/pragmas.md#ieee-floating-point-operation-semantics) makes a division by zero return `Infinity`, `NaN` or `-Infinity` instead. In SereneDB:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_001" />
 

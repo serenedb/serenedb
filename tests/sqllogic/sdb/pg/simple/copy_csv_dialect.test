@@ -70,9 +70,8 @@ six	t	f	t	seven
 statement error
 COPY beast_two FROM '${__TEST_DIR__}/semicolon_header.csv' (FORMAT csv);
 ----
-db error: ERROR: CSV Error on Line: 1
-Original Line: mr;beast
-Expected Number of Columns: 2 Found: 1
+db error: ERROR: Error when sniffing file "<slt:ignore>/semicolon_header.csv".
+It was not possible to automatically detect the CSV parsing dialect
 <slt:ignore>
 
 

@@ -100,13 +100,13 @@ QUERY PLAN
 ╭─ PROJECTION ───────╮
 │ Projections: name, │
 │              id    │
-│ ~42 rows           │
+│ ~4 rows            │
 ╰──────────┬─────────╯
 ╭─ READ_CSV ─────────╮
 │ Function: READ_CSV │
 │ Projections: id,   │
 │              name  │
-│ ~42 rows           │
+│ ~4 rows            │
 ╰────────────────────╯
 
 

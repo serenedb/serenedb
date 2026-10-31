@@ -70,7 +70,7 @@ constexpr double kUntrainedGain = 0.02;
 constexpr double kFsstPreference = 0.05;
 
 constexpr uint8_t kLz4Fast = 1;
-constexpr uint8_t kRefreshLz4Levels[] = {1, 4};
+constexpr uint8_t kRefreshLz4Levels[] = {1};
 constexpr uint8_t kLz4Levels[] = {1, 4, 6};
 constexpr uint8_t kZxcLevels[] = {1, 3};
 constexpr uint8_t kNoLevel[] = {0};

@@ -1465,6 +1465,25 @@ bigint	bigint	bigint	text
 bigint	bigint	bigint	text
 
 statement ok
+CREATE FUNCTION mn_wsum(x bigint) RETURNS bigint LANGUAGE sql RETURN sum(x)
+
+query
+SELECT mn_pick(mn_wsum(i) OVER ()) AS b FROM range(2) t(i)
+----
+b
+bigint
+bigint
+
+statement error
+SELECT mn_pick(sum(i) OVER ()) FROM range(2) t(i)
+----
+db error: ERROR: Macro mn_pick() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	mn_pick(t BIGINT)
+	mn_pick(t VARCHAR)
+
+
+statement ok
 CREATE MACRO mn_mix2(x, y) AS x + x - x + y
 
 query
@@ -1637,6 +1656,9 @@ DROP MACRO mn_mix2
 
 statement ok
 DROP MACRO mn_pick
+
+statement ok
+DROP FUNCTION mn_wsum
 
 statement ok
 DROP MACRO mn_body_max

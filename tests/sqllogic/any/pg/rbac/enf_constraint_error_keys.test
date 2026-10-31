@@ -1,0 +1,236 @@
+statement ok
+DROP TABLE IF EXISTS ecek_clickclack;
+
+
+statement ok
+DROP TABLE IF EXISTS ecek_mop;
+
+
+statement ok
+DROP TABLE IF EXISTS ecek_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS ecek_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ecek_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS ecek_kostya;
+
+
+statement ok
+CREATE TABLE ecek_iceberg (a int, b int, UNIQUE (a, b));
+
+
+statement ok
+INSERT INTO ecek_iceberg VALUES (1, 4242), (2, 4242);
+
+
+statement ok
+CREATE TABLE ecek_mop (id int PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE ecek_clickclack (mop_id int REFERENCES ecek_mop (id));
+
+
+statement ok
+INSERT INTO ecek_mop VALUES (7);
+
+
+statement ok
+INSERT INTO ecek_clickclack VALUES (7);
+
+
+statement ok
+CREATE ROLE ecek_vedernikoff;
+
+
+statement ok
+CREATE ROLE ecek_babsky;
+
+
+statement ok
+CREATE ROLE ecek_kostya;
+
+
+statement ok
+GRANT UPDATE (a) ON ecek_iceberg TO ecek_vedernikoff;
+
+
+statement ok
+GRANT DELETE ON ecek_mop TO ecek_vedernikoff;
+
+
+statement ok
+GRANT INSERT ON ecek_clickclack TO ecek_vedernikoff;
+
+
+statement ok
+GRANT SELECT, UPDATE ON ecek_iceberg TO ecek_babsky;
+
+
+statement ok
+GRANT SELECT (a, b), UPDATE (a) ON ecek_iceberg TO ecek_kostya;
+
+
+statement ok
+SET ROLE ecek_vedernikoff;
+
+
+skipif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_iceberg_a_b_key"
+
+
+onlyif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key
+
+
+statement ok
+PREPARE ecek_update AS UPDATE ecek_iceberg SET a = 1;
+
+
+skipif serenedb
+statement error
+EXECUTE ecek_update;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_iceberg_a_b_key"
+
+
+onlyif serenedb
+statement error
+EXECUTE ecek_update;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key
+
+
+skipif serenedb
+statement error
+EXECUTE ecek_update;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_iceberg_a_b_key"
+
+
+onlyif serenedb
+statement error
+EXECUTE ecek_update;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key
+
+
+statement ok
+DEALLOCATE ecek_update;
+
+
+skipif serenedb
+statement error
+DELETE FROM ecek_mop;
+----
+db error: ERROR: update or delete on table "ecek_mop" violates foreign key constraint "ecek_clickclack_mop_id_fkey" on table "ecek_clickclack"
+DETAIL: Key is still referenced from table "ecek_clickclack".
+
+
+onlyif serenedb
+statement error
+DELETE FROM ecek_mop;
+----
+db error: ERROR: Violates foreign key constraint because a key is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation
+
+
+skipif serenedb
+statement error
+INSERT INTO ecek_clickclack VALUES (8);
+----
+db error: ERROR: insert or update on table "ecek_clickclack" violates foreign key constraint "ecek_clickclack_mop_id_fkey"
+DETAIL: Key is not present in table "ecek_mop".
+
+
+onlyif serenedb
+statement error
+INSERT INTO ecek_clickclack VALUES (8);
+----
+db error: ERROR: Violates foreign key constraint because a key does not exist in the referenced table
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE ecek_babsky;
+
+
+skipif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_iceberg_a_b_key"
+DETAIL: Key (a, b)=(1, 4242) already exists.
+
+
+onlyif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1, 4242"
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE ecek_kostya;
+
+
+skipif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_iceberg_a_b_key"
+DETAIL: Key (a, b)=(1, 4242) already exists.
+
+
+onlyif serenedb
+statement error
+UPDATE ecek_iceberg SET a = 1;
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1, 4242"
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE ecek_clickclack;
+
+
+statement ok
+DROP TABLE ecek_mop;
+
+
+statement ok
+DROP TABLE ecek_iceberg;
+
+
+statement ok
+DROP ROLE ecek_vedernikoff;
+
+
+statement ok
+DROP ROLE ecek_babsky;
+
+
+statement ok
+DROP ROLE ecek_kostya;

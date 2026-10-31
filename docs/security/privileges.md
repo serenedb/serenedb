@@ -111,6 +111,7 @@ Listings and error messages show a role only the objects it may use:
 - An error about a column of a table or view the role cannot see reports `permission denied` for that table or view instead, so errors never list its columns.
 - `PRAGMA table_info` and `pragma_table_info()` describe a table or view only to a role that could see it in those listings, and report `permission denied` for it to any other role.
 - `DESCRIBE` needs the privileges its query needs to run: `DESCRIBE t` needs `SELECT` on every column of `t`, as `SELECT * FROM t` does.
+- A primary key, unique or foreign key violation names the offending key only to a role that may read every indexed column of the table the statement writes; any other role gets the same error without the key, for example `PRIMARY KEY or UNIQUE constraint violation: duplicate key`.
 - A database-wide `VACUUM` warns only about the tables the role can see when it skips them.
 
 ## Superuser-only operations

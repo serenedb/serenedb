@@ -1,0 +1,172 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS eisr_vedernikoff;
+
+
+statement ok
+CREATE ROLE eisr_vedernikoff LOGIN PASSWORD 'eisr_pw';
+
+
+statement ok
+CREATE DATABASE eisr_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eisr_other_${__DATABASE__}.public.eisr_remote (a integer);
+
+
+statement ok
+INSERT INTO eisr_other_${__DATABASE__}.public.eisr_remote VALUES (1);
+
+
+statement ok
+CREATE INDEX eisr_remote_i ON eisr_other_${__DATABASE__}.public.eisr_remote (a);
+
+
+statement ok
+GRANT SELECT ON eisr_other_${__DATABASE__}.public.eisr_remote TO eisr_vedernikoff;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE eisr_other_${__DATABASE__} FROM PUBLIC;
+
+
+statement ok
+CREATE SCHEMA eisr_hidden;
+
+
+statement ok
+CREATE TABLE eisr_hidden.eisr_tucked (a integer);
+
+
+statement ok
+INSERT INTO eisr_hidden.eisr_tucked VALUES (2);
+
+
+statement ok
+CREATE INDEX eisr_tucked_i ON eisr_hidden.eisr_tucked (a);
+
+
+statement ok
+GRANT SELECT ON eisr_hidden.eisr_tucked TO eisr_vedernikoff;
+
+
+statement ok
+CREATE TABLE eisr_hidden.eisr_docs (body text);
+
+
+statement ok
+INSERT INTO eisr_hidden.eisr_docs VALUES ('tucked away');
+
+
+statement ok
+CREATE INDEX eisr_docs_i ON eisr_hidden.eisr_docs USING inverted (body);
+
+
+statement ok
+GRANT SELECT ON eisr_hidden.eisr_docs TO eisr_vedernikoff;
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT a FROM seq_scan('eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i');
+----
+db error: ERROR: permission denied for database "eisr_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT a FROM seq_scan('${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i');
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement ok
+SET search_path TO eisr_hidden, public;
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT a FROM eisr_tucked_i;
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT body FROM eisr_docs_i;
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement ok
+RESET search_path;
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+PRAGMA table_info('eisr_hidden.eisr_tucked');
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT column_name FROM pragma_show('eisr_hidden.eisr_tucked');
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+statement error
+SELECT index_key({'catalog': '${__DATABASE__}', 'schema': 'eisr_hidden', 'table': 'eisr_tucked'}, 'eisr_tucked_i', 2);
+----
+db error: ERROR: permission denied for schema eisr_hidden
+
+
+statement ok
+GRANT USAGE ON SCHEMA eisr_hidden TO eisr_vedernikoff;
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+query
+SELECT a FROM seq_scan('${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i');
+----
+a
+2
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+query
+SELECT column_name FROM pragma_show('eisr_hidden.eisr_tucked');
+----
+column_name
+a
+
+
+statement ok
+GRANT CONNECT ON DATABASE eisr_other_${__DATABASE__} TO eisr_vedernikoff;
+
+
+connection c_ved user=eisr_vedernikoff password=eisr_pw
+query
+SELECT a FROM seq_scan('eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i');
+----
+a
+1
+
+
+statement ok
+DROP DATABASE eisr_other_${__DATABASE__};
+
+
+statement ok
+DROP SCHEMA eisr_hidden CASCADE;
+
+
+statement ok
+DROP ROLE eisr_vedernikoff;

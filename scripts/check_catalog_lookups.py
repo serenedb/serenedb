@@ -5,6 +5,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLANNER = "third_party/duckdb/src/planner"
+FUNCTIONS = "third_party/duckdb/src/function"
+EXTENSIONS = "third_party/duckdb/extension"
 SERVER = "server"
 DIRECT_LOOKUP = re.compile(r"Catalog::(?:GetEntry(?:<[\w:]+>)?|GetSchema)\(\s*([^,()]*)")
 ROUTED_ARGUMENTS = frozenset({"retriever", "entry_retriever"})
@@ -33,6 +35,13 @@ ALLOWED = {
     f"{PLANNER}/operator/logical_merge_into.cpp": 1,
     f"{PLANNER}/operator/logical_update.cpp": 1,
     f"{PLANNER}/statement_preprocessor.cpp": 2,
+    f"{FUNCTIONS}/aggregate/distributive/minmax.cpp": 1,
+    f"{FUNCTIONS}/scalar/sequence/nextval.cpp": 1,
+    f"{FUNCTIONS}/table/system/pragma_storage_info.cpp": 3,
+    f"{FUNCTIONS}/table/system/pragma_table_sample.cpp": 1,
+    f"{FUNCTIONS}/table/table_scan.cpp": 3,
+    f"{EXTENSIONS}/core_functions/aggregate/distributive/sum.cpp": 1,
+    f"{EXTENSIONS}/core_functions/scalar/generic/system_functions.cpp": 3,
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
     f"{SERVER}/connector/duckdb_physical_create_index.cpp": 1,
     f"{SERVER}/connector/functions/jobs.cpp": 1,
@@ -49,6 +58,10 @@ ALLOWED = {
 }
 ROUTE = {
     PLANNER: "resolve names through the binder's entry_retriever",
+    FUNCTIONS: "resolve a name the function takes through its input's binder, or pass the entry it found to "
+    "Binder::RegisterEntryRead",
+    EXTENSIONS: "resolve a name the function takes through its input's binder, or pass the entry it found to "
+    "Binder::RegisterEntryRead",
     SERVER: "resolve a name the client wrote through a binder's entry_retriever, or auth::Lookup outside a binder",
 }
 

@@ -344,7 +344,8 @@ void BM_Merge(benchmark::State& state) {
     [next = std::make_shared<std::atomic<irs::field_id>>(1000)](irs::field_id) {
       return next->fetch_add(1);
     },
-    DEFAULT_ROW_GROUP_SIZE};
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SortSpec spec{{{.column = kKey}}};
   ThreadedExecutor threaded{threads};
   sdb::search::PipelineMergeExecutor piped{

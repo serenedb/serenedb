@@ -278,8 +278,8 @@ void MakeSegDirectory(ColSeg& seg, const ColArm& arm) {
 }
 
 void OpenReader(ColSeg& seg) {
-  seg.reader =
-    std::make_unique<irs::ColReader>(*seg.dir, std::string{kSeg}, CsDb());
+  seg.reader = std::make_unique<irs::ColReader>(*seg.dir, std::string{kSeg},
+                                                CsDb(), irs::IOAdvice::RANDOM);
   seg.col = seg.reader->Column(kField);
   if (seg.col == nullptr) {
     std::fprintf(stderr, "col_codecs_real: column missing\n");
@@ -327,7 +327,7 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
   w.Commit(pos);
   if (std::getenv("SDB_BENCH_BREAKDOWN") &&
       data.type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::NORMAL);
+    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
     std::vector<uint8_t> file(in->Length());
     in->ReadData(file.data(), file.size());
     uint64_t parts[8]{};
@@ -367,7 +367,7 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(dictionaries));
   }
   if (std::getenv("SDB_BENCH_HASH")) {
-    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::NORMAL);
+    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
     std::vector<uint8_t> file(in->Length());
     in->ReadData(file.data(), file.size());
     uint64_t hash = 0xcbf29ce484222325ULL;

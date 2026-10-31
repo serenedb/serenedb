@@ -188,8 +188,8 @@ const Seg& GetSeg(Corpus corpus, size_t arm) {
     slot->rows = Rows();
     slot->dir = MakeSegDirectory(corpus, arm);
     slot->bytes = Build(*slot->dir, corpus, kArms[arm], slot->rows);
-    slot->reader =
-      std::make_unique<irs::ColReader>(*slot->dir, std::string{kSeg}, CsDb());
+    slot->reader = std::make_unique<irs::ColReader>(
+      *slot->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::RANDOM);
     slot->col = slot->reader->Column(kField);
     if (slot->col == nullptr) {
       std::fprintf(stderr, "col_codecs: column missing\n");

@@ -328,11 +328,15 @@ void SereneDBClientState::TransactionRollback(
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   if (context.transaction.HasActiveTransaction()) {
-    auto& cluster = catalog::ClusterOf(*context.db);
-    if (duckdb::MetaTransaction::Get(context).ModifiedDatabase().get() ==
-        &cluster.GetAttached()) {
-      context.InstallSecurity(
-        auth::BuildRoleGraph(cluster, cluster.GetCatalogTransaction(context)));
+    auto& meta = duckdb::MetaTransaction::Get(context);
+    if (meta.ModifiedDatabase()) {
+      if (auto attached = meta.GetReferencedDatabase(
+            duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName});
+          attached && !meta.GetTransaction(*attached).IsReadOnly()) {
+        auto& cluster = attached->GetCatalog().Cast<catalog::ClusterCatalog>();
+        context.InstallSecurity(auth::BuildRoleGraph(
+          cluster, cluster.GetCatalogTransaction(context)));
+      }
     }
   }
   _connection_ctx->OnStatementBegin();

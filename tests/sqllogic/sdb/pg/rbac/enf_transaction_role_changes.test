@@ -1,0 +1,113 @@
+statement ok
+DROP ROLE IF EXISTS etrc_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS etrc_readers;
+
+
+statement ok
+CREATE ROLE etrc_readers;
+
+
+statement ok
+CREATE ROLE etrc_vedernikoff;
+
+
+statement ok
+GRANT etrc_readers TO etrc_vedernikoff;
+
+
+statement ok
+CREATE TABLE etrc_secret (a integer);
+
+
+statement ok
+GRANT SELECT ON etrc_secret TO etrc_readers;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE etrc_scratch (a integer);
+
+
+statement ok
+REVOKE etrc_readers FROM etrc_vedernikoff;
+
+
+statement ok
+SET ROLE etrc_vedernikoff;
+
+
+statement error
+SELECT * FROM etrc_secret;
+----
+db error: ERROR: permission denied for table etrc_secret
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+REVOKE etrc_readers FROM etrc_vedernikoff;
+
+
+statement ok
+CREATE TABLE etrc_scratch (a integer);
+
+
+statement ok
+SET ROLE etrc_vedernikoff;
+
+
+statement error
+SELECT * FROM etrc_secret;
+----
+db error: ERROR: permission denied for table etrc_secret
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE etrc_vedernikoff;
+
+
+query
+SELECT count(*) AS n FROM etrc_secret;
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP TABLE etrc_secret;
+
+
+statement ok
+DROP ROLE etrc_vedernikoff;
+
+
+statement ok
+DROP ROLE etrc_readers;

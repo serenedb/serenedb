@@ -43,6 +43,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/blocking_once.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -114,16 +115,12 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
 
-  static constexpr uint8_t kUnprepared = 0;
-  static constexpr uint8_t kPreparing = 1;
-  static constexpr uint8_t kReady = 2;
-
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
-  std::atomic_uint8_t prepare{kUnprepared};
+  irs::BlockingOnce prepare;
   std::unique_ptr<OrderedUnits> ordered;
 };
 
@@ -235,6 +232,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t thread_slots{0};
 
   bool stats_stage = false;
+  uint32_t head_prefetch_min = 0;
   std::atomic_uint32_t prepare_next{0};
   ScanBarrier stats_barrier;
 

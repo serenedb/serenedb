@@ -36,8 +36,7 @@ Root::ptr MakeConstant(uint64_t count);
 
 Root::ptr MakeAllCount(doc_id_t count);
 
-Root::ptr MakeTermCount(const detail::PostingClause& posting,
-                        const Context& ctx);
+Root::ptr MakeTermCount(const detail::PostingClause& posting);
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
 

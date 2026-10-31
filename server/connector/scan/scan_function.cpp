@@ -332,6 +332,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
+    if (state->remote) {
+      state->head_prefetch_min = 2;
+    }
     BuildClaimPlan(*state, context);
     return state;
   }
@@ -347,6 +350,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     state->stats_stage =
       state->scorer_obj && state->total_segments != 0 && !ss.score.vector;
+  }
+  if (state->remote && state->stats_stage) {
+    state->head_prefetch_min = 1;
   }
 
   if (state->shape == ScanShape::TopK) {

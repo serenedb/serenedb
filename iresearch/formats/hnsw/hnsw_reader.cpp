@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <limits>
 #include <span>
 #include <utility>
@@ -54,11 +53,7 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 std::shared_ptr<const HnswData> HnswIndex::Load(
   const SubReader& segment) const {
-  if (_loaded.load(std::memory_order_acquire)) {
-    return _data;
-  }
-  duckdb::TaskScheduler::BlockingScope blocking;
-  absl::call_once(_once, [&] {
+  _load.Call([&] {
     const auto* file = segment.AnnFile();
     if (!file) {
       return;
@@ -121,7 +116,6 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     }
     _data = std::move(data);
   });
-  _loaded.store(true, std::memory_order_release);
   return _data;
 }
 

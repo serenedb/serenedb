@@ -21,7 +21,6 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <utility>
@@ -34,6 +33,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs {
@@ -80,7 +80,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
-  mutable absl::once_flag _distance_prepared;
+  mutable BlockingOnce _distance_prepared;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   QueryBuilder::ptr _index_only;

@@ -20,8 +20,6 @@
 
 #include "iresearch/search/detail/term_acceptor.hpp"
 
-#include <absl/base/call_once.h>
-
 #include <algorithm>
 #include <span>
 #include <utility>
@@ -29,6 +27,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -179,7 +178,7 @@ class FuzzySource final : public TermAcceptorSource {
   bool ok() const noexcept final { return true; }
 
   SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
-    absl::call_once(_once, [this] {
+    _once.Call([this] {
       if (_fuzzy->LowerBound().empty()) {
         _dfa = FuzzyConjunction::Make(_fuzzy);
       }
@@ -197,7 +196,7 @@ class FuzzySource final : public TermAcceptorSource {
 
  private:
   std::shared_ptr<const LevenshteinAcceptor> _fuzzy;
-  mutable absl::once_flag _once;
+  mutable BlockingOnce _once;
   mutable std::shared_ptr<const FuzzyConjunction> _dfa;
 };
 

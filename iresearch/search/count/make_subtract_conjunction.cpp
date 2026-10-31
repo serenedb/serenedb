@@ -46,8 +46,7 @@ Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
     return {};
   }
   return memory::make_managed<Subtract>(
-    MakeSum(MakeTermCount(terms.front(), ctx),
-            MakeTermCount(terms.back(), ctx)),
+    MakeSum(MakeTermCount(terms.front()), MakeTermCount(terms.back())),
     std::move(disjunction));
 }
 

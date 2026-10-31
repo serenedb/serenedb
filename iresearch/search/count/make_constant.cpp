@@ -108,21 +108,10 @@ class TermRange : public detail::PostingBatch<InputType, false> {
 
 class TermCount : public Root {
  public:
-  TermCount(const detail::PostingClause& posting, const Context& ctx) noexcept
-    : _posting{posting}, _ctx{ctx} {}
+  explicit TermCount(const detail::PostingClause& posting) noexcept
+    : _posting{posting} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    if (_ctx.table != nullptr) {
-      if (!_exact) {
-        _exact = MakeTermWalk(_posting, _ctx);
-      }
-      return _exact->Run(min, max);
-    }
-    return Count(min, max);
-  }
-
- private:
-  uint64_t Count(doc_id_t min, doc_id_t max) {
     const auto count = _posting.state.cookie.docs_count;
     const bool from_start = min == doc_limits::min();
     const bool to_end = doc_limits::eof(max);
@@ -133,20 +122,13 @@ class TermCount : public Root {
       const auto doc = doc_limits::min() + _posting.state.cookie.doc_delta;
       return min <= doc && doc < max;
     }
-    const auto above = from_start ? count : Rank(min);
-    const auto below = to_end ? 0 : Rank(max);
+    const auto above = from_start ? count : Source().AtLeast(min);
+    const auto below = to_end ? 0 : Source().AtLeast(max);
     SDB_ASSERT(above >= below);
     return above - below;
   }
 
-  uint64_t Rank(doc_id_t doc) {
-    if (doc != _rank_doc) {
-      _rank_doc = doc;
-      _rank = Source().AtLeast(doc);
-    }
-    return _rank;
-  }
-
+ private:
   struct RankSource {
     virtual ~RankSource() = default;
     virtual uint64_t AtLeast(doc_id_t doc) = 0;
@@ -174,11 +156,7 @@ class TermCount : public Root {
   }
 
   detail::PostingClause _posting;
-  Context _ctx;
-  Root::ptr _exact;
   std::unique_ptr<RankSource> _ranks;
-  doc_id_t _rank_doc = doc_limits::invalid();
-  uint64_t _rank = 0;
 };
 
 class AllCount : public Root {
@@ -215,9 +193,8 @@ Root::ptr MakeAllCount(doc_id_t count) {
   return memory::make_managed<AllCount>(count);
 }
 
-Root::ptr MakeTermCount(const detail::PostingClause& posting,
-                        const Context& ctx) {
-  return memory::make_managed<TermCount>(posting, ctx);
+Root::ptr MakeTermCount(const detail::PostingClause& posting) {
+  return memory::make_managed<TermCount>(posting);
 }
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
@@ -228,7 +205,7 @@ Root::ptr Family::MakePosting(const detail::PostingClause& posting,
                               const SubReader&, const Context& ctx,
                               ScoreMergeType) {
   if (ctx.table == nullptr) {
-    return memory::make_managed<TermCount>(posting, ctx);
+    return MakeTermCount(posting);
   }
   return MakeTermWalk(posting, ctx);
 }

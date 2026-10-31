@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
-
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -32,6 +29,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
 
 namespace irs {
@@ -99,8 +97,7 @@ class HnswIndex final : public AnnIndex {
   HnswMeta _meta;
   field_id _field;
   HnswBases* _bases;
-  mutable absl::once_flag _once;
-  mutable std::atomic_bool _loaded{false};
+  mutable BlockingOnce _load;
   mutable std::shared_ptr<const HnswData> _data;
 };
 

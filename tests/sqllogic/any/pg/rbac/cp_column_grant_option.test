@@ -4,16 +4,6 @@
 # the byte-identical storage surface -- attacl::text -- plus the plain
 # has_column_privilege read on each column.
 #
-# SCOPED OUT (SereneDB diverges from PostgreSQL, both column-grant-option
-# *enforcement* gaps -- the attacl storage above is already byte-identical):
-#   1. has_column_privilege(role, t, col, 'SELECT WITH GRANT OPTION') ignores
-#      the stored `r*` star: PG returns t, SereneDB returns f (clickclack here).
-#   2. A grantee holding a column grant WITH GRANT OPTION cannot re-GRANT that
-#      column: PG records a chained grant `cgo_r2=r/cgo_r1`, SereneDB refuses
-#      with "permission denied for table cgo_iceberg". (The WITHOUT-option
-#      re-grant -- PG's "no privileges were granted" warn+no-op -- is therefore
-#      unobservable on SereneDB and is likewise out of scope.)
-#
 # Lore: iceberg is the table (owned by postgres); clickclack/babsky/mop are its
 # columns. cgo_r1 is the option-holding grantee.
 
@@ -61,7 +51,7 @@ mop	(none)
 
 
 # Plain has_column_privilege sees both granted columns; the untouched one is
-# refused. (The 'SELECT WITH GRANT OPTION' mode is scoped out -- see header.)
+# refused.
 query
 SELECT
   has_column_privilege('cgo_r1', 'cgo_iceberg', 'clickclack', 'SELECT') AS cc_sel,

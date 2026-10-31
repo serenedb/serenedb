@@ -1,0 +1,79 @@
+statement ok
+DROP TABLE IF EXISTS cdr_iceberg;
+
+
+statement ok
+DROP ROLE IF EXISTS cdr_babsky;
+
+
+statement ok
+DROP ROLE IF EXISTS cdr_vedernikoff;
+
+
+statement ok
+CREATE TABLE cdr_iceberg (clickclack int, mop int);
+
+
+statement ok
+CREATE ROLE cdr_vedernikoff;
+
+
+statement ok
+CREATE ROLE cdr_babsky;
+
+
+statement ok
+GRANT SELECT (clickclack) ON cdr_iceberg TO cdr_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE cdr_vedernikoff;
+
+
+statement ok
+GRANT SELECT (clickclack) ON cdr_iceberg TO cdr_babsky;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT
+  has_column_privilege('cdr_vedernikoff', 'cdr_iceberg', 'clickclack', 'SELECT WITH GRANT OPTION') AS ved_option,
+  has_column_privilege('cdr_babsky', 'cdr_iceberg', 'clickclack', 'SELECT') AS babsky_select;
+----
+ved_option	babsky_select
+t	t
+
+
+statement error
+REVOKE GRANT OPTION FOR SELECT (clickclack) ON cdr_iceberg FROM cdr_vedernikoff;
+----
+db error: ERROR: dependent privileges exist<slt:ignore>
+
+
+statement ok
+REVOKE GRANT OPTION FOR SELECT (clickclack) ON cdr_iceberg FROM cdr_vedernikoff CASCADE;
+
+
+query
+SELECT
+  has_column_privilege('cdr_vedernikoff', 'cdr_iceberg', 'clickclack', 'SELECT') AS ved_select,
+  has_column_privilege('cdr_vedernikoff', 'cdr_iceberg', 'clickclack', 'SELECT WITH GRANT OPTION') AS ved_option,
+  has_column_privilege('cdr_babsky', 'cdr_iceberg', 'clickclack', 'SELECT') AS babsky_select;
+----
+ved_select	ved_option	babsky_select
+t	f	f
+
+
+statement ok
+DROP TABLE cdr_iceberg;
+
+
+statement ok
+DROP ROLE cdr_babsky;
+
+
+statement ok
+DROP ROLE cdr_vedernikoff;

@@ -51,6 +51,7 @@
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_scan.hpp>
 #include <iresearch/formats/column/codecs/string_writer.hpp>
+#include <iresearch/formats/column/codecs/zstd.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -528,6 +529,37 @@ TEST(PackedReaderTest, SingleValuesMatchUnpackedGroups) {
       ASSERT_EQ(values[i], reader.At(i))
         << "width " << int{width} << ", value " << i;
     }
+  }
+}
+
+TEST(ZstdTest, ShortPeriodRepeatsRoundTrip) {
+  constexpr std::array<size_t, 7> kRepeatBytes{9, 15, 16, 17, 31, 33, 4000};
+  constexpr std::array<uint8_t, 4> kLevels{1, 3, 9, 19};
+  std::mt19937_64 rng{3};
+  std::string raw;
+  for (size_t period = 1; period < 16; ++period) {
+    for (const size_t repeat : kRepeatBytes) {
+      std::string pattern(period, '\0');
+      for (auto& c : pattern) {
+        c = static_cast<char>(rng());
+      }
+      for (size_t i = 0; i < period + repeat; ++i) {
+        raw.push_back(pattern[i % period]);
+      }
+    }
+  }
+  for (const uint8_t level : kLevels) {
+    irs::codecs::Zstd::Compressor compressor;
+    compressor.SetLevel(level);
+    std::string compressed(irs::codecs::Zstd::Bound(raw.size()), '\0');
+    compressed.resize(compressor.Compress(
+      raw.data(), raw.size(), compressed.data(), compressed.size()));
+    irs::codecs::Zstd::Decompressor decompressor;
+    std::string decoded(raw.size(), '\0');
+    ASSERT_TRUE(decompressor.Decompress(compressed.data(), compressed.size(),
+                                        decoded.data(), decoded.size()))
+      << "level " << int{level};
+    EXPECT_EQ(raw, decoded) << "level " << int{level};
   }
 }
 

@@ -109,6 +109,62 @@ DETAIL: User does not have CONNECT privilege.
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
+SELECT * FROM edcp_other_${__DATABASE__}.public.edcp_missing;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+INSERT INTO edcp_other_${__DATABASE__}.public.edcp_missing VALUES (1);
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+ALTER TABLE edcp_other_${__DATABASE__}.public.edcp_missing ADD COLUMN b integer;
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+COMMENT ON TABLE edcp_other_${__DATABASE__}.public.edcp_missing IS 'x';
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+PRAGMA table_info('edcp_other_${__DATABASE__}.public.edcp_missing');
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+SELECT * FROM seq_scan('edcp_other_${__DATABASE__}', 'public', 'edcp_missing');
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
+CREATE TABLE edcp_other_${__DATABASE__}.edcp_missing_schema.edcp_made (a integer);
+----
+db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
+DETAIL: User does not have CONNECT privilege.
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
 CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made (a integer);
 ----
 db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"

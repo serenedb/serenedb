@@ -41,9 +41,9 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server is gated on `CREATE` on the **database**, not on a schema; a server of the `duckdb_fdw` or `serenedb_fdw` wrapper names a server file and can be created only by a superuser.
 
-`CONNECT` on a database is checked when a session connects to it, when `USE` switches to it, and again whenever a statement reads or writes an object of that database by a qualified name, so revoking `CONNECT` also stops access from sessions connected to other databases. `pg_database_size`, `VACUUM` and `REINDEX` need `CONNECT` on the database they work on.
+`CONNECT` on a database is checked when a session connects to it, when `USE`, `SET schema` or `SET search_path` names it, and again whenever a statement reads, creates, changes or drops anything in it, however the statement names the object: by a qualified name, through the search path, or through a function such as `seq_scan`. Revoking `CONNECT` therefore also stops access from sessions connected to other databases, including sessions whose search path already names it, and a name in a database without `CONNECT` reports `permission denied for database` whether or not the object exists. `pg_database_size`, `VACUUM` and `REINDEX` need `CONNECT` on the database they work on.
 
-`TEMPORARY` on the current database lets a role create temporary tables, views, sequences and types, including the temporary type a `PIVOT` without an `IN` list creates. Every role has it unless it is revoked from `PUBLIC`; without it, creating one reports `permission denied to create temporary tables in database "name"`. A temporary object belongs to the role that created it.
+`TEMPORARY` on the database the session is connected to lets a role create temporary tables, views, sequences and types, including the temporary type a `PIVOT` without an `IN` list creates. Every role has it unless it is revoked from `PUBLIC`; without it, creating one reports `permission denied to create temporary tables in database "name"`. A temporary object belongs to the role that created it.
 
 ## Column privileges
 
@@ -130,7 +130,7 @@ A table that has no owner, such as one created by `dbgen`, can be used only by a
 
 - Granting a privilege requires owning the object or holding it `WITH GRANT OPTION`.
 - Superusers bypass all privilege checks.
-- `ALTER DEFAULT PRIVILEGES` sets the privileges that tables, sequences, functions and types created afterwards receive, in every schema or only `IN SCHEMA` one, for the objects of the current role or `FOR ROLE` another.
+- `ALTER DEFAULT PRIVILEGES` sets the privileges that tables, sequences, functions and types created afterwards receive, in every schema or only `IN SCHEMA` one, for the objects of the current role or `FOR ROLE` another. An object created in another database by a qualified name, such as `CREATE SCHEMA other_db.s`, gets the default privileges of the database it is created in.
 
 ## See also
 

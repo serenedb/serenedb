@@ -48,7 +48,10 @@ struct Credential {
   std::optional<ScramVerifier> scram;
   std::optional<std::string> cleartext;
   std::optional<std::string> md5;
+  int64_t valid_until = 0;
 };
+
+bool PasswordExpired(const Credential& credential);
 
 // The storage-decoupled seam. Returning nullopt => no credential for this user
 // => trust (unconfigured-server behavior). The colleague's RBAC provides a real

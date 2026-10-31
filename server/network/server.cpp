@@ -129,13 +129,14 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
     std::string stored;
+    network::Credential credential;
     catalog::ReadRole(username, [&](const catalog::RoleCatalogEntry& role) {
       stored = role.Password();
+      credential.valid_until = role.ValidUntil();
     });
     if (stored.empty()) {
       return std::nullopt;
     }
-    network::Credential credential;
     if (auto verifier = network::ParseScramVerifier(stored)) {
       credential.scram = std::move(*verifier);
     } else if (network::IsMd5Verifier(stored)) {

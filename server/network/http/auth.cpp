@@ -98,13 +98,15 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
         network::ConstantTimeEqual(
           {reinterpret_cast<const uint8_t*>(password.data()), password.size()},
           {reinterpret_cast<const uint8_t*>(expected.data()),
-           expected.size()})) {
+           expected.size()}) &&
+        !network::PasswordExpired(*credential)) {
       return {.context = {.user = std::string{user}}};
     }
     return {.status = HttpStatus::Unauthorized};
   }
   if (credential->scram &&
-      network::VerifyCleartextAgainstScram(*credential->scram, password)) {
+      network::VerifyCleartextAgainstScram(*credential->scram, password) &&
+      !network::PasswordExpired(*credential)) {
     return {.context = {.user = std::string{user}}};
   }
   return {.status = HttpStatus::Unauthorized};

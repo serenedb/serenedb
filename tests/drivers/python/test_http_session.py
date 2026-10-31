@@ -130,6 +130,36 @@ def passwordless_role():
         conn.execute(f"DROP ROLE {PASSWORDLESS}")
 
 
+EXPIRED = "drv_http_session_expired"
+EXPIRED_PASSWORD = "drv-http-session-expired-pw"
+
+
+@pytest.fixture()
+def expired_role():
+    database = conn_kwargs()["dbname"]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"DROP ROLE IF EXISTS {EXPIRED}")
+        conn.execute(
+            f"CREATE ROLE {EXPIRED} LOGIN PASSWORD '{EXPIRED_PASSWORD}' "
+            "VALID UNTIL '2000-01-01 00:00:00+00'"
+        )
+        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {EXPIRED}')
+    yield EXPIRED
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {EXPIRED}')
+        conn.execute(f"DROP ROLE {EXPIRED}")
+
+
+def test_a_password_past_its_valid_until_is_refused(expired_role, http_conn):
+    auth = "Basic " + base64.b64encode(
+        f"{expired_role}:{EXPIRED_PASSWORD}".encode()
+    ).decode()
+    assert session_user(http_conn, auth)[0] == 401
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"ALTER ROLE {expired_role} VALID UNTIL 'infinity'")
+    assert session_user(http_conn, auth) == (200, expired_role)
+
+
 def test_a_passwordless_role_is_not_trusted(passwordless_role, http_conn):
     for password in ("", "anything"):
         auth = "Basic " + base64.b64encode(

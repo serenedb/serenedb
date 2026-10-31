@@ -24,6 +24,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -54,6 +56,11 @@ std::string Md5Hex(std::string_view data) {
 }
 
 }  // namespace
+
+bool PasswordExpired(const Credential& credential) {
+  return credential.valid_until != 0 &&
+         absl::ToUnixMicros(absl::Now()) >= credential.valid_until;
+}
 
 std::optional<std::string> Base64Decode(std::string_view in) {
   std::string out;

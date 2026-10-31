@@ -84,6 +84,8 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_015" />
 
+An argument that is a constant expression takes the place of its parameter as its value, so it can stand where a constant is required, such as in `LIMIT`. Any other argument that the query reads more than once, other than a column or a parameter, is evaluated once for each call.
+
 ### SQL Functions
 
 `CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
@@ -174,13 +176,17 @@ An argument that the expression uses more than once is evaluated once for each r
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_041" />
 
-In a macro, a volatile argument such as `random()` is evaluated at each use; in a function declared with `RETURNS`, a volatile argument used more than once is evaluated once for each row. A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
+A volatile argument such as `random()` or `nextval('s')` is no exception: the expression sees one value of it for each row:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_043" />
+
+A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
 
 In a macro whose body contains a subquery, an aggregate over a parameter aggregates the rows of the subquery it is written in:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_042" />
 
-The argument of such a parameter, and an argument that itself contains a subquery, such as a nested call of the same macro, when the body uses it more than once, is evaluated once for each row of the calling query, as a function argument is, even when the subquery returns no rows. Any other argument is replaced as written, and so is every argument of a call where one argument contains a volatile, aggregate or window function.
+An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`.
 
 ## Limitations
 

@@ -447,9 +447,7 @@ query
 SELECT mn_inc(count(*)) AS r FROM range(3)
 ----
 r
-2
-2
-2
+4
 
 query
 SELECT count(*) AS r FROM range(mn_inc(4))
@@ -494,9 +492,9 @@ query
 SELECT i, mn_shadow(i) AS a, mn_shadow(i + 1) AS b FROM range(3) t(i) ORDER BY i
 ----
 i	a	b
-0	200	202
-1	200	202
-2	200	202
+0	0	2
+1	2	4
+2	4	6
 
 statement ok
 CREATE MACRO mn_below(x) AS (SELECT max(v) + x + x FROM range(4) r(v) WHERE v < x)
@@ -565,7 +563,7 @@ query
 SELECT bool_or(mn_vdiff(random()) <> 0) AS r FROM range(100)
 ----
 r
-t
+f
 
 query
 EXPLAIN SELECT mn_branch(i > 0, i + 1) FROM range(3) t(i)
@@ -870,16 +868,24 @@ i	r
 2	6
 
 query
-SELECT mn_typed_item(sum(i)) AS a, mn_typed((SELECT 2)) AS b FROM range(3) t(i)
+SELECT mn_typed_item(sum(i)::BIGINT) AS a, mn_typed((SELECT 2)) AS b FROM range(3) t(i)
 ----
 a	b
 6	17
+
+statement error
+SELECT mn_typed_item(sum(i)) AS a FROM range(3) t(i)
+----
+db error: ERROR: Macro mn_typed_item() does not support the supplied arguments. You might need to add explicit type casts.
+Candidate macros:
+	mn_typed_item(x BIGINT)
+
 
 statement ok
 CREATE MACRO mn_typed_item2(x BIGINT, y BIGINT) AS (SELECT x + x + y)
 
 query
-SELECT i, mn_typed_item2(i + 1, sum(i)) AS r FROM range(3) t(i) GROUP BY i ORDER BY i
+SELECT i, mn_typed_item2(i + 1, sum(i)::BIGINT) AS r FROM range(3) t(i) GROUP BY i ORDER BY i
 ----
 i	r
 0	2
@@ -1013,11 +1019,11 @@ CREATE MACRO mn_caller(x) AS mn_callee(count(x))
 statement ok
 CREATE OR REPLACE MACRO mn_callee(e) AS (SELECT sum(e) FROM range(2) r(v))
 
-statement error
+query
 SELECT mn_caller(i) AS r FROM range(3) t(i)
 ----
-db error: ERROR: aggregate function calls cannot be nested
-
+r
+6
 
 query
 SELECT i + 1 AS j, j + j AS k, k + 0 AS m FROM (VALUES (1, 100)) t(i, j)
@@ -1364,3 +1370,291 @@ DROP MACRO mn_vs
 
 statement ok
 DROP MACRO mn_va
+
+statement ok
+CREATE MACRO mn_tri(x) AS x + x - x
+
+query
+SELECT bool_and(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(mn_tri(random())))))))))))))))) BETWEEN 0 AND 1) AS r FROM range(10)
+----
+r
+t
+
+statement ok
+CREATE SEQUENCE mn_seq
+
+statement ok
+CREATE MACRO mn_seq_twice(x) AS x + x
+
+query
+SELECT mn_seq_twice(nextval('mn_seq')) AS r FROM range(3) ORDER BY r
+----
+r
+2
+4
+6
+
+query
+SELECT currval('mn_seq') AS r
+----
+r
+3
+
+statement ok
+CREATE MACRO mn_sqtri(x) AS (SELECT x + x - x FROM range(1))
+
+query
+SELECT mn_sqtri(sum(i)) AS a, mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(sum(i))))))))))))) AS b FROM range(4) t(i)
+----
+a	b
+6	6
+
+query
+SELECT i, sum(i) OVER () AS w, mn_sqtri(sum(i) OVER ()) AS m, mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(sum(i) OVER ())))))))))))) AS n FROM range(3) t(i) ORDER BY i
+----
+i	w	m	n
+0	3	3	3
+1	3	3	3
+2	3	3	3
+
+query
+SELECT bool_and(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(mn_sqtri(random())))))))))))) BETWEEN 0 AND 1) AS r FROM range(10)
+----
+r
+t
+
+statement ok
+CREATE MACRO mn_sq_item(y) AS (SELECT y FROM range(1))
+
+query
+SELECT 1 AS k, mn_sq_item(k) AS c, mn_sq_item(k + 1) AS d
+----
+k	c	d
+1	1	2
+
+statement ok
+CREATE TABLE mn_body_t (c INT)
+
+statement ok
+INSERT INTO mn_body_t VALUES (4), (7)
+
+statement ok
+CREATE MACRO mn_body_max(x) AS (SELECT max(x) FROM mn_body_t)
+
+query
+SELECT mn_body_max(c) AS r FROM (SELECT 1 AS c) s
+----
+r
+1
+
+query
+SELECT mn_body_max(c) AS r
+----
+r
+7
+
+
+statement ok
+CREATE MACRO mn_pick(t BIGINT) AS (SELECT 'bigint' WHERE t IS NOT NULL), (t VARCHAR) AS (SELECT 'text' WHERE t IS NOT NULL)
+
+query
+SELECT mn_pick(i) AS a, mn_pick(count(*) OVER ()) AS b, mn_pick(CAST(sum(i) OVER () AS BIGINT)) AS c, mn_pick(i::VARCHAR) AS d FROM range(2) t(i)
+----
+a	b	c	d
+bigint	bigint	bigint	text
+bigint	bigint	bigint	text
+
+statement ok
+CREATE MACRO mn_mix2(x, y) AS x + x - x + y
+
+query
+SELECT mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(mn_mix2(sum(i), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)), count(*)) AS r FROM range(3) t(i)
+----
+r
+51
+
+statement ok
+CREATE MACRO mn_tm0(x) AS TABLE SELECT x AS v
+
+statement ok
+CREATE MACRO mn_tm1(x) AS TABLE SELECT * FROM mn_tm0(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm2(x) AS TABLE SELECT * FROM mn_tm1(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm3(x) AS TABLE SELECT * FROM mn_tm2(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm4(x) AS TABLE SELECT * FROM mn_tm3(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm5(x) AS TABLE SELECT * FROM mn_tm4(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm6(x) AS TABLE SELECT * FROM mn_tm5(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm7(x) AS TABLE SELECT * FROM mn_tm6(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm8(x) AS TABLE SELECT * FROM mn_tm7(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm9(x) AS TABLE SELECT * FROM mn_tm8(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm10(x) AS TABLE SELECT * FROM mn_tm9(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm11(x) AS TABLE SELECT * FROM mn_tm10(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm12(x) AS TABLE SELECT * FROM mn_tm11(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm13(x) AS TABLE SELECT * FROM mn_tm12(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm14(x) AS TABLE SELECT * FROM mn_tm13(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm15(x) AS TABLE SELECT * FROM mn_tm14(x + x - x)
+
+statement ok
+CREATE MACRO mn_tm16(x) AS TABLE SELECT * FROM mn_tm15(x + x - x)
+
+query
+SELECT v FROM mn_tm16(5)
+----
+v
+5
+
+query
+SELECT t.i, m.v FROM range(3) t(i), mn_tm16(t.i) m ORDER BY t.i
+----
+i	v
+0	0
+1	1
+2	2
+
+statement ok
+CREATE TABLE mn_gen_chain (c0 BIGINT, c1 BIGINT GENERATED ALWAYS AS (c0 + c0 - c0), c2 BIGINT GENERATED ALWAYS AS (c1 + c1 - c1), c3 BIGINT GENERATED ALWAYS AS (c2 + c2 - c2), c4 BIGINT GENERATED ALWAYS AS (c3 + c3 - c3), c5 BIGINT GENERATED ALWAYS AS (c4 + c4 - c4), c6 BIGINT GENERATED ALWAYS AS (c5 + c5 - c5), c7 BIGINT GENERATED ALWAYS AS (c6 + c6 - c6), c8 BIGINT GENERATED ALWAYS AS (c7 + c7 - c7), c9 BIGINT GENERATED ALWAYS AS (c8 + c8 - c8), c10 BIGINT GENERATED ALWAYS AS (c9 + c9 - c9), c11 BIGINT GENERATED ALWAYS AS (c10 + c10 - c10), c12 BIGINT GENERATED ALWAYS AS (c11 + c11 - c11), c13 BIGINT GENERATED ALWAYS AS (c12 + c12 - c12), c14 BIGINT GENERATED ALWAYS AS (c13 + c13 - c13), c15 BIGINT GENERATED ALWAYS AS (c14 + c14 - c14), c16 BIGINT GENERATED ALWAYS AS (c15 + c15 - c15))
+
+statement ok
+INSERT INTO mn_gen_chain (c0) VALUES (7)
+
+statement ok
+UPDATE mn_gen_chain SET c0 = 9
+
+query
+SELECT c1, c16 FROM mn_gen_chain
+----
+c1	c16
+9	9
+
+statement ok
+CREATE TABLE mn_gen_stored (c0 BIGINT, c1 BIGINT GENERATED ALWAYS AS (c0 + c0 - c0) STORED, c2 BIGINT GENERATED ALWAYS AS (c1 + c1 - c1) STORED, c3 BIGINT GENERATED ALWAYS AS (c2 + c2 - c2) STORED, c4 BIGINT GENERATED ALWAYS AS (c3 + c3 - c3) STORED, c5 BIGINT GENERATED ALWAYS AS (c4 + c4 - c4) STORED, c6 BIGINT GENERATED ALWAYS AS (c5 + c5 - c5) STORED, c7 BIGINT GENERATED ALWAYS AS (c6 + c6 - c6) STORED, c8 BIGINT GENERATED ALWAYS AS (c7 + c7 - c7) STORED, c9 BIGINT GENERATED ALWAYS AS (c8 + c8 - c8) STORED, c10 BIGINT GENERATED ALWAYS AS (c9 + c9 - c9) STORED, c11 BIGINT GENERATED ALWAYS AS (c10 + c10 - c10) STORED, c12 BIGINT GENERATED ALWAYS AS (c11 + c11 - c11) STORED, c13 BIGINT GENERATED ALWAYS AS (c12 + c12 - c12) STORED, c14 BIGINT GENERATED ALWAYS AS (c13 + c13 - c13) STORED, c15 BIGINT GENERATED ALWAYS AS (c14 + c14 - c14) STORED, c16 BIGINT GENERATED ALWAYS AS (c15 + c15 - c15) STORED, CHECK (c16 > 0))
+
+statement ok
+INSERT INTO mn_gen_stored (c0) VALUES (7)
+
+statement error
+INSERT INTO mn_gen_stored (c0) VALUES (-7)
+----
+db error: ERROR: CHECK constraint failed on table "mn_gen_stored" with expression CHECK((c16 > 0))
+
+
+
+statement ok
+UPDATE mn_gen_stored SET c0 = 9
+
+query
+SELECT c1, c16 FROM mn_gen_stored
+----
+c1	c16
+9	9
+
+statement ok
+DROP TABLE mn_gen_stored
+
+statement ok
+DROP TABLE mn_gen_chain
+
+statement ok
+DROP MACRO mn_tm16
+
+statement ok
+DROP MACRO mn_tm15
+
+statement ok
+DROP MACRO mn_tm14
+
+statement ok
+DROP MACRO mn_tm13
+
+statement ok
+DROP MACRO mn_tm12
+
+statement ok
+DROP MACRO mn_tm11
+
+statement ok
+DROP MACRO mn_tm10
+
+statement ok
+DROP MACRO mn_tm9
+
+statement ok
+DROP MACRO mn_tm8
+
+statement ok
+DROP MACRO mn_tm7
+
+statement ok
+DROP MACRO mn_tm6
+
+statement ok
+DROP MACRO mn_tm5
+
+statement ok
+DROP MACRO mn_tm4
+
+statement ok
+DROP MACRO mn_tm3
+
+statement ok
+DROP MACRO mn_tm2
+
+statement ok
+DROP MACRO mn_tm1
+
+statement ok
+DROP MACRO mn_tm0
+
+statement ok
+DROP MACRO mn_mix2
+
+statement ok
+DROP MACRO mn_pick
+
+statement ok
+DROP MACRO mn_body_max
+
+statement ok
+DROP TABLE mn_body_t
+
+statement ok
+DROP MACRO mn_sq_item
+
+statement ok
+DROP MACRO mn_sqtri
+
+statement ok
+DROP MACRO mn_seq_twice
+
+statement ok
+DROP SEQUENCE mn_seq
+
+statement ok
+DROP MACRO mn_tri

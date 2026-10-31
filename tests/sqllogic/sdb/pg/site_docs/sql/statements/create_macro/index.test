@@ -464,6 +464,26 @@ d	result
 2	10
 5	4
 
+# DOCS_TEST: example_043
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE ticket;
+
+statement ok
+CREATE MACRO doubled(x) AS x + x;
+
+query
+SELECT doubled(nextval('ticket')) AS result
+FROM range(3)
+ORDER BY result;
+----
+result
+2
+4
+6
+
 # DOCS_TEST: example_042
 
 # DOCS_TEST_BODY

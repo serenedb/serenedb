@@ -282,6 +282,14 @@ DETAIL: User does not have CONNECT privilege.
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
+SELECT a FROM edcp_remot;
+----
+db error: ERROR: Table with name edcp_remot does not exist!
+Did you mean "pg_description"?
+
+
+connection c_ved user=edcp_vedernikoff password=edcp_pw
+statement error
 CREATE TABLE edcp_made (a integer);
 ----
 db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"

@@ -184,12 +184,6 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
       ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
       ERR_MSG("database \"", target.database, "\" does not exist"));
   }
-  if (!context.CanSeeDatabase(database->GetAttached())) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for database \"", target.database, "\""),
-      ERR_DETAIL("User does not have CONNECT privilege."));
-  }
   target.database_id = database->GetOid();
   target.schema_path = std::move(schema_path);
   auto index_entry = auth::Lookup(

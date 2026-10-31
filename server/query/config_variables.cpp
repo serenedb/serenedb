@@ -291,10 +291,8 @@ void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
 // allow_system_table_mods, debug_discard_caches, wal_consistency_checking.
 void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                       std::string_view detail) {
-  // No connection context means an internal connection (boot, background
-  // work): the server acting on its own behalf, with no role to check.
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (!conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+  if (const auto principal = ctx.principal;
+      !principal || principal->is_superuser) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -367,10 +365,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
   }
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
-  const auto session_role = conn.GetSessionRoleId();
-  const auto roles = auth::RolesOf(&ctx);
-  const auto session = roles->Access(session_role);
-  if (role.oid != session_role && !(session && session->CanSet(role.oid))) {
+  if (!auth::ClosureFor(&ctx, conn.GetSessionRoleId())->CanSet(role.oid)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
@@ -1753,11 +1748,9 @@ std::string_view SettingContext(std::string_view name) {
 }
 
 bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name) {
-  if (!IsSuperuserReadSetting(ctx, name)) {
-    return true;
-  }
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  return !conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser;
+  const auto principal = ctx.principal;
+  return !principal || principal->is_superuser ||
+         !IsSuperuserReadSetting(ctx, name);
 }
 
 namespace {

@@ -136,7 +136,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   void Row(const ProgressSnapshot& s) {
     if (_closure && !_closure->is_superuser) {
       const auto* role = _roles->FindByName(s.user);
-      if (!role || !_closure->MemberOf(role->first)) {
+      if (!role || !_closure->MemberOf(*role)) {
         Emit<kHidden>(s);
         return;
       }

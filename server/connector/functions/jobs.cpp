@@ -206,7 +206,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   absl::flat_hash_set<duckdb::idx_t> databases;
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    databases.insert(database->oid);
+    if (context.CanSeeDatabase(*database)) {
+      databases.insert(database->oid);
+    }
   }
   const auto principal = context.principal;
   for (auto& run : scheduler->GetHistory()) {

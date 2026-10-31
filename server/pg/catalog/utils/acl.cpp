@@ -89,7 +89,7 @@ std::optional<duckdb::idx_t> AclRole(
   const auth::RoleGraph& roles, std::string_view name, bool oids,
   std::optional<irs::pg::SqlErrorData>& error) {
   if (const auto* role = roles.FindByName(name)) {
-    return role->first;
+    return *role;
   }
   if (duckdb::idx_t oid = 0; oids && absl::SimpleAtoi(name, &oid)) {
     return oid;

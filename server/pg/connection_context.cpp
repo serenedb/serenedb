@@ -80,14 +80,11 @@ ConnectionContext::ConnectionContext(
   : Transaction{duckdb_ctx},
     _user{user},
     _system_user{system_user},
-    _database_name{dbname},
     _database_id{database_id},
     _backend_pid{backend_pid},
     _cancel_registry{cancel_registry},
     _send_buffer{send_buffer},
-    _login_role_id{role_id},
-    _session_role_id{role_id},
-    _effective_role_id{role_id} {
+    _login_role_id{role_id} {
   duckdb_ctx.session_user = user;
   duckdb_ctx.session_role = role_id;
   duckdb_ctx.client_data->default_database = duckdb::Identifier{dbname};
@@ -105,12 +102,12 @@ std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
 }  // namespace
 
 std::string ConnectionContext::EffectiveUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), _effective_role_id,
-                  _user);
+  return RoleName(*auth::RolesOf(&GetClientContext()), GetRoleId(), _user);
 }
 
 std::string ConnectionContext::SessionUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), _session_role_id, _user);
+  return RoleName(*auth::RolesOf(&GetClientContext()), GetSessionRoleId(),
+                  _user);
 }
 
 void ConnectionContext::PreventInTransactionBlock(

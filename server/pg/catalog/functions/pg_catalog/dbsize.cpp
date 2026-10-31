@@ -364,9 +364,7 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
           principal &&
           !principal->Can(duckdb::CatalogType::DATABASE_ENTRY,
                           entry->permissions, duckdb::AclMode::Connect)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied for database ",
-                                entry->name.GetIdentifierName()));
+        duckdb::ThrowPermissionDenied(*entry);
       }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);

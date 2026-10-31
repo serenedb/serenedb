@@ -58,18 +58,16 @@ using RoleNodes = irs::containers::FlatHashMap<duckdb::idx_t, RoleNode>;
 
 class RoleGraph final : public duckdb::SecuritySnapshot {
  public:
-  using Node = RoleNode;
-
   RoleGraph(RoleNodes nodes, duckdb::vector<Role> closures);
 
-  const Node* Find(duckdb::idx_t role) const {
+  const RoleNode* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
     return it == nodes.end() ? nullptr : &it->second;
   }
 
-  const RoleNodes::value_type* FindByName(std::string_view name) const {
+  const duckdb::idx_t* FindByName(std::string_view name) const {
     const auto it = by_name.find(name);
-    return it == by_name.end() ? nullptr : &*nodes.find(it->second);
+    return it == by_name.end() ? nullptr : &it->second;
   }
 
   std::string_view NameOf(duckdb::idx_t role) const {

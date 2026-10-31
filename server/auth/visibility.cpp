@@ -32,7 +32,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <string_view>
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -63,15 +62,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindServer(
 }
 
 bool CanUseDatabase(duckdb::ClientContext& context,
-                    const duckdb::RoleAccess& closure, std::string_view name) {
-  if (name ==
+                    const duckdb::RoleAccess& closure,
+                    const duckdb::Identifier& name) {
+  if (name.GetIdentifierName() ==
       duckdb::ClientData::Get(context).default_database.GetIdentifierName()) {
     return true;
   }
   auto& cluster = catalog::ClusterOf(context);
   auto database = cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY)
-                    .GetEntry(cluster.GetCatalogTransaction(context),
-                              duckdb::Identifier{name});
+                    .GetEntry(cluster.GetCatalogTransaction(context), name);
   return !database || closure.Can(CatalogType::DATABASE_ENTRY,
                                   database->permissions, AclMode::Connect);
 }
@@ -81,8 +80,7 @@ bool DatabaseVisible(duckdb::ClientContext& context,
                      duckdb::AttachedDatabase& database) {
   const auto type = database.GetCatalog().GetCatalogType();
   if (type == catalog::SereneDBCatalog::kStorageType) {
-    return CanUseDatabase(context, closure,
-                          database.GetName().GetIdentifierName());
+    return CanUseDatabase(context, closure, database.GetName());
   }
   if (type == catalog::ClusterCatalog::kStorageType || database.IsSystem() ||
       database.IsTemporary()) {
@@ -97,12 +95,7 @@ bool EntryVisible(duckdb::ClientContext& context,
                   const duckdb::RoleAccess& closure,
                   duckdb::CatalogEntry& entry) {
   if (entry.type == CatalogType::DATABASE_ENTRY) {
-    return CanUseDatabase(context, closure, entry.name.GetIdentifierName());
-  }
-  auto& parent = entry.ParentCatalog();
-  if (parent.GetCatalogType() != catalog::ClusterCatalog::kStorageType &&
-      !DatabaseVisible(context, closure, parent.GetAttached())) {
-    return false;
+    return CanUseDatabase(context, closure, entry.name);
   }
   if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
        entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&

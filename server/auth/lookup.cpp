@@ -20,16 +20,20 @@
 
 #include "auth/lookup.h"
 
-#include <duckdb/planner/binder.hpp>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 
 namespace sdb::auth {
 
 duckdb::optional_ptr<duckdb::CatalogEntry> Lookup(
   duckdb::ClientContext& context, const duckdb::EntryLookupInfo& lookup,
   duckdb::OnEntryNotFound if_not_found) {
-  auto binder = duckdb::Binder::CreateBinder(context);
-  binder->SetPrincipal(context.principal);
-  return binder->EntryRetriever().GetEntry(lookup, if_not_found);
+  duckdb::CatalogEntryRetriever retriever{context};
+  retriever.SetPrincipal(context.principal);
+  retriever.SetCallback([&context](duckdb::CatalogEntry& entry) {
+    context.CheckDatabaseReference(entry.ParentCatalog());
+  });
+  return retriever.GetEntry(lookup, if_not_found);
 }
 
 }  // namespace sdb::auth

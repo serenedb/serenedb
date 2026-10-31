@@ -87,6 +87,52 @@ RESET ROLE;
 
 
 statement ok
+BEGIN;
+
+
+statement ok
+REVOKE etrc_readers FROM etrc_vedernikoff;
+
+
+statement ok
+SET ROLE etrc_vedernikoff;
+
+
+query
+SELECT has_table_privilege('etrc_secret', 'SELECT') AS can_read;
+----
+can_read
+f
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT etrc_readers TO etrc_vedernikoff;
+
+
+statement ok
+SET ROLE etrc_vedernikoff;
+
+
+query
+SELECT count(*) AS n FROM etrc_secret;
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
 SET ROLE etrc_vedernikoff;
 
 

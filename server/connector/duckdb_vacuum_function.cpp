@@ -225,11 +225,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
-  if (!context.CanSeeDatabase(found->GetAttached())) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for database \"", name, "\""),
-                    ERR_DETAIL("User does not have CONNECT privilege."));
-  }
+  context.CheckDatabaseReference(*found);
   return *found;
 }
 

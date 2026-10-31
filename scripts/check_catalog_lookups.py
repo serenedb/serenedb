@@ -37,8 +37,6 @@ ALLOWED = {
     f"{PLANNER}/statement_preprocessor.cpp": 2,
     f"{FUNCTIONS}/aggregate/distributive/minmax.cpp": 1,
     f"{FUNCTIONS}/scalar/sequence/nextval.cpp": 1,
-    f"{FUNCTIONS}/table/system/pragma_storage_info.cpp": 3,
-    f"{FUNCTIONS}/table/system/pragma_table_sample.cpp": 1,
     f"{FUNCTIONS}/table/table_scan.cpp": 3,
     f"{EXTENSIONS}/core_functions/aggregate/distributive/sum.cpp": 1,
     f"{EXTENSIONS}/core_functions/scalar/generic/system_functions.cpp": 3,
@@ -58,10 +56,8 @@ ALLOWED = {
 }
 ROUTE = {
     PLANNER: "resolve names through the binder's entry_retriever",
-    FUNCTIONS: "resolve a name the function takes through its input's binder, or pass the entry it found to "
-    "Binder::RegisterEntryRead",
-    EXTENSIONS: "resolve a name the function takes through its input's binder, or pass the entry it found to "
-    "Binder::RegisterEntryRead",
+    FUNCTIONS: "resolve a name the function takes through its input's binder",
+    EXTENSIONS: "resolve a name the function takes through its input's binder",
     SERVER: "resolve a name the client wrote through a binder's entry_retriever, or auth::Lookup outside a binder",
 }
 

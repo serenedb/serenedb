@@ -116,8 +116,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
   const Session& session, std::string_view name) {
   auto schema = LookupSchema(session, name);
   if (schema && !duckdb::CanUseSchema(session.context->principal, *schema)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for schema ", name));
+    duckdb::ThrowPermissionDenied(*schema);
   }
   return schema;
 }
@@ -1579,7 +1578,7 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
   }
   const auto graph = auth::RolesOf(session.context);
   if (const auto* role = graph->FindByName(*name)) {
-    return role->first;
+    return *role;
   }
   return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

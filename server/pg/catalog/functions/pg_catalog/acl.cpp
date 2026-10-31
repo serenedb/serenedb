@@ -381,7 +381,7 @@ AclMode RelationRights(const Relation& relation) {
 duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
                            std::string_view name) {
   if (const auto* role = roles.FindByName(name)) {
-    return role->first;
+    return *role;
   }
   ThrowUndefinedObject("role", name);
 }
@@ -930,7 +930,7 @@ template<typename F>
 class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
   explicit PrivilegeCheck(duckdb::ClientContext& context)
-    : _context{context}, _scope{F::Begin(context)} {}
+    : _scope{F::Begin(context)} {}
 
   PrivilegeCheck& ForChunk() {
     _named.reset();
@@ -939,9 +939,15 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   }
 
   void Prefetch(duckdb::Vector& oids) {
-    if constexpr (std::is_base_of_v<Session, typename F::Scope>) {
+    if constexpr (std::is_base_of_v<RelationPrivileges<F>, F> ||
+                  std::is_same_v<F, FunctionPrivileges> ||
+                  std::is_same_v<F, TypePrivileges> ||
+                  std::is_same_v<F, ServerPrivileges>) {
       const Session& session = _scope;
       session.prefetched_oids.clear();
+      if (oids.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
+        return;
+      }
       for (const auto oid : oids.ValidValues<int64_t>()) {
         session.prefetched_oids.push_back(
           static_cast<duckdb::idx_t>(oid.GetValue()));
@@ -986,11 +992,6 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     typename F::Modes modes;
   };
 
-  struct RoleClosureOf {
-    duckdb::idx_t role;
-    auth::RoleAccessRef closure;
-  };
-
   const typename F::Modes& Modes(duckdb::string_t text) {
     if (!_modes || text != _modes->text) {
       _modes = ParsedModes{.text = text, .modes = F::Parse(AsView(text))};
@@ -1000,17 +1001,16 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
 
   const auth::RoleClosure& Closure(duckdb::idx_t role) {
     if (!_closure || role != _closure->role) {
-      _closure = RoleClosureOf{.role = role,
-                               .closure = auth::ClosureFor(&_context, role)};
+      const auto access = _scope.roles->Access(role);
+      _closure = access ? *access : auth::RoleClosure{.role = role};
     }
-    return *_closure->closure;
+    return *_closure;
   }
 
-  duckdb::ClientContext& _context;
   typename F::Scope _scope;
   std::optional<NamedRole> _named;
   std::optional<ParsedModes> _modes;
-  std::optional<RoleClosureOf> _closure;
+  std::optional<auth::RoleClosure> _closure;
 };
 
 template<typename F>

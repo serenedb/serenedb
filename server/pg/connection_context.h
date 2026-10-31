@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
 #include <memory>
 #include <string_view>
@@ -100,15 +101,19 @@ class ConnectionContext final : public query::Transaction {
 
   const std::string& user() const { return _user; }
   const std::string& SystemUser() const { return _system_user; }
-  const std::string& GetDatabase() const { return _database_name; }
+  const std::string& GetDatabase() const {
+    return GetClientContext().client_data->default_database.GetIdentifierName();
+  }
   duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  duckdb::idx_t GetRoleId() const { return _effective_role_id; }
+  duckdb::idx_t GetRoleId() const { return GetClientContext().principal_role; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
-  duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
+  duckdb::idx_t GetSessionRoleId() const {
+    return GetClientContext().session_role;
+  }
 
   std::string EffectiveUserName() const;
   std::string SessionUserName() const;
@@ -118,17 +123,14 @@ class ConnectionContext final : public query::Transaction {
   // restore the login role. Whether SHOW role reports 'none' vs a name is
   // carried by the `role` GUC's own value, not tracked here.
   void SetEffectiveRole(duckdb::idx_t role) {
-    _effective_role_id = role;
     GetClientContext().SetPrincipalRole(role);
     GetClientContext().session_user = EffectiveUserName();
   }
   void SetSessionRole(duckdb::idx_t role) {
-    _session_role_id = role;
     GetClientContext().session_role = role;
     SetEffectiveRole(role);
   }
   void ResetIdentity() {
-    _session_role_id = _login_role_id;
     GetClientContext().session_role = _login_role_id;
     SetEffectiveRole(_login_role_id);
   }
@@ -186,14 +188,11 @@ class ConnectionContext final : public query::Transaction {
 
   const std::string _user;
   const std::string _system_user;
-  const std::string _database_name;
   const duckdb::idx_t _database_id;
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
   const duckdb::idx_t _login_role_id;
-  duckdb::idx_t _session_role_id;
-  duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};

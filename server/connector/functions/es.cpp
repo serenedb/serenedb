@@ -474,18 +474,16 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  auto table = auth::Lookup(
-    context, duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->SetPrincipal(context.principal);
+  auto table = binder->EntryRetriever().GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  if (const auto principal = context.principal;
-      principal && !principal->Owns(table->permissions.owner)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("must be owner of table ", data.index));
-  }
+  binder->RequireOwner(*table);
   duckdb::DropInfo drop;
   drop.type = duckdb::CatalogType::TABLE_ENTRY;
   drop.SetQualifiedName(qname);
@@ -1480,8 +1478,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
                       ERR_MSG("no such index [", data.index, "]"));
     }
     if (!may_maintain(*table)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("permission denied for table ", data.index));
+      duckdb::ThrowPermissionDenied(*table);
     }
     refresh_table(*table);
   }

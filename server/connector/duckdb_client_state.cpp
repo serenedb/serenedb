@@ -334,8 +334,13 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
             duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName});
           attached && !meta.GetTransaction(*attached).IsReadOnly()) {
         auto& cluster = attached->GetCatalog().Cast<catalog::ClusterCatalog>();
-        context.InstallSecurity(auth::BuildRoleGraph(
-          cluster, cluster.GetCatalogTransaction(context)));
+        if (const auto version = cluster.GetCatalogVersion(context).GetIndex();
+            !_roles || version != _roles_version) {
+          _roles_version = version;
+          _roles = auth::BuildRoleGraph(cluster,
+                                        cluster.GetCatalogTransaction(context));
+        }
+        context.InstallSecurity(_roles);
       }
     }
   }

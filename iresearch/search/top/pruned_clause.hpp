@@ -37,6 +37,7 @@ struct PrunedClause : memory::Managed {
   virtual score_t MaxScore(doc_id_t last) = 0;
   virtual void FetchScoreArgs(uint32_t slot) = 0;
   virtual ScoreFunction PrepareScore() = 0;
+  virtual uint32_t TakeReads() = 0;
 };
 
 template<typename Leaf>
@@ -61,6 +62,14 @@ class PrunedClauseImpl : public PrunedClause {
       return _leaf.PrepareScore();
     } else {
       return _leaf.PrepareScore(ScoreMergeType::Sum, score_t{0});
+    }
+  }
+
+  uint32_t TakeReads() final {
+    if constexpr (requires { _leaf.TakeReads(); }) {
+      return _leaf.TakeReads();
+    } else {
+      return 0;
     }
   }
 
@@ -93,8 +102,15 @@ class ErasedClause {
 
   ScoreFunction PrepareScore() { return _node->PrepareScore(); }
 
+  uint32_t TakeReads() { return _node->TakeReads(); }
+
  private:
   PrunedClause::ptr _node;
+};
+
+class ErasedProbeClause : public ErasedClause {
+ public:
+  using ErasedClause::ErasedClause;
 };
 
 }  // namespace irs::top

@@ -20,15 +20,14 @@
 
 #pragma once
 
-#include <limits>
 #include <utility>
 
-#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/search/top/phrase_bound.hpp"
 #include "iresearch/search/top/union_member.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,7 +43,9 @@ class PhraseUnionMember : public UnionMember {
   template<typename... Args>
   PhraseUnionMember(const SubReader& segment, const TermReader& field,
                     const irs::detail::ScoreArgs& args, Args&&... slots)
-    : _slots{std::forward<Args>(slots)...}, _fetcher{*args.fetcher} {
+    : _slots{std::forward<Args>(slots)...},
+      _bound{segment, field, args},
+      _fetcher{*args.fetcher} {
     _provider.freq.value = _freqs;
     SDB_ASSERT(args.scorer != nullptr);
     _score = args.scorer->PrepareScorer({
@@ -55,20 +56,9 @@ class PhraseUnionMember : public UnionMember {
       .stats = args.stats,
       .boost = args.boost,
     });
-    if (auto source = args.scorer->PrepareScoreBoundSource()) {
-      _bound_func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
-      _bound_source = std::move(source);
-    }
   }
 
-  bool Bounded() const noexcept { return _bound_source != nullptr; }
+  bool Bounded() const noexcept { return _bound.Bounded(); }
 
   doc_id_t Seek(doc_id_t target) final {
     if (target <= _doc) {
@@ -78,34 +68,11 @@ class PhraseUnionMember : public UnionMember {
   }
 
   doc_id_t AdvanceBlock(doc_id_t target) final {
-    const auto* const index = Index();
-    if (index == nullptr) {
-      return doc_limits::eof();
-    }
-    _block = index->Find(_block, target);
-    return _block < index->Size() ? index->Last(_block) : doc_limits::eof();
+    return _bound.AdvanceBlock(_slots, target);
   }
 
   score_t MaxScore(doc_id_t last) final {
-    const auto* const index = Index();
-    if (index == nullptr) {
-      return std::numeric_limits<score_t>::max();
-    }
-    const auto n = index->Size();
-    const auto end = index->Find(_block, last);
-    score_t best = 0;
-    for (auto k = _block; k < n && k <= end;) {
-      const auto run = k / BlockIndex::kRun;
-      const auto run_end = std::min(n, (run + 1) * BlockIndex::kRun);
-      if (k == run * BlockIndex::kRun && run_end <= end + 1) {
-        best = std::max(best, BoundScore(index->RunBound(run)));
-        k = run_end;
-        continue;
-      }
-      best = std::max(best, BoundScore(index->Bound(k)));
-      ++k;
-    }
-    return best;
+    return _bound.MaxScore(_slots, last);
   }
 
   doc_id_t SkipNonCompetitive(doc_id_t first, doc_id_t, score_t) final {
@@ -177,16 +144,6 @@ class PhraseUnionMember : public UnionMember {
   }
 
  private:
-  const BlockIndex* Index() {
-    auto* const leaf = _bound_source ? _slots.BoundLeaf() : nullptr;
-    return leaf ? leaf->Blocks() : nullptr;
-  }
-
-  score_t BoundScore(BoundPair bound) {
-    _bound_source->Set(_slots.FreqBoundOf(bound.freq), bound.norm);
-    return _bound_func.Score();
-  }
-
   doc_id_t Settle(doc_id_t doc) {
     while (!doc_limits::eof(doc) && !_slots.Match(doc)) {
       doc = _slots.Next(doc);
@@ -209,13 +166,11 @@ class PhraseUnionMember : public UnionMember {
   ABSL_CACHELINE_ALIGNED score_t _scores[kScoreBlock];
   ABSL_CACHELINE_ALIGNED uint32_t _freqs[kScoreBlock];
   Slots _slots;
+  PhraseBound _bound;
   irs::detail::LeafProvider _provider;
   ScoreFunction _score;
-  ScoreFunction _bound_func;
-  ScoreBoundSource::ptr _bound_source;
   ColumnArgsFetcher& _fetcher;
   uint32_t _freq = 0;
-  uint32_t _block = 0;
 };
 
 }  // namespace irs::top

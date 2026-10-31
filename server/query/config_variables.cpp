@@ -1709,6 +1709,7 @@ const duckdb::case_insensitive_set_view_t kSuperuserReadSettings = {
   "extension_directory",
   "extension_repository_directory",
   "file_search_path",
+  "hba",
   "home_directory",
   "http_proxy_password",
   "http_proxy_username",

@@ -143,6 +143,43 @@ db error: ERROR: must be superuser to examine "calendar"
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
+SHOW hba;
+----
+db error: ERROR: must be superuser to examine "hba"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('hba');
+----
+db error: ERROR: must be superuser to examine "hba"
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name = 'hba';
+----
+shown
+0
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name = 'hba';
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name = 'hba';
+----
+shown
+1
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
 SELECT current_setting('http_proxy_password', true);
 ----
 db error: ERROR: must be superuser to examine "http_proxy_password"

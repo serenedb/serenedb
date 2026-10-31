@@ -1,6 +1,7 @@
 # SereneDB PDF readers
 
-SereneDB's Apache-2.0 PDF extension provides `read_pdf` and `read_pdf_blocks`.
+SereneDB's PDF extension provides `read_pdf` and `read_pdf_blocks` under the
+repository's [Apache-2.0 license](../../LICENSE).
 PoDoFo is used under MPL-2.0, and FreeType under the FreeType License.
 Their licenses, attribution, and source references accompany binary releases.
 

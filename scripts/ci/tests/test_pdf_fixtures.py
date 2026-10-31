@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -63,6 +64,45 @@ class FixtureGenerationTest(unittest.TestCase):
         self.scripts[1].write_text("raise SystemExit(1)\n")
         with self.assertRaises(subprocess.CalledProcessError):
             fixture.ensure_fixture()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.output.parent.glob("pdf-fixture-*")), [])
+
+    def test_docker_uses_checkout_image_and_owner(self):
+        run = subprocess.run
+        commands = []
+        image = "serenedb/serenedb-build-ubuntu:012345abcdef"
+
+        def docker(command, **kwargs):
+            commands.append(command)
+            self.assertEqual(command[:3], ["docker", "run", "--rm"])
+            self.assertIn(image, command)
+            self.assertIn("serenedb.owner=pdf-test", command)
+            self.assertIn(f"{fixture.REPO}:{fixture.REPO}", command)
+            return run([sys.executable, *command[-2:]], **kwargs)
+
+        with patch.object(fixture.importlib.util, "find_spec", return_value=None), \
+                patch.object(fixture.shutil, "which", return_value="docker"), \
+                patch.object(fixture.subprocess, "check_output", return_value=image + "\n") as resolve, \
+                patch.object(fixture.subprocess, "run", side_effect=docker), \
+                patch.dict(os.environ, {"SDB_DOCKER_OWNER": "pdf-test", "BUILD_IMAGE": "stale-image"}):
+            fixture.ensure_fixture()
+
+        resolve.assert_called_once_with(
+            [sys.executable, str(fixture.REPO / "scripts/ci/ci.py"), "image"],
+            text=True, timeout=30,
+        )
+        self.assertEqual(len(commands), 2)
+        self.assertEqual((self.output / "rendered/sample.pdf").read_bytes(), b"fixture")
+
+    def test_image_lookup_failure_does_not_publish_fixtures(self):
+        with patch.object(fixture.importlib.util, "find_spec", return_value=None), \
+                patch.object(fixture.shutil, "which", return_value="docker"), \
+                patch.object(fixture.subprocess, "check_output",
+                             side_effect=subprocess.CalledProcessError(1, "image")), \
+                patch.object(fixture.subprocess, "run") as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                fixture.ensure_fixture()
+        run.assert_not_called()
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.output.parent.glob("pdf-fixture-*")), [])
 

@@ -39,3 +39,9 @@ install(
         "${PDF_FREETYPE_SOURCE}/docs/FTL.TXT"
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/freetype"
 )
+install(
+    FILES
+        "${PROJECT_SOURCE_DIR}/resources/licenses/pdf/FREETYPE_THIRD_PARTY.txt"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/pdf/freetype"
+    RENAME "THIRD_PARTY.txt"
+)

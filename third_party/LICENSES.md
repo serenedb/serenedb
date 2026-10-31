@@ -17,7 +17,6 @@
 * [Apache Avro](https://github.com/apache/avro)
 * [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp)
 * [StringZilla](https://github.com/ashvardanian/StringZilla)
-* [SereneDB PDF readers](duckdb_pdf), Apache-2.0; PoDoFo and FreeType retain their licenses listed below.
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
@@ -69,7 +68,7 @@
 ### Other licenses
 
 * [PoDoFo](https://github.com/podofo/podofo), MPL-2.0 (alternative license: LGPL-2.0-or-later); bundled component notices are in `podofo/NOTICE` and the source headers.
-* [FreeType](https://github.com/freetype/freetype), FreeType License (`freetype/docs/FTL.TXT`; alternative license: GPL-2.0).
+* [FreeType](https://github.com/freetype/freetype), FreeType License (`freetype/docs/FTL.TXT`; alternative license: GPL-2.0); bundled component notices are in `../resources/licenses/pdf/FREETYPE_THIRD_PARTY.txt`.
 * [ICU](https://icu.unicode.org), [Unicode License V3](https://github.com/unicode-org/icu/blob/main/LICENSE)
 * [glibc](https://www.gnu.org/software/libc), GNU LGPL
 * [jemalloc](https://github.com/jemalloc/jemalloc), free as-is license with the comment:

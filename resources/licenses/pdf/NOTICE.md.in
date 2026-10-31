@@ -16,7 +16,7 @@ The bundled component license notices are in `podofo/THIRD_PARTY.txt`,
 Portions of this software are copyright (C) 1996-2025 The FreeType Project
 (https://freetype.org). All rights reserved. This software is based in part on
 the work of the FreeType Team. FreeType is used under the FreeType License;
-see `freetype/FTL.TXT` and `freetype/LICENSE.TXT`.
+see `freetype/FTL.TXT`, `freetype/LICENSE.TXT`, and `freetype/THIRD_PARTY.txt`.
 
 FreeType source:
 https://github.com/serenedb/freetype/tree/@PDF_FREETYPE_REVISION@

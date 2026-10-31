@@ -1,8 +1,11 @@
 import argparse
+from contextlib import closing
 import io
 from pathlib import Path
+import re
 
-import pymupdf
+import pikepdf
+import pypdfium2 as pdfium
 import reportlab
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import RectangleObject
@@ -112,6 +115,11 @@ def forms(path):
     pdf.save()
 
 
+def render_page(document, index):
+    with closing(document[index]) as page, closing(page.render(scale=96 / 72)) as bitmap:
+        return bitmap.to_pil().copy()
+
+
 def generate(directory, previews):
     directory.mkdir(parents=True, exist_ok=True)
     font = Path(reportlab.__file__).parent / "fonts" / "Vera.ttf"
@@ -120,19 +128,18 @@ def generate(directory, previews):
     geometry(directory / "geometry.pdf")
     forms(directory / "forms.pdf")
     source = directory / "business_report.pdf"
-    with pymupdf.open(source) as document:
-        document.save(directory / "compressed_report.pdf", garbage=4,
-                      deflate=True, use_objstms=1)
-        raster = document[0].get_pixmap(dpi=96)
-        image = io.BytesIO(raster.tobytes("png"))
+    with pikepdf.open(source) as document:
+        document.save(directory / "compressed_report.pdf", compress_streams=True,
+                      object_stream_mode=pikepdf.ObjectStreamMode.generate)
+    with pdfium.PdfDocument(source) as document:
         pdf = canvas(directory / "scan.pdf")
-        pdf.drawImage(ImageReader(image), 0, 0, width=612, height=792)
+        pdf.drawImage(ImageReader(render_page(document, 0)), 0, 0, width=612, height=792)
         pdf.showPage()
         pdf.save()
         if previews:
             previews.mkdir(parents=True, exist_ok=True)
-            for index, page in enumerate(document):
-                page.get_pixmap(dpi=96).save(previews / f"report-{index + 1}.png")
+            for index in range(len(document)):
+                render_page(document, index).save(previews / f"report-{index + 1}.png")
     for algorithm in ("AES-128", "AES-256"):
         writer = PdfWriter(clone_from=source)
         writer.encrypt("reader-secret", "owner-secret", algorithm=algorithm)
@@ -152,10 +159,16 @@ def generate(directory, previews):
 
 def validate(directory):
     for path in sorted(directory.glob("*.pdf")):
-        with pymupdf.open(path) as document:
-            if document.needs_pass:
-                assert document.authenticate("reader-secret"), path
-            text = [page.get_text() for page in document]
+        with pdfium.PdfDocument(path, password="reader-secret") as document:
+            text = []
+            rotations = []
+            images = []
+            for index in range(len(document)):
+                with closing(document[index]) as page, closing(page.get_textpage()) as text_page:
+                    text.append(text_page.get_text_bounded())
+                    rotations.append(page.get_rotation())
+                    images.append(any(obj.type == pdfium.raw.FPDF_PAGEOBJ_IMAGE
+                                      for obj in page.get_objects()))
             if path.stem in {"business_report", "compressed_report"} or path.stem.startswith("protected_"):
                 assert len(text) == 4, path
                 assert "Invoice 2026-010" in text[0] and "137.50" in text[0], path
@@ -164,21 +177,21 @@ def validate(directory):
                 assert UNICODE_TEXT in text[3] and "END-OF-REPORT" in text[3], path
             elif path.stem == "scan":
                 assert len(text) == 1 and not text[0].strip(), path
-                assert document[0].get_images(), path
+                assert images[0], path
             elif path.stem == "hybrid":
                 assert len(text) == 3 and not text[1].strip(), path
                 assert "Invoice 2026-010" in text[0] and UNICODE_TEXT in text[2], path
             elif path.stem == "geometry":
                 assert len(text) == 4, path
-                for page, angle in zip(document, (0, 90, 180, 270)):
-                    assert page.rotation == angle and f"Rotation {angle}" in page.get_text(), path
+                for page_text, rotation, angle in zip(text, rotations, (0, 90, 180, 270)):
+                    assert rotation == angle and f"Rotation {angle}" in page_text, path
             elif path.stem == "forms":
                 assert text[0].count("Approved form stamp") == 2, path
             elif path.stem == "offset_page":
                 assert "Rotation 0" in text[0], path
             print(f"{path.name}: {len(text)} pages; independent text validation passed")
     assert b"/ObjStm" in (directory / "compressed_report.pdf").read_bytes()
-    assert b"/Type/XRef" in (directory / "compressed_report.pdf").read_bytes()
+    assert re.search(rb"/Type\s*/XRef\b", (directory / "compressed_report.pdf").read_bytes())
 
 
 if __name__ == "__main__":

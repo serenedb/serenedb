@@ -66,3 +66,8 @@ def test_pdf_notices_in_binary_install(tmp_path):
     ):
         assert (notices / installed).read_bytes() == (source / "third_party" / original).read_bytes()
     assert "Permission is hereby granted" in (notices / "podofo/THIRD_PARTY.txt").read_text()
+    freetype_notices = (notices / "freetype/THIRD_PARTY.txt").read_text()
+    assert freetype_notices == (source / "resources/licenses/pdf/FREETYPE_THIRD_PARTY.txt").read_text()
+    for holder in ("Francesco Zappa Nardelli", "New Mexico State University",
+                   "The Open Group", "Red Hat, Inc.", "Google, Inc."):
+        assert holder in freetype_notices

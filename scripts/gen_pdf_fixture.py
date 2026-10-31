@@ -40,20 +40,25 @@ def ensure_fixture():
     with tempfile.TemporaryDirectory(prefix="pdf-fixture-", dir=OUT.parent) as work:
         directory = Path(work)
         available = all(importlib.util.find_spec(module) is not None for module in (
-            "reportlab", "pypdf", "cryptography", "pymupdf"
+            "reportlab", "pypdf", "cryptography", "pikepdf", "pypdfium2"
         ))
         if not available and shutil.which("docker") is None:
             raise RuntimeError(
                 "PDF fixtures need Docker or a Python environment with "
                 "scripts/ci/pdf-fixture-requirements.txt installed; "
-                "set PDF_FIXTURE_PYTHON to that environment's python"
+                "activate that environment before running tests"
             )
-        command = [sys.executable] if available else [
-            "docker", "run", "--rm", "-u", f"{os.getuid()}:{os.getgid()}",
-            "-e", "HOME=/tmp", "-v", f"{REPO}:{REPO}",
-            os.environ.get("BUILD_IMAGE", "serenedb/serenedb-build-ubuntu:latest"),
-            "python3",
-        ]
+        command = [sys.executable]
+        if not available:
+            image = subprocess.check_output(
+                [sys.executable, str(REPO / "scripts/ci/ci.py"), "image"],
+                text=True, timeout=30,
+            ).strip()
+            command = ["docker", "run", "--rm"]
+            if owner := os.environ.get("SDB_DOCKER_OWNER"):
+                command += ["--label", f"serenedb.owner={owner}"]
+            command += ["-u", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+                        "-v", f"{REPO}:{REPO}", image, "python3"]
         for generator, target in (("generate.py", "basic"), ("generate_rendered.py", "rendered")):
             subprocess.run(command + [str(SOURCE / generator), str(directory / target)],
                            check=True, timeout=120)

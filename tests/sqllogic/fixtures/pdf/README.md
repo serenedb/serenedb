@@ -22,29 +22,50 @@ The embedded Bitstream Vera font is distributed with ReportLab; its notice is in
 
 ## Regenerate and inspect
 
-Run from the repository root. CI build images include the required packages. For a local Python environment:
+Run from the repository root. Like Iceberg fixtures, PDF fixtures use the active Python environment when its packages are installed, or the current checkout's CI build image through Docker. Normal test runs generate fixtures automatically; to prepare them explicitly:
 
 ```sh
-python3 -m venv /tmp/serenedb-pdf-fixtures-venv
-/tmp/serenedb-pdf-fixtures-venv/bin/pip install -r scripts/ci/pdf-fixture-requirements.txt
-export PDF_FIXTURE_PYTHON=/tmp/serenedb-pdf-fixtures-venv/bin/python
 ./scripts/ensure_pdf_fixture.sh
 ```
 
-Without local packages, generation uses `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`) through Docker. Unchanged fixtures are reused; changing a generator or dependency manifest, or removing a generated PDF, triggers regeneration. Concurrent runners share a generation lock.
+The Docker image is the one printed by `python3 scripts/ci/ci.py image`. If it has not been published, run `bash build_images.sh local` from `scripts/ci/` to build the checkout's images, as for Iceberg. CI prepares the images automatically. No PDF-specific environment variables are required. For a Docker-free setup, install `scripts/ci/pdf-fixture-requirements.txt` in your active Python environment.
 
-PyMuPDF independently checks expected text and page structure before the fixtures are ready. Encryption uses fresh randomness, so regenerated encrypted files need not be byte-identical. To produce optional page previews, run `generate_rendered.py` with `--previews /tmp/serenedb-pdf-previews` and a separate output directory.
+Unchanged fixtures are reused; changing a generator or dependency manifest, or removing a generated PDF, triggers regeneration. Concurrent runners share a generation lock.
 
-To validate existing files without replacing them:
+PDFium independently checks expected text and page structure before the fixtures are ready. Encryption uses fresh randomness, so regenerated encrypted files need not be byte-identical. To produce optional page previews, run `generate_rendered.py` with `--previews /tmp/serenedb-pdf-previews` and a separate output directory.
+
+Fixture tools are test-only: ReportLab (BSD), pypdf (BSD), cryptography (Apache-2.0/BSD), pikepdf (MPL-2.0, with QPDF under Apache-2.0), and pypdfium2 (Apache-2.0/BSD, with PDFium and its bundled component licenses). They are not linked into SereneDB. Keep the license files included with their packages when distributing CI images.
+
+With the fixture packages installed locally, validate existing files without replacing them:
 
 ```sh
-/tmp/serenedb-pdf-fixtures-venv/bin/python tests/sqllogic/fixtures/pdf/generate_rendered.py \
+python3 tests/sqllogic/fixtures/pdf/generate_rendered.py \
   resources/tests/pdf/rendered --check-only
 ```
 
-## Run the SQL tests
+## Build and test locally
 
-With the locally built server listening on port 7890:
+Run from the repository root with the [build prerequisites](../../../../CONTRIBUTING.md) installed, plus Python 3.13 and Rust/Cargo for the SQL test runner. Initialize submodules and build the server and C++ tests:
+
+```sh
+git submodule update --init --jobs 4
+cmake --preset lldb
+cmake --build build --target serened serenedb-tests --parallel 4
+```
+
+Use the same Python test environment as the other SQL and driver tests (`tests/drivers/python/requirements.txt`). Docker supplies missing PDF fixture packages. The shared test runner generates the fixtures and starts and stops the required server:
+
+```sh
+scripts/ci/test.py --build-dir build --suite sqllogic --jobs 1 \
+  --test 'sqllogic:*:sdb/pg/simple/read_pdf*.test' \
+  --test 'sqllogic:*:sdb/pg/site_docs/sql/functions/pdf.test'
+scripts/ci/test.py --build-dir build --suite gtest --jobs 1 \
+  --test 'gtest:serenedb-tests:PdfLayoutTest.*'
+scripts/ci/test.py --build-dir build --suite drivers --jobs 1 \
+  --test 'drivers:python:test_shell_pdf'
+```
+
+For an already running local server listening on port 7890:
 
 ```sh
 scripts/ci/test.py --suite sqllogic --server 127.0.0.1:7890 --jobs 1 \

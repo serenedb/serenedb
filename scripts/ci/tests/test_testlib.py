@@ -22,7 +22,7 @@ from testlib.timing import Timing  # noqa: E402
 
 def test_pdf_suites_require_generated_fixtures():
     for rel in ("sdb/pg/simple/read_pdf.test", "sdb/pg/simple/read_pdf_rendered.test",
-                "sdb/pg/site_docs/pdf.test"):
+                "sdb/pg/site_docs/sql/functions/pdf.test"):
         path = ROOT / "tests" / "sqllogic" / rel
         assert sqllogic.service_fixture_names(path, False) == ("svc:pdf-data",)
     assert "svc:pdf-data" in sqllogic.service_factories(False)

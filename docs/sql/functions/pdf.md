@@ -11,7 +11,7 @@ The PDF readers are available in SereneDB SQL and in `serened shell`, with no se
 
 `read_pdf(path, password := '', first_page := 1, last_page := ..., layout := 'auto')` returns one row per selected PDF page. The path can name a file or contain a glob pattern. Local paths are relative to the server's working directory and refer to files accessible to the server.
 
-<SqlLogicTest id="pdf/read_pages" />
+<SqlLogicTest id="sql/functions/pdf/read_pages" />
 
 | Column | Type | Meaning |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ The default `layout := 'auto'` groups text into lines and detects reading column
 
 `read_pdf_blocks` accepts `path`, `password`, `first_page`, and `last_page` and returns one row per nonblank text fragment in the document's content order. A fragment is not necessarily a paragraph, line, word, or table cell.
 
-<SqlLogicTest id="pdf/read_blocks" />
+<SqlLogicTest id="sql/functions/pdf/read_blocks" />
 
 | Column | Type | Meaning |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ The coordinate system has its origin at the bottom left and increases upward alo
 
 Provide `password` for password-protected documents. A missing or incorrect password produces an error. Page bounds are inclusive and start at 1. `last_page` is clipped to the document's page count. An invalid range or a `first_page` beyond the document's page count produces an error. Page selection applies separately to every matching file.
 
-<SqlLogicTest id="pdf/page_range" />
+<SqlLogicTest id="sql/functions/pdf/page_range" />
 
 ## Limits and errors
 

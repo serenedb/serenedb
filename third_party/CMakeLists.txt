@@ -610,7 +610,7 @@ sdb_add_module(avro DIR avro/lang/c NO_WARNINGS)
 sdb_add_module(libxml2 DIR libxml2-cmake)
 
 sdb_add_module(freetype DIR freetype-cmake)
-sdb_add_module(podofo DIR podofo-cmake)
+sdb_add_module(podofo DIR podofo-cmake NO_WARNINGS)
 
 ################################################################################
 ## Azure SDK (monolithic build)

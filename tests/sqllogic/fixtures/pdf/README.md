@@ -44,15 +44,14 @@ To validate existing files without replacing them:
 
 ## Run the SQL tests
 
-With the locally built server listening on port 7890 and the debug test runner already built:
+With the locally built server listening on port 7890:
 
 ```sh
-CARGO_TARGET_DIR="$PWD/build_pdf/sqllogic" SDB_SKIP_SQLLOGIC_BUILD=1 \
-  ./tests/sqllogic/run.sh --debug=true --single-port 7890 --jobs 1 \
-  --test 'tests/sqllogic/sdb/pg/simple/read_pdf*.test' \
-  --test 'tests/sqllogic/sdb/pg/site_docs/pdf.test'
+scripts/ci/test.py --suite sqllogic --server 127.0.0.1:7890 --jobs 1 \
+  --test 'sqllogic:*:sdb/pg/simple/read_pdf*.test' \
+  --test 'sqllogic:*:sdb/pg/site_docs/sql/functions/pdf.test'
 ```
 
-Expect six `[OK]` results: three files in each PostgreSQL wire mode. The rendered-document suite covers both page and block extraction, geometry, passwords, blank and scanned pages, Unicode paths, globbing, and storing extracted text in a table.
+Expect six passing units: three files in each PostgreSQL wire mode. The rendered-document suite covers both page and block extraction, geometry, passwords, blank and scanned pages, Unicode paths, globbing, and storing extracted text in a table.
 
-Check generation caching and failure cleanup with `python3 -m unittest discover -s tests/sqllogic/fixtures/pdf -p 'test_*.py'` (Python 3.11 or newer).
+Check generation caching, failure cleanup, and license installation with `python3 -m pytest scripts/ci/tests/test_pdf_fixtures.py scripts/ci/tests/test_pdf_notices.py`. These tests also run through the CI-script pre-commit hook.

@@ -10,7 +10,7 @@ drivers=(psycopg3 psycopg2 asyncpg)
 parallel=(test_psql_mode)
 extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_http_timeouts test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_search_wal_corrupt_deletes test_inverted_index_concurrent_writers_1 test_inverted_index_concurrent_writers_2 test_inverted_index_concurrent_writers_3 test_inverted_index_concurrent_writers_4 test_inverted_index_update_visibility test_inverted_index_concurrent_upserts test_inverted_index_crash_replay_1 test_inverted_index_crash_replay_2 test_inverted_index_crash_replay_3 test_search_table_concurrent_writers_1 test_search_table_concurrent_writers_2 test_search_table_crash_replay_1 test_search_table_crash_replay_2 test_missing_database test_startup test_prepared_alter_rebind test_procedure_body_concurrent test_progress test_drop_database_sessions)
 checks=(cli_help otel_fixtures otel_schema)
-extras+=(test_shell_pdf test_pdf_notices)
+extras+=(test_shell_pdf)
 
 if [[ -n "${SDB_DRV_PY_LIST:-}" ]]; then
 	printf '%s\n' "${parallel[@]}" "${drivers[@]/#/test_}" "${extras[@]}" "${checks[@]}"

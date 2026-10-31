@@ -96,12 +96,10 @@ while read -r sha fork number branch; do
 	echo "land $fork#$number: $branch -> $sha${fork_review:+ ($fork_review)}"
 	landings+=("$fork $branch $sha")
 done < <(sed -n 's/^.*: gitlink \([0-9a-f]*\) is pending: head of open \([^#]*\)#\([0-9]*\) into \(.*\)$/\1 \2 \3 \4/p' <<<"$out")
-run=
+refresh=false
 if ((${#landings[@]})) || [[ -n "$waiting" ]]; then
-	run=$(gh run list -R "$repo" --workflow simple.yml --event pull_request --commit "$head" --limit 1 \
-		--json databaseId --jq '.[0].databaseId')
-	[[ -n "$run" ]] || die "#$pr: no pre-commit run for $head"
-	echo "rerun pre-commit run $run"
+	refresh=true
+	echo "turn the pre-commit status of $head green"
 fi
 echo "squash-merge #$pr at $head"
 
@@ -116,19 +114,20 @@ for landing in "${landings[@]}"; do
 	echo "landed $fork $branch at $sha"
 done
 
-if [[ -n "$run" ]]; then
-	attempt=$(gh api "repos/$repo/actions/runs/$run" --jq .run_attempt)
-	gh run rerun "$run" -R "$repo"
-	now=$attempt
-	status=
+if [[ "$refresh" == true ]]; then
+	after=$(python3 scripts/check_submodule_pointers.py --rev "$head" --base "$base" 2>&1) ||
+		die "#$pr: its gitlinks are not on version branches after landing:"$'\n'"$after"
+	gh workflow run gitlink-status.yml -R "$repo" -f SHA="$head" >/dev/null
+	state=
 	for _ in $(seq 120); do
 		sleep 5
-		read -r now status conclusion < <(gh api "repos/$repo/actions/runs/$run" \
-			--jq '"\(.run_attempt) \(.status) \(.conclusion)"') || continue
-		[[ "$now" -gt "$attempt" && "$status" == completed ]] && break
+		state=$(gh api "repos/$repo/commits/$head/status" \
+			--jq '.statuses[] | select(.context == "pre-commit") | .state') || continue
+		[[ "$state" == success ]] && break
 	done
-	[[ "$now" -gt "$attempt" && "$status" == completed ]] || die "#$pr: pre-commit run $run did not finish within 10 minutes"
-	[[ "$conclusion" == success ]] || die "#$pr: pre-commit run $run failed after landing"
+	[[ "$state" == success ]] ||
+		die "#$pr: its pre-commit status is ${state:-missing} 10 minutes after landing: see https://github.com/$repo/actions/workflows/gitlink-status.yml"
+	echo "pre-commit status of $head is green"
 fi
 
 gh api -X PUT "repos/$repo/pulls/$pr/merge" -f merge_method=squash -f sha="$head" --jq .message

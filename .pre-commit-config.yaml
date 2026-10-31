@@ -170,5 +170,5 @@ repos:
         language: python
         additional_dependencies: [pytest==9.1.1]
         entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
-        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$)|tests/drivers/harness/|tests/sqllogic/(generated|sqllogic_gen)\.py$|\.github/workflows/simple\.yml$)
+        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$|land\.sh$)|tests/drivers/harness/|tests/sqllogic/(generated|sqllogic_gen)\.py$|\.github/workflows/(simple|gitlink-status)\.yml$)
         pass_filenames: false

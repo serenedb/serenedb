@@ -112,8 +112,8 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
         auto& numeric = Numeric(base);
         for (idx_t i = 0; i < count; ++i) {
           SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-          keep(i, NumericCode(numeric, rows[i], i == 0 ? kNoRow : rows[i - 1],
-                              i + 1 == count ? kNoRow : rows[i + 1]));
+          keep(i, numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
+                                i + 1 == count ? kNoRow : rows[i + 1]));
         }
         break;
       }
@@ -133,7 +133,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
         code = RunCode(row);
         break;
       case CodesEncoding::Numeric:
-        code = NumericCode(Numeric(base), row, kNoRow, kNoRow);
+        code = Numeric(base).Fetch(row, kNoRow, kNoRow);
         break;
     }
     if (code == 0) {
@@ -180,17 +180,6 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
                           CodesHeader(base, frames.header));
     }
     return *code_frames;
-  }
-
-  IRS_FORCE_INLINE static uint32_t NumericCode(FrameDecoder<uint32_t>& numeric,
-                                               idx_t row, uint64_t previous,
-                                               uint64_t next) {
-    if (numeric.ReadsAlone() && !numeric.Holds(row) &&
-        !numeric.Near(row, previous) && !numeric.Near(row, next)) {
-      return numeric.ReadAlone(row);
-    }
-    numeric.Seek(row);
-    return numeric.At(row);
   }
 
   bool PlanBatch(const_data_ptr_t base) {

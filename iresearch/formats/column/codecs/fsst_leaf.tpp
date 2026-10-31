@@ -61,15 +61,13 @@ ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
       enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, out + off + lcp, room);
     SDB_ENSURE(dec <= room, "col codec: corrupted entry");
     const std::string_view value{out + off, lcp + dec};
-    if (!visit(e, value)) {
-      return {e, off, enc_off};
-    }
+    visit(e, value);
     prev_off = off;
     prev_len = value.size();
     off += value.size();
     enc_off += enc;
   }
-  return {end, off, enc_off};
+  return {off, enc_off};
 }
 
 template<typename Visit>
@@ -132,7 +130,7 @@ struct FsstScan {
         SDB_ASSERT(
           !Frames::kDedup || e == m.first_entry || View(s.values[e - 1]) < v,
           "col codec: dictionary entries out of order");
-        return s.Keep(e, v);
+        s.Keep(e, v);
       });
     SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
                "col codec: corrupted frame");
@@ -178,8 +176,7 @@ struct FsstScan {
                   .GetDataWriteable();
     WalkChain(decoder, s.Data(), s.length_reader, lcps, first, end,
               group_enc_off[group_base[f] + g], s.header.data_size, out,
-              capacity,
-              [&](uint32_t e, std::string_view v) { return s.Keep(e, v); });
+              capacity, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
     group_decoded[group_base[f] + g] = 1;
   }
 

@@ -943,8 +943,7 @@ void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state, idx_t,
   const uint64_t start = state.GetPositionInSegment();
   for (idx_t i = 0; i < sel_count; ++i) {
     const uint64_t row = start + sel.get_index(i);
-    frames.Seek(row);
-    out[i] = frames.At(row);
+    out[i] = frames.Get(row);
   }
 }
 
@@ -1033,22 +1032,14 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   }
   auto& frames = *cache.frames;
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  const bool alone = frames.ReadsAlone();
-  uint64_t previous = std::numeric_limits<uint64_t>::max();
+  constexpr auto kNone = std::numeric_limits<uint64_t>::max();
+  uint64_t previous = kNone;
   for (idx_t i = 0; i < count; ++i) {
     const auto row = static_cast<uint64_t>(rows[i]);
     SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    auto& value = data[result_offset + result_sel.get_index(i)];
-    if (alone && !frames.Holds(row) && !frames.Near(row, previous) &&
-        (i + 1 == count || !frames.Near(row, rows[i + 1]))) {
-      if (i + 1 < count) {
-        frames.Prefetch(rows[i + 1]);
-      }
-      value = frames.ReadAlone(row);
-    } else {
-      frames.Seek(row);
-      value = frames.At(row);
-    }
+    const uint64_t next = i + 1 < count ? rows[i + 1] : kNone;
+    data[result_offset + result_sel.get_index(i)] =
+      frames.Fetch(row, previous, next);
     previous = row;
   }
 }

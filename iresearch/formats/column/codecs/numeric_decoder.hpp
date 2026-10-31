@@ -113,17 +113,6 @@ class FrameDecoder {
     return Scaled(static_cast<U>(MetaAt(f).max));
   }
 
-  void Seek(uint64_t row) {
-    if (row >= _begin && row < _end) {
-      return;
-    }
-    if (Blocked()) {
-      DecodeBlock(row);
-    } else {
-      Decode(FrameOf(row), row != _next);
-    }
-  }
-
   void Read(uint64_t row, uint64_t count, T* out) {
     uint64_t done = 0;
     while (done < count) {
@@ -140,6 +129,34 @@ class FrameDecoder {
       Copy(row + done, take, out + done);
       Rescale(out + done, take);
       done += take;
+    }
+  }
+
+  T Get(uint64_t row) {
+    Seek(row);
+    return At(row);
+  }
+
+  T Fetch(uint64_t row, uint64_t previous, uint64_t next) {
+    if (ReadsAlone() && !Holds(row) && !Near(row, previous) &&
+        !Near(row, next)) {
+      Prefetch(next);
+      return ReadAlone(row);
+    }
+    return Get(row);
+  }
+
+ private:
+  static constexpr uint64_t kNearShare = 32;
+
+  void Seek(uint64_t row) {
+    if (row >= _begin && row < _end) {
+      return;
+    }
+    if (Blocked()) {
+      DecodeBlock(row);
+    } else {
+      Decode(FrameOf(row), row != _next);
     }
   }
 
@@ -210,9 +227,6 @@ class FrameDecoder {
     const auto m = MetaAt(FrameOf(row));
     __builtin_prefetch(Data(m) + (row - m.frame.first_entry) * _h.stored);
   }
-
- private:
-  static constexpr uint64_t kNearShare = 32;
 
   void Copy(uint64_t row, uint64_t count, T* out) noexcept {
     if (!Runs(_h.transform)) {

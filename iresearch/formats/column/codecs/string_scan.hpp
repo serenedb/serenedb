@@ -98,7 +98,6 @@ uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
                        uint32_t first, uint32_t end);
 
 struct ChainEnd {
-  uint32_t stop;
   uint64_t written;
   uint64_t enc_off;
 };

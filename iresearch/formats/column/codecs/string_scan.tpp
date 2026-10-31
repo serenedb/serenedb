@@ -192,9 +192,8 @@ struct EntryFrames {
     return reinterpret_cast<const char*>(base + header.off_data);
   }
 
-  bool Keep(uint32_t e, std::string_view v) noexcept {
+  void Keep(uint32_t e, std::string_view v) noexcept {
     values[e] = string_t{v.data(), static_cast<uint32_t>(v.size())};
-    return true;
   }
 
   uint64_t CacheBytes() const noexcept {

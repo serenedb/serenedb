@@ -1,11 +1,11 @@
 statement error
-SELECT json_structure(repeat('[', 5000) || repeat(']', 5000)) AS s
+SELECT json_structure(repeat('[', 100000) || repeat(']', 100000)) AS s
 ----
-db error: ERROR: JSON nesting depth exceeds the maximum of 1000
+db error: ERROR: stack depth limit exceeded
 
 
 query
-SELECT json_structure(repeat('[', 900) || '1' || repeat(']', 900)) = repeat('[', 900) || '"UBIGINT"' || repeat(']', 900) AS r
+SELECT json_structure(repeat('[', 2000) || '1' || repeat(']', 2000)) = repeat('[', 2000) || '"UBIGINT"' || repeat(']', 2000) AS r
 ----
 r
 t

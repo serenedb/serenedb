@@ -37,7 +37,7 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
-`USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema.
+`USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema. The expressions a table stores, its column defaults, `CHECK` constraints and generated columns, need no `USAGE` on the schemas they name from a role that inserts or updates rows; that role still needs `USAGE` or `UPDATE` on a sequence a default advances and `EXECUTE` on the functions they call.
 
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server is gated on `CREATE` on the **database**, not on a schema; a server of the `duckdb_fdw` or `serenedb_fdw` wrapper names a server file and can be created only by a superuser.
 

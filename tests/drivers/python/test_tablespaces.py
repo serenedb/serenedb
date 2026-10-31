@@ -1638,33 +1638,6 @@ def test_cold_column_scan_reads_its_columns_in_one_round(
     _one_round(log, ".col")
 
 
-def _split_segments(server: _Server, fake: FakeS3, location: str,
-                    segments: int) -> psycopg.Connection:
-    _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
-                   location)
-    conn = server.connect()
-    conn.execute(
-        "CREATE TEXT SEARCH DICTIONARY words AS "
-        "split_by_non_alpha(case := 'lower') WITH (frequency, position, norm)")
-    conn.execute(
-        "CREATE TABLE logs WITH (storage = 'search', compaction_interval = 0) "
-        "TABLESPACE idx AS SELECT 0 AS id, '' AS body WHERE false")
-    conn.execute("CREATE INDEX logs_body ON logs USING inverted(body words)")
-    conn.execute("SET threads = 1")
-    for segment in range(segments):
-        conn.execute(
-            "INSERT INTO logs SELECT i, concat_ws(' ', 'svc' || (hash(i) % 50), "
-            "CASE WHEN hash(i * 5) % 100 < 6 THEN 'cache' END, "
-            "'w' || (hash(i * 3) % 3000)) "
-            f"FROM range({segment * 2000000}, {(segment + 1) * 2000000}) t(i)")
-        conn.execute("VACUUM (REFRESH_TABLE) logs")
-    conn.execute("RESET threads")
-    conn.execute("SET GLOBAL threads = 8")
-    conn.execute("SET GLOBAL enable_external_file_cache = false")
-    conn.execute("SET GLOBAL enable_external_file_cache = true")
-    return conn
-
-
 @pytest.mark.parametrize("split", ["tail", "always"])
 @pytest.mark.parametrize("query", [
     "SELECT count(*) FROM logs WHERE body @@ ts_regexp('c.che')",
@@ -1679,23 +1652,43 @@ def test_a_repeated_query_reads_nothing_from_the_store(
         server = _Server(tmp_path / "data")
         try:
             assert server.wait_ready(), server.output()
-            with _split_segments(server, fake, location, 4) as conn:
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            with server.connect() as conn:
+                conn.execute(
+                    "CREATE TEXT SEARCH DICTIONARY words AS "
+                    "split_by_non_alpha(case := 'lower') "
+                    "WITH (frequency, position, norm)")
+                conn.execute(
+                    "CREATE TABLE logs WITH (storage = 'search', compaction_interval = 0) "
+                    "TABLESPACE idx AS SELECT 0 AS id, '' AS body WHERE false")
+                conn.execute("CREATE INDEX logs_body ON logs USING inverted(body words)")
+                conn.execute("SET threads = 1")
+                for segment in range(4):
+                    conn.execute(
+                        "INSERT INTO logs SELECT i, concat_ws(' ', "
+                        "'svc' || (hash(i) % 50), "
+                        "CASE WHEN hash(i * 5) % 100 < 6 THEN 'cache' END, "
+                        "'w' || (hash(i * 3) % 3000)) "
+                        f"FROM range({segment * 2000000}, {(segment + 1) * 2000000}) t(i)")
+                    conn.execute("VACUUM (REFRESH_TABLE) logs")
+                conn.execute("RESET threads")
+                conn.execute("SET GLOBAL threads = 8")
+                conn.execute("SET GLOBAL enable_external_file_cache = false")
+                conn.execute("SET GLOBAL enable_external_file_cache = true")
                 conn.execute(f"SET sdb_scan_split = '{split}'")
                 fake.latency = 0.02
-                first = conn.execute(query).fetchall()
-                repeats = []
+                first = sorted(conn.execute(query).fetchall())
                 fake.log = []
-                for _ in range(12):
-                    began = time.monotonic()
-                    rows = conn.execute(query).fetchall()
-                    repeats.append((rows, [entry["key"] for entry in fake.log
-                                           if entry["began"] >= began]))
+                repeated = time.monotonic()
+                repeats = [sorted(conn.execute(query).fetchall()) for _ in range(12)]
+                reads = [entry["key"] for entry in fake.log
+                         if entry["began"] >= repeated]
                 fake.log = None
         finally:
             server.stop()
-    for rows, keys in repeats:
-        assert sorted(rows) == sorted(first)
-        assert keys == []
+    assert repeats == [first] * 12
+    assert reads == []
 
 
 def test_cold_count_reads_its_postings_in_one_round(tmp_path: Path) -> None:

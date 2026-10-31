@@ -37,6 +37,7 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/ann/collector.hpp>
+#include <iresearch/search/ann/root.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -386,7 +387,6 @@ struct ColScanLocalState final : public ScanLocalState {
 
 struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
   uint64_t next_row = 0;
@@ -398,8 +398,6 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 struct RankedLocalState : public ScanLocalState, FetchLocalState {
   irs::ColumnArgsFetcher score_fetcher;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;
@@ -418,6 +416,7 @@ struct TopKLocalState final : public RankedLocalState {
 struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
+  irs::ann::Root::ptr root;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   std::vector<irs::ScoreDoc> pending;
   std::vector<irs::ScoreDoc> rescored;

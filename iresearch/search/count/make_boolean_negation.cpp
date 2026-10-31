@@ -79,7 +79,7 @@ Root::ptr Family::MakeNegation(
     if (exclude_terms.size() == 1 && split.rest.empty()) {
       if (auto live = MakeLiveTerm(exclude_terms.front(), segment)) {
         return memory::make_managed<Subtract>(MakeLiveCount(segment),
-                                              std::move(live), ctx.partial);
+                                              std::move(live));
       }
     }
     return detail::builder::MakeWindowNegation<Family>(
@@ -109,7 +109,7 @@ Root::ptr Family::MakeNegation(
   }
   return memory::make_managed<Subtract>(
     MakeAllCount(static_cast<doc_id_t>(segment.docs_count())),
-    std::move(excluded), ctx.partial);
+    std::move(excluded));
 }
 
 }  // namespace irs::count

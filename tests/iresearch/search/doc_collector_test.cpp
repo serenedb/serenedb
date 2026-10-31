@@ -569,7 +569,7 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
     ASSERT_EQ(segment.live_docs_count(),
               count->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({});
     ASSERT_NE(nullptr, split);
     constexpr irs::doc_id_t kBounds[]{irs::doc_limits::min(), 3, 20,
                                       irs::doc_limits::eof()};
@@ -577,7 +577,6 @@ TEST_P(DocCollectorTestCase, test_count_all_skips_deleted) {
     for (size_t i = 1; i != std::size(kBounds); ++i) {
       total += split->Run(kBounds[i - 1], kBounds[i]);
     }
-    total += split->Finish();
     ASSERT_EQ(segment.live_docs_count(), total);
     counted += total;
   }
@@ -628,18 +627,12 @@ TEST_P(DocCollectorTestCase, test_count_split_single_doc_term) {
   }
   ASSERT_NE(0, expected_back);
 
-  for (const bool partial : {false, true}) {
-    auto front = query->PlanCount({.partial = partial});
-    ASSERT_NE(nullptr, front);
-    auto back = query->PlanCount({.partial = partial});
-    ASSERT_NE(nullptr, back);
-    const auto front_count =
-      front->Run(irs::doc_limits::min(), mid) + front->Finish();
-    const auto back_count =
-      back->Run(mid, irs::doc_limits::eof()) + back->Finish();
-    EXPECT_EQ(expected_front, front_count);
-    EXPECT_EQ(expected_back, back_count);
-  }
+  auto front = query->PlanCount({});
+  ASSERT_NE(nullptr, front);
+  auto back = query->PlanCount({});
+  ASSERT_NE(nullptr, back);
+  EXPECT_EQ(expected_front, front->Run(irs::doc_limits::min(), mid));
+  EXPECT_EQ(expected_back, back->Run(mid, irs::doc_limits::eof()));
 }
 
 TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {

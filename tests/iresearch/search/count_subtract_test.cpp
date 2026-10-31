@@ -159,10 +159,9 @@ class CountSubtractTest : public tests::IndexTestBase {
     auto whole = query->PlanCount({});
     ASSERT_NE(nullptr, whole);
     ASSERT_EQ(expected,
-              whole->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
-                whole->Finish());
+              whole->Run(irs::doc_limits::min(), irs::doc_limits::eof()));
 
-    auto split = query->PlanCount({.partial = true});
+    auto split = query->PlanCount({});
     ASSERT_NE(nullptr, split);
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 30001, 65536, 70001, irs::doc_limits::eof()};
@@ -170,7 +169,7 @@ class CountSubtractTest : public tests::IndexTestBase {
     for (size_t i = 1; i != std::size(kBounds); ++i) {
       parts += split->Run(kBounds[i - 1], kBounds[i]);
     }
-    ASSERT_EQ(expected, parts + split->Finish());
+    ASSERT_EQ(expected, parts);
   }
 
   void CheckUnion(std::string_view a, std::string_view b) {

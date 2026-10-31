@@ -39,15 +39,14 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
     } else {
       const auto range = g.RangeOf(unit);
       const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
-      if (g.remote) {
+      if (g.remote && unit.rg_begin == 0) {
         irs::PrefetchPostingHeads(seg_query, 2);
       }
       auto* table = BeginVerify(l.col_verify, sub, g, l);
       auto plan = irs::count::MakeRoot(
-        seg_query, {.table = table, .span = g.UnitSpan(unit), .partial = true});
+        seg_query, {.table = table, .span = g.UnitSpan(unit)});
       EnsurePlanned(plan != nullptr);
       l.local_count += plan->Run(range.begin, range.end);
-      l.local_count += plan->Finish();
     }
     FinishUnit(g, l);
   }

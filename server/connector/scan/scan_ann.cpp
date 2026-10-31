@@ -205,8 +205,6 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
       FlushSegment(g, l);
     }
     l.pool_seg = unit.seg;
-  }
-  if (l.root_seg != unit.seg) {
     const auto& seg = (*g.reader)[unit.seg];
     l.score_fetcher.Clear();
     const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
@@ -221,9 +219,8 @@ void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
                                      .k = l.collector->K()});
     EnsurePlanned(plan != nullptr);
     l.root = std::move(plan);
-    l.root_seg = unit.seg;
   }
-  irs::utils::downCast<irs::ann::Root>(l.root.get())->Run(*l.collector);
+  l.root->Run(*l.collector);
 }
 
 void PublishHits(ScanGlobalState& g, AnnLocalState& l) {

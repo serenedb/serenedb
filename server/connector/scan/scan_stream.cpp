@@ -25,7 +25,6 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <limits>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -35,7 +34,8 @@ namespace sdb::connector {
 namespace {
 
 bool Resumes(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
-  return l.root_seg == l.unit.seg && g.RowsOf(l.unit).begin >= l.stop_row;
+  return l.hit_batcher->Bound(l.unit.seg) &&
+         g.RowsOf(l.unit).begin >= l.stop_row;
 }
 
 void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
@@ -75,7 +75,6 @@ void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
     EnsurePlanned(root != nullptr);
     l.root = std::move(root);
   }
-  l.root_seg = seg_idx;
 }
 
 void PushHits(StreamLocalState& l) {

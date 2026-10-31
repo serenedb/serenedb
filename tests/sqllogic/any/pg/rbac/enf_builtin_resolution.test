@@ -1,0 +1,79 @@
+statement ok
+DROP SCHEMA IF EXISTS ebr_quas CASCADE;
+
+
+statement ok
+CREATE SCHEMA ebr_quas;
+
+
+statement ok
+CREATE FUNCTION ebr_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''shadowed''';
+
+
+statement ok
+CREATE TABLE ebr_quas.pg_roles (rolname text);
+
+
+statement ok
+SET search_path = ebr_quas, public;
+
+
+query
+SELECT current_schemas(true) AS schemas;
+----
+schemas
+{pg_catalog,ebr_quas,public}
+
+
+query
+SELECT lower('ABC') AS result;
+----
+result
+abc
+
+
+query
+SELECT ebr_quas.lower('ABC') AS result;
+----
+result
+shadowed
+
+
+query
+SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
+----
+from_catalog
+t
+
+
+statement ok
+SET search_path = ebr_quas, pg_catalog, public;
+
+
+query
+SELECT current_schemas(true) AS schemas;
+----
+schemas
+{ebr_quas,pg_catalog,public}
+
+
+query
+SELECT lower('ABC') AS result;
+----
+result
+shadowed
+
+
+query
+SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
+----
+from_catalog
+f
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA ebr_quas CASCADE;

@@ -174,11 +174,11 @@ The order of named parameters does not matter:
 
 When macros are used, they are expanded (i.e., replaced with the original expression), and the parameters within the expanded expression are replaced with the supplied arguments. Step by step:
 
-The `add` macro we defined above is used in a query:
+The `add_pair` macro we defined above is used in a query:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_028" />
 
-Internally, `add` is replaced with its definition of `a + b`:
+Internally, `add_pair` is replaced with its definition of `a + b`:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_029" />
 

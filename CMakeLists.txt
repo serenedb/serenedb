@@ -610,6 +610,7 @@ endif()
 ################################################################################
 
 include(GNUInstallDirs)
+include(PdfNotices)
 install(
     FILES ${CMAKE_SOURCE_DIR}/LICENSE
     DESTINATION ${CMAKE_INSTALL_DOCDIR}

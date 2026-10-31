@@ -19,6 +19,7 @@ mkdir -p "${WORKSPACE}/out/logs"
 # host-owned docker socket) -- generate it here and serve it through the
 # serenedb container's /workspace mount (see RESOURCES in the compose).
 "${WORKSPACE}/scripts/ensure_iceberg_fixture.sh"
+"${WORKSPACE}/scripts/ensure_pdf_fixture.sh"
 
 export DOCKER_UID="$(id -u)"
 export DOCKER_GID="$(id -g)"

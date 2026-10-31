@@ -20,6 +20,32 @@ from testlib.suites import duckdb, gtest, sqllogic  # noqa: E402
 from testlib.timing import Timing  # noqa: E402
 
 
+def test_pdf_suites_require_generated_fixtures():
+    for rel in ("sdb/pg/simple/read_pdf.test", "sdb/pg/simple/read_pdf_rendered.test",
+                "sdb/pg/site_docs/sql/functions/pdf.test"):
+        path = ROOT / "tests" / "sqllogic" / rel
+        assert sqllogic.service_fixture_names(path, False) == ("svc:pdf-data",)
+    assert "svc:pdf-data" in sqllogic.service_factories(False)
+
+
+def test_pdf_fixture_generation_runs_once_and_propagates_failure(monkeypatch, tmp_path):
+    commands = []
+    monkeypatch.setattr(sqllogic.services.subprocess, "run", lambda cmd, **kw: commands.append(cmd))
+    fixture = sqllogic.ServicesFixture(SimpleNamespace(out_dir=tmp_path), ["pdf-data"])
+    fixture.start(None)
+    fixture.start(None)
+    assert commands == [[str(ROOT / "scripts" / "ensure_pdf_fixture.sh")]]
+
+    def fail(cmd, **kw):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(sqllogic.services.subprocess, "run", fail)
+    fixture = sqllogic.ServicesFixture(SimpleNamespace(out_dir=tmp_path), ["pdf-data"])
+    with pytest.raises(subprocess.CalledProcessError):
+        fixture.start(None)
+    assert "pdf-data" not in fixture.services.started
+
+
 def unit(uid, members=(), fixtures=(), cost=1.0, cpus=1):
     return Unit(uid, uid.split(":")[0], None, members=members, fixtures=fixtures, cost=cost,
                 cpus=cpus)

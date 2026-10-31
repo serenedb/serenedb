@@ -32,12 +32,18 @@ Create a type alias:
 
 <SqlLogicTest id="sql/statements/create_type/index/example_004" />
 
+Create a temporary type, visible only to this session:
+
+<SqlLogicTest id="sql/statements/create_type/index/example_006" />
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />
 
 The `CREATE TYPE` clause defines a new data type available to this SereneDB instance.
 These new types can then be inspected in the [`sdb_types` table](../../functions/metadata.md#sdb_types).
+
+`CREATE TEMPORARY TYPE` (or `CREATE TEMP TYPE`) creates the type in the session's temporary database, `temp`, as `CREATE TEMPORARY TABLE` creates a table there: only the session sees it, a schema name cannot be given, and it is dropped when the session ends.
 
 Every table and view also has a row type with its own name, as in PostgreSQL, so a type cannot take the name of a table or view in the same schema, and a table or view cannot take the name of a type there; renaming into such a name fails the same way. Indexes and sequences have no row type, so their names never clash with a type's.
 

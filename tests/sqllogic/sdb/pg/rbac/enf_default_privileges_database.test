@@ -1,0 +1,60 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS edpd_vedernikoff;
+
+
+statement ok
+CREATE ROLE edpd_vedernikoff LOGIN PASSWORD 'edpd_pw';
+
+
+statement ok
+CREATE DATABASE edpd_other_${__DATABASE__};
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT CREATE ON SCHEMAS TO edpd_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA edpd_other_${__DATABASE__}.edpd_bare;
+
+
+connection c_ved user=edpd_vedernikoff password=edpd_pw
+statement error
+CREATE TABLE edpd_other_${__DATABASE__}.edpd_bare.edpd_made (a integer);
+----
+db error: ERROR: permission denied for schema edpd_bare
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE CREATE ON SCHEMAS FROM edpd_vedernikoff;
+
+
+statement ok
+SET search_path TO edpd_other_${__DATABASE__}.public;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT CREATE ON SCHEMAS TO edpd_vedernikoff;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+CREATE SCHEMA edpd_other_${__DATABASE__}.edpd_granted;
+
+
+connection c_ved user=edpd_vedernikoff password=edpd_pw
+statement ok
+CREATE TABLE edpd_other_${__DATABASE__}.edpd_granted.edpd_made (a integer);
+
+
+statement ok
+DROP DATABASE edpd_other_${__DATABASE__};
+
+
+statement ok
+DROP ROLE edpd_vedernikoff;

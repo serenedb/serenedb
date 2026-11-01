@@ -37,6 +37,7 @@
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
 
@@ -89,7 +90,7 @@ class StringAccumulator {
   uint64_t row_count = 0;
   uint64_t null_count = 0;
   std::vector<std::string_view> entries;
-  std::vector<uint32_t> codes;
+  ScratchVector<uint32_t> codes;
 
  private:
   containers::FlatHashMap<std::string_view, uint32_t> _map;

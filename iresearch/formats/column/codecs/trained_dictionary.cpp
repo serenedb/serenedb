@@ -82,7 +82,6 @@ std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
   if (!Ready()) {
     return nullptr;
   }
-  std::string dictionary(kTrainedDictionaryBytes, '\0');
   ZDICT_fastCover_params_t params{};
   params.k = 256;
   params.d = 8;
@@ -93,14 +92,19 @@ std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
   params.zParams.compressionLevel = 3;
   const std::vector<size_t> sizes(_samples.size() / kSamplePieceBytes,
                                   kSamplePieceBytes);
-  const auto n = ZDICT_trainFromBuffer_fastCover(
-    dictionary.data(), dictionary.size(), _samples.data(), sizes.data(),
-    static_cast<unsigned>(sizes.size()), params);
+  size_t n = 0;
+  std::string dictionary;
+  dictionary.resize_and_overwrite(
+    kTrainedDictionaryBytes, [&](char* buf, size_t size) {
+      n = ZDICT_trainFromBuffer_fastCover(
+        buf, size, _samples.data(), sizes.data(),
+        static_cast<unsigned>(sizes.size()), params);
+      return ZDICT_isError(n) ? 0 : n;
+    });
   std::string{}.swap(_samples);
   if (ZDICT_isError(n)) {
     return nullptr;
   }
-  dictionary.resize(n);
   return std::make_shared<const TrainedDictionary>(std::move(dictionary));
 }
 

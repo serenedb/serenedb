@@ -62,8 +62,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   FSST symbol table, at most 2066 bytes      |   |
 |   +----------------------------------------------+   |
-|   trained once per row group; each of the row        |
-|   group's FSST segments stores a copy                |
+|   trained per row group and again when its data      |
+|   drifts; each FSST segment stores a copy            |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -126,8 +126,8 @@ encoded bytes:
 |   +----------------------------------------------+   |
 |   |   FSST symbol table, at most 2066 bytes      |   |
 |   +----------------------------------------------+   |
-|   trained once per row group; each of the row        |
-|   group's FSST segments stores a copy                |
+|   trained per row group and again when its data      |
+|   drifts; each FSST segment stores a copy            |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -185,22 +185,21 @@ void FsstEncoder::Encode(std::span<const std::string_view> strings,
 
   _out_lengths.resize(n);
   _out_ptrs.resize(n);
+  lengths.resize(n);
   size_t done = 0;
   out.resize_and_overwrite(2 * total + 8, [&](char* buf, size_t size) {
     done = duckdb_fsst_compress(_encoder.get(), n, _in_lengths.data(),
                                 _in_ptrs.data(), size,
                                 reinterpret_cast<unsigned char*>(buf),
                                 _out_lengths.data(), _out_ptrs.data());
-    return size;
+    size_t used = 0;
+    for (size_t i = 0; i < done; ++i) {
+      lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
+      used += _out_lengths[i];
+    }
+    return used;
   });
   SDB_ENSURE(done == n, "fsst: compression ran out of space");
-  size_t used = 0;
-  lengths.resize(n);
-  for (size_t i = 0; i < n; ++i) {
-    lengths[i] = static_cast<uint32_t>(_out_lengths[i]);
-    used += _out_lengths[i];
-  }
-  out.resize(used);
 }
 
 bool FsstDecoder::Import(std::string_view table) noexcept {

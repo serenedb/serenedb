@@ -43,9 +43,9 @@ namespace irs::codecs::text {
 
 using duckdb::string_t;
 
-std::vector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
-                             uint8_t width) {
-  std::vector<uint32_t> out(
+ScratchVector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
+                               uint8_t width) {
+  ScratchVector<uint32_t> out(
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count));
   if (count != 0) {
     duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
@@ -96,18 +96,19 @@ const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
 
 EntryRanges Normalize(EntryRanges ranges) {
   absl::c_sort(ranges);
-  EntryRanges out;
-  for (const auto& [lo, hi] : ranges) {
+  size_t kept = 0;
+  for (const auto [lo, hi] : ranges) {
     if (lo >= hi) {
       continue;
     }
-    if (!out.empty() && lo <= out.back().second) {
-      out.back().second = std::max(out.back().second, hi);
+    if (kept != 0 && lo <= ranges[kept - 1].second) {
+      ranges[kept - 1].second = std::max(ranges[kept - 1].second, hi);
     } else {
-      out.emplace_back(lo, hi);
+      ranges[kept++] = {lo, hi};
     }
   }
-  return out;
+  ranges.resize(kept);
+  return ranges;
 }
 
 EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {

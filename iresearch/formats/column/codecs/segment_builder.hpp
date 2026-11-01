@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text {
@@ -117,7 +118,7 @@ struct Segment {
   uint32_t max_len = 0;
   std::string head;
   std::string data;
-  std::vector<uint32_t> codes;
+  ScratchVector<uint32_t> codes;
   std::optional<duckdb::BaseStatistics> stats;
 
   uint64_t Size() const noexcept { return head.size() + data.size(); }
@@ -271,7 +272,7 @@ class SegmentBuilder {
 
   const StringAccumulator& _acc;
   duckdb::StatsWriter<duckdb::string_t> _stats;
-  duckdb::LogicalType _type;
+  const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
   Shape _shape = Shape::Dedup;
   uint8_t _level = 0;
@@ -279,7 +280,7 @@ class SegmentBuilder {
   uint64_t _next = 0;
 
   std::vector<std::string_view> _entries;
-  std::vector<uint32_t> _codes;
+  ScratchVector<uint32_t> _codes;
   uint64_t _rows = 0;
   uint64_t _runs = 0;
   uint32_t _last_code = 0;

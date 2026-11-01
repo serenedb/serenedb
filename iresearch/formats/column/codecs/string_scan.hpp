@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs::text {
 
@@ -52,8 +53,8 @@ inline constexpr uint32_t kLazyFilterEntries = 4096;
 inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 inline constexpr duckdb::idx_t kFetchAhead = 16;
 
-std::vector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
-                             uint8_t width);
+ScratchVector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
+                               uint8_t width);
 
 struct PackedReader {
   PackedReader(duckdb::data_ptr_t src, uint8_t width)

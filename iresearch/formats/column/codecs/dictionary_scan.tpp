@@ -785,8 +785,8 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   uint64_t warmed_bytes = 0;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
-  std::vector<uint32_t> run_values;
-  std::vector<uint32_t> run_ends;
+  ScratchVector<uint32_t> run_values;
+  ScratchVector<uint32_t> run_ends;
   std::optional<FrameDecoder<uint32_t>> code_frames;
   duckdb::unsafe_unique_array<bool> filter_result;
   idx_t filter_match_count = 0;

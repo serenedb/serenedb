@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <limits>
@@ -159,25 +160,28 @@ class SegmentWriter {
     auto h = Header::Parse(base, seg.Size());
     SDB_ASSERT(seg.codes.size() == h.row_count);
     const uint64_t current = h.off_symtab - h.off_codes;
-    auto encoded = EncodeCodes(seg.codes, current, _tuning.codes);
+    const auto encoded = EncodeCodes(seg.codes, current, _tuning.codes);
     if (!encoded) {
       return;
     }
-    const auto symtab =
-      std::string_view{seg.head}.substr(h.off_symtab, h.symtab_size);
-    std::string head{seg.head, 0, h.off_codes};
-    head.append(encoded->bytes);
-    head.resize(duckdb::AlignValue<uint64_t, 8>(head.size()), '\0');
-    h.off_runs = static_cast<uint32_t>(head.size());
+    const auto& bytes = encoded->bytes;
+    SDB_ASSERT(bytes.size() < current);
+    const uint64_t codes_end = h.off_codes + bytes.size();
+    const auto off_symtab = duckdb::AlignValue<uint64_t, 8>(codes_end);
+    const auto symtab_end = off_symtab + h.symtab_size;
+    const auto off_data = duckdb::AlignValue<uint64_t, 8>(symtab_end);
+    std::memcpy(base + h.off_codes, bytes.data(), bytes.size());
+    std::memset(base + codes_end, 0, off_symtab - codes_end);
+    std::memmove(base + off_symtab, base + h.off_symtab, h.symtab_size);
+    std::memset(base + symtab_end, 0, off_data - symtab_end);
+    h.off_runs = static_cast<uint32_t>(off_symtab);
     h.off_symtab = h.off_runs;
-    head.append(symtab);
-    head.resize(duckdb::AlignValue<uint64_t, 8>(head.size()), '\0');
-    h.off_data = static_cast<uint32_t>(head.size());
+    h.off_data = static_cast<uint32_t>(off_data);
     h.codes_encoding = CodesEncoding::Numeric;
     h.run_count = 0;
     h.run_width = 0;
-    duckdb::Store(h, reinterpret_cast<duckdb::data_ptr_t>(head.data()));
-    seg.head.swap(head);
+    duckdb::Store(h, base);
+    seg.head.resize(off_data);
   }
 
   Config Cutter() const noexcept {

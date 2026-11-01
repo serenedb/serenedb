@@ -319,8 +319,9 @@ duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
     duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
   Scan scan{segment, buffer_manager.Pin(segment.GetBlockHandle())};
   scan.EnsureDictionary();
-  return duckdb::make_shared_ptr<DecodedDictionary>(scan.entries.dictionary,
-                                                    scan.entries.CacheBytes());
+  const auto bytes = scan.entries.CacheBytes();
+  return duckdb::make_shared_ptr<DecodedDictionary>(
+    std::move(scan.entries.dictionary), bytes);
 }
 
 template<typename Scan>

@@ -183,7 +183,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
-  irs::MergeReservation ReserveMerges(
+  std::vector<irs::MergeTicket> ReserveMerges(
     auto&& planner, irs::LoneSegment lone = irs::LoneSegment::Skip) {
     return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
                                   lone);
@@ -193,6 +193,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                      const irs::IndexFieldOptions* field_options,
                      const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
     -> yaclib::Future<MergeResult>;
+  auto CompactAsync(const irs::CompactionPolicy& policy,
+                    const irs::MergeProgress& progress,
+                    const irs::IndexFieldOptions* field_options,
+                    const irs::AnnBuildEnv* env, irs::MergeExecutor& executor,
+                    irs::LoneSegment lone) -> yaclib::Future<MergeResult>;
   ResultWithTime CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {

@@ -205,21 +205,21 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
   const auto blocked = merges.Blocked(*relation);
   const auto policy =
     MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
-  auto reservation = idx->ReserveMerges(
-    [&](const irs::IndexReader& index, const irs::CompactingSegments& reserved,
-        irs::MergeGroups& groups) {
-      irs::CompactingSegments taken = reserved;
-      taken.insert(blocked.begin(), blocked.end());
-      groups = PickMerges(policy, index, std::move(taken), wanted);
-    });
+  auto tickets = idx->ReserveMerges([&](const irs::IndexReader& index,
+                                        const irs::CompactingSegments& reserved,
+                                        irs::MergeGroups& groups) {
+    irs::CompactingSegments taken = reserved;
+    taken.insert(blocked.begin(), blocked.end());
+    groups = PickMerges(policy, index, std::move(taken), wanted);
+  });
   std::vector<std::unique_ptr<MergeJob>> jobs;
-  jobs.reserve(reservation.tickets.size());
-  for (auto& ticket : reservation.tickets) {
+  jobs.reserve(tickets.size());
+  for (auto& ticket : tickets) {
     jobs.emplace_back(
       std::make_unique<StorageMergeJob<Storage>>(idx, std::move(ticket)));
   }
   merges.Enqueue(relation, std::move(jobs));
-  return reservation.tickets.size();
+  return tickets.size();
 }
 
 // Wait up to `total` for the timer OR a NudgeCompaction. OneShotEvent is a poor

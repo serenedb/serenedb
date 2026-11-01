@@ -1363,9 +1363,9 @@ CompactingSegments IndexWriter::UnavailableLocked(
   return unavailable;
 }
 
-MergeReservation IndexWriter::ReserveLocked(
+std::vector<MergeTicket> IndexWriter::ReserveLocked(
   std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
-  LoneSegment lone) {
+  LoneSegment lone, bool& busy) {
   if (const auto floor = _compacting.floor; floor != 0) {
     for (auto& group : groups) {
       std::erase_if(group, [floor](const SubReader* candidate) {
@@ -1373,8 +1373,8 @@ MergeReservation IndexWriter::ReserveLocked(
       });
     }
   }
-  MergeReservation reservation;
-  reservation.tickets.reserve(groups.size());
+  std::vector<MergeTicket> tickets;
+  tickets.reserve(groups.size());
   for (auto& group : groups) {
     if (group.empty() || (group.size() == 1 && lone == LoneSegment::Skip &&
                           !HasRemovals(group.front()->Meta()))) {
@@ -1383,7 +1383,7 @@ MergeReservation IndexWriter::ReserveLocked(
     if (absl::c_any_of(group, [this](const SubReader* candidate) {
           return _compacting.segments.contains(candidate->Meta().name);
         })) {
-      reservation.busy = true;
+      busy = true;
       continue;
     }
 #ifdef SDB_DEV
@@ -1413,9 +1413,9 @@ MergeReservation IndexWriter::ReserveLocked(
       _compacting.segments.emplace(candidate->Meta().name);
     }
     _compacting.tickets.emplace(state.get());
-    reservation.tickets.emplace_back(MergeTicket{*this, std::move(state)});
+    tickets.emplace_back(MergeTicket{*this, std::move(state)});
   }
-  return reservation;
+  return tickets;
 }
 
 void IndexWriter::ReleaseTicket(MergeTicket::State& state) noexcept {
@@ -1448,19 +1448,20 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const AnnBuildEnv* env, MergeExecutor* executor,
                                LoneSegment lone)
   -> yaclib::Future<CompactionResult> {
-  auto reservation = ReserveMerges(
+  bool busy = false;
+  auto tickets = Reserve(
     [&policy](const IndexReader& index, const CompactingSegments& reserved,
               MergeGroups& groups) {
       policy(groups.emplace_back(), index, reserved);
     },
-    lone);
-  if (reservation.tickets.empty()) {
+    lone, busy);
+  if (tickets.empty()) {
     co_return CompactionResult{
-      0, reservation.busy ? CompactionError::Busy : CompactionError::Ok};
+      0, busy ? CompactionError::Busy : CompactionError::Ok};
   }
-  SDB_ASSERT(reservation.tickets.size() == 1);
-  co_return co_await RunMerge(std::move(reservation.tickets.front()),
-                              field_options, progress, env, executor);
+  SDB_ASSERT(tickets.size() == 1);
+  co_return co_await RunMerge(std::move(tickets.front()), field_options,
+                              progress, env, executor);
 }
 
 auto IndexWriter::RunMerge(MergeTicket ticket,

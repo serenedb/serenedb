@@ -526,6 +526,19 @@ auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
   });
 }
 
+auto SearchTable::CompactAsync(const irs::CompactionPolicy& policy,
+                               const irs::MergeProgress& progress,
+                               const irs::IndexFieldOptions* field_options,
+                               const irs::AnnBuildEnv* env,
+                               irs::MergeExecutor& executor,
+                               irs::LoneSegment lone)
+  -> yaclib::Future<MergeResult> {
+  co_return co_await AwaitMerge([&] {
+    return _writer->CompactAsync(policy, field_options, progress, env,
+                                 &executor, lone);
+  });
+}
+
 auto SearchTable::AwaitMerge(
   absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
   -> yaclib::Future<MergeResult> {

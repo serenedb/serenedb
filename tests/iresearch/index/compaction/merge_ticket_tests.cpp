@@ -104,9 +104,9 @@ class MergeTicketTest : public ::testing::Test {
     return names;
   }
 
-  irs::MergeReservation Reserve(const Positions& positions,
-                                std::vector<std::string>* seen = nullptr,
-                                bool* called = nullptr) {
+  std::vector<irs::MergeTicket> Reserve(
+    const Positions& positions, std::vector<std::string>* seen = nullptr,
+    bool* called = nullptr) {
     return _writer->ReserveMerges([&](const irs::IndexReader& index,
                                       const irs::CompactingSegments& reserved,
                                       irs::MergeGroups& groups) {
@@ -159,32 +159,31 @@ TEST_F(MergeTicketTest, ReservesDisjointGroupsAndReleasesThem) {
   std::vector<std::string> seen{"stale"};
   auto reservation = Reserve({{0, 1}, {2, 3}}, &seen);
   EXPECT_TRUE(seen.empty());
-  EXPECT_FALSE(reservation.busy);
-  ASSERT_EQ(2, reservation.tickets.size());
-  EXPECT_EQ(Names({{0, 1}}), NamesOf(reservation.tickets[0]));
-  EXPECT_EQ(Names({{2, 3}}), NamesOf(reservation.tickets[1]));
-  EXPECT_FALSE(reservation.tickets[0].Revoked());
+  ASSERT_EQ(2, reservation.size());
+  EXPECT_EQ(Names({{0, 1}}), NamesOf(reservation[0]));
+  EXPECT_EQ(Names({{2, 3}}), NamesOf(reservation[1]));
+  EXPECT_FALSE(reservation[0].Revoked());
   EXPECT_EQ(Names(), ReservedNames());
 
   const auto second = Names({{2, 3}});
   {
-    const auto released = std::move(reservation.tickets[0]);
+    const auto released = std::move(reservation[0]);
   }
-  EXPECT_TRUE(reservation.tickets[0].Candidates().empty());
-  EXPECT_FALSE(reservation.tickets[0].Revoked());
+  EXPECT_TRUE(reservation[0].Candidates().empty());
+  EXPECT_FALSE(reservation[0].Revoked());
   EXPECT_EQ(second, ReservedNames());
 
-  reservation.tickets.clear();
+  reservation.clear();
   EXPECT_TRUE(ReservedNames().empty());
 }
 
 TEST_F(MergeTicketTest, MovedTicketsKeepOneReservation) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   const auto first = Names({{0, 1}});
-  irs::MergeTicket moved{std::move(reservation.tickets[0])};
-  EXPECT_TRUE(reservation.tickets[0].Candidates().empty());
+  irs::MergeTicket moved{std::move(reservation[0])};
+  EXPECT_TRUE(reservation[0].Candidates().empty());
   EXPECT_EQ(first, NamesOf(moved));
 
   auto& self = moved;
@@ -194,9 +193,9 @@ TEST_F(MergeTicketTest, MovedTicketsKeepOneReservation) {
 
   AddSegments(2);
   auto other = Reserve({{2, 3}});
-  ASSERT_EQ(1, other.tickets.size());
-  moved = std::move(other.tickets[0]);
-  EXPECT_TRUE(other.tickets[0].Candidates().empty());
+  ASSERT_EQ(1, other.size());
+  moved = std::move(other[0]);
+  EXPECT_TRUE(other[0].Candidates().empty());
   EXPECT_EQ(Names({{2, 3}}), ReservedNames());
   {
     const auto released = std::move(moved);
@@ -207,13 +206,11 @@ TEST_F(MergeTicketTest, MovedTicketsKeepOneReservation) {
 TEST_F(MergeTicketTest, OverlappingGroupsAreBusy) {
   AddSegments(3);
   auto first = Reserve({{0, 1}, {1, 2}});
-  EXPECT_TRUE(first.busy);
-  ASSERT_EQ(1, first.tickets.size());
-  EXPECT_EQ(Names({{0, 1}}), NamesOf(first.tickets[0]));
+  ASSERT_EQ(1, first.size());
+  EXPECT_EQ(Names({{0, 1}}), NamesOf(first[0]));
 
   auto second = Reserve({{1, 2}});
-  EXPECT_TRUE(second.busy);
-  EXPECT_TRUE(second.tickets.empty());
+  EXPECT_TRUE(second.empty());
 
   EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
   EXPECT_EQ(Names({{0, 1}}), ReservedNames());
@@ -223,29 +220,27 @@ TEST_F(MergeTicketTest, ReservesNothingWithoutWork) {
   bool called = false;
   auto empty = Reserve({{}}, nullptr, &called);
   EXPECT_FALSE(called);
-  EXPECT_FALSE(empty.busy);
-  EXPECT_TRUE(empty.tickets.empty());
+  EXPECT_TRUE(empty.empty());
 
   AddSegments(1);
   auto none = Reserve({{}, {0}});
-  EXPECT_FALSE(none.busy);
-  EXPECT_TRUE(none.tickets.empty());
+  EXPECT_TRUE(none.empty());
   EXPECT_TRUE(ReservedNames().empty());
 
   AddSegments(1, 0.5);
   ASSERT_LT(_writer->GetSnapshot()[1].live_docs_count(),
             _writer->GetSnapshot()[1].docs_count());
   auto purge = Reserve({{1}});
-  ASSERT_EQ(1, purge.tickets.size());
-  EXPECT_EQ(Names({{1}}), NamesOf(purge.tickets[0]));
+  ASSERT_EQ(1, purge.size());
+  EXPECT_EQ(Names({{1}}), NamesOf(purge[0]));
 }
 
 TEST_F(MergeTicketTest, RunMergePublishesAndHandsTheReservationToTheCommit) {
   AddSegments(4, 0.2);
   const auto live = _writer->GetSnapshot().live_docs_count();
   auto reservation = Reserve({{0, 1}, {2, 3}});
-  ASSERT_EQ(2, reservation.tickets.size());
-  for (auto& ticket : reservation.tickets) {
+  ASSERT_EQ(2, reservation.size());
+  for (auto& ticket : reservation) {
     const auto result = Run(std::move(ticket));
     EXPECT_EQ(CompactionError::Ok, result.error);
     EXPECT_EQ(2, result.size);
@@ -265,9 +260,9 @@ TEST_F(MergeTicketTest, RunMergePublishesAndHandsTheReservationToTheCommit) {
 TEST_F(MergeTicketTest, AWaitingTicketHoldsOnlyItsOwnSegments) {
   AddSegments(4);
   auto reservation = Reserve({{0, 1}, {2, 3}});
-  ASSERT_EQ(2, reservation.tickets.size());
-  const auto replaced = NamesOf(reservation.tickets[1]);
-  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation.tickets[1])).error);
+  ASSERT_EQ(2, reservation.size());
+  const auto replaced = NamesOf(reservation[1]);
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation[1])).error);
   ASSERT_TRUE(_writer->RefreshCommit());
   irs::directory_utils::RemoveAllUnreferenced(_dir);
   for (const auto& name : replaced) {
@@ -278,7 +273,7 @@ TEST_F(MergeTicketTest, AWaitingTicketHoldsOnlyItsOwnSegments) {
     });
     EXPECT_FALSE(left) << name;
   }
-  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation.tickets[0])).error);
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(reservation[0])).error);
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
   EXPECT_EQ(200, _writer->GetSnapshot().live_docs_count());
@@ -287,11 +282,10 @@ TEST_F(MergeTicketTest, AWaitingTicketHoldsOnlyItsOwnSegments) {
 TEST_F(MergeTicketTest, RunMergeDuringACommitPublishesWithTheNextOne) {
   AddSegments(3);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   InsertUncommitted();
   ASSERT_TRUE(_writer->RefreshBegin());
-  EXPECT_EQ(CompactionError::Pending,
-            Run(std::move(reservation.tickets[0])).error);
+  EXPECT_EQ(CompactionError::Pending, Run(std::move(reservation[0])).error);
   _writer->RefreshFinish();
   EXPECT_EQ(4, _writer->GetSnapshot().size());
   EXPECT_EQ(2, ReservedNames().size());
@@ -305,13 +299,13 @@ TEST_F(MergeTicketTest, RunMergeDuringACommitPublishesWithTheNextOne) {
 TEST_F(MergeTicketTest, ArmingAFloorRevokesQueuedTickets) {
   AddSegments(3);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
 
   auto floor = _writer->ArmCompactionFloor();
   ASSERT_TRUE(floor.Held());
-  EXPECT_TRUE(reservation.tickets[0].Revoked());
+  EXPECT_TRUE(reservation[0].Revoked());
 
-  const auto result = Run(std::move(reservation.tickets[0]));
+  const auto result = Run(std::move(reservation[0]));
   EXPECT_EQ(CompactionError::Cancelled, result.error);
   EXPECT_EQ(0, result.size);
   EXPECT_FALSE(result);
@@ -320,42 +314,39 @@ TEST_F(MergeTicketTest, ArmingAFloorRevokesQueuedTickets) {
   std::vector<std::string> seen;
   auto below = Reserve({{0, 1, 2}}, &seen);
   EXPECT_EQ(Names(), seen);
-  EXPECT_FALSE(below.busy);
-  EXPECT_TRUE(below.tickets.empty());
+  EXPECT_TRUE(below.empty());
 
   AddSegments(2);
   auto above = Reserve({{0, 1, 2, 3, 4}});
-  ASSERT_EQ(1, above.tickets.size());
-  EXPECT_EQ(Names({{3, 4}}), NamesOf(above.tickets[0]));
+  ASSERT_EQ(1, above.size());
+  EXPECT_EQ(Names({{3, 4}}), NamesOf(above[0]));
   EXPECT_FALSE(_writer->ArmCompactionFloor().Held());
 
   floor = {};
-  above.tickets.clear();
-  EXPECT_EQ(2, Reserve({{0, 1}, {2, 3}}).tickets.size());
+  above.clear();
+  EXPECT_EQ(2, Reserve({{0, 1}, {2, 3}}).size());
 }
 
 TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
   AddSegments(3);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   InsertUncommitted();
   ASSERT_TRUE(_writer->RefreshBegin());
-  ASSERT_EQ(CompactionError::Pending,
-            Run(std::move(reservation.tickets[0])).error);
+  ASSERT_EQ(CompactionError::Pending, Run(std::move(reservation[0])).error);
   _writer->RefreshFinish();
 
   auto pending = _writer->ArmCompactionFloor();
   EXPECT_FALSE(pending.Held());
   bool called = false;
   auto blocked = Reserve({{2, 3}}, nullptr, &called);
-  EXPECT_TRUE(blocked.busy);
   EXPECT_FALSE(called);
-  EXPECT_TRUE(blocked.tickets.empty());
+  EXPECT_TRUE(blocked.empty());
   EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
 
   pending = _writer->ArmCompactionFloor();
   EXPECT_FALSE(pending.Held());
-  EXPECT_TRUE(Reserve({{2, 3}}).busy);
+  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
 
   ASSERT_TRUE(_writer->RefreshCommit());
   pending = _writer->ArmCompactionFloor();
@@ -364,14 +355,13 @@ TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
 
   pending = {};
   auto free = Reserve({{0, 1}});
-  EXPECT_FALSE(free.busy);
-  EXPECT_EQ(1, free.tickets.size());
+  EXPECT_EQ(1, free.size());
 }
 
 TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   irs::IndexWriter::CompactionFloorGuard floor;
   bool armed = false;
   const irs::MergeProgress progress = [&] {
@@ -381,11 +371,11 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
     }
     return true;
   };
-  const auto result = Run(std::move(reservation.tickets[0]), progress);
+  const auto result = Run(std::move(reservation[0]), progress);
   EXPECT_EQ(CompactionError::Cancelled, result.error);
   EXPECT_EQ(2, result.size);
   EXPECT_FALSE(floor.Held());
-  EXPECT_TRUE(Reserve({{0, 1}}).busy);
+  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
 
   floor = _writer->ArmCompactionFloor();
   EXPECT_TRUE(floor.Held());
@@ -396,9 +386,8 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
 TEST_F(MergeTicketTest, AStoppedMergeIsCancelledAndReleased) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
-  const auto result =
-    Run(std::move(reservation.tickets[0]), [] { return false; });
+  ASSERT_EQ(1, reservation.size());
+  const auto result = Run(std::move(reservation[0]), [] { return false; });
   EXPECT_EQ(CompactionError::Cancelled, result.error);
   EXPECT_FALSE(result);
   EXPECT_TRUE(ReservedNames().empty());
@@ -414,9 +403,9 @@ TEST_F(MergeTicketTest, AStoppedMergeIsCancelledAndReleased) {
 TEST_F(MergeTicketTest, AFailedMergeIsAFailureAndReleased) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   RefusingExecutor refusing;
-  const auto result = Run(std::move(reservation.tickets[0]), {}, &refusing);
+  const auto result = Run(std::move(reservation[0]), {}, &refusing);
   EXPECT_EQ(CompactionError::Fail, result.error);
   EXPECT_EQ(2, result.size);
   EXPECT_TRUE(ReservedNames().empty());
@@ -430,56 +419,55 @@ TEST_F(MergeTicketTest, AThrowingUnitFailsTheMergeAndReleasesItsTicket) {
   }
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
-  EXPECT_ANY_THROW(Run(std::move(reservation.tickets[0])));
+  ASSERT_EQ(1, reservation.size());
+  EXPECT_ANY_THROW(Run(std::move(reservation[0])));
   EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::MergeUnit"));
   EXPECT_TRUE(ReservedNames().empty());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
-  EXPECT_EQ(1, Reserve({{0, 1}}).tickets.size());
+  EXPECT_EQ(1, Reserve({{0, 1}}).size());
 }
 
 TEST_F(MergeTicketTest, ARevokedTicketStaysReleasedAcrossRevocations) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   {
     auto floor = _writer->ArmCompactionFloor();
     ASSERT_TRUE(floor.Held());
   }
   auto fresh = Reserve({{0, 1}});
-  ASSERT_EQ(1, fresh.tickets.size());
+  ASSERT_EQ(1, fresh.size());
   {
     auto floor = _writer->ArmCompactionFloor();
     EXPECT_TRUE(floor.Held());
   }
-  EXPECT_TRUE(reservation.tickets[0].Revoked());
-  EXPECT_TRUE(fresh.tickets[0].Revoked());
-  reservation.tickets.clear();
-  fresh.tickets.clear();
+  EXPECT_TRUE(reservation[0].Revoked());
+  EXPECT_TRUE(fresh[0].Revoked());
+  reservation.clear();
+  fresh.clear();
   EXPECT_TRUE(ReservedNames().empty());
 }
 
 TEST_F(MergeTicketTest, ClearRevokesEveryTicket) {
   AddSegments(4);
   auto reservation = Reserve({{0, 1}, {2, 3}});
-  ASSERT_EQ(2, reservation.tickets.size());
+  ASSERT_EQ(2, reservation.size());
   _writer->Clear();
-  EXPECT_TRUE(reservation.tickets[0].Revoked());
-  EXPECT_TRUE(reservation.tickets[1].Revoked());
+  EXPECT_TRUE(reservation[0].Revoked());
+  EXPECT_TRUE(reservation[1].Revoked());
   EXPECT_EQ(0, _writer->GetSnapshot().size());
 
   AddSegments(2);
   auto fresh = Reserve({{0, 1}});
-  ASSERT_EQ(1, fresh.tickets.size());
+  ASSERT_EQ(1, fresh.size());
   const auto names = ReservedNames();
   EXPECT_EQ(Names(), names);
 
-  EXPECT_EQ(CompactionError::Cancelled,
-            Run(std::move(reservation.tickets[0])).error);
-  reservation.tickets.clear();
+  EXPECT_EQ(CompactionError::Cancelled, Run(std::move(reservation[0])).error);
+  reservation.clear();
   EXPECT_EQ(names, ReservedNames());
 
-  EXPECT_EQ(CompactionError::Ok, Run(std::move(fresh.tickets[0])).error);
+  EXPECT_EQ(CompactionError::Ok, Run(std::move(fresh[0])).error);
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(100, _writer->GetSnapshot().live_docs_count());
@@ -488,7 +476,7 @@ TEST_F(MergeTicketTest, ClearRevokesEveryTicket) {
 TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
-  ASSERT_EQ(1, reservation.tickets.size());
+  ASSERT_EQ(1, reservation.size());
   bool cleared = false;
   const irs::MergeProgress progress = [&] {
     if (!cleared) {
@@ -498,20 +486,20 @@ TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
     return true;
   };
   EXPECT_EQ(CompactionError::Cancelled,
-            Run(std::move(reservation.tickets[0]), progress).error);
+            Run(std::move(reservation[0]), progress).error);
   EXPECT_TRUE(cleared);
   EXPECT_EQ(0, _writer->GetSnapshot().size());
   EXPECT_TRUE(ReservedNames().empty());
 
   AddSegments(2);
-  EXPECT_EQ(1, Reserve({{0, 1}}).tickets.size());
+  EXPECT_EQ(1, Reserve({{0, 1}}).size());
 }
 
 TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
   AddSegments(3);
   auto merge = Reserve({{0, 1}});
-  ASSERT_EQ(1, merge.tickets.size());
-  ASSERT_EQ(CompactionError::Ok, Run(std::move(merge.tickets[0])).error);
+  ASSERT_EQ(1, merge.size());
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(merge[0])).error);
   if (!duckdb::FaultPoints::Arm("pause_irs_commit_before_reader_swap")) {
     GTEST_SKIP() << "built without fault injection";
   }
@@ -534,7 +522,7 @@ TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
           }
         }
       });
-    for (const auto& ticket : reservation.tickets) {
+    for (const auto& ticket : reservation) {
       for (const auto* candidate : ticket.Candidates()) {
         names.emplace_back(candidate->Meta().name);
       }
@@ -570,12 +558,12 @@ TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {
             }
           }
         });
-      if (reservation.tickets.empty()) {
+      if (reservation.empty()) {
         continue;
       }
       ++reserved;
       const auto snapshot = _writer->GetSnapshot();
-      for (const auto* candidate : reservation.tickets.front().Candidates()) {
+      for (const auto* candidate : reservation.front().Candidates()) {
         const auto& name = candidate->Meta().name;
         stale += std::none_of(snapshot.begin(), snapshot.end(),
                               [&](const irs::SubReader& segment) {
@@ -588,11 +576,10 @@ TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {
   for (size_t round = 0; round != 300; ++round) {
     AddSegments(1);
     auto reservation = Reserve({{0, 1}});
-    if (reservation.tickets.empty()) {
+    if (reservation.empty()) {
       continue;
     }
-    merged +=
-      Run(std::move(reservation.tickets[0])).error == CompactionError::Ok;
+    merged += Run(std::move(reservation[0])).error == CompactionError::Ok;
     _writer->RefreshCommit();
   }
   done = true;
@@ -606,13 +593,13 @@ TEST_F(MergeTicketTest, DisjointTicketsMergeConcurrentlyWithACommit) {
   AddSegments(6, 0.1);
   const auto live = _writer->GetSnapshot().live_docs_count();
   auto reservation = Reserve({{0, 1}, {2, 3}, {4, 5}});
-  ASSERT_EQ(3, reservation.tickets.size());
+  ASSERT_EQ(3, reservation.size());
 
-  std::vector<irs::CompactionResult> results(reservation.tickets.size());
+  std::vector<irs::CompactionResult> results(reservation.size());
   std::vector<std::thread> threads;
-  for (size_t i = 0; i != reservation.tickets.size(); ++i) {
+  for (size_t i = 0; i != reservation.size(); ++i) {
     threads.emplace_back([this, &results, &reservation, i] {
-      results[i] = Run(std::move(reservation.tickets[i]));
+      results[i] = Run(std::move(reservation[i]));
     });
   }
   InsertUncommitted();

@@ -2266,6 +2266,84 @@ TEST_F(ColumnReaderTest, ListGatherSparse) {
   }
 }
 
+TEST_F(ColumnReaderTest, PointReadsAfterASpreadVectorReturnTheirOwnLists) {
+  constexpr irs::field_id kL = 16;
+  constexpr uint64_t kLists = 4200;
+  constexpr uint64_t kListLen = 128;
+  constexpr uint64_t kAlternating = 2 * kLists;
+  constexpr uint64_t kFirstRepeat = 600;
+  constexpr uint64_t kRepeats = 4;
+  constexpr uint64_t kRows = kAlternating + kRepeats;
+  constexpr uint64_t kSpreadFirst = 6200;
+  const auto ltype = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  auto list_of = [](uint64_t row) -> uint64_t {
+    if (row >= kAlternating) {
+      return kFirstRepeat + (row - kAlternating);
+    }
+    return row % 2 == 0 ? 0 : (row + 1) / 2;
+  };
+  auto elem_val = [](uint64_t list, uint64_t j) {
+    return static_cast<int64_t>(list * 1000 + j);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "pseg", Db()};
+    auto& cw = w.OpenColumn(kL, ltype, /*skip_validity=*/false,
+                            static_cast<uint32_t>(kRows));
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{ltype, STANDARD_VECTOR_SIZE};
+      duckdb::ListVector::Reserve(v, take * kListLen);
+      auto* le = duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(v);
+      auto* cd = duckdb::FlatVector::GetDataMutable<int64_t>(
+        duckdb::ListVector::GetChildMutable(v));
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        le[k] = duckdb::list_entry_t{k * kListLen, kListLen};
+        for (uint64_t j = 0; j < kListLen; ++j) {
+          cd[k * kListLen + j] = elem_val(list_of(pos + k), j);
+        }
+      }
+      duckdb::ListVector::SetListSize(v, take * kListLen);
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "pseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kL);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  ASSERT_EQ(col->Child()->RowCount(), (kLists + 1) * kListLen);
+
+  auto state = col->InitScan(r.Ctx());
+  uint64_t at = 0;
+  auto read = [&](uint64_t first, duckdb::idx_t count) {
+    col->Skip(state, first - at);
+    duckdb::Vector result{ltype, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(col->Scan(state, result, count), count);
+    at = first + count;
+    result.Flatten(count);
+    const auto* le = duckdb::FlatVector::GetData<duckdb::list_entry_t>(result);
+    const auto* cd = duckdb::FlatVector::GetData<int64_t>(
+      duckdb::ListVector::GetChild(result));
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = first + i;
+      ASSERT_EQ(le[i].length, kListLen) << "row " << row;
+      for (uint64_t j = 0; j < kListLen; ++j) {
+        ASSERT_EQ(cd[le[i].offset + j], elem_val(list_of(row), j))
+          << "row " << row << " element " << j;
+      }
+    }
+  };
+  read(1, 2);
+  read(kSpreadFirst, STANDARD_VECTOR_SIZE);
+  read(kAlternating, kRepeats);
+}
+
 // Build a VARIANT column from a SQL query (each chunk Append-ed), collecting
 // the per-row expected Values. Mirrors variant_shredding_test.cpp's
 // construction but drives the new ColWriter.
@@ -4170,6 +4248,78 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
   ASSERT_NE(ca, nullptr);
   ASSERT_EQ(ca->RowCount(), kTotal);
   VerifyBigint(*ca, r.Ctx(), kTotal, is_valid, val);
+}
+
+TEST_F(ColumnReaderTest, SortedFlushReorderKeepsStagedStringBytes) {
+  constexpr uint64_t kRows = 3000;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kInOrder = 1;
+  constexpr irs::field_id kReversed = 2;
+  auto text = [](uint64_t row) {
+    return absl::StrCat("staged string longer than inlined ", row);
+  };
+  auto staged_strings = [](const irs::ColumnWriter& cw) {
+    std::vector<duckdb::string_t> strings;
+    for (const auto& chunk : cw.Staged()) {
+      const auto* d = duckdb::FlatVector::GetData<duckdb::string_t>(chunk.data);
+      strings.insert(strings.end(), d, d + chunk.count);
+    }
+    return strings;
+  };
+
+  irs::MemoryDirectory dir;
+  irs::ColWriter w{dir, "seg", Db()};
+  w.StageAll();
+  auto& in_order = w.OpenColumn(kInOrder, duckdb::LogicalType::VARCHAR,
+                                /*skip_validity=*/false, kRgSize);
+  auto& reversed = w.OpenColumn(kReversed, duckdb::LogicalType::VARCHAR,
+                                /*skip_validity=*/false, kRgSize);
+  for (uint64_t pos = 0; pos < kRows;) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector v{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      d[k] = duckdb::StringVector::AddString(v, text(pos + k));
+    }
+    duckdb::FlatVector::SetSize(v, take);
+    in_order.Append(v, take);
+    reversed.Append(v, take);
+    pos += take;
+  }
+  const auto in_order_before = staged_strings(in_order);
+  const auto reversed_before = staged_strings(reversed);
+  ASSERT_EQ(kRows, in_order_before.size());
+  ASSERT_EQ(kRows, reversed_before.size());
+  std::vector<uint32_t> new2old(kRows);
+  for (uint32_t row = 0; row != kRows; ++row) {
+    new2old[row] = static_cast<uint32_t>(kRows - 1 - row);
+  }
+
+  in_order.PadNullsTo(kRows);
+  in_order.Reorder({});
+  reversed.PadNullsTo(kRows);
+  reversed.Reorder(new2old);
+
+  const auto in_order_after = staged_strings(in_order);
+  const auto reversed_after = staged_strings(reversed);
+  ASSERT_EQ(kRows, in_order_after.size());
+  ASSERT_EQ(kRows, reversed_after.size());
+  uint64_t in_order_copies = 0;
+  uint64_t reversed_copies = 0;
+  for (uint32_t row = 0; row != kRows; ++row) {
+    const auto old = new2old[row];
+    in_order_copies +=
+      in_order_after[row].GetData() != in_order_before[row].GetData();
+    reversed_copies +=
+      reversed_after[row].GetData() != reversed_before[old].GetData();
+    EXPECT_EQ(text(row), in_order_after[row].GetString()) << row;
+    EXPECT_EQ(text(old), reversed_after[row].GetString()) << row;
+  }
+  EXPECT_EQ(0u, in_order_copies);
+  EXPECT_EQ(0u, reversed_copies);
+  in_order.Finish();
+  reversed.Finish();
 }
 
 // DENSE VARCHAR with FEW distinct short repeated values -> forces the dict_fsst

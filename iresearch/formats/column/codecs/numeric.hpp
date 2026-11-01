@@ -26,6 +26,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -50,6 +51,7 @@ struct NumericSegment {
 };
 
 inline constexpr double kDrift = 1.25;
+inline constexpr uint64_t kNoRival = std::numeric_limits<uint64_t>::max();
 
 struct CalibrationClock {
   static constexpr uint32_t kMaxGap = 16;
@@ -91,9 +93,10 @@ class NumericSealer {
 
   virtual void Add(const duckdb::Vector& input) = 0;
 
-  virtual std::optional<NumericSegment> Seal(
-    const ColCodecParams& params, std::optional<uint64_t> rival_bytes,
-    NumericTuning& tuning, bool due) = 0;
+  virtual std::optional<NumericSegment> Seal(const ColCodecParams& params,
+                                             uint64_t rival_bytes,
+                                             NumericTuning& tuning,
+                                             bool due) = 0;
 };
 
 }  // namespace irs::codecs

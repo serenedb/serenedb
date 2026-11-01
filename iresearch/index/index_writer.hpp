@@ -94,11 +94,6 @@ using CompactionPolicy =
 
 using MergeGroups = std::vector<Compaction>;
 
-struct MergeReservation {
-  std::vector<MergeTicket> tickets;
-  bool busy = false;
-};
-
 enum class LoneSegment : uint8_t {
   Skip,
   Rewrite,
@@ -460,23 +455,10 @@ class IndexWriter : private util::Noncopyable {
                     LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
-  MergeReservation ReserveMerges(auto&& planner,
-                                 LoneSegment lone = LoneSegment::Skip) {
-    std::lock_guard lock{_compacting.lock};
-    if (_compacting.floor_requests != 0) {
-      return {.busy = true};
-    }
-    auto snapshot = GetSnapshotImpl();
-    if (snapshot->size() == 0) {
-      return {};
-    }
-    MergeGroups groups;
-    if (_compacting.floor == 0) {
-      planner(*snapshot, _compacting.segments, groups);
-    } else {
-      planner(*snapshot, UnavailableLocked(*snapshot), groups);
-    }
-    return ReserveLocked(std::move(snapshot), groups, lone);
+  std::vector<MergeTicket> ReserveMerges(auto&& planner,
+                                         LoneSegment lone = LoneSegment::Skip) {
+    bool busy = false;
+    return Reserve(planner, lone, busy);
   }
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
@@ -571,9 +553,28 @@ class IndexWriter : private util::Noncopyable {
   friend class MergeTicket;
 
   CompactingSegments UnavailableLocked(const IndexReader& snapshot) const;
-  MergeReservation ReserveLocked(
+  std::vector<MergeTicket> Reserve(auto&& planner, LoneSegment lone,
+                                   bool& busy) {
+    std::lock_guard lock{_compacting.lock};
+    if (_compacting.floor_requests != 0) {
+      busy = true;
+      return {};
+    }
+    auto snapshot = GetSnapshotImpl();
+    if (snapshot->size() == 0) {
+      return {};
+    }
+    MergeGroups groups;
+    if (_compacting.floor == 0) {
+      planner(*snapshot, _compacting.segments, groups);
+    } else {
+      planner(*snapshot, UnavailableLocked(*snapshot), groups);
+    }
+    return ReserveLocked(std::move(snapshot), groups, lone, busy);
+  }
+  std::vector<MergeTicket> ReserveLocked(
     std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
-    LoneSegment lone);
+    LoneSegment lone, bool& busy);
   void ReleaseTicket(MergeTicket::State& state) noexcept;
   void RevokeTicketsLocked() noexcept;
 

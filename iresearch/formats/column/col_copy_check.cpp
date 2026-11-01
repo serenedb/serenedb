@@ -127,7 +127,7 @@ ReencodeEstimate TrialReencode(
     static_cast<uint32_t>(group_rows), column_options.compression,
     /*hyperloglog=*/false, codec_params);
   if (dictionary) {
-    writer.ShareDictionary(std::move(dictionary), 1);
+    writer.ShareLeafDictionary({}, std::move(dictionary), 1);
   }
   auto ctx = std::make_shared<ReadContext>(reader);
   ctx->SetReusableDictionaries(true);

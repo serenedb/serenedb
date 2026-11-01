@@ -1012,7 +1012,7 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
     }
     const uint16_t index =
       dictionary ? output.AddColumnDictionary(column, dictionary->Bytes()) : 0;
-    cw.ShareDictionary(std::move(dictionary), index);
+    cw.ShareLeafDictionary({}, std::move(dictionary), index);
   }
   std::vector<LeafDictionary> leaves;
   {

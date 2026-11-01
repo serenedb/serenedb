@@ -226,36 +226,24 @@ ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
                                    irs::MergeExecutor& executor) const {
   search::MergeRecorder recorder{_table ? _table->GetId() : _index->GetId(),
                                  origin};
-  const auto pick = [&](const irs::IndexReader& index,
-                        const irs::CompactingSegments&,
-                        irs::MergeGroups& groups) {
+  const irs::CompactionPolicy pick = [&](irs::Compaction& candidates,
+                                         const irs::IndexReader& index,
+                                         const irs::CompactingSegments&) {
     if (_table && !_table->IsCurrentConfig(field_options)) {
       return;
     }
-    auto& group = groups.emplace_back();
     for (const auto& segment : index) {
       if (IsInput(planned, segment.Meta().name)) {
-        group.emplace_back(&segment);
+        candidates.emplace_back(&segment);
       }
     }
-    recorder.Begin(group);
+    recorder.Begin(candidates);
   };
-  auto reservation = _table ? _table->ReserveMerges(pick, planned.lone)
-                            : _index->ReserveMerges(pick, planned.lone);
-  if (reservation.tickets.empty()) {
-    const irs::CompactionResult result{0, reservation.busy
-                                            ? irs::CompactionError::Busy
-                                            : irs::CompactionError::Ok};
-    recorder.Finish(result);
-    return {.outcome = search::OutcomeOf(result)};
-  }
-  SDB_ASSERT(reservation.tickets.size() == 1);
-  auto ticket = std::move(reservation.tickets.front());
   auto merged =
-    _table ? irs::GetBlocking(_table->RunMergeAsync(
-               std::move(ticket), progress, field_options, env, executor))
-           : irs::GetBlocking(_index->RunMergeAsync(
-               std::move(ticket), progress, field_options, env, executor));
+    _table ? irs::GetBlocking(_table->CompactAsync(
+               pick, progress, field_options, env, executor, planned.lone))
+           : irs::GetBlocking(_index->CompactAsync(
+               pick, progress, field_options, env, executor, planned.lone));
   if (merged.res.ok()) {
     recorder.Finish(merged.outcome);
   } else {

@@ -144,8 +144,6 @@ struct VariantScanState;
 struct ListDictionary {
   uint64_t begin = 0;
   uint64_t end = 0;
-  uint64_t ends_pos = 0;
-  uint64_t elems_pos = 0;
   uint64_t missed_block = 0;
   uint64_t oversized_block = 0;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
@@ -189,7 +187,7 @@ class ColumnReader {
     bool certified_dictionary = false;
     bool initialized = false;
     duckdb::SelectionVector sel;
-    std::unique_ptr<VectorScratch> list_offsets;
+    std::unique_ptr<VectorScratch> list_codes;
     std::unique_ptr<ListDictionary> list_dict;
     struct Fetch {
       std::unique_ptr<duckdb::ColumnSegment> segment;

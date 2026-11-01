@@ -34,19 +34,12 @@
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
+#include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class ColWriter;
-class ListIngest;
-
-struct WriteChunk {
-  duckdb::Vector data;
-  duckdb::idx_t count;
-};
 
 bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
                             const duckdb::LogicalType& type,
@@ -59,8 +52,6 @@ class ColumnWriter final {
                bool skip_validity, uint32_t row_group_size,
                duckdb::CompressionType forced, bool hyperloglog,
                ColCodecParams codec_params);
-
-  ~ColumnWriter();
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -95,7 +86,7 @@ class ColumnWriter final {
 
   void Reorder(std::span<const uint32_t> new2old);
 
-  void Finish();
+  void Finish() { SealRowGroup(); }
 
   void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
@@ -105,9 +96,6 @@ class ColumnWriter final {
 
   bool TrainsDictionary() const noexcept;
   void SampleDictionary(std::span<const std::string_view> entries);
-  void ShareDictionary(
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary,
-    uint16_t index);
   void ShareLeafDictionary(
     std::span<const uint32_t> path,
     std::shared_ptr<const codecs::TrainedDictionary> dictionary,
@@ -120,10 +108,13 @@ class ColumnWriter final {
   void Stage(uint64_t count, Fill&& fill);
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
   void AppendStruct(const duckdb::Vector& vec, duckdb::idx_t count);
-  void CheckListDistinct(const WriteChunk& back);
   void PadNestedNulls(uint64_t count);
   WriteChunk& OpenChunk();
   void InitIngest();
+  bool IngestsList() const noexcept {
+    return !_ingest.empty() &&
+           _type.InternalType() == duckdb::PhysicalType::LIST;
+  }
 
   void SealRowGroup();
 
@@ -142,15 +133,12 @@ class ColumnWriter final {
                      std::span<WriteChunk> chunks, ColumnMeta& meta);
 
   bool SealString(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  duckdb::CompressionType forced, ColumnMeta& meta);
+                  uint64_t row_count, duckdb::CompressionType forced,
+                  ColumnMeta& meta);
 
   bool SealNumeric(const duckdb::LogicalType& type,
-                   std::span<WriteChunk> chunks, duckdb::CompressionType forced,
-                   ColumnMeta& meta);
-
-  void SealLeafValidity(std::span<WriteChunk> chunks, uint64_t row_count,
-                        bool skip_validity, bool nulls_covered_by_data,
-                        ColumnMeta& meta);
+                   std::span<WriteChunk> chunks, uint64_t row_count,
+                   duckdb::CompressionType forced, ColumnMeta& meta);
 
   void Compress(const duckdb::CompressionFunction& picked,
                 duckdb::unique_ptr<duckdb::AnalyzeState> state,
@@ -218,8 +206,7 @@ class ColumnWriter final {
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;
-  std::unique_ptr<ListIngest> _list_ingest;
-  std::vector<std::unique_ptr<ListIngest>> _field_ingest;
+  std::vector<std::unique_ptr<ListIngest>> _ingest;
   ColumnMeta _meta;
 };
 

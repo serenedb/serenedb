@@ -21,6 +21,7 @@ target_sources(
         column/column_reader.cpp
         column/column_writer.cpp
         column/internal/write_context.cpp
+        column/list_ingest.cpp
         column/merge.cpp
         column/norm_column_reader.cpp
         column/norm_writer.cpp

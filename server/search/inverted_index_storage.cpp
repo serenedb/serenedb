@@ -274,6 +274,17 @@ auto InvertedIndexStorage::RunMergeAsync(
   });
 }
 
+auto InvertedIndexStorage::CompactAsync(
+  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  irs::MergeExecutor& executor, irs::LoneSegment lone)
+  -> yaclib::Future<MergeResult> {
+  co_return co_await AwaitMerge([&] {
+    return _writer->CompactAsync(policy, field_options, progress, env,
+                                 &executor, lone);
+  });
+}
+
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   SDB_ASSERT(_writer);
@@ -310,7 +321,7 @@ auto InvertedIndexStorage::AwaitMerge(
       SDB_DEBUG(SEARCH, "compaction of Search index '", GetId(),
                 "' merged nothing: cancelled, or every document was removed");
       empty_compaction = true;
-    } else if (result.outcome.error != irs::CompactionError::Busy) {
+    } else {
       empty_compaction = result.outcome.size == 0;
     }
   } catch (const std::exception& e) {

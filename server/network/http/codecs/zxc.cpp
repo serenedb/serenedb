@@ -30,7 +30,7 @@ namespace sdb::network::http {
 namespace {
 
 static_assert(kZxcLevels.min == ZXC_LEVEL_FASTEST &&
-              kZxcLevels.max == ZXC_LEVEL_COMPACT);
+              kZxcLevels.max == ZXC_LEVEL_ULTRA);
 
 template<typename Step>
 void Drain(message::Writer& out, Step step) {

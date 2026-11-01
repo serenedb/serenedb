@@ -508,14 +508,14 @@ target_compile_definitions(
     clickhouse_cpp
     PRIVATE WITH_OPENSSL=1
     PUBLIC
-        CH_MAP_BOOL_TO_UINT8=1
-        CH_USE_ABSEIL_FOR_BIGNUM=1
-        CH_NON_OPTIONAL_CURRENT_ENDPOINT=0
+        CH_MAP_BOOL_TO_UINT8=0
+        CH_USE_ABSEIL_FOR_BIGNUM=0
+        CH_NON_OPTIONAL_CURRENT_ENDPOINT=1
 )
 
 target_link_libraries(
     clickhouse_cpp
-    PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+    PUBLIC lz4_static zstd::zstd OpenSSL::SSL OpenSSL::Crypto
 )
 
 ###############################################################################

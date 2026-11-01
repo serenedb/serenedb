@@ -87,8 +87,7 @@ id	v_float	v_double
 3	0	0
 
 # ---------------------------------------------------------------------
-# Boolean: true/false round-trip. The ClickHouse connector surfaces Bool back
-# through serened as 1/0 on this path.
+# Boolean: true/false round-trip.
 # ---------------------------------------------------------------------
 statement ok
 CREATE TABLE chwt.default.wt_bool (id BIGINT PRIMARY KEY, v_flag BOOLEAN NOT NULL);
@@ -100,8 +99,8 @@ query
 SELECT id, v_flag FROM chwt.default.wt_bool ORDER BY id;
 ----
 id	v_flag
-1	1
-2	0
+1	t
+2	f
 
 # ---------------------------------------------------------------------
 # VARCHAR (NOT NULL -> plain String): a plain handle, the empty string, an

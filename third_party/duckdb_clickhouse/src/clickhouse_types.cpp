@@ -77,11 +77,11 @@ static int64_t DateTime64TicksToMicros(int64_t ticks, int precision) {
 }
 
 static hugeint_t ClickHouseInt128ToHugeint(const clickhouse::Int128 &value) {
-	return hugeint_t(static_cast<int64_t>(absl::Int128High64(value)), absl::Int128Low64(value));
+	return hugeint_t(clickhouse::Bignum::Int128High64(value), clickhouse::Bignum::Int128Low64(value));
 }
 
 static uhugeint_t ClickHouseUInt128ToUhugeint(const clickhouse::UInt128 &value) {
-	return uhugeint_t(absl::Uint128High64(value), absl::Uint128Low64(value));
+	return uhugeint_t(clickhouse::Bignum::UInt128High64(value), clickhouse::Bignum::UInt128Low64(value));
 }
 
 static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
@@ -212,14 +212,14 @@ static void CopyConverted(const clickhouse::Column &col, Vector &out, idx_t src_
 
 template <class T>
 static void CopyDecimal(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
-	CopyConverted<T, clickhouse::ColumnDecimal>(col, out, src_offset, count, dst_offset,
-	                                            [](const clickhouse::Int128 &unscaled) {
-		                                            if constexpr (std::is_same_v<T, hugeint_t>) {
-			                                            return ClickHouseInt128ToHugeint(unscaled);
-		                                            } else {
-			                                            return static_cast<T>(unscaled);
-		                                            }
-	                                            });
+	CopyConverted<T, clickhouse::ColumnDecimal>(
+	    col, out, src_offset, count, dst_offset, [](const clickhouse::Int128 &unscaled) {
+		    if constexpr (std::is_same_v<T, hugeint_t>) {
+			    return ClickHouseInt128ToHugeint(unscaled);
+		    } else {
+			    return static_cast<T>(clickhouse::Bignum::Int128Low64(unscaled));
+		    }
+	    });
 }
 
 // NameAt() does std::map::at on the ordinal -> throws (aborting the whole scan)
@@ -782,7 +782,7 @@ string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
 }
 
 static clickhouse::Int128 HugeintToCH(const hugeint_t &value) {
-	return absl::MakeInt128(value.upper, value.lower);
+	return clickhouse::Bignum::MakeInt128(value.upper, value.lower);
 }
 
 // NULL rows append T{} rather than data[row]: the Nullable wrapper records the
@@ -890,7 +890,7 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
 		auto typed = col->As<clickhouse::ColumnUInt128>();
 		auto data = FlatVector::GetData<uhugeint_t>(vec);
 		for (idx_t row = 0; row < count; row++) {
-			typed->Append(validity.RowIsValid(row) ? absl::MakeUint128(data[row].upper, data[row].lower)
+			typed->Append(validity.RowIsValid(row) ? clickhouse::Bignum::MakeUInt128(data[row].upper, data[row].lower)
 			                                       : clickhouse::UInt128(0));
 		}
 		return;

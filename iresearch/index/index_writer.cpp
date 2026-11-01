@@ -600,7 +600,8 @@ IndexWriter::ActiveSegmentContext::ActiveSegmentContext(
   : _segment{std::move(segment)},
     _segments_active{&segments_active},
     _flush{flush},
-    _pending_segment_offset{pending_segment_offset} {
+    _pending_segment_offset{pending_segment_offset},
+    _unstaged{flush != nullptr} {
   SDB_ASSERT(_segment != nullptr);
 }
 
@@ -613,6 +614,7 @@ IndexWriter::ActiveSegmentContext::~ActiveSegmentContext() {
   _segment.reset();
   _segments_active->fetch_sub(1, std::memory_order_relaxed);
   if (_flush != nullptr) {
+    SDB_ASSERT(!_unstaged);
     _flush->pending.Done();
   }
 }
@@ -623,7 +625,8 @@ IndexWriter::ActiveSegmentContext::ActiveSegmentContext(
     _segments_active{std::exchange(other._segments_active, nullptr)},
     _flush{std::exchange(other._flush, nullptr)},
     _pending_segment_offset{std::exchange(other._pending_segment_offset,
-                                          writer_limits::kInvalidOffset)} {}
+                                          writer_limits::kInvalidOffset)},
+    _unstaged{std::exchange(other._unstaged, false)} {}
 
 IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
   ActiveSegmentContext&& other) noexcept {
@@ -632,8 +635,15 @@ IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
     std::swap(_segments_active, other._segments_active);
     std::swap(_flush, other._flush);
     std::swap(_pending_segment_offset, other._pending_segment_offset);
+    std::swap(_unstaged, other._unstaged);
   }
   return *this;
+}
+
+void IndexWriter::ActiveSegmentContext::Stage() noexcept {
+  if (std::exchange(_unstaged, false)) {
+    _flush->Unstage();
+  }
 }
 
 IndexWriter::Document::Document(SegmentContext& segment, uint64_t tick,
@@ -716,6 +726,7 @@ bool IndexWriter::Transaction::CommitImpl(
   SDB_ASSERT(segment != nullptr);
   SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
   segment->Commit(_queries, last_tick);
+  _active.Stage();
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
@@ -737,6 +748,7 @@ void IndexWriter::Transaction::Abort() noexcept {
     return;
   }
   segment->Rollback();
+  _active.Stage();
   // cannot throw because active_.Flush() not null
   _writer->GetFlushContext()->Emplace(std::move(_active));
   SDB_ASSERT(_active.Segment() == nullptr);
@@ -859,6 +871,26 @@ void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active,
 
 void IndexWriter::FlushContext::AddToPending(ActiveSegmentContext& active) {
   std::lock_guard lock{pending_mutex};
+  AddToPendingLocked(active);
+}
+
+bool IndexWriter::FlushContext::AddToPendingIfUnstaged(
+  ActiveSegmentContext& active) {
+  std::lock_guard lock{pending_mutex};
+  if (unstaged.load(std::memory_order_relaxed) == 0) {
+    return false;
+  }
+  AddToPendingLocked(active);
+  return true;
+}
+
+void IndexWriter::FlushContext::Unstage() noexcept {
+  std::lock_guard lock{pending_mutex};
+  unstaged.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void IndexWriter::FlushContext::AddToPendingLocked(
+  ActiveSegmentContext& active) {
   const auto size_before = pending_segments.size();
   SDB_ASSERT(active._segment != nullptr);
   pending_segments.emplace_back(active._segment, size_before);
@@ -1155,6 +1187,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
     duckdb::TaskScheduler::BlockingScope blocking;
     ctx->pending.Wait();
   }
+  SDB_ASSERT(ctx->unstaged.load(std::memory_order_relaxed) == 0);
   ctx->pending.Reset(1);
   // TODO(mbkkt) Move some pending to the next flush ctx?
   //  It's not super trivial for spliting segments
@@ -1706,6 +1739,18 @@ IndexWriter::FlushContextPtr IndexWriter::SwitchFlushContext() noexcept {
           }};
 }
 
+IndexWriter::FlushContextPtr IndexWriter::StagingFlush(
+  ActiveSegmentContext& active) noexcept {
+  auto current = GetFlushContext();
+  if (auto* previous = current->next;
+      previous->unstaged.load(std::memory_order_acquire) != 0 &&
+      previous->AddToPendingIfUnstaged(active)) {
+    return {previous, [](FlushContext*) noexcept {}};
+  }
+  current->AddToPending(active);
+  return current;
+}
+
 IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
   bool exclusive) try {
   // TODO(mbkkt) rewrite this when will be written parallel Commit
@@ -1733,6 +1778,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
     auto* freelist_node = flush->pending_freelist.pop();
     if (freelist_node != nullptr) {
       flush->pending.Add();
+      flush->unstaged.fetch_add(1, std::memory_order_relaxed);
       return {static_cast<PendingSegmentContext*>(freelist_node)->segment,
               _segments_active, flush.get(), freelist_node->value};
     }
@@ -1786,6 +1832,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     duckdb::TaskScheduler::BlockingScope blocking;
     ctx->pending.Wait();
   }
+  SDB_ASSERT(ctx->unstaged.load(std::memory_order_relaxed) == 0);
   ctx->pending.Reset(1);
   ctx->FlushPending();
 

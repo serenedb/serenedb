@@ -295,6 +295,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
             w.shard->GetTransaction()));
       }
       ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
+      SDB_PARK_ONCE_ON_FAILURE("search_commit_buffer_replayed");
     }
     if (w.buffer_trx != nullptr) {
       for (const auto& segment : w.buffer_trx->FlushAndFsync()) {

@@ -187,6 +187,8 @@ class IndexWriter : private util::Noncopyable {
     auto* Segment() noexcept { return _segment.get(); }
     auto* Flush() noexcept { return _flush; }
 
+    void Stage() noexcept;
+
    private:
     friend struct FlushContext;
 
@@ -194,6 +196,7 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t* _segments_active{nullptr};
     FlushContext* _flush{nullptr};
     size_t _pending_segment_offset{writer_limits::kInvalidOffset};
+    bool _unstaged{false};
   };
 
   static_assert(std::is_nothrow_move_constructible_v<ActiveSegmentContext>);
@@ -694,6 +697,7 @@ class IndexWriter : private util::Noncopyable {
     Freelist pending_freelist;
     yaclib::WaitGroup<> pending{1};
     absl::Mutex pending_mutex;
+    std::atomic_size_t unstaged{0};
 
     CompactingSegments segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
@@ -712,6 +716,9 @@ class IndexWriter : private util::Noncopyable {
     void EmplaceLocked(ActiveSegmentContext&& active);
 
     void AddToPending(ActiveSegmentContext& active);
+    bool AddToPendingIfUnstaged(ActiveSegmentContext& active);
+    void AddToPendingLocked(ActiveSegmentContext& active);
+    void Unstage() noexcept;
 
     void FlushPending();
 
@@ -771,6 +778,7 @@ class IndexWriter : private util::Noncopyable {
 
   FlushContextPtr GetFlushContext() const noexcept;
   FlushContextPtr SwitchFlushContext() noexcept;
+  FlushContextPtr StagingFlush(ActiveSegmentContext& active) noexcept;
 
   ActiveSegmentContext GetSegmentContext(bool exclusive = false);
 
@@ -828,16 +836,18 @@ void IndexWriter::Transaction::RegisterFlush(
       break;
     }
   }
+  for (const auto& trx : transactions) {
+    trx->_active.Stage();
+  }
   // Put every transaction that has data and isn't in a flush into it.
   for (const auto& trx : transactions) {
     // Nothing written, or already in.
     if (!trx->_active.Segment() || trx->_active.Flush()) {
       continue;
     }
-    // The commit isn't in a flush yet: take the current one, locked against
-    // switching until we return.
     if (!flush) {
-      flush = trx->_writer->GetFlushContext();
+      flush = trx->_writer->StagingFlush(trx->_active);
+      continue;
     }
     flush->AddToPending(trx->_active);
   }

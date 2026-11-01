@@ -29,6 +29,7 @@
 #include <atomic>
 #include <chrono>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <filesystem>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/file_names.hpp>
@@ -2486,6 +2487,65 @@ TEST_F(IndexAdoptTest, TransactionsListedBeforeThePooledOneJoinItsFlush) {
   EXPECT_EQ(1, counts.at("seed"));
   EXPECT_EQ(2, counts.at("commit"))
     << "the transaction listed before the pooled one stayed in the next flush";
+}
+
+TEST_F(IndexAdoptTest, AFlushHoldsEveryCommitStagedBeforeItsLastPooledOne) {
+  constexpr std::string_view kSwitch = "pause_irs_commit_after_flush_switch";
+  irs::SourcePosition stamped;
+  auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
+  options.meta_payload_writer = [&](const irs::SourcePosition& position,
+                                    duckdb::BinarySerializer& out) {
+    stamped = position;
+    out.WriteProperty<uint64_t>(0, "offset", position.offset);
+  };
+  _writer.reset();
+  auto writer =
+    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(options));
+  {
+    auto seed = writer->GetBatch();
+    ASSERT_TRUE(InsertDoc(seed, "seed"));
+    ASSERT_TRUE(seed.Commit(1, {.generation = 1, .offset = 10}));
+  }
+  auto late = writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(late, "late"));
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm(kSwitch));
+  std::thread refresh{[&] { EXPECT_TRUE(writer->RefreshCommit()); }};
+  absl::Cleanup release = [&] {
+    duckdb::FaultPoints::Arm(absl::StrCat(kSwitch, ":release"));
+    refresh.join();
+    duckdb::FaultPoints::Clear();
+  };
+  while (!duckdb::FaultPoints::Disarm(absl::StrCat(kSwitch, ":parked"))) {
+    std::this_thread::yield();
+  }
+
+  auto early = writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(early, "early"));
+  irs::IndexWriter::Transaction* early_commit[] = {&early};
+  irs::IndexWriter::Transaction::RegisterFlush(early_commit);
+  ASSERT_TRUE(early.Commit(2, {1, 30}));
+  irs::IndexWriter::Transaction* late_commit[] = {&late};
+  irs::IndexWriter::Transaction::RegisterFlush(late_commit);
+  ASSERT_TRUE(late.Commit(3, {1, 40}));
+  auto after = writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(after, "after"));
+  irs::IndexWriter::Transaction* after_commit[] = {&after};
+  irs::IndexWriter::Transaction::RegisterFlush(after_commit);
+  ASSERT_TRUE(after.Commit(4, {1, 50}));
+  std::move(release).Invoke();
+
+  EXPECT_EQ((irs::SourcePosition{1, 40}), stamped);
+  auto counts = LiveDocsByName(writer->GetSnapshot());
+  EXPECT_EQ(1, counts["late"]);
+  EXPECT_EQ(1, counts["early"])
+    << "a commit staged before the flush's last pooled one was left out";
+  EXPECT_EQ(0, counts["after"]);
+
+  ASSERT_TRUE(writer->RefreshCommit());
+  EXPECT_EQ((irs::SourcePosition{1, 50}), stamped);
+  counts = LiveDocsByName(writer->GetSnapshot());
+  EXPECT_EQ(1, counts["after"]);
 }
 #endif
 

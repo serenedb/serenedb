@@ -134,7 +134,7 @@ A table that has no owner, such as one created by `dbgen`, can be used only by a
 
 - Granting a privilege requires owning the object or holding it `WITH GRANT OPTION`.
 - Superusers bypass all privilege checks.
-- `ALTER DEFAULT PRIVILEGES` sets the privileges that tables, sequences, functions and types created afterwards receive, in every schema or only `IN SCHEMA` one, for the objects of the current role or `FOR ROLE` another. An object created in another database by a qualified name, such as `CREATE SCHEMA other_db.s`, gets the default privileges of the database it is created in.
+- `ALTER DEFAULT PRIVILEGES` sets the privileges that tables, sequences, functions and types created afterwards receive, in every schema or only `IN SCHEMA` one, for the objects of the current role or `FOR ROLE` another. The database-wide setting replaces the built-in defaults, so `ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` creates functions and procedures that only their owner may run; a schema's setting only adds privileges to the database-wide ones and cannot take any away. An object created in another database by a qualified name, such as `CREATE SCHEMA other_db.s`, gets the default privileges of the database it is created in.
 
 ## See also
 

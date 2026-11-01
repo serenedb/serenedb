@@ -1,0 +1,114 @@
+statement ok
+DROP SCHEMA IF EXISTS dpr_quas CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dpr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS dpr_kostya;
+
+
+statement ok
+CREATE ROLE dpr_kostya;
+
+
+statement ok
+CREATE ROLE dpr_vedernikoff LOGIN PASSWORD 'dpr_pw';
+
+
+statement ok
+CREATE SCHEMA dpr_quas AUTHORIZATION dpr_kostya;
+
+
+statement ok
+GRANT USAGE ON SCHEMA dpr_quas TO dpr_vedernikoff;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya IN SCHEMA dpr_quas REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+statement ok
+SET ROLE dpr_kostya;
+
+
+statement ok
+CREATE FUNCTION dpr_quas.dpr_schema_scoped() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+statement ok
+SET ROLE dpr_kostya;
+
+
+statement ok
+CREATE FUNCTION dpr_quas.dpr_global() RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+CREATE PROCEDURE dpr_quas.dpr_proc() LANGUAGE sql AS 'SELECT 3';
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT proname, array_to_string(proacl, ',') AS proacl FROM pg_proc WHERE proname IN ('dpr_schema_scoped', 'dpr_global', 'dpr_proc') ORDER BY proname;
+----
+proname	proacl
+dpr_global	dpr_kostya=X/dpr_kostya
+dpr_proc	dpr_kostya=X/dpr_kostya
+dpr_schema_scoped	NULL
+
+
+query
+SELECT has_function_privilege('dpr_vedernikoff', 'dpr_quas.dpr_schema_scoped()', 'EXECUTE') AS schema_scoped, has_function_privilege('dpr_vedernikoff', 'dpr_quas.dpr_global()', 'EXECUTE') AS global;
+----
+schema_scoped	global
+t	f
+
+
+connection c_dpr user=dpr_vedernikoff password=dpr_pw
+query
+SELECT dpr_quas.dpr_schema_scoped() AS schema_scoped;
+----
+schema_scoped
+1
+
+
+connection c_dpr user=dpr_vedernikoff password=dpr_pw
+statement error
+SELECT dpr_quas.dpr_global();
+----
+db error: ERROR: permission denied for function dpr_global
+
+
+connection c_dpr user=dpr_vedernikoff password=dpr_pw
+statement error permission denied for (function|procedure) dpr_proc
+CALL dpr_quas.dpr_proc();
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+
+
+statement ok
+DROP SCHEMA dpr_quas CASCADE;
+
+
+statement ok
+DROP ROLE dpr_vedernikoff;
+
+
+statement ok
+DROP ROLE dpr_kostya;

@@ -92,7 +92,7 @@ INSERT INTO xt_local VALUES (4, 'd');
 
 connection after_autocommit
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log';
+SET sdb_faults = 'pause_search_commit_before_build_truncate';
 
 connection mixed
 statement async error connection closed
@@ -100,7 +100,7 @@ COMMIT;
 
 connection after_autocommit
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection after_autocommit
 statement ok

@@ -1,0 +1,51 @@
+statement ok
+CREATE ROLE sgs_user;
+
+statement ok
+SET ROLE sgs_user;
+
+statement error
+SET GLOBAL memory_limit = '123MB';
+----
+db error: ERROR: permission denied to set parameter "memory_limit"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+statement error
+SET GLOBAL fsync_mode = 'none';
+----
+db error: ERROR: permission denied to set parameter "fsync_mode"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+statement error
+RESET GLOBAL memory_limit;
+----
+db error: ERROR: permission denied to set parameter "memory_limit"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+statement error
+RESET GLOBAL fsync_mode;
+----
+db error: ERROR: permission denied to set parameter "fsync_mode"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+statement ok
+RESET ROLE;
+
+statement ok
+SET GLOBAL memory_limit = '123MB';
+
+query
+SELECT current_setting('memory_limit') AS v;
+----
+v
+117.3 MiB
+
+statement ok
+RESET GLOBAL memory_limit;
+
+statement ok
+DROP ROLE sgs_user;

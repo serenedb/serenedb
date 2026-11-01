@@ -1,20 +1,6 @@
 control substitution on
 
 statement ok
-CREATE TABLE ses_search (v text) WITH (storage = 'search');
-
-
-statement ok
-ALTER SEQUENCE ses_search_pk_seq RESTART WITH 9223372036854775806;
-
-
-statement error
-INSERT INTO ses_search VALUES ('a'), ('b'), ('c');
-----
-db error: ERROR: nextval: reached maximum value of sequence "ses_search_pk_seq" (9223372036854775807)
-
-
-statement ok
 CREATE SEQUENCE ses_restarted;
 
 
@@ -43,7 +29,3 @@ restarted
 
 statement ok
 DROP SEQUENCE ses_restarted;
-
-
-statement ok
-DROP TABLE ses_search;

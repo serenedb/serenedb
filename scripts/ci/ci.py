@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "scripts" / "ci"), str(ROOT / "tests" / "drivers" / "harness")]
 
+import services  # noqa: E402
 from testlib import store  # noqa: E402
 from testlib.config import CONFIGS  # noqa: E402
 from testlib.scheduler import BAD  # noqa: E402
@@ -38,11 +39,14 @@ BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
     "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
-    "bin/re2-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
+    "bin/re2-tests", "bin/croaring-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
+BUNDLE_MIN_FREE = 200 << 30
 ARCHES = ("x86_64", "aarch64")
+DOCKER_ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
 IMAGE_REPO = "serenedb/serenedb-build-ubuntu"
+FIXTURE_IMAGE_REPO = "serenedb/serenedb-test-"
 IMAGE_DOCKERFILE = "scripts/ci/build-ubuntu.Dockerfile"
 IMAGE_CONTEXTS = {"": "scripts/ci", "drivers": "tests/drivers"}
 
@@ -135,12 +139,16 @@ def cmd_stage(args):
     if args.runner:
         files.append((Path(args.runner).resolve(), "bin/sqllogictest"))
     shared_cache()
+    prune_bundles()
     dest = cached_bundle(args.config, args.arch, args.digest)
     tmp_dir = Path(tempfile.mkdtemp(dir=BUNDLE_CACHE, prefix=".stage-"))
     try:
         for source, rel in files:
             (tmp_dir / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, tmp_dir / rel)
+            if source.is_dir():
+                shutil.copytree(source, tmp_dir / rel)
+            else:
+                shutil.copy2(source, tmp_dir / rel)
         (tmp_dir / ".complete").write_text(args.digest)
         tmp_dir.chmod(0o755)
         if dest.exists():
@@ -214,23 +222,79 @@ def fetch_bundle(config, arch, dig, dest):
     return dest
 
 
-def prune_bundles(keep_days=2):
+def drop_bundle(path):
+    if not (path / ".complete").is_file():
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    with open(path / ".complete") as marker:
+        fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_bundles(keep_days=2, min_free=BUNDLE_MIN_FREE):
     if not BUNDLE_CACHE.is_dir():
         return
     cutoff = time.time() - keep_days * 86400
+    recent = []
     for d in BUNDLE_CACHE.iterdir():
         try:
             info = d.stat()
-            if info.st_uid != os.getuid() or info.st_mtime >= cutoff:
+            if info.st_uid != os.getuid():
                 continue
-            if not (d / ".complete").is_file():
-                shutil.rmtree(d, ignore_errors=True)
-                continue
-            with open(d / ".complete") as marker:
-                fcntl.flock(marker, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                shutil.rmtree(d, ignore_errors=True)
+            if info.st_mtime < cutoff:
+                drop_bundle(d)
+            elif not d.name.startswith(".") and (d / ".complete").is_file():
+                recent.append((info.st_mtime, d))
         except OSError:
             pass
+    for _, d in sorted(recent):
+        if shutil.disk_usage(BUNDLE_CACHE).free >= min_free:
+            return
+        try:
+            drop_bundle(d)
+        except OSError:
+            pass
+
+
+def checkout_images():
+    fixtures = ROOT / "tests" / "sqllogic" / "fixtures"
+    return {image_name(), services.KEV_IMAGE,
+            *(f"{FIXTURE_IMAGE_REPO}{d.parent.name}:{services.fixture_image_tag(d.parent.name)}"
+              for d in fixtures.glob("*/Dockerfile"))}
+
+
+def stale_images(rows, wanted, arch):
+    foreign = tuple(f"-{other}" for other in DOCKER_ARCHES.values() if other != arch)
+    newest = {}
+    stale = []
+    for ref, _ in sorted(rows, key=lambda row: row[1], reverse=True):
+        repo, _, tag = ref.rpartition(":")
+        if tag == "<none>" or (repo != IMAGE_REPO and not repo.startswith(FIXTURE_IMAGE_REPO)):
+            continue
+        if tag.endswith(foreign):
+            stale.append(ref)
+            continue
+        base = ref.removesuffix(f"-{arch}")
+        if newest.setdefault(repo, base) != base and base not in wanted:
+            stale.append(ref)
+    return stale
+
+
+def prune_images():
+    listing = subprocess.run(["docker", "images", "--format", "{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}"],
+                             capture_output=True, text=True)
+    if listing.returncode != 0:
+        return
+    rows = [line.split("\t") for line in listing.stdout.splitlines()]
+    stale = stale_images(rows, checkout_images(), DOCKER_ARCHES[platform.machine()])
+    if stale:
+        subprocess.run(["docker", "rmi", *stale], capture_output=True)
+    subprocess.run(["docker", "image", "prune", "-f"], capture_output=True)
+
+
+def cmd_prune(args):
+    prune_bundles()
+    prune_images()
 
 
 def fetched(config, arch, dig):
@@ -387,6 +451,8 @@ def cmd_select_suites(args):
             out += ["--suite", "iresearch", "--suite", "iresearch-load"]
         if args.re2:
             out += ["--suite", "re2"]
+        if args.croaring:
+            out += ["--suite", "croaring"]
         suites = [s for s in args.duckdb_suites.split(",") if s]
         if suites and not args.no_duckdb:
             out += ["--suite", "duckdb"]
@@ -401,28 +467,52 @@ def cmd_select_suites(args):
     print(" ".join(out))
 
 
+def run_profiles(config, arch, run, profiles):
+    profiles.mkdir(parents=True)
+    got = 0
+    for key in store.run_files("profdata", run, f"{config}-{arch}-"):
+        store.get(key, profiles / key.rsplit("/", 1)[1])
+        got += 1
+    return got
+
+
+def in_build_image(bundle, *cmd):
+    subprocess.run(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+                    "-v", f"{ROOT}:{ROOT}", "-w", str(ROOT), "-v", f"{bundle}:{bundle}", image_name(), *cmd],
+                   check=True)
+
+
 def cmd_coverage_report(args):
     arch = platform.machine()
-    image = image_name()
     bundle = fetched(args.config, arch, args.digest)
     out = ROOT / "out" / f"coverage-{args.config}"
     shutil.rmtree(out, ignore_errors=True)
     profiles = out / "profiles"
-    profiles.mkdir(parents=True)
-    got = 0
-    for key in store.run_files("profdata", args.run, f"{args.config}-{arch}-"):
-        store.get(key, profiles / key.rsplit("/", 1)[1])
-        got += 1
+    got = run_profiles(args.config, arch, args.run, profiles)
     label = f"coverage {args.config}/{arch}"
     if got < args.shards:
         label += f" (partial: profiles of {got} of {args.shards} shards)"
-    docker = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
-              "-v", f"{ROOT}:{ROOT}", "-w", str(ROOT), "-v", f"{bundle}:{bundle}"]
-    subprocess.run([*docker, image, "python3", "scripts/coverage/diff.py", "--build-dir", str(bundle),
-                    "--profiles", str(profiles), "--base", args.base, "--label", label,
-                    "--out", str(out)], check=True)
+    in_build_image(bundle, "python3", "scripts/coverage/diff.py", "--build-dir", str(bundle),
+                   "--profiles", str(profiles), "--base", args.base, "--label", label, "--out", str(out))
     shutil.rmtree(profiles)
     (out / "merged.profdata").unlink(missing_ok=True)
+
+
+def cmd_coverage_nightly(args):
+    arch = platform.machine()
+    bundle = fetched("dev", arch, args.digest)
+    out = ROOT / "out" / "coverage-nightly"
+    shutil.rmtree(out, ignore_errors=True)
+    profiles = out / "profiles"
+    got = run_profiles("dev", arch, args.run, profiles)
+    label = f"dev/{arch}, " + (f"partial: profiles of {got} of {args.shards} shards" if got < args.shards
+                               else f"{got} shards")
+    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                         check=True).stdout.strip()
+    in_build_image(bundle, "python3", "scripts/coverage/nightly.py", "report", "--build-dir", str(bundle),
+                   "--profiles", str(profiles), "--label", label, "--run", args.run, "--sha", sha,
+                   "--out", str(out))
+    shutil.rmtree(profiles)
 
 
 def cmd_wait_check(args):
@@ -556,6 +646,8 @@ def main(argv):
     p.add_argument("--arch", required=True)
     p.add_argument("--digest", required=True)
     p.set_defaults(fn=cmd_fetch)
+    p = sub.add_parser("prune", help="drop this box's stale bundles and the CI images its checkout does not use")
+    p.set_defaults(fn=cmd_prune)
     p = sub.add_parser("upload", help="put a file into the store")
     p.add_argument("src")
     p.add_argument("dest")
@@ -606,6 +698,7 @@ def main(argv):
     p.add_argument("--corpus", action="store_true", help="the sqlite corpus too")
     p.add_argument("--iresearch", action="store_true")
     p.add_argument("--re2", action="store_true")
+    p.add_argument("--croaring", action="store_true")
     p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
     p.add_argument("--no-duckdb", action="store_true",
                    help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")
@@ -620,6 +713,12 @@ def main(argv):
     p.add_argument("--base", default="origin/main")
     p.add_argument("--shards", type=int, default=0, help="how many shards the run had")
     p.set_defaults(fn=cmd_coverage_report)
+    p = sub.add_parser("coverage-nightly", help="report the coverage of the whole system by component "
+                                                "from a nightly's dev profiles")
+    p.add_argument("--digest", required=True, help="the dev bundle the run tested")
+    p.add_argument("--run", required=True, help="<run id>-<attempt>")
+    p.add_argument("--shards", type=int, default=0, help="how many dev shards the run had")
+    p.set_defaults(fn=cmd_coverage_nightly)
     p = sub.add_parser("wait-check", help="wait for a commit's check run to finish; fail unless it "
                                           "succeeded")
     p.add_argument("--repo", required=True)

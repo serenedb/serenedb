@@ -1,0 +1,105 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE mc (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO mc SELECT i, 'a' || i FROM generate_series(0, 999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+
+statement ok
+INSERT INTO mc SELECT i, 'b' || i FROM generate_series(1000, 1999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+
+connection compactor
+statement async ok
+VACUUM (COMPACT_TABLE) mc;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+
+connection deleter
+statement ok
+DELETE FROM mc WHERE id % 7 = 3;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+
+wait
+
+
+connection default
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM mc;
+----
+segments
+1
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM mc;
+----
+n	s
+1714	1712857
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS deleted FROM mc;
+----
+n	deleted
+1714	0

@@ -127,7 +127,9 @@ Deletions introduce gaps in the rowids which may be reclaimed later:
 
 <SqlLogicTest id="sql/statements/select/index/example_011" />
 
-The `rowid` values are stable within a transaction.
+On a regular table, the `rowid` values are stable within a transaction.
+
+On a table created `WITH (storage = 'search')`, the `rowid` is the row's position in the snapshot the statement reads: the upper 32 bits number the storage segment that holds the row and the lower 32 bits the row within it. Every row has a distinct `rowid` within a snapshot, but a later snapshot can give the same value to another row: an `UPDATE` moves the rows it changes, and a commit, a [compaction](../../indexes/inverted/maintenance.md#background-compaction) or an index build can renumber the others. A `rowid` is therefore valid only within the statement that read it, and across statements only in a `REPEATABLE READ` transaction or once the transaction has changed data; a `rowid` carried from an earlier snapshot can update or delete a different row.
 
 <DocCallout type="bestPractice">
 It is strongly advised to avoid using rowids as identifiers.

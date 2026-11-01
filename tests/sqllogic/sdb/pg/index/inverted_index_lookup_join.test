@@ -753,7 +753,7 @@ EXPLAIN SELECT * FROM lj_hits WHERE url LIKE '%google%' ORDER BY event_time LIMI
 ----
 QUERY PLAN
 ╭─ LOOKUP_JOIN ──────────────────────────────╮
-│ Key: iresearch_pk                          │
+│ Key: rowid                                 │
 │ ~3 rows                                    │
 ╰──────────────────────┬─────────────────────╯
                        ├──────────────────────────────────╮
@@ -765,7 +765,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮  │              c2, │
 │ Index: lj_hits                             │  │              c3  │
 │ Lookup: search                             │  │ ~3 rows          │
-│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Projections: url, event_time, rowid        │  ╰──────────────────╯
 │ Column Filter:                             │
 │ contains(url, 'google'),                   │
 │ optional: Dynamic Filter (event_time < ?)  │
@@ -780,7 +780,7 @@ QUERY PLAN
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
 ╭─ LOOKUP_JOIN ──────────────────────────────╮
-│ Key: iresearch_pk                          │
+│ Key: rowid                                 │
 │ 3 rows                                 0µs │
 ╰──────────────────────┬─────────────────────╯
                        ├──────────────────────────────────╮
@@ -792,7 +792,7 @@ QUERY PLAN
 ╭─ TABLE_SCAN ─────────┚┖────────────────────╮  │              c2, │
 │ Index: lj_hits                             │  │              c3  │
 │ Lookup: search                             │  │ 3 rows       0µs │
-│ Projections: url, event_time, iresearch_pk │  ╰──────────────────╯
+│ Projections: url, event_time, rowid        │  ╰──────────────────╯
 │ Column Filter:                             │
 │ contains(url, 'google'),                   │
 │ optional: Dynamic Filter (event_time < ?)  │

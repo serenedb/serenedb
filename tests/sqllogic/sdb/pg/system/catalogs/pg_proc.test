@@ -447,3 +447,21 @@ unknown
 
 statement ok
 DROP FUNCTION rubick_prc_void();
+
+
+statement ok
+CREATE MACRO rubick_prc_untyped(a, b) AS a + b;
+
+
+query
+SELECT p.proargtypes::text AS argtypes, p.oid::regprocedure::text AS procedure,
+       'rubick_prc_untyped(unknown,unknown)'::regprocedure = p.oid AS by_signature
+FROM pg_proc p
+WHERE p.proname = 'rubick_prc_untyped';
+----
+argtypes	procedure	by_signature
+705 705	rubick_prc_untyped(unknown,unknown)	t
+
+
+statement ok
+DROP MACRO rubick_prc_untyped;

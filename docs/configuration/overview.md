@@ -308,7 +308,7 @@ What the server records about itself.
 | `enable_progress_bar` | Tracks the progress of long queries, so that `enable_progress_bar_print` can print it. On in every server session. | `BOOLEAN` | `SESSION` | `true` |
 | `enable_progress_bar_print` | Prints a progress bar for long queries, when `enable_progress_bar` is on. The bar goes to the standard output of the `serened` process, not to the client. | `BOOLEAN` | `SESSION` | `false` |
 | `legacy_metrics_format` | Deprecated. When enabled, profiling output uses the legacy flat format instead of the current grouped format. | `BOOLEAN` | `SESSION` | `off` |
-| `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Setting the session's own path again reopens the file; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
+| `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Queries are appended to the file, also when the session sets its own path again; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
 | `logging_level` | The log level which will be recorded in the log | `VARCHAR` | `GLOBAL` | `INFO` |
 | `logging_mode` | Determines which types of log messages are logged | `VARCHAR` | `GLOBAL` | `LEVEL_ONLY` |
 | `logging_storage` | Set the logging storage (memory/stdout/file/&lt;custom&gt;) | `VARCHAR` | `GLOBAL` | `stdout` |

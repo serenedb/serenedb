@@ -775,9 +775,7 @@ SELECT sequence_name, last_value IS NOT NULL AS used FROM duckdb_sequences()
 WHERE database_name = current_database() AND sequence_name LIKE 'ri_%' ORDER BY sequence_name;
 ----
 sequence_name	used
-ri_generated_pk_seq	t
 ri_serial_id_seq	f
-ri_serial_pk_seq	t
 
 statement ok
 INSERT INTO ri_serial (v) VALUES ('c');

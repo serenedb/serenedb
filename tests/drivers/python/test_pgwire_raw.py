@@ -350,6 +350,50 @@ def test_startup_non_utf8_client_encoding_accepted_with_warning():
     assert "LATIN1" in warns[0]["M"] and "UTF8" in warns[0]["M"], warns
 
 
+def test_startup_options_apply_settings():
+    m = _startup_collect(
+        {
+            "options": r"-c statement_timeout=5000 --application-name=raw\ options"
+            r" -cIntervalStyle=iso_8601 -c DateStyle=SQL,\ DMY"
+        }
+    )
+    assert "Z" in types(m) and "E" not in types(m), errors(m)
+    status = dict(param_status(m))
+    assert status.get("application_name") == "raw options", status
+    assert status.get("IntervalStyle") == "iso_8601", status
+    assert status.get("DateStyle") == "SQL, DMY", status
+
+
+@pytest.mark.parametrize(
+    "options, message",
+    [
+        ("-x", "invalid command-line argument for server process: -x"),
+        (
+            "statement_timeout=1",
+            "invalid command-line argument for server process: statement_timeout=1",
+        ),
+        ("-c statement_timeout", "-c statement_timeout requires a value"),
+        ("--statement-timeout", "--statement-timeout requires a value"),
+        ("-c", "invalid command-line argument for server process: -c"),
+    ],
+)
+def test_startup_options_refuse_bad_switches(options, message):
+    m = _startup_collect({"options": options})
+    assert [(e.get("S"), e.get("C"), e.get("M")) for e in errors(m)] == [
+        ("FATAL", "42601", message)
+    ]
+
+
+def test_startup_options_bad_value_is_fatal():
+    m = _startup_collect({"options": "-c statement_timeout=nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
+
+
+def test_startup_parameter_bad_value_is_fatal():
+    m = _startup_collect({"statement_timeout": "nan"})
+    assert [(e.get("S"), e.get("C")) for e in errors(m)] == [("FATAL", "22023")]
+
+
 def test_startup_utf8_client_encoding_no_warning():
     # The matching encoding (UTF8 and its aliases) applies cleanly: connection up,
     # no client_encoding NoticeResponse.
@@ -643,11 +687,82 @@ def test_char_oid18_text_param(conn, param, text):
         (4451, 1, b"\x00\x00\x00\x01\xff\xff\xff\xfe", "22P03"),
         (22, 0, b"a b", "22P02"),
         (1007, 0, b"{{1,2},{3,4}}", "22P02"),
+        (1020, 0, b'{"(1,1),(0,0)","(2,2),(1,1)"}', "22P02"),
+        (1033, 0, b"garbage", "22P02"),
+        (1033, 0, b"nobody_missing=r/postgres", "42704"),
+        (2205, 0, b"no_such_table_x", "42P01"),
     ],
 )
 def test_malformed_parameter_is_refused(conn, oid, fmt, param, sqlstate):
     conn.parse("", "select $1::text", oids=(oid,))
     conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == [sqlstate]
+
+
+def test_malformed_map_parameter_is_refused(conn):
+    conn.parse("", "select $1::MAP(INT, INT)::text", oids=(0,))
+    conn.bind("", "", params=(b'{"(1,2)"x}',), formats=(0,))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+
+
+def test_aclitem_text_param_is_canonical(conn):
+    conn.parse("", "select $1::text", oids=(1033,))
+    conn.bind("", "", params=(b'"postgres"=r/postgres',))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"postgres=r/postgres"
+
+
+@pytest.mark.parametrize(
+    "query, param, expected",
+    [
+        ("select $1::regclass::text", b"pg_class", b"pg_class"),
+        ("select $1::regclass::text", b"1259", b"pg_class"),
+        ("select $1::regtype::text", b"integer", b"integer"),
+        ("select $1::regnamespace::text", b"pg_catalog", b"pg_catalog"),
+        ("select $1::regproc::text", b"now", b"now"),
+        ("select $1::regrole::text", b"-", b"-"),
+        ("select $1::regprocedure::text", b"now()", b"now()"),
+        ("select $1::regcollation::text", b'"C"', b'"C"'),
+        ("select $1::regconfig::text", b"-", b"-"),
+        ("select $1::regdictionary::text", b"-", b"-"),
+    ],
+)
+def test_reg_text_param(conn, query, param, expected):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+def test_reg_text_param_names_a_missing_object(conn):
+    conn.parse("", "select $1::regclass")
+    conn.bind("", "", params=(b"raw_no_such_relation",))
+    conn.execute("")
+    conn.sync()
+    assert sqlstates(conn.drain_to_ready()) == ["42P01"]
+
+
+@pytest.mark.parametrize(
+    "query, param, sqlstate",
+    [
+        ("select $1::regoper", b"@#@", "42883"),
+        ("select $1::regoperator", b"@#@(integer,integer)", "42883"),
+        ("select $1::regoperator", b"-", "22P02"),
+    ],
+)
+def test_reg_text_param_names_a_missing_operator(conn, query, param, sqlstate):
+    conn.parse("", query)
+    conn.bind("", "", params=(param,))
     conn.execute("")
     conn.sync()
     assert sqlstates(conn.drain_to_ready()) == [sqlstate]

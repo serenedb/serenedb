@@ -8,7 +8,7 @@ split: page
 
 SereneDB uses PostgreSQL's SQL parser and speaks the PostgreSQL wire protocol (version 3.0). Most PostgreSQL clients, drivers and tools connect without any code changes. The SQL dialect covers the majority of day-to-day PostgreSQL syntax — data types, DML, DDL, transactions and functions.
 
-That said, SereneDB is a different engine built from scratch. Some PostgreSQL features behave differently, and some are not yet implemented.
+That said, SereneDB is a different engine built from scratch. Some PostgreSQL features behave differently, and some are not implemented.
 
 ## PostgreSQL Compatibility
 

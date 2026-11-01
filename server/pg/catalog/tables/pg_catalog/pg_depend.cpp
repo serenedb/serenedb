@@ -169,8 +169,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
                             const duckdb::DependencyDependentFlags& flags) {
       if (object.type == duckdb::CatalogType::TYPE_ENTRY) {
         ColumnTypes(table, object);
-      } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
-                 !table.NumbersRowsWith(object)) {
+      } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY) {
         Sequence(table, object, flags.IsOwnedBy());
       }
     });
@@ -185,10 +184,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('a') && !Allows<"deptype">('n')) {
       return;
     }
-    if (auto table =
-          SiblingTable(Transaction(), trigger, trigger.base_table->Table())) {
-      Trigger(*table, trigger);
-    }
+    Trigger(SiblingTable(Transaction(), trigger, trigger.base_table->Table()),
+            trigger);
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
@@ -251,11 +248,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     });
   }
 
-  void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!NumbersRows(sequence)) {
-      Namespace(sequence);
-    }
-  }
+  void Row(duckdb::SequenceCatalogEntry& sequence) { Namespace(sequence); }
 
   void Row(const duckdb::TypeCatalogEntry& type) {
     Namespace(type);

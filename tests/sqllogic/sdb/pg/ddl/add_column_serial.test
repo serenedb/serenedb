@@ -76,3 +76,45 @@ SELECT pg_get_serial_sequence('acss2', 'id') AS seq
 ----
 seq
 public.acss2_id_seq
+
+
+statement error
+ALTER TABLE acss2 ADD COLUMN id2 serial COLLATE "C"
+----
+db error: ERROR: Only VARCHAR columns can have collations!
+
+
+statement ok
+CREATE TABLE acss_tg (v int)
+
+
+statement ok
+CREATE TABLE acss_tg_log (tag text)
+
+
+statement ok
+CREATE TRIGGER acss_tg_upd AFTER UPDATE ON acss_tg FOR EACH STATEMENT
+  INSERT INTO acss_tg_log VALUES ('update');
+
+
+statement ok
+INSERT INTO acss_tg VALUES (1), (2)
+
+
+statement ok
+ALTER TABLE acss_tg ADD COLUMN id serial
+
+
+query
+SELECT count(*) AS n FROM acss_tg_log
+----
+n
+0
+
+
+query
+SELECT v, id FROM acss_tg ORDER BY v
+----
+v	id
+1	1
+2	2

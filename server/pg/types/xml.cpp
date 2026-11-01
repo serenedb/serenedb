@@ -560,7 +560,7 @@ std::string NodeToXml(xmlNode* node) {
 }
 
 std::string NumberToXml(double value) {
-  char buffer[utils::kNumberStrMaxLen];
+  char buffer[kNumberStrMaxLen];
   return std::string{buffer, WriteFloat<true>(value, 1, buffer)};
 }
 

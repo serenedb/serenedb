@@ -42,7 +42,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <limits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -235,7 +234,7 @@ bool IsWordStart(char c) {
 
 std::optional<NameList> SplitNames(std::string_view text) {
   NameList names;
-  size_t pos = 0;
+  duckdb::idx_t pos = 0;
   const auto skip_spaces = [&] {
     while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;
@@ -337,7 +336,7 @@ struct Token {
 
 std::vector<Token> Tokenize(std::string_view text) {
   std::vector<Token> tokens;
-  size_t pos = 0;
+  duckdb::idx_t pos = 0;
   while (true) {
     while (pos < text.size() && absl::ascii_isspace(text[pos])) {
       ++pos;
@@ -1175,9 +1174,7 @@ std::vector<duckdb::idx_t> MacroArgs(const duckdb::MacroFunction& macro) {
   std::vector<duckdb::idx_t> args;
   args.reserve(macro.types.size());
   for (const auto& type : macro.types) {
-    args.emplace_back(type.id() == duckdb::LogicalTypeId::UNKNOWN
-                        ? duckdb::idx_t{0}
-                        : duckdb::idx_t{CatalogTypeOid(type)});
+    args.emplace_back(CatalogTypeOid(type));
   }
   return args;
 }
@@ -1613,12 +1610,11 @@ bool IsNumericOid(std::string_view text) {
 
 std::optional<uint64_t> ParseOid(std::string_view text,
                                  irs::pg::SqlErrorData* soft_error) {
-  uint64_t oid = 0;
+  int64_t oid = 0;
   const auto* end = text.data() + text.size();
   const auto parsed = fast_float::from_chars(
     text.data(), end, oid, text.size() > 1 && text.front() == '0' ? 8 : 10);
-  if (parsed.ec == std::errc::result_out_of_range ||
-      (parsed.ptr == end && oid > std::numeric_limits<uint32_t>::max())) {
+  if (parsed.ec == std::errc::result_out_of_range) {
     return Miss(soft_error,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                                ERR_MSG("value \"", text,
@@ -1787,6 +1783,43 @@ std::string_view RegOut(const Session& session, RegKind kind, uint64_t oid) {
     return recent.text;
   }
   return CacheRegOut(session, kind, oid, key, recent);
+}
+
+std::optional<RegKind> RegKindOf(const duckdb::LogicalType& type) {
+  if (IsRegtype(type)) {
+    return RegKind::Type;
+  }
+  if (IsRegclass(type)) {
+    return RegKind::Class;
+  }
+  if (IsRegnamespace(type)) {
+    return RegKind::Namespace;
+  }
+  if (IsRegproc(type)) {
+    return RegKind::Proc;
+  }
+  if (IsRegprocedure(type)) {
+    return RegKind::Procedure;
+  }
+  if (IsRegoper(type)) {
+    return RegKind::Oper;
+  }
+  if (IsRegoperator(type)) {
+    return RegKind::Operator;
+  }
+  if (IsRegrole(type)) {
+    return RegKind::Role;
+  }
+  if (IsRegconfig(type)) {
+    return RegKind::Config;
+  }
+  if (IsRegdictionary(type)) {
+    return RegKind::Dictionary;
+  }
+  if (IsRegcollation(type)) {
+    return RegKind::Collation;
+  }
+  return std::nullopt;
 }
 
 std::optional<uint64_t> RegIn(const Session& session, RegKind kind,

@@ -12,7 +12,6 @@ CAUSES = {
     "group_by": "GROUP BY a table alias that is also an output column name is rejected",
     "index_am": "SereneDB indexes use access methods of their own",
     "index_desc": "CREATE INDEX drops DESC",
-    "null_array": "NULL || array is NULL where PostgreSQL returns the array",
     "numeric": "A bare numeric is DECIMAL(18,3)",
     "owner": "The bootstrap superuser has oid 16384, not 10, and public belongs to postgres, not "
              "pg_database_owner",
@@ -1438,13 +1437,13 @@ ORDER BY 2, 3
 ) q"""
 
 
-def psql_relation(relation, verbose=False, projection=None):
+def psql_relation(relation, verbose=False):
     options = ("pg_catalog.array_to_string(c.reloptions || array(select 'toast.' || x from pg_catalog.unnest(tc.reloptions) x), ', ')\n, "
                if verbose else "'', ")
-    unnamed = "" if verbose else ' q."?column?",'
-    projection = projection or (
+    options_column = " q.array_to_string," if verbose else ' q."?column?",'
+    projection = (
         "q.relchecks, q.relkind, q.relhasindex, q.relhasrules, q.relhastriggers, q.relrowsecurity,\n"
-        f"  q.relforcerowsecurity, q.relhasoids, q.relispartition,{unnamed} q.reltablespace, q.reloftype, q.relpersistence,\n"
+        f"  q.relforcerowsecurity, q.relhasoids, q.relispartition,{options_column} q.reltablespace, q.reloftype, q.relpersistence,\n"
         "  q.relreplident, replace(q.amname, 'secondary', 'btree') AS amname")
     return f"""SELECT {projection} FROM (
 SELECT c.relchecks, c.relkind, c.relhasindex, c.relhasrules, c.relhastriggers, c.relrowsecurity, c.relforcerowsecurity, false AS relhasoids, c.relispartition, {options}c.reltablespace, CASE WHEN c.reloftype = 0 THEN '' ELSE c.reloftype::pg_catalog.regtype::pg_catalog.text END, c.relpersistence, c.relreplident, am.amname
@@ -1790,7 +1789,6 @@ ORDER BY 1, 2
 ORDER BY q."Name"::text COLLATE "C"''')
 check(psql_lookup("customers", "public"))
 check(psql_relation("public.customers", verbose=True))
-check(psql_relation("public.customers", True, "q.array_to_string"), "null_array")
 check(psql_columns("public.customers", PSQL_COLUMNS.replace(" q.pg_get_expr,", "") + ", q.attstorage,\n  q.attcompression, "
                    "q.attstattarget, q.col_description", "\nWHERE q.attname @NOT IN ('email')", PSQL_TABLE_EXTRAS),
       "typmod")
@@ -1800,7 +1798,6 @@ check(psql_indexes("public.customers"))
 psql_table_tail("public.customers")
 check(psql_lookup("order_totals", "app"))
 check(psql_relation("app.order_totals", verbose=True))
-check(psql_relation("app.order_totals", True, "q.array_to_string"), "null_array")
 check(psql_columns("app.order_totals", PSQL_COLUMNS + ", q.attstorage, q.col_description", "\nWHERE q.attname @NOT IN ('total')",
                    PSQL_VIEW_EXTRAS), "aggregate_type")
 check(f"""SELECT {spaced("q.pg_get_viewdef", "pg_get_viewdef")} FROM (

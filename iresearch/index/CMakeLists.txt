@@ -4,6 +4,7 @@ target_sources(
         column_extract.cpp
         directory_reader.cpp
         directory_reader_impl.cpp
+        doc_removal.cpp
         docs_mask/chunks.cpp
         document_mask.cpp
         field_meta.cpp

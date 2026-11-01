@@ -769,6 +769,13 @@ db error: ERROR: Index keys cannot contain expressions with side effects. Functi
 
 
 statement error
+CREATE INDEX bad_inc_age ON bad USING inverted(
+    id, (age(TIMESTAMP '2000-01-01' + a * INTERVAL 1 DAY)) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects. Function "age" is not immutable.
+
+
+statement error
 CREATE INDEX bad_inc_setting ON bad USING inverted(
     id, (a::VARCHAR || current_setting('application_name', true)) included());
 ----
@@ -820,7 +827,7 @@ db error: ERROR: Index keys cannot contain expressions with side effects. Functi
 # error can't name it.
 statement error
 CREATE INDEX bad_inc_privilege_const ON bad USING inverted(
-    id, (a::VARCHAR || has_table_privilege('bad', 'SELECT')::VARCHAR) included());
+    id, (a::VARCHAR || upper(has_table_privilege('bad', 'SELECT')::VARCHAR)) included());
 ----
 db error: ERROR: Index keys cannot contain expressions with side effects.
 

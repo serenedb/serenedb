@@ -38,7 +38,7 @@ query
 SELECT [1] || [2] || NULL::INT[] AS r
 ----
 r
-NULL
+{1,2}
 
 query
 SELECT x || '' || 'b' || '' || x AS r FROM (VALUES (1, 'a'), (2, NULL)) t(k, x) ORDER BY k

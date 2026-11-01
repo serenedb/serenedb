@@ -1,0 +1,99 @@
+control substitution on
+
+system ok
+mkdir -p $__TEST_DIR__/rvdv_one/metadata && ln -sfn ${ICEBERG_FIXTURES}/moved_deletion_vector_path/data $__TEST_DIR__/rvdv_one/data && ln -sf ${ICEBERG_FIXTURES}/moved_deletion_vector_path/metadata/*.avro ${ICEBERG_FIXTURES}/moved_deletion_vector_path/metadata/*.metadata.json $__TEST_DIR__/rvdv_one/metadata/ && printf 1 > $__TEST_DIR__/rvdv_one/metadata/version-hint.text
+
+system ok
+mkdir -p $__TEST_DIR__/rvdv_two/metadata && ln -sfn ${ICEBERG_FIXTURES}/multi_blob_deletion_vectors/warehouse/default/multi_blob_deletion_vectors/data $__TEST_DIR__/rvdv_two/data && ln -sf ${ICEBERG_FIXTURES}/multi_blob_deletion_vectors/warehouse/default/multi_blob_deletion_vectors/metadata/*.avro ${ICEBERG_FIXTURES}/multi_blob_deletion_vectors/warehouse/default/multi_blob_deletion_vectors/metadata/*.metadata.json $__TEST_DIR__/rvdv_two/metadata/ && printf 00002-44e82e69-84df-401a-b3ad-3d1c89d5c2c0 > $__TEST_DIR__/rvdv_two/metadata/version-hint.text
+
+statement ok
+CREATE VIEW rvdv_one_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rvdv_one', allow_moved_paths=true);
+
+statement ok
+CREATE VIEW rvdv_two_v AS SELECT * FROM iceberg_scan(
+  '${__TEST_DIR__}/rvdv_two', allow_moved_paths=true);
+
+statement ok
+CREATE INDEX rvdv_one_idx ON rvdv_one_v USING inverted(col);
+
+statement ok
+CREATE INDEX rvdv_two_idx ON rvdv_two_v USING inverted(id, source);
+
+query
+SELECT count(*), min(col), max(col) FROM rvdv_one_idx;
+----
+count	min	max
+100	0	99
+
+query
+SELECT count(*) FROM rvdv_two_idx;
+----
+count
+6
+
+query
+SELECT action FROM serenedb_reindex('rvdv_one_idx');
+----
+action
+up_to_date
+
+system ok
+printf 2 > $__TEST_DIR__/rvdv_one/metadata/version-hint.text && printf 00003-multi-blob > $__TEST_DIR__/rvdv_two/metadata/version-hint.text
+
+query
+SELECT * FROM serenedb_reindex('rvdv_one_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	0
+
+query
+SELECT count(*), min(col), max(col) FROM rvdv_one_idx;
+----
+count	min	max
+99	1	99
+
+query
+SELECT count(*) FROM rvdv_one_idx WHERE col = 0;
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('rvdv_two_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	2	0	0
+
+query
+SELECT count(*) FROM rvdv_two_idx;
+----
+count
+3
+
+query
+SELECT count(*) FROM (
+  (SELECT id, source FROM rvdv_two_idx EXCEPT SELECT id, source FROM rvdv_two_v)
+  UNION ALL
+  (SELECT id, source FROM rvdv_two_v EXCEPT SELECT id, source FROM rvdv_two_idx));
+----
+count
+0
+
+query
+SELECT action FROM serenedb_reindex('rvdv_one_idx');
+----
+action
+up_to_date
+
+query
+SELECT action FROM serenedb_reindex('rvdv_two_idx');
+----
+action
+up_to_date
+
+statement ok
+DROP VIEW rvdv_one_v CASCADE;
+
+statement ok
+DROP VIEW rvdv_two_v CASCADE;

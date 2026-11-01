@@ -229,11 +229,3 @@ class Model:
                 if only is not ABSENT:
                     out[key] = only
         return out
-
-    def row_bearing_keys(self):
-        out = {}
-        for key, cands in self._owned.items():
-            states = [c for c in cands if isinstance(c, Present)]
-            if states:
-                out[key] = states
-        return out

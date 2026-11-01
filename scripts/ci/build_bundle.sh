@@ -23,6 +23,7 @@ for i in 1 2 3; do
 	docker pull -q "$BUILD_IMAGE" && break
 	sleep 10
 done
+python3 scripts/ci/ci.py prune
 
 digest=$(python3 scripts/ci/ci.py digest --config "$CONFIG" --flags "$BUILD_FLAGS" --image "$BUILD_IMAGE")
 output digest "$digest"
@@ -34,6 +35,10 @@ if [[ "$where" != none ]]; then
 	exit 0
 fi
 output reused false
+
+if [[ " ${TARGETS[*]} " == *" croaring-tests "* ]]; then
+	git submodule update --init --checkout --depth 1 third_party/cmocka
+fi
 
 remote=()
 if [[ "$ARCH" == x86_64 && -n "${SDB_STORE_HOST:-}" ]]; then

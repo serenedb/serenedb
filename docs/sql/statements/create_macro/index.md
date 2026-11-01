@@ -90,7 +90,11 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_036" />
 
-`RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
+In the body, a parameter is a value of the call: it can stand next to an aggregate, in a `HAVING` clause, in a `WITH` query or in a nested subquery, and an aggregate over a parameter aggregates the rows of the query it is written in:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_040" />
+
+Without `SETOF`, the function returns the first row of the body, also when its result calls a set-returning function such as `unnest`. `RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_037" />
 
@@ -166,6 +170,18 @@ Then, the parameters are replaced by the supplied arguments:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_030" />
 
+An argument that the expression uses more than once is evaluated once for each row, and only for the rows where the expression reads it, such as the taken branch of a `CASE`, including inside a lambda, where it is evaluated only for the elements that read it:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_041" />
+
+In a macro, a volatile argument such as `random()` is evaluated at each use; in a function declared with `RETURNS`, a volatile argument used more than once is evaluated once for each row. A macro used as a predicate in `WHERE` or in a join condition is planned like the expression it expands to, so it can filter a table scan, use an index or make a hash join.
+
+In a macro whose body contains a subquery, an aggregate over a parameter aggregates the rows of the subquery it is written in:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_042" />
+
+The argument of such a parameter, and an argument that itself contains a subquery, such as a nested call of the same macro, when the body uses it more than once, is evaluated once for each row of the calling query, as a function argument is, even when the subquery returns no rows. Any other argument is replaced as written, and so is every argument of a call where one argument contains a volatile, aggregate or window function.
+
 ## Limitations
 
 ### Using Subquery Macros
@@ -173,6 +189,8 @@ Then, the parameters are replaced by the supplied arguments:
 Table macros as well as scalar macros defined using scalar subqueries cannot be used in the arguments of table functions. SereneDB will return an error:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_035" />
+
+A scalar subquery made of a single expression, with no `FROM` or other clause, such as `(SELECT 5)`, expands to that expression, so a macro defined with it has no such limitation, unless the expression calls an aggregate, window, set-returning or volatile function or contains a subquery.
 
 
 ### Recursive Functions

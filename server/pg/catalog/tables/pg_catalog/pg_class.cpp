@@ -335,10 +335,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   }
 
   void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!NumbersRows(sequence)) {
-      Emit<kSequence>(
-        sequence, Shown(*this, sequence, sequence.name.GetIdentifierName()));
-    }
+    Emit<kSequence>(sequence,
+                    Shown(*this, sequence, sequence.name.GetIdentifierName()));
   }
 
   void Row(const duckdb::TypeCatalogEntry& type) {

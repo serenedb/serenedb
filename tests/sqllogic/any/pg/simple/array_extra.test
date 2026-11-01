@@ -78,6 +78,14 @@ array_cat
 {1,2,3,4,5}
 
 
+query
+SELECT NULL::text[] || ARRAY['a'] AS l, ARRAY['a'] || NULL::text[] AS r,
+       (NULL::text[] || NULL::text[]) IS NULL AS n, ('x' || NULL::text) IS NULL AS s;
+----
+l	r	n	s
+{a}	{a}	t	t
+
+
 # array_prepend
 
 query

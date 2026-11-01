@@ -26,6 +26,8 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -65,6 +67,10 @@ inline constexpr std::array kForeignDataWrapperAcl{duckdb::AclItem{
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const auth::RoleGraph& roles);
+
+std::optional<irs::pg::SqlErrorData> ParseAcl(std::string_view text,
+                                              const auth::RoleGraph& roles,
+                                              bool oids, duckdb::AclItem& item);
 
 void VisitDefaultAcls(
   duckdb::ClientContext& context, const duckdb::CatalogEntry& database,

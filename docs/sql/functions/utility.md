@@ -43,7 +43,7 @@ The functions below are difficult to categorize into specific function types and
 | [`md5_number_lower(string)`](#md5_number_lowerstring)                                                | Returns the lower 64-bit segment of the MD5 hash of the `string` as a `UBIGINT`.                                                                                                                                                                                                                                                                                                    |
 | [`md5_number_upper(string)`](#md5_number_upperstring)                                                | Returns the upper 64-bit segment of the MD5 hash of the `string` as a `UBIGINT`.                                                                                                                                                                                                                                                                                                    |
 | [`nextval('sequence_name')`](#nextvalsequence_name)                                                  | Return the following value of the sequence.                                                                                                                                                                                                                                                                                                                                         |
-| [`nullif(a, b)`](#nullifa-b)                                                                         | Return `NULL` if `a = b`, else return `a`. Equivalent to `CASE WHEN a = b THEN NULL ELSE a END`.                                                                                                                                                                                                                                                                                    |
+| [`nullif(a, b)`](#nullifa-b)                                                                         | Return `NULL` if `a = b`, else return `a`, in the type `a` and `b` are compared in.                                                                                                                                                                                                                                                                                                 |
 | [`parse_formatted_bytes(string)`](#parse_formatted_bytesstring)                                      | Parse a human-readable byte size string (e.g., `'16 KiB'`) into a `UBIGINT` number of bytes. Throws an error on invalid input.                                                                                                                                                                                                                                                      |
 | [`pg_typeof(expression)`](#pg_typeofexpression)                                                      | Returns the lower case name of the data type of the result of the expression. For PostgreSQL compatibility.                                                                                                                                                                                                                                                                         |
 | [`query(`_`query_string`_`)`](#queryquery_string)                                                    | Table function that parses and executes the query defined in _`query_string`_. Only constant strings are allowed. Warning: this function allows invoking arbitrary queries, potentially altering the database state.                                                                                                                                                                |
@@ -250,13 +250,13 @@ Returns the upper 8 bytes of the MD5 hash of `string` as a `UBIGINT`.
 
 #### `nextval('sequence_name')`
 
-Return the following value of the sequence.
+Return the following value of the sequence. `sequence_name` is read as the name is in SQL text, optionally schema-qualified: an unquoted part folds as an unquoted identifier does, a part in double quotes is kept as written. `currval` and `setval` read the name the same way.
 
 <SqlLogicTest id="sql/functions/utility/nextval" />
 
 #### `nullif(a, b)`
 
-Return `NULL` if a = b, else return a. Equivalent to `CASE WHEN a = b THEN NULL ELSE a END`.
+Return `NULL` if `a = b`, else return `a`. The result has the type `a` and `b` are compared in, so `nullif(5, 5.5)` is a `NUMERIC`. Each argument is evaluated once.
 
 <SqlLogicTest id="sql/functions/utility/nullif" />
 

@@ -26,7 +26,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
@@ -144,19 +143,6 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
   return result;
 }
 
-duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
-                                      duckdb::SchemaCatalogEntry& schema,
-                                      const duckdb::Identifier& table) {
-  const auto stem = table.GetIdentifierName() + "_pk_seq";
-  duckdb::Identifier candidate{stem};
-  for (duckdb::idx_t attempt = 1; schema.GetEntry(
-         transaction, duckdb::CatalogType::SEQUENCE_ENTRY, candidate);
-       ++attempt) {
-    candidate = duckdb::Identifier{absl::StrCat(stem, attempt)};
-  }
-  return candidate;
-}
-
 std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
   const duckdb::TableCatalogEntry& table) {
   std::vector<InvertedIndexKey> keys;
@@ -233,13 +219,6 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
-  if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
-    _pk_sequence = duckdb::Identifier{tag->second};
-  } else if (base.oid == 0) {
-    _pk_sequence = FreePkSequenceName(transaction, schema, name);
-    tags.insert_or_assign(kGeneratedPkSequenceTag,
-                          _pk_sequence.GetIdentifierName());
-  }
   if (!_storage) {
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
@@ -354,11 +333,11 @@ std::string_view AlterName(const duckdb::AlterTableInfo& alter) {
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
   const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
-  duckdb::column_t generated_pk) {
+  duckdb::column_t key_column) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
   const auto locate = [&](irs::field_id id) -> std::optional<duckdb::idx_t> {
     if (id == connector::kGeneratedPKId) {
-      return generated_pk;
+      return key_column;
     }
     for (const auto& column : table.GetColumns().Physical()) {
       if (connector::TableColumnId(column) == id) {
@@ -397,8 +376,7 @@ bool SearchTableEntry::ScanColumnSegmentInfo(
   if (!reader) {
     return false;
   }
-  result =
-    ColumnSegmentRows(reader, *this, connector::kColumnIdentifierGeneratedPk);
+  result = ColumnSegmentRows(reader, *this, duckdb::COLUMN_IDENTIFIER_ROW_ID);
   return true;
 }
 
@@ -409,7 +387,7 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
-  result.insert({connector::kColumnIdentifierGeneratedPk,
+  result.insert({connector::kColumnIdentifierDocAddress,
                  duckdb::TableColumn{duckdb::Identifier{"rowid"},
                                      duckdb::LogicalType::ROW_TYPE}});
   for (size_t i = 0; i != keys.size(); ++i) {
@@ -421,18 +399,7 @@ duckdb::virtual_column_map_t SearchTableEntry::GetVirtualColumns() const {
 }
 
 duckdb::vector<duckdb::column_t> SearchTableEntry::GetRowIdColumns() const {
-  return {connector::kColumnIdentifierGeneratedPk};
-}
-
-duckdb::optional_ptr<duckdb::SequenceCatalogEntry>
-SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
-  if (_pk_sequence.empty()) {
-    return nullptr;
-  }
-  auto entry = ParentSchema(context).GetEntry(
-    catalog.GetCatalogTransaction(context), duckdb::CatalogType::SEQUENCE_ENTRY,
-    _pk_sequence);
-  return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
+  return {connector::kColumnIdentifierDocAddress};
 }
 
 void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
@@ -450,38 +417,34 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
 }
 
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
-                                    duckdb::DataChunk& chunk,
-                                    duckdb::optional_idx row_start) {
+                                    duckdb::DataChunk& chunk) {
   std::vector<connector::ColumnId> column_ids;
   for (const auto& column : _columns.Logical()) {
     column_ids.emplace_back(connector::TableColumnId(column));
   }
-  _storage->ReplayInsert(context, catalog, column_ids, chunk,
-                         row_start.GetIndex());
+  _storage->ReplayInsert(context, catalog, column_ids, chunk);
 }
 
-void SearchTableEntry::ReplayDelete(duckdb::ClientContext&,
-                                    duckdb::DataChunk& chunk) {
-  _storage->ReplayDelete(catalog.GetAttached(), chunk);
+void SearchTableEntry::ReplayDeleteRowPositions(
+  std::shared_ptr<const duckdb::data_t> entry,
+  const duckdb::vector<duckdb::WALFrozenRowPositionGroup>& groups) {
+  _storage->ReplayDeleteRowPositions(catalog.GetAttached(), std::move(entry),
+                                     groups);
 }
 
-void SearchTableEntry::ReplayDeleteRanges(
-  duckdb::ClientContext&, const duckdb::vector<duckdb::row_t>& starts,
-  const duckdb::vector<duckdb::idx_t>& counts) {
-  std::vector<search::RowRange> rows;
-  rows.reserve(starts.size());
-  for (size_t i = 0; i != starts.size(); ++i) {
-    rows.emplace_back(starts[i], starts[i] + static_cast<int64_t>(counts[i]));
-  }
-  _storage->ReplayDeleteRanges(catalog.GetAttached(), std::move(rows));
+void SearchTableEntry::ReplayRowPositionMaps(
+  std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
+  const duckdb::vector<duckdb::WALFrozenRowPositionMap>& maps) {
+  _storage->ReplayRowPositionMaps(catalog.GetAttached(), std::move(entry),
+                                  source, maps);
 }
 
-void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&) {
+void SearchTableEntry::ReplayTruncate() {
   _storage->ReplayTruncate(catalog.GetAttached());
 }
 
 void SearchTableEntry::ReplayAdoptSegments(
-  duckdb::ClientContext&, duckdb::vector<std::string> segments) {
+  duckdb::vector<std::string> segments) {
   _storage->ReplayAdoptSegments(catalog.GetAttached(), std::move(segments));
 }
 

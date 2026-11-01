@@ -55,12 +55,13 @@ class Build:
     fault_injection: bool
     coverage: bool
     duckdb_unittests: bool
+    croaring_tests: bool
     build_type: str
 
     @classmethod
     def absent(cls, root):
         return cls(root=root, dir=None, sanitize="", gtests=False, fault_injection=False,
-                   coverage=False, duckdb_unittests=False, build_type="")
+                   coverage=False, duckdb_unittests=False, croaring_tests=False, build_type="")
 
     @classmethod
     def load(cls, root, build_dir):
@@ -75,6 +76,7 @@ class Build:
             fault_injection=_on(cache.get("SDB_FAULT_INJECTION", "OFF")),
             coverage=_on(cache.get("SDB_COVERAGE", "OFF")),
             duckdb_unittests=_on(cache.get("SDB_BUILD_DUCKDB_UNITTESTS", "OFF")),
+            croaring_tests=_on(cache.get("ENABLE_ROARING_TESTS", "OFF")),
             build_type=cache.get("CMAKE_BUILD_TYPE", ""),
         )
 

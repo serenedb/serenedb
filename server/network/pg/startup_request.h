@@ -22,6 +22,8 @@
 
 #include <cstdint>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/pg/sql_error.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,5 +46,13 @@ struct StartupRequest {
 // Decode a StartupMessage payload: the version word followed by null-delimited
 // key/value pairs. Pure -- no IO, no session state.
 StartupRequest ParseStartup(std::string_view payload);
+
+struct StartupSetting {
+  std::string name;
+  std::string value;
+};
+
+std::optional<irs::pg::SqlErrorData> ParseStartupOptions(
+  std::string_view options, std::vector<StartupSetting>& settings);
 
 }  // namespace sdb::network::pg

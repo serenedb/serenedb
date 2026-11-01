@@ -73,15 +73,19 @@ class BooleanWindow : public Root {
       const auto skip = static_cast<uint32_t>(off / BitsRequired<uint64_t>());
       if (skip >= _words_end) {
         for (; _word != _words_end; ++_word) {
+          Drop(_word, _mask[_word], BitsRequired<uint64_t>());
           _mask[_word] = 0;
         }
       } else {
         for (; _word < skip; ++_word) {
+          Drop(_word, _mask[_word], BitsRequired<uint64_t>());
           _mask[_word] = 0;
         }
         if (_word == skip) {
           if (const auto bit = off % BitsRequired<uint64_t>(); bit != 0) {
-            _mask[skip] &= ~((uint64_t{1} << bit) - 1);
+            const auto dropped = _mask[skip] & ((uint64_t{1} << bit) - 1);
+            Drop(skip, dropped, static_cast<uint32_t>(bit));
+            _mask[skip] ^= dropped;
           }
         }
       }
@@ -171,67 +175,44 @@ class BooleanWindow : public Root {
   }
 
  private:
+  IRS_FORCE_INLINE void Drop(uint32_t word, uint64_t bits, uint32_t width) {
+    if constexpr (kTally || kResets) {
+      if (bits == 0) {
+        return;
+      }
+      const auto base = word * BitsRequired<uint64_t>();
+      if (std::popcount(bits) >= irs::detail::kDenseWord) {
+        if constexpr (kTally) {
+          std::fill_n(_optional.Counts() + base, width, uint32_t{0});
+        }
+        std::fill_n(_window + base, width, _constant);
+        return;
+      }
+      do {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(bits));
+        if constexpr (kTally) {
+          _optional.Counts()[base + bit] = 0;
+        }
+        _window[base + bit] = _constant;
+        bits = PopBit(bits);
+      } while (bits != 0);
+    }
+  }
+
   IRS_FORCE_INLINE void Emit(doc_id_t* IRS_RESTRICT out,
                              score_t* IRS_RESTRICT scores, uint32_t& n,
                              const score_t* IRS_RESTRICT window, doc_id_t min,
                              uint32_t base, uint64_t word) {
-    {
-      {
-        _mask[_word] = 0;
-        if constexpr (kTally) {
-          auto* const counts = _optional.Counts() + base;
-          const auto min_match = _optional.MinMatch();
-          if (std::popcount(word) >= irs::detail::kDenseWord) {
-            const auto answer = irs::detail::TallyAnswer(counts, min_match);
-            std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
-            const auto first = n;
-            n = static_cast<uint32_t>(
-              MaterializeWord(min + static_cast<doc_id_t>(base), answer,
-                              out + n) -
-              out);
-            const auto full = first + ((n - first) & ~uint32_t{7});
-            for (auto i = first; i != full; i += 8) {
-              for (uint32_t j = 0; j != 8; ++j) {
-                scores[i + j] = window[out[i + j] - min];
-              }
-            }
-            for (auto i = full; i != n; ++i) {
-              scores[i] = window[out[i] - min];
-            }
-            std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
-            return;
-          }
-          while (word != 0) {
-            const auto bit = static_cast<uint32_t>(std::countr_zero(word));
-            const auto offset = base + bit;
-            if (counts[bit] >= min_match) {
-              out[n] = min + static_cast<doc_id_t>(offset);
-              scores[n] = _window[offset];
-              ++n;
-            }
-            counts[bit] = 0;
-            _window[offset] = _constant;
-            word = PopBit(word);
-          }
-          return;
-        }
-        if (std::popcount(word) < kSparseWord) {
-          while (word != 0) {
-            const auto offset =
-              base + static_cast<uint32_t>(std::countr_zero(word));
-            out[n] = min + static_cast<doc_id_t>(offset);
-            scores[n] = _window[offset];
-            if constexpr (kResets) {
-              _window[offset] = _constant;
-            }
-            ++n;
-            word = PopBit(word);
-          }
-          return;
-        }
+    _mask[_word] = 0;
+    if constexpr (kTally) {
+      auto* const counts = _optional.Counts() + base;
+      const auto min_match = _optional.MinMatch();
+      if (std::popcount(word) >= irs::detail::kDenseWord) {
+        const auto answer = irs::detail::TallyAnswer(counts, min_match);
+        std::fill_n(counts, BitsRequired<uint64_t>(), uint32_t{0});
         const auto first = n;
         n = static_cast<uint32_t>(
-          MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) -
+          MaterializeWord(min + static_cast<doc_id_t>(base), answer, out + n) -
           out);
         const auto full = first + ((n - first) & ~uint32_t{7});
         for (auto i = first; i != full; i += 8) {
@@ -242,10 +223,51 @@ class BooleanWindow : public Root {
         for (auto i = full; i != n; ++i) {
           scores[i] = window[out[i] - min];
         }
-        if constexpr (kResets) {
-          std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
-        }
+        std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
+        return;
       }
+      while (word != 0) {
+        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+        const auto offset = base + bit;
+        if (counts[bit] >= min_match) {
+          out[n] = min + static_cast<doc_id_t>(offset);
+          scores[n] = _window[offset];
+          ++n;
+        }
+        counts[bit] = 0;
+        _window[offset] = _constant;
+        word = PopBit(word);
+      }
+      return;
+    }
+    if (std::popcount(word) < kSparseWord) {
+      while (word != 0) {
+        const auto offset =
+          base + static_cast<uint32_t>(std::countr_zero(word));
+        out[n] = min + static_cast<doc_id_t>(offset);
+        scores[n] = _window[offset];
+        if constexpr (kResets) {
+          _window[offset] = _constant;
+        }
+        ++n;
+        word = PopBit(word);
+      }
+      return;
+    }
+    const auto first = n;
+    n = static_cast<uint32_t>(
+      MaterializeWord(min + static_cast<doc_id_t>(base), word, out + n) - out);
+    const auto full = first + ((n - first) & ~uint32_t{7});
+    for (auto i = first; i != full; i += 8) {
+      for (uint32_t j = 0; j != 8; ++j) {
+        scores[i + j] = window[out[i + j] - min];
+      }
+    }
+    for (auto i = full; i != n; ++i) {
+      scores[i] = window[out[i] - min];
+    }
+    if constexpr (kResets) {
+      std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
     }
   }
 

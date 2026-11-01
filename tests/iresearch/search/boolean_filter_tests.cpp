@@ -1529,6 +1529,34 @@ TEST(boolean_query_estimation, bounds_and_matches) {
     EXPECT_EQ(450, query->EstimateMatches());
     EXPECT_EQ(500, query->EstimateMax());
   }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 600);
+    add(root, irs::Occur::Should, 100);
+    add(root, irs::Occur::Should, 300);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(0, query->EstimateMin());
+    EXPECT_EQ(222, query->EstimateMatches());
+    EXPECT_EQ(400, query->EstimateMax());
+  }
+
+  {
+    irs::BooleanFilter root;
+    add(root, irs::Occur::Must, 900);
+    add(root, irs::Occur::Should, 300);
+    add(root, irs::Occur::Should, 500);
+    AsDisjunction(root);
+    tests::PreparedFilter prep{root, segment_reader};
+    const auto* query = prep.Query(0);
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(400, query->EstimateMin());
+    EXPECT_EQ(585, query->EstimateMatches());
+    EXPECT_EQ(800, query->EstimateMax());
+  }
 }
 
 TEST(boolean_disjunction, next) {

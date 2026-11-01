@@ -508,6 +508,18 @@ TEST_P(TextTokenizerTest, non_ascii_alpha_accept) {
   AssertStream(stream.get(), "\xE5\x8C\x97\xE4\xBA\xAC x", expected);
 }
 
+TEST_P(TextTokenizerTest, malformed_bytes_are_not_letters) {
+  for (const auto accept :
+       {Options::Accept::Alpha, Options::Accept::AlphaNumeric}) {
+    auto stream = TextTokenizer::Make(Options{
+      .accept = accept,
+      .convert = irs::Case::None,
+    });
+    const AnalyzerTokens expected{{"x", 2, 3, 0}, {"y", 6, 7, 1}};
+    AssertStream(stream.get(), "\xFF x \x80 y \xC3", expected);
+  }
+}
+
 TEST(TextTokenizerTest, make_empty_object) {
   auto stream = TextTokenizer::Make(Options{});
   ASSERT_TRUE(stream);

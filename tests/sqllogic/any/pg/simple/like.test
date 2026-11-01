@@ -41,6 +41,30 @@ Serene\\%DB
 
 
 query
+SELECT like_escape('a\b%', '') AS empty_escape, like_escape('aéb%', 'é') AS multibyte,
+       'a\b' LIKE like_escape('a\b', '') AS literal_backslash;
+----
+empty_escape	multibyte	literal_backslash
+a\\\\b%	a\\b%	t
+
+
+query
+SELECT like_escape('a#\b', '#') AS escaped_backslash, like_escape('aêbé%', 'é') AS shared_lead_byte,
+       'a\b' LIKE 'a#\b' ESCAPE '#' AS escaped_backslash_matches;
+----
+escaped_backslash	shared_lead_byte	escaped_backslash_matches
+a\\\\b	aêb\\%	t
+
+
+statement error
+SELECT like_escape('ab', 'xy');
+----
+db error: ERROR: invalid escape string
+HINT: Escape string must be empty or one character.
+
+
+
+query
 SELECT 'Incorrect' ~~ 'Incorrect\';
 ----
 ?column?

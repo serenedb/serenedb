@@ -49,13 +49,14 @@ def lldb_binary():
     return None
 
 
-def session_pids(sid):
+def _processes():
     if not os.path.isdir("/proc"):
-        out = subprocess.run(["ps", "-A", "-o", "pid=,pgid="], capture_output=True,
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True,
                              text=True).stdout
-        return sorted(int(pid) for pid, pgid in (ln.split() for ln in out.splitlines())
-                      if int(pgid) == sid)
-    pids = []
+        for line in out.splitlines():
+            pid, ppid, pgid = line.split()
+            yield int(pid), int(ppid), int(pgid)
+        return
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
@@ -64,9 +65,27 @@ def session_pids(sid):
                 fields = fh.read().decode("utf-8", "replace").rsplit(") ", 1)[-1].split()
         except OSError:
             continue
-        if len(fields) > 3 and int(fields[3]) == sid:
-            pids.append(int(entry))
-    return sorted(pids)
+        if len(fields) > 3:
+            yield int(entry), int(fields[1]), int(fields[3])
+
+
+def session_pids(sid):
+    return sorted(pid for pid, _, session in _processes() if session == sid)
+
+
+def descendants(root):
+    children = {}
+    sessions = {}
+    for pid, ppid, session in _processes():
+        children.setdefault(ppid, []).append(pid)
+        sessions[pid] = session
+    found = {}
+    pending = [root]
+    while pending:
+        for child in children.get(pending.pop(), ()):
+            found[child] = sessions[child]
+            pending.append(child)
+    return found
 
 
 def process_name(pid):
@@ -180,8 +199,11 @@ def run(argv, *, env, cwd, log_path, timeout, stack_dir, extra_stack_pids=lambda
         if time.monotonic() >= deadline + stalled():
             break
     with dumping():
-        pids = session_pids(proc.pid) + [p for p in extra_stack_pids() if p]
+        tree = descendants(proc.pid)
+        pids = sorted(set(session_pids(proc.pid)) | tree.keys())
+        pids += [p for p in extra_stack_pids() if p and p not in pids]
         stacks = dump_all_stacks(pids, stack_dir)
-    kill_session(proc.pid)
+    for sid in {proc.pid, *tree.values()}:
+        kill_session(sid)
     proc.wait()
     return ProcResult(None, time.monotonic() - start, stuck=True, stacks=stacks)

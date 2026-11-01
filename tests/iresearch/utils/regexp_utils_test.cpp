@@ -191,14 +191,6 @@ TEST_F(RegexpUtilsTest, unescape_mixed_literals_and_escapes) {
   EXPECT_EQ("foo.bar*baz", irs::ViewCast<char>(result));
 }
 
-TEST_F(RegexpUtilsTest, unescape_trailing_backslash_kept) {
-  // Documented behavior: lone trailing backslash is appended to output.
-  // Not a valid regexp on its own, but UnescapeRegexp must be robust.
-  irs::bstring out;
-  auto result = irs::UnescapeRegexp(ToBytesView("foo\\"), out);
-  EXPECT_EQ("foo\\", irs::ViewCast<char>(result));
-}
-
 TEST_F(RegexpUtilsTest, unescape_clears_output_buffer) {
   // The function must clear() out before writing - callers may reuse
   // a buffer across multiple patterns.
@@ -233,11 +225,10 @@ TEST_F(RegexpUtilsTest, regexp_type_two_literal_backslashes) {
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_trailing_backslash) {
-  // "foo\" on wire - trailing lone backslash. HasMetacharacters sees
-  // the \, sets escaped=true, loop ends - no unescaped metacharacter
-  // was returned as true. HasEscapes returns true -> LiteralEscaped.
-  EXPECT_EQ(irs::RegexpType::LiteralEscaped,
+  EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("foo\\")));
+  EXPECT_EQ(irs::RegexpType::Complex,
+            irs::ComputeRegexpType(ToBytesView("a\\.b\\")));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_escaped_dot_then_star) {

@@ -75,9 +75,7 @@ duckdb::optional<int32_t> IndexPosition(const Session& session, int64_t oid,
     }
     const auto& index = entry->Cast<duckdb::IndexCatalogEntry>();
     auto relation = index.GetRelation(*session.transaction);
-    if (!relation) {
-      return duckdb::nullopt;
-    }
+    SDB_ASSERT(relation);
     return Position(IndexAttnums(*session.context, index, *relation), column);
   }
   if (const auto key = FindKeyIndex(session, static_cast<uint64_t>(oid));

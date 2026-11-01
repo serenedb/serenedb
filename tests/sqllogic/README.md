@@ -33,8 +33,9 @@ Its files are in sqllogictest's original format (no column names, one value per 
 A test of thousands of similar cases isn't committed: `test.py` writes it before
 every run. Each `generators/<path>.py` prints the test that `test.py` saves as
 `<path>.gen.test`, so `generators/sdb/pg/index/phrase_deferred_matrix.py`
-produces `sdb/pg/index/phrase_deferred_matrix.gen.test`. `.gitignore` ignores
-every `*.gen.test`; edit the generator, not its output.
+produces `sdb/pg/index/phrase_deferred_matrix.gen.test`, and a generator under
+`generators/recovery/` writes a recovery test. `.gitignore` ignores every
+`*.gen.test`; edit the generator, not its output.
 
 A generator builds its test with `sqllogic_gen.Test`, which writes the header,
 the setup statements and the checks:
@@ -61,14 +62,20 @@ queries give each `id` the same `s`; `query(sql)` checks any query by its
 whole recorded answer, header and rows, or by its error;
 `query(sql, columns, rows)` by its recorded answer of `rows` rows under that
 header, by every row it returns for `rows=None`, or by `rows` themselves when
-the generator knows the answer; `error(sql, message)` expects a statement to
-fail with that message;
-`onlyif=`/`skipif=` on each of them runs it on one engine only, such as a
-PostgreSQL setting SereneDB doesn't have. `t.rng` is
-seeded with `seed`, so a generator writes the same
-cases on every run. `temporal_gen` holds the shapes of the temporal tests (a key
-grouped, a predicate counted) and their rounds, which run every shape with an
-optimizer off and on and compare the results.
+the generator knows the answer; `expect(sql, columns, rows)` checks a query by
+the rows the generator worked out itself; `error(sql, message)` expects a
+statement to fail with that message;
+`onlyif=`/`skipif=` on a statement, a query or an error runs it on one engine
+only, such as a PostgreSQL setting SereneDB doesn't have. `connection(name)`
+runs the next statement or query on another connection, and `statement` and
+`expect` take the record's first line as `kind`, for a retry such as
+`statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION` after
+`control("substitution on")`. `t.rng` is seeded with `seed`, so a generator
+writes the same cases on every run. `temporal_gen` holds the shapes of the
+temporal tests (a key grouped, a predicate counted) and their rounds, which run
+every shape with an optimizer off and on and compare the results;
+`search_dml_gen` holds the random DML of the search-table tests, which compare a
+search table with a plain one after every step.
 
 A generator whose test would run longer than about 20 s splits it with
 `t.part()`: everything before the first `t.part()` is shared, and each part

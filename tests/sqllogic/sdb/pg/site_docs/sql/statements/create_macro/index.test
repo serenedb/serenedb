@@ -361,7 +361,7 @@ WHERE function_type IN ('macro', 'table_macro');
 # DOCS_TEST: example_035
 
 statement ok
-CREATE MACRO scalar_sub() AS (SELECT 5);
+CREATE MACRO scalar_sub() AS (SELECT max(x) FROM range(5) t(x));
 
 # DOCS_TEST_BODY
 
@@ -431,3 +431,54 @@ SELECT split_name('Ada Lovelace') AS name;
 ----
 name
 (Ada,Lovelace)
+
+# DOCS_TEST: example_040
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION count_below(n bigint) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) * 100 + sum(n) + n FROM generate_series(1, 10) g WHERE g < n';
+
+query
+SELECT count_below(4) AS result;
+----
+result
+316
+
+# DOCS_TEST: example_041
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE MACRO doubled_if_positive(d, x) AS CASE WHEN d > 0 THEN x + x END;
+
+query
+SELECT
+    d,
+    doubled_if_positive(d, 10 / d) AS result
+FROM (VALUES (0), (2), (5)) t(d)
+ORDER BY d;
+----
+d	result
+0	NULL
+2	10
+5	4
+
+# DOCS_TEST: example_042
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE MACRO four_times(x) AS (SELECT sum(x) FROM range(4) r(v));
+
+query
+SELECT
+    i,
+    four_times(i) AS result
+FROM range(3) t(i)
+ORDER BY i;
+----
+i	result
+0	0
+1	4
+2	8

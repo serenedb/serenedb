@@ -173,6 +173,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                     const irs::SourcePosition& position);
   void CommitReplaySlots(ReplaySession& session,
                          const irs::SourcePosition& position);
+  void CommitReplayDeletes(ReplaySession& session,
+                           const irs::SourcePosition& position);
 
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;

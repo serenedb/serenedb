@@ -152,7 +152,7 @@ std::optional<std::string> ColumnName(const Session& session,
     return columns->names[column].GetIdentifierName();
   }
   if (entry.type == SEQUENCE_ENTRY) {
-    if (NumbersRows(entry) || column >= kSequenceColumns.size()) {
+    if (column >= kSequenceColumns.size()) {
       return std::nullopt;
     }
     return std::string{kSequenceColumns[column]};
@@ -335,17 +335,14 @@ ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
     return Missing("trigger");
   }
   const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();
-  const auto table =
+  const auto& table =
     SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
-  if (!table) {
-    return Missing("trigger");
-  }
-  const auto [schema, table_name] = NameOf(*session.transaction, *table);
+  const auto [schema, table_name] = NameOf(*session.transaction, table);
   const auto& name = trigger.name.GetIdentifierName();
   return ObjectIdentity{
     .type = "trigger",
     .description = absl::StrCat("trigger ", name, " on table ",
-                                RegOut(session, RegKind::Class, table->oid)),
+                                RegOut(session, RegKind::Class, table.oid)),
     .identity = absl::StrCat(QuoteIdentifier(name), " on ",
                              QualifiedOutName(schema, table_name))};
 }
@@ -372,13 +369,11 @@ ObjectIdentity IdentifyNamed(std::string_view type, std::string_view name) {
                         .identity = QuoteIdentifier(name)};
 }
 
-template<typename R>
-ObjectIdentity IdentifyNamed(std::string_view type, const R& objects,
+ObjectIdentity IdentifyNamed(std::string_view type, const auto& objects,
                              uint64_t oid) {
-  const auto it = absl::c_find_if(
-    objects, [&](const auto& object) { return object.oid == oid; });
-  return it == objects.end() ? Missing(std::string{type})
-                             : IdentifyNamed(type, it->name);
+  const auto* object = FindSystemObject(objects, oid);
+  return object ? IdentifyNamed(type, object->name)
+                : Missing(std::string{type});
 }
 
 ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {

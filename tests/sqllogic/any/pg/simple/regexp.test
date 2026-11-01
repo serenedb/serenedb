@@ -267,6 +267,18 @@ id	regexp_match
 
 
 query
+SELECT id, regexp_match(txt, '(row)?[^c]*code (\d+)') FROM regexp_match_rows ORDER BY id
+----
+id	regexp_match
+1	{row,17}
+2	{row,29}
+3	NULL
+4	NULL
+5	{row,42}
+6	{NULL,8}
+
+
+query
 SELECT id, regexp_match(txt, NULL) FROM regexp_match_rows ORDER BY id
 ----
 id	regexp_match

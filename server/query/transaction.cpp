@@ -25,6 +25,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -35,6 +36,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <ranges>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -178,7 +180,7 @@ Transaction::SearchSlot& Transaction::EnsureIndexSlot(
   auto& result = entry.slots[slot];
   if (!result.transaction) {
     result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-      storage->GetTransaction());
+      storage->GetTransaction(/*exclusive_segment=*/slot != 0));
     result.transaction->SetFieldOptions(std::move(config));
   }
   if (!entry.storage) {
@@ -195,12 +197,13 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     }
     uint64_t queries = 0;
     for (auto& slot : entry.slots) {
+      SDB_ASSERT(slot.transaction);
       slot.writer.reset();
-      if (slot.transaction) {
-        slot.transaction->RegisterFlush();
-        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
-      }
+      queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
     }
+    irs::IndexWriter::Transaction::RegisterFlush(
+      std::views::transform(entry.slots, &SearchSlot::transaction));
+    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }

@@ -31,22 +31,21 @@
 
 namespace sdb::connector {
 
-// DELETE on a TableEngine::Search table. Single-threaded like the RocksDB
-// delete operator (no ParallelSink / local sink state): each row's PK is
-// encoded and (1) handed to the shard's serial iresearch trx as a removal and
-// (2) recorded on the transaction as the WAL delete payload.
+// DELETE on a TableEngine::Search table. Single-threaded (no ParallelSink /
+// local sink state): the transaction buffers each row's rowid as a removal.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
-  // `return_chunk` is RETURNING: `types` is then the table row followed by its
-  // row-identity virtual columns, and `return_columns` maps each table column
-  // to the expression that reads it. Otherwise the operator reports the row
-  // count and `types` is one BIGINT.
+  // `return_chunk` is RETURNING: `types` is then the table row followed by the
+  // virtual columns `returning_virtual_columns` lists, in that order, and
+  // `return_columns` maps each table column to the expression that reads it.
+  // Otherwise the operator reports the row count and `types` is one BIGINT.
   SereneDBSearchDelete(
     duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
     duckdb::vector<duckdb::idx_t> return_columns,
+    const duckdb::vector<duckdb::column_t>& returning_virtual_columns,
     duckdb::RowIdHandling row_id_handling);
 
   bool IsSink() const final { return true; }
@@ -65,9 +64,7 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
 
  private:
   duckdb::optional_ptr<const catalog::SearchTableEntry> _table;
-  // The PK columns as they arrive in the input chunk (explicit PK), or the
-  // single generated-PK rowid column (no-PK tables).
-  std::vector<primary_key::PKColumn> _pk_columns;
+  primary_key::PKColumn _rowid;
   bool _return_chunk = false;
   duckdb::vector<duckdb::idx_t> _return_columns;
   duckdb::RowIdHandling _row_id_handling;

@@ -70,9 +70,7 @@ struct SimpleIntBindData : public duckdb::FunctionData {
   }
 };
 
-// --- array_ndims ---
-
-duckdb::unique_ptr<duckdb::FunctionData> ArrayNdimsBind(
+duckdb::unique_ptr<duckdb::FunctionData> ArrayDepthBind(
   duckdb::BindScalarFunctionInput& input) {
   const auto& type = input.GetArguments()[0]->GetReturnType();
   return duckdb::make_uniq<SimpleIntBindData>(CountListDepth(type));
@@ -92,14 +90,6 @@ void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       }
       return bind_data.ndims;
     });
-}
-
-// --- array_dims ---
-
-duckdb::unique_ptr<duckdb::FunctionData> ArrayDimsBind(
-  duckdb::BindScalarFunctionInput& input) {
-  const auto& type = input.GetArguments()[0]->GetReturnType();
-  return duckdb::make_uniq<SimpleIntBindData>(CountListDepth(type));
 }
 
 void ArrayDimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -437,7 +427,7 @@ void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db) {
     },
     duckdb::LogicalType::INTEGER,
     ArrayNdimsFunction,
-    ArrayNdimsBind,
+    ArrayDepthBind,
   };
   loader.RegisterFunction(array_ndims);
 
@@ -448,7 +438,7 @@ void RegisterPgArrayFunctions(duckdb::DatabaseInstance& db) {
     },
     duckdb::LogicalType::VARCHAR,
     ArrayDimsFunction,
-    ArrayDimsBind,
+    ArrayDepthBind,
   };
   loader.RegisterFunction(array_dims);
 

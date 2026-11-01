@@ -222,6 +222,32 @@ def re2_units(ctx, args, skips):
     return GtestBinary(ctx, "re2-tests").units(skips)
 
 
+def croaring_units(ctx, args, skips):
+    if not ctx.build.croaring_tests:
+        return []
+    tests = ctx.build.bin("croaring-tests")
+    if not tests.is_dir():
+        raise SystemExit(f"{tests} is missing, though the build has ENABLE_ROARING_TESTS on: build "
+                         "the croaring-tests target")
+    units = []
+    for binary in sorted(tests.iterdir()):
+        uid = f"croaring:{binary.name}"
+        skip = skipped(skips, uid)
+        if skip:
+            ctx.skips.append((uid, skip))
+            continue
+        cost, timeout = plan(ctx, uid, 5.0)
+        units.append(Unit(uid, "croaring", _croaring_run(ctx, binary), cost=cost, timeout=timeout))
+    return units
+
+
+def _croaring_run(ctx, binary):
+    def run(r):
+        return r.outcome(r.exec([str(binary)], cwd=ctx.root / "third_party" / "croaring"))
+
+    return run
+
+
 def iresearch_units(ctx, args, skips):
     if not ctx.build.gtests:
         return []

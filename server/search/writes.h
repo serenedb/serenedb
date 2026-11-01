@@ -92,11 +92,10 @@ class Writes {
   void AddSegments(const std::shared_ptr<Store>& store,
                    std::vector<std::string>&& segments);
 
-  void AddInlineInsertChunk(const std::shared_ptr<Store>& store,
-                            duckdb::BufferManager& buffer_manager,
-                            const duckdb::vector<duckdb::LogicalType>& types,
-                            std::span<const connector::ColumnId> column_ids,
-                            duckdb::Catalog& catalog, duckdb::DataChunk& chunk);
+  void AddInlineRows(const std::shared_ptr<Store>& store,
+                     std::span<const connector::ColumnId> column_ids,
+                     duckdb::Catalog& catalog,
+                     std::unique_ptr<duckdb::ColumnDataCollection> rows);
 
   // Bytes a flush would reclaim for `store_id`; deletes are not counted.
   uint64_t BufferedBytes(duckdb::idx_t store_id) const noexcept {
@@ -104,17 +103,16 @@ class Writes {
     return it == _writes.end() ? 0 : it->second.changes.BufferedBytes();
   }
 
-  // Replays the whole buffer -- rows and removals -- into the shard's exclusive
-  // transaction, creating it on first use, and empties the row buffer. The rows
-  // become that transaction's to make durable, so the record stops carrying a
-  // copy of them; the removals stay buffered, since the record has to carry
-  // those either way.
+  // Replays the whole buffer into the shard's exclusive transaction, creating
+  // it on first use, and empties the row buffer. The rows become that
+  // transaction's to make durable, so the record stops carrying a copy of
+  // them.
   void FlushBuffer(const std::shared_ptr<Store>& store,
                    duckdb::ClientContext& context);
   void FlushBufferTransaction(duckdb::idx_t store_id);
 
-  void AddSearchDeletes(const std::shared_ptr<Store>& store,
-                        const duckdb::Vector& positions);
+  void AddRemoval(const std::shared_ptr<Store>& store,
+                  irs::DocRemovalBuilder&& positions);
 
   void AddSearchTruncate(const std::shared_ptr<Store>& store,
                          const duckdb::Identifier& table_name,

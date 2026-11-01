@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -30,6 +31,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -42,6 +44,7 @@ namespace {
 
 using sdb::connector::FillRowPositions;
 using sdb::connector::MakeRowPosition;
+using sdb::search::AddRowPositions;
 using sdb::search::LocalTableChangesEntry;
 using sdb::test::EngineDb;
 using sdb::test::OneRowSegments;
@@ -60,9 +63,11 @@ class SearchTableChangesRows : public ::testing::Test {
       values[i] = _next_row++;
     }
     chunk.SetCardinality(count);
-    changes.AppendInsertChunk(
-      duckdb::BufferManager::GetBufferManager(EngineDb()), _types, _columns,
-      duckdb::Catalog::GetSystemCatalog(EngineDb()), chunk);
+    auto rows = std::make_unique<duckdb::ColumnDataCollection>(
+      duckdb::BufferManager::GetBufferManager(EngineDb()), _types);
+    rows->Append(chunk);
+    changes.AppendInsertRows(std::move(rows), _columns,
+                             duckdb::Catalog::GetSystemCatalog(EngineDb()));
   }
 
  private:
@@ -81,9 +86,9 @@ duckdb::Vector MakePositions(std::span<const uint64_t> values) {
   return vector;
 }
 
-void AppendDeletes(LocalTableChangesEntry& changes,
-                   std::span<const uint64_t> positions) {
-  changes.AppendDeletes(MakePositions(positions));
+void AppendDeletes(irs::DocRemovalBuilder& positions,
+                   std::span<const uint64_t> values) {
+  AddRowPositions(positions, MakePositions(values));
 }
 
 std::vector<uint64_t> Positions(const irs::DocRemoval& removal) {
@@ -94,154 +99,136 @@ std::vector<uint64_t> Positions(const irs::DocRemoval& removal) {
   return positions;
 }
 
-std::vector<uint64_t> Pending(const LocalTableChangesEntry& changes) {
-  auto positions = changes.positions;
-  return Positions(*std::move(positions).Finish(OneRowSegments()));
+std::vector<uint64_t> Pending(const irs::DocRemovalBuilder& positions) {
+  auto copy = positions;
+  return Positions(*std::move(copy).Finish(OneRowSegments()));
 }
 
-TEST_F(SearchTableChangesRows, DeletesGatherUntilAFlushFinishesThem) {
-  LocalTableChangesEntry changes;
-  const std::vector<uint64_t> first{7, 8, 9};
-  const std::vector<uint64_t> second{1, 2};
-  AppendDeletes(changes, first);
-  AppendDeletes(changes, second);
-  AppendRows(changes, 2);
-  const std::vector<uint64_t> third{3};
-  AppendDeletes(changes, third);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{1, 2, 3, 7, 8, 9}));
-
-  const auto removal = changes.FinishRemoval(OneRowSegments());
-  EXPECT_TRUE(changes.positions.Empty());
-  ASSERT_EQ(1, changes.removals.size());
-  EXPECT_EQ(removal, changes.removals.front());
-  EXPECT_EQ(Positions(*removal), (std::vector<uint64_t>{1, 2, 3, 7, 8, 9}));
-
-  const std::vector<uint64_t> fourth{4};
-  AppendDeletes(changes, fourth);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{4}));
-  EXPECT_EQ(1, changes.removals.size());
+std::shared_ptr<const irs::DocRemoval> Removal(
+  std::span<const uint64_t> values) {
+  irs::DocRemovalBuilder positions;
+  AppendDeletes(positions, values);
+  return std::move(positions).Finish(OneRowSegments());
 }
 
 TEST_F(SearchTableChangesRows, ClearingTheRowsKeepsTheRemovals) {
   LocalTableChangesEntry changes;
   AppendRows(changes, 3);
   const std::vector<uint64_t> first{100};
-  AppendDeletes(changes, first);
-  changes.FinishRemoval(OneRowSegments());
-  const std::vector<uint64_t> second{200};
-  AppendDeletes(changes, second);
+  changes.removals.push_back(Removal(first));
   changes.ClearBufferedRows();
   EXPECT_FALSE(changes.HasBufferedRows());
   ASSERT_EQ(1, changes.removals.size());
   EXPECT_EQ(Positions(*changes.removals.front()), (std::vector<uint64_t>{100}));
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{200}));
+}
+
+TEST_F(SearchTableChangesRows, BufferedRowsJoinOneCollection) {
+  LocalTableChangesEntry changes;
+  AppendRows(changes, 2);
+  AppendRows(changes, 3);
+  ASSERT_TRUE(changes.HasBufferedRows());
+  EXPECT_EQ(5, changes.collection->Count());
+  EXPECT_EQ((std::vector<sdb::connector::ColumnId>{0}), changes.column_ids);
 }
 
 TEST_F(SearchTableChangesRows, TruncateDropsEverythingBufferedBeforeIt) {
   LocalTableChangesEntry changes;
   const std::vector<uint64_t> positions{11, 12};
   AppendRows(changes, 2);
-  AppendDeletes(changes, positions);
-  changes.FinishRemoval(OneRowSegments());
-  AppendDeletes(changes, positions);
+  changes.removals.push_back(Removal(positions));
   changes.AppendSegments({"_1"});
   changes.AppendTruncate(false);
   EXPECT_TRUE(changes.truncate);
   EXPECT_FALSE(changes.ClearsShard());
   EXPECT_FALSE(changes.HasBufferedRows());
-  EXPECT_TRUE(changes.positions.Empty());
   EXPECT_TRUE(changes.removals.empty());
   EXPECT_TRUE(changes.segments.empty());
-
-  AppendDeletes(changes, positions);
-  EXPECT_TRUE(changes.truncate);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{11, 12}));
+  EXPECT_FALSE(changes.Empty());
 }
 
 TEST(SearchTableChanges, EmptyDeleteLeavesNothingPending) {
-  LocalTableChangesEntry changes;
-  AppendDeletes(changes, {});
-  EXPECT_TRUE(changes.positions.Empty());
+  irs::DocRemovalBuilder positions;
+  AppendDeletes(positions, {});
+  EXPECT_TRUE(positions.Empty());
 }
 
 TEST(SearchTableChanges, DeleteChunksJoin) {
-  LocalTableChangesEntry changes;
+  irs::DocRemovalBuilder positions;
   const std::vector<uint64_t> first{11, 12, 20};
   const std::vector<uint64_t> second{13, 14, 12};
-  AppendDeletes(changes, first);
-  AppendDeletes(changes, second);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{11, 12, 13, 14, 20}));
+  AppendDeletes(positions, first);
+  AppendDeletes(positions, second);
+  EXPECT_EQ(Pending(positions), (std::vector<uint64_t>{11, 12, 13, 14, 20}));
 }
 
 TEST(SearchTableChanges, PositionsKeepTheirSegments) {
-  LocalTableChangesEntry changes;
   const auto last = irs::doc_limits::eof() - 1;
   const std::vector<uint64_t> positions{
     MakeRowPosition(3, last - 1), MakeRowPosition(3, last),
     MakeRowPosition(4, irs::doc_limits::min()), MakeRowPosition(3, 2)};
-  AppendDeletes(changes, positions);
-  const auto& removal = *changes.FinishRemoval(OneRowSegments());
+  const auto removal = Removal(positions);
   std::vector<uint32_t> indexes;
-  for (const auto& group : removal.groups) {
+  for (const auto& group : removal->groups) {
     indexes.emplace_back(IndexOf(group.segment));
   }
   EXPECT_EQ((std::vector<uint32_t>{3, 4}), indexes);
   EXPECT_EQ(
-    Positions(removal),
+    Positions(*removal),
     (std::vector<uint64_t>{MakeRowPosition(3, 2), MakeRowPosition(3, last - 1),
                            MakeRowPosition(3, last),
                            MakeRowPosition(4, irs::doc_limits::min())}));
 }
 
 TEST(SearchTableChanges, AMillionRowDeleteFreezesToAFewBytes) {
-  LocalTableChangesEntry changes;
+  irs::DocRemovalBuilder positions;
   std::vector<uint64_t> chunk(STANDARD_VECTOR_SIZE);
   uint64_t next = MakeRowPosition(5, irs::doc_limits::min());
   for (size_t rows = 0; rows < 1000000; rows += chunk.size()) {
     for (auto& position : chunk) {
       position = next++;
     }
-    AppendDeletes(changes, chunk);
+    AppendDeletes(positions, chunk);
   }
-  const auto& removal = *changes.FinishRemoval(OneRowSegments());
-  ASSERT_EQ(1, removal.groups.size());
-  EXPECT_LE(1000000, removal.groups[0].docs.Count());
-  EXPECT_GT(1024, removal.groups[0].docs.FrozenSize());
+  const auto removal = std::move(positions).Finish(OneRowSegments());
+  ASSERT_EQ(1, removal->groups.size());
+  EXPECT_LE(1000000, removal->groups[0].docs.Count());
+  EXPECT_GT(1024, removal->groups[0].docs.FrozenSize());
 }
 
 TEST(SearchTableChanges, DeletesReadConstantVectors) {
-  LocalTableChangesEntry changes;
+  irs::DocRemovalBuilder positions;
   const auto position = MakeRowPosition(1, 5);
-  const duckdb::Vector positions{
+  const duckdb::Vector values{
     duckdb::Value::BIGINT(static_cast<int64_t>(position)), duckdb::count_t(3)};
-  changes.AppendDeletes(positions);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{position}));
+  AddRowPositions(positions, values);
+  EXPECT_EQ(Pending(positions), (std::vector<uint64_t>{position}));
 }
 
 TEST(SearchTableChanges, DeletesReadDictionaryVectors) {
-  LocalTableChangesEntry changes;
+  irs::DocRemovalBuilder positions;
   std::vector<uint64_t> places;
   for (uint32_t i = 0; i < 10; ++i) {
     places.emplace_back(MakeRowPosition(2, 1 + i));
   }
-  auto positions = MakePositions(places);
+  auto values = MakePositions(places);
   duckdb::SelectionVector sel{3};
   sel.set_index(0, 9);
   sel.set_index(1, 3);
   sel.set_index(2, 3);
-  positions.Slice(sel, 3);
-  changes.AppendDeletes(positions);
-  EXPECT_EQ(Pending(changes), (std::vector<uint64_t>{MakeRowPosition(2, 4),
-                                                     MakeRowPosition(2, 10)}));
+  values.Slice(sel, 3);
+  AddRowPositions(positions, values);
+  EXPECT_EQ(
+    Pending(positions),
+    (std::vector<uint64_t>{MakeRowPosition(2, 4), MakeRowPosition(2, 10)}));
 }
 
 TEST(SearchTableChanges, DeletesReadFilledPositions) {
-  LocalTableChangesEntry changes;
-  duckdb::Vector positions{duckdb::LogicalType::ROW_TYPE};
-  FillRowPositions(6, 20, nullptr, 4, positions);
-  changes.AppendDeletes(positions);
+  irs::DocRemovalBuilder positions;
+  duckdb::Vector values{duckdb::LogicalType::ROW_TYPE};
+  FillRowPositions(6, 20, nullptr, 4, values);
+  AddRowPositions(positions, values);
   EXPECT_EQ(
-    Pending(changes),
+    Pending(positions),
     (std::vector<uint64_t>{MakeRowPosition(6, 20), MakeRowPosition(6, 21),
                            MakeRowPosition(6, 22), MakeRowPosition(6, 23)}));
 }

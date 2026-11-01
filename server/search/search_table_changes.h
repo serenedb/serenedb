@@ -22,9 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <memory>
@@ -42,11 +40,23 @@ class Catalog;
 }  // namespace duckdb
 namespace sdb::search {
 
+inline void AddRowPositions(irs::DocRemovalBuilder& positions,
+                            const duckdb::Vector& rows) {
+  auto places = rows.Values<int64_t>();
+  for (duckdb::idx_t i = 0; i < places.size();) {
+    const auto first = static_cast<uint64_t>(places.GetValueUnsafe(i));
+    auto end = first + 1;
+    while (++i < places.size() &&
+           static_cast<uint64_t>(places.GetValueUnsafe(i)) == end) {
+      ++end;
+    }
+    const auto doc = connector::RowPositionDoc(first);
+    positions.AddRange(connector::RowPositionIndex(first), doc,
+                       static_cast<irs::doc_id_t>(doc + (end - first)));
+  }
+}
+
 // Per-search-table, per-transaction write buffer.
-//
-// One collection of rows, the positions of the deletes since the last flush and
-// the removals the flushes made of the ones before; nothing reaches iresearch
-// until the buffer is flushed.
 struct LocalTableChangesEntry {
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
   // The shard's stored columns, in chunk order, and the catalog its sink is
@@ -56,46 +66,24 @@ struct LocalTableChangesEntry {
   std::vector<connector::ColumnId> column_ids;
   duckdb::Catalog* catalog = nullptr;
 
-  irs::DocRemovalBuilder positions;
   std::vector<std::shared_ptr<const irs::DocRemoval>> removals;
   bool truncate = false;
   bool clears_shard = false;
   // Segments a bulk statement flushed, for the record to reference by name.
   std::vector<std::string> segments;
 
-  void AppendInsertChunk(duckdb::BufferManager& bm,
-                         const duckdb::vector<duckdb::LogicalType>& types,
-                         std::span<const connector::ColumnId> cols,
-                         duckdb::Catalog& cat, duckdb::DataChunk& chunk) {
-    if (collection == nullptr) {
-      collection = std::make_unique<duckdb::ColumnDataCollection>(bm, types);
-    }
+  void AppendInsertRows(std::unique_ptr<duckdb::ColumnDataCollection> rows,
+                        std::span<const connector::ColumnId> cols,
+                        duckdb::Catalog& cat) {
     if (column_ids.empty()) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
     }
-    collection->Append(chunk);
-  }
-
-  void AppendDeletes(const duckdb::Vector& rows) {
-    auto places = rows.Values<int64_t>();
-    for (duckdb::idx_t i = 0; i < places.size();) {
-      const auto first = static_cast<uint64_t>(places.GetValueUnsafe(i));
-      auto end = first + 1;
-      while (++i < places.size() &&
-             static_cast<uint64_t>(places.GetValueUnsafe(i)) == end) {
-        ++end;
-      }
-      const auto doc = connector::RowPositionDoc(first);
-      positions.AddRange(connector::RowPositionIndex(first), doc,
-                         static_cast<irs::doc_id_t>(doc + (end - first)));
+    if (collection == nullptr) {
+      collection = std::move(rows);
+    } else {
+      collection->Combine(*rows);
     }
-  }
-
-  const std::shared_ptr<const irs::DocRemoval>& FinishRemoval(
-    const irs::DirectoryReader& reader) {
-    SDB_ASSERT(!positions.Empty());
-    return removals.emplace_back(std::move(positions).Finish(reader));
   }
 
   // A truncate removes every row, including the ones this transaction has just
@@ -105,7 +93,6 @@ struct LocalTableChangesEntry {
   // not mask the part the truncate should have taken.
   void AppendTruncate(bool clears) {
     collection.reset();
-    positions = {};
     removals.clear();
     segments.clear();
     truncate = true;
@@ -140,14 +127,14 @@ struct LocalTableChangesEntry {
   void ClearBufferedRows() { collection.reset(); }
 
   bool ClearsShard() const noexcept {
-    SDB_ASSERT(!clears_shard || (positions.Empty() && removals.empty()),
+    SDB_ASSERT(!clears_shard || removals.empty(),
                "a clearing TRUNCATE must be the only op in its transaction");
     return clears_shard;
   }
 
   bool Empty() const noexcept {
-    return collection == nullptr && positions.Empty() && removals.empty() &&
-           !truncate && segments.empty();
+    return collection == nullptr && removals.empty() && !truncate &&
+           segments.empty();
   }
 };
 

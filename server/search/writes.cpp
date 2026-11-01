@@ -35,6 +35,7 @@
 #include <memory>
 #include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "connector/search_sink_writer.hpp"
@@ -69,7 +70,6 @@ irs::IndexWriter::Transaction& AddTransaction(StoreWrites& w,
 struct Tail {
   irs::IndexWriter::Transaction* trx = nullptr;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
-  std::shared_ptr<const irs::DocRemoval> removal;
 };
 
 class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
@@ -112,8 +112,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
       }
     }
     changes.ClearBufferedRows();
-    if (_tail.removal) {
-      _tail.trx->Remove(std::move(_tail.removal));
+    for (const auto& removal : changes.removals) {
+      _tail.trx->Remove(removal);
     }
     irs::IndexWriter::Transaction::Stage(Transactions(_writes.slots));
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
@@ -182,13 +182,12 @@ void Writes::AddSegments(const std::shared_ptr<Store>& store,
   EnsureStoreWrites(store).changes.AppendSegments(std::move(segments));
 }
 
-void Writes::AddInlineInsertChunk(
-  const std::shared_ptr<Store>& store, duckdb::BufferManager& buffer_manager,
-  const duckdb::vector<duckdb::LogicalType>& types,
-  std::span<const connector::ColumnId> column_ids, duckdb::Catalog& catalog,
-  duckdb::DataChunk& chunk) {
-  EnsureStoreWrites(store).changes.AppendInsertChunk(
-    buffer_manager, types, column_ids, catalog, chunk);
+void Writes::AddInlineRows(const std::shared_ptr<Store>& store,
+                           std::span<const connector::ColumnId> column_ids,
+                           duckdb::Catalog& catalog,
+                           std::unique_ptr<duckdb::ColumnDataCollection> rows) {
+  EnsureStoreWrites(store).changes.AppendInsertRows(std::move(rows), column_ids,
+                                                    catalog);
 }
 
 const irs::DirectoryReader& Writes::PinnedReader(const Store& store) const {
@@ -220,9 +219,6 @@ void Writes::FlushBuffer(const std::shared_ptr<Store>& store,
                                         store->GetId(), context);
     }
   }
-  if (!changes.positions.Empty()) {
-    w.buffer_trx->Remove(changes.FinishRemoval(PinnedReader(*store)));
-  }
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.
   changes.ClearBufferedRows();
@@ -235,9 +231,10 @@ void Writes::FlushBufferTransaction(duckdb::idx_t store_id) {
   }
 }
 
-void Writes::AddSearchDeletes(const std::shared_ptr<Store>& store,
-                              const duckdb::Vector& positions) {
-  EnsureStoreWrites(store).changes.AppendDeletes(positions);
+void Writes::AddRemoval(const std::shared_ptr<Store>& store,
+                        irs::DocRemovalBuilder&& positions) {
+  EnsureStoreWrites(store).changes.removals.push_back(
+    std::move(positions).Finish(PinnedReader(*store)));
 }
 
 void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
@@ -313,7 +310,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       continue;
     }
     Tail tail;
-    if (changes.HasBufferedRows() || !changes.positions.Empty()) {
+    if (changes.HasBufferedRows() || !changes.removals.empty()) {
       SDB_IF_FAILURE("search_feed_pending_fails") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
@@ -321,9 +318,6 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       if (changes.HasBufferedRows()) {
         tail.sink = connector::MakeSearchTableInsertSink(
           *tail.trx, *w.store, *changes.catalog, context);
-      }
-      if (!changes.positions.Empty()) {
-        tail.removal = changes.FinishRemoval(PinnedReader(*w.store));
       }
     }
     if (w.buffer_trx) {

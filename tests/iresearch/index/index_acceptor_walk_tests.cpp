@@ -692,7 +692,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
         irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                irs::PatternKind::Wildcard),
         irs::TermBounds{},
-        irs::CreateByWildcard(field_id, irs::DictRef{},
+        irs::CreateByWildcard(field_id,
                               irs::ViewCast<irs::byte_type>(kResidual)));
       ASSERT_TRUE(source->ok());
 
@@ -754,7 +754,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
       {
         auto source = irs::MakeConjunctionSource(
           nullptr, bounds,
-          irs::CreateByWildcard(field_id, irs::DictRef{},
+          irs::CreateByWildcard(field_id,
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);
@@ -767,7 +767,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
           irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                  irs::PatternKind::Wildcard),
           bounds,
-          irs::CreateByWildcard(field_id, irs::DictRef{},
+          irs::CreateByWildcard(field_id,
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);

@@ -704,8 +704,7 @@ TEST_P(TermsFilterTestCase, levenshtein_iterator_boosts) {
   irs::ByEditDistanceOptions options;
   options.term = irs::bstring{B("abcd")};
   options.max_distance = 1;
-  const auto lowered =
-    irs::LowerLevenshtein(kDuplicatedId, irs::DictRef{}, options, 2.f);
+  const auto lowered = irs::LowerLevenshtein(kDuplicatedId, options, 2.f);
   ASSERT_NE(nullptr, lowered);
 
   const auto pred = lowered->CompileTermPredicate();

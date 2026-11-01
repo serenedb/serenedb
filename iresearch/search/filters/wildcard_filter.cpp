@@ -37,15 +37,13 @@ QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
     ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
-                          score_t boost) {
+Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = term;
       filter->SetBoost(boost);
       return filter;
@@ -53,7 +51,6 @@ Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = term;
       filter->SetBoost(boost);
       return filter;
@@ -61,7 +58,6 @@ Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
       *filter->mutable_options() =
         AutomatonOptions{term, PatternKind::Wildcard};
       filter->SetBoost(boost);
@@ -69,11 +65,9 @@ Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
     });
 }
 
-Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
-                             score_t boost) {
+Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term, score_t boost) {
   auto filter = std::make_unique<ByWildcard>();
   *filter->mutable_field_id() = id;
-  *filter->mutable_dict() = dict;
   filter->mutable_options()->term = term;
   filter->SetBoost(boost);
   return filter;

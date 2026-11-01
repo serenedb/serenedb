@@ -99,7 +99,6 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
       filter->mutable_options()->term = term;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
@@ -108,7 +107,6 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
       filter->mutable_options()->term = term;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
@@ -130,7 +128,6 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
       filter->mutable_options()->term = term;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
@@ -139,7 +136,6 @@ bool RegexpSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
     [&](bytes_view prefix) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = node.field_id();
-      *filter->mutable_dict() = node.dict();
       filter->mutable_options()->term = prefix;
       filter->SetBoost(node.GetBoost());
       filter->SetScorer(node.GetScorer());
@@ -162,7 +158,6 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   }
   auto filter = std::make_unique<ByTerm>();
   *filter->mutable_field_id() = node.field_id();
-  *filter->mutable_dict() = node.dict();
   auto& target = filter->mutable_options()->term;
   target.reserve(opts.prefix.size() + opts.term.size());
   target += opts.prefix;
@@ -197,8 +192,7 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
       !ScoreIsIgnored(phrase, ctx)) {
     return false;
   }
-  auto lowered =
-    PartFilter(phrase.field_id(), phrase.dict(), std::move(part), constant);
+  auto lowered = PartFilter(phrase.field_id(), std::move(part), constant);
   lowered->SetBoost(phrase.GetBoost());
   lowered->SetScorer(phrase.GetScorer());
   slot = std::move(lowered);
@@ -222,7 +216,6 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
   if (terms_count == 1) {
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();
-    *by_term->mutable_dict() = node.dict();
     by_term->mutable_options()->term = ngrams.front();
     by_term->SetBoost(node.GetBoost());
     by_term->SetScorer(node.GetScorer());
@@ -232,10 +225,8 @@ bool NGramSimilarityLowerRule::Apply(Filter::ptr& slot,
   if (ScoreIsIgnored(node, ctx) && min_match == 1) {
     auto disjunction_node = std::make_unique<BooleanFilter>();
     for (const auto& ngram : ngrams) {
-      disjunction_node->Add(
-        TermClause{
-          .field = node.field_id(), .dict = node.dict(), .term = ngram},
-        Occur::Should);
+      disjunction_node->Add(TermClause{.field = node.field_id(), .term = ngram},
+                            Occur::Should);
     }
     disjunction_node->SetMinShouldMatch(1);
     disjunction_node->SetBoost(node.GetBoost());
@@ -264,16 +255,14 @@ void LowerNode(Filter::ptr& slot) {
   const auto type = slot->type();
   if (type == Type<ByWildcard>::id()) {
     auto& node = irs::utils::downCast<ByWildcard>(*slot);
-    slot = LowerWildcard(node.field_id(), node.dict(), node.options().term,
-                         node.GetBoost());
+    slot = LowerWildcard(node.field_id(), node.options().term, node.GetBoost());
   } else if (type == Type<ByRegexp>::id()) {
     auto& node = irs::utils::downCast<ByRegexp>(*slot);
-    slot = LowerRegexp(node.field_id(), node.dict(), node.options().pattern,
+    slot = LowerRegexp(node.field_id(), node.options().pattern,
                        node.options().syntax, node.GetBoost());
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = irs::utils::downCast<ByEditDistance>(*slot);
-    slot = LowerLevenshtein(node.field_id(), node.dict(), node.options(),
-                            node.GetBoost());
+    slot = LowerLevenshtein(node.field_id(), node.options(), node.GetBoost());
   }
 }
 

@@ -78,7 +78,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto wildcard = irs::CreateByWildcard(
-    column_info.field_id, DictOf(column_info),
+    column_info.field_id,
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), ctx.boost);
   if (!ctx.negated) {
     parent.Add(std::move(wildcard));

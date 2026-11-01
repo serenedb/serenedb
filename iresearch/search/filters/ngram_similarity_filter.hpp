@@ -46,14 +46,13 @@ class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
   static QueryBuilder::ptr PrepareSegment(
     const SubReader& segment, const PrepareContext& ctx,
-    const TermReader* field, const std::vector<irs::bstring>& ngrams,
+    irs::field_id field_name, const std::vector<irs::bstring>& ngrams,
     float_t threshold, score_t boost);
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final {
-    SDB_ASSERT(irs::field_limits::valid(field_id()));
-    return PrepareSegment(segment, ctx, segment.field(field_id(), dict()),
-                          options().ngrams, options().threshold, GetBoost());
+    return PrepareSegment(segment, ctx, field_id(), options().ngrams,
+                          options().threshold, GetBoost());
   }
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

@@ -487,7 +487,7 @@ void FusedSourceBuild(benchmark::State& state) {
   for (auto _ : state) {
     auto source = irs::MakeConjunctionSource(
       PrefixDriverSource(), PrefixDriverBounds(),
-      irs::CreateByRegexp(kKwFieldId, irs::DictRef{}, AsBytes(kRegexpPattern)));
+      irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
     benchmark::DoNotOptimize(source->ok());
   }
   state.SetItemsProcessed(state.iterations());
@@ -498,7 +498,7 @@ void FusedSourceWalk(benchmark::State& state) {
   const auto& field = FieldOf(index);
   const auto source = irs::MakeConjunctionSource(
     PrefixDriverSource(), PrefixDriverBounds(),
-    irs::CreateByRegexp(kKwFieldId, irs::DictRef{}, AsBytes(kRegexpPattern)));
+    irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
   size_t produced = 0;
   for (auto _ : state) {
     produced += DrainSource(field, *source);
@@ -511,7 +511,7 @@ void FusedBoundsOnlyWalk(benchmark::State& state) {
   const auto& field = FieldOf(index);
   const auto source = irs::MakeConjunctionSource(
     nullptr, PrefixDriverBounds(),
-    irs::CreateByRegexp(kKwFieldId, irs::DictRef{}, AsBytes(kRegexpPattern)));
+    irs::CreateByRegexp(kKwFieldId, AsBytes(kRegexpPattern)));
   size_t produced = 0;
   for (auto _ : state) {
     produced += DrainSource(field, *source);

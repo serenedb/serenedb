@@ -128,9 +128,8 @@ class LevenshteinAutomatonFilter final
   : public FilterWithField<LevenshteinAutomatonOptions> {
  public:
   static QueryBuilder::ptr PrepareSegment(
-    const SubReader& segment, const PrepareContext& ctx,
-    const TermReader* reader, const LevenshteinAutomatonOptions& options,
-    score_t boost);
+    const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
+    const LevenshteinAutomatonOptions& options, score_t boost);
 
   static field_visitor visitor(const LevenshteinAutomatonOptions& options);
 
@@ -146,7 +145,7 @@ class LevenshteinAutomatonFilter final
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;
 };
 
-Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
+Filter::ptr LowerLevenshtein(irs::field_id id,
                              const ByEditDistanceOptions& opts, score_t boost);
 
 }  // namespace irs

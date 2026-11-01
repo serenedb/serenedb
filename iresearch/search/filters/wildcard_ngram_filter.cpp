@@ -80,11 +80,9 @@ std::string LikeRegexp(std::string_view pattern) {
   return regex;
 }
 
-ByPhrase MakePhraseFilter(const ByWildcardNGram& filter,
-                          const ByPhraseOptions& part) {
+ByPhrase MakePhraseFilter(irs::field_id field, const ByPhraseOptions& part) {
   ByPhrase phrase;
-  *phrase.mutable_field_id() = filter.field_id();
-  *phrase.mutable_dict() = filter.dict();
+  *phrase.mutable_field_id() = field;
   *phrase.mutable_options() = part;
   return phrase;
 }
@@ -170,7 +168,7 @@ class GramQueryPreparer {
                     const PrepareContext& ctx, const PrepareContext& sub_ctx)
     : _filter{filter},
       _segment{segment},
-      _reader{segment.field(filter.field_id(), filter.dict())},
+      _reader{segment.field(filter.field_id())},
       _ctx{ctx},
       _sub_ctx{sub_ctx} {}
 
@@ -225,7 +223,7 @@ class GramQueryPreparer {
                                     std::get<ByTermOptions>(part).term);
     }
     if (_filter.options().has_pos) {
-      return MakePhraseFilter(_filter, grams)
+      return MakePhraseFilter(_filter.field_id(), grams)
         .PrepareSegment(_segment, _sub_ctx);
     }
     auto builder = MakeBuilder(0);

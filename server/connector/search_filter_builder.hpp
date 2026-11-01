@@ -181,6 +181,9 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
 
 inline irs::DictRef DictOf(const SearchColumnInfo& info,
                            irs::ValueKind kind = irs::ValueKind::Text) {
+  if (kind == irs::ValueKind::Text) {
+    return {};
+  }
   return {.layout = info.layout, .kind = kind};
 }
 

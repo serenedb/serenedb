@@ -4379,7 +4379,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::BooleanFilter expected;
   expected.Add(irs::CreateByRegexp(
-                 ExpectedFieldId(1), irs::DictRef{},
+                 ExpectedFieldId(1),
                  irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"})),
                irs::Occur::MustNot);
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ !!ts_regexp('foo.*')",

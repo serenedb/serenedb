@@ -76,16 +76,16 @@ Filter MakeFilter(irs::field_id field, std::string_view term) {
 // (ByTerm / ByPrefix / AutomatonFilter), mirroring how callers build and
 // optimize wildcard filters in production.
 irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term) {
-  auto filter = irs::CreateByWildcard(field, irs::DictRef{},
-                                      irs::ViewCast<irs::byte_type>(term));
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
   irs::Optimize(filter);
   return filter;
 }
 
 irs::Filter::ptr MakeWildcard(irs::field_id field, std::string_view term,
                               const irs::Scorer* scorer) {
-  auto filter = irs::CreateByWildcard(field, irs::DictRef{},
-                                      irs::ViewCast<irs::byte_type>(term));
+  auto filter =
+    irs::CreateByWildcard(field, irs::ViewCast<irs::byte_type>(term));
   filter->SetScorer(scorer);
   irs::Optimize(filter, {.scored = true});
   return filter;
@@ -127,8 +127,7 @@ TEST(by_wildcard_test, boost) {
     irs::score_t boost = 1.5f;
 
     irs::Filter::ptr q = irs::CreateByWildcard(
-      kFieldId, irs::DictRef{},
-      irs::ViewCast<irs::byte_type>(std::string_view("bar*")), boost);
+      kFieldId, irs::ViewCast<irs::byte_type>(std::string_view("bar*")), boost);
     irs::Optimize(q);
     ASSERT_EQ(boost, q->GetBoost());
 

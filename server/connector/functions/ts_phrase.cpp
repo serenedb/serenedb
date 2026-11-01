@@ -314,12 +314,10 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
     irs::Filter::ptr lowered;
     if (auto term = PlanPhrase(shingle, *column_info, options, "to_tsquery",
                                "or search for single words", context)) {
-      lowered =
-        irs::PartFilter(phrase.field_id(), phrase.dict(),
-                        irs::ByTermOptions{.term = std::move(*term)}, true);
+      lowered = irs::PartFilter(
+        phrase.field_id(), irs::ByTermOptions{.term = std::move(*term)}, true);
     } else if (options.size() == 1 && options.word_separator().empty()) {
-      lowered = irs::PartFilter(phrase.field_id(), phrase.dict(),
-                                options.begin()->part, true);
+      lowered = irs::PartFilter(phrase.field_id(), options.begin()->part, true);
     } else {
       return;
     }

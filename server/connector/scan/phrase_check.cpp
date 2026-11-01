@@ -45,8 +45,7 @@ struct PhraseCheckData {
       compiled{PhraseOf(*source).options(),
                {},
                irs::PhraseWordStats(PhraseOf(*source).options(), reader,
-                                    PhraseOf(*source).field_id(),
-                                    PhraseOf(*source).dict())} {}
+                                    PhraseOf(*source).field_id())} {}
 
   irs::Filter::ptr source;
   irs::CompiledPhrase compiled;

@@ -197,7 +197,7 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
                                           uint32_t threads) const final;
 };
 
-Filter::ptr PartFilter(field_id field, DictRef dict,
-                       ByPhraseOptions::PhrasePart part, bool max_synonyms);
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool max_synonyms);
 
 }  // namespace irs

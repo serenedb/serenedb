@@ -33,7 +33,6 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
 #include "iresearch/store/memory_directory.hpp"
-#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -286,28 +285,6 @@ bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& writer) {
                             std::chrono::steady_clock::now() - p.started)
                             .count());
   return ok;
-}
-
-bool TermRangeMerge::MergePart(size_t part) {
-  auto writer = BeginPart(part);
-  const auto state = _merge->BeginMerge(part);
-  duckdb::vector<duckdb::PresortedRun> runs;
-  while (!state->Done()) {
-    runs.clear();
-    duckdb::optional_idx unsorted;
-    if (!_merge->Merge(*state, runs, STANDARD_VECTOR_SIZE, *_progress,
-                       unsorted)) {
-      if (unsorted.IsValid()) {
-        SDB_ERROR(IRESEARCH, "Terms of field ", _field, " in merge input ",
-                  unsorted.GetIndex(), " are not sorted");
-      }
-      return false;
-    }
-    if (!writer->Consume(runs)) {
-      break;
-    }
-  }
-  return FinishPart(part, *writer);
 }
 
 bool TermRangeMerge::Done() const noexcept { return PartsLeft() == 0; }

@@ -21,33 +21,30 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
+#include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 
 namespace tests::merge {
 
-class ThreadedMergeExecutor final : public irs::MergeExecutor {
- public:
-  explicit ThreadedMergeExecutor(size_t threads) noexcept : _threads{threads} {}
+irs::PipelineMergeExecutor MakeExecutor(size_t threads = 1);
 
-  bool Run(irs::MergePlan& plan) final;
-  size_t Threads() const noexcept final { return _threads; }
+bool RunPlan(irs::MergePlan& plan, size_t threads = 1);
+
+bool RunOrder(irs::MergePlan& plan);
+
+bool ExpandOrder(irs::KeyOrder& order);
+
+class ShuffledClaims {
+ public:
+  explicit ShuffledClaims(bool shuffled = true);
+  ~ShuffledClaims();
+
+  ShuffledClaims(const ShuffledClaims&) = delete;
+  ShuffledClaims& operator=(const ShuffledClaims&) = delete;
 
  private:
-  size_t _threads;
-};
-
-class ShuffledMergeExecutor final : public irs::MergeExecutor {
- public:
-  ShuffledMergeExecutor(size_t threads, uint64_t seed) noexcept
-    : _threads{threads}, _seed{seed} {}
-
-  bool Run(irs::MergePlan& plan) final;
-  size_t Threads() const noexcept final { return _threads; }
-
- private:
-  size_t _threads;
-  uint64_t _seed;
+  bool _armed;
 };
 
 }  // namespace tests::merge

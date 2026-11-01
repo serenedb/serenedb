@@ -20,199 +20,69 @@
 
 #include "index/merge/support/parallel_merge.hpp"
 
-#include <absl/synchronization/mutex.h>
-
-#include <algorithm>
-#include <atomic>
-#include <exception>
-#include <functional>
-#include <iresearch/index/merge/merge_schedule.hpp>
-#include <iresearch/index/merge/term_ranges.hpp>
-#include <numeric>
-#include <optional>
-#include <random>
-#include <thread>
-#include <vector>
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/sorting/presorted_merge.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <span>
 
 namespace tests::merge {
 namespace {
 
-bool RunUnits(irs::MergePlan& plan, size_t threads,
-              const std::function<bool()>& done,
-              const std::function<std::optional<size_t>()>& claim,
-              const std::function<void(size_t, bool)>& finish) {
-  absl::Mutex mutex;
-  std::exception_ptr error;
-  size_t finished = 0;
-  auto work = [&] {
-    while (true) {
-      std::optional<size_t> unit;
-      {
-        absl::MutexLock lock{&mutex};
-        for (unit = claim(); !unit && !done(); unit = claim()) {
-          const auto seen = finished;
-          const auto changed = [&] { return finished != seen; };
-          mutex.Await(absl::Condition{&changed});
-        }
+bool ExpandRuns(const duckdb::PresortedMerge& merge, auto&& expand) {
+  duckdb::vector<duckdb::PresortedRun> runs;
+  for (duckdb::idx_t partition = 0; partition != merge.PartitionCount();
+       ++partition) {
+    const auto state = merge.BeginMerge(partition);
+    while (!state->Done()) {
+      runs.clear();
+      duckdb::optional_idx unsorted;
+      if (!merge.Merge(
+            *state, runs, STANDARD_VECTOR_SIZE, [] { return true; },
+            unsorted) ||
+          !expand(partition, std::span<const duckdb::PresortedRun>{runs})) {
+        return false;
       }
-      if (!unit) {
-        return;
-      }
-      bool ok = false;
-      try {
-        ok = plan.RunUnit(*unit);
-      } catch (...) {
-        absl::MutexLock lock{&mutex};
-        if (!error) {
-          error = std::current_exception();
-        }
-      }
-      absl::MutexLock lock{&mutex};
-      finish(*unit, ok);
-      ++finished;
     }
-  };
-  std::vector<std::thread> helpers;
-  for (size_t i = 1; i < threads; ++i) {
-    helpers.emplace_back(work);
-  }
-  work();
-  for (auto& helper : helpers) {
-    helper.join();
-  }
-  if (error) {
-    std::rethrow_exception(error);
   }
   return true;
 }
 
-bool RunPostings(irs::MergePlan& plan, size_t threads,
-                 std::optional<uint64_t> seed) {
-  if (!plan.PostingsPending()) {
-    return true;
-  }
-  for (const auto& range : plan.TermRanges()) {
-    std::vector<size_t> parts(range->PartCount());
-    std::iota(parts.begin(), parts.end(), size_t{0});
-    if (seed) {
-      std::shuffle(parts.begin(), parts.end(), std::mt19937_64{*seed});
-    }
-    std::atomic<size_t> next{0};
-    std::atomic<bool> ok{true};
-    absl::Mutex mutex;
-    std::exception_ptr error;
-    auto work = [&] {
-      for (size_t at; (at = next++) < parts.size();) {
-        try {
-          if (!range->MergePart(parts[at])) {
-            ok = false;
-          }
-        } catch (...) {
-          absl::MutexLock guard{&mutex};
-          if (!error) {
-            error = std::current_exception();
-          }
-          ok = false;
-        }
-      }
-    };
-    std::vector<std::thread> helpers;
-    for (size_t i = 1; i < threads; ++i) {
-      helpers.emplace_back(work);
-    }
-    work();
-    for (auto& helper : helpers) {
-      helper.join();
-    }
-    if (error) {
-      std::rethrow_exception(error);
-    }
-    if (!ok) {
-      return false;
-    }
-  }
-  return plan.FinishPostings();
-}
-
 }  // namespace
 
-bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
-  if (plan.OrderPending() && !plan.RunOrder()) {
-    return false;
-  }
-  if (!RunPostings(plan, _threads, std::nullopt)) {
-    return false;
-  }
-  irs::MergeSchedule schedule{plan};
-  RunUnits(
-    plan, _threads, [&] { return schedule.Done(); },
-    [&]() -> std::optional<size_t> {
-      const auto unit = schedule.Claim();
-      if (unit == irs::MergeSchedule::kNoUnit) {
-        return std::nullopt;
-      }
-      return unit;
-    },
-    [&](size_t unit, bool ok) { schedule.Finish(unit, ok); });
-  return schedule.Ok();
+irs::PipelineMergeExecutor MakeExecutor(size_t threads) {
+  return irs::PipelineMergeExecutor{irs::DuckDBEngine::Instance().instance(),
+                                    nullptr, threads};
 }
 
-bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
-  if (plan.OrderPending() && !plan.RunOrder()) {
+bool RunPlan(irs::MergePlan& plan, size_t threads) {
+  return MakeExecutor(threads).Run(plan);
+}
+
+bool RunOrder(irs::MergePlan& plan) {
+  if (!ExpandRuns(*plan.KeyMerge(), [&](size_t partition, auto runs) {
+        return plan.ExpandOrder(partition, runs);
+      })) {
     return false;
   }
-  if (!RunPostings(plan, _threads, _seed)) {
-    return false;
+  plan.FinishOrder();
+  return true;
+}
+
+bool ExpandOrder(irs::KeyOrder& order) {
+  return ExpandRuns(*order.KeyMerge(), [&](size_t partition, auto runs) {
+    order.Expand(partition, runs);
+    return true;
+  });
+}
+
+ShuffledClaims::ShuffledClaims(bool shuffled)
+  : _armed{shuffled &&
+           duckdb::FaultPoints::Arm("irs::MergeSchedule::Shuffle")} {}
+
+ShuffledClaims::~ShuffledClaims() {
+  if (_armed) {
+    duckdb::FaultPoints::Disarm("irs::MergeSchedule::Shuffle");
   }
-  const auto units = plan.Units();
-  std::vector<size_t> waiting(units.size());
-  std::vector<std::vector<size_t>> dependents(units.size());
-  std::vector<size_t> ready;
-  for (size_t unit = 0; unit != units.size(); ++unit) {
-    const auto& deps = units[unit].deps;
-    waiting[unit] = deps.size();
-    for (const auto dep : deps) {
-      dependents[dep].push_back(unit);
-    }
-    if (deps.empty()) {
-      ready.push_back(unit);
-    }
-  }
-  std::mt19937_64 rng{_seed};
-  size_t left = units.size();
-  size_t running = 0;
-  bool failed = false;
-  RunUnits(
-    plan, _threads, [&] { return failed ? running == 0 : left == 0; },
-    [&]() -> std::optional<size_t> {
-      if (failed || ready.empty()) {
-        return std::nullopt;
-      }
-      const auto at = rng() % ready.size();
-      const auto unit = ready[at];
-      ready[at] = ready.back();
-      ready.pop_back();
-      ++running;
-      return unit;
-    },
-    [&](size_t unit, bool ok) {
-      --running;
-      --left;
-      if (!ok) {
-        failed = true;
-        ready.clear();
-        return;
-      }
-      if (failed) {
-        return;
-      }
-      for (const auto next : dependents[unit]) {
-        if (--waiting[next] == 0) {
-          ready.push_back(next);
-        }
-      }
-    });
-  return !failed;
 }
 
 }  // namespace tests::merge

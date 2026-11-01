@@ -31,6 +31,7 @@
 #include <duckdb/main/query_profiler.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <memory>
 #include <string>
@@ -38,7 +39,6 @@
 #include <vector>
 
 #include "connector/query_deadline.h"
-#include "search/compaction/pipeline_merge_executor.h"
 
 namespace sdb::connector {
 namespace {
@@ -50,14 +50,14 @@ struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
   duckdb::idx_t threads;
   std::unique_ptr<ManualCompaction> compaction;
   std::vector<ExecutedMerge> executed;
-  search::PipelineMergeExecutor::Profiles pipelines;
+  irs::PipelineMergeExecutor::Profiles pipelines;
 };
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
 
 duckdb::unique_ptr<duckdb::ProfilingNode> MergeNode(
   size_t number, const ExecutedMerge& merge,
-  search::PipelineMergeExecutor::Profiles queries) {
+  irs::PipelineMergeExecutor::Profiles queries) {
   auto node = duckdb::make_uniq<duckdb::ProfilingNode>();
   auto& metrics = node->GetOperatorMetrics();
   metrics.name = absl::StrCat("MERGE ", number);
@@ -92,7 +92,7 @@ void Adopt(duckdb::ProfilingNode& node, duckdb::idx_t depth,
 void GraftPipelines(duckdb::ClientContext& context,
                     const duckdb::PhysicalOperator& op,
                     const MergeTarget& target,
-                    search::PipelineMergeExecutor::Profiles& merges) {
+                    irs::PipelineMergeExecutor::Profiles& merges) {
   auto& profiler = duckdb::QueryProfiler::Get(context);
   profiler.GetRootUnderLock([&](duckdb::optional_ptr<duckdb::ProfilingNode>) {
     const auto& tree = profiler.GetTreeMap();
@@ -183,9 +183,9 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
     return StatementRunning(client);
   };
   const bool profiled = context.thread.profiler.IsEnabled();
-  search::PipelineMergeExecutor::Profiles queries;
-  search::PipelineMergeExecutor executor{*client.db, &scheduler, state.threads,
-                                         profiled ? &queries : nullptr};
+  irs::PipelineMergeExecutor::Profiles queries;
+  const irs::PipelineMergeExecutor executor{
+    *client.db, &scheduler, state.threads, profiled ? &queries : nullptr};
   ExecutedMerge executed;
   if (state.compaction->Next(progress, search::MergeOrigin::Sql, executor,
                              executed)) {

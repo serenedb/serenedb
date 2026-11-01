@@ -22,8 +22,16 @@
 
 #include <cstddef>
 #include <duckdb/main/profiler/profiling_node.hpp>
-#include <iresearch/index/merge/merge_plan.hpp>
 #include <vector>
+
+#include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_plan.hpp"
+#include "iresearch/index/merge/merge_profile.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
+#include "iresearch/store/directory.hpp"
 
 namespace duckdb {
 
@@ -31,20 +39,23 @@ class DatabaseInstance;
 class TaskScheduler;
 
 }  // namespace duckdb
-namespace sdb::search {
+namespace irs {
 
-class PipelineMergeExecutor final : public irs::MergeExecutor {
+class PipelineMergeExecutor {
  public:
   using Profiles = std::vector<duckdb::unique_ptr<duckdb::ProfilingNode>>;
 
-  PipelineMergeExecutor(duckdb::DatabaseInstance& db,
-                        duckdb::TaskScheduler* scheduler, size_t threads,
-                        Profiles* profiles = nullptr) noexcept
+  explicit PipelineMergeExecutor(duckdb::DatabaseInstance& db,
+                                 duckdb::TaskScheduler* scheduler,
+                                 size_t threads,
+                                 Profiles* profiles = nullptr) noexcept
     : _db{db}, _scheduler{scheduler}, _threads{threads}, _profiles{profiles} {}
 
-  bool Run(irs::MergePlan& plan) final;
-  size_t Threads() const noexcept final { return _threads; }
-  duckdb::TaskScheduler* Scheduler() const noexcept final { return _scheduler; }
+  size_t Threads() const noexcept { return _threads; }
+
+  duckdb::TaskScheduler* Scheduler() const noexcept { return _scheduler; }
+
+  bool Run(MergePlan& plan) const;
 
  private:
   duckdb::DatabaseInstance& _db;
@@ -53,4 +64,12 @@ class PipelineMergeExecutor final : public irs::MergeExecutor {
   Profiles* _profiles;
 };
 
-}  // namespace sdb::search
+[[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,
+                                 SegmentMeta& segment,
+                                 const SegmentWriterOptions& options,
+                                 const PipelineMergeExecutor& executor,
+                                 const MergeProgress& progress = {},
+                                 const AnnBuildEnv* env = nullptr,
+                                 MergeProfile* profile = nullptr);
+
+}  // namespace irs

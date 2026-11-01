@@ -56,7 +56,6 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -603,27 +602,6 @@ void MergePlan::FinishOrder() {
   _order_clock->Lap(MergeStep::Prepare);
 }
 
-bool MergePlan::RunOrder() {
-  SDB_ASSERT(OrderPending());
-  if (!_key_order->Merge(_progress)) {
-    return false;
-  }
-  FinishOrder();
-  return true;
-}
-
-bool MergePlan::RunPostings() {
-  SDB_ASSERT(_postings_pending);
-  for (const auto& range : _term_ranges) {
-    for (size_t part = 0; part != range->PartCount(); ++part) {
-      if (!range->MergePart(part)) {
-        return false;
-      }
-    }
-  }
-  return FinishPostings();
-}
-
 bool MergePlan::FinishPostings() {
   _postings_pending = false;
   uint64_t nanos = 0;
@@ -682,47 +660,6 @@ bool MergePlan::RunUnit(size_t unit) {
       return WriteIndex(clock);
   }
   SDB_UNREACHABLE();
-}
-
-bool RunSerially(MergePlan& plan) {
-  if (plan.OrderPending() && !plan.RunOrder()) {
-    return false;
-  }
-  if (plan.PostingsPending() && !plan.RunPostings()) {
-    return false;
-  }
-  for (size_t unit = 0; unit < plan.Units().size(); ++unit) {
-    if (!plan.RunUnit(unit)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
-                   const SegmentWriterOptions& options,
-                   const MergeProgress& progress, const AnnBuildEnv* env,
-                   MergeExecutor* executor, MergeProfile* profile) {
-  SDB_ASSERT(options.db);
-  bool merged = false;
-  Finally invalidate = [&merged, &segment]() noexcept {
-    if (!merged) [[unlikely]] {
-      segment.files.clear();
-      static_cast<SegmentInfo&>(segment) = SegmentInfo{};
-    }
-  };
-  MergePlan plan{dir,          doc_map,
-                 segment,      options.scorer,
-                 *options.db,  options.field_options,
-                 progress,     env,
-                 options.sort, options.hnsw_bases};
-  merged = (executor ? plan.Prepare(executor->Threads(), executor->Scheduler())
-                     : plan.Prepare()) &&
-           (executor ? executor->Run(plan) : RunSerially(plan));
-  if (profile) {
-    *profile = plan.Profile();
-  }
-  return merged;
 }
 
 }  // namespace irs

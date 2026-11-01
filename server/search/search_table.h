@@ -192,19 +192,19 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   yaclib::Future<MergeResult> RunMergeAsync(
     irs::MergeTicket ticket, const irs::MergeProgress& progress,
     const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    irs::MergeExecutor& executor) {
+    const irs::PipelineMergeExecutor& executor) {
     const auto begin = std::chrono::steady_clock::now();
     return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
-                                               progress, env, &executor));
+                                               progress, env, executor));
   }
   yaclib::Future<MergeResult> CompactAsync(
     const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
     const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    irs::MergeExecutor& executor, irs::LoneSegment lone) {
+    const irs::PipelineMergeExecutor& executor, irs::LoneSegment lone) {
     const auto begin = std::chrono::steady_clock::now();
     return AwaitMerge(
       begin, _writer->CompactAsync(policy, field_options, progress, env,
-                                   &executor, lone));
+                                   executor, lone));
   }
   ResultWithTime CleanupUnsafe();
 

@@ -387,8 +387,7 @@ TEST_F(MergeScheduleTest, ThreadedMergesMatchTheInputs) {
     ResetDocMap();
     irs::MemoryDirectory out;
     const auto plan = MakePlan(out, _plain);
-    ThreadedMergeExecutor executor{threads};
-    ASSERT_TRUE(executor.Run(*plan));
+    ASSERT_TRUE(RunPlan(*plan, threads));
     EXPECT_EQ("", MergedDifference(out));
   }
 }
@@ -399,8 +398,8 @@ TEST_F(MergeScheduleTest, ShuffledMergesMatchTheInputs) {
     ResetDocMap();
     irs::MemoryDirectory out;
     const auto plan = MakePlan(out, _plain);
-    ShuffledMergeExecutor executor{1 + seed % 4, seed};
-    ASSERT_TRUE(executor.Run(*plan));
+    const ShuffledClaims shuffle;
+    ASSERT_TRUE(RunPlan(*plan, 1 + seed % 4));
     EXPECT_EQ("", MergedDifference(out));
   }
 }
@@ -420,8 +419,7 @@ TEST_F(MergeScheduleTest, StoppedMergeFailsEveryExecutor) {
                         [&] { return calls.fetch_add(1) < 3; },
                         nullptr};
     ASSERT_TRUE(plan.Prepare());
-    ThreadedMergeExecutor threaded{threads};
-    EXPECT_FALSE(threaded.Run(plan));
+    EXPECT_FALSE(RunPlan(plan, threads));
   }
 }
 

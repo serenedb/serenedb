@@ -154,15 +154,6 @@ void KeyOrder::ThrowIncomplete() const {
                           " segments does not hold every live document once"));
 }
 
-void KeyOrder::ThrowIfUnsorted(const duckdb::optional_idx& input) const {
-  if (input.IsValid()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-      ERR_MSG("segment '", Reader(input.GetIndex()).Meta().name,
-              "' of a sorted merge is not sorted by the merge key"));
-  }
-}
-
 void KeyOrder::PlanParts() {
   const auto count = static_cast<size_t>(_merge->PartitionCount());
   std::vector<uint64_t> live_in(count);
@@ -296,25 +287,6 @@ void KeyOrder::Expand(size_t partition,
       return;
     }
   }
-}
-
-bool KeyOrder::Merge(const MergeProgress& proceed) {
-  SDB_ASSERT(_merge);
-  duckdb::vector<duckdb::PresortedRun> runs;
-  for (size_t part = 0; part != _parts.size(); ++part) {
-    const auto state = _merge->BeginMerge(part);
-    while (!state->Done()) {
-      runs.clear();
-      duckdb::optional_idx unsorted;
-      if (!_merge->Merge(*state, runs, STANDARD_VECTOR_SIZE, proceed,
-                         unsorted)) {
-        ThrowIfUnsorted(unsorted);
-        return false;
-      }
-      Expand(part, runs);
-    }
-  }
-  return true;
 }
 
 void KeyOrder::Finish() {

@@ -83,7 +83,7 @@ MergeResult RunMerge(
   const irs::IndexFieldOptions* field_options,
   const irs::MergeProgress& progress = {},
   irs::IResourceManager& memory = irs::IResourceManager::gNoop,
-  irs::ScorerPtr scorer = nullptr, irs::MergeExecutor* executor = nullptr) {
+  irs::ScorerPtr scorer = nullptr, size_t threads = 1) {
   MergeResult result;
   const irs::SegmentWriterOptions options{
     .scorer = scorer,
@@ -93,7 +93,7 @@ MergeResult RunMerge(
   };
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   result.flushed = irs::MergeSegments(out, doc_map, result.meta, options,
-                                      progress, nullptr, executor);
+                                      MakeExecutor(threads), progress);
   if (result.flushed) {
     result.reader = irs::SegmentReaderImpl::Open(
       out, result.meta, irs::tests::DefaultReaderOptions());
@@ -152,7 +152,8 @@ class MergeCharacterizationTest : public ::testing::Test {
         field_options != nullptr ? field_options : &_field_options,
     };
     auto doc_map = irs::MakeMergeDocMap(_inputs, options.resource_manager);
-    return irs::MergeSegments(_out, doc_map, meta, options, progress);
+    return irs::MergeSegments(_out, doc_map, meta, options, MakeExecutor(),
+                              progress);
   }
 
   irs::MemoryDirectory _dir;
@@ -666,13 +667,13 @@ void WriteVectors(irs::IndexWriter& writer, size_t docs, uint64_t seed) {
 }
 
 void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs,
-                    irs::MergeExecutor* executor) {
+                    size_t threads) {
   irs::FunctionFieldOptions field_options{
     IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
     IvfAnns()};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options, {},
-                               irs::IResourceManager::gNoop, nullptr, executor);
+                               irs::IResourceManager::gNoop, nullptr, threads);
   ASSERT_TRUE(merged.flushed);
   for (const auto id : {kLowVector, kHighVector}) {
     SCOPED_TRACE(id);
@@ -695,18 +696,17 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs,
 
 void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
   {
-    SCOPED_TRACE("serial");
-    ExpectIvfMerge(inputs, nullptr);
+    SCOPED_TRACE("one thread");
+    ExpectIvfMerge(inputs, 1);
   }
   {
     SCOPED_TRACE("scheduled");
-    ThreadedMergeExecutor executor{4};
-    ExpectIvfMerge(inputs, &executor);
+    ExpectIvfMerge(inputs, 4);
   }
   for (const uint64_t seed : {1, 2}) {
     SCOPED_TRACE(absl::StrCat("shuffled ", seed));
-    ShuffledMergeExecutor executor{4, seed};
-    ExpectIvfMerge(inputs, &executor);
+    const ShuffledClaims shuffle;
+    ExpectIvfMerge(inputs, 4);
   }
 }
 

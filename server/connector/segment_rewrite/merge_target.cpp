@@ -221,12 +221,11 @@ search::MergeRoundPlan MergeTarget::Plan(
     });
 }
 
-ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
-                                   const irs::MergeProgress& progress,
-                                   const irs::IndexFieldOptions* field_options,
-                                   const irs::AnnBuildEnv* env,
-                                   search::MergeOrigin origin,
-                                   irs::MergeExecutor& executor) const {
+ExecutedMerge MergeTarget::Compact(
+  const search::PlannedMerge& planned, const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  search::MergeOrigin origin,
+  const irs::PipelineMergeExecutor& executor) const {
   search::MergeRecorder recorder{_store->MergeRelation()->id, origin};
   const irs::CompactionPolicy pick = [&](irs::Compaction& candidates,
                                          const irs::IndexReader& index,
@@ -302,7 +301,7 @@ void ManualCompaction::Plan() {
 
 bool ManualCompaction::Next(const irs::MergeProgress& progress,
                             search::MergeOrigin origin,
-                            irs::MergeExecutor& executor,
+                            const irs::PipelineMergeExecutor& executor,
                             ExecutedMerge& merge) {
   while (_next == _plan.merges.size()) {
     if (!_plan.partial || _target.Snapshot().size() >= _plan.segments) {

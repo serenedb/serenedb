@@ -30,6 +30,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
+#include <iresearch/index/merge/logical_presorted_merge.hpp>
 #include <limits>
 #include <map>
 #include <random>
@@ -37,8 +38,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include "search/compaction/pipeline_merge_operators.h"
 
 namespace {
 
@@ -532,7 +531,7 @@ TEST_F(PresortedMergeTest, OperatorEmitsEveryPartitionOnSeveralThreads) {
   merge->Partition(8);
   ASSERT_LT(1, merge->PartitionCount());
   Exec("SET threads = 4");
-  auto root = duckdb::make_uniq<sdb::search::LogicalPresortedMerge>(merge);
+  auto root = duckdb::make_uniq<irs::LogicalPresortedMerge>(merge);
   EXPECT_EQ("PRESORTED_MERGE", root->GetName());
   EXPECT_FALSE(root->RequireOptimizer());
   EXPECT_FALSE(root->SupportSerialization());

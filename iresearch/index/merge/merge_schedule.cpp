@@ -21,26 +21,39 @@
 #include "iresearch/index/merge/merge_schedule.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/random/distributions.h>
+#include <absl/random/random.h>
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/mutex.hpp>
+#include <utility>
 
-#include "iresearch/index/merge/merge_plan.hpp"
+#include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
-MergeSchedule::MergeSchedule(const MergePlan& plan) {
+MergeSchedule::MergeSchedule(MergePlan& plan) : _plan{plan} {
   const auto units = plan.Units();
+  const bool hold_postings = plan.PostingsPending();
+  absl::MutexLock lock{&_mutex};
   _rank.resize(units.size());
   _dependents.resize(units.size());
   _waiting.resize(units.size());
   _left = units.size();
+  _ranges_left = plan.TermRanges().size();
   for (size_t unit = 0; unit != units.size(); ++unit) {
     const auto& deps = units[unit].deps;
     _waiting[unit] = deps.size();
     for (const auto dep : deps) {
       SDB_ASSERT(dep < unit);
       _dependents[dep].push_back(unit);
+    }
+    if (hold_postings && _held == kNoUnit &&
+        units[unit].kind == MergeUnitKind::Postings) {
+      _held = unit;
+      ++_waiting[unit];
     }
   }
   for (size_t unit = units.size(); unit-- != 0;) {
@@ -60,14 +73,30 @@ size_t MergeSchedule::Claim() {
   if (_failed || _ready.empty()) {
     return kNoUnit;
   }
-  const auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
+  auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
     return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
   });
+  SDB_IF_FAILURE("irs::MergeSchedule::Shuffle") {
+    best = _ready.begin() +
+           absl::Uniform<ptrdiff_t>(absl::BitGen{}, 0, std::ssize(_ready));
+  }
   const auto unit = *best;
   *best = _ready.back();
   _ready.pop_back();
   ++_running;
   return unit;
+}
+
+bool MergeSchedule::MayClaim(size_t threads) const {
+  absl::MutexLock lock{&_mutex};
+  if (_held == kNoUnit) {
+    return true;
+  }
+  size_t left = 0;
+  for (const auto& range : _plan.TermRanges()) {
+    left += range->PartsLeft();
+  }
+  return _running + std::min(left, threads - 1) < threads;
 }
 
 void MergeSchedule::Hold(size_t unit) {
@@ -80,6 +109,10 @@ void MergeSchedule::Hold(size_t unit) {
 
 void MergeSchedule::Release(size_t unit) {
   absl::MutexLock lock{&_mutex};
+  ReleaseLocked(unit);
+}
+
+void MergeSchedule::ReleaseLocked(size_t unit) {
   SDB_ASSERT(unit < _waiting.size());
   SDB_ASSERT(_waiting[unit] != 0);
   if (--_waiting[unit] == 0 && !_failed) {
@@ -89,23 +122,25 @@ void MergeSchedule::Release(size_t unit) {
 
 void MergeSchedule::Fail() {
   absl::MutexLock lock{&_mutex};
+  FailLocked();
+}
+
+void MergeSchedule::FailLocked() {
   _failed = true;
   _ready.clear();
 }
 
-size_t MergeSchedule::Running() const {
-  absl::MutexLock lock{&_mutex};
-  return _running;
-}
-
 void MergeSchedule::Finish(size_t unit, bool ok) {
   absl::MutexLock lock{&_mutex};
+  FinishLocked(unit, ok);
+}
+
+void MergeSchedule::FinishLocked(size_t unit, bool ok) {
   SDB_ASSERT(_running != 0);
   --_running;
   --_left;
   if (!ok) {
-    _failed = true;
-    _ready.clear();
+    FailLocked();
     return;
   }
   if (_failed) {
@@ -126,6 +161,86 @@ bool MergeSchedule::Done() const {
 bool MergeSchedule::Ok() const {
   absl::MutexLock lock{&_mutex};
   return !_failed;
+}
+
+bool MergeSchedule::Run(size_t unit) {
+  bool ok = false;
+  std::exception_ptr failure;
+  try {
+    ok = _plan.RunUnit(unit);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  if (!ok) {
+    _plan.Abort();
+  }
+  absl::MutexLock lock{&_mutex};
+  if (failure && !_error) {
+    _error = std::move(failure);
+  }
+  FinishLocked(unit, ok);
+  return ok;
+}
+
+void MergeSchedule::RangeDone() {
+  bool last = false;
+  {
+    absl::MutexLock lock{&_mutex};
+    SDB_ASSERT(_ranges_left != 0);
+    last = --_ranges_left == 0;
+  }
+  if (last && !ReleasePostings(_plan.FinishPostings())) {
+    return;
+  }
+  Wake();
+}
+
+bool MergeSchedule::ReleasePostings(bool ok) {
+  absl::MutexLock lock{&_mutex};
+  if (_held == kNoUnit) {
+    return false;
+  }
+  const auto unit = std::exchange(_held, kNoUnit);
+  if (ok) {
+    ReleaseLocked(unit);
+  } else {
+    _plan.Abort();
+    FailLocked();
+  }
+  return true;
+}
+
+void MergeSchedule::SetUnits(duckdb::GlobalSourceState* units) {
+  absl::MutexLock lock{&_mutex};
+  _units = units;
+}
+
+void MergeSchedule::Wake() {
+  duckdb::GlobalSourceState* units = nullptr;
+  {
+    absl::MutexLock lock{&_mutex};
+    units = _units;
+  }
+  if (!units) {
+    return;
+  }
+  duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{units->lock};
+  units->UnblockTasks();
+}
+
+bool MergeSchedule::Result() {
+  _plan.RecordWall();
+  std::exception_ptr error;
+  bool ok = false;
+  {
+    absl::MutexLock lock{&_mutex};
+    error = _error;
+    ok = !_failed;
+  }
+  if (error) {
+    std::rethrow_exception(error);
+  }
+  return ok;
 }
 
 }  // namespace irs

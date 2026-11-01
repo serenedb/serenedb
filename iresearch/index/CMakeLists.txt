@@ -25,6 +25,7 @@ target_sources(
         merge/merge_schedule.cpp
         merge/merged_postings.cpp
         merge/norms_unit.cpp
+        merge/pipeline_merge_executor.cpp
         merge/postings_unit.cpp
         merge/term_keys.cpp
         merge/term_ranges.cpp

@@ -50,7 +50,6 @@
 #include "iresearch/index/merge/postings_unit.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
-#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -112,15 +111,11 @@ class MergePlan {
 
   void FinishOrder();
 
-  bool RunOrder();
-
   bool PostingsPending() const noexcept { return _postings_pending; }
 
   std::span<const std::unique_ptr<TermRangeMerge>> TermRanges() const noexcept {
     return _term_ranges;
   }
-
-  bool RunPostings();
 
   bool FinishPostings();
 
@@ -220,25 +215,5 @@ class MergePlan {
   std::vector<std::unique_ptr<TermRangeMerge>> _term_ranges;
   bool _postings_pending = false;
 };
-
-class MergeExecutor {
- public:
-  virtual bool Run(MergePlan& plan) = 0;
-  virtual size_t Threads() const noexcept { return 1; }
-  virtual duckdb::TaskScheduler* Scheduler() const noexcept { return nullptr; }
-
- protected:
-  ~MergeExecutor() = default;
-};
-
-bool RunSerially(MergePlan& plan);
-
-[[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,
-                                 SegmentMeta& segment,
-                                 const SegmentWriterOptions& options,
-                                 const MergeProgress& progress = {},
-                                 const AnnBuildEnv* env = nullptr,
-                                 MergeExecutor* executor = nullptr,
-                                 MergeProfile* profile = nullptr);
 
 }  // namespace irs

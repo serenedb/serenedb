@@ -35,6 +35,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -50,7 +51,6 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "search/compaction/merge_planner.h"
-#include "search/compaction/pipeline_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -257,7 +257,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
 void CompactTarget(Action action, const MergeTarget& target,
                    std::string_view verb, duckdb::ClientContext& context,
                    pg::ProgressMetrics* progress,
-                   irs::MergeExecutor& executor) {
+                   const irs::PipelineMergeExecutor& executor) {
   const irs::MergeProgress tick = [&context, progress] {
     if (progress) {
       pg::ProgressMetrics::Add(progress->step, 1);
@@ -471,7 +471,7 @@ void DispatchInverted(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
-  search::PipelineMergeExecutor executor{
+  const irs::PipelineMergeExecutor executor{
     *context.db, &duckdb::TaskScheduler::GetScheduler(context),
     duckdb::TaskScheduler::QueryThreads(context)};
   for (auto& step : steps) {

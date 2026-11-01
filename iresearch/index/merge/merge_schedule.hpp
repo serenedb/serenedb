@@ -20,24 +20,32 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/execution/physical_operator_states.hpp>
+#include <exception>
 #include <limits>
 #include <vector>
 
-namespace irs {
+#include "iresearch/index/merge/merge_plan.hpp"
 
-class MergePlan;
+namespace irs {
 
 class MergeSchedule {
  public:
   static constexpr size_t kNoUnit = std::numeric_limits<size_t>::max();
 
-  explicit MergeSchedule(const MergePlan& plan);
+  explicit MergeSchedule(MergePlan& plan);
+
+  MergeSchedule(const MergeSchedule&) = delete;
+  MergeSchedule& operator=(const MergeSchedule&) = delete;
 
   size_t Claim();
+
+  bool MayClaim(size_t threads) const;
 
   void Hold(size_t unit);
 
@@ -45,23 +53,46 @@ class MergeSchedule {
 
   void Fail();
 
-  size_t Running() const;
-
   void Finish(size_t unit, bool ok);
 
   bool Done() const;
 
   bool Ok() const;
 
+  bool Run(size_t unit);
+
+  void PartDone() { Wake(); }
+
+  void RangeDone();
+
+  void SetUnits(duckdb::GlobalSourceState* units);
+
+  bool Result();
+
  private:
-  mutable absl::Mutex _mutex;
+  void ReleaseLocked(size_t unit) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
+  void FailLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
+  void FinishLocked(size_t unit, bool ok) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
+  bool ReleasePostings(bool ok);
+
+  void Wake();
+
+  MergePlan& _plan;
   std::vector<uint64_t> _rank;
   std::vector<std::vector<size_t>> _dependents;
-  std::vector<size_t> _waiting;
-  std::vector<size_t> _ready;
-  size_t _left = 0;
-  size_t _running = 0;
-  bool _failed = false;
+  mutable absl::Mutex _mutex;
+  std::vector<size_t> _waiting ABSL_GUARDED_BY(_mutex);
+  std::vector<size_t> _ready ABSL_GUARDED_BY(_mutex);
+  size_t _left ABSL_GUARDED_BY(_mutex) = 0;
+  size_t _running ABSL_GUARDED_BY(_mutex) = 0;
+  size_t _held ABSL_GUARDED_BY(_mutex) = kNoUnit;
+  size_t _ranges_left ABSL_GUARDED_BY(_mutex) = 0;
+  bool _failed ABSL_GUARDED_BY(_mutex) = false;
+  std::exception_ptr _error ABSL_GUARDED_BY(_mutex);
+  duckdb::GlobalSourceState* _units ABSL_GUARDED_BY(_mutex) = nullptr;
 };
 
 }  // namespace irs

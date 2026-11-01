@@ -22,7 +22,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/common/optional_idx.hpp>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/types.hpp>
 #include <limits>
@@ -32,7 +31,6 @@
 
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
-#include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/types.hpp"
 
@@ -64,8 +62,6 @@ class KeyOrder {
 
   void Expand(size_t partition, std::span<const duckdb::PresortedRun> runs);
 
-  bool Merge(const MergeProgress& proceed);
-
   void Finish();
 
   uint64_t IsolatedBegin(size_t input) const noexcept {
@@ -92,8 +88,6 @@ class KeyOrder {
   }
 
   [[noreturn]] void ThrowIncomplete() const;
-
-  void ThrowIfUnsorted(const duckdb::optional_idx& input) const;
 
   void PlanParts();
 

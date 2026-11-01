@@ -93,8 +93,6 @@ class TermRangeMerge {
 
   bool FinishPart(size_t part, TermRangeWriter& writer);
 
-  bool MergePart(size_t part);
-
   bool Done() const noexcept;
 
   size_t PartsLeft() const noexcept;

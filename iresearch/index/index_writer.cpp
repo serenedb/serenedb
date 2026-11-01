@@ -48,6 +48,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_plan.hpp"
+#include "iresearch/index/merge/pipeline_merge_executor.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -1442,7 +1443,8 @@ void IndexWriter::RevokeTicketsLocked() noexcept {
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeProgress& progress,
-                               const AnnBuildEnv* env, MergeExecutor* executor,
+                               const AnnBuildEnv* env,
+                               const PipelineMergeExecutor& executor,
                                LoneSegment lone)
   -> yaclib::Future<CompactionResult> {
   bool busy = false;
@@ -1464,7 +1466,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 auto IndexWriter::RunMerge(MergeTicket ticket,
                            const IndexFieldOptions* field_options,
                            const MergeProgress& progress,
-                           const AnnBuildEnv* env, MergeExecutor* executor)
+                           const AnnBuildEnv* env,
+                           const PipelineMergeExecutor& executor)
   -> yaclib::Future<CompactionResult> {
   auto owned = std::move(ticket);
   SDB_ASSERT(owned._state.get_deleter().writer == this);
@@ -1516,8 +1519,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   // We do not persist segment meta since some removals may come later
   const bool flushed =
-    MergeSegments(dir, doc_map, compaction_segment.meta, options, checked, env,
-                  executor, &result.stats.profile);
+    MergeSegments(dir, doc_map, compaction_segment.meta, options, executor,
+                  checked, env, &result.stats.profile);
   if (!flushed) {
     if (stopped.load(std::memory_order_relaxed)) {
       result.error = CompactionError::Cancelled;
@@ -1602,8 +1605,10 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 CompactionResult IndexWriter::Compact(const CompactionPolicy& policy,
                                       const IndexFieldOptions* field_options,
                                       const MergeProgress& progress) {
-  return GetReady(CompactAsync(policy, field_options, progress,
-                               /*env=*/nullptr));
+  SDB_ASSERT(_db);
+  const PipelineMergeExecutor executor{*_db, nullptr, 1};
+  return GetReady(
+    CompactAsync(policy, field_options, progress, nullptr, executor));
 }
 
 void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,

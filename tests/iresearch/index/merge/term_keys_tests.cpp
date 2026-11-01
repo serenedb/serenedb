@@ -44,6 +44,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_dump.hpp"
 #include "index/merge/support/segment_gen.hpp"
 #include "insert_field.hpp"
@@ -448,7 +449,7 @@ TEST_P(TermMergeTest, LongRunsAndSharedTermsMatchTheOracle) {
   irs::MemoryDirectory out;
   irs::SegmentMeta meta;
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(out, doc_map, meta, options));
+  ASSERT_TRUE(irs::MergeSegments(out, doc_map, meta, options, MakeExecutor()));
   const auto merged =
     irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);

@@ -33,6 +33,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -50,7 +51,6 @@
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_scheduler.h"
-#include "search/compaction/pipeline_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/lifecycle.h"
@@ -169,9 +169,9 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    PipelineMergeExecutor executor{irs::DuckDBEngine::Instance().instance(),
-                                   &GetSearchEngine().MergeTasks(),
-                                   1 + helpers};
+    const irs::PipelineMergeExecutor executor{
+      irs::DuckDBEngine::Instance().instance(), &GetSearchEngine().MergeTasks(),
+      1 + helpers};
     auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
                                                    opts.field_options,
                                                    &AnnBuildEnv(), executor);

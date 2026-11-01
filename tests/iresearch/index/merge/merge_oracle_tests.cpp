@@ -56,7 +56,7 @@ irs::IndexWriter::ptr MakeWriter(irs::Directory& dir) {
 
 std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
   irs::Directory& out, std::span<const irs::SubReader* const> inputs,
-  bool& flushed, irs::MergeExecutor* executor = nullptr) {
+  bool& flushed, size_t threads = 1) {
   irs::FunctionFieldOptions field_options{
     SketchedColumns,
     irs::tests::MakeNormColumnIdProvider(),
@@ -69,7 +69,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
   };
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   flushed =
-    irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, executor);
+    irs::MergeSegments(out, doc_map, meta, options, MakeExecutor(threads));
   if (!flushed) {
     return nullptr;
   }
@@ -138,14 +138,10 @@ TEST_P(ParallelMergeOracleTest, RandomSegmentSets) {
   const auto expected = ExpectedMerge(inputs);
   for (const bool shuffled : {false, true}) {
     SCOPED_TRACE(shuffled ? "shuffled" : "scheduled");
-    ThreadedMergeExecutor scheduled{threads};
-    ShuffledMergeExecutor random{threads, seed};
+    const ShuffledClaims shuffle{shuffled};
     irs::MemoryDirectory out;
     bool flushed = false;
-    const auto merged =
-      MergeAll(out, inputs, flushed,
-               shuffled ? static_cast<irs::MergeExecutor*>(&random)
-                        : static_cast<irs::MergeExecutor*>(&scheduled));
+    const auto merged = MergeAll(out, inputs, flushed, threads);
     ASSERT_EQ(expected.docs != 0, flushed);
     if (!flushed) {
       continue;
@@ -225,10 +221,9 @@ TEST(MergeGoldenTest, ParallelMergesMatchTheRecording) {
     for (const size_t threads : {2, 4, 16}) {
       SCOPED_TRACE(
         absl::StrCat("seed ", golden.seed, ", ", threads, " threads"));
-      ThreadedMergeExecutor executor{threads};
       irs::MemoryDirectory out;
       bool flushed = false;
-      const auto merged = MergeAll(out, inputs, flushed, &executor);
+      const auto merged = MergeAll(out, inputs, flushed, threads);
       ASSERT_TRUE(flushed);
       ASSERT_NE(nullptr, merged);
       EXPECT_EQ(golden.content, Fnv1a(Describe(Dump(*merged))));
@@ -237,7 +232,7 @@ TEST(MergeGoldenTest, ParallelMergesMatchTheRecording) {
 }
 
 uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
-                          irs::MergeExecutor* executor = nullptr) {
+                          size_t threads = 1) {
   irs::FunctionFieldOptions field_options{
     SketchedColumns,
     irs::tests::MakeNormColumnIdProvider(),
@@ -253,7 +248,7 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
   irs::MemoryDirectory out;
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   EXPECT_TRUE(
-    irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, executor));
+    irs::MergeSegments(out, doc_map, meta, options, MakeExecutor(threads)));
   std::vector<std::string> files(meta.files.begin(), meta.files.end());
   std::ranges::sort(files);
   std::string bytes;
@@ -286,8 +281,8 @@ TEST(MergeGoldenTest, ScoredMergeBytesDoNotDependOnTheExecutor) {
     ASSERT_FALSE(inputs.empty());
     const auto bytes = ScoredMergeBytes(inputs);
     for (const uint64_t shuffle : {1, 2, 3}) {
-      ShuffledMergeExecutor executor{4, shuffle};
-      EXPECT_EQ(bytes, ScoredMergeBytes(inputs, &executor)) << shuffle;
+      const ShuffledClaims shuffled;
+      EXPECT_EQ(bytes, ScoredMergeBytes(inputs, 4)) << shuffle;
     }
   }
 }

@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -54,12 +53,12 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
-#include <iresearch/index/merge/merge_schedule.hpp>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/enum_name.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -71,7 +70,6 @@
 #include <vector>
 
 #include "insert_field.hpp"
-#include "search/compaction/pipeline_merge_executor.h"
 
 extern "C" int JemallocControl(const char* name, void* old_value,
                                size_t* old_size, void* new_value,
@@ -197,120 +195,6 @@ const Inputs& InputsOf(Layout layout) {
   return *cached;
 }
 
-constexpr std::array<std::string_view, 9> kUnitNames{
-  "norms", "column",   "train", "copy", "footer",
-  "ann",   "postings", "index", "order"};
-constexpr size_t kOrderNanos = kUnitNames.size() - 1;
-
-class ThreadedExecutor final : public irs::MergeExecutor {
- public:
-  explicit ThreadedExecutor(size_t threads) noexcept : _threads{threads} {}
-
-  size_t Threads() const noexcept final { return _threads; }
-
-  uint64_t Nanos(size_t kind) const noexcept {
-    return _nanos[kind].load(std::memory_order_relaxed);
-  }
-
-  bool Run(irs::MergePlan& plan) final {
-    if (plan.OrderPending()) {
-      const auto begin = std::chrono::steady_clock::now();
-      const bool ordered = plan.RunOrder();
-      _nanos[kOrderNanos].fetch_add(
-        static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - begin)
-            .count()),
-        std::memory_order_relaxed);
-      if (!ordered) {
-        return false;
-      }
-    }
-    if (plan.PostingsPending()) {
-      const auto begin = std::chrono::steady_clock::now();
-      const bool merged = RunPostings(plan);
-      _nanos[static_cast<size_t>(irs::MergeUnitKind::Postings)].fetch_add(
-        static_cast<uint64_t>(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - begin)
-            .count()),
-        std::memory_order_relaxed);
-      if (!merged) {
-        return false;
-      }
-    }
-    irs::MergeSchedule schedule{plan};
-    absl::Mutex mutex;
-    size_t finished = 0;
-    auto work = [&] {
-      while (true) {
-        size_t unit = irs::MergeSchedule::kNoUnit;
-        {
-          absl::MutexLock lock{&mutex};
-          for (unit = schedule.Claim();
-               unit == irs::MergeSchedule::kNoUnit && !schedule.Done();
-               unit = schedule.Claim()) {
-            const auto seen = finished;
-            const auto changed = [&] { return finished != seen; };
-            mutex.Await(absl::Condition{&changed});
-          }
-        }
-        if (unit == irs::MergeSchedule::kNoUnit) {
-          return;
-        }
-        const auto begin = std::chrono::steady_clock::now();
-        const bool ok = plan.RunUnit(unit);
-        const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::chrono::steady_clock::now() - begin);
-        _nanos[static_cast<size_t>(plan.Units()[unit].kind)].fetch_add(
-          static_cast<uint64_t>(nanos.count()), std::memory_order_relaxed);
-        absl::MutexLock lock{&mutex};
-        schedule.Finish(unit, ok);
-        ++finished;
-      }
-    };
-    std::vector<std::thread> helpers;
-    for (size_t i = 1; i < _threads; ++i) {
-      helpers.emplace_back(work);
-    }
-    work();
-    for (auto& helper : helpers) {
-      helper.join();
-    }
-    return schedule.Ok();
-  }
-
- private:
-  bool RunPostings(irs::MergePlan& plan) {
-    for (const auto& range : plan.TermRanges()) {
-      std::atomic<size_t> next{0};
-      std::atomic<bool> ok{true};
-      auto work = [&] {
-        for (size_t part; (part = next++) < range->PartCount();) {
-          if (!range->MergePart(part)) {
-            ok = false;
-          }
-        }
-      };
-      std::vector<std::thread> helpers;
-      for (size_t i = 1; i < _threads; ++i) {
-        helpers.emplace_back(work);
-      }
-      work();
-      for (auto& helper : helpers) {
-        helper.join();
-      }
-      if (!ok) {
-        return false;
-      }
-    }
-    return plan.FinishPostings();
-  }
-
-  size_t _threads;
-  std::array<std::atomic<uint64_t>, kUnitNames.size()> _nanos{};
-};
-
 uint64_t StatusKb(std::string_view key) {
   std::ifstream status{"/proc/self/status"};
   std::string line;
@@ -335,10 +219,9 @@ void BM_Merge(benchmark::State& state) {
   const auto layout = static_cast<Layout>(state.range(0));
   const bool sorted = state.range(1) != 0;
   const auto threads = static_cast<size_t>(state.range(2));
-  const bool pipeline = state.range(3) != 0;
   const auto& inputs = InputsOf(layout);
   uint64_t peak_kb = 0;
-  uint64_t prepare_nanos = 0;
+  std::array<uint64_t, irs::kMergeStepCount> step_nanos{};
   irs::FunctionFieldOptions field_options{
     [](irs::field_id) { return irs::ColumnOptions{}; },
     [next = std::make_shared<std::atomic<irs::field_id>>(1000)](irs::field_id) {
@@ -347,11 +230,8 @@ void BM_Merge(benchmark::State& state) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   const irs::SortSpec spec{{{.column = kKey}}};
-  ThreadedExecutor threaded{threads};
-  sdb::search::PipelineMergeExecutor piped{
+  const irs::PipelineMergeExecutor executor{
     irs::DuckDBEngine::Instance().instance(), nullptr, threads};
-  irs::MergeExecutor& executor =
-    pipeline ? static_cast<irs::MergeExecutor&>(piped) : threaded;
   for (auto _ : state) {
     state.PauseTiming();
     const auto base_kb = ResetPeakKb();
@@ -366,7 +246,7 @@ void BM_Merge(benchmark::State& state) {
     auto doc_map =
       irs::MakeMergeDocMap(inputs.reader, options.resource_manager);
     irs::MergeProfile profile;
-    if (!irs::MergeSegments(out, doc_map, meta, options, {}, nullptr, &executor,
+    if (!irs::MergeSegments(out, doc_map, meta, options, executor, {}, nullptr,
                             &profile)) {
       state.SkipWithError("merge failed");
       return;
@@ -374,7 +254,9 @@ void BM_Merge(benchmark::State& state) {
     benchmark::DoNotOptimize(meta.byte_size);
     state.PauseTiming();
     peak_kb = std::max(peak_kb, StatusKb("VmHWM:") - base_kb);
-    prepare_nanos += profile.Nanos(irs::MergeStep::Prepare);
+    for (size_t step = 0; step != irs::kMergeStepCount; ++step) {
+      step_nanos[step] += profile.Nanos(static_cast<irs::MergeStep>(step));
+    }
     state.ResumeTiming();
   }
   const auto per_merge = [&](uint64_t nanos) {
@@ -383,17 +265,17 @@ void BM_Merge(benchmark::State& state) {
   };
   state.SetItemsProcessed(state.iterations() * kSegments * kRowsPerSegment);
   state.counters["peak_mb"] = static_cast<double>(peak_kb) / 1024;
-  state.counters["prepare"] = per_merge(prepare_nanos);
-  for (size_t kind = 0; kind != kUnitNames.size(); ++kind) {
-    if (const auto nanos = threaded.Nanos(kind); nanos != 0) {
-      state.counters[std::string{kUnitNames[kind]}] = per_merge(nanos);
+  for (size_t step = 0; step != irs::kMergeStepCount; ++step) {
+    if (step_nanos[step] != 0) {
+      state.counters[std::string{irs::SnakeCaseName(
+        static_cast<irs::MergeStep>(step))}] = per_merge(step_nanos[step]);
     }
   }
 }
 
 BENCHMARK(BM_Merge)
-  ->ArgsProduct({{0, 1, 2}, {0, 1}, {1, 4}, {0, 1}})
-  ->ArgNames({"layout", "sorted", "threads", "pipeline"})
+  ->ArgsProduct({{0, 1, 2}, {0, 1}, {1, 4}})
+  ->ArgNames({"layout", "sorted", "threads"})
   ->Unit(benchmark::kMillisecond)
   ->UseRealTime()
   ->Iterations(3);
@@ -742,9 +624,21 @@ void BM_KeyOrder(benchmark::State& state) {
     const auto begin = std::chrono::steady_clock::now();
     order.Prepare(1);
     const auto prepared = std::chrono::steady_clock::now();
-    if (!order.Merge([] { return true; })) {
-      state.SkipWithError("merge failed");
-      return;
+    const auto merge = order.KeyMerge();
+    duckdb::vector<duckdb::PresortedRun> runs;
+    for (duckdb::idx_t part = 0; part != merge->PartitionCount(); ++part) {
+      const auto merge_state = merge->BeginMerge(part);
+      while (!merge_state->Done()) {
+        runs.clear();
+        duckdb::optional_idx unsorted;
+        if (!merge->Merge(
+              *merge_state, runs, STANDARD_VECTOR_SIZE, [] { return true; },
+              unsorted)) {
+          state.SkipWithError("merge failed");
+          return;
+        }
+        order.Expand(part, runs);
+      }
     }
     const auto merged = std::chrono::steady_clock::now();
     order.Finish();

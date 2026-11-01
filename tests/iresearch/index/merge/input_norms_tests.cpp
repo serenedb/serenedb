@@ -41,6 +41,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_gen.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
@@ -147,7 +148,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
                         nullptr,
                         sort};
     ASSERT_TRUE(plan.Prepare());
-    ASSERT_TRUE(irs::RunSerially(plan));
+    ASSERT_TRUE(RunPlan(plan));
     if (sort != nullptr) {
       for (const auto& input : _doc_map) {
         _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
@@ -155,7 +156,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
       _order = std::make_unique<irs::KeyOrder>(_order_map, *sort);
       _order->Prepare(1);
       ASSERT_TRUE(_order->Pending());
-      ASSERT_TRUE(_order->Merge([] { return true; }));
+      ASSERT_TRUE(ExpandOrder(*_order));
       _order->Finish();
     }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,
@@ -368,7 +369,7 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
                       {},
                       nullptr};
   ASSERT_TRUE(plan.Prepare());
-  ASSERT_TRUE(irs::RunSerially(plan));
+  ASSERT_TRUE(RunPlan(plan));
   const auto merged =
     irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);

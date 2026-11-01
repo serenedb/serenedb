@@ -407,9 +407,8 @@ TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
   for (const auto& range : plan.TermRanges()) {
     EXPECT_LT(1, range->PartCount());
   }
-  ThreadedMergeExecutor scheduled{threads};
-  ShuffledMergeExecutor random{threads, 42};
-  ASSERT_TRUE(shuffled ? random.Run(plan) : scheduled.Run(plan));
+  const ShuffledClaims shuffle{shuffled};
+  ASSERT_TRUE(RunPlan(plan, threads));
   EXPECT_FALSE(plan.PostingsPending());
   EXPECT_EQ("", MergedDifference(out, expected));
   const auto merged = irs::SegmentReaderImpl::Open(
@@ -435,7 +434,7 @@ TEST_F(TermRangeMergeTest, OneThreadMergesTermsWithoutParts) {
   ASSERT_TRUE(plan.Prepare(1));
   EXPECT_FALSE(plan.PostingsPending());
   EXPECT_TRUE(plan.TermRanges().empty());
-  ASSERT_TRUE(irs::RunSerially(plan));
+  ASSERT_TRUE(RunPlan(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -447,7 +446,7 @@ TEST_F(TermRangeMergeTest, SerialRunsMergeEveryPart) {
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(4));
   ASSERT_TRUE(plan.PostingsPending());
-  ASSERT_TRUE(irs::RunSerially(plan));
+  ASSERT_TRUE(RunPlan(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -464,8 +463,7 @@ TEST_F(TermRangeMergeTest, StoppedPartsFailTheMerge) {
     if (!plan.Prepare(4)) {
       continue;
     }
-    ThreadedMergeExecutor executor{4};
-    const bool ok = executor.Run(plan);
+    const bool ok = RunPlan(plan, 4);
     EXPECT_EQ(calls.load() <= stop_after, ok);
   }
 }

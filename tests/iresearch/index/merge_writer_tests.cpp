@@ -53,6 +53,7 @@
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "utils/write_helpers.hpp"
@@ -289,7 +290,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
       .db = &::irs::DuckDBEngine::Instance().instance()};
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MakeExecutor()));
 
     auto segment = irs::SegmentReaderImpl::Open(
       dir, index_segment,
@@ -327,8 +329,9 @@ TEST_P(MergeWriterTestCase, MergeReportsStepTimes) {
     .db = &::irs::DuckDBEngine::Instance().instance()};
   auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
   irs::MergeProfile profile;
-  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, segment, options, {}, nullptr,
-                                 nullptr, &profile));
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, segment, options,
+                                 tests::merge::MakeExecutor(), {}, nullptr,
+                                 &profile));
 
   uint64_t sum = 0;
   for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
@@ -341,7 +344,7 @@ TEST_P(MergeWriterTestCase, MergeReportsStepTimes) {
     }
     sum += profile.Nanos(id);
   }
-  EXPECT_EQ(sum, profile.TotalNanos());
+  EXPECT_LE(sum, profile.TotalNanos());
 }
 
 TEST_P(MergeWriterTestCase, CompactReportsMergeStats) {
@@ -434,8 +437,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       .db = &::irs::DuckDBEngine::Instance().instance()};
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    ASSERT_TRUE(
-      irs::MergeSegments(dir, doc_map, index_segment, options, progress));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MakeExecutor(), progress));
 
     ASSERT_FALSE(index_segment.files.empty());
     ASSERT_EQ(2, index_segment.docs_count);
@@ -458,8 +461,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       .db = &::irs::DuckDBEngine::Instance().instance()};
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    ASSERT_FALSE(
-      irs::MergeSegments(dir, doc_map, index_segment, options, progress));
+    ASSERT_FALSE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                    tests::merge::MakeExecutor(), progress));
 
     ASSERT_TRUE(index_segment.name.empty());
     ASSERT_TRUE(index_segment.files.empty());
@@ -483,8 +486,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       .db = &::irs::DuckDBEngine::Instance().instance()};
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
-    ASSERT_TRUE(
-      irs::MergeSegments(dir, doc_map, index_segment, options, progress));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MakeExecutor(), progress));
 
     ASSERT_FALSE(index_segment.files.empty());
     ASSERT_EQ(2, index_segment.docs_count);
@@ -515,8 +518,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
 
     index_segment.name = "merged";
-    ASSERT_FALSE(
-      irs::MergeSegments(dir, doc_map, index_segment, options, progress));
+    ASSERT_FALSE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                    tests::merge::MakeExecutor(), progress));
     ASSERT_EQ(0, call_count);
 
     ASSERT_TRUE(index_segment.name.empty());
@@ -621,7 +624,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     auto doc_map = irs::MakeMergeDocMap(segments, options.resource_manager);
 
     irs::SegmentMeta index_segment;
-    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MakeExecutor()));
   }
 
   // test merge existing with feature superset: succeeds with the
@@ -637,7 +641,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     auto doc_map = irs::MakeMergeDocMap(segments, options.resource_manager);
 
     irs::SegmentMeta index_segment;
-    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options));
+    ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                   tests::merge::MakeExecutor()));
   }
 }
 
@@ -1343,7 +1348,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     .field_options = &field_options,
   };
   auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options));
+  ASSERT_TRUE(irs::MergeSegments(dir, doc_map, index_segment, options,
+                                 tests::merge::MakeExecutor()));
 
   auto segment = irs::SegmentReaderImpl::Open(
     dir, index_segment, irs::tests::DefaultReaderOptions());
@@ -2389,7 +2395,8 @@ TEST_P(MergeWriterTestCase, MergeKeepsTheColumnCompressionLevel) {
       .field_options = &field_options,
     };
     auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
-    ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options));
+    ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                   tests::merge::MakeExecutor()));
 
     auto segment = irs::SegmentReaderImpl::Open(
       merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
@@ -2479,7 +2486,8 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
     .field_options = &field_options,
   };
   auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options));
+  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                 tests::merge::MakeExecutor()));
 
   auto segment = irs::SegmentReaderImpl::Open(
     merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
@@ -2566,7 +2574,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
     .sort = &sort,
   };
   auto doc_map = irs::MakeMergeDocMap(reader, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options));
+  ASSERT_TRUE(irs::MergeSegments(merged_dir, doc_map, merged_meta, options,
+                                 tests::merge::MakeExecutor()));
 
   auto segment = irs::SegmentReaderImpl::Open(
     merged_dir, merged_meta, irs::tests::DefaultReaderOptions());

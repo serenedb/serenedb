@@ -69,6 +69,7 @@ class DatabaseInstance;
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_plan.hpp"
+#include "iresearch/index/merge/pipeline_merge_executor.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -451,7 +452,7 @@ class IndexWriter : private util::Noncopyable {
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
                     const MergeProgress& progress, const AnnBuildEnv* env,
-                    MergeExecutor* executor = nullptr,
+                    const PipelineMergeExecutor& executor,
                     LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
@@ -463,7 +464,7 @@ class IndexWriter : private util::Noncopyable {
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
                 const MergeProgress& progress, const AnnBuildEnv* env,
-                MergeExecutor* executor = nullptr)
+                const PipelineMergeExecutor& executor)
     -> yaclib::Future<CompactionResult>;
 
   void AdoptSegment(std::string_view meta_file, uint64_t tick,

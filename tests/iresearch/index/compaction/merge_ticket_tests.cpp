@@ -37,6 +37,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_gen.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
@@ -54,11 +55,6 @@ void MergeEverything(irs::Compaction& candidates, const irs::IndexReader& index,
     candidates.emplace_back(&segment);
   }
 }
-
-class RefusingExecutor final : public irs::MergeExecutor {
- public:
-  bool Run(irs::MergePlan&) final { return false; }
-};
 
 class MergeTicketTest : public ::testing::Test {
  protected:
@@ -133,8 +129,8 @@ class MergeTicketTest : public ::testing::Test {
   }
 
   irs::CompactionResult Run(irs::MergeTicket ticket,
-                            const irs::MergeProgress& progress = {},
-                            irs::MergeExecutor* executor = nullptr) {
+                            const irs::MergeProgress& progress = {}) {
+    const auto executor = MakeExecutor();
     return irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
                                            nullptr, executor));
   }
@@ -404,8 +400,11 @@ TEST_F(MergeTicketTest, AFailedMergeIsAFailureAndReleased) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.size());
-  RefusingExecutor refusing;
-  const auto result = Run(std::move(reservation[0]), {}, &refusing);
+  if (!duckdb::FaultPoints::Arm("irs::PipelineMergeExecutor::Run")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  const auto result = Run(std::move(reservation[0]));
+  EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::PipelineMergeExecutor::Run"));
   EXPECT_EQ(CompactionError::Fail, result.error);
   EXPECT_EQ(2, result.size);
   EXPECT_TRUE(ReservedNames().empty());

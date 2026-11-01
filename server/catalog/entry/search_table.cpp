@@ -321,7 +321,7 @@ void CheckColumnCodec(duckdb::ClientContext& context,
   if (!columnstore || type == duckdb::CompressionType::COMPRESSION_AUTO) {
     return;
   }
-  if (const auto available = duckdb::CompressionTypeIsAvailable(type, storage);
+  if (auto available = duckdb::CompressionTypeIsAvailable(type, storage);
       !available.IsAvailable()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

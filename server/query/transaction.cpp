@@ -20,13 +20,10 @@
 
 #include "query/transaction.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -36,7 +33,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <ranges>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -169,64 +165,14 @@ void Transaction::PreCommit() {
   CommitVariables();
 }
 
-Transaction::SearchSlot& Transaction::EnsureIndexSlot(
-  duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
-  std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
-  auto& entry = _search_transactions.try_emplace(index_id).first->second;
-  if (entry.slots.size() <= slot) {
-    entry.slots.resize(slot + 1);
-  }
-  auto& result = entry.slots[slot];
-  if (!result.transaction) {
-    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
-      storage->GetTransaction(/*exclusive_segment=*/slot != 0));
-    result.transaction->SetFieldOptions(std::move(config));
-  }
-  if (!entry.storage) {
-    entry.storage = std::move(storage);
-  }
-  return result;
-}
-
 void Transaction::StageSearch(const irs::SourcePosition& position,
                               duckdb::idx_t database) noexcept {
-  for (auto& [index_id, entry] : _search_transactions) {
-    if (entry.storage->GetDatabaseId() != database) {
-      continue;
-    }
-    for (auto& slot : entry.slots) {
-      SDB_ASSERT(slot.transaction);
-      slot.writer.reset();
-    }
-    irs::IndexWriter::Transaction::Stage(
-      std::views::transform(entry.slots, &SearchSlot::transaction));
-    SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
-    entry.position = position;
-  }
   if (_search_txn) {
     _search_txn->Stage(position, database);
   }
 }
 
 void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
-  const auto in_scope = [&](const auto& item) {
-    return item.second.storage->GetDatabaseId() == database;
-  };
-  for (auto& item : _search_transactions) {
-    if (!in_scope(item)) {
-      continue;
-    }
-    auto& [index_id, entry] = item;
-    for (auto& slot : entry.slots) {
-      if (!slot.transaction || slot.transaction->Commit(entry.position)) {
-        continue;
-      }
-      SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
-                "'; the index replays it from the WAL on next boot");
-      entry.storage->MarkOutOfSync();
-    }
-  }
-  absl::erase_if(_search_transactions, in_scope);
   if (_search_txn) {
     _search_txn->Publish(database);
   }
@@ -259,31 +205,6 @@ search::StoreSnapshotPtr Transaction::EnsureSearchSnapshot(
   return snapshot;
 }
 
-const duckdb::Vector& Transaction::FeedColumn(
-  const void* database, duckdb::idx_t table_oid, duckdb::row_t first_row,
-  duckdb::idx_t count, duckdb::idx_t column, const duckdb::Vector& source) {
-  if (_feed_columns.database != database ||
-      _feed_columns.table_oid != table_oid ||
-      _feed_columns.first_row != first_row || _feed_columns.count != count) {
-    _feed_columns.database = database;
-    _feed_columns.table_oid = table_oid;
-    _feed_columns.first_row = first_row;
-    _feed_columns.count = count;
-    _feed_columns.columns.clear();
-  }
-  for (const auto& [index, copy] : _feed_columns.columns) {
-    if (index == column) {
-      return copy;
-    }
-  }
-  auto& copy = _feed_columns.columns
-                 .emplace_back(column, duckdb::Vector{source.GetType(), count})
-                 .second;
-  duckdb::VectorOperations::Copy(source, copy, count, 0, 0);
-  duckdb::FlatVector::SetSize(copy, count);
-  return copy;
-}
-
 void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   for (const auto& [owner, storage] : _created_indexes) {
     if (owner == database) {
@@ -308,9 +229,7 @@ void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
     table->ReleaseLayout(owner);
   }
   _layout_claims.clear();
-  _search_transactions.clear();
   _search_snapshots.clear();
-  _feed_columns = {};
   _search_txn.reset();
   _on_commit.clear();
   _created_indexes.clear();

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -34,32 +35,26 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/duckdb_sink_writer_base.h"
 #include "search/search_table_changes.h"
+#include "search/store.h"
 
-namespace duckdb {
-
-class ClientContext;
-
-}  // namespace duckdb
-namespace sdb::catalog {
-
-class SearchTableEntry;
-
-}  // namespace sdb::catalog
 namespace sdb::search {
 
-class Store;
+struct Slot {
+  std::unique_ptr<irs::IndexWriter::Transaction> trx;
+  std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
+};
 
-struct SearchShardWrites {
-  std::shared_ptr<Store> shard;
+struct StoreWrites {
+  std::shared_ptr<Store> store;
   const catalog::SearchTableEntry* table = nullptr;
-  std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
-  // The transaction the write buffer flushes into once it has overrun, owned by
-  // `transactions` above. Exclusive, so its segments can be named in the
-  // record. Null while the buffer has never overrun.
+  std::vector<Slot> slots;
+  LocalTableChangesEntry changes;
   irs::IndexWriter::Transaction* buffer_trx = nullptr;
-  // The writer-generation slot this transaction registered in on `shard`,
+  // The writer-generation slot this transaction registered in on `store`,
   // released when the transaction settles. -1 until it registers.
   int writer_slot = -1;
   bool truncate_claim = false;
@@ -67,48 +62,46 @@ struct SearchShardWrites {
   irs::SourcePosition position;
 };
 
-// Holds a query::Transaction's search-table (TableEngine::Search) state and
-// commit logic.
-class SearchTableTransaction {
+class Writes {
  public:
-  ~SearchTableTransaction();
+  ~Writes() { Abort(); }
 
-  // Registers this transaction as a writer of `shard`, once, before anything
-  // reads the shard's index config -- so a rebuild that publishes a config can
+  // Registers this transaction as a writer of `store`, once, before anything
+  // reads the store's index config -- so a rebuild that publishes a config can
   // tell whether this transaction predates it. Called from the DML operators'
   // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
   // the Combine that hands over its iresearch transaction, so registering any
   // later would let it straddle a swap unnoticed.
-  void RegisterWriter(const std::shared_ptr<Store>& shard,
+  void RegisterWriter(const std::shared_ptr<Store>& store,
                       const catalog::SearchTableEntry& table);
 
-  // Whether this transaction has already written to `shard`. CREATE INDEX
+  // Whether this transaction has already written to `store_id`. CREATE INDEX
   // refuses to run in such a transaction: the rebuild would wait for writers
   // that predate its config swap, and this one cannot finish until the
   // statement it is running does.
-  bool HasWritesFor(duckdb::idx_t shard_id) const noexcept {
-    return _writes.contains(shard_id);
+  bool HasWritesFor(duckdb::idx_t store_id) const noexcept {
+    return _writes.contains(store_id);
   }
 
   void AddParallelSearchTransaction(
-    const std::shared_ptr<Store>& shard,
+    const std::shared_ptr<Store>& store,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
 
   // The segments a bulk statement flushed + fsynced, for the WAL to reference
   // instead of a second copy of the rows.
-  void AddSegments(const std::shared_ptr<Store>& shard,
+  void AddSegments(const std::shared_ptr<Store>& store,
                    std::vector<std::string>&& segments);
 
-  void AddInlineInsertChunk(const std::shared_ptr<Store>& shard,
+  void AddInlineInsertChunk(const std::shared_ptr<Store>& store,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
                             std::span<const connector::ColumnId> column_ids,
                             duckdb::Catalog& catalog, duckdb::DataChunk& chunk);
 
-  // Bytes a flush would reclaim for `shard_id`; deletes are not counted.
-  uint64_t BufferedBytes(duckdb::idx_t shard_id) const noexcept {
-    auto it = _changes.find(shard_id);
-    return it == _changes.end() ? 0 : it->second.BufferedBytes();
+  // Bytes a flush would reclaim for `store_id`; deletes are not counted.
+  uint64_t BufferedBytes(duckdb::idx_t store_id) const noexcept {
+    const auto it = _writes.find(store_id);
+    return it == _writes.end() ? 0 : it->second.changes.BufferedBytes();
   }
 
   // Replays the whole buffer -- rows and removals -- into the shard's exclusive
@@ -116,16 +109,16 @@ class SearchTableTransaction {
   // become that transaction's to make durable, so the record stops carrying a
   // copy of them; the removals stay buffered, since the record has to carry
   // those either way.
-  void FlushBuffer(const std::shared_ptr<Store>& shard,
+  void FlushBuffer(const std::shared_ptr<Store>& store,
                    duckdb::ClientContext& context);
-  void FlushBufferTransaction(duckdb::idx_t shard_id);
+  void FlushBufferTransaction(duckdb::idx_t store_id);
 
-  void AddSearchDeletes(const std::shared_ptr<Store>& shard,
+  void AddSearchDeletes(const std::shared_ptr<Store>& store,
                         const duckdb::Vector& positions);
 
-  void AddSearchTruncate(const std::shared_ptr<Store>& shard,
+  void AddSearchTruncate(const std::shared_ptr<Store>& store,
                          const duckdb::Identifier& table_name,
-                         bool clears_shard);
+                         bool clears_store);
 
   struct PinnedSearchTable {
     std::shared_ptr<irs::DirectoryReader> reader;
@@ -134,15 +127,46 @@ class SearchTableTransaction {
 
   template<typename Factory>
   const PinnedSearchTable& EnsureSearchTable(duckdb::idx_t database_id,
-                                             duckdb::idx_t shard_id,
+                                             duckdb::idx_t store_id,
                                              Factory&& make) {
     auto& pinned =
-      _readers.try_emplace(std::pair{database_id, shard_id}).first->second;
+      _readers.try_emplace(std::pair{database_id, store_id}).first->second;
     if (!pinned.reader) {
       pinned = make();
     }
     return pinned;
   }
+
+  void ResetReaders() noexcept { _readers.clear(); }
+
+  void ResetReader(duckdb::idx_t database_id, duckdb::idx_t store_id) noexcept {
+    _readers.erase(std::pair{database_id, store_id});
+  }
+
+  Slot& EnsureIndexSlot(
+    duckdb::idx_t index_id, std::shared_ptr<Store> store,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    size_t slot = 0);
+
+  irs::IndexWriter::Transaction& EnsureIndexTransaction(
+    duckdb::idx_t index_id, std::shared_ptr<Store> store,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+    return *EnsureIndexSlot(index_id, std::move(store), std::move(config)).trx;
+  }
+
+  std::span<Slot> IndexSlots(duckdb::idx_t index_id) {
+    const auto it = _writes.find(index_id);
+    if (it == _writes.end()) {
+      return {};
+    }
+    return it->second.slots;
+  }
+
+  const duckdb::Vector& FeedColumn(const void* database,
+                                   duckdb::idx_t table_oid,
+                                   duckdb::row_t first_row, duckdb::idx_t count,
+                                   duckdb::idx_t column,
+                                   const duckdb::Vector& source);
 
   bool Empty() const noexcept { return _writes.empty(); }
 
@@ -153,34 +177,26 @@ class SearchTableTransaction {
 
   void Abort() noexcept;
 
-  void ResetReaders() noexcept { _readers.clear(); }
-
-  void ResetReader(duckdb::idx_t database_id, duckdb::idx_t shard_id) noexcept {
-    _readers.erase(std::pair{database_id, shard_id});
-  }
-
  private:
-  SearchShardWrites& EnsureShardWrites(const std::shared_ptr<Store>& shard);
-  void ReleaseWriters() noexcept;
+  struct FeedColumns {
+    const void* database = nullptr;
+    duckdb::idx_t table_oid = 0;
+    duckdb::row_t first_row = 0;
+    duckdb::idx_t count = 0;
+    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
+  };
 
-  // Replays a buffer's rows and pending deletes into `trx`. The rows stay
-  // buffered; the caller decides whether they are now somebody else's to make
-  // durable.
-  void ReplayBuffer(Store& shard, LocalTableChangesEntry& entry,
-                    irs::IndexWriter::Transaction& trx,
-                    duckdb::ClientContext& context);
+  StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
+  const irs::DirectoryReader& PinnedReader(const Store& store) const;
 
-  const irs::DirectoryReader& PinnedReader(const Store& shard) const;
-
-  // The shard's exclusive buffer transaction, created on first overrun.
-  irs::IndexWriter::Transaction& EnsureBufferTransaction(
-    const std::shared_ptr<Store>& shard);
-
-  irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
+  // Node-based: the entry is well past FlatHashMap's size cut-off, and the
+  // buffer is held by reference across a statement, so the nodes must not
+  // move.
+  irs::containers::NodeHashMap<duckdb::idx_t, StoreWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
                                PinnedSearchTable>
     _readers;
-  LocalTableChanges _changes;
+  FeedColumns _feed_columns;
 };
 
 }  // namespace sdb::search

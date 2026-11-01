@@ -162,14 +162,6 @@ std::unique_ptr<DuckDBSearchSinkInsertWriter> MakeInsertWriter(
     MakeEntryInfoProvider(config), config.pk);
 }
 
-TokenizerProvider BoundTokenizers(catalog::IndexTokenizers::Bound tokenizers) {
-  return [tokenizers = std::move(tokenizers)](irs::field_id id) mutable {
-    const auto it = tokenizers.find(id);
-    return it == tokenizers.end() ? catalog::ColumnTokenizer{}
-                                  : std::move(it->second);
-  };
-}
-
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> FieldExpressions(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& expressions,
   const InvertedIndexConfig& config) {
@@ -584,8 +576,8 @@ InvertedStoreIndex::CopyInsertShared(query::Transaction& transaction,
     if (expression.GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF) {
       const auto column =
         expression.Cast<duckdb::BoundReferenceExpression>().Index();
-      target.Reference(transaction.FeedColumn(&db, _table_oid, first_row, count,
-                                              column, chunk.data[column]));
+      target.Reference(transaction.SearchTxn().FeedColumn(
+        &db, _table_oid, first_row, count, column, chunk.data[column]));
     } else {
       duckdb::VectorOperations::Copy(results.data[i], target, count, 0, 0);
       duckdb::FlatVector::SetSize(target, count);
@@ -705,14 +697,15 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
   duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
   const auto count =
     Evaluate(conn->GetClientContext(), chunk, row_ids, results, rows);
-  const auto slots = conn->IndexSlots(_index_id);
+  const auto slots = conn->SearchTxn().IndexSlots(_index_id);
   duckdb::idx_t prepared = 0;
   while (prepared < slots.size() && slots[prepared].writer) {
     ++prepared;
   }
   if (prepared == 0) {
     auto& context = conn->GetClientContext();
-    auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
+    auto& trx =
+      conn->SearchTxn().EnsureIndexTransaction(_index_id, _storage, _config);
     const auto writer = MakeInsertWriter(trx, *_config, [&](irs::field_id id) {
       return _tokenizers.Acquire(id, context);
     });
@@ -725,7 +718,7 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());
       for (duckdb::idx_t k = 0; k < prepared; ++k) {
-        _live->queues.emplace_back(*slots[k].writer, *slots[k].transaction,
+        _live->queues.emplace_back(*slots[k].writer, *slots[k].trx,
                                    kLiveFeedDepth);
       }
     }
@@ -756,11 +749,11 @@ void InvertedStoreIndex::PrepareFeed(query::Transaction& transaction,
   const auto slots = std::clamp<duckdb::idx_t>(
     rows / kMinSlotRows, 1, std::max<duckdb::idx_t>(1, threads));
   for (duckdb::idx_t k = 0; k < slots; ++k) {
-    auto& slot = transaction.EnsureIndexSlot(_index_id, _storage, _config, k);
+    auto& slot =
+      transaction.SearchTxn().EnsureIndexSlot(_index_id, _storage, _config, k);
     if (!slot.writer) {
-      slot.writer =
-        MakeInsertWriter(*slot.transaction, *_config,
-                         BoundTokenizers(_tokenizers.AcquireAll(context)));
+      slot.writer = MakeInsertWriter(
+        *slot.trx, *_config, BoundTokenizers(_tokenizers.AcquireAll(context)));
     }
   }
 }
@@ -775,9 +768,7 @@ bool InvertedStoreIndex::AppendLocal(
     return false;
   }
   std::vector<duckdb::IndexWriteHandle<InvertedStoreIndex>> handles;
-  std::vector<
-    std::pair<InvertedStoreIndex*, std::span<query::Transaction::SearchSlot>>>
-    indexes;
+  std::vector<std::pair<InvertedStoreIndex*, std::span<search::Slot>>> indexes;
   duckdb::idx_t slots = 0;
   for (auto entry : index_list.IndexEntries()) {
     if (entry->GetBindState() != duckdb::IndexBindState::BOUND ||
@@ -787,7 +778,7 @@ bool InvertedStoreIndex::AppendLocal(
     auto* inverted =
       handles.emplace_back(entry->GetWriteHandle<InvertedStoreIndex>())
         .operator->();
-    const auto prepared = conn->IndexSlots(inverted->_index_id);
+    const auto prepared = conn->SearchTxn().IndexSlots(inverted->_index_id);
     duckdb::idx_t ready = 0;
     while (ready < prepared.size() && prepared[ready].writer) {
       ++ready;
@@ -823,7 +814,7 @@ bool InvertedStoreIndex::AppendLocal(
     targets.reserve(indexes.size());
     for (const auto& [inverted, prepared] : indexes) {
       targets.push_back(
-        {inverted, prepared[k].writer.get(), prepared[k].transaction.get()});
+        {inverted, prepared[k].writer.get(), prepared[k].trx.get()});
     }
     executor.ScheduleTask(duckdb::make_uniq<RangeTask>(
       executor, transaction, context, source, mapped_column_ids,
@@ -869,7 +860,8 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   SDB_PARK_ONCE_ON_FAILURE("inverted_delete_rows_logged");
   auto native = _storage->AppendDeleteLog(std::move(rows));
   if (!native.empty()) {
-    auto& trx = conn->EnsureIndexTransaction(_index_id, _storage, _config);
+    auto& trx =
+      conn->SearchTxn().EnsureIndexTransaction(_index_id, _storage, _config);
     try {
       SDB_IF_FAILURE("inverted_rows_remove_fails") {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),

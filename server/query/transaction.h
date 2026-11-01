@@ -26,16 +26,13 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
-#include <span>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
 #include "catalog/catalog.h"
-#include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
-#include "search/search_table_transaction.h"
 #include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::query {
 
@@ -44,10 +41,7 @@ class Transaction : public Config {
   using Config::Config;
 
 #ifdef SDB_DEV
-  ~Transaction() override {
-    SDB_ASSERT(_search_transactions.empty());
-    SDB_ASSERT(!_search_txn || _search_txn->Empty());
-  }
+  ~Transaction() override { SDB_ASSERT(!_search_txn || _search_txn->Empty()); }
 #endif
 
   // Per-statement snapshot lifecycle, driven by DuckDB's QueryBegin/QueryEnd.
@@ -108,10 +102,7 @@ class Transaction : public Config {
   search::StoreSnapshotPtr EnsureSearchSnapshot(
     duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage);
 
-  // Lazily-created search-table (TableEngine::Search) transaction state +
-  // commit logic. Engaged on the first search-table write/scan. The operator
-  // and scan reach the per-shard mutators through here.
-  search::SearchTableTransaction& SearchTxn() {
+  search::Writes& SearchTxn() {
     if (!_search_txn) {
       _search_txn.emplace();
     }
@@ -126,66 +117,16 @@ class Transaction : public Config {
 
   void Destroy(duckdb::transaction_t owner) noexcept;
 
-  struct SearchSlot {
-    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
-    std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
-  };
-
-  SearchSlot& EnsureIndexSlot(
-    duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config,
-    size_t slot = 0);
-
-  irs::IndexWriter::Transaction& EnsureIndexTransaction(
-    duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
-              .transaction;
-  }
-
-  std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
-    const auto it = _search_transactions.find(index_id);
-    if (it == _search_transactions.end()) {
-      return {};
-    }
-    return it->second.slots;
-  }
-
-  const duckdb::Vector& FeedColumn(const void* database,
-                                   duckdb::idx_t table_oid,
-                                   duckdb::row_t first_row, duckdb::idx_t count,
-                                   duckdb::idx_t column,
-                                   const duckdb::Vector& source);
-
  private:
-  struct FeedColumns {
-    const void* database = nullptr;
-    duckdb::idx_t table_oid = 0;
-    duckdb::row_t first_row = 0;
-    duckdb::idx_t count = 0;
-    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
-  };
-
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
-  struct SearchTransaction {
-    std::vector<SearchSlot> slots;
-    std::shared_ptr<search::Store> storage;
-    irs::SourcePosition position;
-  };
-
-  irs::containers::FlatHashMap<duckdb::idx_t, SearchTransaction>
-    _search_transactions;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
                                search::StoreSnapshotPtr>
     _search_snapshots;
-  FeedColumns _feed_columns;
-  // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
-  // lazily via SearchTxn(); reset in Destroy.
-  std::optional<search::SearchTableTransaction> _search_txn;
+  std::optional<search::Writes> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<std::pair<duckdb::idx_t, std::shared_ptr<search::Store>>>
     _created_indexes;

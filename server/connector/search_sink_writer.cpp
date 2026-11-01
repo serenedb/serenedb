@@ -1091,19 +1091,15 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       key.field_id);
   }
   auto tokenizers =
-    std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
+    catalog::IndexTokenizers{context, catalog, *config}.AcquireAll(context);
   auto entry_of = [config](irs::field_id field_id) {
     const auto* entry = config->FindEntry(field_id);
     return entry ? entry : AllStoredEntry();
   };
   trx.SetFieldOptions(config);
   return std::make_unique<SearchSinkInsertBaseImpl>(
-    trx,
-    [tokenizers](irs::field_id field_id) {
-      return tokenizers->Acquire(field_id);
-    },
-    std::move(entry_of), catalog::PkColumnKind::None, std::move(indexed_exprs),
-    config.get());
+    trx, BoundTokenizers(std::move(tokenizers)), std::move(entry_of),
+    catalog::PkColumnKind::None, std::move(indexed_exprs), config.get());
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

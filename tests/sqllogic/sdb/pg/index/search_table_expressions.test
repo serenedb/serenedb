@@ -198,7 +198,7 @@ INSERT INTO jtok VALUES (1, '{"meta":"quick fox"}');
 statement error
 INSERT INTO jtok VALUES (2, '{"meta":{"a":1}}');
 ----
-db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 statement ok

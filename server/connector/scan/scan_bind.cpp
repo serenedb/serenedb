@@ -58,8 +58,8 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
-#include "search/search_table_transaction.h"
 #include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -116,12 +116,12 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
-search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
+search::Writes::PinnedSearchTable PinnedSearchTable(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
   const std::shared_ptr<search::Store>& store) {
   const auto make = [&] {
     auto config = store->ScanConfig();
-    return search::SearchTableTransaction::PinnedSearchTable{
+    return search::Writes::PinnedSearchTable{
       .reader =
         std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
       .config = std::move(config),

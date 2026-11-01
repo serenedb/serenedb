@@ -73,6 +73,15 @@ inline EntryInfoProvider MakeEntryInfoProvider(
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
 }
 
+inline TokenizerProvider BoundTokenizers(
+  catalog::IndexTokenizers::Bound tokenizers) {
+  return [tokenizers = std::move(tokenizers)](irs::field_id id) mutable {
+    const auto it = tokenizers.find(id);
+    return it == tokenizers.end() ? catalog::ColumnTokenizer{}
+                                  : std::move(it->second);
+  };
+}
+
 inline std::vector<ColumnId> IndexedColumnIds(
   const catalog::InvertedIndexConfig& config) {
   std::vector<ColumnId> ids;

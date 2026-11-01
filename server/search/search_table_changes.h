@@ -27,7 +27,6 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -145,11 +144,11 @@ struct LocalTableChangesEntry {
                "a clearing TRUNCATE must be the only op in its transaction");
     return clears_shard;
   }
-};
 
-// Node-based: the entry is well past FlatHashMap's size cut-off, and the buffer
-// is held by reference across a statement, so the nodes must not move.
-using LocalTableChanges =
-  irs::containers::NodeHashMap<duckdb::idx_t, LocalTableChangesEntry>;
+  bool Empty() const noexcept {
+    return collection == nullptr && positions.Empty() && removals.empty() &&
+           !truncate && segments.empty();
+  }
+};
 
 }  // namespace sdb::search

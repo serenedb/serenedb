@@ -149,6 +149,9 @@ std::string PhrasesText(doc_id_t i) {
   repeat(34, 10, "medal");
   repeat(35, 20, "honor");
   repeat(36, 700, "of");
+  repeat(40, 10, "brass brass brass");
+  repeat(41, 2, "brass band");
+  repeat(42, 500, "band");
   if (Chance(37, i, 3)) {
     absl::StrAppend(&text, " visit port", Mix(uint64_t{i} * 13 + 5) % 40);
   }
@@ -570,6 +573,11 @@ TEST_P(PrunedTopTest, phrases_bound_candidates_before_reading_dense_terms) {
     SCOPED_TRACE(absl::StrJoin(parts, " "));
     CheckRanking(*PhraseOf(parts));
   }
+}
+
+TEST_P(PrunedTopTest, phrases_probe_dense_terms_when_most_candidates_pass) {
+  Build(PhrasesText);
+  CheckRanking(*PhraseOf(std::vector<std::string_view>{"brass", "band"}));
 }
 
 TEST_P(PrunedTopTest, unions_with_phrases) {

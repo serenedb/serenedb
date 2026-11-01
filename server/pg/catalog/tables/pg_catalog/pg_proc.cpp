@@ -194,7 +194,17 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       [](const auto& row) { return row.macro.is_procedure ? 'p' : 'f'; }),
     Col<"proisstrict">([](const auto& row) { return row.macro.strict; }),
     Col<"proretset">([](const auto& row) { return ReturnsSet(row.macro); }),
-    Col<"provolatile">([](const auto&) { return 'v'; }),
+    Col<"provolatile">([](const auto& row) {
+      switch (row.macro.stability) {
+        case duckdb::FunctionStability::CONSISTENT:
+          return 'i';
+        case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
+          return 's';
+        case duckdb::FunctionStability::VOLATILE:
+          return 'v';
+      }
+      return 'v';
+    }),
     Col<"proparallel">([](const auto&) { return 'u'; }),
     Col<"pronargs">([](const auto& row) { return row.macro.types.size(); }),
     Col<"prorettype">([](const auto& row) -> duckdb::idx_t {

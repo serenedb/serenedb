@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
@@ -75,7 +76,10 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       _left_in_leaf = 0;
       _doc = doc_limits::min() + meta.doc_delta;
     }
-    _least_score = BoundScore({.freq = 1, .norm = 1});
+    _least_score =
+      irs::detail::DensePosting(meta.docs_count, segment.docs_count())
+        ? std::numeric_limits<score_t>::max()
+        : BoundScore({.freq = 1, .norm = 1});
     if (_cursor.Armed()) {
       _most_freq = _cursor.Index().Root().freq;
     }

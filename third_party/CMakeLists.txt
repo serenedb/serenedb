@@ -60,6 +60,7 @@ sdb_add_module(fast_float)
 
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+set(SIMDJSON_DEVELOPMENT_CHECKS ${SDB_DEV} CACHE BOOL "" FORCE)
 sdb_add_module(simdjson)
 
 ################################################################################

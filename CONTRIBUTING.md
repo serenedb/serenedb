@@ -52,7 +52,7 @@ The build type sets the defaults of the codegen options; each can be set on its 
 
 | | Debug | RelWithDebInfo | Release |
 |---|---|---|---|
-| Optimization | `-O0` | `-O3` | `-O3` |
+| Optimization | `-Og` | `-O3` | `-O3` |
 | `SDB_FRAME_POINTERS` | on | on | off |
 | `SDB_DEBUG_INFO` | `FULL` | `STACK` | `STACK` |
 | `SDB_LTO` (ThinLTO) | off | off | on |

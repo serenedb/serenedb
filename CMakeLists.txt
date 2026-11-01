@@ -466,7 +466,7 @@ endif()
 # there is no need to repeat the base flags in the build-type specific flags!
 foreach(lang C CXX)
     set(CMAKE_${lang}_FLAGS_DEBUG
-        "-O0 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        "-Og ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
         CACHE INTERNAL
         ""
     )
@@ -481,6 +481,7 @@ foreach(lang C CXX)
         ""
     )
 endforeach()
+add_compile_options($<$<CONFIG:Debug>:-Wno-pass-failed>)
 
 ################################################################################
 ## Runtime

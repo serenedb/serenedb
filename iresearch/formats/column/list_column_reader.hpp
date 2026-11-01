@@ -29,6 +29,7 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
 #include <limits>
+#include <span>
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -99,13 +100,14 @@ class ListColumnReader final : public ColumnReader {
     }
   }
 
-  static duckdb::Vector& Scratch(ScanState& s, duckdb::idx_t count) {
-    if (!s.list_codes || s.list_codes->cache.GetCapacity().GetIndex() < count) {
-      s.list_codes = std::make_unique<VectorScratch>(
+  static duckdb::Vector& Scratch(std::unique_ptr<VectorScratch>& scratch,
+                                 duckdb::idx_t count) {
+    if (!scratch || scratch->cache.GetCapacity().GetIndex() < count) {
+      scratch = std::make_unique<VectorScratch>(
         duckdb::LogicalType::UBIGINT,
         std::max<duckdb::idx_t>(count, STANDARD_VECTOR_SIZE));
     }
-    return s.list_codes->Reset();
+    return scratch->Reset();
   }
 
   duckdb::buffer_ptr<duckdb::DictionaryEntry> NewLists(const ScanState& s,
@@ -140,27 +142,29 @@ class ListColumnReader final : public ColumnReader {
                  uint64_t child_base, uint64_t max_elems) const {
     SDB_ENSURE(first + count <= _children[1]->RowCount(),
                "list column: corrupted list codes");
-    const uint64_t first_end = first == 0 ? 0 : first - 1;
-    SeekChild(s, 1, first_end);
-    const uint64_t end_count = first + count - first_end;
-    duckdb::Vector ends_vec{duckdb::LogicalType::UBIGINT, end_count};
+    const bool chained =
+      first == 0 || first == _children[1]->GatherCursor(s.child_states[2]);
+    const uint64_t from = chained ? first : first - 1;
+    SeekChild(s, 1, from);
+    const uint64_t end_count = first + count - from;
+    auto& ends_vec = Scratch(s.list_ends, end_count);
     _children[1]->ScanCount(s.child_states[2], ends_vec,
                             static_cast<duckdb::idx_t>(end_count), 0);
+    auto* ends = duckdb::FlatVector::GetDataMutable<uint64_t>(ends_vec);
     if (!_parts.empty()) {
-      AddBases(&ListPart::code, &ListPart::elem, first_end,
-               duckdb::FlatVector::GetDataMutable<uint64_t>(ends_vec),
-               end_count);
+      AddBases(&ListPart::code, &ListPart::elem, from, ends, end_count);
     }
-    const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
-    const uint64_t first_elem = first == 0 ? 0 : ends[0];
-    const uint64_t last_elem = ends[end_count - 1];
+    const uint64_t first_elem =
+      first == 0 ? 0 : (chained ? s.st.last_offset : ends[0]);
+    const auto* list_ends = ends + (end_count - count);
+    const uint64_t last_elem = list_ends[count - 1];
+    s.st.last_offset = last_elem;
     SDB_ENSURE(first_elem <= last_elem && last_elem <= _children[0]->RowCount(),
                "list column: corrupted list ends");
     const uint64_t elem_count = last_elem - first_elem;
     if (elem_count > max_elems) {
       return false;
     }
-    const auto* list_ends = ends + (first == 0 ? 0 : 1);
     uint64_t prev = first_elem;
     bool ordered = true;
     for (uint64_t k = 0; k < count; ++k) {
@@ -184,28 +188,8 @@ class ListColumnReader final : public ColumnReader {
     return true;
   }
 
-  static bool CodeRange(const uint64_t* codes,
-                        const duckdb::ValidityMask& validity,
-                        duckdb::idx_t offset, duckdb::idx_t count, uint64_t& lo,
-                        uint64_t& hi) noexcept {
-    bool any = false;
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (!validity.RowIsValid(offset + i)) {
-        continue;
-      }
-      if (!any) {
-        lo = hi = codes[i];
-        any = true;
-        continue;
-      }
-      lo = std::min(lo, codes[i]);
-      hi = std::max(hi, codes[i]);
-    }
-    return any;
-  }
-
-  static bool Consecutive(const uint64_t* codes, duckdb::idx_t count) noexcept {
-    for (duckdb::idx_t i = 1; i < count; ++i) {
+  static bool Consecutive(std::span<const uint64_t> codes) noexcept {
+    for (size_t i = 1; i < codes.size(); ++i) {
       if (codes[i] != codes[0] + i) {
         return false;
       }
@@ -215,8 +199,7 @@ class ListColumnReader final : public ColumnReader {
 
   [[gnu::noinline]] bool DirectRun(const ScanState& s, uint64_t first,
                                    duckdb::idx_t count) const noexcept {
-    if ((first == 0 ? 0 : first - 1) <
-        _children[1]->GatherCursor(s.child_states[2])) {
+    if (first < _children[1]->GatherCursor(s.child_states[2])) {
       return false;
     }
     if (!s.list_dict) {
@@ -244,34 +227,19 @@ class ListColumnReader final : public ColumnReader {
     return true;
   }
 
-  static uint64_t Index(const ListDictionary& d, uint64_t code) noexcept {
-    const uint64_t off = code - d.begin;
-    if (d.decoded.empty()) {
-      return off + 1;
-    }
-    const auto below = d.decoded[off / 64] & ((uint64_t{1} << (off % 64)) - 1);
-    return 1 + d.ranks[off / 64] + static_cast<uint64_t>(std::popcount(below));
-  }
-
-  static bool Covers(const ListDictionary& d, const uint64_t* codes,
-                     const duckdb::ValidityMask& validity, duckdb::idx_t offset,
-                     duckdb::idx_t count, uint64_t lo, uint64_t hi) noexcept {
+  static bool Covers(const ListDictionary& d, std::span<const uint64_t> codes,
+                     uint64_t lo, uint64_t hi) noexcept {
     if (!d.lists || lo < d.begin || hi >= d.end) {
       return false;
     }
     if (d.decoded.empty()) {
       return true;
     }
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (!validity.RowIsValid(offset + i)) {
-        continue;
-      }
-      const uint64_t off = codes[i] - d.begin;
-      if (((d.decoded[off / 64] >> (off % 64)) & 1) == 0) {
-        return false;
-      }
-    }
-    return true;
+    return absl::c_all_of(
+      codes, [begin = d.begin, words = d.decoded.data()](uint64_t code) {
+        const uint64_t off = code - begin;
+        return ((words[off / 64] >> (off % 64)) & 1) != 0;
+      });
   }
 
   static uint64_t NextBit(const std::vector<uint64_t>& bits, uint64_t pos,
@@ -305,17 +273,15 @@ class ListColumnReader final : public ColumnReader {
     }
   }
 
-  void ReferencedLists(ScanState& s, ListDictionary& d, const uint64_t* codes,
-                       const duckdb::ValidityMask& validity,
-                       duckdb::idx_t offset, duckdb::idx_t count, uint64_t lo,
+  void ReferencedLists(ScanState& s, ListDictionary& d,
+                       std::span<const uint64_t> codes, uint64_t lo,
                        uint64_t hi) const {
     auto& bits = d.decoded;
     bits.assign((hi - lo) / 64 + 1, 0);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      if (validity.RowIsValid(offset + i)) {
-        const uint64_t off = codes[i] - lo;
-        bits[off / 64] |= uint64_t{1} << (off % 64);
-      }
+    auto* words = bits.data();
+    for (const auto code : codes) {
+      const uint64_t off = code - lo;
+      words[off / 64] |= uint64_t{1} << (off % 64);
     }
     const uint64_t limit = bits.size() * 64;
     for (uint64_t from = NextBit(bits, 0, true), prev = from; from < limit;) {
@@ -387,7 +353,7 @@ class ListColumnReader final : public ColumnReader {
     if (count == 0) {
       return 0;
     }
-    auto& codes_vec = Scratch(s, count);
+    auto& codes_vec = Scratch(s.list_codes, count);
     const uint64_t row = GatherCursor(s);
     const auto scan_count =
       ScanVector(s, codes_vec, count, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
@@ -401,92 +367,63 @@ class ListColumnReader final : public ColumnReader {
       _validity->ColumnReader::ScanCount(s.child_states[0], result, count,
                                          result_offset);
     }
-    const auto& validity = duckdb::FlatVector::Validity(result);
-    const auto* codes = duckdb::FlatVector::GetData<uint64_t>(codes_vec);
-    auto* entries =
-      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+    const std::span<const uint64_t> codes{
+      duckdb::FlatVector::GetData<uint64_t>(codes_vec), scan_count};
     const uint64_t child_base =
       result_offset != 0 ? duckdb::ListVector::GetListSize(result) : 0;
-    if (Consecutive(codes, scan_count) && DirectRun(s, codes[0], scan_count)) {
-      ReadLists(s, codes[0], scan_count, result, entries + result_offset,
-                child_base, kAnyElems);
+    if (Consecutive(codes) && DirectRun(s, codes[0], scan_count)) {
+      ReadLists(
+        s, codes[0], scan_count, result,
+        duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
+          result_offset,
+        child_base, kAnyElems);
       return scan_count;
     }
-    uint64_t lo = 0;
-    uint64_t hi = 0;
-    if (!CodeRange(codes, validity, result_offset, scan_count, lo, hi)) {
-      for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-        entries[result_offset + i] = duckdb::list_entry_t{child_base, 0};
-      }
-      duckdb::ListVector::SetListSize(result,
-                                      static_cast<duckdb::idx_t>(child_base));
-      return scan_count;
-    }
+    const auto [lo_at, hi_at] = absl::c_minmax_element(codes);
+    const uint64_t lo = *lo_at;
+    const uint64_t hi = *hi_at;
     SDB_ENSURE(hi < _children[1]->RowCount(),
                "list column: corrupted list codes");
     if (!s.list_dict) {
       s.list_dict = std::make_unique<ListDictionary>();
     }
     auto& d = *s.list_dict;
-    if (!Covers(d, codes, validity, result_offset, scan_count, lo, hi)) {
+    if (!Covers(d, codes, lo, hi)) {
       if (s.ctx->ReadAhead() && hi - lo < 2 * kReadAheadLists) {
         Lists(s, d, lo, hi, scan_count);
       } else {
-        ReferencedLists(s, d, codes, validity, result_offset, scan_count, lo,
-                        hi);
+        ReferencedLists(s, d, codes, lo, hi);
       }
     }
-    if constexpr (kDictionary) {
-      duckdb::SelectionVector sel{scan_count};
-      const auto fill = [&](auto index) {
-        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-          sel.set_index(i, validity.RowIsValid(i)
-                             ? static_cast<duckdb::idx_t>(index(codes[i]))
-                             : 0);
-        }
-      };
-      if (d.decoded.empty()) {
-        fill([begin = d.begin](uint64_t code) { return code - begin + 1; });
-      } else {
-        fill([&d](uint64_t code) { return Index(d, code); });
+    const auto& validity = duckdb::FlatVector::Validity(result);
+    const duckdb::idx_t offset = kDictionary ? 0 : result_offset;
+    duckdb::SelectionVector sel{scan_count};
+    const auto fill = [&](auto index) {
+      for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+        sel.set_index(i, validity.RowIsValid(offset + i)
+                           ? static_cast<duckdb::idx_t>(index(codes[i]))
+                           : 0);
       }
+    };
+    if (d.decoded.empty()) {
+      fill([begin = d.begin](uint64_t code) { return code - begin + 1; });
+    } else {
+      fill([begin = d.begin, words = d.decoded.data(),
+            ranks = d.ranks.data()](uint64_t code) {
+        const uint64_t off = code - begin;
+        const auto below = words[off / 64] & ((uint64_t{1} << (off % 64)) - 1);
+        return 1 + ranks[off / 64] +
+               static_cast<uint64_t>(std::popcount(below));
+      });
+    }
+    if constexpr (kDictionary) {
       result.Dictionary(d.lists, sel, scan_count);
       return scan_count;
     }
-    const auto* lists =
-      duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
-    uint64_t total = 0;
-    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-      if (validity.RowIsValid(result_offset + i)) {
-        total += lists[Index(d, codes[i])].length;
-      }
-    }
-    duckdb::ListVector::Reserve(result,
-                                static_cast<duckdb::idx_t>(child_base + total));
-    duckdb::SelectionVector picked{static_cast<duckdb::idx_t>(total)};
-    uint64_t pos = 0;
-    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-      if (!validity.RowIsValid(result_offset + i)) {
-        entries[result_offset + i] = duckdb::list_entry_t{child_base + pos, 0};
-        continue;
-      }
-      const auto& list = lists[Index(d, codes[i])];
-      entries[result_offset + i] =
-        duckdb::list_entry_t{child_base + pos, list.length};
-      for (uint64_t k = 0; k < list.length; ++k) {
-        picked.set_index(static_cast<duckdb::idx_t>(pos++),
-                         static_cast<duckdb::idx_t>(list.offset + k));
-      }
-    }
-    if (total > 0) {
-      duckdb::ImmutableStrings::Copy(
-        duckdb::ListVector::GetChild(d.lists->data),
-        duckdb::ListVector::GetChildMutable(result), picked,
-        static_cast<duckdb::idx_t>(total), 0,
-        static_cast<duckdb::idx_t>(child_base));
-    }
-    duckdb::ListVector::SetListSize(
-      result, static_cast<duckdb::idx_t>(child_base + total));
+    duckdb::ListVector::SetListSize(result,
+                                    static_cast<duckdb::idx_t>(child_base));
+    duckdb::ImmutableStrings::Copy(d.lists->data, result, sel, scan_count, 0,
+                                   result_offset);
     return scan_count;
   }
 

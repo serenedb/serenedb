@@ -15,6 +15,14 @@ CREATE TABLE ebr_quas.pg_roles (rolname text);
 
 
 statement ok
+CREATE TABLE ebr_quas.duckdb_tables (ebr_marker int);
+
+
+statement ok
+INSERT INTO ebr_quas.duckdb_tables VALUES (42);
+
+
+statement ok
 SET search_path = ebr_quas, public;
 
 
@@ -44,6 +52,13 @@ SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
 ----
 from_catalog
 t
+
+
+query
+SELECT ebr_marker FROM duckdb_tables;
+----
+ebr_marker
+42
 
 
 statement ok

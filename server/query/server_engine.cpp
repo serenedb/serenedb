@@ -233,6 +233,13 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::InitSystemTables();
   pg::InitSystemFunctions(db, parser);
   pg::InitSystemViews(parser);
+  auto& builtin_relations = duckdb::DBConfig::GetConfig(db).builtin_relations;
+  pg::VisitSystemTables("pg_catalog", [&](const pg::SystemTable& table) {
+    builtin_relations.emplace(table.Sql().name);
+  });
+  pg::VisitSystemViews("pg_catalog", [&](const pg::StaticView& view) {
+    builtin_relations.emplace(view.name);
+  });
 }
 
 }  // namespace sdb::server::query

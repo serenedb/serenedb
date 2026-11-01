@@ -191,7 +191,7 @@ The `sdb_dependencies()` function provides metadata about the dependencies avail
 
 ## `sdb_extensions`
 
-The `sdb_extensions()` function provides metadata about the optional capability modules compiled into the SereneDB instance.
+The `sdb_extensions()` function provides metadata about the optional capability modules compiled into the SereneDB instance. Only a superuser can call it.
 
 <SqlLogicTest id="sql/functions/metadata/example_010" />
 

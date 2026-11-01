@@ -145,6 +145,20 @@ db error: ERROR: permission denied for function duckdb_temporary_files
 
 connection c_ved user=esf_vedernikoff password=esf_pw
 statement error
+SELECT count(*) FROM duckdb_extensions();
+----
+db error: ERROR: permission denied for function duckdb_extensions
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
+SELECT count(*) FROM sdb_extensions();
+----
+db error: ERROR: permission denied for function sdb_extensions
+
+
+connection c_ved user=esf_vedernikoff password=esf_pw
+statement error
 SELECT count(*) FROM duckdb_external_file_cache();
 ----
 db error: ERROR: permission denied for function duckdb_external_file_cache

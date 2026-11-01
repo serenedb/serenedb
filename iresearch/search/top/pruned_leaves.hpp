@@ -304,13 +304,7 @@ class PrunedLeaves {
       }
       const auto c = _order[i];
       auto& leaf = _leaves[c];
-      ScoreMask hits = 0;
-      for (auto m = alive; m != 0; m &= m - 1) {
-        const auto j = static_cast<uint32_t>(std::countr_zero(m));
-        const auto doc = docs[j];
-        hits |= static_cast<ScoreMask>(leaf.Probe(doc) == doc) << j;
-        leaf.FetchScoreArgs(j);
-      }
+      const auto hits = leaf.Hits(docs, alive);
       if (hits == 0) {
         continue;
       }

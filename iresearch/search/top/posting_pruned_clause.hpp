@@ -43,6 +43,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   using Base::_provider;
   using Base::_recipe;
   using Base::DecodeFreqs;
+  using Base::Matches;
   using Base::Members;
   using Base::ReadFill;
 
@@ -94,6 +95,27 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     _gather[slot] = _freqs.data[_leaf.Index()];
   }
 
+  IRS_FORCE_INLINE ScoreMask Hits(const doc_id_t* docs, ScoreMask alive) {
+    const auto last =
+      docs[BitsRequired<ScoreMask>() - 1 - std::countl_zero(alive)];
+    if (last < _doc) {
+      return 0;
+    }
+    const auto count = static_cast<uint32_t>(std::popcount(alive));
+    const auto span = last - docs[std::countr_zero(alive)];
+    if (count > 2 && uint64_t{span} * _leaf.Len() <
+                       uint64_t{count - 2} * (_max_in_leaf - _base)) {
+      return Merge(docs, alive);
+    }
+    ScoreMask hits = 0;
+    for (auto m = alive; m != 0; m &= m - 1) {
+      const auto j = static_cast<uint32_t>(std::countr_zero(m));
+      hits |= static_cast<ScoreMask>(Probe(docs[j]) == docs[j]) << j;
+      FetchScoreArgs(j);
+    }
+    return hits;
+  }
+
   uint32_t Keep(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
                 uint32_t n) {
     uint32_t kept = 0;
@@ -117,6 +139,24 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   }
 
  private:
+  IRS_NO_INLINE ScoreMask Merge(const doc_id_t* docs, ScoreMask alive) {
+    doc_id_t picked[kScoreBlock];
+    uint32_t slots[kScoreBlock];
+    std::fill_n(picked, kScoreBlock, doc_limits::eof());
+    uint32_t n = 0;
+    for (auto m = alive; m != 0; m &= m - 1) {
+      const auto slot = static_cast<uint32_t>(std::countr_zero(m));
+      picked[n] = docs[slot];
+      slots[n++] = slot;
+    }
+    ScoreMask hits = 0;
+    Matches(picked, n, [&](uint32_t i, uint32_t freq) IRS_FORCE_INLINE {
+      _gather[slots[i]] = freq;
+      hits |= ScoreMask{1} << slots[i];
+    });
+    return hits;
+  }
+
   IRS_NO_INLINE doc_id_t ProbeSlow(doc_id_t target) {
     if (!_needs_reposition) [[likely]] {
       if (const auto span = _max_in_leaf - _base;

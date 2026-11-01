@@ -89,8 +89,54 @@ class MaskedLeaf {
     return FindMasked(base, target);
   }
 
+  template<uint32_t N, typename Mask>
+  IRS_FORCE_INLINE doc_id_t Match(const doc_id_t* docs, doc_id_t base,
+                                  const doc_id_t* targets, uint32_t first,
+                                  uint32_t end, Mask& hits,
+                                  uint32_t* index) noexcept {
+    if (!_packed) [[unlikely]] {
+      doc_id_t doc = 0;
+      for (auto i = first; i != end; ++i) {
+        doc = FindMasked(base, targets[i]);
+        hits |= static_cast<Mask>(doc == targets[i]) << i;
+        index[i] = _index;
+      }
+      return doc;
+    }
+    const auto from = LowerBound(docs, _at, targets[first]);
+    const auto to = LowerBound(docs, from, targets[end - 1] + 1);
+    if (to - from < end - first) {
+      for (auto at = from; at != to; ++at) {
+        const auto doc = docs[at];
+        const auto i = CountLess<N>(targets, doc);
+        hits |= static_cast<Mask>(targets[i] == doc) << i;
+        index[i] = at;
+      }
+    } else {
+      for (auto i = first, at = from; i != end; ++i) {
+        at = LowerBound(docs, at, targets[i]);
+        hits |= static_cast<Mask>(docs[at] == targets[i]) << i;
+        index[i] = at;
+      }
+    }
+    _at = _index = std::min(to, kBlock - 1);
+    return docs[_at];
+  }
+
  private:
   static constexpr auto kBits = BitsRequired<uint64_t>();
+
+  IRS_FORCE_INLINE uint32_t LowerBound(const doc_id_t* docs, uint32_t from,
+                                       doc_id_t target) const noexcept {
+    if (_len == kBlock) [[likely]] {
+      return static_cast<uint32_t>(BranchlessLowerBound<kBlock>(docs, target) -
+                                   docs);
+    }
+    while (from != kBlock && docs[from] < target) {
+      ++from;
+    }
+    return from;
+  }
 
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {
     const auto first = base + 1;

@@ -482,68 +482,65 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   template<typename Visit>
   IRS_FORCE_INLINE void Members(const doc_id_t* docs, uint32_t n,
                                 Visit&& visit) {
-    SDB_ASSERT(n <= kScoreBlock);
-    uint32_t blocks[kScoreBlock];
-    const auto landings = Landings(docs, n, blocks);
-    uint32_t landed = 0;
-    for (uint32_t i = 0; i != n;) {
-      if (docs[i] > _max_in_leaf) {
-        if (landed != landings) {
-          LandOn(blocks[landed++]);
-        } else if (!Reach(docs[i])) {
-          _doc = doc_limits::eof();
-          return;
-        }
-      }
+    ForEachLeafOf(docs, n, [&](uint32_t i) IRS_FORCE_INLINE {
       const auto last = _max_in_leaf;
       do {
         const auto doc = docs[i];
         _doc = _leaf.Find(std::begin(_docs), _base, doc);
         const bool hit = _doc == doc;
-        if constexpr (InputType::kVolatileAlways) {
-          if (hit && _lazy != nullptr) [[unlikely]] {
-            DecodeFreqs();
-          }
-        }
+        DecodeLazyFreqs(hit);
         visit(i, hit, _freqs.data[_leaf.Index()]);
       } while (++i != n && docs[i] <= last);
-    }
+      return i;
+    });
   }
 
   template<typename Visit>
   IRS_FORCE_INLINE void Matches(const doc_id_t* docs, uint32_t n,
                                 Visit&& visit) {
-    SDB_ASSERT(n <= kScoreBlock);
-    uint32_t blocks[kScoreBlock];
     uint32_t index[kScoreBlock];
-    const auto landings = Landings(docs, n, blocks);
-    uint32_t landed = 0;
-    for (uint32_t i = 0; i != n;) {
-      if (docs[i] > _max_in_leaf) {
-        if (landed != landings) {
-          LandOn(blocks[landed++]);
-        } else if (!Reach(docs[i])) {
-          _doc = doc_limits::eof();
-          return;
-        }
-      }
+    ForEachLeafOf(docs, n, [&](uint32_t i) IRS_FORCE_INLINE {
       const auto end = CountLess<kScoreBlock>(docs, _max_in_leaf + 1);
       SDB_ASSERT(i < end && end <= n);
       ScoreMask hits = 0;
       _doc = _leaf.template Match<kScoreBlock>(std::begin(_docs), _base, docs,
                                                i, end, hits, index);
       if (hits != 0) {
-        if constexpr (InputType::kVolatileAlways) {
-          if (_lazy != nullptr) [[unlikely]] {
-            DecodeFreqs();
-          }
-        }
+        DecodeLazyFreqs();
         for (; hits != 0; hits &= hits - 1) {
           const auto j = static_cast<uint32_t>(std::countr_zero(hits));
           visit(j, _freqs.data[index[j]]);
         }
       }
-      i = end;
+      return end;
+    });
+  }
+
+  template<typename Visit>
+  IRS_FORCE_INLINE void ForEachLeafOf(const doc_id_t* docs, uint32_t n,
+                                      Visit&& visit) {
+    SDB_ASSERT(n <= kScoreBlock);
+    uint32_t blocks[kScoreBlock];
+    const auto landings = Landings(docs, n, blocks);
+    uint32_t landed = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _max_in_leaf) {
+        if (landed != landings) {
+          LandOn(blocks[landed++]);
+        } else if (!Reach(docs[i])) {
+          _doc = doc_limits::eof();
+          return;
+        }
+      }
+      i = visit(i);
+    }
+  }
+
+  IRS_FORCE_INLINE void DecodeLazyFreqs(bool needed = true) noexcept {
+    if constexpr (InputType::kVolatileAlways) {
+      if (needed && _lazy != nullptr) [[unlikely]] {
+        DecodeFreqs();
+      }
     }
   }
 

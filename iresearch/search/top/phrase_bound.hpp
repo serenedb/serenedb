@@ -85,7 +85,6 @@ class PhraseBound {
     return best;
   }
 
- private:
   template<typename Slots>
   const BlockIndex* Index(Slots& slots) {
     auto* const leaf = _source ? slots.BoundLeaf() : nullptr;
@@ -98,6 +97,7 @@ class PhraseBound {
     return _func.Score();
   }
 
+ private:
   ScoreFunction _func;
   ScoreBoundSource::ptr _source;
   uint32_t _block = 0;

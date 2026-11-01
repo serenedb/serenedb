@@ -44,11 +44,13 @@ SELECT (TIMESTAMPTZ '2024-07-15 16:34:56.789+00')::TIMETZ AS tstz2ttz;
 tstz2ttz
 12:34:56.789-04
 
+# TIME -> TIMETZ attaches the session offset of the current date.
 query
-SELECT (TIME '12:34:56.789')::TIMETZ AS t2ttz;
+SELECT (TIME '12:34:56.789')::TIMETZ::TIME AS t2ttz,
+       extract(timezone FROM (TIME '12:34:56.789')::TIMETZ) = extract(timezone FROM now()) AS t2ttz_offset;
 ----
-t2ttz
-12:34:56.789-04
+t2ttz	t2ttz_offset
+12:34:56.789	t
 
 query
 SELECT (TIMETZ '12:34:56.789+05:30')::TIME AS ttz2t;

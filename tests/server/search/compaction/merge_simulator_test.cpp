@@ -133,7 +133,7 @@ TEST(MergeSimulator, FlushesReplayInTimeOrder) {
   EXPECT_EQ(2 * kMiB, events[0].bytes);
   EXPECT_EQ(1, events[0].segments);
   EXPECT_EQ(2 * kMiB, events[0].segment_bytes);
-  EXPECT_FALSE(events[0].overlap);
+  EXPECT_EQ(0, events[0].overlap);
   EXPECT_TRUE(events[0].rowids.Empty());
   EXPECT_EQ(absl::Seconds(1), events[1].at);
   EXPECT_EQ("_2", events[1].segment);
@@ -275,13 +275,13 @@ TEST(MergeSimulator, RowIdRangesFollowTheSegments) {
   ASSERT_EQ(4, events.size());
   EXPECT_EQ(1, events[0].rowids.first);
   EXPECT_EQ(100, events[0].rowids.last);
-  EXPECT_DOUBLE_EQ(1.0, *events[0].overlap);
-  EXPECT_DOUBLE_EQ(1.0, *events[1].overlap);
-  EXPECT_DOUBLE_EQ(200.0 / 150, *events[2].overlap);
+  EXPECT_DOUBLE_EQ(1.0, events[0].overlap);
+  EXPECT_DOUBLE_EQ(1.0, events[1].overlap);
+  EXPECT_DOUBLE_EQ(200.0 / 150, events[2].overlap);
   const auto& merge = events[3];
   EXPECT_EQ(1, merge.rowids.first);
   EXPECT_EQ(150, merge.rowids.last);
-  EXPECT_DOUBLE_EQ(1.0, *merge.overlap);
+  EXPECT_DOUBLE_EQ(1.0, merge.overlap);
 }
 
 TEST(MergeSimulator, AMergeOfUnrangedSegmentsHasNoRange) {
@@ -289,7 +289,7 @@ TEST(MergeSimulator, AMergeOfUnrangedSegmentsHasNoRange) {
     SimulateMerges({Flush(0, kMiB), Flush(0, kMiB)}, Options(1));
   ASSERT_EQ(3, events.size());
   EXPECT_TRUE(events[2].rowids.Empty());
-  EXPECT_FALSE(events[2].overlap);
+  EXPECT_EQ(0, events[2].overlap);
 }
 
 TEST(MergeSimulator, AFailingPolicyStopsTheReplay) {

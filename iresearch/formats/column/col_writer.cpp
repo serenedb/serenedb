@@ -31,7 +31,6 @@
 #include <duckdb/main/database.hpp>
 #include <iterator>
 #include <limits>
-#include <mutex>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -200,7 +199,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool hyperloglog,
                                     ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(!_parts.contains(id));
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
@@ -252,7 +251,7 @@ ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
                                         duckdb::CompressionType compression,
                                         ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   auto& writer = PartOf(id, part).writer;
   SDB_ASSERT(!writer);
   EnsureOut();
@@ -278,7 +277,7 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                absl::FunctionRef<bool()> progress) {
   ColBlockSink* sink = nullptr;
   {
-    std::lock_guard lock{_mutex};
+    absl::MutexLock lock{&_mutex};
     EnsureOut();
     sink = _blocks.get();
   }
@@ -287,7 +286,7 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                         progress)) {
     return false;
   }
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
   slot.copy = std::move(copy);
@@ -303,7 +302,7 @@ uint16_t ColWriter::AppendDictionary(ColumnParts& parts,
 }
 
 uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   auto& parts = _parts[id];
   if (parts.own_dictionary == 0) {
     parts.own_dictionary = AppendDictionary(parts, bytes);
@@ -314,7 +313,7 @@ uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
 uint16_t ColWriter::AddLeafDictionary(field_id id,
                                       std::span<const uint32_t> path,
                                       std::string_view bytes) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   auto [it, inserted] = _parts[id].leaf_dictionaries.try_emplace(
     std::vector<uint32_t>{path.begin(), path.end()});
   if (inserted) {
@@ -330,7 +329,7 @@ bool ColWriter::AddCopiedDictionaries(
   std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
     dictionaries,
   std::vector<uint16_t>& indexes) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   auto& parts = _parts[id];
   const size_t reserved = parts.own_dictionary == 0 ? 1 : 0;
   if (parts.dictionaries.size() + reserved + dictionaries.size() >
@@ -372,7 +371,7 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
     id, row_group_size, [this]() -> ColBlockSink& {
-      std::lock_guard lock{_mutex};
+      absl::MutexLock lock{&_mutex};
       EnsureOut();
       return *_blocks;
     }));
@@ -386,7 +385,7 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
                                             uint32_t row_group_size) {
   SDB_ASSERT(row_group_size != 0);
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
     return *it->second;
   }
@@ -394,14 +393,14 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
 }
 
 NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(!_norm_by_id.contains(id), "ColWriter::StreamNormColumn: column ",
              id, " already open");
   return AddNormColumn(id, 0);
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(existing.info == info && existing.column_id == column_id,
@@ -486,7 +485,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
     return true;
   }
   {
-    std::lock_guard lock{_mutex};
+    absl::MutexLock lock{&_mutex};
     EnsureOut();
   }
   for (auto& cw : _columns) {

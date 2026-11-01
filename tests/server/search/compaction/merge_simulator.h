@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -92,7 +91,7 @@ struct SimulatedEvent {
   MergeLane lane = MergeLane::Small;
   size_t segments = 0;
   uint64_t segment_bytes = 0;
-  std::optional<double> overlap;
+  double overlap = 0;
   size_t merges_queued = 0;
   size_t merges_running = 0;
 };

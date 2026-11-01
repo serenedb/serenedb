@@ -55,25 +55,25 @@ constexpr uint8_t BytesFor(U max) noexcept {
   return 8;
 }
 
-template<typename U, typename S>
-void NarrowAs(const U* in, size_t n, uint8_t* out) noexcept {
+template<typename S, typename F>
+void NarrowAs(size_t n, uint8_t* out, F value) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    const auto s = static_cast<S>(in[i]);
+    const auto s = static_cast<S>(value(i));
     std::memcpy(out + i * sizeof(S), &s, sizeof(S));
   }
 }
 
-template<typename U>
-void Narrow(const U* in, size_t n, uint8_t stored, uint8_t* out) noexcept {
+template<typename F>
+void Narrow(size_t n, uint8_t stored, uint8_t* out, F value) noexcept {
   switch (stored) {
     case 1:
-      return NarrowAs<U, uint8_t>(in, n, out);
+      return NarrowAs<uint8_t>(n, out, value);
     case 2:
-      return NarrowAs<U, uint16_t>(in, n, out);
+      return NarrowAs<uint16_t>(n, out, value);
     case 4:
-      return NarrowAs<U, uint32_t>(in, n, out);
+      return NarrowAs<uint32_t>(n, out, value);
     default:
-      return NarrowAs<U, uint64_t>(in, n, out);
+      return NarrowAs<uint64_t>(n, out, value);
   }
 }
 
@@ -302,13 +302,14 @@ constexpr size_t PackedBytes(unsigned bits) noexcept {
 
 template<typename U, unsigned W, unsigned J>
 IRS_FORCE_INLINE void PackStep(const U* IRS_RESTRICT in,
-                               LaneWord<U>* IRS_RESTRICT out, unsigned l,
-                               LaneWord<U>& acc) noexcept {
+                               LaneWord<U>* IRS_RESTRICT out, U base,
+                               unsigned l, LaneWord<U>& acc) noexcept {
   using Word = LaneWord<U>;
   constexpr unsigned kWordBits = 8 * sizeof(Word);
   constexpr unsigned kBit = J * W;
   constexpr unsigned kShift = kBit % kWordBits;
-  const auto v = static_cast<Word>(in[J * kLanes<U> + l]);
+  const auto v =
+    static_cast<Word>(static_cast<U>(in[J * kLanes<U> + l] - base));
   if constexpr (kShift == 0) {
     acc = v;
   } else {
@@ -324,19 +325,21 @@ IRS_FORCE_INLINE void PackStep(const U* IRS_RESTRICT in,
 
 template<typename U, unsigned W, unsigned... J>
 IRS_FORCE_INLINE void PackLane(const U* IRS_RESTRICT in,
-                               LaneWord<U>* IRS_RESTRICT out, unsigned l,
+                               LaneWord<U>* IRS_RESTRICT out, U base,
+                               unsigned l,
                                std::integer_sequence<unsigned, J...>) noexcept {
   LaneWord<U> acc = 0;
-  (PackStep<U, W, J>(in, out, l, acc), ...);
+  (PackStep<U, W, J>(in, out, base, l, acc), ...);
 }
 
 template<typename U, unsigned W>
-void PackBlock(const U* IRS_RESTRICT in,
-               LaneWord<U>* IRS_RESTRICT out) noexcept {
+void PackBlock(const U* IRS_RESTRICT in, LaneWord<U>* IRS_RESTRICT out,
+               U base) noexcept {
   if constexpr (W != 0) {
     constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {
-      PackLane<U, W>(in, out, l, std::make_integer_sequence<unsigned, kRows>{});
+      PackLane<U, W>(in, out, base, l,
+                     std::make_integer_sequence<unsigned, kRows>{});
     }
   }
 }
@@ -406,7 +409,7 @@ U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
 }
 
 template<typename U>
-using PackFn = void (*)(const U*, LaneWord<U>*) noexcept;
+using PackFn = void (*)(const U*, LaneWord<U>*, U) noexcept;
 
 template<typename U>
 using UnpackFn = void (*)(const LaneWord<U>*, U*, U) noexcept;

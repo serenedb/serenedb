@@ -106,6 +106,10 @@ Inside a query of the body, a column of that query, or of a query of the body ar
 
 A parameter takes a default after `DEFAULT` or `=`, as well as after `:=`. `IMMUTABLE`, `STABLE` and `VOLATILE`, volatile by default, are shown in `pg_proc.provolatile` and in the function's definition; what a call evaluates follows its body.
 
+A function that `RETURNS void` runs its body to the end, every row of a query body included, and returns `NULL`. A function whose body modifies data cannot be called for each row of a query:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_047" />
+
 Without `SETOF`, the function returns the first row of the body, also when its result calls a set-returning function such as `unnest`. `RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_037" />

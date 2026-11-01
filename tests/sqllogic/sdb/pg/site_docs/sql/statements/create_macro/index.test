@@ -555,3 +555,31 @@ result
 2
 4
 6
+
+# DOCS_TEST: example_047
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE visits (who text);
+
+statement ok
+CREATE FUNCTION visit(who text) RETURNS void LANGUAGE sql AS 'INSERT INTO visits VALUES (who)';
+
+query
+SELECT visit('ann') IS NULL AS returned_null;
+----
+returned_null
+t
+
+query
+SELECT who FROM visits;
+----
+who
+ann
+
+statement error
+SELECT visit(name)
+FROM (VALUES ('bob'), ('eve')) v(name);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query

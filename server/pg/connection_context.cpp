@@ -127,9 +127,7 @@ void ConnectionContext::ApplyRoleSettings() {
       continue;
     }
     try {
-      GetClientContext().RunFunctionInTransaction([&] {
-        SetSettingChecked(setting.first, std::string{setting.second}, false);
-      });
+      SetSettingChecked(setting.first, std::string{setting.second});
     } catch (const std::exception& exception) {
       AddNotice(network::pg::ToSqlError(exception));
     }

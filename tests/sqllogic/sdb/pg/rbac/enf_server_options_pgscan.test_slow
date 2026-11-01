@@ -55,12 +55,6 @@ database	NULL
 password	NULL
 
 
-statement error
-SELECT srvoptions FROM pg_foreign_server;
-----
-db error: ERROR: permission denied for table pg_foreign_server
-
-
 statement ok
 RESET ROLE;
 

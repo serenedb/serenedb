@@ -151,8 +151,7 @@ class Config {
   // casting and the option's set_callback run as if the client had issued a
   // `SET key = value` statement. Throws on unknown settings or validation
   // failure -- callers translate to the appropriate PG error.
-  void SetSettingChecked(std::string_view key, std::string value,
-                         bool is_local);
+  void SetSettingChecked(std::string_view key, std::string value);
 
   // Monotonic counter bumped whenever a session/local setting changes (via the
   // setting_change_handler) or is reverted at txn end. Lets the wire layer skip

@@ -190,12 +190,12 @@ void Config::OnSet(std::string_view name, bool is_local,
   }
 }
 
-void Config::SetSettingChecked(std::string_view key, std::string value,
-                               bool is_local) {
-  duckdb::PhysicalSet::SetVariable(
-    _client_ctx, duckdb::Identifier{key},
-    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
-    duckdb::Value{std::move(value)});
+void Config::SetSettingChecked(std::string_view key, std::string value) {
+  _client_ctx.RunFunctionInTransaction([&] {
+    duckdb::PhysicalSet::SetVariable(_client_ctx, duckdb::Identifier{key},
+                                     duckdb::SetScope::SESSION,
+                                     duckdb::Value{std::move(value)});
+  });
 }
 
 bool Config::IsExplicitTransaction() const {

@@ -533,8 +533,7 @@ bool PgWireSession<Kind>::SetupConnection() {
 
   const auto apply = [&](const std::string& name, const std::string& value) {
     try {
-      _connection_ctx->GetClientContext().RunFunctionInTransaction(
-        [&] { _connection_ctx->SetSettingChecked(name, value, false); });
+      _connection_ctx->SetSettingChecked(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(

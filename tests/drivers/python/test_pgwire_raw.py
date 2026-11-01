@@ -406,6 +406,26 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def test_startup_role_parameter_sets_the_current_role():
+    other = WireConn()
+    try:
+        other.run_ok("CREATE ROLE ns_startup_role")
+        try:
+            m = _startup_collect({"role": "ns_startup_role"})
+            assert "Z" in types(m) and "E" not in types(m), types(m)
+            assert dict(param_status(m)).get("is_superuser") == "off", param_status(m)
+        finally:
+            other.run_ok("DROP ROLE ns_startup_role")
+    finally:
+        other.close()
+
+
+def test_startup_search_path_parameter_applies():
+    m = _startup_collect({"search_path": "pg_catalog"})
+    assert "Z" in types(m) and "E" not in types(m), types(m)
+    assert dict(param_status(m)).get("search_path") == "pg_catalog", param_status(m)
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")

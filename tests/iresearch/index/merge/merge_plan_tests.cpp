@@ -307,16 +307,15 @@ TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
   ASSERT_LT(1, text.size());
   for (uint32_t part = 0; part != text.size(); ++part) {
     EXPECT_EQ(part, units[text[part]].part);
-    EXPECT_TRUE(std::ranges::equal(std::vector{trains[0]},
-                                   plan.Dependencies(text[part])));
+    EXPECT_TRUE(
+      std::ranges::equal(std::vector{trains[0]}, units[text[part]].deps));
   }
   const auto numbers = UnitsOf(units, MergeUnitKind::Column, kBigintColumn);
   ASSERT_LT(1, numbers.size());
   EXPECT_TRUE(
     UnitsOf(units, MergeUnitKind::ColumnTrain, kBigintColumn).empty());
   for (const auto unit : numbers) {
-    EXPECT_TRUE(std::ranges::equal(plan.Dependencies(trains[0]),
-                                   plan.Dependencies(unit)));
+    EXPECT_TRUE(std::ranges::equal(units[trains[0]].deps, units[unit].deps));
   }
   for (const auto id : {kListColumn, kStructColumn}) {
     const auto parts = UnitsOf(units, MergeUnitKind::Column, id);
@@ -332,7 +331,7 @@ TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
     static_cast<size_t>(std::ranges::find(units, MergeUnitKind::ColumnsFooter,
                                           &irs::MergeUnit::kind) -
                         units.begin());
-  EXPECT_EQ(footer, plan.Dependencies(footer).size());
+  EXPECT_EQ(footer, units[footer].deps.size());
   ASSERT_TRUE(irs::RunSerially(plan));
   EXPECT_EQ("", MergedDifference(out));
 }

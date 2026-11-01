@@ -22,16 +22,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/optional_idx.hpp>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <functional>
+#include <duckdb/common/types.hpp>
 #include <limits>
-#include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 
@@ -39,8 +42,13 @@ class KeyOrder {
  public:
   static constexpr uint64_t kNotIsolated = std::numeric_limits<uint64_t>::max();
 
-  KeyOrder(MergeDocMap& doc_map, const SortSpec& spec);
-  ~KeyOrder();
+  struct KeyColumn {
+    field_id id;
+    duckdb::LogicalType type;
+  };
+
+  KeyOrder(MergeDocMap& doc_map, const SortSpec& spec)
+    : _doc_map{doc_map}, _spec{spec} {}
 
   KeyOrder(const KeyOrder&) = delete;
   KeyOrder& operator=(const KeyOrder&) = delete;
@@ -48,23 +56,57 @@ class KeyOrder {
   void Prepare(size_t partitions, duckdb::TaskScheduler* scheduler = nullptr,
                size_t threads = 1);
 
-  bool Pending() const noexcept;
+  bool Pending() const noexcept { return static_cast<bool>(_merge); }
 
-  duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept;
+  duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept {
+    return _merge;
+  }
 
   void Expand(size_t partition, std::span<const duckdb::PresortedRun> runs);
 
-  bool Merge(const std::function<bool()>& proceed);
+  bool Merge(const MergeProgress& proceed);
 
   void Finish();
 
-  uint64_t IsolatedBegin(size_t input) const noexcept;
+  uint64_t IsolatedBegin(size_t input) const noexcept {
+    return _isolated[input];
+  }
 
-  const MergeOrder& Order() const noexcept;
+  const MergeOrder& Order() const noexcept { return *_order; }
 
  private:
-  struct State;
-  std::unique_ptr<State> _state;
+  struct Span {
+    uint64_t first = std::numeric_limits<uint64_t>::max();
+    uint64_t last = 0;
+  };
+
+  struct Part {
+    uint64_t next = 0;
+    uint64_t end = 0;
+    std::vector<Span> spans;
+    bool failed = false;
+  };
+
+  const SubReader& Reader(size_t input) const {
+    return *_doc_map[input].reader;
+  }
+
+  [[noreturn]] void ThrowIncomplete() const;
+
+  void ThrowIfUnsorted(const duckdb::optional_idx& input) const;
+
+  void PlanParts();
+
+  void ConcatOrder();
+
+  MergeDocMap& _doc_map;
+  const SortSpec& _spec;
+  std::vector<KeyColumn> _keys;
+  std::vector<uint64_t> _live;
+  std::vector<uint64_t> _isolated;
+  std::optional<MergeOrder> _order;
+  duckdb::shared_ptr<duckdb::PresortedMerge> _merge;
+  std::vector<Part> _parts;
 };
 
 }  // namespace irs

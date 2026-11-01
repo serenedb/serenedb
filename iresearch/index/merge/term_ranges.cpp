@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <mutex>
 #include <string_view>
 #include <utility>
 
@@ -43,23 +42,8 @@ namespace {
 
 constexpr std::string_view kPartName = "part";
 
-class RangeWriterBase : public TermRangeWriter {
- public:
-  virtual bool Finish() = 0;
-  virtual const bitset& Docs() const noexcept = 0;
-  virtual TermPartWriter& Terms() noexcept = 0;
-
-  std::chrono::steady_clock::time_point Started() const noexcept {
-    return _started;
-  }
-
- private:
-  std::chrono::steady_clock::time_point _started =
-    std::chrono::steady_clock::now();
-};
-
 template<typename Postings>
-class RangeWriter final : public RangeWriterBase {
+class RangeWriter final : public TermRangeWriter {
  public:
   RangeWriter(std::span<const TermRangeMerge::Input> sources,
               std::span<const duckdb::shared_ptr<TermKeys>> keys,
@@ -213,6 +197,7 @@ struct TermRangeMerge::Part {
   IndexInput::ptr doc;
   IndexInput::ptr pos;
   IndexInput::ptr pay;
+  std::chrono::steady_clock::time_point started;
   bool done = false;
 };
 
@@ -257,6 +242,7 @@ void TermRangeMerge::Partition(size_t parts, const Target& target,
 
 std::unique_ptr<TermRangeWriter> TermRangeMerge::BeginPart(size_t part) {
   SDB_ASSERT(part < _parts.size());
+  _parts[part]->started = std::chrono::steady_clock::now();
   auto& dir = _parts[part]->dir;
   if (_sorted) {
     return std::make_unique<RangeWriter<SortedPostings>>(
@@ -266,9 +252,8 @@ std::unique_ptr<TermRangeWriter> TermRangeMerge::BeginPart(size_t part) {
     _inputs, _keys, _props, _target, dir, *_progress);
 }
 
-bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& base) {
+bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& writer) {
   SDB_ASSERT(part < _parts.size());
-  auto& writer = static_cast<RangeWriterBase&>(base);
   const bool ok = writer.Finish();
   auto& p = *_parts[part];
   auto& terms = writer.Terms();
@@ -289,7 +274,7 @@ bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& base) {
   p.pay = open(PostingsWriter::kPayExt);
   const auto& docs = writer.Docs();
   {
-    std::lock_guard lock{_mutex};
+    absl::MutexLock lock{&_mutex};
     SDB_ASSERT(docs.words() <= _docs.size());
     for (size_t w = 0; w != docs.words(); ++w) {
       _docs[w] |= docs.data()[w];
@@ -298,7 +283,7 @@ bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& base) {
   }
   _nanos +=
     static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now() - writer.Started())
+                            std::chrono::steady_clock::now() - p.started)
                             .count());
   return ok;
 }
@@ -328,7 +313,7 @@ bool TermRangeMerge::MergePart(size_t part) {
 bool TermRangeMerge::Done() const noexcept { return PartsLeft() == 0; }
 
 size_t TermRangeMerge::PartsLeft() const noexcept {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return static_cast<size_t>(
     absl::c_count_if(_parts, [](const auto& part) { return !part->done; }));
 }
@@ -362,13 +347,13 @@ void TermRangeMerge::ReleaseParts() noexcept {
     part->terms.clear();
     part->terms.shrink_to_fit();
   }
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _docs.clear();
   _docs.shrink_to_fit();
 }
 
 uint64_t TermRangeMerge::DocCount() const noexcept {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return math::Popcount(_docs.begin(), _docs.end());
 }
 

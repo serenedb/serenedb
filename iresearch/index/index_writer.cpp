@@ -1220,10 +1220,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
   Finish();
 
   std::lock_guard lock{_compacting.lock};
-  for (auto* state : _compacting.tickets) {
-    state->revoked.store(true, std::memory_order_relaxed);
-    state->registered = false;
-  }
+  RevokeTicketsLocked();
   _compacting.segments.clear();
 }
 

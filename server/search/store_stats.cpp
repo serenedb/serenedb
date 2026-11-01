@@ -20,8 +20,15 @@
 
 #include "search/store_stats.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/common/error_data.hpp>
+#include <exception>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/log.hpp>
+#include <yaclib/coro/await.hpp>
+#include <yaclib/coro/future.hpp>
 
 namespace sdb::search {
 
@@ -43,6 +50,32 @@ StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
 
 void MaintainedStore::SetWriterOptions(irs::IndexWriterOptions& options) const {
   options.sort = _sort;
+}
+
+yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
+  std::chrono::steady_clock::time_point begin,
+  yaclib::Future<irs::CompactionResult> merge) {
+  bool empty_compaction = false;
+  MergeResult result;
+  try {
+    result.outcome = co_await std::move(merge);
+    if (!result.outcome) {
+      SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
+                " produced nothing: cancelled, or every document was removed");
+      empty_compaction = true;
+    } else {
+      empty_compaction = result.outcome.size == 0;
+    }
+  } catch (const std::exception& e) {
+    result.error = duckdb::ErrorData{e}.RawMessage();
+    result.res = absl::InternalError(absl::StrCat(
+      "merge of relation ", _merge_relation->id, " failed: ", result.error));
+  }
+  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - begin)
+                     .count();
+  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
+  co_return result;
 }
 
 }  // namespace sdb::search

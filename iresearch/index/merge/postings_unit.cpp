@@ -22,8 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -191,11 +191,8 @@ bool WriteFields(const irs::FlushState& flush_state,
                  const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
                  IdxWriter& idx, std::span<const BasicTermReader* const> extra,
                  std::span<const std::unique_ptr<TermRangeMerge>> ranges) {
-  for (const auto& range : ranges) {
-    if (!range->Done()) {
-      return false;
-    }
-  }
+  SDB_ASSERT(
+    absl::c_all_of(ranges, [](const auto& range) { return range->Done(); }));
   auto field_writer =
     std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
@@ -263,42 +260,24 @@ FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
   return props;
 }
 
-struct PostingsMerger::Impl {
-  using Fields = std::variant<CompoundFieldIterator<CompoundPostings>,
-                              CompoundFieldIterator<SortedPostings>>;
-
-  Impl(size_t inputs, const MergeProgress& progress, bool sorted,
-       const IndexFieldOptions* field_options)
-    : fields{
-        sorted
-          ? Fields{std::in_place_index<1>, inputs, progress, field_options}
-          : Fields{std::in_place_index<0>, inputs, progress, field_options}} {}
-
-  Fields fields;
-};
-
-PostingsMerger::PostingsMerger(size_t inputs, const MergeProgress& progress,
-                               bool sorted,
-                               const IndexFieldOptions* field_options)
-  : _impl{std::make_unique<Impl>(inputs, progress, sorted, field_options)} {}
-
-PostingsMerger::~PostingsMerger() = default;
-
-void PostingsMerger::Add(const SubReader& reader, const DocRemap& remap) {
-  std::visit([&](auto& fields) { fields.Add(reader, remap); }, _impl->fields);
-}
-
-bool PostingsMerger::Write(
-  const FlushState& flush_state, const MergedNormIdMap& merged_norm_ids,
-  IResourceManager& rm, IdxWriter& idx,
-  std::span<const BasicTermReader* const> extra,
-  std::span<const std::unique_ptr<TermRangeMerge>> ranges) {
-  return std::visit(
-    [&](auto& fields) {
-      return WriteFields(flush_state, fields, merged_norm_ids, rm, idx, extra,
-                         ranges);
-    },
-    _impl->fields);
+bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
+                   bool sorted, const IndexFieldOptions* field_options,
+                   const MergeProgress& progress,
+                   const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
+                   IdxWriter& idx,
+                   std::span<const BasicTermReader* const> extra,
+                   std::span<const std::unique_ptr<TermRangeMerge>> ranges) {
+  const auto write = [&](auto postings) {
+    CompoundFieldIterator<typename decltype(postings)::type> fields{
+      inputs.size(), progress, field_options};
+    for (const auto& input : inputs) {
+      fields.Add(*input.reader, input.remap);
+    }
+    return WriteFields(flush_state, fields, merged_norm_ids, rm, idx, extra,
+                       ranges);
+  };
+  return sorted ? write(std::type_identity<SortedPostings>{})
+                : write(std::type_identity<CompoundPostings>{});
 }
 
 }  // namespace irs

@@ -236,15 +236,14 @@ TEST_F(MergeScheduleTest, VectorUnitsRunOneAfterAnotherAfterTheFooter) {
   const auto index = Find(*plan, MergeUnitKind::Index);
   ASSERT_EQ(footer + 1, hnsw);
   ASSERT_EQ(hnsw + 1, ivf);
+  const auto units = plan->Units();
   EXPECT_TRUE(
-    std::ranges::equal(std::vector<size_t>{footer}, plan->Dependencies(hnsw)));
+    std::ranges::equal(std::vector<size_t>{footer}, units[hnsw].deps));
+  EXPECT_TRUE(std::ranges::equal(std::vector<size_t>{hnsw}, units[ivf].deps));
   EXPECT_TRUE(
-    std::ranges::equal(std::vector<size_t>{hnsw}, plan->Dependencies(ivf)));
-  EXPECT_TRUE(
-    std::ranges::equal(std::vector<size_t>{ivf}, plan->Dependencies(postings)));
-  EXPECT_TRUE(
-    std::ranges::equal(std::vector<size_t>{footer, hnsw, ivf, postings},
-                       plan->Dependencies(index)));
+    std::ranges::equal(std::vector<size_t>{ivf}, units[postings].deps));
+  EXPECT_TRUE(std::ranges::equal(
+    std::vector<size_t>{footer, hnsw, ivf, postings}, units[index].deps));
   EXPECT_GT(plan->Units()[hnsw].cost, 0);
 
   irs::MergeSchedule schedule{*plan};
@@ -280,7 +279,7 @@ TEST_F(MergeScheduleTest, VectorUnitsWithoutIvfLeavePostingsFree) {
     std::move(hnsw_anns)};
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, hnsw_only);
-  EXPECT_TRUE(plan->Dependencies(Find(*plan, MergeUnitKind::Postings)).empty());
+  EXPECT_TRUE(plan->Units()[Find(*plan, MergeUnitKind::Postings)].deps.empty());
   irs::MergeSchedule schedule{*plan};
   const auto claimed = ClaimAll(schedule);
   EXPECT_NE(std::ranges::end(claimed),
@@ -310,7 +309,7 @@ TEST_F(MergeScheduleTest, HeldUnitWaitsForItsRelease) {
   const auto plan = MakePlan(out, _plain);
   const auto postings = Find(*plan, MergeUnitKind::Postings);
   const auto index = Find(*plan, MergeUnitKind::Index);
-  ASSERT_TRUE(plan->Dependencies(postings).empty());
+  ASSERT_TRUE(plan->Units()[postings].deps.empty());
   irs::MergeSchedule schedule{*plan};
   schedule.Hold(postings);
   size_t finished = 0;
@@ -338,7 +337,7 @@ TEST_F(MergeScheduleTest, ReleasedUnitStillWaitsForItsDependencies) {
   const auto postings = Find(*plan, MergeUnitKind::Postings);
   const auto ivf = Find(*plan, MergeUnitKind::Ann, kIvfColumn);
   ASSERT_TRUE(
-    std::ranges::equal(std::vector<size_t>{ivf}, plan->Dependencies(postings)));
+    std::ranges::equal(std::vector<size_t>{ivf}, plan->Units()[postings].deps));
   irs::MergeSchedule schedule{*plan};
   schedule.Hold(postings);
   schedule.Release(postings);

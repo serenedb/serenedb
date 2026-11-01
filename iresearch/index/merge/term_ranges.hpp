@@ -37,6 +37,7 @@
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/term_keys.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 
 namespace irs {
 
@@ -48,6 +49,12 @@ class TermRangeWriter {
   virtual ~TermRangeWriter() = default;
 
   virtual bool Consume(std::span<const duckdb::PresortedRun> runs) = 0;
+
+  virtual bool Finish() = 0;
+
+  virtual const bitset& Docs() const noexcept = 0;
+
+  virtual TermPartWriter& Terms() noexcept = 0;
 };
 
 class TermRangeMerge {

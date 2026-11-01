@@ -39,7 +39,6 @@
 #include <vector>
 
 #include "connector/functions/function_values.h"
-#include "connector/functions/rowid_values.h"
 #include "connector/segment_rewrite/merge_target.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
@@ -184,9 +183,13 @@ void EmitSegments(SegmentsState& state, duckdb::DataChunk& output) {
     output.data[2].Append(Bigint(row.live_docs));
     output.data[3].Append(Bigint(row.docs - row.live_docs));
     output.data[4].Append(Bigint(row.bytes));
-    const auto rowids = RowIdValuesOf(row.rowids);
-    output.data[5].Append(rowids.min);
-    output.data[6].Append(rowids.max);
+    if (row.rowids.Empty()) {
+      output.data[5].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
+      output.data[6].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
+    } else {
+      output.data[5].Append(duckdb::Value::BIGINT(row.rowids.first));
+      output.data[6].Append(duckdb::Value::BIGINT(row.rowids.last));
+    }
   }
 }
 

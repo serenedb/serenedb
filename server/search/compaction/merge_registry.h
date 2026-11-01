@@ -54,17 +54,6 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
 bool Produced(MergeOutcome outcome) noexcept;
 
-enum class MergeLane : uint8_t {
-  Small = 0,
-  Big,
-};
-
-struct MergeEstimate {
-  uint64_t rewrite_bytes = 0;
-  double score = 0;
-  MergeLane lane = MergeLane::Big;
-};
-
 struct MergeRecord {
   uint64_t id = 0;
   uint64_t relation_id = 0;
@@ -74,7 +63,6 @@ struct MergeRecord {
   int64_t started_us = 0;
   int64_t finished_us = 0;
   irs::MergeStats stats;
-  uint64_t output_live_docs = 0;
   RowIdRange rowids;
   std::string error;
 

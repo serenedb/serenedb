@@ -46,6 +46,6 @@ LiveNormStats ComputeLiveNormStats(field_id id,
 
 void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
                      std::span<const MergeSource> sources,
-                     const MergeOrder* order = nullptr);
+                     const MergeOrder* order);
 
 }  // namespace irs

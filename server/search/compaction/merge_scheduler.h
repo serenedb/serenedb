@@ -45,6 +45,17 @@ class IExecutor;
 }  // namespace yaclib
 namespace sdb::search {
 
+enum class MergeLane : uint8_t {
+  Small = 0,
+  Big,
+};
+
+struct MergeEstimate {
+  uint64_t rewrite_bytes = 0;
+  double score = 0;
+  MergeLane lane = MergeLane::Big;
+};
+
 MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept;
 
 class MergeJob {
@@ -68,30 +79,22 @@ class MergeScheduler {
     bool gauges = true;
   };
 
-  class Relation {
-   public:
-    explicit Relation(uint64_t id) noexcept : _id{id} {}
-
-    uint64_t Id() const noexcept { return _id; }
-
+  struct Relation {
     void NudgeCompaction() noexcept {
-      _compaction_gen.fetch_add(1, std::memory_order_release);
+      compaction_gen.fetch_add(1, std::memory_order_release);
     }
     uint64_t CompactionGeneration() const noexcept {
-      return _compaction_gen.load(std::memory_order_acquire);
+      return compaction_gen.load(std::memory_order_acquire);
     }
 
-   private:
-    friend class MergeScheduler;
-
-    uint64_t _id;
-    std::atomic<uint64_t> _compaction_gen{0};
-    size_t _queued = 0;
-    size_t _running = 0;
-    size_t _running_big = 0;
-    uint32_t _paused = 0;
-    uint32_t _failures = 0;
-    irs::containers::FlatHashMap<std::string, absl::Time> _blocked;
+    uint64_t id = 0;
+    std::atomic<uint64_t> compaction_gen{0};
+    size_t queued = 0;
+    size_t running = 0;
+    size_t running_big = 0;
+    uint32_t paused = 0;
+    uint32_t failures = 0;
+    irs::containers::FlatHashMap<std::string, absl::Time> blocked;
   };
 
   struct Resume {
@@ -110,7 +113,6 @@ class MergeScheduler {
 
   size_t Wanted(const Relation& relation) const;
   std::vector<std::string> Blocked(Relation& relation) const;
-  size_t FreeThreads() const;
 
   void Enqueue(const std::shared_ptr<Relation>& relation,
                std::vector<std::unique_ptr<MergeJob>> jobs);

@@ -111,7 +111,7 @@ absl::Time MergeScheduler::Now() const {
 
 void MergeScheduler::Drop(Queue& dropped) {
   for (const auto& entry : dropped) {
-    --entry->relation->_queued;
+    --entry->relation->queued;
     _registry.Drop(entry->id);
   }
   UpdateGauges();
@@ -150,7 +150,7 @@ void MergeScheduler::UpdateGauges() const {
 bool MergeScheduler::NoneRunning() const { return _running.empty(); }
 
 bool MergeScheduler::NoneRunningFor(const Relation* relation) {
-  return relation->_running == 0;
+  return relation->running == 0;
 }
 
 bool MergeScheduler::Admits(const Entry& entry) const {
@@ -158,35 +158,30 @@ bool MergeScheduler::Admits(const Entry& entry) const {
     return _threads < _options.threads || _small == 0;
   }
   return _big < BigThreads() && _threads < _options.threads &&
-         entry.relation->_running_big < RelationCap();
+         entry.relation->running_big < RelationCap();
 }
 
 size_t MergeScheduler::Wanted(const Relation& relation) const {
   absl::MutexLock lock{&_mutex};
-  if (_stopping || relation._paused != 0) {
+  if (_stopping || relation.paused != 0) {
     return 0;
   }
   const auto round = RoundSize();
-  const auto used = relation._queued + relation._running;
+  const auto used = relation.queued + relation.running;
   return used < round ? round - used : 0;
 }
 
 std::vector<std::string> MergeScheduler::Blocked(Relation& relation) const {
   absl::MutexLock lock{&_mutex};
   const auto now = Now();
-  absl::erase_if(relation._blocked,
+  absl::erase_if(relation.blocked,
                  [now](const auto& blocked) { return blocked.second <= now; });
   std::vector<std::string> names;
-  names.reserve(relation._blocked.size());
-  for (const auto& [name, until] : relation._blocked) {
+  names.reserve(relation.blocked.size());
+  for (const auto& [name, until] : relation.blocked) {
     names.emplace_back(name);
   }
   return names;
-}
-
-size_t MergeScheduler::FreeThreads() const {
-  absl::MutexLock lock{&_mutex};
-  return _threads < _options.threads ? _options.threads - _threads : 0;
 }
 
 void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
@@ -212,13 +207,13 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   }
   {
     absl::MutexLock lock{&_mutex};
-    if (!_stopping && relation->_paused == 0) {
+    if (!_stopping && relation->paused == 0) {
       const auto now = Now();
       for (auto& entry : entries) {
-        entry->id = _registry.Queue(relation->Id(), entry->job->Candidates());
+        entry->id = _registry.Queue(relation->id, entry->job->Candidates());
         entry->queued = now;
         _queue.emplace_back(std::move(entry));
-        ++relation->_queued;
+        ++relation->queued;
       }
       UpdateGauges();
     }
@@ -244,7 +239,7 @@ MergeScheduler::Lease MergeScheduler::TakeOver(
   Queue dropped;
   {
     absl::MutexLock lock{&_mutex};
-    ++relation->_paused;
+    ++relation->paused;
     const auto of_relation = [&](const Entry& entry) {
       return entry.relation == relation;
     };
@@ -259,7 +254,7 @@ MergeScheduler::Lease MergeScheduler::TakeOver(
 void MergeScheduler::Resume::operator()(Relation* relation) const noexcept {
   {
     absl::MutexLock lock{&scheduler->_mutex};
-    --relation->_paused;
+    --relation->paused;
   }
   relation->NudgeCompaction();
 }
@@ -334,14 +329,14 @@ void MergeScheduler::Pump() {
       auto entry = std::move(*best);
       _queue.erase(best);
       auto& relation = *entry->relation;
-      --relation._queued;
-      ++relation._running;
+      --relation.queued;
+      ++relation.running;
       ++_threads;
       if (entry->estimate.lane == MergeLane::Small) {
         ++_small;
       } else {
         ++_big;
-        ++relation._running_big;
+        ++relation.running_big;
       }
       _registry.Dispatch(entry->id);
       auto* raw = entry.get();
@@ -377,10 +372,10 @@ yaclib::Future<> MergeScheduler::Execute(Entry& entry) {
     result = co_await entry.job->Run(entry.stop, entry.helpers);
   } catch (const std::exception& e) {
     result.error = e.what();
-    SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
+    SDB_WARN(SEARCH, "background merge of relation ", entry.relation->id,
              " failed: ", result.error);
   } catch (...) {
-    SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
+    SDB_WARN(SEARCH, "background merge of relation ", entry.relation->id,
              " failed");
   }
   Finish(entry, std::move(result));
@@ -397,23 +392,23 @@ void MergeScheduler::Finish(Entry& raw, MergeResult result) noexcept {
     entry = std::move(it->second);
     _running.erase(it);
     auto& relation = *entry->relation;
-    --relation._running;
+    --relation.running;
     _threads -= 1 + entry->helpers;
     if (entry->estimate.lane == MergeLane::Small) {
       --_small;
     } else {
       _big -= 1 + entry->helpers;
-      --relation._running_big;
+      --relation.running_big;
     }
     if (Produced(outcome)) {
-      relation._failures = 0;
+      relation.failures = 0;
     } else if (outcome == MergeOutcome::Failed) {
-      ++relation._failures;
-      const auto shift = std::min<uint32_t>(relation._failures - 1, 20);
+      ++relation.failures;
+      const auto shift = std::min<uint32_t>(relation.failures - 1, 20);
       const auto until =
         Now() + std::min(kMaxBackoff, kBackoff * (int64_t{1} << shift));
       for (auto& name : entry->inputs) {
-        relation._blocked.insert_or_assign(std::move(name), until);
+        relation.blocked.insert_or_assign(std::move(name), until);
       }
     }
     UpdateGauges();

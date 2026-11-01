@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <mutex>
 
 #include "iresearch/index/merge/merge_plan.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -37,7 +36,7 @@ MergeSchedule::MergeSchedule(const MergePlan& plan) {
   _waiting.resize(units.size());
   _left = units.size();
   for (size_t unit = 0; unit != units.size(); ++unit) {
-    const auto deps = plan.Dependencies(unit);
+    const auto& deps = units[unit].deps;
     _waiting[unit] = deps.size();
     for (const auto dep : deps) {
       SDB_ASSERT(dep < unit);
@@ -57,7 +56,7 @@ MergeSchedule::MergeSchedule(const MergePlan& plan) {
 }
 
 size_t MergeSchedule::Claim() {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (_failed || _ready.empty()) {
     return kNoUnit;
   }
@@ -72,7 +71,7 @@ size_t MergeSchedule::Claim() {
 }
 
 void MergeSchedule::Hold(size_t unit) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(unit < _waiting.size());
   if (_waiting[unit]++ == 0) {
     std::erase(_ready, unit);
@@ -80,7 +79,7 @@ void MergeSchedule::Hold(size_t unit) {
 }
 
 void MergeSchedule::Release(size_t unit) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(unit < _waiting.size());
   SDB_ASSERT(_waiting[unit] != 0);
   if (--_waiting[unit] == 0 && !_failed) {
@@ -89,18 +88,18 @@ void MergeSchedule::Release(size_t unit) {
 }
 
 void MergeSchedule::Fail() {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _failed = true;
   _ready.clear();
 }
 
 size_t MergeSchedule::Running() const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return _running;
 }
 
 void MergeSchedule::Finish(size_t unit, bool ok) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(_running != 0);
   --_running;
   --_left;
@@ -120,12 +119,12 @@ void MergeSchedule::Finish(size_t unit, bool ok) {
 }
 
 bool MergeSchedule::Done() const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return _failed ? _running == 0 : _left == 0;
 }
 
 bool MergeSchedule::Ok() const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return !_failed;
 }
 

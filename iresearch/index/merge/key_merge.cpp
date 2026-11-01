@@ -29,8 +29,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
-#include <limits>
-#include <optional>
+#include <memory>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -47,10 +46,7 @@
 namespace irs {
 namespace {
 
-struct KeyColumn {
-  field_id id;
-  duckdb::LogicalType type;
-};
+using KeyColumn = KeyOrder::KeyColumn;
 
 class SegmentKeyReader final : public duckdb::PresortedMergeReader {
  public:
@@ -152,111 +148,76 @@ class SegmentKeys final : public duckdb::PresortedMergeInput {
 
 }  // namespace
 
-struct KeyOrder::State {
-  State(MergeDocMap& doc_map, const SortSpec& spec)
-    : doc_map{doc_map}, spec{spec} {}
+void KeyOrder::ThrowIncomplete() const {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("the order of a sorted merge of ", _doc_map.size(),
+                          " segments does not hold every live document once"));
+}
 
-  const SubReader& Reader(size_t input) const { return *doc_map[input].reader; }
-
-  [[noreturn]] void ThrowIncomplete() const {
+void KeyOrder::ThrowIfUnsorted(const duckdb::optional_idx& input) const {
+  if (input.IsValid()) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("the order of a sorted merge of ", doc_map.size(),
-              " segments does not hold every live document once"));
+      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+      ERR_MSG("segment '", Reader(input.GetIndex()).Meta().name,
+              "' of a sorted merge is not sorted by the merge key"));
   }
+}
 
-  void ThrowIfUnsorted(const duckdb::optional_idx& input) const {
-    if (input.IsValid()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-        ERR_MSG("segment '", Reader(input.GetIndex()).Meta().name,
-                "' of a sorted merge is not sorted by the merge key"));
-    }
-  }
-
-  void PlanParts() {
-    const auto count = static_cast<size_t>(merge->PartitionCount());
-    std::vector<uint64_t> live_in(count);
-    for (size_t i = 0; i != doc_map.size(); ++i) {
-      const auto mask = MakeGenericDocsMask(Reader(i));
-      for (size_t p = 0; p != count; ++p) {
-        const auto first = merge->PartitionBegin(p, i);
-        const auto end = merge->PartitionBegin(p + 1, i);
-        live_in[p] +=
-          end - first -
-          mask.CountIn(static_cast<doc_id_t>(first + doc_limits::min()),
-                       static_cast<doc_id_t>(end + doc_limits::min()));
-      }
-    }
-    parts.resize(count);
-    uint64_t next = 0;
+void KeyOrder::PlanParts() {
+  const auto count = static_cast<size_t>(_merge->PartitionCount());
+  std::vector<uint64_t> live_in(count);
+  for (size_t i = 0; i != _doc_map.size(); ++i) {
+    const auto mask = MakeGenericDocsMask(Reader(i));
     for (size_t p = 0; p != count; ++p) {
-      parts[p].next = next;
-      next += live_in[p];
-      parts[p].end = next;
-      parts[p].spans.resize(doc_map.size());
+      const auto first = _merge->PartitionBegin(p, i);
+      const auto end = _merge->PartitionBegin(p + 1, i);
+      live_in[p] +=
+        end - first -
+        mask.CountIn(static_cast<doc_id_t>(first + doc_limits::min()),
+                     static_cast<doc_id_t>(end + doc_limits::min()));
     }
   }
-
-  void ConcatOrder() {
-    doc_id_t next = doc_limits::min();
-    for (size_t i = 0; i != doc_map.size(); ++i) {
-      const auto& reader = Reader(i);
-      auto* const id_map = doc_map[i].remap.id_map.data();
-      auto mask = MakeGenericDocsMask(reader);
-      isolated[i] = next - doc_limits::min();
-      VisitLive(mask, doc_limits::min(), LiveEnd(reader),
-                [&](doc_id_t window, std::span<const uint32_t> live) {
-                  for (const auto doc : live) {
-                    order->Set(next - doc_limits::min(), i);
-                    id_map[window + doc] = next++;
-                  }
-                  return true;
-                });
-    }
-    order->Finish();
+  _parts.resize(count);
+  uint64_t next = 0;
+  for (size_t p = 0; p != count; ++p) {
+    _parts[p].next = next;
+    next += live_in[p];
+    _parts[p].end = next;
+    _parts[p].spans.resize(_doc_map.size());
   }
+}
 
-  struct Span {
-    uint64_t first = std::numeric_limits<uint64_t>::max();
-    uint64_t last = 0;
-  };
-
-  struct Part {
-    uint64_t next = 0;
-    uint64_t end = 0;
-    std::vector<Span> spans;
-    bool failed = false;
-  };
-
-  MergeDocMap& doc_map;
-  const SortSpec& spec;
-  std::vector<KeyColumn> keys;
-  std::vector<uint64_t> live;
-  std::vector<uint64_t> isolated;
-  std::optional<MergeOrder> order;
-  duckdb::shared_ptr<duckdb::PresortedMerge> merge;
-  std::vector<Part> parts;
-};
-
-KeyOrder::KeyOrder(MergeDocMap& doc_map, const SortSpec& spec)
-  : _state{std::make_unique<State>(doc_map, spec)} {}
-
-KeyOrder::~KeyOrder() = default;
+void KeyOrder::ConcatOrder() {
+  doc_id_t next = doc_limits::min();
+  for (size_t i = 0; i != _doc_map.size(); ++i) {
+    const auto& reader = Reader(i);
+    auto* const id_map = _doc_map[i].remap.id_map.data();
+    auto mask = MakeGenericDocsMask(reader);
+    _isolated[i] = next - doc_limits::min();
+    VisitLive(mask, doc_limits::min(), LiveEnd(reader),
+              [&](doc_id_t window, std::span<const uint32_t> live) {
+                for (const auto doc : live) {
+                  _order->Set(next - doc_limits::min(), i);
+                  id_map[window + doc] = next++;
+                }
+                return true;
+              });
+  }
+  _order->Finish();
+}
 
 void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
                        size_t threads) {
-  auto& s = *_state;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
-  for (const auto& key : s.spec.keys) {
-    for (const auto& input : s.doc_map) {
+  for (const auto& key : _spec.keys) {
+    for (const auto& input : _doc_map) {
       const auto* cs = input.reader->GetColReader();
       const auto* col = cs ? cs->Column(key.column) : nullptr;
       if (!col) {
         continue;
       }
-      s.keys.push_back({.id = key.column, .type = col->Type()});
+      _keys.push_back({.id = key.column, .type = col->Type()});
       types.push_back(col->Type());
       modifiers.emplace_back(key.descending ? duckdb::OrderType::DESCENDING
                                             : duckdb::OrderType::ASCENDING,
@@ -267,63 +228,54 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
     }
   }
   uint64_t rows = 0;
-  s.live.resize(s.doc_map.size());
-  s.isolated.assign(s.doc_map.size(), kNotIsolated);
-  for (size_t i = 0; i != s.doc_map.size(); ++i) {
-    auto& input = s.doc_map[i];
+  _live.resize(_doc_map.size());
+  _isolated.assign(_doc_map.size(), kNotIsolated);
+  for (size_t i = 0; i != _doc_map.size(); ++i) {
+    auto& input = _doc_map[i];
     const auto& reader = *input.reader;
-    s.live[i] = reader.live_docs_count();
-    rows += s.live[i];
+    _live[i] = reader.live_docs_count();
+    rows += _live[i];
     input.remap.id_map.resize(reader.docs_count() + doc_limits::min(),
                               doc_limits::eof());
   }
-  s.order.emplace(s.doc_map.size(), rows, s.doc_map.get_allocator().Manager());
-  if (s.keys.empty() || rows == 0) {
-    s.ConcatOrder();
+  _order.emplace(_doc_map.size(), rows, _doc_map.get_allocator().Manager());
+  if (_keys.empty() || rows == 0) {
+    ConcatOrder();
     return;
   }
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
-  for (const auto& input : s.doc_map) {
+  for (const auto& input : _doc_map) {
     inputs.push_back(
-      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, s.keys));
+      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, _keys));
   }
-  s.merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
+  _merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
     std::move(types), std::move(modifiers), std::move(inputs));
-  s.merge->Partition(partitions, false, scheduler, threads);
-  s.PlanParts();
-}
-
-bool KeyOrder::Pending() const noexcept {
-  return static_cast<bool>(_state->merge);
-}
-
-duckdb::shared_ptr<duckdb::PresortedMerge> KeyOrder::KeyMerge() const noexcept {
-  return _state->merge;
+  _merge->Partition(partitions, false, scheduler, threads);
+  PlanParts();
 }
 
 void KeyOrder::Expand(size_t partition,
                       std::span<const duckdb::PresortedRun> runs) {
-  auto& s = *_state;
-  SDB_ASSERT(partition < s.parts.size());
-  auto& part = s.parts[partition];
+  SDB_ASSERT(partition < _parts.size());
+  auto& part = _parts[partition];
   for (const auto& run : runs) {
-    if (run.input >= s.doc_map.size()) {
+    if (run.input >= _doc_map.size()) {
       part.failed = true;
       return;
     }
     const auto input = static_cast<size_t>(run.input);
-    const auto first_row = s.merge->PartitionBegin(partition, input);
-    const auto end_row = s.merge->PartitionBegin(partition + 1, input);
+    const auto first_row = _merge->PartitionBegin(partition, input);
+    const auto end_row = _merge->PartitionBegin(partition + 1, input);
     if (run.begin < first_row || run.begin > end_row ||
         run.count > end_row - run.begin) {
       part.failed = true;
       return;
     }
-    auto& remap = s.doc_map[input].remap;
+    auto& remap = _doc_map[input].remap;
     auto& span = part.spans[input];
     const auto begin = static_cast<doc_id_t>(run.begin + doc_limits::min());
     const auto end = static_cast<doc_id_t>(begin + run.count);
-    auto mask = MakeGenericDocsMask(*s.doc_map[input].reader);
+    auto mask = MakeGenericDocsMask(*_doc_map[input].reader);
     const bool expanded = VisitLive(
       mask, begin, end, [&](doc_id_t window, std::span<const uint32_t> live) {
         for (const auto offset : live) {
@@ -331,7 +283,7 @@ void KeyOrder::Expand(size_t partition,
           if (remap.id_map[doc] != doc_limits::eof()) {
             return false;
           }
-          s.order->Set(part.next, input);
+          _order->Set(part.next, input);
           remap.id_map[doc] =
             static_cast<doc_id_t>(part.next + doc_limits::min());
           span.first = std::min(span.first, part.next);
@@ -346,18 +298,17 @@ void KeyOrder::Expand(size_t partition,
   }
 }
 
-bool KeyOrder::Merge(const std::function<bool()>& proceed) {
-  auto& s = *_state;
-  SDB_ASSERT(s.merge);
+bool KeyOrder::Merge(const MergeProgress& proceed) {
+  SDB_ASSERT(_merge);
   duckdb::vector<duckdb::PresortedRun> runs;
-  for (size_t part = 0; part != s.parts.size(); ++part) {
-    const auto state = s.merge->BeginMerge(part);
+  for (size_t part = 0; part != _parts.size(); ++part) {
+    const auto state = _merge->BeginMerge(part);
     while (!state->Done()) {
       runs.clear();
       duckdb::optional_idx unsorted;
-      if (!s.merge->Merge(*state, runs, STANDARD_VECTOR_SIZE, proceed,
-                          unsorted)) {
-        s.ThrowIfUnsorted(unsorted);
+      if (!_merge->Merge(*state, runs, STANDARD_VECTOR_SIZE, proceed,
+                         unsorted)) {
+        ThrowIfUnsorted(unsorted);
         return false;
       }
       Expand(part, runs);
@@ -367,12 +318,11 @@ bool KeyOrder::Merge(const std::function<bool()>& proceed) {
 }
 
 void KeyOrder::Finish() {
-  auto& s = *_state;
-  SDB_IF_FAILURE("irs::KeyOrder::Finish") { s.ThrowIncomplete(); }
-  std::vector<State::Span> spans(s.doc_map.size());
-  for (const auto& part : s.parts) {
+  SDB_IF_FAILURE("irs::KeyOrder::Finish") { ThrowIncomplete(); }
+  std::vector<Span> spans(_doc_map.size());
+  for (const auto& part : _parts) {
     if (part.failed || part.next != part.end) {
-      s.ThrowIncomplete();
+      ThrowIncomplete();
     }
     for (size_t i = 0; i != spans.size(); ++i) {
       spans[i].first = std::min(spans[i].first, part.spans[i].first);
@@ -381,19 +331,13 @@ void KeyOrder::Finish() {
   }
   for (size_t i = 0; i != spans.size(); ++i) {
     if (spans[i].first <= spans[i].last &&
-        spans[i].last - spans[i].first + 1 == s.live[i]) {
-      s.isolated[i] = spans[i].first;
+        spans[i].last - spans[i].first + 1 == _live[i]) {
+      _isolated[i] = spans[i].first;
     }
   }
-  s.merge.reset();
-  s.parts = {};
-  s.order->Finish();
+  _merge.reset();
+  _parts = {};
+  _order->Finish();
 }
-
-uint64_t KeyOrder::IsolatedBegin(size_t input) const noexcept {
-  return _state->isolated[input];
-}
-
-const MergeOrder& KeyOrder::Order() const noexcept { return *_state->order; }
 
 }  // namespace irs

@@ -152,6 +152,7 @@ class MergeSchedulerTest : public ::testing::Test {
  protected:
   std::unique_ptr<MergeScheduler> Make(
     size_t threads, yaclib::IExecutor& executor = yaclib::MakeInline()) {
+    _threads = threads;
     MergeScheduler::Options options;
     options.threads = threads;
     options.now = [this] { return _now; };
@@ -161,6 +162,12 @@ class MergeSchedulerTest : public ::testing::Test {
 
   std::shared_ptr<MergeScheduler::Relation> Relation(uint64_t id) {
     return std::make_shared<MergeScheduler::Relation>(id);
+  }
+
+  size_t FreeThreads() const {
+    const auto busy = static_cast<size_t>(
+      sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
+    return busy < _threads ? _threads - busy : 0;
   }
 
   struct Job {
@@ -215,6 +222,7 @@ class MergeSchedulerTest : public ::testing::Test {
   Board _board;
   MergeRegistry _registry;
   absl::Time _now = absl::FromUnixSeconds(1'000'000);
+  size_t _threads = 0;
 };
 
 TEST(MergeEstimateTest, LanesAndScores) {
@@ -266,11 +274,11 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
   EXPECT_FALSE(Started("big2"));
   EXPECT_FALSE(Started("big3"));
   EXPECT_EQ(1, _board.helpers["big1"]);
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
 
   Enqueue(*scheduler, relations[0], "small", kMiB);
   EXPECT_TRUE(Started("small"));
-  EXPECT_EQ(0, scheduler->FreeThreads());
+  EXPECT_EQ(0, FreeThreads());
   EXPECT_FALSE(scheduler->TryAcquireThread());
 
   Complete("big1", MergeOutcome::Merged);
@@ -279,7 +287,7 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
   EXPECT_EQ(0, _board.helpers["big2"]);
   EXPECT_EQ(0, _board.helpers["big3"]);
   CompleteAll(MergeOutcome::Merged);
-  EXPECT_EQ(3, scheduler->FreeThreads());
+  EXPECT_EQ(3, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
@@ -449,7 +457,7 @@ TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
   EXPECT_EQ(1, scheduler->Blocked(*relation).size());
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
@@ -458,19 +466,19 @@ TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
   auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
   EXPECT_EQ(2, _board.helpers["a"]);
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
   EXPECT_FALSE(scheduler->TryAcquireThread());
   Enqueue(*scheduler, second, "b", 512 * kMiB);
   EXPECT_FALSE(Started("b"));
   Enqueue(*scheduler, second, "small", kMiB);
   EXPECT_TRUE(Started("small"));
-  EXPECT_EQ(0, scheduler->FreeThreads());
+  EXPECT_EQ(0, FreeThreads());
 
   Complete("a", MergeOutcome::Merged);
   EXPECT_TRUE(Started("b"));
   EXPECT_EQ(2, _board.helpers["b"]);
   CompleteAll(MergeOutcome::Merged);
-  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(4, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, AManualCompactionHoldsABigThread) {
@@ -491,7 +499,7 @@ TEST_F(MergeSchedulerTest, AManualCompactionHoldsABigThread) {
   scheduler->ReleaseThread();
   scheduler->ReleaseThread();
   CompleteAll(MergeOutcome::Merged);
-  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(4, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
@@ -507,10 +515,10 @@ TEST_F(MergeSchedulerTest, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
   EXPECT_EQ(1, _board.helpers["big1"]);
   EXPECT_EQ(0, _board.helpers["big2"]);
   EXPECT_EQ(0, _board.helpers["small"]);
-  EXPECT_EQ(0, scheduler->FreeThreads());
+  EXPECT_EQ(0, FreeThreads());
 
   CompleteAll(MergeOutcome::Merged);
-  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(4, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
@@ -553,7 +561,7 @@ TEST_F(MergeSchedulerTest, StopReturnsTheHelpersOfRunningMerges) {
   Enqueue(*scheduler, second, "queued", 512 * kMiB);
   EXPECT_EQ(2, _board.helpers["running"]);
   EXPECT_FALSE(Started("queued"));
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
   EXPECT_EQ(3, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 
   std::thread stopper{[&] { scheduler->Stop(); }};
@@ -563,7 +571,7 @@ TEST_F(MergeSchedulerTest, StopReturnsTheHelpersOfRunningMerges) {
   Complete("running", MergeOutcome::Cancelled);
   stopper.join();
   EXPECT_TRUE(Destroyed("queued"));
-  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(4, FreeThreads());
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
@@ -575,7 +583,7 @@ TEST_F(MergeSchedulerTest, AnyThrownValueFailsTheMerge) {
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
   EXPECT_EQ(1, scheduler->Blocked(*relation).size());
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
 }
 
 TEST_F(MergeSchedulerTest, SmallMergesFillingTheThreadsHoldBackBigOnes) {
@@ -682,7 +690,7 @@ TEST_F(MergeSchedulerTest, ADroppedSubmissionCountsAsCancelled) {
   EXPECT_FALSE(Started("a"));
   EXPECT_TRUE(Destroyed("a"));
   EXPECT_EQ(0, relation->CompactionGeneration());
-  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(1, FreeThreads());
   EXPECT_EQ(2, scheduler->Wanted(*relation));
 }
 
@@ -692,7 +700,7 @@ TEST_F(MergeSchedulerTest, ABigMergeThatNeverRunsReturnsItsHelpers) {
   Enqueue(*scheduler, relation, "a", 512 * kMiB);
   EXPECT_FALSE(Started("a"));
   EXPECT_TRUE(Destroyed("a"));
-  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(4, FreeThreads());
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
 
@@ -733,7 +741,7 @@ TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {
   auto scheduler = Make(2);
   MaintainedStore store{3, {}};
   const auto& relation = store.MergeRelation();
-  EXPECT_EQ(3, relation->Id());
+  EXPECT_EQ(3, relation->id);
   scheduler->TakeOver(relation);
   EXPECT_EQ(1, store.CompactionGeneration());
   store.NudgeCompaction();

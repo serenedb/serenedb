@@ -153,8 +153,7 @@ class StorageMergeJob final : public MergeJob {
     SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
     SDB_WAIT_ON_FAILURE("pause_compaction_run");
     SDB_PARK_ONCE_ON_FAILURE("park_compaction_run");
-    if (_storage->Retired() || _ticket.Revoked() ||
-        _storage->GetTasksSettings().compaction_interval_msec == 0) {
+    if (Stale() || _storage->GetTasksSettings().compaction_interval_msec == 0) {
       co_return MergeResult{
         .outcome = {.error = irs::CompactionError::Cancelled}};
     }
@@ -196,11 +195,11 @@ class StorageMergeJob final : public MergeJob {
 };
 
 template<typename Storage>
-size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
-                  const std::shared_ptr<MergeScheduler::Relation>& relation) {
+size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   if constexpr (std::is_same_v<Storage, SearchTable>) {
     SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
   }
+  const auto& relation = idx->MergeRelation();
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.Blocked(*relation);
   const auto policy =
@@ -413,7 +412,7 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
       }
 
       if (triggered) {
-        if (PlanMerges(idx, merges, relation) != 0) {
+        if (PlanMerges(idx, merges) != 0) {
           backoff = Clock::duration::zero();
         } else {
           backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;

@@ -51,8 +51,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <utility>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
@@ -512,61 +510,6 @@ void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
       }) != 0) {
     _layout.compaction_stale = true;
   }
-}
-
-auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
-                                const irs::MergeProgress& progress,
-                                const irs::IndexFieldOptions* field_options,
-                                const irs::AnnBuildEnv* env,
-                                irs::MergeExecutor& executor)
-  -> yaclib::Future<MergeResult> {
-  co_return co_await AwaitMerge([&] {
-    return _writer->RunMerge(std::move(ticket), field_options, progress, env,
-                             &executor);
-  });
-}
-
-auto SearchTable::CompactAsync(const irs::CompactionPolicy& policy,
-                               const irs::MergeProgress& progress,
-                               const irs::IndexFieldOptions* field_options,
-                               const irs::AnnBuildEnv* env,
-                               irs::MergeExecutor& executor,
-                               irs::LoneSegment lone)
-  -> yaclib::Future<MergeResult> {
-  co_return co_await AwaitMerge([&] {
-    return _writer->CompactAsync(policy, field_options, progress, env,
-                                 &executor, lone);
-  });
-}
-
-auto SearchTable::AwaitMerge(
-  absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-  -> yaclib::Future<MergeResult> {
-  const auto begin = std::chrono::steady_clock::now();
-  bool empty_compaction = false;
-  MergeResult result;
-  try {
-    // iresearch serializes Compact against refresh/DML internally, so a long
-    // merge never blocks the refresh chain.
-    result.outcome = co_await merge();
-    if (!result.outcome) {
-      SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
-                " merged nothing: cancelled, or every document was removed");
-      empty_compaction = true;
-    } else {
-      empty_compaction = result.outcome.size == 0;
-    }
-  } catch (const std::exception& e) {
-    result.error = duckdb::ErrorData{e}.RawMessage();
-    result.res =
-      absl::InternalError(absl::StrCat("consolidation failed for search table ",
-                                       GetTableId(), ": ", result.error));
-  }
-  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - begin)
-                     .count();
-  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
-  co_return result;
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {

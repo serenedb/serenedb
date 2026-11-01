@@ -205,17 +205,20 @@ search::MergeRoundPlan MergeTarget::Plan(
   const irs::IndexReader& snapshot, const MergeRequest& request,
   const search::CopyChecker& checker) const {
   return search::PlanMergeRound(
-    snapshot, search::MergeRoundRequest{
-                .mode = request.mode,
-                .settings = &Settings(),
-                .merges = search::GetSearchEngine().MergeRoundSize(),
-                .target_segments = request.target_segments,
-                .exact_target = request.exact_target,
-                .row_group_size = RowGroupSize(),
-                .inputs_max = MergeInputsMax(),
-                .segments = request.segments,
-                .copy_check = &checker,
-              });
+    snapshot,
+    search::MergeRoundRequest{
+      .mode = request.mode,
+      .settings = &_store->GetTasksSettings(),
+      .merges = search::GetSearchEngine().Merges().RoundSize(),
+      .target_segments = _index && request.mode == search::MergeMode::Compact
+                           ? 1
+                           : request.target_segments,
+      .exact_target = request.exact_target,
+      .row_group_size = _options->row_group_size,
+      .inputs_max = _store->MergeInputsMax(),
+      .segments = request.segments,
+      .copy_check = &checker,
+    });
 }
 
 ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
@@ -224,8 +227,7 @@ ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
                                    const irs::AnnBuildEnv* env,
                                    search::MergeOrigin origin,
                                    irs::MergeExecutor& executor) const {
-  search::MergeRecorder recorder{_table ? _table->GetId() : _index->GetId(),
-                                 origin};
+  search::MergeRecorder recorder{_store->MergeRelation()->id, origin};
   const irs::CompactionPolicy pick = [&](irs::Compaction& candidates,
                                          const irs::IndexReader& index,
                                          const irs::CompactingSegments&) {
@@ -255,10 +257,6 @@ ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
     .stats = std::move(merged.outcome.stats),
     .error = std::string{merged.res.message()},
   };
-}
-
-search::MergeScheduler::Lease MergeTarget::TakeOver() const {
-  return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
 }
 
 void MergeTarget::Publish() const {

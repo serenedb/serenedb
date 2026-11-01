@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/numeric/int128.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -33,7 +32,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <magic_enum/magic_enum.hpp>
+#include <string_view>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -294,13 +293,6 @@ void PlanSegments(const irs::IndexReader& reader,
 }
 
 }  // namespace
-
-std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept {
-  return magic_enum::enum_cast<MergeMode>(
-    name, [](char given, char enumerator) noexcept {
-      return given == absl::ascii_tolower(enumerator);
-    });
-}
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment) {
   PlannedSegment result{

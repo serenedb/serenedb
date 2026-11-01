@@ -156,7 +156,6 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   if (!stats.inputs.empty() || stats.profile.TotalNanos() != 0) {
     record.stats = std::move(stats);
   }
-  record.output_live_docs = record.stats.output_docs;
   record.error = std::move(error);
   if (_history.size() == kHistoryCapacity) {
     _history.pop_front();

@@ -100,8 +100,7 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
     }
     plan.FinishOrder();
   }
-  const auto run = std::make_shared<MergeUnitRun>(plan, plan.Started(),
-                                                  plan.PostingsPending());
+  const auto run = std::make_shared<MergeUnitRun>(plan, plan.PostingsPending());
   run->SetInterrupt([&context] { context.Interrupt(); });
   const bool completed = Execute(
     connection,

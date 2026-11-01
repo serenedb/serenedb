@@ -23,6 +23,7 @@
 #include <absl/status/status.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iresearch/index/index_writer.hpp>
@@ -31,6 +32,7 @@
 #include <limits>
 #include <memory>
 #include <utility>
+#include <yaclib/async/future.hpp>
 
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
@@ -185,6 +187,10 @@ class MaintainedStore {
   }
 
   void SetWriterOptions(irs::IndexWriterOptions& options) const;
+
+  yaclib::Future<MergeResult> AwaitMerge(
+    std::chrono::steady_clock::time_point begin,
+    yaclib::Future<irs::CompactionResult> merge);
 
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;

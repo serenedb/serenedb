@@ -28,6 +28,7 @@
 #include <absl/time/time.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/doc_removal.hpp>
@@ -169,17 +170,24 @@ class InvertedIndexStorage final
                                   lone);
   }
 
-  auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeProgress& progress,
-                     const irs::IndexFieldOptions* field_options,
-                     const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
-    -> yaclib::Future<MergeResult>;
+  yaclib::Future<MergeResult> RunMergeAsync(
+    irs::MergeTicket ticket, const irs::MergeProgress& progress,
+    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+    irs::MergeExecutor& executor) {
+    const auto begin = std::chrono::steady_clock::now();
+    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
+                                               progress, env, &executor));
+  }
 
-  auto CompactAsync(const irs::CompactionPolicy& policy,
-                    const irs::MergeProgress& progress,
-                    const irs::IndexFieldOptions* field_options,
-                    const irs::AnnBuildEnv* env, irs::MergeExecutor& executor,
-                    irs::LoneSegment lone) -> yaclib::Future<MergeResult>;
+  yaclib::Future<MergeResult> CompactAsync(
+    const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+    irs::MergeExecutor& executor, irs::LoneSegment lone) {
+    const auto begin = std::chrono::steady_clock::now();
+    return AwaitMerge(
+      begin, _writer->CompactAsync(policy, field_options, progress, env,
+                                   &executor, lone));
+  }
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -262,9 +270,6 @@ class InvertedIndexStorage final
   irs::IndexReaderOptions ReaderOptions() const;
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);
-  auto AwaitMerge(
-    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-    -> yaclib::Future<MergeResult>;
   void PublishSnapshot();
 
   duckdb::idx_t _index_id;

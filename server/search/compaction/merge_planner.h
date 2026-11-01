@@ -25,10 +25,8 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
-#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "search/compaction/rowid_range.h"
@@ -44,8 +42,6 @@ enum class MergeMode : uint8_t {
   Segments,
   Optimize,
 };
-
-std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept;
 
 struct PlannedSegment {
   std::string name;

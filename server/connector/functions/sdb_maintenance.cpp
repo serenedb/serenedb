@@ -20,6 +20,7 @@
 
 #include "connector/functions/sdb_maintenance.h"
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
@@ -33,6 +34,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -81,7 +83,11 @@ search::MergeMode ReadMode(const duckdb::TableFunctionBindInput& input) {
     return search::MergeMode::Background;
   }
   const auto name = value.GetValue<std::string>();
-  if (const auto mode = search::ParseMergeMode(name)) {
+  const auto mode = magic_enum::enum_cast<search::MergeMode>(
+    name, [](char given, char enumerator) noexcept {
+      return given == absl::ascii_tolower(enumerator);
+    });
+  if (mode) {
     return *mode;
   }
   THROW_SQL_ERROR(
@@ -146,9 +152,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     .exact_target = target_segments != 0,
     .segments = segments,
   };
-  if (target.IsIndex() && mode == search::MergeMode::Compact) {
-    request.target_segments = 1;
-  }
   const search::CopyChecker checker{
     target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
   auto plan = target.Plan(snapshot, request, checker);

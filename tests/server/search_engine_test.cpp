@@ -34,7 +34,7 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   SearchEngine engine;
   engine.start();
   int held = 0;
-  while (engine.TryAcquireCompaction()) {
+  while (engine.Merges().TryAcquireThread()) {
     ++held;
   }
   EXPECT_LT(0, held);
@@ -43,7 +43,7 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
     EXPECT_TRUE(slot.AnnEnv());
   }
   for (; held != 0; --held) {
-    engine.ReleaseCompaction();
+    engine.Merges().ReleaseThread();
   }
   engine.stop();
   scheduler.stop();

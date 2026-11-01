@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <cstdint>
 #include <memory>
 #include <span>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
 
 namespace irs {
 
@@ -69,17 +68,16 @@ class ColumnMerger {
 
   bool Copyable(field_id column, size_t input) const;
 
-  bool Merge(field_id column, ColWriter& output,
-             absl::FunctionRef<bool()> progress);
+  bool Merge(field_id column, ColWriter& output, const MergeProgress& progress);
 
-  bool Train(field_id column, absl::FunctionRef<bool()> progress);
+  bool Train(field_id column, const MergeProgress& progress);
 
   bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
-                  ColWriter& output, absl::FunctionRef<bool()> progress);
+                  ColWriter& output, const MergeProgress& progress);
 
   bool CopyRange(field_id column, uint32_t part, size_t input, uint64_t begin,
                  uint64_t end, ColWriter& output,
-                 absl::FunctionRef<bool()> progress);
+                 const MergeProgress& progress);
 
  private:
   struct State;

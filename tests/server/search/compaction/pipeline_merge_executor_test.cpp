@@ -527,8 +527,8 @@ TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
                       nullptr, {},      nullptr, &spec};
   ASSERT_TRUE(plan.Prepare(1));
   ASSERT_TRUE(plan.OrderPending());
-  const auto run = std::make_shared<search::MergeUnitRun>(
-    plan, std::chrono::steady_clock::now(), plan.PostingsPending());
+  const auto run =
+    std::make_shared<search::MergeUnitRun>(plan, plan.PostingsPending());
   const search::LogicalMergeOrder order{plan};
   const search::LogicalMergeUnits units{run, 1, {}};
   EXPECT_EQ("MERGE_ORDER", order.GetName());
@@ -561,8 +561,7 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
   ASSERT_FALSE(plan.TermRanges().empty());
   auto& range = *plan.TermRanges().front();
   EXPECT_LT(1, range.PartCount());
-  const auto run = std::make_shared<search::MergeUnitRun>(
-    plan, std::chrono::steady_clock::now(), false);
+  const auto run = std::make_shared<search::MergeUnitRun>(plan, false);
   const search::LogicalPostingsMerge merge{range, duckdb::TableIndex(1), run};
   EXPECT_EQ("POSTINGS_MERGE", merge.GetName());
   EXPECT_FALSE(merge.RequireOptimizer());
@@ -717,7 +716,7 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   irs::MergePlan plan{out,      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare());
-  search::MergeUnitRun run{plan, std::chrono::steady_clock::now(), false};
+  search::MergeUnitRun run{plan, false};
   std::vector<size_t> ready;
   for (auto unit = run.schedule.Claim(); unit != irs::MergeSchedule::kNoUnit;
        unit = run.schedule.Claim()) {
@@ -759,8 +758,8 @@ TEST_F(PipelineMergeExecutorTest, MergeUnitsPlanPassesThePlanVerifier) {
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare(8));
   ASSERT_FALSE(plan.TermRanges().empty());
-  const auto run = std::make_shared<search::MergeUnitRun>(
-    plan, std::chrono::steady_clock::now(), plan.PostingsPending());
+  const auto run =
+    std::make_shared<search::MergeUnitRun>(plan, plan.PostingsPending());
   search::LogicalMergeUnits units{run, 8, plan.TermRanges()};
   units.ResolveOperatorTypes();
   const auto result = duckdb::LogicalPlanVerifier::VerifyAlways(units);
@@ -786,8 +785,7 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
   const auto parts = range.PartCount();
   ASSERT_LT(1, parts);
   ASSERT_EQ(parts, range.PartsLeft());
-  search::MergeUnitRun run{plan, std::chrono::steady_clock::now(),
-                           plan.PostingsPending()};
+  search::MergeUnitRun run{plan, plan.PostingsPending()};
   EXPECT_TRUE(run.MayClaim(1));
   EXPECT_TRUE(run.MayClaim(parts));
   const auto unit = run.schedule.Claim();

@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -188,16 +189,23 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
                                   lone);
   }
-  auto RunMergeAsync(irs::MergeTicket ticket,
-                     const irs::MergeProgress& progress,
-                     const irs::IndexFieldOptions* field_options,
-                     const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
-    -> yaclib::Future<MergeResult>;
-  auto CompactAsync(const irs::CompactionPolicy& policy,
-                    const irs::MergeProgress& progress,
-                    const irs::IndexFieldOptions* field_options,
-                    const irs::AnnBuildEnv* env, irs::MergeExecutor& executor,
-                    irs::LoneSegment lone) -> yaclib::Future<MergeResult>;
+  yaclib::Future<MergeResult> RunMergeAsync(
+    irs::MergeTicket ticket, const irs::MergeProgress& progress,
+    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+    irs::MergeExecutor& executor) {
+    const auto begin = std::chrono::steady_clock::now();
+    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
+                                               progress, env, &executor));
+  }
+  yaclib::Future<MergeResult> CompactAsync(
+    const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
+    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+    irs::MergeExecutor& executor, irs::LoneSegment lone) {
+    const auto begin = std::chrono::steady_clock::now();
+    return AwaitMerge(
+      begin, _writer->CompactAsync(policy, field_options, progress, env,
+                                   &executor, lone));
+  }
   ResultWithTime CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
@@ -312,9 +320,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);
-  auto AwaitMerge(
-    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-    -> yaclib::Future<MergeResult>;
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;

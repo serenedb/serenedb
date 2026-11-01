@@ -25,7 +25,6 @@
 #include <absl/time/time.h>
 
 #include <chrono>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
@@ -47,8 +46,6 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
@@ -264,27 +261,6 @@ ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-auto InvertedIndexStorage::RunMergeAsync(
-  irs::MergeTicket ticket, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  irs::MergeExecutor& executor) -> yaclib::Future<MergeResult> {
-  co_return co_await AwaitMerge([&] {
-    return _writer->RunMerge(std::move(ticket), field_options, progress, env,
-                             &executor);
-  });
-}
-
-auto InvertedIndexStorage::CompactAsync(
-  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  irs::MergeExecutor& executor, irs::LoneSegment lone)
-  -> yaclib::Future<MergeResult> {
-  co_return co_await AwaitMerge([&] {
-    return _writer->CompactAsync(policy, field_options, progress, env,
-                                 &executor, lone);
-  });
-}
-
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   SDB_ASSERT(_writer);
@@ -307,41 +283,6 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
 
   _maintenance.RecordCommit(result, code, time_ms);
   return {std::move(result), time_ms};
-}
-
-auto InvertedIndexStorage::AwaitMerge(
-  absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
-  -> yaclib::Future<MergeResult> {
-  const auto begin = std::chrono::steady_clock::now();
-  bool empty_compaction = false;
-  MergeResult result;
-  try {
-    result.outcome = co_await merge();
-    if (!result.outcome) {
-      SDB_DEBUG(SEARCH, "compaction of Search index '", GetId(),
-                "' merged nothing: cancelled, or every document was removed");
-      empty_compaction = true;
-    } else {
-      empty_compaction = result.outcome.size == 0;
-    }
-  } catch (const std::exception& e) {
-    result.error = duckdb::ErrorData{e}.RawMessage();
-    result.res = absl::InternalError(
-      absl::StrCat("caught exception while executing compaction policy "
-                   "on Search index '",
-                   GetId(), "': ", result.error));
-  } catch (...) {
-    result.error = "unknown exception";
-    result.res = absl::InternalError(
-      absl::StrCat("caught exception while executing compaction policy "
-                   "on Search index '",
-                   GetId(), "'"));
-  }
-  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - begin)
-                     .count();
-  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
-  co_return result;
 }
 
 void InvertedIndexStorage::PublishSnapshot() {

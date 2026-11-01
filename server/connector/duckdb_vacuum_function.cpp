@@ -270,9 +270,7 @@ void CompactTarget(Action action, const MergeTarget& target,
     target,
     MergeRequest{
       .mode = mode,
-      .target_segments = target.IsIndex() && mode == search::MergeMode::Compact
-                           ? 1
-                           : search::DefaultTarget(mode, context),
+      .target_segments = search::DefaultTarget(mode, context),
     },
     duckdb::TaskScheduler::GetScheduler(context)};
   ExecutedMerge merge;

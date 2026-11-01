@@ -169,7 +169,7 @@ bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
   std::vector<std::vector<size_t>> dependents(units.size());
   std::vector<size_t> ready;
   for (size_t unit = 0; unit != units.size(); ++unit) {
-    const auto deps = plan.Dependencies(unit);
+    const auto& deps = units[unit].deps;
     waiting[unit] = deps.size();
     for (const auto dep : deps) {
       dependents[dep].push_back(unit);

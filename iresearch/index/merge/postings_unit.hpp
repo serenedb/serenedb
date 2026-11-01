@@ -22,7 +22,6 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <cstddef>
 #include <memory>
 #include <span>
 
@@ -45,25 +44,12 @@ using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
                                       const MergedNormIdMap& merged_norm_ids);
 
-class PostingsMerger {
- public:
-  PostingsMerger(size_t inputs, const MergeProgress& progress, bool sorted,
-                 const IndexFieldOptions* field_options);
-  ~PostingsMerger();
-
-  PostingsMerger(const PostingsMerger&) = delete;
-  PostingsMerger& operator=(const PostingsMerger&) = delete;
-
-  void Add(const SubReader& reader, const DocRemap& remap);
-
-  bool Write(const FlushState& flush_state,
-             const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
-             IdxWriter& idx, std::span<const BasicTermReader* const> extra,
-             std::span<const std::unique_ptr<TermRangeMerge>> ranges = {});
-
- private:
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
-};
+bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
+                   bool sorted, const IndexFieldOptions* field_options,
+                   const MergeProgress& progress,
+                   const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
+                   IdxWriter& idx,
+                   std::span<const BasicTermReader* const> extra,
+                   std::span<const std::unique_ptr<TermRangeMerge>> ranges);
 
 }  // namespace irs

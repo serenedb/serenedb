@@ -77,9 +77,6 @@ class SearchEngine final {
   // Signal the loops to stop without joining.
   void RequestStop() noexcept;
 
-  [[nodiscard]] bool TryAcquireCompaction() noexcept;
-  void ReleaseCompaction() noexcept;
-
   uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
                              uint32_t most = MaxAnnWorkersPerBuild()) noexcept {
     const uint32_t cap = MaxAnnBuildWorkers();
@@ -103,8 +100,6 @@ class SearchEngine final {
   void ReleaseAnnWorkers(uint32_t n) noexcept {
     _running_ann_workers.fetch_sub(n, std::memory_order_release);
   }
-
-  size_t MergeRoundSize() const noexcept;
 
  private:
   std::atomic<bool> _stopping{false};

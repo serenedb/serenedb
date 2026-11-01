@@ -41,7 +41,6 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -409,7 +408,7 @@ struct ColumnMerger::State {
   template<typename Visit>
   bool VisitRows(field_id column, uint64_t begin, uint64_t end,
                  std::span<const std::shared_ptr<ReadContext>> ctxs,
-                 absl::FunctionRef<bool()> progress, Visit&& visit) {
+                 const MergeProgress& progress, Visit&& visit) {
     const auto& type = First(column).Type();
     ColumnReader::VectorScratch batch_scratch{type};
     duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
@@ -494,7 +493,7 @@ struct ColumnMerger::State {
     return rows;
   }
 
-  bool TrainLeaves(field_id column, absl::FunctionRef<bool()> progress) {
+  bool TrainLeaves(field_id column, const MergeProgress& progress) {
     const auto opts = Options(column);
     std::vector<LeafSample> leaves;
     for (auto& path : TextLeavesOf(First(column).Type())) {
@@ -535,13 +534,13 @@ struct ColumnMerger::State {
       trained.emplace_back(
         LeafDictionary{std::move(leaf.path), leaf.sampler.Train()});
     }
-    std::lock_guard lock{dictionaries_mutex};
+    absl::MutexLock lock{&dictionaries_mutex};
     leaf_dictionaries.emplace(column, std::move(trained));
     return true;
   }
 
   bool SampleLeafRowGroups(field_id column, std::span<LeafSample> leaves,
-                           absl::FunctionRef<bool()> progress) {
+                           const MergeProgress& progress) {
     uint64_t group = 0;
     const auto close = [&] {
       for (auto& leaf : leaves) {
@@ -575,7 +574,7 @@ struct ColumnMerger::State {
   }
 
   bool SampleRowGroups(field_id column, codecs::DictionarySampler& sampler,
-                       absl::FunctionRef<bool()> progress) {
+                       const MergeProgress& progress) {
     uint64_t group = 0;
     std::string entries;
     irs::containers::FlatHashSet<uint64_t> seen;
@@ -736,7 +735,7 @@ struct ColumnMerger::State {
 
   template<typename Visit>
   bool VisitOrdered(field_id column, uint64_t begin, uint64_t end,
-                    absl::FunctionRef<bool()> progress, Visit&& visit) {
+                    const MergeProgress& progress, Visit&& visit) {
     static constexpr uint16_t kNullSlot = std::numeric_limits<uint16_t>::max();
     const auto& type = First(column).Type();
     const auto inputs = order->Inputs();
@@ -965,7 +964,7 @@ bool ColumnMerger::Copyable(field_id column, size_t input) const {
   return BlocksRelocatable(*col);
 }
 
-bool ColumnMerger::Train(field_id column, absl::FunctionRef<bool()> progress) {
+bool ColumnMerger::Train(field_id column, const MergeProgress& progress) {
   auto& shared = *_state;
   if (shared.First(column).Type().IsNested()) {
     return shared.TrainLeaves(column, progress);
@@ -991,21 +990,21 @@ bool ColumnMerger::Train(field_id column, absl::FunctionRef<bool()> progress) {
     }
     dictionary = sampler.Train();
   }
-  std::lock_guard lock{shared.dictionaries_mutex};
+  absl::MutexLock lock{&shared.dictionaries_mutex};
   shared.dictionaries.emplace(column, std::move(dictionary));
   return true;
 }
 
 bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
                               uint64_t end, ColWriter& output,
-                              absl::FunctionRef<bool()> progress) {
+                              const MergeProgress& progress) {
   SDB_ASSERT(begin < end);
   auto& shared = *_state;
   auto& cw = shared.OpenPart(column, part, output);
   if (cw.TrainsDictionary()) {
     std::shared_ptr<const codecs::TrainedDictionary> dictionary;
     {
-      std::lock_guard lock{shared.dictionaries_mutex};
+      absl::MutexLock lock{&shared.dictionaries_mutex};
       const auto it = shared.dictionaries.find(column);
       SDB_ASSERT(it != shared.dictionaries.end());
       dictionary = it->second;
@@ -1016,7 +1015,7 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
   }
   std::vector<LeafDictionary> leaves;
   {
-    std::lock_guard lock{shared.dictionaries_mutex};
+    absl::MutexLock lock{&shared.dictionaries_mutex};
     if (const auto it = shared.leaf_dictionaries.find(column);
         it != shared.leaf_dictionaries.end()) {
       leaves = it->second;
@@ -1050,13 +1049,13 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
 
 bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
                              uint64_t begin, uint64_t end, ColWriter& output,
-                             absl::FunctionRef<bool()> progress) {
+                             const MergeProgress& progress) {
   auto& shared = *_state;
   const auto& source = shared.sources[input];
   const auto& col = *source.col_reader->Column(column);
   std::shared_ptr<const codecs::TrainedDictionary> dictionary;
   {
-    std::lock_guard lock{shared.dictionaries_mutex};
+    absl::MutexLock lock{&shared.dictionaries_mutex};
     if (const auto it = shared.dictionaries.find(column);
         it != shared.dictionaries.end()) {
       dictionary = it->second;
@@ -1085,7 +1084,7 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
 }
 
 bool ColumnMerger::Merge(field_id column, ColWriter& output,
-                         absl::FunctionRef<bool()> progress) {
+                         const MergeProgress& progress) {
   auto& shared = *_state;
   const auto sources = shared.sources;
   HyperLogLogMerger hyperloglog;

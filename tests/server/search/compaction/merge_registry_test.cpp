@@ -203,7 +203,7 @@ TEST(MergeRegistry, FinishedMergeMovesToHistory) {
   EXPECT_LE(record.started_us, record.finished_us);
   EXPECT_EQ(stats.inputs, record.stats.inputs);
   EXPECT_EQ("_3", record.stats.output);
-  EXPECT_EQ(9, record.output_live_docs);
+  EXPECT_EQ(9, record.stats.output_docs);
   EXPECT_EQ(1000, record.stats.profile.Nanos(irs::MergeStep::Columns));
   EXPECT_TRUE(record.error.empty());
 }

@@ -56,16 +56,6 @@ void SearchEngine::RequestStop() noexcept {
   _merges->Interrupt();
 }
 
-bool SearchEngine::TryAcquireCompaction() noexcept {
-  return _merges->TryAcquireThread();
-}
-
-void SearchEngine::ReleaseCompaction() noexcept { _merges->ReleaseThread(); }
-
-size_t SearchEngine::MergeRoundSize() const noexcept {
-  return _merges->RoundSize();
-}
-
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   return std::max<int>(1, static_cast<int>(CountLogicalCores()) / 4 - 1);
 }
@@ -92,11 +82,11 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }  // namespace
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
-  : _held{GetSearchEngine().TryAcquireCompaction()} {}
+  : _held{GetSearchEngine().Merges().TryAcquireThread()} {}
 
 ManualCompactionSlot::~ManualCompactionSlot() {
   if (_held) {
-    GetSearchEngine().ReleaseCompaction();
+    GetSearchEngine().Merges().ReleaseThread();
   }
 }
 

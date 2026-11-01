@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-#include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/compaction/rowid_range.h"
 
 namespace sdb::search {

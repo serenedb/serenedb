@@ -80,18 +80,12 @@ class MergeTarget {
   const std::string& Name() const noexcept { return _name; }
   const std::string& Database() const noexcept { return _database; }
   bool ReadOnly() const noexcept { return _read_only; }
-  bool IsIndex() const noexcept { return static_cast<bool>(_index); }
   bool Sorted() const noexcept { return _store->Sorted(); }
-  size_t MergeInputsMax() const noexcept { return _store->MergeInputsMax(); }
-  uint32_t RowGroupSize() const noexcept { return _options->row_group_size; }
   const irs::IndexFieldOptions& FieldOptions() const noexcept {
     return *_options;
   }
 
   irs::DirectoryReader Snapshot() const;
-  const search::TasksSettings& Settings() const {
-    return _store->GetTasksSettings();
-  }
   search::CompactionOptions PinOptions() const;
   std::string ColumnName(irs::field_id id) const;
 
@@ -103,7 +97,9 @@ class MergeTarget {
                         const irs::IndexFieldOptions* field_options,
                         const irs::AnnBuildEnv* env, search::MergeOrigin origin,
                         irs::MergeExecutor& executor) const;
-  search::MergeScheduler::Lease TakeOver() const;
+  search::MergeScheduler::Lease TakeOver() const {
+    return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
+  }
   void Publish() const;
 
  private:

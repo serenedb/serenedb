@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <duckdb/common/fault_points.hpp>
 #include <exception>
@@ -32,19 +31,14 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/term_ranges.hpp>
-#include <mutex>
 #include <optional>
 #include <utility>
 
 namespace sdb::search {
 
 struct MergeUnitRun {
-  MergeUnitRun(irs::MergePlan& plan,
-               std::chrono::steady_clock::time_point begin, bool hold_postings)
-    : plan{plan},
-      schedule{plan},
-      begin{begin},
-      ranges_left{plan.TermRanges().size()} {
+  MergeUnitRun(irs::MergePlan& plan, bool hold_postings)
+    : plan{plan}, schedule{plan}, ranges_left{plan.TermRanges().size()} {
     if (!hold_postings) {
       return;
     }
@@ -71,14 +65,14 @@ struct MergeUnitRun {
   }
 
   void Wake() {
-    std::lock_guard lock{mutex};
+    absl::MutexLock lock{&mutex};
     if (waker) {
       waker();
     }
   }
 
   void ReleasePostings(bool ok) {
-    std::lock_guard lock{mutex};
+    absl::MutexLock lock{&mutex};
     if (!held) {
       return;
     }
@@ -104,12 +98,12 @@ struct MergeUnitRun {
   }
 
   void SetWaker(std::function<void()> callback) {
-    std::lock_guard lock{mutex};
+    absl::MutexLock lock{&mutex};
     waker = std::move(callback);
   }
 
   void SetInterrupt(std::function<void()> callback) {
-    std::lock_guard lock{mutex};
+    absl::MutexLock lock{&mutex};
     interrupt = std::move(callback);
   }
 
@@ -126,7 +120,7 @@ struct MergeUnitRun {
     }
     std::function<void()> stop;
     {
-      std::lock_guard lock{mutex};
+      absl::MutexLock lock{&mutex};
       if (failure && !error) {
         error = std::move(failure);
       }
@@ -142,10 +136,7 @@ struct MergeUnitRun {
   }
 
   bool Finish() {
-    plan.SetWallNanos(static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now() - begin)
-        .count()));
+    plan.RecordWall();
     if (error) {
       std::rethrow_exception(error);
     }
@@ -154,7 +145,6 @@ struct MergeUnitRun {
 
   irs::MergePlan& plan;
   irs::MergeSchedule schedule;
-  std::chrono::steady_clock::time_point begin;
   std::atomic<size_t> ranges_left;
   absl::Mutex mutex;
   std::exception_ptr error;

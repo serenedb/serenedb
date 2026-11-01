@@ -77,7 +77,7 @@ constexpr std::tuple kMergeColumns{
   Col<"output">(
     [](const auto& r) { return NonEmpty(std::string_view{r.stats.output}); }),
   Col<"output_docs">([](const auto& r) { return r.stats.output_docs; }),
-  Col<"output_live_docs">(&MergeRecord::output_live_docs),
+  Col<"output_live_docs">([](const auto& r) { return r.stats.output_docs; }),
   Col<"output_bytes">([](const auto& r) { return r.stats.output_bytes; }),
   Col<"rowid_min">([](const auto& r) {
     return r.rowids.Empty() ? std::nullopt

@@ -7423,7 +7423,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit segment 3)
 
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_2
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -7560,7 +7560,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit segment 3)
 
-    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));  // segments_3
+    ASSERT_EQ(1, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};

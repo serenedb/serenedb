@@ -186,7 +186,6 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
-# A nested value takes a codec when every leaf takes it.
 statement ok
 CREATE TABLE compr_nested (pk INTEGER PRIMARY KEY, payload STRUCT(a INTEGER, b VARCHAR), txt VARCHAR);
 

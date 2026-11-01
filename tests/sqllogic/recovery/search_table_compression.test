@@ -456,8 +456,6 @@ DROP TABLE search_forced_alprd;
 statement ok
 DROP TABLE search_forced_roaring;
 
-# A refresh always writes the cheap leaves (fsst, lz4); compaction re-encodes
-# with the full set. Two flushed segments so the compaction merges.
 statement ok
 CREATE TABLE obj_auto (a INTEGER PRIMARY KEY, host TEXT, body TEXT, url TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);

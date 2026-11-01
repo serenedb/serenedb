@@ -1,29 +1,4 @@
 #!/usr/bin/env bash
-# col_codecs_matrix.sh -- size and speed matrix of the search-table (.col) string
-# codecs on the hits columns.
-#
-#   for each arm (a codec name, optionally :level):
-#     fresh serened + datadir,
-#       CREATE TABLE hits (id PK, <cols> USING COMPRESSION codec[(compression_level = level)])
-#       WITH (storage = 'search'),
-#     INSERT ... FROM read_parquet(hits.parquet) [LIMIT rows],
-#     VACUUM (REFRESH_TABLE) [+ VACUUM (COMPACT_TABLE)],
-#     bytes per column (pragma_storage_info byte_size), .col file bytes, datadir bytes, peak RSS,
-#     reads per column, cold (after restart) and hot (min of CM_HOT):
-#       scan            sum(length(col))
-#       eq              count(*) WHERE col = <value of row 4242>
-#       like            count(*) WHERE col LIKE '%<10 middle bytes of that value>%'
-#       gather100k      sum(length(col)) WHERE id % 100000 = 7
-#       gather1m        sum(length(col)) WHERE id % 1000000 = 7
-#       points          CM_POINTS lookups WHERE id = k, summed
-#
-# Env: CM_BIN (build_bench/bin/serened), CM_PARQUET (~/data/hits.parquet),
-#      CM_ROWS (0 = all), CM_ARMS, CM_COLS, CM_PORT, CM_RES, CM_HOT,
-#      CM_POINTS, CM_COMPACT (1), CM_KEEP (keep datadirs), CM_THREADS,
-#      CM_CACHE (sdb_object_cache_size in bytes after every start; 1 = no dictionary cache),
-#      CM_PASSES (insert the parquet N times, ids = file_row_number + pass * CM_PASS_ROWS,
-#                 refreshing after every pass so the WAL is reclaimed between passes).
-# Output: TSV under CM_RES plus a rendered table on stdout.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 BIN="${CM_BIN:-${ROOT}/build_bench/bin/serened}"
@@ -75,7 +50,7 @@ down() {
 }
 trap down EXIT
 
-psql_ms() { # sql... -> ms of the statements (sum of psql Time: lines), -1 on error
+psql_ms() {
 	local out
 	if ! out=$(psql "${CONN}" -X -v ON_ERROR_STOP=1 -c '\timing on' "$@" 2>&1); then
 		echo "SQL failed: $*" >&2
@@ -87,12 +62,12 @@ psql_ms() { # sql... -> ms of the statements (sum of psql Time: lines), -1 on er
 }
 sql_at() { psql "${CONN}" -X -At -v ON_ERROR_STOP=1 -c "$1"; }
 rss_mb() { awk '/VmHWM/{print int($2/1024)}' "/proc/${SPID}/status" 2>/dev/null || echo 0; }
-row() { # arm col metric value
+row() {
 	printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" | tee -a "${OUT}"
 }
 sqlq() { printf '%s' "$1" | sed "s/'/''/g"; }
 
-read_sql() { # col metric -> sql
+read_sql() {
 	local c="$1" m="$2"
 	case "${m}" in
 	scan) echo "SELECT sum(length(\"${c}\")) FROM hits;" ;;
@@ -112,7 +87,7 @@ read_sql() { # col metric -> sql
 	esac
 }
 
-run_reads() { # phase(cold|hot) -> rows per col x metric
+run_reads() {
 	local phase="$1" c m ms best i
 	for c in ${COLS}; do
 		for m in scan eq like gather100k gather1m points; do

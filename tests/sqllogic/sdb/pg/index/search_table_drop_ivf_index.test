@@ -1,7 +1,3 @@
-# Segments written while an IVF index existed keep its cluster postings after
-# DROP INDEX. Merging them with the remaining indexes must drop that field
-# instead of writing it as plain postings.
-
 statement ok
 CREATE TABLE dv (id BIGINT PRIMARY KEY, vec FLOAT[3], txt TEXT)
   WITH (storage='search', compaction_interval=0);

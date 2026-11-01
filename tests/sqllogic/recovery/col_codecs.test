@@ -1,10 +1,3 @@
-# The .col string codecs (dict_lz4, dict_zstd, lz4, and the columnstore's own
-# dict_fsst / fsst) on search tables: named per column, on an INCLUDE column,
-# forced globally, cut into several segments, refused on a transactional table, and read back after a restart so
-# the frames are decoded from disk rather than from the writer's memory.
-# force_compression is a global setting, so this file owns its serened
-# instance.
-
 control substitution on
 
 
@@ -52,7 +45,6 @@ s	FSST
 url	DICT_LZ4
 
 
-# every value round-trips, nulls included
 query
 SELECT count(*) AS mismatches FROM cc_named
 WHERE url IS DISTINCT FROM 'https://example.org/p/' || (a % 5000)
@@ -67,8 +59,6 @@ mismatches
 0
 
 
-# pushed filters: the dictionary shapes evaluate once per entry, the plain
-# shape decodes and filters
 query
 SELECT (SELECT count(*) FROM cc_named WHERE host = 'host-3') AS host3,
        (SELECT count(*) FROM cc_named WHERE n IS NULL) AS n_nulls,
@@ -84,7 +74,6 @@ host3	n_nulls	n4	bn_nulls	body777	url49	k42	s123	s_nulls
 1177	2858	1319	4000	1	444	100	1	1819
 
 
-# point lookups through the primary key
 query
 SELECT url, host, body IS NOT NULL AS has_body, n, bn IS NULL AS bn_null FROM cc_named WHERE a IN (0, 7, 19999) ORDER BY a;
 ----
@@ -94,7 +83,6 @@ https://example.org/p/7	host-7	t	NULL	f
 https://example.org/p/4999	host-7	t	NULL	f
 
 
-# --- INCLUDE column of an inverted index --------------------------------------
 statement ok
 CREATE TEXT SEARCH DICTIONARY cc_eng AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -128,7 +116,6 @@ n	first
 50	7
 
 
-# --- forced globally ----------------------------------------------------------
 statement ok
 SET GLOBAL force_compression = 'dict_zstd';
 
@@ -150,7 +137,6 @@ statement ok
 RESET GLOBAL force_compression;
 
 
-# --- the decoded-dictionary cache budget is a global setting ------------------
 query
 SELECT current_setting('sdb_object_cache_size') AS bytes;
 ----
@@ -225,7 +211,6 @@ mismatches
 0
 
 
-# --- a long column is cut into several segments --------------------------------
 statement ok
 CREATE TABLE cc_small (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION dict_lz4)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
@@ -253,7 +238,6 @@ mismatches
 0
 
 
-# --- where the codecs are refused ---------------------------------------------
 statement error
 CREATE TABLE cc_int (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION dict_lz4) WITH (storage = 'search');
 ----
@@ -276,7 +260,6 @@ ALTER TABLE cc_plain ADD COLUMN w TEXT USING COMPRESSION lz4;
 db error: ERROR: Column "w": compression 'lz4' is only available on search tables (WITH (storage = 'search'))
 
 
-# --- everything survives a restart ------------------------------------------------
 statement ok
 SET sdb_faults = 'crash_on_packet';
 

@@ -1,8 +1,3 @@
-# Index keys with a lambda: list_transform and list_filter over a list column, inline and through a macro, on a
-# search table and on a view. CREATE INDEX validates an expression's constant parts by evaluating them, and a lambda
-# has no children to the expression iterator, so it looked foldable and failed with "Unimplemented type for
-# StandardVectorBuffer::GetValue" before the lambda was skipped.
-
 control substitution on
 
 statement ok

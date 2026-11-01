@@ -1,9 +1,3 @@
-# dict_fsst on a search table is the columnstore's own codec: a sorted,
-# front-coded dictionary of FSST-encoded suffixes with no per-string limit and
-# segments that are never rewound to a block. Strings of ~24 KiB used to push
-# such a column to Uncompressed (duckdb's dict_fsst declines a row group at
-# 16 KiB); now they compress, and the segments are re-read after a restart.
-
 control substitution on
 
 

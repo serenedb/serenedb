@@ -1,7 +1,3 @@
-# Sparse search hits project their columns from many column blocks into one
-# output vector: every value matches its row, whatever each column's codec
-# (uncompressed, dictionary, chosen per block, numeric) and with NULLs.
-
 statement ok
 CREATE TABLE sparse_hits (id INT PRIMARY KEY, tag TEXT,
                           body TEXT USING COMPRESSION uncompressed,

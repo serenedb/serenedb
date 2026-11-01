@@ -1750,8 +1750,6 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
     candidates.push_back(found);
   }
 
-  // The replaced segments ride along with every replacement: holding them
-  // keeps the cleaner off their files until the commit publishes it.
   std::vector<std::vector<SegmentReader>> pins(adopted.size());
   for (auto& pinned : pins) {
     pinned.reserve(candidates.size());

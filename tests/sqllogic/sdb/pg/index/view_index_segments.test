@@ -1,6 +1,3 @@
-# An index over a view of several files keys its rows by file and row number,
-# not by a row id: describing and compacting its segments works on that key.
-
 control substitution on
 
 statement ok

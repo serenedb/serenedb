@@ -447,10 +447,6 @@ segments	docs	deleted
 1	180	0
 
 
-# The planner keeps a group of one segment without deletes as it is, merges a
-# listed segment only when there is something to merge, and leaves a segment
-# out of a background round when the adjacent policy picks nothing.
-
 statement ok
 CREATE TABLE sdbc_plan (id BIGINT PRIMARY KEY, vec FLOAT[3], body TEXT)
 WITH (storage = 'search', compaction_interval = 0)
@@ -705,8 +701,6 @@ statement ok
 DROP TABLE sdbc_many
 
 
-# A group of one segment is merged when it has deletes.
-
 statement ok
 CREATE TABLE sdbc_live (id INT PRIMARY KEY, body TEXT)
 WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2)
@@ -929,8 +923,6 @@ statement ok
 DROP TABLE sdbc_runs
 
 
-# Planning with compaction enabled skips the "compaction is off" note.
-
 statement ok
 CREATE TABLE sdbc_on (id INT PRIMARY KEY, body TEXT)
 WITH (storage = 'search', compaction_interval = 3600000)
@@ -1006,8 +998,6 @@ statement ok
 DROP TABLE sdbc_plain
 
 
-# A merge spreads its columns and postings over the session's threads; the
-# rows and search results are the same with one thread and with several.
 statement ok
 CREATE TABLE sdbc_par (id INT PRIMARY KEY, body TEXT, n BIGINT, x DOUBLE,
                        flag BOOLEAN, label TEXT)
@@ -1106,7 +1096,6 @@ rows	n	x	flags	labels	dogs
 200000	60000300000	5000025000	66666	7	100000
 
 
-# A statement timeout stops the call between two merges; the rows stay.
 statement ok
 INSERT INTO sdbc_par
 SELECT i, 'fox owl', i * 3, i / 4.0, false, 'L0'

@@ -1,22 +1,5 @@
 hash-threshold 100
 
-# Coverage for `MergeWriter::Flush`
-# under all the shapes their code paths actually branch on:
-#
-#   - sources with no deletes (identity remap, all-ones in `DocRemap`),
-#   - sources with deletes (sparse remap via `id_map`, mask-filter on cs),
-#   - INCLUDE columns where some rows are NULL (validity bitmap merge),
-#   - norm columns where some sources DON'T have the field (zero-pad path),
-#   - segment sizes that cover the STANDARD_VECTOR_SIZE boundary (2048):
-#       * < 2048      -> single scan chunk, partial last word
-#       * == 2048     -> single scan chunk, full last word, no partial
-#       * >  2048     -> multi-chunk, both full and partial words
-#       * == 4096     -> two full chunks, no partial in either
-#       * boundary+/- 1 cases for off-by-one in tail-bit masking
-#
-# Driven via `VACUUM (COMPACT_TABLE) <table>` after several
-# VACUUM (REFRESH_TABLE) segment-creating batches.
-
 statement ok
 CREATE TABLE m (
   pk INTEGER PRIMARY KEY,

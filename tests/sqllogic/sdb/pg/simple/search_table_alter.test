@@ -1,8 +1,3 @@
-# ALTER TABLE on a search table. Maintenance options take effect on the running
-# table, a shortened interval applies at once and a rolled-back ALTER leaves the
-# old settings running. Codec options and ALTER COLUMN SET COMPRESSION apply to
-# the segments written from then on; compaction rewrites the older ones.
-
 statement ok
 CREATE TABLE alt (id INT PRIMARY KEY, body TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
@@ -61,7 +56,6 @@ SELECT count(*) AS n FROM alt;
 n
 200
 
-# An inverted index on the table does not block altering it.
 statement ok
 CREATE INDEX alt_idx ON alt USING inverted(body);
 
@@ -83,8 +77,6 @@ reloptions
 statement ok
 DROP TABLE alt;
 
-# Column codecs. Two batches with the same values land in two segments; the
-# second is written after the ALTER.
 statement ok
 CREATE TABLE alc (a INTEGER PRIMARY KEY, v TEXT, n INTEGER)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
@@ -131,7 +123,6 @@ WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
 segments	compression
 1	DICT_ZSTD
 
-# A rolled-back SET COMPRESSION leaves the column's codec in place.
 statement ok
 BEGIN;
 
@@ -155,7 +146,6 @@ WHERE column_name = 'v' AND segment_type <> 'VALIDITY';
 compression
 DICT_ZSTD
 
-# DEFAULT returns the column to auto.
 statement ok
 ALTER TABLE alc ALTER COLUMN v SET COMPRESSION DEFAULT;
 
@@ -192,7 +182,6 @@ SELECT split_part(sql, ' WITH', 1) AS columns FROM duckdb_tables() WHERE table_n
 columns
 CREATE TABLE public.alc(a INTEGER PRIMARY KEY, v VARCHAR, n INTEGER)
 
-# Rejections.
 statement error
 ALTER TABLE alc SET (compression_level = 3);
 ----
@@ -247,8 +236,6 @@ db error: ERROR: cannot SET COMPRESSION for generated column "g"
 statement ok
 DROP TABLE alg;
 
-# On a transactional table the new codec applies at the next checkpoint, and
-# the columnstore codecs stay search-table only.
 statement ok
 CREATE TABLE alt_tx (a INTEGER, b INTEGER);
 

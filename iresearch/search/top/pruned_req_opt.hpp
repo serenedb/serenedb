@@ -129,20 +129,15 @@ class PrunedReqOpt : public Root {
 
   void ScoreWindow(doc_id_t last, score_t optional_max,
                    LoserScoreCollector& collector) {
-    auto threshold = collector.ScoreThreshold();
     _lead.ForEachScoredBlock(
       last + 1, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
+        const auto threshold = collector.ScoreThreshold();
         if (const auto required = threshold - optional_max; required > 0) {
           len = irs::detail::FilterScores(docs, scores, len, required);
         }
-        for (uint32_t off = 0; off < len; off += kChunk) {
-          const auto n = std::min<uint32_t>(kChunk, len - off);
-          const auto kept =
-            _optional.AddOptional(docs + off, scores + off, n, threshold);
-          if (kept != 0) {
-            _admit.AddDocs(collector, docs + off, kept, scores + off);
-            threshold = collector.ScoreThreshold();
-          }
+        len = _optional.AddOptional(docs, scores, len, threshold);
+        if (len != 0) {
+          _admit.AddDocs(collector, docs, len, scores);
         }
       });
   }

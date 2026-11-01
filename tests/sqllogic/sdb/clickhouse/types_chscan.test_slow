@@ -85,3 +85,15 @@ ORDER BY c_uint8;
 c_uint8	c_lowcard	c_nullable
 1	low	42
 2	high	NULL
+
+
+query
+SELECT id, b, nb
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT number AS id, toLowCardinality(toBool(number = 1)) AS b, toLowCardinality(CAST(if(number = 2, NULL, number = 0) AS Nullable(Bool))) AS nb FROM numbers(3)')
+ORDER BY id;
+----
+id	b	nb
+0	f	t
+1	t	f
+2	f	NULL

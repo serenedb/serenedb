@@ -319,6 +319,15 @@ static void CopyLowCardinality(const clickhouse::Column &col, Vector &out, idx_t
 		return CopyLowCardinalityFixed<float>(*lc, nested_nullable, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Float64:
 		return CopyLowCardinalityFixed<double>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Bool:
+		return CopyLowCardinality<bool>(*lc, nested_nullable, out, src_offset, count, dst_offset,
+		                                [&](const clickhouse::ItemView &item, bool &target) {
+			                                if (nested_nullable && item.AsBinaryData().size() == 0) {
+				                                return false;
+			                                }
+			                                target = item.get<uint8_t>() != 0;
+			                                return true;
+		                                });
 	case clickhouse::Type::Date:
 		return CopyLowCardinality<date_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
 		                                  [&](const clickhouse::ItemView &item, date_t &target) {

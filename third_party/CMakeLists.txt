@@ -81,6 +81,7 @@ sdb_add_module(yaclib)
 sdb_add_module(openssl DIR openssl-cmake)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
 set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
+set(OPENSSL_VERSION ${OPENSSL_VERSION} PARENT_SCOPE)
 
 # Repeating the trick done by NuRaft that helped our build survive folly.
 # Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
@@ -451,7 +452,6 @@ set(HAVE_AWSLC 0 CACHE INTERNAL "")
 set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
 set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
 set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
-set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
@@ -491,7 +491,7 @@ file(
 )
 list(
     APPEND CLICKHOUSE_CPP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/cityhash/city.cc"
 )
 
 add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
@@ -501,12 +501,16 @@ target_include_directories(
     SYSTEM
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/cityhash"
 )
 
 target_compile_definitions(
     clickhouse_cpp
-    PRIVATE WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+    PRIVATE WITH_OPENSSL=1
+    PUBLIC
+        CH_MAP_BOOL_TO_UINT8=1
+        CH_USE_ABSEIL_FOR_BIGNUM=1
+        CH_NON_OPTIONAL_CURRENT_ENDPOINT=0
 )
 
 target_link_libraries(

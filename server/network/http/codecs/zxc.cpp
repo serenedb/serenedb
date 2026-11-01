@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <zxc.h>
 
 #include <algorithm>
@@ -55,9 +56,15 @@ void Drain(message::Writer& out, Step step) {
 
 zxc_cstream* CreateCStream(int level) {
   SDB_ASSERT(kZxcLevels.Contains(level));
-  zxc_compress_opts_t opts{};
-  opts.level = level;
-  return zxc_cstream_create(&opts);
+  auto* cfg = zxc_create_cctx();
+  if (!cfg) {
+    return nullptr;
+  }
+  absl::Cleanup free_cfg = [cfg] { zxc_free_cctx(cfg); };
+  if (const int rc = zxc_cctx_set_param(cfg, ZXC_C_LEVEL, level); rc < 0) {
+    ThrowCodecError("zxc", zxc_error_name(rc));
+  }
+  return zxc_cstream_create(cfg);
 }
 
 zxc_dstream* CreateDStream() {

@@ -223,29 +223,19 @@ struct PublishedSegment {
   size_t place = 0;
 };
 
-std::vector<size_t> IncomingPlaces(const DirectoryReaderImpl& committed,
-                                   const auto& incoming) {
-  std::vector<size_t> places(incoming.size(), committed.size());
-  if (absl::c_all_of(incoming, [](const auto& entry) {
-        return entry.compaction_ctx.inputs.empty();
-      })) {
-    return places;
-  }
+size_t IncomingPlace(const DirectoryReaderImpl& committed, const auto& entry) {
   const auto& readers = committed.GetReaders();
-  containers::FlatHashMap<uint64_t, size_t> positions;
-  positions.reserve(readers.size());
-  for (size_t i = 0; i != readers.size(); ++i) {
-    positions.emplace(readers[i].GetImpl()->Id(), i);
-  }
-  for (size_t i = 0; i != incoming.size(); ++i) {
-    for (const auto& input : incoming[i].compaction_ctx.inputs) {
-      if (const auto it = positions.find(input.GetImpl()->Id());
-          it != positions.end()) {
-        places[i] = std::min(places[i], it->second);
+  size_t place = readers.size();
+  for (const auto& input : entry.compaction_ctx.inputs) {
+    const auto id = input.GetImpl()->Id();
+    for (size_t r = 0; r != place; ++r) {
+      if (readers[r].GetImpl()->Id() == id) {
+        place = r;
+        break;
       }
     }
   }
-  return places;
+  return place;
 }
 
 void SortUnique(std::vector<int64_t>& terms) {
@@ -364,7 +354,8 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
 }
 
 PublishResult AddIncoming(auto& incoming_segments,
-                          std::span<const size_t> places, uint64_t all_tick,
+                          const DirectoryReaderImpl& committed,
+                          uint64_t all_tick,
                           std::span<DocumentMaskBuilder> removed,
                           Directory& dir,
                           const ProgressReportCallback& progress) {
@@ -415,7 +406,7 @@ PublishResult AddIncoming(auto& incoming_segments,
     result.segments.emplace_back(
       std::move(incoming.segment), SegmentReader{std::move(reader)},
       SyncOf(incoming.compaction_ctx.candidates.empty(), docs_mask_modified),
-      places[incoming_index]);
+      IncomingPlace(committed, incoming));
     result.modified = true;
   }
   return result;
@@ -966,17 +957,8 @@ void IndexWriter::SwapDocMaps(FlushContext& flushed) noexcept {
 }
 
 void IndexWriter::FlushContext::Absorb(std::vector<DocMap>&& maps) {
-  containers::FlatHashMap<uint64_t, size_t> counts;
-  for (const auto& map : maps) {
-    ++counts[map.source];
-  }
-  doc_maps.reserve(doc_maps.size() + counts.size());
-  for (const auto [source, count] : counts) {
-    auto& slot = doc_maps[source];
-    slot.reserve(slot.size() + count);
-  }
   for (auto& map : maps) {
-    doc_maps.find(map.source)->second.push_back(std::move(map));
+    doc_maps[map.source].push_back(std::move(map));
   }
 }
 
@@ -1937,7 +1919,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // Stage 2
   // Add incoming segments registered by compaction, adoption or replacement
   auto incoming = AddIncoming(
-    ctx->incoming, IncomingPlaces(committed_reader, ctx->incoming), all_tick,
+    ctx->incoming, committed_reader, all_tick,
     std::span{removed}.subspan(committed_reader.size()), dir, progress);
 
   auto segments = std::move(existing.segments);

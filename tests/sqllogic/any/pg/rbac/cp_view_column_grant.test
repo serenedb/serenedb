@@ -3,11 +3,19 @@ DROP VIEW IF EXISTS cvg_clickclack;
 
 
 statement ok
+DROP VIEW IF EXISTS cvg_mop;
+
+
+statement ok
 DROP TABLE IF EXISTS cvg_iceberg;
 
 
 statement ok
 DROP ROLE IF EXISTS cvg_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS cvg_babsky;
 
 
 statement ok
@@ -141,6 +149,108 @@ db error: ERROR: Cannot drop entry "cvg_vedernikoff" because there are entries t
 
 
 statement ok
+CREATE ROLE cvg_babsky;
+
+
+statement ok
+GRANT SELECT (a) ON cvg_clickclack TO cvg_vedernikoff WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE cvg_vedernikoff;
+
+
+statement ok
+GRANT SELECT (a) ON cvg_clickclack TO cvg_babsky;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT
+  has_column_privilege('cvg_babsky', 'cvg_clickclack', 'a', 'SELECT') AS a_select,
+  has_column_privilege('cvg_babsky', 'cvg_clickclack', 'b', 'SELECT') AS b_select;
+----
+a_select	b_select
+t	f
+
+
+query
+SELECT d.objsubid, d.deptype
+FROM pg_shdepend d JOIN pg_roles r ON r.oid = d.refobjid
+WHERE r.rolname = 'cvg_babsky'
+  AND d.objid = (SELECT oid FROM pg_class WHERE relname = 'cvg_clickclack');
+----
+objsubid	deptype
+1	a
+
+
+statement ok
+SET ROLE cvg_babsky;
+
+
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'cvg_clickclack'
+ORDER BY ordinal_position;
+----
+column_name
+a
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE VIEW cvg_mop (x) AS SELECT a FROM cvg_iceberg;
+
+
+statement ok
+GRANT SELECT (x) ON cvg_mop TO cvg_babsky;
+
+
+statement ok
+CREATE OR REPLACE VIEW cvg_mop AS SELECT a AS x, b AS a FROM cvg_iceberg;
+
+
+query
+SELECT
+  has_column_privilege('cvg_babsky', 'cvg_mop', 'x', 'SELECT') AS x_select,
+  has_column_privilege('cvg_babsky', 'cvg_mop', 'a', 'SELECT') AS a_select;
+----
+x_select	a_select
+t	f
+
+
+statement ok
+SET ROLE cvg_babsky;
+
+
+query
+SELECT x FROM cvg_mop;
+----
+x
+1
+
+
+statement error
+SELECT a FROM cvg_mop;
+----
+db error: ERROR: permission denied for view cvg_mop
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP VIEW cvg_mop;
+
+
+statement ok
 DROP VIEW cvg_clickclack;
 
 
@@ -150,3 +260,7 @@ DROP TABLE cvg_iceberg;
 
 statement ok
 DROP ROLE cvg_vedernikoff;
+
+
+statement ok
+DROP ROLE cvg_babsky;

@@ -487,7 +487,7 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
     if (!target.owner_only) {
       target.any_column = TableColumns(relation);
       if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
-        for (const auto& [name, acl] :
+        for (const auto& acl :
              relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls) {
           target.columns.emplace_back(acl);
         }

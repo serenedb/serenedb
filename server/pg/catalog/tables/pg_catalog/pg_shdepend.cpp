@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -138,6 +139,17 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
     }
     if (Names(entry.permissions.acl, role)) {
       Depend(database, classid, entry.oid, 0, role, 'a');
+    }
+    if (entry.type == duckdb::CatalogType::VIEW_ENTRY) {
+      int32_t attnum = 0;
+      for (const auto& acl :
+           entry.Cast<duckdb::ViewCatalogEntry>().column_acls) {
+        ++attnum;
+        if (Names(acl, role)) {
+          Depend(database, classid, entry.oid, attnum, role, 'a');
+        }
+      }
+      return;
     }
     if (entry.type != duckdb::CatalogType::TABLE_ENTRY) {
       return;

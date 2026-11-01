@@ -281,7 +281,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
-    if (!Visible(view)) {
+    const bool visible = Visible(view);
+    if (!visible && view.column_acls.empty()) {
       return;
     }
     const auto columns = ViewColumns(Context(), view);
@@ -290,6 +291,10 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
+      if (!visible && (_closure->HeldModes(view.ColumnAcl(i)) &
+                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+        continue;
+      }
       Emit<kViewColumn>({.scan = *this,
                          .database = _database,
                          .arrays = _arrays,

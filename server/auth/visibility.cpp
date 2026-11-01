@@ -126,8 +126,7 @@ bool EntryVisible(duckdb::ClientContext& context,
       };
       if (entry.type == CatalogType::VIEW_ENTRY) {
         return absl::c_any_of(
-          entry.Cast<duckdb::ViewCatalogEntry>().column_acls,
-          [&](const auto& column) { return grants(column.second); });
+          entry.Cast<duckdb::ViewCatalogEntry>().column_acls, grants);
       }
       return absl::c_any_of(
         entry.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical(),

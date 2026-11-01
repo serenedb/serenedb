@@ -139,8 +139,17 @@ class PhraseSlots {
       lead += leaf.Estimate();
     }
     for (size_t i = 1; i != _leaves.Size(); ++i) {
-      _gated[i] = gates(lead, LeavesOf(_leaves.begin()[i]));
-      _gating |= _gated[i];
+      const auto leaves = LeavesOf(_leaves.begin()[i]);
+      if (!gates(lead, leaves)) {
+        continue;
+      }
+      uint64_t docs = 0;
+      for (const auto& leaf : leaves) {
+        docs += leaf.Estimate();
+      }
+      _gates[i].share = static_cast<double>(lead) * doc_limits::kBlockSize /
+                        static_cast<double>(std::max<uint64_t>(docs, 1));
+      _gating = true;
     }
   }
 
@@ -151,7 +160,12 @@ class PhraseSlots {
     requires(kHasFreqBound)
   {
     return _leaves.Next(end, [&](doc_id_t candidate, Slot* cold) {
-      if (!_gated[static_cast<size_t>(cold - _leaves.begin())]) {
+      auto& gate = _gates[static_cast<size_t>(cold - _leaves.begin())];
+      if (gate.share == 0) {
+        return true;
+      }
+      if (gate.skip != 0) {
+        --gate.skip;
         return true;
       }
       auto* slot = _leaves.begin();
@@ -159,7 +173,9 @@ class PhraseSlots {
       while (++slot != cold) {
         freq = std::min(freq, DocFreqOf(*slot));
       }
-      return admit(candidate, _matcher.FreqBoundOf(freq));
+      const bool admitted = admit(candidate, _matcher.FreqBoundOf(freq));
+      gate.Observe(admitted);
+      return admitted;
     });
   }
 
@@ -209,6 +225,31 @@ class PhraseSlots {
  private:
   using Leaves = ConjunctionLeaves<Slot, N>;
 
+  static constexpr uint32_t kGateWindow = 64;
+
+  struct SlotGate {
+    void Observe(bool admitted) noexcept {
+      admits += static_cast<uint32_t>(admitted);
+      if (++checks != kGateWindow) {
+        return;
+      }
+      const auto passes = admits * share;
+      const bool read = passes >= checks;
+      if (read && read_before) {
+        skip = static_cast<uint32_t>(passes);
+      }
+      read_before = read;
+      checks = 0;
+      admits = 0;
+    }
+
+    double share = 0;
+    uint32_t checks = 0;
+    uint32_t admits = 0;
+    uint32_t skip = 0;
+    bool read_before = false;
+  };
+
   static std::span<Leaf> LeavesOf(Slot& slot) noexcept {
     if constexpr (kVariadic) {
       return slot.Leaves();
@@ -236,8 +277,8 @@ class PhraseSlots {
   Matcher _matcher;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
-  containers::Fixed<bool, N> _gated{
-    _leaves.Size(), [](bool& gated, size_t) noexcept { gated = false; }};
+  containers::Fixed<SlotGate, N> _gates{
+    _leaves.Size(), [](SlotGate& gate, size_t) noexcept { gate = {}; }};
   bool _gating = false;
 };
 

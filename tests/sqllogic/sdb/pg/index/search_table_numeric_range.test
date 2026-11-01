@@ -389,15 +389,20 @@ EXPLAIN SELECT pk FROM snr_n WHERE num <= 1500
   ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: snr_n                      │
-│ Lookup: search                    │
-│ Score: l2_distance(emb, FLOAT[2]) │
-│ Top: 3                            │
-│ Projections: pk                   │
-│ Column Filter: num <= 1500        │
-│ ~400 rows                         │
-╰───────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: snr_n                        │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ Granular Range ─╮                │
+│ │ Field: num       │                │
+│ │ Range: <=1500    │                │
+│ ╰──────────────────╯                │
+│ Index or Column Filter: num <= 1500 │
+│ Score: l2_distance(emb, FLOAT[2])   │
+│ Top: 3                              │
+│ Projections: pk                     │
+│ ~400 rows                           │
+╰─────────────────────────────────────╯
 
 query
 SELECT pk FROM snr_n WHERE num <= 40

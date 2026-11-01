@@ -2180,11 +2180,8 @@ TEST_P(MergeWriterTestCase, merges_every_slot) {
       ASSERT_TRUE(trx.Commit());
       writer->RefreshCommit();
     }
-    auto removal = std::make_unique<irs::ByTerm>();
-    *removal->mutable_field_id() = kOther;
-    removal->mutable_options()->term =
-      irs::ViewCast<irs::byte_type>(std::string_view{keyword(1, 1)});
-    tests::Remove(*writer, irs::Filter::ptr{std::move(removal)});
+    tests::Remove(*writer,
+                  tests::Terms{.field = kOther, .values = {keyword(1, 1)}});
     writer->RefreshCommit();
   }
 

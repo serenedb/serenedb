@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -1372,17 +1373,27 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     check(1);
     {
-      auto trx = writer->GetBatch();
-      auto removal = std::make_unique<irs::ByGranularRange>();
-      *removal->mutable_field_id() = kPk;
-      irs::SetGranularNumericTerm(removal->mutable_options()->range.min,
+      irs::ByGranularRange removal;
+      *removal.mutable_field_id() = kPk;
+      irs::SetGranularNumericTerm(removal.mutable_options()->range.min,
                                   int64_t{3000});
-      irs::SetGranularNumericTerm(removal->mutable_options()->range.max,
+      irs::SetGranularNumericTerm(removal.mutable_options()->range.max,
                                   int64_t{4000});
-      removal->mutable_options()->range.min_type = irs::BoundType::Inclusive;
-      removal->mutable_options()->range.max_type = irs::BoundType::Exclusive;
-      trx.Remove(irs::Filter::ptr{std::move(removal)});
-      trx.Commit();
+      removal.mutable_options()->range.min_type = irs::BoundType::Inclusive;
+      removal.mutable_options()->range.max_type = irs::BoundType::Exclusive;
+      const auto snapshot = writer->GetSnapshot();
+      tests::PreparedFilter prepared{removal, snapshot};
+      irs::DocRemovalBuilder builder;
+      for (uint32_t i = 0; i != snapshot.size(); ++i) {
+        const auto mask = snapshot[i].MaskedDocs();
+        auto docs = prepared.Execute(i);
+        while (!irs::doc_limits::eof(docs->Next())) {
+          if (!mask.Contains(docs->Value())) {
+            builder.Add(i, docs->Value());
+          }
+        }
+      }
+      tests::Remove(*writer, std::move(builder).Finish(snapshot));
     }
     writer->RefreshCommit();
     for (size_t pk = 3000; pk != 4000; ++pk) {

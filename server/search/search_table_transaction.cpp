@@ -88,7 +88,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
 
   void WriteToWAL(duckdb::WriteAheadLog& wal) final {
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_written");
-    irs::IndexWriter::Transaction::RegisterFlush(_writes.transactions);
+    irs::IndexWriter::Transaction::Stage(_writes.transactions);
     SDB_PARK_ONCE_ON_FAILURE("search_wal_transactions_registered");
     bool set_table = true;
     SDB_IF_FAILURE("search_delete_wal_no_table") { set_table = false; }
@@ -319,12 +319,6 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     if (w.shard->GetDatabaseId() != database) {
       continue;
     }
-    uint64_t queries = 0;
-    for (const auto& trx : w.transactions) {
-      queries += trx->GetQueries();
-    }
-    irs::IndexWriter::Transaction::RegisterFlush(w.transactions);
-    w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
     w.shard->MarkStaged(position);
   }
@@ -351,10 +345,8 @@ void SearchTableTransaction::Publish(duckdb::idx_t database) noexcept {
     if (changes != _changes.end() && changes->second.truncate) {
       shard.RecordTruncateForBuild(w.position);
     }
-    auto tick = w.first_tick;
     for (auto& trx : w.transactions) {
-      tick += trx->GetQueries();
-      SDB_FATAL_IF(SEARCH, !trx->Commit(tick, w.position),
+      SDB_FATAL_IF(SEARCH, !trx->Commit(w.position),
                    "search-table commit: iresearch trx Commit failed for "
                    "table ",
                    table_id);

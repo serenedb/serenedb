@@ -418,7 +418,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_storage.GetTransaction());
+    inverted_storage.GetTransaction(/*exclusive_segment=*/true));
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
@@ -542,7 +542,6 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   // Flush this thread's tail segment here (in parallel Combines) rather than
   // leaving it for the single-threaded Finalize refresh to write.
   auto& trx = *lstate.search_trx;
-  trx.RegisterFlush();
   try {
     trx.Flush();
   } catch (const irs::SqlException& e) {

@@ -64,7 +64,6 @@ struct SearchShardWrites {
   int writer_slot = -1;
   bool truncate_claim = false;
   duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
-  uint64_t first_tick = 0;
   irs::SourcePosition position;
 };
 

@@ -192,10 +192,6 @@ class InvertedIndexStorage final
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
 
-  uint64_t NextTick(uint64_t queries) noexcept {
-    return _writer->NextTick(queries);
-  }
-
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }

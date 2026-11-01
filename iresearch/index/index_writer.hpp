@@ -284,33 +284,24 @@ class IndexWriter : private util::Noncopyable {
 
     void Remove(KeyRemoval removal);
 
-    void RemoveAll() { Queue(QueuedRemoval::AllDocs{}); }
+    void RemoveAll() { Queue(Queued::AllDocs{}); }
 
-    void Reset() noexcept;
-
-    void RegisterFlush() noexcept { RegisterFlush(std::array{this}); }
+    void Adopt(std::string_view meta_file);
 
     template<typename Transactions>
-    static void RegisterFlush(Transactions&& transactions) noexcept;
+    static void Stage(Transactions&& transactions) noexcept;
 
-    bool Commit() noexcept {
-      auto* segment = _active.Segment();
-      if (segment == nullptr) {
+    bool Commit(const SourcePosition& position = {}) noexcept {
+      if (_active.Segment() == nullptr) {
         return true;
       }
-      return CommitImpl(_writer->NextTick(_queries), {});
+      if (!_staged) {
+        Stage(std::array{this});
+      }
+      return CommitImpl(position);
     }
 
     std::span<const FlushedSegment> FlushAndFsync();
-
-    bool Commit(uint64_t last_tick,
-                const SourcePosition& position = {}) noexcept {
-      auto* segment = _active.Segment();
-      if (segment == nullptr) {
-        return true;
-      }
-      return CommitImpl(last_tick, position);
-    }
 
     void Abort() noexcept;
 
@@ -345,9 +336,7 @@ class IndexWriter : private util::Noncopyable {
 
     bool Valid() const noexcept { return _writer != nullptr; }
 
-    uint64_t GetQueries() const noexcept { return _queries; }
-
-    void AdvanceQueries(uint64_t n = 1) noexcept { _queries += n; }
+    bool Empty() const noexcept { return _active.Segment() == nullptr; }
 
     void SetFieldOptions(
       std::shared_ptr<const IndexFieldOptions> options) noexcept {
@@ -355,21 +344,22 @@ class IndexWriter : private util::Noncopyable {
     }
 
    private:
-    bool CommitImpl(uint64_t last_tick,
-                    const SourcePosition& position) noexcept;
+    bool CommitImpl(const SourcePosition& position) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
 
-    template<typename Removal>
-    void Queue(Removal removal) {
+    template<typename Op>
+    void Queue(Op op) {
       UpdateSegment(true, nullptr);
-      _active.Segment()->queries.emplace_back(std::move(removal), _queries++);
+      _active.Segment()->queries.emplace_back(std::move(op), _queries++);
     }
 
     IndexWriter* _writer{nullptr};
     ActiveSegmentContext _active;
     uint64_t _queries{0};
+    uint64_t _first_tick{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
     bool _exclusive_segment{false};
+    bool _staged{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -422,10 +412,6 @@ class IndexWriter : private util::Noncopyable {
 
   void Clear(const SourcePosition& position = {});
 
-  uint64_t NextTick(uint64_t queries) noexcept {
-    return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
-  }
-
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
@@ -434,9 +420,6 @@ class IndexWriter : private util::Noncopyable {
                     const IndexFieldOptions* field_options,
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
-
-  void AdoptSegment(std::string_view meta_file, uint64_t tick,
-                    const SourcePosition& position = {});
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
@@ -573,11 +556,17 @@ class IndexWriter : private util::Noncopyable {
     bool meta_on_disk = false;
   };
 
-  struct QueuedRemoval {
+  struct Queued {
     struct AllDocs {};
+    struct Adopted {
+      IndexSegment segment;
+      FileRefs refs;
+      std::shared_ptr<const SegmentReaderImpl> reader;
+    };
 
-    std::variant<std::shared_ptr<const DocRemoval>, KeyRemoval, AllDocs>
-      removal;
+    std::variant<std::shared_ptr<const DocRemoval>, KeyRemoval, AllDocs,
+                 Adopted>
+      op;
     uint64_t tick = 0;
   };
 
@@ -588,7 +577,7 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    ManagedVector<QueuedRemoval> queries;
+    ManagedVector<Queued> queries;
     ManagedVector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
@@ -780,6 +769,10 @@ class IndexWriter : private util::Noncopyable {
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
 
+  uint64_t NextTick(uint64_t queries) noexcept {
+    return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
+  }
+
   bool Start(const CommitInfo& info);
   void Finish();
   void Abort() noexcept;
@@ -814,11 +807,13 @@ class IndexWriter : private util::Noncopyable {
 };
 
 template<typename Transactions>
-void IndexWriter::Transaction::RegisterFlush(
-  Transactions&& transactions) noexcept {
+void IndexWriter::Transaction::Stage(Transactions&& transactions) noexcept {
   static_assert(std::ranges::forward_range<Transactions>);
   SDB_ASSERT(
     absl::c_none_of(transactions, [](const auto& trx) { return !trx; }));
+  SDB_ASSERT(absl::c_all_of(transactions, [&](const auto& trx) {
+    return trx->_writer == (*std::ranges::begin(transactions))->_writer;
+  }));
   // Is the commit already in a flush? Only a pooled segment puts it there and
   // its transaction keeps that flush open, so there is nothing to release.
   FlushContextPtr flush{nullptr, nullptr};
@@ -844,6 +839,20 @@ void IndexWriter::Transaction::RegisterFlush(
   SDB_ASSERT(absl::c_all_of(transactions, [&](const auto& trx) {
     return !trx->_active.Segment() || trx->_active.Flush() == flush.get();
   }));
+  if (!flush) {
+    return;
+  }
+  uint64_t queries = 0;
+  for (const auto& trx : transactions) {
+    queries += trx->_queries;
+  }
+  auto tick =
+    (*std::ranges::begin(transactions))->_writer->NextTick(queries) - queries;
+  for (const auto& trx : transactions) {
+    trx->_first_tick = tick;
+    trx->_staged = true;
+    tick += trx->_queries;
+  }
 }
 
 }  // namespace irs

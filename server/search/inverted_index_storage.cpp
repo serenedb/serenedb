@@ -390,7 +390,6 @@ template<typename Remove>
 void InvertedIndexStorage::CommitRemovalWith(const Remove& remove) {
   auto trx = GetTransaction();
   remove(trx);
-  trx.RegisterFlush();
   if (!trx.Commit()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                     ERR_MSG("inverted index ", _index_id,

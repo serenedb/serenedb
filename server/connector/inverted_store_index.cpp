@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/inlined_vector.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -390,8 +389,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
       duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
       const auto fed = targets[t].index->Evaluate(
         context, view, row_ids, results[t], rows, executors[t].get());
-      targets[t].index->Feed(*targets[t].writer, *targets[t].transaction,
-                             results[t], rows, fed);
+      targets[t].index->Feed(*targets[t].writer, results[t], rows, fed);
     }
     row += static_cast<duckdb::row_t>(size);
     return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
@@ -490,13 +488,11 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
 }
 
 void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
-                              irs::IndexWriter::Transaction& trx,
                               duckdb::DataChunk& results, duckdb::Vector& rows,
                               duckdb::idx_t count) {
   if (count != 0) {
     FeedChunk(writer, count, &rows, results, _columns, _expressions);
   }
-  trx.AdvanceQueries(1);
 }
 
 InvertedStoreIndex::ReplaySession* InvertedStoreIndex::ReplaySessionForEntry() {
@@ -554,7 +550,7 @@ void InvertedStoreIndex::Apply(FeedQueue& queue, ReplayOp& op) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                     ERR_MSG("inverted index feed failed"));
   }
-  Feed(queue.insert_writer, queue.trx, op.results, op.rows, op.count);
+  Feed(queue.insert_writer, op.results, op.rows, op.count);
 }
 
 std::unique_ptr<InvertedStoreIndex::ReplayOp> InvertedStoreIndex::CopyInsert(
@@ -607,21 +603,9 @@ irs::SourcePosition InvertedStoreIndex::ReplayPosition() const {
 void InvertedStoreIndex::CommitReplay(
   std::span<irs::IndexWriter::Transaction* const> trxs,
   const irs::SourcePosition& position) {
-  absl::InlinedVector<irs::IndexWriter::Transaction*, 16> written;
-  uint64_t queries = 0;
+  irs::IndexWriter::Transaction::Stage(trxs);
   for (auto* trx : trxs) {
-    if (trx->GetQueries() != 0) {
-      written.push_back(trx);
-      queries = std::max<uint64_t>(queries, trx->GetQueries());
-    }
-  }
-  if (written.empty()) {
-    return;
-  }
-  irs::IndexWriter::Transaction::RegisterFlush(written);
-  const auto tick = _storage->NextTick(queries);
-  for (auto* trx : written) {
-    SDB_ENSURE(trx->Commit(tick, position),
+    SDB_ENSURE(trx->Commit(position),
                "inverted index replay: commit failed for index ", _index_id);
   }
 }
@@ -733,11 +717,11 @@ duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,
     const auto writer = MakeInsertWriter(trx, *_config, [&](irs::field_id id) {
       return _tokenizers.Acquire(id, context);
     });
-    Feed(*writer, trx, results, rows, count);
+    Feed(*writer, results, rows, count);
     return {};
   }
   if (prepared == 1) {
-    Feed(*slots[0].writer, *slots[0].transaction, results, rows, count);
+    Feed(*slots[0].writer, results, rows, count);
   } else if (count != 0) {
     if (!_live) {
       _live = std::make_unique<LiveFeed>(db.GetDatabase());

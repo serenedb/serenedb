@@ -195,16 +195,13 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     if (entry.storage->GetDatabaseId() != database) {
       continue;
     }
-    uint64_t queries = 0;
     for (auto& slot : entry.slots) {
       SDB_ASSERT(slot.transaction);
       slot.writer.reset();
-      queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
     }
-    irs::IndexWriter::Transaction::RegisterFlush(
+    irs::IndexWriter::Transaction::Stage(
       std::views::transform(entry.slots, &SearchSlot::transaction));
     SDB_PARK_ONCE_ON_FAILURE("inverted_stage_slots_registered");
-    entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }
   if (_search_txn) {
@@ -221,10 +218,8 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
       continue;
     }
     auto& [index_id, entry] = item;
-    SDB_ASSERT(entry.tick != 0);
     for (auto& slot : entry.slots) {
-      if (!slot.transaction ||
-          slot.transaction->Commit(entry.tick, entry.position)) {
+      if (!slot.transaction || slot.transaction->Commit(entry.position)) {
         continue;
       }
       SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,

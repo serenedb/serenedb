@@ -99,16 +99,10 @@ std::vector<Config> WithConfig(std::vector<Config> configs, Config config) {
 }  // namespace
 
 struct SearchTable::ReplaySession {
-  struct PendingAdopt {
-    std::string meta_file;
-    uint64_t queries_before;
-  };
-
   irs::IndexWriter::Transaction trx;
   irs::DocRemoval removal;
   irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> doc_maps;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
-  std::vector<PendingAdopt> adopts;
 };
 
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
@@ -695,8 +689,14 @@ void SearchTable::ReplayAdoptSegments(duckdb::AttachedDatabase& db,
   if (!session) {
     return;
   }
-  for (auto& segment : segments) {
-    session->adopts.push_back({std::move(segment), session->trx.GetQueries()});
+  for (const auto& segment : segments) {
+    try {
+      session->trx.Adopt(segment);
+    } catch (const std::exception& e) {
+      SDB_FATAL(SEARCH, "search-table WAL recovery: failed to adopt segment '",
+                segment, "' for table ", _table_id, ": ",
+                duckdb::ErrorData{e}.RawMessage());
+    }
   }
 }
 
@@ -713,19 +713,7 @@ bool SearchTable::FinishReplay(duckdb::AttachedDatabase& db) {
   auto& storage = db.GetStorageManager();
   const irs::SourcePosition end{
     storage.GetBlockManager().GetCheckpointIteration(), storage.GetWALSize()};
-  const auto queries = session.trx.GetQueries();
-  const auto tick = NextTick(queries);
-  for (const auto& pending : session.adopts) {
-    try {
-      _writer->AdoptSegment(pending.meta_file,
-                            tick - queries + pending.queries_before, end);
-    } catch (const std::exception& e) {
-      SDB_FATAL(SEARCH, "search-table WAL recovery: failed to adopt segment '",
-                pending.meta_file, "' for table ", _table_id, ": ",
-                duckdb::ErrorData{e}.RawMessage());
-    }
-  }
-  SDB_FATAL_IF(SEARCH, !session.trx.Commit(tick, end),
+  SDB_FATAL_IF(SEARCH, !session.trx.Commit(end),
                "search-table WAL recovery: iresearch trx Commit failed for "
                "table ",
                _table_id);

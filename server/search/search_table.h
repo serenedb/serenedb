@@ -152,10 +152,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
     _durability.Clear(*_writer, position);
   }
 
-  uint64_t NextTick(uint64_t count) noexcept {
-    return _writer->NextTick(count);
-  }
-
   template<typename Visit>
   void VisitDocMaps(std::span<const irs::DocRemoval* const> removals,
                     const Visit& visit) const {

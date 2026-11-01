@@ -178,7 +178,6 @@ class Transaction : public Config {
   struct SearchTransaction {
     std::vector<SearchSlot> slots;
     std::shared_ptr<search::InvertedIndexStorage> storage;
-    uint64_t tick = 0;
     irs::SourcePosition position;
   };
 

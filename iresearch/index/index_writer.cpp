@@ -538,10 +538,11 @@ uint64_t ResolveRemovals(
                          ResolveKeys(keys, key_column, entry.tick, flushed);
                          key_removals.emplace_back(&keys);
                        },
-                       [&](IndexWriter::QueuedRemoval::AllDocs) {
+                       [&](IndexWriter::Queued::AllDocs) {
                          all_tick = std::max(all_tick, entry.tick);
-                       }},
-        entry.removal);
+                       },
+                       [](const IndexWriter::Queued::Adopted&) {}},
+        entry.op);
     }
   }
   if (key_removals.empty()) {
@@ -733,22 +734,45 @@ void IndexWriter::Transaction::Remove(KeyRemoval removal) {
   Queue(std::move(removal));
 }
 
-void IndexWriter::Transaction::Reset() noexcept {
-  // TODO(mbkkt) rename Reset() to Rollback()
-  if (auto* segment = _active.Segment(); segment != nullptr) {
-    segment->Rollback();
+void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
+  auto& dir = _writer->_dir;
+  IndexSegment segment;
+  segment.filename = meta_file;
+  segment_meta::Read(dir, segment.meta, meta_file);
+  if (segment.meta.live_docs_count == 0) {
+    return;
   }
+  auto meta_ref = directory_utils::Reference(dir, segment.filename);
+  if (!meta_ref) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("cannot adopt segment meta '", segment.filename,
+                            "': it does not exist"));
+  }
+  auto reader = SegmentReaderImpl::Open(dir, segment.meta,
+                                        _writer->GetSnapshotImpl()->Options());
+  [[maybe_unused]] uint64_t id = 0;
+  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
+               id <= _writer->_seg_counter.load(std::memory_order_relaxed),
+             "Adopted segment id is above the segment counter; the writer was "
+             "not opened with cleanup_on_open = false");
+  FileRefs refs;
+  refs.emplace_back(std::move(meta_ref));
+  Queue(Queued::Adopted{.segment = std::move(segment),
+                        .refs = std::move(refs),
+                        .reader = std::move(reader)});
 }
 
 bool IndexWriter::Transaction::CommitImpl(
-  uint64_t last_tick, const SourcePosition& position) noexcept try {
+  const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
+  SDB_ASSERT(_staged);
   SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
-  segment->Commit(_queries, last_tick);
+  segment->Commit(_queries, _first_tick + _queries);
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
+  _staged = false;
   return true;
 } catch (...) {
   SDB_ASSERT(_active.Segment() != nullptr);
@@ -761,6 +785,8 @@ void IndexWriter::Transaction::Abort() noexcept {
   if (segment == nullptr) {
     return;  // nothing to do
   }
+  _queries = 0;
+  _staged = false;
   if (_active.Flush() == nullptr) {
     segment->Reset();  // reset before returning to pool
     _active = {};      // back to pool no needed Rollback
@@ -969,6 +995,13 @@ void IndexWriter::FlushContext::FlushPending() {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
     segment->Flush();
+    for (auto& queued : segment->queries) {
+      if (auto* adopted = std::get_if<Queued::Adopted>(&queued.op)) {
+        incoming.emplace_back(std::move(adopted->segment), queued.tick,
+                              std::move(adopted->refs),
+                              std::move(adopted->reader));
+      }
+    }
     segments.push_back(std::move(segment));
   }
   ClearPending();
@@ -1535,43 +1568,6 @@ CompactionResult IndexWriter::Compact(
   const MergeWriter::FlushProgress& progress) {
   return GetReady(CompactAsync(policy, field_options, progress,
                                /*env=*/nullptr));
-}
-
-void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,
-                               const SourcePosition& position) {
-  IndexSegment segment;
-  segment.filename = meta_file;
-  segment_meta::Read(_dir, segment.meta, meta_file);
-  if (segment.meta.live_docs_count == 0) {
-    return;  // Nothing to adopt
-  }
-
-  auto meta_ref = directory_utils::Reference(_dir, segment.filename);
-  if (!meta_ref) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("cannot adopt segment meta '", segment.filename,
-                            "': it does not exist"));
-  }
-
-  auto adopted_reader =
-    SegmentReaderImpl::Open(_dir, segment.meta, GetSnapshotImpl()->Options());
-
-  [[maybe_unused]] uint64_t id = 0;
-  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
-               id <= _seg_counter.load(std::memory_order_relaxed),
-             "Adopted segment id is above the segment counter; the writer was "
-             "not opened with cleanup_on_open = false");
-
-  FileRefs refs;
-  refs.emplace_back(std::move(meta_ref));
-  auto flush = GetFlushContext();
-
-  // lock due to context modification
-  std::lock_guard lock{flush->pending_mutex};
-
-  flush->position = std::max(flush->position, position);
-  flush->incoming.emplace_back(std::move(segment), tick, std::move(refs),
-                               std::move(adopted_reader));
 }
 
 void IndexWriter::CompactionFloorGuard::Release() noexcept {

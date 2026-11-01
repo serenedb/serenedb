@@ -149,9 +149,8 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                          duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
                          duckdb::DataChunk& results, duckdb::Vector& rows,
                          duckdb::ExpressionExecutor* executor = nullptr);
-  void Feed(DuckDBSinkIndexWriter& writer, irs::IndexWriter::Transaction& trx,
-            duckdb::DataChunk& results, duckdb::Vector& rows,
-            duckdb::idx_t count);
+  void Feed(DuckDBSinkIndexWriter& writer, duckdb::DataChunk& results,
+            duckdb::Vector& rows, duckdb::idx_t count);
 
   ReplaySession* ReplaySessionForEntry();
   void Enqueue(duckdb::TaskExecutor& executor, FeedQueue& queue,

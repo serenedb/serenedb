@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <zxc.h>
 
 #include <algorithm>
@@ -29,7 +30,7 @@ namespace sdb::network::http {
 namespace {
 
 static_assert(kZxcLevels.min == ZXC_LEVEL_FASTEST &&
-              kZxcLevels.max == ZXC_LEVEL_COMPACT);
+              kZxcLevels.max == ZXC_LEVEL_ULTRA);
 
 template<typename Step>
 void Drain(message::Writer& out, Step step) {
@@ -55,9 +56,14 @@ void Drain(message::Writer& out, Step step) {
 
 zxc_cstream* CreateCStream(int level) {
   SDB_ASSERT(kZxcLevels.Contains(level));
-  zxc_compress_opts_t opts{};
-  opts.level = level;
-  return zxc_cstream_create(&opts);
+  auto* cfg = zxc_create_cctx();
+  if (!cfg) {
+    return nullptr;
+  }
+  absl::Cleanup free_cfg = [cfg] { zxc_free_cctx(cfg); };
+  [[maybe_unused]] const int rc = zxc_cctx_set_param(cfg, ZXC_C_LEVEL, level);
+  SDB_ASSERT(rc == ZXC_OK);
+  return zxc_cstream_create(cfg);
 }
 
 zxc_dstream* CreateDStream() {

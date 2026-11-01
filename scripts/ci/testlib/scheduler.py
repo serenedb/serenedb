@@ -247,19 +247,21 @@ class Scheduler:
             if name in self._fixture_errors:
                 raise RuntimeError(f"fixture {name} failed to start: {self._fixture_errors[name]}")
             if name not in self.ctx.fixtures:
-                fixture = self.factories[name](self.ctx)
-                for required in fixture.requires:
-                    self._fixture(required)
-                started_wall = time.time()
-                t0 = time.monotonic()
+                fixture = None
                 try:
+                    fixture = self.factories[name](self.ctx)
+                    for required in fixture.requires:
+                        self._fixture(required)
+                    started_wall = time.time()
+                    t0 = time.monotonic()
                     fixture.start(self.ctx)
                 except Exception as e:
                     self._fixture_errors[name] = str(e)
-                    try:
-                        fixture.stop()
-                    except Exception:
-                        pass
+                    if fixture is not None:
+                        try:
+                            fixture.stop()
+                        except Exception:
+                            pass
                     raise RuntimeError(f"fixture {name} failed to start: {e}") from e
                 self.ctx.fixtures[name] = fixture
                 took = time.monotonic() - t0

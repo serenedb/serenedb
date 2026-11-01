@@ -201,7 +201,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
         case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
           return 's';
         case duckdb::FunctionStability::VOLATILE:
-          return 'v';
+          break;
       }
       return 'v';
     }),

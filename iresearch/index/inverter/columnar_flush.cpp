@@ -28,6 +28,7 @@
 #include <bit>
 #include <duckdb/common/bswap.hpp>
 #include <functional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -102,15 +103,14 @@ IRS_FORCE_INLINE uint32_t Get(uint32_t* const* blocks, uint64_t i) noexcept {
                [i & ScatterScratch::kBlockMask];
 }
 
-template<typename T, typename DocOf>
+template<typename T, typename DocOf, typename Less>
 void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
-               doc_id_t max_doc, DocOf doc_of) {
+               doc_id_t max_doc, DocOf doc_of, Less less) {
   constexpr uint32_t kRadixBits = 11;
   constexpr uint32_t kRadixMask = (uint32_t{1} << kRadixBits) - 1;
   constexpr size_t kComparisonSortMax = 256;
   if (items.size() <= kComparisonSortMax) {
-    absl::c_stable_sort(
-      items, [&](const T& l, const T& r) { return doc_of(l) < doc_of(r); });
+    absl::c_sort(items, less);
     return;
   }
   spare.resize(items.size());
@@ -175,8 +175,9 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
       for (auto i = begin; i != end; ++i) {
         keys.push_back(Get(docs, i));
       }
-      SortByDoc(keys, _s->doc_keys_alt, max_doc,
-                [](uint32_t doc) noexcept { return doc; });
+      SortByDoc(
+        keys, _s->doc_keys_alt, max_doc,
+        [](uint32_t doc) noexcept { return doc; }, std::less<>{});
       for (auto i = begin; const auto doc : keys) {
         Put(docs, i++, doc);
       }
@@ -186,9 +187,12 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
       for (auto i = begin; i != end; ++i) {
         pairs.push_back(uint64_t{Get(docs, i)} << 32 | Get(positions, i));
       }
-      SortByDoc(pairs, _s->doc_pos_alt, max_doc, [](uint64_t pair) noexcept {
-        return static_cast<uint32_t>(pair >> 32);
-      });
+      SortByDoc(
+        pairs, _s->doc_pos_alt, max_doc,
+        [](uint64_t pair) noexcept {
+          return static_cast<uint32_t>(pair >> 32);
+        },
+        std::less<>{});
       for (auto i = begin; const auto pair : pairs) {
         Put(docs, i, static_cast<uint32_t>(pair >> 32));
         Put(positions, i++, static_cast<uint32_t>(pair));
@@ -202,10 +206,16 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
                                .offs_start = Get(_s->offs_start.data(), i),
                                .offs_end = Get(_s->offs_end.data(), i)});
       }
-      SortByDoc(occurrences, _s->occurrences_alt, max_doc,
-                [](const ScatterScratch::Occurrence& occurrence) noexcept {
-                  return occurrence.doc;
-                });
+      SortByDoc(
+        occurrences, _s->occurrences_alt, max_doc,
+        [](const ScatterScratch::Occurrence& occurrence) noexcept {
+          return occurrence.doc;
+        },
+        [](const ScatterScratch::Occurrence& l,
+           const ScatterScratch::Occurrence& r) noexcept {
+          return std::tie(l.doc, l.pos, l.offs_start, l.offs_end) <
+                 std::tie(r.doc, r.pos, r.offs_start, r.offs_end);
+        });
       for (auto i = begin; const auto& occurrence : occurrences) {
         Put(docs, i, occurrence.doc);
         Put(positions, i, occurrence.pos);

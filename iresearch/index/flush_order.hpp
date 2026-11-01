@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace duckdb {
@@ -44,13 +45,13 @@ struct DocOrder {
   bool Empty() const noexcept { return new2old.empty(); }
 
   doc_id_t NewDoc(size_t row) const noexcept {
-    return static_cast<doc_id_t>(Empty() ? row : old2new[row]) +
-           doc_limits::min();
+    SDB_ASSERT(!Empty());
+    return static_cast<doc_id_t>(old2new[row]) + doc_limits::min();
   }
 
   size_t OldRow(doc_id_t doc) const noexcept {
-    const size_t row = doc - doc_limits::min();
-    return Empty() ? row : new2old[row];
+    SDB_ASSERT(!Empty());
+    return new2old[doc - doc_limits::min()];
   }
 
   void MaskRows(DocumentMaskBuilder& mask, size_t from, size_t to) const;

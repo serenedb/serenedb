@@ -164,7 +164,7 @@ void AppendReplacements(const Slice& slice,
         auto& map = absorbed.emplace_back(source);
         map.rank_begin = static_cast<irs::doc_id_t>(rank);
         map.rank_end = static_cast<irs::doc_id_t>(rank + take);
-        map.base = flushed.order.NewDoc(used);
+        map.base = static_cast<irs::doc_id_t>(used) + irs::doc_limits::min();
       } else {
         irs::DocMapRuns runs{source, absorbed};
         for (uint64_t row = 0; row != take; ++row) {

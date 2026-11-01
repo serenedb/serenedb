@@ -99,7 +99,9 @@ struct FlushedSegmentContext {
   }
 
   bool CommittedBy(doc_id_t doc, size_t bound) const noexcept {
-    return flushed.order.OldRow(doc) < bound;
+    const auto& order = flushed.order;
+    return (order.Empty() ? size_t{doc} - doc_limits::min()
+                          : order.OldRow(doc)) < bound;
   }
 
   void RemoveAll(uint64_t tick);

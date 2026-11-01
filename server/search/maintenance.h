@@ -26,9 +26,8 @@
 #include <cstddef>
 #include <cstdint>
 
-// Background-maintenance vocabulary shared by the maintained iresearch stores
-// (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
-// them.
+// Background-maintenance vocabulary shared by Store and the loops in
+// search/task.h that drive it.
 namespace sdb::search {
 
 // Maintenance cadence, read by the background loops while an ALTER rewrites it.

@@ -45,7 +45,7 @@
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/transaction.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 
 namespace duckdb {
 
@@ -68,7 +68,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 
   InvertedStoreIndex(duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
                      duckdb::idx_t table_oid,
-                     std::shared_ptr<search::InvertedIndexStorage> storage,
+                     std::shared_ptr<search::Store> storage,
                      std::shared_ptr<const InvertedIndexConfig> config,
                      catalog::IndexTokenizers tokenizers, bool has_predicate);
   ~InvertedStoreIndex() final;
@@ -177,7 +177,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;
 
-  std::shared_ptr<search::InvertedIndexStorage> _storage;
+  std::shared_ptr<search::Store> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
   std::vector<FeedColumn> _columns;
@@ -189,7 +189,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
 };
 
 struct PublishedInvertedIndex {
-  std::shared_ptr<search::InvertedIndexStorage> storage;
+  std::shared_ptr<search::Store> storage;
   duckdb::idx_t rowid_horizon = 0;
 };
 

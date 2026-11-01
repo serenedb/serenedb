@@ -34,9 +34,8 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
 #include "search/search_table_transaction.h"
+#include "search/store.h"
 
 namespace sdb::query {
 
@@ -78,11 +77,11 @@ class Transaction : public Config {
     _on_commit.push_back(std::move(action));
   }
 
-  void ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+  void ClaimSearchLayout(std::shared_ptr<search::Store> table,
                          duckdb::transaction_t owner, std::string_view name);
 
   void AddCreatedIndex(duckdb::idx_t database,
-                       std::shared_ptr<search::InvertedIndexStorage> storage) {
+                       std::shared_ptr<search::Store> storage) {
     _created_indexes.emplace_back(database, std::move(storage));
   }
   void RefreshCreatedIndexes(duckdb::idx_t database);
@@ -106,9 +105,8 @@ class Transaction : public Config {
   // definition is handed in rather than looked up: the caller is the scan
   // The storage is handed in rather than read off the definition: an open
   // directory is the object's, not something a version of it describes.
-  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(
-    duckdb::idx_t index_id,
-    const std::shared_ptr<search::InvertedIndexStorage>& storage);
+  search::StoreSnapshotPtr EnsureSearchSnapshot(
+    duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage);
 
   // Lazily-created search-table (TableEngine::Search) transaction state +
   // commit logic. Engaged on the first search-table write/scan. The operator
@@ -134,14 +132,12 @@ class Transaction : public Config {
   };
 
   SearchSlot& EnsureIndexSlot(
-    duckdb::idx_t index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
+    duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
     std::shared_ptr<const catalog::InvertedIndexConfig> config,
     size_t slot = 0);
 
   irs::IndexWriter::Transaction& EnsureIndexTransaction(
-    duckdb::idx_t index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
+    duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
     std::shared_ptr<const catalog::InvertedIndexConfig> config) {
     return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
               .transaction;
@@ -177,24 +173,23 @@ class Transaction : public Config {
 
   struct SearchTransaction {
     std::vector<SearchSlot> slots;
-    std::shared_ptr<search::InvertedIndexStorage> storage;
+    std::shared_ptr<search::Store> storage;
     irs::SourcePosition position;
   };
 
   irs::containers::FlatHashMap<duckdb::idx_t, SearchTransaction>
     _search_transactions;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               search::InvertedIndexSnapshotPtr>
+                               search::StoreSnapshotPtr>
     _search_snapshots;
   FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy.
   std::optional<search::SearchTableTransaction> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
-  std::vector<
-    std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
+  std::vector<std::pair<duckdb::idx_t, std::shared_ptr<search::Store>>>
     _created_indexes;
-  std::vector<std::shared_ptr<search::SearchTable>> _layout_claims;
+  std::vector<std::shared_ptr<search::Store>> _layout_claims;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

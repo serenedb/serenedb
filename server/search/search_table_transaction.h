@@ -49,10 +49,10 @@ class SearchTableEntry;
 }  // namespace sdb::catalog
 namespace sdb::search {
 
-class SearchTable;
+class Store;
 
 struct SearchShardWrites {
-  std::shared_ptr<SearchTable> shard;
+  std::shared_ptr<Store> shard;
   const catalog::SearchTableEntry* table = nullptr;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   // The transaction the write buffer flushes into once it has overrun, owned by
@@ -79,7 +79,7 @@ class SearchTableTransaction {
   // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
   // the Combine that hands over its iresearch transaction, so registering any
   // later would let it straddle a swap unnoticed.
-  void RegisterWriter(const std::shared_ptr<SearchTable>& shard,
+  void RegisterWriter(const std::shared_ptr<Store>& shard,
                       const catalog::SearchTableEntry& table);
 
   // Whether this transaction has already written to `shard`. CREATE INDEX
@@ -91,15 +91,15 @@ class SearchTableTransaction {
   }
 
   void AddParallelSearchTransaction(
-    const std::shared_ptr<SearchTable>& shard,
+    const std::shared_ptr<Store>& shard,
     std::unique_ptr<irs::IndexWriter::Transaction> trx);
 
   // The segments a bulk statement flushed + fsynced, for the WAL to reference
   // instead of a second copy of the rows.
-  void AddSegments(const std::shared_ptr<SearchTable>& shard,
+  void AddSegments(const std::shared_ptr<Store>& shard,
                    std::vector<std::string>&& segments);
 
-  void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
+  void AddInlineInsertChunk(const std::shared_ptr<Store>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
                             std::span<const connector::ColumnId> column_ids,
@@ -116,14 +116,14 @@ class SearchTableTransaction {
   // become that transaction's to make durable, so the record stops carrying a
   // copy of them; the removals stay buffered, since the record has to carry
   // those either way.
-  void FlushBuffer(const std::shared_ptr<SearchTable>& shard,
+  void FlushBuffer(const std::shared_ptr<Store>& shard,
                    duckdb::ClientContext& context);
   void FlushBufferTransaction(duckdb::idx_t shard_id);
 
-  void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
+  void AddSearchDeletes(const std::shared_ptr<Store>& shard,
                         const duckdb::Vector& positions);
 
-  void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
+  void AddSearchTruncate(const std::shared_ptr<Store>& shard,
                          const duckdb::Identifier& table_name,
                          bool clears_shard);
 
@@ -160,22 +160,21 @@ class SearchTableTransaction {
   }
 
  private:
-  SearchShardWrites& EnsureShardWrites(
-    const std::shared_ptr<SearchTable>& shard);
+  SearchShardWrites& EnsureShardWrites(const std::shared_ptr<Store>& shard);
   void ReleaseWriters() noexcept;
 
   // Replays a buffer's rows and pending deletes into `trx`. The rows stay
   // buffered; the caller decides whether they are now somebody else's to make
   // durable.
-  void ReplayBuffer(SearchTable& shard, LocalTableChangesEntry& entry,
+  void ReplayBuffer(Store& shard, LocalTableChangesEntry& entry,
                     irs::IndexWriter::Transaction& trx,
                     duckdb::ClientContext& context);
 
-  const irs::DirectoryReader& PinnedReader(const SearchTable& shard) const;
+  const irs::DirectoryReader& PinnedReader(const Store& shard) const;
 
   // The shard's exclusive buffer transaction, created on first overrun.
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
-    const std::shared_ptr<SearchTable>& shard);
+    const std::shared_ptr<Store>& shard);
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,

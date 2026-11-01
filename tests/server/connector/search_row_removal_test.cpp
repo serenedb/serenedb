@@ -59,8 +59,8 @@
 #include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "gtest/gtest.h"
-#include "search/inverted_index_storage.h"
 #include "search/row_position_wal.h"
+#include "search/store.h"
 
 namespace {
 

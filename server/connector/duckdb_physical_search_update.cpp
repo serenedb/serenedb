@@ -39,13 +39,13 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
-  std::shared_ptr<search::SearchTable> search_table;
+  std::shared_ptr<search::Store> search_table;
   query::Transaction* sdb_txn = nullptr;
 
   std::vector<ColumnId> column_ids;

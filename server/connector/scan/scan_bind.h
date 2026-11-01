@@ -42,7 +42,7 @@
 #include "connector/column_id.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 
@@ -79,7 +79,7 @@ struct SearchSpec {
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
-  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
+  std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
     acquire_snapshot;
   std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
 
@@ -242,8 +242,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool ReadsParametersAtExecution() const final;
   duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
 
-  search::InvertedIndexSnapshotPtr Snapshot(
-    duckdb::ClientContext& context) const {
+  search::StoreSnapshotPtr Snapshot(duckdb::ClientContext& context) const {
     return search.acquire_snapshot(context);
   }
 
@@ -327,9 +326,9 @@ struct DeferredBuild {
   std::vector<DeferredCheck> checks;
 };
 
-DeferredBuild BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan,
-  const search::InvertedIndexSnapshot& snapshot);
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan,
+                                  const search::StoreSnapshot& snapshot);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

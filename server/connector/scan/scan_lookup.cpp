@@ -134,7 +134,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> LookupToStringValue(
 }
 
 struct SourceLookupLocalState final : duckdb::LocalTableFunctionState {
-  search::InvertedIndexSnapshotPtr snapshot;
+  search::StoreSnapshotPtr snapshot;
   std::unique_ptr<irs::IndexSource> source;
 };
 

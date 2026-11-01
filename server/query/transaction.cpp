@@ -40,8 +40,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::query {
 
@@ -171,7 +170,7 @@ void Transaction::PreCommit() {
 }
 
 Transaction::SearchSlot& Transaction::EnsureIndexSlot(
-  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  duckdb::idx_t index_id, std::shared_ptr<search::Store> storage,
   std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
   auto& entry = _search_transactions.try_emplace(index_id).first->second;
   if (entry.slots.size() <= slot) {
@@ -248,15 +247,14 @@ void Transaction::Rollback(duckdb::transaction_t owner) {
   RollbackVariables();
 }
 
-search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
-  duckdb::idx_t index_id,
-  const std::shared_ptr<search::InvertedIndexStorage>& storage) {
+search::StoreSnapshotPtr Transaction::EnsureSearchSnapshot(
+  duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage) {
   SDB_ASSERT(storage);
   auto& snapshot =
     _search_snapshots.try_emplace(std::pair{storage->GetDatabaseId(), index_id})
       .first->second;
   if (!snapshot) {
-    snapshot = storage->GetInvertedIndexSnapshot();
+    snapshot = storage->Snapshot();
   }
   return snapshot;
 }
@@ -297,7 +295,7 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   }
 }
 
-void Transaction::ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+void Transaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
                                     duckdb::transaction_t owner,
                                     std::string_view name) {
   if (table->AcquireLayout(owner, name)) {

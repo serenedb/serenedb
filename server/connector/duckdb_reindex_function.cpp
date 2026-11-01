@@ -101,7 +101,7 @@
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "planning/iceberg_multi_file_list.hpp"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 #include "search/task.h"
 
 namespace sdb::connector {
@@ -728,7 +728,7 @@ template<typename Observe>
 void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               const ReindexTarget& target, const Source& src, FileDiff& files,
               Observe& observe, const search::FileManifest& manifest,
-              search::InvertedIndexStorage& storage) {
+              search::Store& storage) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   std::vector<std::pair<uint64_t, int64_t>> eq_rows;
   if constexpr (kIceberg) {
@@ -750,9 +750,9 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
   // above them. A crash between the two loses the removed rows until the next
   // tick: the manifest version only moves at the end, so the tick re-runs the
   // delta.
-  if (auto removal = ResolveRemoves(storage.GetInvertedIndexSnapshot()->reader,
-                                    std::move(files.del_files),
-                                    std::move(masks), std::move(eq_rows));
+  if (auto removal =
+        ResolveRemoves(storage.Snapshot()->reader, std::move(files.del_files),
+                       std::move(masks), std::move(eq_rows));
       !removal->groups.empty()) {
     SDB_PARK_ONCE_ON_FAILURE("reindex_delta_removes_resolved");
     storage.CommitRemoval(std::move(removal));
@@ -808,8 +808,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
                           ConnectionContext& conn_ctx,
                           const ReindexTarget& target, const Source& src,
                           const search::FileManifest& manifest,
-                          search::InvertedIndexStorage& storage,
-                          Observe& observe) {
+                          search::Store& storage, Observe& observe) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
   auto files = DiffListing(src, manifest, observe);
 
@@ -905,10 +904,10 @@ std::optional<Source> ResolveSource(duckdb::ClientContext& context,
   return src;
 }
 
-ReindexOutcome RunClaimed(
-  duckdb::ClientContext& context, ConnectionContext& conn_ctx,
-  const ReindexTarget& target,
-  const std::shared_ptr<search::InvertedIndexStorage>& storage) {
+ReindexOutcome RunClaimed(duckdb::ClientContext& context,
+                          ConnectionContext& conn_ctx,
+                          const ReindexTarget& target,
+                          const std::shared_ptr<search::Store>& storage) {
   SDB_WAIT_ON_FAILURE("pause_reindex_claimed");
   const auto manifest = storage->GetFileManifest();
   std::optional<Source> src;
@@ -921,7 +920,7 @@ ReindexOutcome RunClaimed(
     return {};
   }
   if (manifest->version && manifest->entries.empty() &&
-      storage->GetInvertedIndexSnapshot()->reader.live_docs_count() > 0) {
+      storage->Snapshot()->reader.live_docs_count() > 0) {
     RunFullRebuild(context, conn_ctx, target);
     return {};
   }
@@ -1009,7 +1008,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->current_relid,
                              static_cast<int64_t>(target.index->oid));
   }
-  const auto claim = search::InvertedIndexStorage::ReindexClaim::Acquire(
+  const auto claim = search::Store::ReindexClaim::Acquire(
     *storage, [&] { return context.IsInterrupted(); }, kClaimPoll);
   if (!claim.Claimed()) {
     context.InterruptCheck();
@@ -1166,8 +1165,7 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!storage) {
     return;
   }
-  const auto claim =
-    search::InvertedIndexStorage::ReindexClaim::TryAcquire(*storage);
+  const auto claim = search::Store::ReindexClaim::TryAcquire(*storage);
   if (!claim.Claimed()) {
     return;
   }

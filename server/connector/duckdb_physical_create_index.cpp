@@ -81,7 +81,7 @@
 #include "pg/progress_registry.h"
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -122,7 +122,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   std::vector<std::atomic<int64_t>> uncommitted_min_rowids;
   std::atomic<size_t> registered_sinks{0};
 
-  std::shared_ptr<search::InvertedIndexStorage> index_storage;
+  std::shared_ptr<search::Store> index_storage;
   catalog::IndexTokenizers tokenizers;
   // The entry's own config: the encoding handed to iresearch and the source
   // of every per-field answer the build needs.
@@ -131,7 +131,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   std::vector<ExpressionSlot> expression_slots;
 
   std::optional<SearchBackfillTarget> search_backfill;
-  search::SearchTable::BuildClaim build_claim;
+  search::Store::BuildClaim build_claim;
 
   pg::ProgressMetrics* progress = nullptr;
 };

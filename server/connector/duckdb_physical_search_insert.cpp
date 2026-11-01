@@ -50,15 +50,15 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table.h"
 #include "search/search_table_changes.h"
+#include "search/store.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
-  std::shared_ptr<search::SearchTable> search_table;
+  std::shared_ptr<search::Store> search_table;
   duckdb::Catalog* catalog = nullptr;
   duckdb::idx_t table_id = 0;
   query::Transaction* sdb_txn = nullptr;

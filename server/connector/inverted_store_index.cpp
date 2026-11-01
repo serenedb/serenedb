@@ -66,8 +66,8 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/config_variable_names.h"
-#include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
+#include "search/store.h"
 
 namespace sdb::connector {
 namespace {
@@ -412,8 +412,7 @@ struct InvertedStoreIndex::RangeTask final : duckdb::BaseExecutorTask {
 
 InvertedStoreIndex::InvertedStoreIndex(
   duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
-  duckdb::idx_t table_oid,
-  std::shared_ptr<search::InvertedIndexStorage> storage,
+  duckdb::idx_t table_oid, std::shared_ptr<search::Store> storage,
   std::shared_ptr<const InvertedIndexConfig> config,
   catalog::IndexTokenizers tokenizers, bool has_predicate)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
@@ -958,7 +957,7 @@ PublishedInvertedIndex PublishInvertedIndex(
                             "table that has been altered or dropped"));
   }
   const auto options = catalog::ResolveSettings(entry.options);
-  auto storage = search::InvertedIndexStorage::Create(
+  auto storage = std::make_shared<search::Store>(
     entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
     entry.catalog.InMemory(), false, entry.catalog.GetOid(), entry.oid, options,
     entry.Config()->top_k_scorer, /*is_new=*/true);

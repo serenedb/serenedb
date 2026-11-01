@@ -2,12 +2,11 @@ target_sources(
     sereneserver
     PRIVATE
         index_durability.cpp
-        inverted_index_storage.cpp
         row_position_wal.cpp
+        store.cpp
         store_stats.cpp
         search_analyzer_impl.cpp
         scorer_options.cpp
-        search_table.cpp
         search_table_transaction.cpp
         task.cpp
         wal_recovery.cpp

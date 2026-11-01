@@ -50,9 +50,8 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "pg/types/logical.h"
-#include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -355,7 +354,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 };
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

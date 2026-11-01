@@ -1076,7 +1076,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForBlockValue(
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
   SDB_PARK_ONCE_ON_FAILURE("search_insert_sink_before_config");
   auto config = shard.Config();

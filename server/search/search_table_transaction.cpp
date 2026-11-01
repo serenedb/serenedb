@@ -43,7 +43,7 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/row_position_wal.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::search {
@@ -118,8 +118,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
 SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
 
 SearchShardWrites& SearchTableTransaction::EnsureShardWrites(
-  const std::shared_ptr<SearchTable>& shard) {
-  auto& w = _writes[shard->GetTableId()];
+  const std::shared_ptr<Store>& shard) {
+  auto& w = _writes[shard->GetId()];
   if (!w.shard) {
     w.shard = shard;
   }
@@ -127,8 +127,7 @@ SearchShardWrites& SearchTableTransaction::EnsureShardWrites(
 }
 
 void SearchTableTransaction::RegisterWriter(
-  const std::shared_ptr<SearchTable>& shard,
-  const catalog::SearchTableEntry& table) {
+  const std::shared_ptr<Store>& shard, const catalog::SearchTableEntry& table) {
   auto& w = EnsureShardWrites(shard);
   w.table = &table;
   if (w.writer_slot < 0) {
@@ -150,28 +149,26 @@ void SearchTableTransaction::ReleaseWriters() noexcept {
 }
 
 void SearchTableTransaction::AddParallelSearchTransaction(
-  const std::shared_ptr<SearchTable>& shard,
+  const std::shared_ptr<Store>& shard,
   std::unique_ptr<irs::IndexWriter::Transaction> trx) {
   EnsureShardWrites(shard).transactions.push_back(std::move(trx));
 }
 
-void SearchTableTransaction::AddSegments(
-  const std::shared_ptr<SearchTable>& shard,
-  std::vector<std::string>&& segments) {
-  _changes[shard->GetTableId()].AppendSegments(std::move(segments));
+void SearchTableTransaction::AddSegments(const std::shared_ptr<Store>& shard,
+                                         std::vector<std::string>&& segments) {
+  _changes[shard->GetId()].AppendSegments(std::move(segments));
 }
 
 void SearchTableTransaction::AddInlineInsertChunk(
-  const std::shared_ptr<SearchTable>& shard,
-  duckdb::BufferManager& buffer_manager,
+  const std::shared_ptr<Store>& shard, duckdb::BufferManager& buffer_manager,
   const duckdb::vector<duckdb::LogicalType>& types,
   std::span<const connector::ColumnId> column_ids, duckdb::Catalog& catalog,
   duckdb::DataChunk& chunk) {
-  _changes[shard->GetTableId()].AppendInsertChunk(buffer_manager, types,
-                                                  column_ids, catalog, chunk);
+  _changes[shard->GetId()].AppendInsertChunk(buffer_manager, types, column_ids,
+                                             catalog, chunk);
 }
 
-void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
+void SearchTableTransaction::ReplayBuffer(Store& shard,
                                           LocalTableChangesEntry& entry,
                                           irs::IndexWriter::Transaction& trx,
                                           duckdb::ClientContext& context) {
@@ -183,7 +180,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
       connector::MakeSearchTableInsertSink(trx, shard, *entry.catalog, context);
     for (auto& chunk : entry.collection->Chunks()) {
       connector::WriteChunkToSearchSink(*sink, chunk, entry.column_ids,
-                                        shard.GetTableId(), context);
+                                        shard.GetId(), context);
     }
   }
   if (!entry.positions.Empty()) {
@@ -192,16 +189,16 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
 }
 
 const irs::DirectoryReader& SearchTableTransaction::PinnedReader(
-  const SearchTable& shard) const {
+  const Store& shard) const {
   const auto pinned =
-    _readers.find(std::pair{shard.GetDatabaseId(), shard.GetTableId()});
-  SDB_ENSURE(pinned != _readers.end(), "search table ", shard.GetTableId(),
+    _readers.find(std::pair{shard.GetDatabaseId(), shard.GetId()});
+  SDB_ENSURE(pinned != _readers.end(), "search table ", shard.GetId(),
              ": deletes without the reader their positions come from");
   return *pinned->second.reader;
 }
 
 irs::IndexWriter::Transaction& SearchTableTransaction::EnsureBufferTransaction(
-  const std::shared_ptr<SearchTable>& shard) {
+  const std::shared_ptr<Store>& shard) {
   auto& w = EnsureShardWrites(shard);
   if (w.buffer_trx == nullptr) {
     // Exclusive: its segments are named in the record, so they must not also
@@ -213,9 +210,9 @@ irs::IndexWriter::Transaction& SearchTableTransaction::EnsureBufferTransaction(
   return *w.buffer_trx;
 }
 
-void SearchTableTransaction::FlushBuffer(
-  const std::shared_ptr<SearchTable>& shard, duckdb::ClientContext& context) {
-  auto it = _changes.find(shard->GetTableId());
+void SearchTableTransaction::FlushBuffer(const std::shared_ptr<Store>& shard,
+                                         duckdb::ClientContext& context) {
+  auto it = _changes.find(shard->GetId());
   if (it == _changes.end()) {
     return;
   }
@@ -234,14 +231,14 @@ void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, const duckdb::Vector& positions) {
+  const std::shared_ptr<Store>& shard, const duckdb::Vector& positions) {
   EnsureShardWrites(shard);
-  _changes[shard->GetTableId()].AppendDeletes(positions);
+  _changes[shard->GetId()].AppendDeletes(positions);
 }
 
 void SearchTableTransaction::AddSearchTruncate(
-  const std::shared_ptr<SearchTable>& shard,
-  const duckdb::Identifier& table_name, bool clears_shard) {
+  const std::shared_ptr<Store>& shard, const duckdb::Identifier& table_name,
+  bool clears_shard) {
   auto& w = EnsureShardWrites(shard);
   if (!w.truncate_claim) {
     if (!shard->ClaimTruncate()) {
@@ -255,7 +252,7 @@ void SearchTableTransaction::AddSearchTruncate(
   w.transactions.clear();
   w.buffer_trx = nullptr;
   const bool clears = clears_shard && !shard->BuildInFlight();
-  auto& changes = _changes[shard->GetTableId()];
+  auto& changes = _changes[shard->GetId()];
   changes.AppendTruncate(clears);
   if (!clears) {
     auto& trx = *w.transactions.emplace_back(

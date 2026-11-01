@@ -61,6 +61,14 @@ DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs
 
 connection c_ved user=efa_vedernikoff password=efa_pw
 statement error
+SELECT count(*) FROM ST_ReadSHP('/etc/efa.shp');
+----
+db error: ERROR: permission denied to access "/etc/efa.shp"
+DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
 SELECT * FROM read_csv('http://127.0.0.1:1/efa.csv');
 ----
 db error: ERROR: permission denied to access "http://127.0.0.1:1/efa.csv"

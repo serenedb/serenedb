@@ -265,13 +265,12 @@ void SimulatedJob::Cancel() {
 }
 
 Simulation::Simulation(const MergeSimulation& options) : _options{options} {
-  _scheduler = std::make_unique<MergeScheduler>(
-    yaclib::MakeInline(), MergeScheduler::Options{
-                            .threads = options.threads,
-                            .now = [this] { return _now; },
-                            .registry = &_registry,
-                            .gauges = false,
-                          });
+  _scheduler = std::make_unique<MergeScheduler>(yaclib::MakeInline(),
+                                                MergeScheduler::Options{
+                                                  .threads = options.threads,
+                                                  .registry = &_registry,
+                                                  .gauges = false,
+                                                });
 }
 
 Simulation::~Simulation() {
@@ -353,7 +352,7 @@ void Simulation::FinishNext() {
 
 void Simulation::Plan(Relation& relation) {
   const auto wanted = _scheduler->Wanted(*relation.handle);
-  const auto blocked = _scheduler->Blocked(*relation.handle);
+  const auto blocked = _scheduler->StartRound(*relation.handle);
   const SimulatedIndex index{relation.segments};
   irs::CompactingSegments taken{relation.reserved.begin(),
                                 relation.reserved.end()};

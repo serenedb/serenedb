@@ -22,27 +22,21 @@
 
 #include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <iresearch/index/compaction/merge_ticket.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <string>
 #include <vector>
 #include <yaclib/async/future.hpp>
+#include <yaclib/exe/executor.hpp>
 
 #include "search/compaction/merge_registry.h"
 #include "search/maintenance.h"
 
-namespace yaclib {
-
-class IExecutor;
-
-}  // namespace yaclib
 namespace sdb::search {
 
 enum class MergeLane : uint8_t {
@@ -74,7 +68,6 @@ class MergeScheduler {
  public:
   struct Options {
     size_t threads = 1;
-    std::function<absl::Time()> now;
     MergeRegistry* registry = nullptr;
     bool gauges = true;
   };
@@ -94,7 +87,8 @@ class MergeScheduler {
     size_t running_big = 0;
     uint32_t paused = 0;
     uint32_t failures = 0;
-    irs::containers::FlatHashMap<std::string, absl::Time> blocked;
+    uint64_t round = 0;
+    irs::containers::FlatHashMap<std::string, uint64_t> blocked;
   };
 
   struct Resume {
@@ -112,7 +106,7 @@ class MergeScheduler {
   MergeScheduler& operator=(const MergeScheduler&) = delete;
 
   size_t Wanted(const Relation& relation) const;
-  std::vector<std::string> Blocked(Relation& relation) const;
+  std::vector<std::string> StartRound(Relation& relation);
 
   void Enqueue(const std::shared_ptr<Relation>& relation,
                std::vector<std::unique_ptr<MergeJob>> jobs);
@@ -139,7 +133,6 @@ class MergeScheduler {
   bool Admits(const Entry& entry) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   bool NoneRunning() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   static bool NoneRunningFor(const Relation* relation);
-  absl::Time Now() const;
   void Drop(Queue& dropped) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   template<typename Pred>
   void DropIf(Queue& dropped, Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
@@ -158,6 +151,7 @@ class MergeScheduler {
   size_t _threads ABSL_GUARDED_BY(_mutex) = 0;
   size_t _big ABSL_GUARDED_BY(_mutex) = 0;
   size_t _small ABSL_GUARDED_BY(_mutex) = 0;
+  uint64_t _dispatched ABSL_GUARDED_BY(_mutex) = 0;
   Queue _queue ABSL_GUARDED_BY(_mutex);
   Running _running ABSL_GUARDED_BY(_mutex);
 };

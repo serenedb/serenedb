@@ -44,9 +44,8 @@ namespace {
 
 constexpr uint64_t kSegmentCost = uint64_t{1} << 20;
 constexpr uint64_t kSmallBytes = uint64_t{64} << 20;
-constexpr absl::Duration kAging = absl::Seconds(30);
-constexpr absl::Duration kBackoff = absl::Seconds(1);
-constexpr absl::Duration kMaxBackoff = absl::Minutes(5);
+constexpr double kDispatchesPerRank = 8;
+constexpr uint64_t kMaxBackoffRounds = 300;
 
 }  // namespace
 
@@ -56,7 +55,7 @@ struct MergeScheduler::Entry {
   std::unique_ptr<MergeJob> job;
   MergeEstimate estimate;
   std::vector<std::string> inputs;
-  absl::Time queued;
+  uint64_t queued_after = 0;
   size_t helpers = 0;
   std::atomic_bool stop{false};
 };
@@ -103,10 +102,6 @@ size_t MergeScheduler::GrantBigThreads(size_t wanted) {
   _big += granted;
   _threads += granted;
   return granted;
-}
-
-absl::Time MergeScheduler::Now() const {
-  return _options.now ? _options.now() : absl::Now();
 }
 
 void MergeScheduler::Drop(Queue& dropped) {
@@ -171,14 +166,15 @@ size_t MergeScheduler::Wanted(const Relation& relation) const {
   return used < round ? round - used : 0;
 }
 
-std::vector<std::string> MergeScheduler::Blocked(Relation& relation) const {
+std::vector<std::string> MergeScheduler::StartRound(Relation& relation) {
   absl::MutexLock lock{&_mutex};
-  const auto now = Now();
-  absl::erase_if(relation.blocked,
-                 [now](const auto& blocked) { return blocked.second <= now; });
+  const auto round = ++relation.round;
+  absl::erase_if(relation.blocked, [round](const auto& blocked) {
+    return blocked.second < round;
+  });
   std::vector<std::string> names;
   names.reserve(relation.blocked.size());
-  for (const auto& [name, until] : relation.blocked) {
+  for (const auto& [name, _] : relation.blocked) {
     names.emplace_back(name);
   }
   return names;
@@ -208,11 +204,10 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   {
     absl::MutexLock lock{&_mutex};
     if (!_stopping && relation->paused == 0) {
-      const auto now = Now();
       for (auto& entry : entries) {
         entry->id = _registry.Queue(relation->id, MergeOrigin::Background,
                                     entry->job->Candidates());
-        entry->queued = now;
+        entry->queued_after = _dispatched;
         _queue.emplace_back(std::move(entry));
         ++relation->queued;
       }
@@ -305,8 +300,6 @@ void MergeScheduler::Pump() {
     }
     SDB_IF_FAILURE("hold_merge_dispatch") { return; }
     DropIf(stale, [](const Entry& entry) { return entry.job->Stale(); });
-    const auto now = Now();
-    const auto aging = absl::ToDoubleSeconds(kAging);
     for (;;) {
       auto best = _queue.end();
       double best_rank = 0;
@@ -315,8 +308,9 @@ void MergeScheduler::Pump() {
         if (!Admits(entry)) {
           continue;
         }
+        const auto age = static_cast<double>(_dispatched - entry.queued_after);
         const auto rank = std::log2(std::max(1.0, entry.estimate.score)) -
-                          absl::ToDoubleSeconds(now - entry.queued) / aging;
+                          age / kDispatchesPerRank;
         if (best == _queue.end() || rank < best_rank) {
           best = it;
           best_rank = rank;
@@ -339,6 +333,7 @@ void MergeScheduler::Pump() {
         ++_big;
         ++relation.running_big;
       }
+      ++_dispatched;
       _registry.Dispatch(entry->id);
       auto* raw = entry.get();
       _running.emplace(raw, std::move(entry));
@@ -406,10 +401,10 @@ void MergeScheduler::Finish(Entry& raw, MergeResult result) noexcept {
     } else if (outcome == MergeOutcome::Failed) {
       ++relation.failures;
       const auto shift = std::min<uint32_t>(relation.failures - 1, 20);
-      const auto until =
-        Now() + std::min(kMaxBackoff, kBackoff * (int64_t{1} << shift));
+      const auto last =
+        relation.round + std::min(kMaxBackoffRounds, uint64_t{1} << shift);
       for (auto& name : entry->inputs) {
-        relation.blocked.insert_or_assign(std::move(name), until);
+        relation.blocked.insert_or_assign(std::move(name), last);
       }
     }
     UpdateGauges();

@@ -155,7 +155,6 @@ class MergeSchedulerTest : public ::testing::Test {
     _threads = threads;
     MergeScheduler::Options options;
     options.threads = threads;
-    options.now = [this] { return _now; };
     options.registry = &_registry;
     return std::make_unique<MergeScheduler>(executor, std::move(options));
   }
@@ -221,7 +220,6 @@ class MergeSchedulerTest : public ::testing::Test {
 
   Board _board;
   MergeRegistry _registry;
-  absl::Time _now = absl::FromUnixSeconds(1'000'000);
   size_t _threads = 0;
 };
 
@@ -324,6 +322,7 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   auto first = Relation(2);
   auto second = Relation(3);
   auto third = Relation(4);
+  auto small = Relation(5);
   Enqueue(*scheduler, blocker, "blocker", 512 * kMiB);
   Enqueue(*scheduler, first, "huge", 64 * 1024 * kMiB, 2);
   Enqueue(*scheduler, second, "cheap", 256 * kMiB, 8);
@@ -351,7 +350,12 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   EXPECT_TRUE(Started("cheap"));
   EXPECT_FALSE(Started("huge"));
 
-  _now += absl::Seconds(30 * 12);
+  for (size_t i = 0; i != 8 * 12; ++i) {
+    const auto name = "small" + std::to_string(i);
+    Enqueue(*scheduler, small, name, kMiB);
+    Complete(name, MergeOutcome::Merged);
+  }
+  EXPECT_FALSE(Started("huge"));
   Enqueue(*scheduler, third, "fresh", 256 * kMiB, 8);
   Complete("cheap", MergeOutcome::Merged);
   EXPECT_TRUE(Started("huge"));
@@ -413,7 +417,7 @@ TEST_F(MergeSchedulerTest, StopRunningRaisesOnlyThatRelationsFlags) {
 
   Complete("a", MergeOutcome::Cancelled);
   EXPECT_EQ(0, first->CompactionGeneration());
-  EXPECT_TRUE(scheduler->Blocked(*first).empty());
+  EXPECT_TRUE(scheduler->StartRound(*first).empty());
   CompleteAll(MergeOutcome::Merged);
 }
 
@@ -423,31 +427,57 @@ TEST_F(MergeSchedulerTest, FailedMergesBlockTheirInputsWithGrowingBackoff) {
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 2);
   Complete("a", MergeOutcome::Failed);
   EXPECT_EQ(1, relation->CompactionGeneration());
-  auto blocked = scheduler->Blocked(*relation);
+  auto blocked = scheduler->StartRound(*relation);
   std::ranges::sort(blocked);
   EXPECT_EQ(std::vector<std::string>({"a.0", "a.1"}), blocked);
-
-  _now += absl::Seconds(1);
-  EXPECT_TRUE(scheduler->Blocked(*relation).empty());
+  EXPECT_TRUE(scheduler->StartRound(*relation).empty());
 
   Enqueue(*scheduler, relation, "b", 512 * kMiB, 1);
   Complete("b", MergeOutcome::Failed);
-  _now += absl::Seconds(1);
-  EXPECT_EQ(1, scheduler->Blocked(*relation).size());
-  _now += absl::Seconds(1);
-  EXPECT_TRUE(scheduler->Blocked(*relation).empty());
+  EXPECT_EQ(1, scheduler->StartRound(*relation).size());
+  EXPECT_EQ(1, scheduler->StartRound(*relation).size());
+  EXPECT_TRUE(scheduler->StartRound(*relation).empty());
 
   Enqueue(*scheduler, relation, "c", 512 * kMiB, 1);
   Complete("c", MergeOutcome::Merged);
   Enqueue(*scheduler, relation, "d", 512 * kMiB, 1);
   Complete("d", MergeOutcome::Failed);
-  _now += absl::Seconds(1);
-  EXPECT_TRUE(scheduler->Blocked(*relation).empty());
+  EXPECT_EQ(1, scheduler->StartRound(*relation).size());
+  EXPECT_TRUE(scheduler->StartRound(*relation).empty());
 
   Enqueue(*scheduler, relation, "e", 512 * kMiB, 1);
   Complete("e", MergeOutcome::Busy);
-  EXPECT_TRUE(scheduler->Blocked(*relation).empty());
+  EXPECT_TRUE(scheduler->StartRound(*relation).empty());
   EXPECT_EQ(5, relation->CompactionGeneration());
+}
+
+TEST_F(MergeSchedulerTest, AFailedMergeIsRetriedOnlyAfterItsBlockedRounds) {
+  auto scheduler = Make(1);
+  auto relation = Relation(1);
+  std::vector<uint64_t> attempts;
+  for (uint64_t round = 1; round != 16; ++round) {
+    if (!scheduler->StartRound(*relation).empty()) {
+      continue;
+    }
+    attempts.emplace_back(round);
+    Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
+    Complete("a", MergeOutcome::Failed);
+  }
+  EXPECT_EQ(std::vector<uint64_t>({1, 3, 6, 11}), attempts);
+}
+
+TEST_F(MergeSchedulerTest, TheFailureBackoffStopsGrowingAtItsCap) {
+  auto scheduler = Make(1);
+  auto relation = Relation(1);
+  for (size_t failure = 0; failure != 10; ++failure) {
+    Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
+    Complete("a", MergeOutcome::Failed);
+  }
+  size_t rounds = 0;
+  while (rounds != 1000 && !scheduler->StartRound(*relation).empty()) {
+    ++rounds;
+  }
+  EXPECT_EQ(300, rounds);
 }
 
 TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
@@ -456,7 +486,7 @@ TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
   _board.throw_on_run = true;
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
-  EXPECT_EQ(1, scheduler->Blocked(*relation).size());
+  EXPECT_EQ(1, scheduler->StartRound(*relation).size());
   EXPECT_EQ(1, FreeThreads());
 }
 
@@ -582,7 +612,7 @@ TEST_F(MergeSchedulerTest, AnyThrownValueFailsTheMerge) {
   _board.throw_int_on_run = true;
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
-  EXPECT_EQ(1, scheduler->Blocked(*relation).size());
+  EXPECT_EQ(1, scheduler->StartRound(*relation).size());
   EXPECT_EQ(1, FreeThreads());
 }
 
@@ -613,8 +643,8 @@ TEST_F(MergeSchedulerTest, ADeferredMergeResetsTheFailureBackoff) {
   Complete("b", MergeOutcome::Deferred);
   Enqueue(*scheduler, relation, "c", 512 * kMiB, 1);
   Complete("c", MergeOutcome::Failed);
-  _now += absl::Seconds(1);
-  EXPECT_TRUE(scheduler->Blocked(*relation).empty());
+  EXPECT_EQ(2, scheduler->StartRound(*relation).size());
+  EXPECT_TRUE(scheduler->StartRound(*relation).empty());
 }
 
 TEST_F(MergeSchedulerTest, TakingARelationOverStopsItsMergesAndPausesIt) {

@@ -195,13 +195,13 @@ class StorageMergeJob final : public MergeJob {
 };
 
 template<typename Storage>
-size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
+bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   if constexpr (std::is_same_v<Storage, SearchTable>) {
     SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
   }
   const auto& relation = idx->MergeRelation();
   const auto wanted = merges.Wanted(*relation);
-  const auto blocked = merges.Blocked(*relation);
+  const auto blocked = merges.StartRound(*relation);
   const auto policy =
     MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
   const auto planner = [&](const irs::IndexReader& index,
@@ -220,7 +220,7 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
       std::make_unique<StorageMergeJob<Storage>>(idx, std::move(ticket)));
   }
   merges.Enqueue(relation, std::move(jobs));
-  return tickets.size();
+  return !tickets.empty() || !blocked.empty();
 }
 
 // Wait up to `total` for the timer OR a NudgeCompaction. OneShotEvent is a poor
@@ -414,7 +414,7 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
       }
 
       if (triggered) {
-        if (PlanMerges(idx, merges) != 0) {
+        if (PlanMerges(idx, merges)) {
           backoff = Clock::duration::zero();
         } else {
           backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;

@@ -21,10 +21,7 @@
 #pragma once
 
 #include <array>
-#include <compare>
-#include <cstdint>
 #include <span>
-#include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -32,55 +29,30 @@
 
 namespace irs {
 
-enum class DictLayout : uint8_t {
-  Scalar = 0,
-  Array = 1,
-  Json = 2,
-};
-
-enum class ValueKind : uint8_t {
-  Text = 0,
-  False = 1,
-  True = 2,
-  Numeric = 3,
-  Null = 4,
-  JsonNull = 5,
-  NullElement = 6,
-};
-
-struct DictRef {
-  DictLayout layout = DictLayout::Scalar;
-  ValueKind kind = ValueKind::Text;
-
-  auto operator<=>(const DictRef&) const = default;
-};
-
-template<typename H>
-H AbslHashValue(H h, const DictRef& ref) {
-  return H::combine(std::move(h), ref.layout, ref.kind);
-}
-
-constexpr ValueKind BoolKind(bool value) noexcept {
-  return value ? ValueKind::True : ValueKind::False;
-}
-
 class MultiTermDict {
  public:
-  const TermReader* At(FieldSlot slot) const noexcept {
-    return _dicts[static_cast<size_t>(slot)];
+  explicit MultiTermDict(DictLayout layout) noexcept : _layout{layout} {}
+
+  DictLayout Layout() const noexcept { return _layout; }
+
+  const TermReader* At(ValueKind kind) const noexcept {
+    const auto position = PositionOf(_layout, kind);
+    return position == kNoPosition ? nullptr : _dicts[position];
   }
 
-  std::span<const TermReader* const> All() const noexcept { return _dicts; }
+  std::span<const TermReader* const> All() const noexcept {
+    return {_dicts.data(), LayoutKinds(_layout).size()};
+  }
 
-  void Add(FieldSlot slot, const TermReader& dict) noexcept {
-    SDB_ASSERT(!At(slot));
-    _dicts[static_cast<size_t>(slot)] = &dict;
+  void Add(ValueKind kind, const TermReader& dict) noexcept {
+    const auto position = PositionOf(_layout, kind);
+    SDB_ASSERT(position != kNoPosition && !_dicts[position]);
+    _dicts[position] = &dict;
   }
 
  private:
-  std::array<const TermReader*, kFieldSlots> _dicts{};
+  std::array<const TermReader*, kMaxLayoutKinds> _dicts{};
+  DictLayout _layout;
 };
-
-const TermReader* Resolve(const MultiTermDict& dicts, DictRef ref) noexcept;
 
 }  // namespace irs

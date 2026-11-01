@@ -1677,11 +1677,10 @@ void RewriteFieldRefsToTerm(duckdb::unique_ptr<duckdb::Expression>& expr,
 template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
-  return (
-    (type == irs::Type<Fs>::id() &&
-     irs::utils::downCast<Fs>(filter).field_id() == field &&
-     irs::utils::downCast<Fs>(filter).dict().kind == irs::ValueKind::Text) ||
-    ...);
+  return ((type == irs::Type<Fs>::id() &&
+           irs::utils::downCast<Fs>(filter).field_id() == field &&
+           irs::utils::downCast<Fs>(filter).dict() == irs::ValueKind::String) ||
+          ...);
 }
 
 bool IsSingleAcceptor(const irs::Filter& filter, irs::field_id field) {
@@ -1706,8 +1705,8 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
     bool ok = node.MinShouldMatch() <= 1;
     for (const auto occur : irs::kAllOccur) {
       for (const auto& clause : node.Terms(occur)) {
-        ok = ok && clause.field == field &&
-             clause.dict.kind == irs::ValueKind::Text;
+        ok =
+          ok && clause.field == field && clause.dict == irs::ValueKind::String;
         ++clauses;
       }
     }

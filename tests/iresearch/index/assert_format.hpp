@@ -97,7 +97,7 @@ struct Field : public irs::FieldMeta {
   };
 
   Field(irs::field_id id, irs::IndexFeatures index_features);
-  Field(irs::field_id id, irs::FieldSlot slot,
+  Field(irs::field_id id, irs::ValueKind slot,
         irs::IndexFeatures index_features);
   Field(Field&& rhs) = default;
   Field& operator=(Field&& rhs) = default;

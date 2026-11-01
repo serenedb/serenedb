@@ -62,10 +62,14 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // protocol (feature mismatch or inversion failure poisons the writer).
   // WithField runs `func(slot)` against the resolved slot; WithTokens
   // serves streamed fills against the pooled TokenSink.
+  void SetLayout(field_id id, DictLayout layout) {
+    _fields.SetLayout(id, layout);
+  }
+
   template<typename Func>
-  bool WithField(field_id id, FieldSlot field_slot,
-                 IndexFeatures index_features, Func&& func) {
-    auto* slot = Field(id, field_slot, index_features);
+  bool WithField(field_id id, ValueKind kind, IndexFeatures index_features,
+                 Func&& func) {
+    auto* slot = Field(id, kind, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }
@@ -173,9 +177,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Per-column slot acquisition: resolves (creating on first sight) and
   // validates the requested features once; a feature mismatch poisons the
   // writer and returns null.
-  FieldInverter* Field(field_id id, FieldSlot field_slot,
+  FieldInverter* Field(field_id id, ValueKind kind,
                        IndexFeatures index_features) {
-    auto* slot = _fields.Emplace(id, field_slot, index_features);
+    auto* slot = _fields.Emplace(id, kind, index_features);
     if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
       _valid = false;
       _error = "the field was created with other index features";
@@ -202,7 +206,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   template<typename Target, typename Func>
   bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
                   Func&& func) {
-    auto* slot = Field(id, FieldSlot::String, index_features);
+    auto* slot = Field(id, ValueKind::String, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }

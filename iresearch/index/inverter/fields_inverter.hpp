@@ -61,7 +61,7 @@ class FieldInverter : util::Noncopyable {
  public:
   using TermIds = std::span<uint32_t, TokenBatch::kCapacity>;
 
-  FieldInverter(field_id id, FieldSlot slot, duckdb::ArenaAllocator& arena,
+  FieldInverter(field_id id, ValueKind kind, duckdb::ArenaAllocator& arena,
                 TermIds term_ids, IResourceManager& rm,
                 IndexFeatures index_features, ColWriter* col_writer,
                 const IndexFieldOptions* field_options)
@@ -69,9 +69,9 @@ class FieldInverter : util::Noncopyable {
       _dict{arena, rm},
       _inline_docs{ManagedTypedAllocator<doc_id_t>{rm}},
       _log{MakePostingLog(arena, rm, LayoutFromFeatures(index_features))},
-      _meta{id, slot, index_features} {
-    SDB_ASSERT(IsKeyed(slot));
-    if (!col_writer || slot != FieldSlot::String ||
+      _meta{id, kind, index_features} {
+    SDB_ASSERT(IsKeyed(kind));
+    if (!col_writer || kind != ValueKind::String ||
         !IsSubsetOf(IndexFeatures::Norm, index_features)) {
       return;
     }
@@ -644,7 +644,7 @@ class FieldInverter : util::Noncopyable {
     constexpr size_t kMaxValues = TokenBatch::kCapacity;
     SDB_ASSERT(!_state.value_open);
     SDB_ASSERT(Layout() == TokenLayout::Terms);
-    SDB_ASSERT(_meta.slot == FieldSlot::Numeric);
+    SDB_ASSERT(_meta.kind == ValueKind::Numeric);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
     duckdb::string_t terms[kMaxValues];
     for (size_t base = 0; base < n;) {
@@ -805,11 +805,13 @@ class PostingSlots : util::Noncopyable {
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
         DocList{ManagedTypedAllocator<doc_id_t>{rm}},
+        DocList{ManagedTypedAllocator<doc_id_t>{rm}},
+        DocList{ManagedTypedAllocator<doc_id_t>{rm}},
       }} {}
 
-  void Push(FieldSlot slot, doc_id_t doc) {
-    SDB_ASSERT(!IsKeyed(slot));
-    auto& docs = _docs[static_cast<size_t>(slot)];
+  void Push(ValueKind kind, doc_id_t doc) {
+    SDB_ASSERT(!IsKeyed(kind));
+    auto& docs = _docs[static_cast<size_t>(kind)];
     SDB_ASSERT(docs.empty() || docs.back() <= doc);
     if (docs.empty() || docs.back() != doc) {
       docs.push_back(doc);
@@ -819,14 +821,14 @@ class PostingSlots : util::Noncopyable {
   void PushNulls(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                  doc_id_t first_doc) {
     analysis::ForEachInvalidRow(fmt, count, [&](uint32_t i) {
-      Push(FieldSlot::SqlNull, first_doc + i);
+      Push(ValueKind::SqlNull, first_doc + i);
       return true;
     });
   }
 
   void PushNulls(uint32_t count, doc_id_t first_doc) {
     for (uint32_t i = 0; i != count; ++i) {
-      Push(FieldSlot::SqlNull, first_doc + i);
+      Push(ValueKind::SqlNull, first_doc + i);
     }
   }
 
@@ -834,14 +836,14 @@ class PostingSlots : util::Noncopyable {
                  doc_id_t first_doc) {
     const auto* data = duckdb::UnifiedVectorFormat::GetData<bool>(fmt);
     analysis::ForEachValidRow(fmt, count, [&](uint32_t r, uint32_t idx) {
-      Push(BoolSlot(data[idx]), first_doc + r);
+      Push(BoolKind(data[idx]), first_doc + r);
       return true;
     });
   }
 
-  std::span<const doc_id_t> Docs(FieldSlot slot) const noexcept {
-    SDB_ASSERT(!IsKeyed(slot));
-    const auto& docs = _docs[static_cast<size_t>(slot)];
+  std::span<const doc_id_t> Docs(ValueKind kind) const noexcept {
+    SDB_ASSERT(!IsKeyed(kind));
+    const auto& docs = _docs[static_cast<size_t>(kind)];
     return {docs.data(), docs.size()};
   }
 
@@ -861,7 +863,7 @@ class PostingSlots : util::Noncopyable {
  private:
   using DocList = ManagedVector<doc_id_t>;
 
-  std::array<DocList, kPostingSlots> _docs;
+  std::array<DocList, kValueKinds> _docs;
 };
 
 class FieldsInverter : util::Noncopyable {
@@ -878,15 +880,21 @@ class FieldsInverter : util::Noncopyable {
   }
   duckdb::Allocator& Allocator() const noexcept { return _mem.allocator; }
 
-  FieldInverter* Emplace(field_id id, FieldSlot slot,
+  void SetLayout(field_id id, DictLayout layout) {
+    _fields_map[id].layout = layout;
+  }
+
+  FieldInverter* Emplace(field_id id, ValueKind kind,
                          IndexFeatures index_features) {
-    auto& keyed = _fields_map[id].keyed[KeyedIndex(slot)];
+    auto& entry = _fields_map[id];
+    SDB_ASSERT(PositionOf(entry.layout, kind) != kNoPosition);
+    auto& keyed = entry.keyed[KeyedIndex(kind)];
     if (keyed.field) {
       return keyed.field;
     }
 
     auto& field =
-      _fields.emplace_back(id, slot, _arena, _term_ids, _mem.rm, index_features,
+      _fields.emplace_back(id, kind, _arena, _term_ids, _mem.rm, index_features,
                            _col_writer, _field_options);
     keyed.field = &field;
     if (keyed.last_terms) {
@@ -946,8 +954,9 @@ class FieldsInverter : util::Noncopyable {
     bool unique = false;
   };
   struct Entry {
-    std::array<Keyed, kKeyedSlots> keyed;
+    std::array<Keyed, kKeyedKinds> keyed;
     PostingSlots* slots = nullptr;
+    DictLayout layout = DictLayout::String;
   };
   using FieldsMap = irs::containers::FlatHashMap<field_id, Entry>;
 

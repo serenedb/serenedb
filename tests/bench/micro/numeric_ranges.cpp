@@ -180,7 +180,8 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder) {
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
-  writer.write(irs::FieldSlot::Numeric, TermsReader{terms, ladder});
+  writer.write(irs::DictLayout::Numeric, irs::ValueKind::Numeric,
+               TermsReader{terms, ladder});
   writer.end();
   idx.Commit();
 }
@@ -375,7 +376,7 @@ const Data& Load(const Shape& shape, Ladder ladder) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data->fields->prepare(irs::ReaderState{
     .dir = data->dir.get(), .meta = &kMeta, .idx = data->idx.get()});
-  data->field = data->fields->dicts(1)->At(irs::FieldSlot::Numeric);
+  data->field = data->fields->dicts(1)->At(irs::ValueKind::Numeric);
   data->error = Validate(*data);
   gData = std::move(data);
   return *gData;

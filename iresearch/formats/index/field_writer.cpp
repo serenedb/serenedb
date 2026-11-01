@@ -343,21 +343,25 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   _pw.Prepare(state);
 }
 
-void FieldWriter::write(FieldSlot slot, const BasicTermReader& reader) {
+void FieldWriter::write(DictLayout layout, ValueKind kind,
+                        const BasicTermReader& reader) {
   const auto id = reader.id();
+  SDB_ASSERT(PositionOf(layout, kind) != kNoPosition);
   SDB_ASSERT(!field_limits::valid(_last_id) || _last_id < id ||
-             (_last_id == id && _slot < slot));
+             (_last_id == id && _layout == layout &&
+              PositionOf(layout, _kind) < PositionOf(layout, kind)));
   _last_id = id;
-  _slot = slot;
+  _layout = layout;
+  _kind = kind;
   const auto props = reader.properties();
-  SDB_ASSERT(IsKeyed(slot) || props.index_features == IndexFeatures::None);
+  SDB_ASSERT(IsKeyed(kind) || props.index_features == IndexFeatures::None);
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
   _width = props.key_width <= kMaxStride ? props.key_width : 0;
-  if (_width == 0 && IsKeyed(slot)) {
+  if (_width == 0 && IsKeyed(kind)) {
     SampleFsst(reader);
   }
-  if (slot == FieldSlot::Numeric && _width != 0) {
+  if (kind == ValueKind::Numeric && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
     _ranges.Begin(_pw);
   }
@@ -408,7 +412,7 @@ void FieldWriter::write(FieldSlot slot, const BasicTermReader& reader) {
     }
   }
 
-  EndField(id, slot, props, total_freq, first_inline);
+  EndField(id, props, total_freq, first_inline);
   ResetField();
 }
 
@@ -420,7 +424,7 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
     }
   }
   if (_terms++ == 0) {
-    SDB_ASSERT(IsKeyed(_slot) || term.empty());
+    SDB_ASSERT(IsKeyed(_kind) || term.empty());
     _min.assign(term);
     _single = meta;
     if (meta.inline_size != 0) {
@@ -428,7 +432,7 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
       _single.inline_data = _single_inline.data();
     }
     _key_prefix.clear();
-    if (IsKeyed(_slot)) {
+    if (IsKeyed(_kind)) {
       SDB_ENSURE(_ordinal < OrdinalLimit(_ordinal_bytes),
                  "term dictionary: more keyed dictionaries than ",
                  OrdinalLimit(_ordinal_bytes));
@@ -436,7 +440,7 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
     }
     return;
   }
-  SDB_ASSERT(IsKeyed(_slot));
+  SDB_ASSERT(IsKeyed(_kind));
   if (_terms == 2) {
     Commit(_min, _single);
   }
@@ -609,9 +613,8 @@ void FieldWriter::WriteBlock() {
   ++_blocks;
 }
 
-void FieldWriter::EndField(field_id id, FieldSlot slot,
-                           const FieldProperties& props, uint64_t total_freq,
-                           uint64_t first_inline) {
+void FieldWriter::EndField(field_id id, const FieldProperties& props,
+                           uint64_t total_freq, uint64_t first_inline) {
   if (_ranges.Active()) {
     _ranges.Finish(_terms);
   }
@@ -622,7 +625,8 @@ void FieldWriter::EndField(field_id id, FieldSlot slot,
 
   auto& head = _heads.emplace_back();
   head.id = id;
-  head.slot = slot;
+  head.layout = _layout;
+  head.kind = _kind;
   head.features = props.index_features;
   head.term_count = _terms;
   head.doc_count = stats.docs_count;
@@ -649,7 +653,7 @@ void FieldWriter::EndField(field_id id, FieldSlot slot,
   if (_first_block == _blocks) {
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
-  } else if (slot == FieldSlot::String) {
+  } else if (_kind == ValueKind::String) {
     auto out = std::back_inserter(head.prefixes);
     uint32_t last = 0;
     for (const auto prefix : _prefixes) {
@@ -657,7 +661,7 @@ void FieldWriter::EndField(field_id id, FieldSlot slot,
       last = prefix;
     }
   }
-  if (slot == FieldSlot::Numeric && _width != 0) {
+  if (_kind == ValueKind::Numeric && _width != 0) {
     const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
     const auto offset = _range_regions.size();
     _ranges.Write(_range_regions, prefix, head.range_counts);
@@ -701,7 +705,8 @@ void FieldWriter::Reset() noexcept {
   _ordinal = 0;
   _ordinal_bytes = 1;
   _last_id = field_limits::invalid();
-  _slot = FieldSlot::String;
+  _layout = DictLayout::String;
+  _kind = ValueKind::String;
 }
 
 void FieldWriter::end() {

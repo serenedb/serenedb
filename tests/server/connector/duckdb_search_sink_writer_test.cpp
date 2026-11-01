@@ -375,13 +375,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
       irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
       return duckdb::FlatVector::GetData<int64_t>(out)[0];
     };
-    constexpr irs::DictRef kNumeric{.kind = irs::ValueKind::Numeric};
+    constexpr auto kNumeric = irs::ValueKind::Numeric;
     auto int32_terms = segment.field(connector::ColumnId{1}, kNumeric);
     ASSERT_NE(nullptr, int32_terms);
     auto varchar_terms = segment.field(connector::ColumnId{2});
     ASSERT_NE(nullptr, varchar_terms);
-    auto bool_terms = segment.field(connector::ColumnId{3},
-                                    irs::DictRef{.kind = irs::BoolKind(col3)});
+    auto bool_terms =
+      segment.field(connector::ColumnId{3}, irs::BoolKind(col3));
     ASSERT_NE(nullptr, bool_terms);
     auto real_terms = segment.field(connector::ColumnId{4}, kNumeric);
     ASSERT_NE(nullptr, real_terms);
@@ -551,7 +551,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   };
   auto varchar_terms = segment.field(connector::ColumnId{1});
   ASSERT_NE(nullptr, varchar_terms);
-  constexpr irs::DictRef kNull{.kind = irs::ValueKind::Null};
+  constexpr auto kNull = irs::ValueKind::SqlNull;
   auto varchar_nulls = segment.field(connector::ColumnId{1}, kNull);
   ASSERT_NE(nullptr, varchar_nulls);
   auto unknown_terms = segment.field(connector::ColumnId{2}, kNull);
@@ -699,8 +699,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
   irs::ReadContext pk_ctx{*segment.GetColReader()};
   const auto pks_of = [&](irs::ValueKind kind, std::string_view term) {
     std::vector<int64_t> pks;
-    const auto* dict = segment.field(
-      col_id, irs::DictRef{.layout = irs::DictLayout::Array, .kind = kind});
+    const auto* dict = segment.field(col_id, kind);
     if (!dict) {
       return pks;
     }
@@ -721,9 +720,10 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
     absl::c_sort(pks);
     return pks;
   };
-  EXPECT_EQ((std::vector<int64_t>{1}), pks_of(irs::ValueKind::Text, "a"));
-  EXPECT_EQ((std::vector<int64_t>{3}), pks_of(irs::ValueKind::Text, "b"));
-  EXPECT_EQ((std::vector<int64_t>{2}), pks_of(irs::ValueKind::Null, {}));
+  EXPECT_EQ(irs::DictLayout::StringList, segment.dicts(col_id)->Layout());
+  EXPECT_EQ((std::vector<int64_t>{1}), pks_of(irs::ValueKind::String, "a"));
+  EXPECT_EQ((std::vector<int64_t>{3}), pks_of(irs::ValueKind::String, "b"));
+  EXPECT_EQ((std::vector<int64_t>{2}), pks_of(irs::ValueKind::SqlNull, {}));
   EXPECT_EQ((std::vector<int64_t>{3, 4}),
             pks_of(irs::ValueKind::NullElement, {}));
 }

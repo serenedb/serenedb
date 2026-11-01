@@ -31,6 +31,17 @@ bool HasTerms(const FieldInverter* field) noexcept {
   return field && (field->Log().Size() != 0 || !field->InlineDocs().empty());
 }
 
+bool PostingsFit(const PostingSlots& slots, DictLayout layout) noexcept {
+  for (size_t i = 0; i != kValueKinds; ++i) {
+    const auto kind = static_cast<ValueKind>(i);
+    if (!IsKeyed(kind) && PositionOf(layout, kind) == kNoPosition &&
+        !slots.Docs(kind).empty()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
@@ -78,14 +89,15 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   ColumnarTermReader terms;
   SlotTermReader slot_terms;
 
-  const auto write_keyed = [&](FieldSlot slot, const FieldInverter* field) {
+  const auto write_keyed = [&](DictLayout layout, ValueKind kind,
+                               const FieldInverter* field) {
     if (!HasTerms(field)) {
       return;
     }
     scattered.Reset(*field);
     SDB_ASSERT(scattered.TermCount() != 0);
     terms.Reset(scattered);
-    fw.write(slot, terms);
+    fw.write(layout, kind, terms);
   };
 
   fw.prepare(state, keyed_dicts);
@@ -94,30 +106,34 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
     const auto id = item->first;
     const auto& entry = item->second;
     for (; ei < sorted_extra.size() && sorted_extra[ei]->id() < id; ++ei) {
-      fw.write(FieldSlot::String, *sorted_extra[ei]);
+      fw.write(DictLayout::String, ValueKind::String, *sorted_extra[ei]);
     }
-    if (entry.slots) {
-      for (size_t i = 0; i != kPostingSlots; ++i) {
-        const auto slot = static_cast<FieldSlot>(i);
-        if (const auto docs = entry.slots->Docs(slot); !docs.empty()) {
-          slot_terms.Reset(id, docs);
-          fw.write(slot, slot_terms);
+    SDB_ASSERT(!entry.slots || PostingsFit(*entry.slots, entry.layout));
+    const bool has_extra =
+      ei < sorted_extra.size() && sorted_extra[ei]->id() == id;
+    SDB_ASSERT(!has_extra || entry.layout == DictLayout::String);
+    for (const auto kind : LayoutKinds(entry.layout)) {
+      if (!IsKeyed(kind)) {
+        if (!entry.slots) {
+          continue;
         }
+        if (const auto docs = entry.slots->Docs(kind); !docs.empty()) {
+          slot_terms.Reset(id, docs);
+          fw.write(entry.layout, kind, slot_terms);
+        }
+        continue;
       }
-    }
-    write_keyed(FieldSlot::Numeric,
-                entry.keyed[KeyedIndex(FieldSlot::Numeric)].field);
-    const auto* string = entry.keyed[KeyedIndex(FieldSlot::String)].field;
-    if (ei < sorted_extra.size() && sorted_extra[ei]->id() == id) {
-      SDB_ASSERT(!HasTerms(string));
-      fw.write(FieldSlot::String, *sorted_extra[ei]);
-      ++ei;
-    } else {
-      write_keyed(FieldSlot::String, string);
+      const auto* field = entry.keyed[KeyedIndex(kind)].field;
+      if (kind == ValueKind::String && has_extra) {
+        SDB_ASSERT(!HasTerms(field));
+        fw.write(entry.layout, kind, *sorted_extra[ei++]);
+      } else {
+        write_keyed(entry.layout, kind, field);
+      }
     }
   }
   for (; ei < sorted_extra.size(); ++ei) {
-    fw.write(FieldSlot::String, *sorted_extra[ei]);
+    fw.write(DictLayout::String, ValueKind::String, *sorted_extra[ei]);
   }
   fw.end();
 }

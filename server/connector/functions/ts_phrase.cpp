@@ -145,8 +145,8 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
     if (const auto* set =
           std::get_if<irs::TermSetOptions>(&options.begin()->part)) {
       std::vector<irs::bstring> terms(set->terms.begin(), set->terms.end());
-      auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field_id,
-                              DictOf(column_info), terms, 1);
+      auto& node =
+        AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms, 1);
       node.SetMergeType(irs::ScoreMergeType::Max);
       node.SetBoost(ctx.boost);
       return;
@@ -154,7 +154,7 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
   }
   auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
   phrase.SetBoost(ctx.boost);
-  SetField(phrase, column_info);
+  *phrase.mutable_field_id() = field_id;
   *phrase.mutable_options() = std::move(options);
 }
 
@@ -275,8 +275,8 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 std::string_view hint) {
   if (auto term = PlanPhrase(QueryShingle(ctx, column_info), column_info,
                              options, label, hint, ctx.client_context)) {
-    AddTerm(MaybeNegated(parent, ctx, column_info), column_info.field_id,
-            DictOf(column_info), *term, ctx.boost);
+    AddTerm(MaybeNegated(parent, ctx, column_info), column_info.field_id, *term,
+            ctx.boost);
     return;
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
@@ -289,7 +289,7 @@ bool MatchesPhrases(const SearchColumnInfo& column_info) {
          (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
           irs::field_limits::valid(column_info.text) &&
           (column_info.logical_type.IsJSONType() ||
-           column_info.layout != irs::DictLayout::Json));
+           column_info.shape != ColumnShape::Json));
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,

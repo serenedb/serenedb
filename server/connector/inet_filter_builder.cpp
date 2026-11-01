@@ -211,7 +211,7 @@ void AddFamilyRange(BoolTarget target, const SearchColumnInfo& column,
         clip_last ? max_term : inet_terms::LastExactTermOf(family, piece.last),
         clip_last ? max.type : irs::BoundType::Inclusive);
     } else if (piece.first == piece.last) {
-      AddTerm(pieces_target, field, irs::DictRef{},
+      AddTerm(pieces_target, field,
               inet_terms::LevelTermOf(family, piece.level, piece.first),
               irs::kNoBoost, &irs::ForceConstScore());
     } else {
@@ -304,8 +304,7 @@ void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
     return;
   }
   if (inet_terms::LevelBits(value.family, level) == bits) {
-    AddTerm(group, field, irs::DictRef{},
-            inet_terms::LevelTermOf(value.family, level, network),
+    AddTerm(group, field, inet_terms::LevelTermOf(value.family, level, network),
             irs::kNoBoost, &irs::ForceConstScore());
   } else {
     AddByteRange(group, field,
@@ -334,7 +333,7 @@ void AddStrictlyContainedBy(BoolTarget target, const SearchColumnInfo& column,
 void AddContains(BoolTarget target, const SearchColumnInfo& column,
                  const inet_terms::Inet& value, uint32_t max_mask) {
   auto& filter = AddFilter<irs::ByPrefixes>(target);
-  SetField(filter, column);
+  *filter.mutable_field_id() = column.field_id;
   filter.SetScorer(&irs::ForceConstScore());
   std::vector<irs::bstring> prefixes;
   prefixes.reserve(max_mask + 1);
@@ -407,8 +406,8 @@ absl::Status FromInetEquality(BoolTarget filter, const FilterContext& ctx,
   const auto target = (ctx.negated != not_equal)
                         ? NegateScoped(filter, *operands.column)
                         : filter;
-  AddTerm(target, operands.column->field_id, DictOf(*operands.column),
-          inet_terms::ExactTermOf(*value), ctx.boost, &irs::ForceConstScore());
+  AddTerm(target, operands.column->field_id, inet_terms::ExactTermOf(*value),
+          ctx.boost, &irs::ForceConstScore());
   return absl::OkStatus();
 }
 
@@ -492,8 +491,8 @@ absl::Status FromInetIn(BoolTarget filter, const FilterContext& ctx,
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
-  auto& node = AddTermSet(MaybeNegated(filter, ctx, column), column.field_id,
-                          DictOf(column), terms, 1);
+  auto& node =
+    AddTermSet(MaybeNegated(filter, ctx, column), column.field_id, terms, 1);
   node.SetBoost(ctx.boost);
   node.SetScorer(&irs::ForceConstScore());
   return absl::OkStatus();

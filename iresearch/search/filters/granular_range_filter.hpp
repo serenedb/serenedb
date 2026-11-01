@@ -53,7 +53,7 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
   ByGranularRange() noexcept {
     SetScorer(&DefaultConstScore());
-    mutable_dict()->kind = ValueKind::Numeric;
+    *mutable_dict() = ValueKind::Numeric;
   }
 
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,

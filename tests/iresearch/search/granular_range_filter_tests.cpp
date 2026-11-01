@@ -1282,13 +1282,11 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
         auto& map =
           pks.emplace_back(segment.docs_count() + irs::doc_limits::min(), -1);
         for (const auto id : kFields) {
-          const auto* numeric =
-            segment.field(id, irs::DictRef{.kind = irs::ValueKind::Numeric});
+          const auto* numeric = segment.field(id, irs::ValueKind::Numeric);
           ASSERT_NE(nullptr, numeric);
-          ASSERT_EQ(irs::FieldSlot::Numeric, numeric->meta().slot);
+          ASSERT_EQ(irs::ValueKind::Numeric, numeric->meta().kind);
         }
-        const auto* terms =
-          segment.field(kPk, irs::DictRef{.kind = irs::ValueKind::Numeric});
+        const auto* terms = segment.field(kPk, irs::ValueKind::Numeric);
         ASSERT_NE(nullptr, terms);
         auto it = terms->iterator();
         while (it->next()) {

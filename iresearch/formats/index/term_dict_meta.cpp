@@ -55,14 +55,19 @@ constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
 
 constexpr duckdb::field_id_t kFieldId = 0;
-constexpr duckdb::field_id_t kFieldFirstSlot = 1;
+constexpr duckdb::field_id_t kFieldLayout = 1;
+constexpr duckdb::field_id_t kFieldFirstDict = 2;
 
-constexpr std::array<const char*, kFieldSlots> kSlotTags{
-  "sql_null", "json_null", "null_element", "false", "true", "numeric", "string",
+constexpr std::array<const char*, kValueKinds> kKindTags{
+  "string", "false", "true", "numeric", "sql_null", "json_null", "null_element",
 };
 
-constexpr duckdb::field_id_t SlotProperty(size_t slot) noexcept {
-  return static_cast<duckdb::field_id_t>(kFieldFirstSlot + slot);
+constexpr duckdb::field_id_t DictProperty(size_t position) noexcept {
+  return static_cast<duckdb::field_id_t>(kFieldFirstDict + position);
+}
+
+constexpr const char* KindTag(ValueKind kind) noexcept {
+  return kKindTags[static_cast<size_t>(kind)];
 }
 
 constexpr duckdb::field_id_t kPostingsRecord = 0;
@@ -154,7 +159,7 @@ void WriteDict(duckdb::BinarySerializer& out, const FieldHead& head) {
                                            head.inline_size, 0);
   }
   if (!head.range_counts.empty()) {
-    SDB_ASSERT(head.slot == FieldSlot::Numeric && head.width != 0);
+    SDB_ASSERT(head.kind == ValueKind::Numeric && head.width != 0);
     out.WriteProperty<uint64_t>(kDictRangeOffset, "range_offset",
                                 head.range_offset);
     out.WriteProperty<uint64_t>(kDictRangeSize, "range_size", head.range_size);
@@ -169,13 +174,19 @@ void WriteDict(duckdb::BinarySerializer& out, const FieldHead& head) {
 }
 
 void WriteField(duckdb::BinarySerializer& out,
-                std::span<const FieldHead> slots) {
-  out.WriteProperty<uint64_t>(kFieldId, "id", slots.front().id);
-  for (const auto& head : slots) {
-    const auto slot = static_cast<size_t>(head.slot);
-    out.WriteObject(SlotProperty(slot), kSlotTags[slot],
+                std::span<const FieldHead> dicts) {
+  const auto layout = dicts.front().layout;
+  out.WriteProperty<uint64_t>(kFieldId, "id", dicts.front().id);
+  out.WritePropertyWithDefault<uint8_t>(
+    kFieldLayout, "layout", static_cast<uint8_t>(layout),
+    static_cast<uint8_t>(DictLayout::String));
+  for (const auto& head : dicts) {
+    SDB_ASSERT(head.layout == layout);
+    const auto position = PositionOf(layout, head.kind);
+    SDB_ASSERT(position != kNoPosition);
+    out.WriteObject(DictProperty(position), KindTag(head.kind),
                     [&](duckdb::BinarySerializer& object) {
-                      if (IsKeyed(head.slot)) {
+                      if (IsKeyed(head.kind)) {
                         WriteDict(object, head);
                       } else {
                         WritePostings(object, head);
@@ -249,9 +260,9 @@ void ReadDict(duckdb::BinaryDeserializer& in, FieldHead& head) {
     });
   head.prefixes =
     in.ReadPropertyWithDefault<std::string>(kDictPrefixes, "prefixes");
-  const bool ranged = head.slot == FieldSlot::Numeric && head.width != 0;
+  const bool ranged = head.kind == ValueKind::Numeric && head.width != 0;
   if ((!ranged && (head.range_size != 0 || !head.range_counts.empty())) ||
-      (head.slot != FieldSlot::String &&
+      (head.kind != ValueKind::String &&
        (!head.prefixes.empty() || head.norm != field_limits::invalid()))) {
     Corrupted("dictionary", head.id);
   }
@@ -262,14 +273,22 @@ void ReadField(duckdb::BinaryDeserializer& in, std::vector<FieldHead>& fields) {
   if (!fields.empty() && fields.back().id >= id) {
     Corrupted("field order", id);
   }
+  const auto layout = in.ReadPropertyWithExplicitDefault<uint8_t>(
+    kFieldLayout, "layout", static_cast<uint8_t>(DictLayout::String));
+  if (layout >= kDictLayouts) {
+    Unsupported("dictionary layout", layout);
+  }
+  const auto kinds = LayoutKinds(static_cast<DictLayout>(layout));
   const auto first = fields.size();
-  for (size_t slot = 0; slot != kFieldSlots; ++slot) {
-    in.ReadOptionalObject(SlotProperty(slot), kSlotTags[slot],
+  for (size_t position = 0; position != kinds.size(); ++position) {
+    const auto kind = kinds[position];
+    in.ReadOptionalObject(DictProperty(position), KindTag(kind),
                           [&](duckdb::BinaryDeserializer& object) {
                             auto& head = fields.emplace_back();
                             head.id = id;
-                            head.slot = static_cast<FieldSlot>(slot);
-                            if (IsKeyed(head.slot)) {
+                            head.layout = static_cast<DictLayout>(layout);
+                            head.kind = kind;
+                            if (IsKeyed(kind)) {
                               ReadDict(object, head);
                             } else {
                               ReadPostings(object, head);
@@ -314,19 +333,21 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
   for (size_t i = 0; i != heads.size(); ++i) {
     fields += i == 0 || heads[i - 1].id != heads[i].id;
   }
-  out.WriteList(kTermsFields, "fields", fields,
-                [&, at = size_t{0}](duckdb::BinarySerializer::List& list,
-                                    duckdb::idx_t) mutable {
-                  auto end = at + 1;
-                  while (end != heads.size() && heads[end].id == heads[at].id) {
-                    SDB_ASSERT(heads[end - 1].slot < heads[end].slot);
-                    ++end;
-                  }
-                  list.WriteObject([&](duckdb::BinarySerializer& field) {
-                    WriteField(field, heads.subspan(at, end - at));
-                  });
-                  at = end;
-                });
+  out.WriteList(
+    kTermsFields, "fields", fields,
+    [&, at = size_t{0}](duckdb::BinarySerializer::List& list,
+                        duckdb::idx_t) mutable {
+      auto end = at + 1;
+      while (end != heads.size() && heads[end].id == heads[at].id) {
+        SDB_ASSERT(PositionOf(heads[at].layout, heads[end - 1].kind) <
+                   PositionOf(heads[at].layout, heads[end].kind));
+        ++end;
+      }
+      list.WriteObject([&](duckdb::BinarySerializer& field) {
+        WriteField(field, heads.subspan(at, end - at));
+      });
+      at = end;
+    });
   WriteOptionalBytes(out, kTermsInlineStarts, "inline_starts",
                      terms.inline_starts);
   out.WritePropertyWithDefault<uint32_t>(kTermsOrdinalBytes, "ordinal_bytes",
@@ -378,7 +399,7 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
     Unsupported("ordinal width", terms.ordinal_bytes);
   }
   const auto keyed = absl::c_count_if(
-    terms.fields, [](const FieldHead& head) { return IsKeyed(head.slot); });
+    terms.fields, [](const FieldHead& head) { return IsKeyed(head.kind); });
   if (static_cast<uint64_t>(keyed) > OrdinalLimit(terms.ordinal_bytes)) {
     Corrupted("ordinal width");
   }

@@ -256,7 +256,7 @@ SearchSinkInsertBaseImpl::DictionaryOf(const duckdb::Vector& vec) {
 
 template<typename Func>
 void SearchSinkInsertBaseImpl::InvertField(const Field& field, Func&& func) {
-  if (!_document->WithField(field.Id(), field.slot, field.GetIndexFeatures(),
+  if (!_document->WithField(field.Id(), field.kind, field.GetIndexFeatures(),
                             std::forward<Func>(func))) {
     THROW_SQL_ERROR(
       ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
@@ -379,7 +379,7 @@ void SearchSinkInsertBaseImpl::WriteColumnBlock(irs::field_id null_id,
 }
 
 void SearchSinkInsertBaseImpl::FinishColumnBlocks(
-  irs::field_id null_id, irs::FieldSlot slot,
+  irs::field_id null_id, irs::ValueKind kind,
   std::vector<irs::doc_id_t>& docs) {
   if (docs.empty()) {
     return;
@@ -387,7 +387,7 @@ void SearchSinkInsertBaseImpl::FinishColumnBlocks(
   if (irs::field_limits::valid(null_id)) {
     InvertSlots(null_id, [&](irs::PostingSlots& slots) {
       for (const auto doc : docs) {
-        slots.Push(slot, doc);
+        slots.Push(kind, doc);
       }
     });
   }
@@ -547,7 +547,7 @@ void SearchSinkInsertBaseImpl::WriteNumericColumn(const Field& field,
                                                   irs::field_id null_id,
                                                   duckdb::idx_t count) {
   SDB_ASSERT(field.GetIndexFeatures() == irs::IndexFeatures::None);
-  SDB_ASSERT(field.slot == irs::FieldSlot::Numeric);
+  SDB_ASSERT(field.kind == irs::ValueKind::Numeric);
 
   WriteColumnBlock(
     null_id, count,
@@ -667,7 +667,7 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
     const auto* data = duckdb::UnifiedVectorFormat::GetData<bool>(child_fmt);
     InvertSlots(field.Id(), [&](irs::PostingSlots& slots) {
       for_each_element([&](duckdb::idx_t child_idx, irs::doc_id_t doc) {
-        slots.Push(irs::BoolSlot(data[child_idx]), doc);
+        slots.Push(irs::BoolKind(data[child_idx]), doc);
       });
     });
   } else {
@@ -682,8 +682,8 @@ void SearchSinkInsertBaseImpl::WriteListBatch(const Field& field,
       });
     });
   }
-  FinishColumnBlocks(null_id, irs::FieldSlot::SqlNull, _null_docs);
-  FinishColumnBlocks(null_id, irs::FieldSlot::NullElement, _null_element_docs);
+  FinishColumnBlocks(null_id, irs::ValueKind::SqlNull, _null_docs);
+  FinishColumnBlocks(null_id, irs::ValueKind::NullElement, _null_element_docs);
 }
 
 bool SearchSinkInsertBaseImpl::DispatchListBatch(
@@ -792,7 +792,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
       irs::analysis::HasInvalidRows(fmt, static_cast<uint32_t>(count))) {
     InvertSlots(id, [&](irs::PostingSlots& slots) {
       for (const auto& value : _json_bools) {
-        slots.Push(irs::BoolSlot(value.value), value.doc);
+        slots.Push(irs::BoolKind(value.value), value.doc);
       }
       slots.PushNulls(fmt, static_cast<uint32_t>(count), first_doc);
     });
@@ -806,7 +806,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
       });
     });
   }
-  FinishColumnBlocks(id, irs::FieldSlot::JsonNull, _null_docs);
+  FinishColumnBlocks(id, irs::ValueKind::JsonNull, _null_docs);
 }
 
 void SearchSinkInsertBaseImpl::RejectJsonComposites(const duckdb::Vector& vec,
@@ -858,6 +858,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     return;
   }
   if (type.IsJSONType() && entry && entry->HasJsonLeafFields()) {
+    _document->SetLayout(field_id, irs::DictLayout::Json);
     _json_fields.InitForExpression(field_id, ResolveTokenizer(field_id));
     if (irs::field_limits::valid(_json_fields.string_field.store_column)) {
       EnsureBlobColumnWriter(_json_fields.string_field.store_column);
@@ -899,11 +900,14 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
                                             : 0);
     if (child_kind == duckdb::LogicalTypeId::VARCHAR ||
         child_kind == duckdb::LogicalTypeId::BLOB) {
+      _document->SetLayout(field_id, irs::DictLayout::StringList);
       _field.PrepareForStringValue(field_id, ResolveTokenizer(field_id));
     } else if (child_kind == duckdb::LogicalTypeId::BOOLEAN) {
-      _field.PrepareForBlockValue(field_id, irs::FieldSlot::String);
+      _document->SetLayout(field_id, irs::DictLayout::BoolList);
+      _field.PrepareForBlockValue(field_id, irs::ValueKind::String);
     } else if (term_dict::IsNumeric(term_dict::Classify(child_kind))) {
-      _field.PrepareForBlockValue(field_id, irs::FieldSlot::Numeric);
+      _document->SetLayout(field_id, irs::DictLayout::NumericList);
+      _field.PrepareForBlockValue(field_id, irs::ValueKind::Numeric);
     } else {
       return;
     }
@@ -916,12 +920,14 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
 
   switch (kind) {
     case duckdb::LogicalTypeId::SQLNULL:
+      _document->SetLayout(field_id, irs::DictLayout::String);
       append_stored();
       WriteNullColumn(_null_id, count);
       return;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
     case duckdb::LogicalTypeId::GEOMETRY: {
+      _document->SetLayout(field_id, irs::DictLayout::String);
       auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(field_id, tokenizer);
       if (kind == duckdb::LogicalTypeId::GEOMETRY) {
@@ -937,6 +943,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       return;
     }
     case duckdb::LogicalTypeId::BOOLEAN:
+      _document->SetLayout(field_id, irs::DictLayout::Bool);
       append_stored();
       WriteBoolColumn(field_id, _null_id, count);
       return;
@@ -944,7 +951,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       if (!pg::IsInetOrCidr(type)) {
         return;
       }
-      _field.PrepareForBlockValue(field_id, irs::FieldSlot::String);
+      _document->SetLayout(field_id, irs::DictLayout::String);
+      _field.PrepareForBlockValue(field_id, irs::ValueKind::String);
       append_stored();
       WriteInetColumn(_field, _null_id, vec, count);
       return;
@@ -952,7 +960,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       if (!term_dict::IsNumeric(term_dict::Classify(kind))) {
         return;
       }
-      _field.PrepareForBlockValue(field_id, irs::FieldSlot::Numeric);
+      _document->SetLayout(field_id, irs::DictLayout::Numeric);
+      _field.PrepareForBlockValue(field_id, irs::ValueKind::Numeric);
       append_stored();
       [[maybe_unused]] const bool matched =
         DispatchNumericKind(kind, [&]<duckdb::LogicalTypeId K>() {
@@ -1003,7 +1012,7 @@ void SearchSinkInsertBaseImpl::JsonExpressionFields::InitForExpression(
   SDB_ASSERT(irs::field_limits::valid(entry_field_id));
   string_field.PrepareForStringValue(entry_field_id, string_analyzer);
   string_field.store_column = string_analyzer.tokenizer_column;
-  numeric_field.PrepareForBlockValue(entry_field_id, irs::FieldSlot::Numeric);
+  numeric_field.PrepareForBlockValue(entry_field_id, irs::ValueKind::Numeric);
 }
 
 void SearchSinkInsertBaseImpl::FinishImpl() {
@@ -1065,7 +1074,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForKeywordStringValue(
   string_analyzer = nullptr;
   store_column = irs::field_limits::invalid();
   index_features = irs::IndexFeatures::None;
-  slot = irs::FieldSlot::String;
+  kind = irs::ValueKind::String;
   keyword = true;
 }
 
@@ -1073,7 +1082,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   irs::field_id field_id, catalog::ColumnTokenizer& column_analyzer) {
   id = field_id;
   index_features = column_analyzer.features;
-  slot = irs::FieldSlot::String;
+  kind = irs::ValueKind::String;
   SDB_ASSERT(column_analyzer.analyzer);
   string_analyzer = column_analyzer.analyzer.get();
   keyword = string_analyzer->Traits().keyword;
@@ -1083,12 +1092,12 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForBlockValue(
-  irs::field_id field_id, irs::FieldSlot value_slot) {
+  irs::field_id field_id, irs::ValueKind value_kind) {
   id = field_id;
   string_analyzer = nullptr;
   store_column = irs::field_limits::invalid();
   index_features = irs::IndexFeatures::None;
-  slot = value_slot;
+  kind = value_kind;
   keyword = false;
 }
 

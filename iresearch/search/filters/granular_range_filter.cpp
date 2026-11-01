@@ -32,7 +32,7 @@ namespace irs {
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  SDB_ASSERT(dict().kind == ValueKind::Numeric);
+  SDB_ASSERT(dict() == ValueKind::Numeric);
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
   return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),

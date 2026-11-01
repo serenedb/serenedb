@@ -106,7 +106,7 @@ bool Term::operator<(const Term& rhs) const {
 Field::Field(irs::field_id id, irs::IndexFeatures index_features)
   : FieldMeta(id, index_features), stats{} {}
 
-Field::Field(irs::field_id id, irs::FieldSlot slot,
+Field::Field(irs::field_id id, irs::ValueKind slot,
              irs::IndexFeatures index_features)
   : FieldMeta(id, slot, index_features), stats{} {}
 
@@ -773,7 +773,7 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
       const auto* actual_dicts = actual_segment.dicts(*actual_id_it);
       ASSERT_NE(nullptr, actual_dicts);
-      const auto* actual_terms = actual_dicts->At(expected_field->second.slot);
+      const auto* actual_terms = actual_dicts->At(expected_field->second.kind);
       ASSERT_NE(nullptr, actual_terms);
       ASSERT_EQ(expected_field->second.id, actual_terms->meta().id);
       ASSERT_EQ(expected_field->second.index_features,

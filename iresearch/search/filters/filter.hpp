@@ -297,8 +297,8 @@ class FilterWithField : public FilterWithOptions<Options> {
 
   irs::field_id field_id() const noexcept { return _field_id; }
   irs::field_id* mutable_field_id() noexcept { return &_field_id; }
-  DictRef dict() const noexcept { return _dict; }
-  DictRef* mutable_dict() noexcept { return &_dict; }
+  ValueKind dict() const noexcept { return _dict; }
+  ValueKind* mutable_dict() noexcept { return &_dict; }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {
@@ -311,7 +311,7 @@ class FilterWithField : public FilterWithOptions<Options> {
 
  private:
   irs::field_id _field_id{irs::field_limits::invalid()};
-  DictRef _dict;
+  ValueKind _dict = ValueKind::String;
 };
 
 class Empty final : public FilterWithType<Empty> {

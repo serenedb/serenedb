@@ -66,17 +66,18 @@ using DocIdMapT = ManagedVector<doc_id_t>;
 
 struct MergedField {
   IndexFeatures string_features = IndexFeatures::None;
+  std::optional<DictLayout> layout;
   bool has_string = false;
   uint8_t keyed = 0;
 };
 
 using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
 
-struct SlotKey {
+struct DictKey {
   field_id id;
-  FieldSlot slot;
+  size_t position;
 
-  auto operator<=>(const SlotKey&) const = default;
+  auto operator<=>(const DictKey&) const = default;
 };
 
 class ProgressTracker {
@@ -369,6 +370,9 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
+  DictLayout Layout() const noexcept { return _layout; }
+  size_t Position() const noexcept { return _current.position; }
+
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
   uint32_t KeyWidth() const noexcept;
@@ -387,9 +391,10 @@ class CompoundFieldIterator final : public BasicTermReader {
   struct FieldIteratorImpl {
     std::span<const field_id> ids;
     size_t pos;
-    size_t slot;
+    size_t position;
     const SubReader* reader;
     const DocRemap* remap;
+    DictLayout layout = DictLayout::String;
   };
 
   struct TermIteratorImpl {
@@ -400,7 +405,8 @@ class CompoundFieldIterator final : public BasicTermReader {
   const TermReader* Current(FieldIteratorImpl& it) const;
 
   FieldProperties _props;
-  SlotKey _current{.id = field_limits::invalid(), .slot = FieldSlot::SqlNull};
+  DictKey _current{.id = field_limits::invalid(), .position = 0};
+  DictLayout _layout = DictLayout::String;
   FieldMeta _synthesized_meta;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
   std::vector<TermIteratorImpl> _field_iterator_mask;
@@ -417,7 +423,7 @@ void CompoundFieldIterator::Add(const SubReader& reader,
 }
 
 const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
-  for (; it.pos < it.ids.size(); ++it.pos, it.slot = 0) {
+  for (; it.pos < it.ids.size(); ++it.pos, it.position = 0) {
     const auto id = it.ids[it.pos];
     if (_field_options &&
         _field_options->GetFieldKind(id) != FieldKind::Index) {
@@ -427,8 +433,10 @@ const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
     if (!dicts) {
       continue;
     }
-    for (; it.slot != kFieldSlots; ++it.slot) {
-      if (const auto* terms = dicts->At(static_cast<FieldSlot>(it.slot))) {
+    it.layout = dicts->Layout();
+    const auto all = dicts->All();
+    for (; it.position != all.size(); ++it.position) {
+      if (const auto* terms = all[it.position]) {
         return terms;
       }
     }
@@ -439,7 +447,7 @@ const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
 bool CompoundFieldIterator::Next() {
   _progress();
 
-  const SlotKey none{.id = field_limits::invalid(), .slot = FieldSlot::SqlNull};
+  const DictKey none{.id = field_limits::invalid(), .position = 0};
   if (Aborted()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
@@ -448,7 +456,7 @@ bool CompoundFieldIterator::Next() {
   }
 
   for (auto& entry : _field_iterator_mask) {
-    ++_field_iterators[entry.itr_id].slot;
+    ++_field_iterators[entry.itr_id].position;
   }
 
   _field_iterator_mask.clear();
@@ -460,15 +468,17 @@ bool CompoundFieldIterator::Next() {
     if (!field_terms) {
       continue;
     }
-    const SlotKey key{.id = field_itr.ids[field_itr.pos],
-                      .slot = static_cast<FieldSlot>(field_itr.slot)};
+    const DictKey key{.id = field_itr.ids[field_itr.pos],
+                      .position = field_itr.position};
     const bool first = !field_limits::valid(_current.id) || key < _current;
     if (!first && key != _current) {
       continue;
     }
     if (first) {
       _field_iterator_mask.clear();
+      _layout = field_itr.layout;
     }
+    SDB_ASSERT(field_itr.layout == _layout);
     const auto features = field_terms->meta().index_features;
     _synthesized_meta.index_features =
       _field_iterator_mask.empty()
@@ -483,7 +493,7 @@ bool CompoundFieldIterator::Next() {
     return false;
   }
   _synthesized_meta.id = _current.id;
-  _synthesized_meta.slot = _current.slot;
+  _synthesized_meta.kind = LayoutKinds(_layout)[_current.position];
   _current_meta = &_synthesized_meta;
   return true;
 }
@@ -531,20 +541,30 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
     if (!dicts) {
       continue;
     }
-    for (size_t i = 0; i != kFieldSlots; ++i) {
-      const auto slot = static_cast<FieldSlot>(i);
-      const auto* term_reader = dicts->At(slot);
+    auto& field = field_meta_map[id];
+    if (!field.layout) {
+      field.layout = dicts->Layout();
+    } else if (*field.layout != dicts->Layout()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("merge: field ", id,
+                              " has different dictionary layouts in its "
+                              "segments"));
+    }
+    const auto kinds = LayoutKinds(dicts->Layout());
+    const auto all = dicts->All();
+    for (size_t position = 0; position != all.size(); ++position) {
+      const auto* term_reader = all[position];
       if (!term_reader) {
         continue;
       }
+      const auto kind = kinds[position];
       const auto features = term_reader->meta().index_features;
       index_features |= features;
-      if (!IsKeyed(slot)) {
+      if (!IsKeyed(kind)) {
         continue;
       }
-      auto& field = field_meta_map[id];
-      field.keyed |= static_cast<uint8_t>(1U << KeyedIndex(slot));
-      if (slot == FieldSlot::String) {
+      field.keyed |= static_cast<uint8_t>(1U << KeyedIndex(kind));
+      if (kind == ValueKind::String) {
         field.string_features =
           field.has_string ? field.string_features & features : features;
         field.has_string = true;
@@ -642,7 +662,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     if (src.col_reader) {
       const auto* dicts = src.reader->dicts(id);
       if (const auto* source_terms =
-            dicts ? dicts->At(FieldSlot::String) : nullptr;
+            dicts ? dicts->At(ValueKind::String) : nullptr;
           source_terms && field_limits::valid(source_terms->meta().norm)) {
         reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
@@ -744,20 +764,28 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  return lhs->id() < rhs->id();
                });
   const auto extra_key = [](const BasicTermReader* reader) {
-    return SlotKey{.id = reader->id(), .slot = FieldSlot::String};
+    return DictKey{
+      .id = reader->id(),
+      .position = PositionOf(DictLayout::String, ValueKind::String),
+    };
+  };
+  const auto write_extra = [&](const BasicTermReader& reader) {
+    field_writer->write(DictLayout::String, ValueKind::String, reader);
   };
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const SlotKey key{.id = field_itr.Meta().id, .slot = field_itr.Meta().slot};
+    const DictKey key{.id = field_itr.Meta().id,
+                      .position = field_itr.Position()};
     while (ei < en && extra_key(sorted_extra[ei]) < key) {
-      field_writer->write(FieldSlot::String, *sorted_extra[ei]);
+      write_extra(*sorted_extra[ei]);
       ++ei;
     }
 
     if (ei < en && extra_key(sorted_extra[ei]) == key) {
-      field_writer->write(FieldSlot::String, *sorted_extra[ei]);
+      SDB_ASSERT(field_itr.Layout() == DictLayout::String);
+      write_extra(*sorted_extra[ei]);
       ++ei;
       continue;
     }
@@ -766,7 +794,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     props.index_features = field_itr.Meta().index_features;
     props.key_width = field_itr.KeyWidth();
 
-    if (key.slot == FieldSlot::String &&
+    if (field_itr.Meta().kind == ValueKind::String &&
         IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(key.id);
       if (it != merged_norm_ids.end()) {
@@ -775,11 +803,11 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     }
 
     field_itr.SetProperties(props);
-    field_writer->write(key.slot, field_itr);
+    field_writer->write(field_itr.Layout(), field_itr.Meta().kind, field_itr);
   }
 
   while (ei < en) {
-    field_writer->write(FieldSlot::String, *sorted_extra[ei]);
+    write_extra(*sorted_extra[ei]);
     ++ei;
   }
 

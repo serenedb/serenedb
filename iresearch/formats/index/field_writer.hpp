@@ -79,7 +79,7 @@ class FieldWriter final {
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void prepare(const FlushState& state, uint64_t keyed_dicts);
-  void write(FieldSlot slot, const BasicTermReader& reader);
+  void write(DictLayout layout, ValueKind kind, const BasicTermReader& reader);
   void end();
 
  private:
@@ -95,8 +95,8 @@ class FieldWriter final {
   void Seal();
   void Cut();
   void WriteBlock();
-  void EndField(field_id id, FieldSlot slot, const FieldProperties& props,
-                uint64_t total_freq, uint64_t first_inline);
+  void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
+                uint64_t first_inline);
   void ResetField() noexcept;
   void Reset() noexcept;
 
@@ -133,7 +133,8 @@ class FieldWriter final {
   uint32_t _ordinal = 0;
   uint32_t _ordinal_bytes = 1;
   field_id _last_id = field_limits::invalid();
-  FieldSlot _slot = FieldSlot::String;
+  DictLayout _layout = DictLayout::String;
+  ValueKind _kind = ValueKind::String;
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;

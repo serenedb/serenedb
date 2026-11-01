@@ -175,7 +175,8 @@ std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
 }
 
 bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+  doc.SetLayout(id, irs::DictLayout::Numeric);
+  return doc.WithField(id, irs::ValueKind::Numeric, index_features,
                        [&](irs::FieldInverter& fld) {
                          return fld.InvertNumerics<int64_t>(
                            [&](auto&& emit) { emit(_value, doc.DocId()); });
@@ -192,7 +193,8 @@ std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
 }
 
 bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+  doc.SetLayout(id, irs::DictLayout::Numeric);
+  return doc.WithField(id, irs::ValueKind::Numeric, index_features,
                        [&](irs::FieldInverter& fld) {
                          return fld.InvertNumerics<int32_t>(
                            [&](auto&& emit) { emit(_value, doc.DocId()); });
@@ -209,7 +211,8 @@ std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
 }
 
 bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+  doc.SetLayout(id, irs::DictLayout::Numeric);
+  return doc.WithField(id, irs::ValueKind::Numeric, index_features,
                        [&](irs::FieldInverter& fld) {
                          return fld.InvertNumerics<double_t>(
                            [&](auto&& emit) { emit(_value, doc.DocId()); });
@@ -226,7 +229,8 @@ std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
 }
 
 bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, irs::FieldSlot::Numeric, index_features,
+  doc.SetLayout(id, irs::DictLayout::Numeric);
+  return doc.WithField(id, irs::ValueKind::Numeric, index_features,
                        [&](irs::FieldInverter& fld) {
                          return fld.InvertNumerics<float_t>(
                            [&](auto&& emit) { emit(_value, doc.DocId()); });

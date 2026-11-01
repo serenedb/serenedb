@@ -229,6 +229,10 @@ class IndexWriter : private util::Noncopyable {
 
     std::string_view Error() const noexcept { return _writer.Error(); }
 
+    void SetLayout(field_id id, DictLayout layout) const {
+      _writer.SetLayout(id, layout);
+    }
+
     template<typename... Args>
     bool WithField(Args&&... args) const {
       return _writer.WithField(std::forward<Args>(args)...);

@@ -54,10 +54,10 @@ namespace {
   irs::field_limits::invalid();
 
 irs::ByTerm MakeFilter(irs::field_id field, const std::string_view term,
-                       irs::ValueKind kind = irs::ValueKind::Text) {
+                       irs::ValueKind kind = irs::ValueKind::String) {
   irs::ByTerm q;
   *q.mutable_field_id() = field;
-  q.mutable_dict()->kind = kind;
+  *q.mutable_dict() = kind;
   q.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return q;
 }

@@ -460,8 +460,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
   auto reader = open_reader();
   ASSERT_EQ(1, reader->size());
   auto& segment = reader[0];
-  auto field =
-    segment.field(kFieldId, irs::DictRef{.kind = irs::ValueKind::Numeric});
+  auto field = segment.field(kFieldId, irs::ValueKind::Numeric);
   ASSERT_NE(nullptr, field);
 
   std::vector<irs::bstring> all_terms;
@@ -723,7 +722,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
     writer.prepare(state, 1);
-    writer.write(irs::FieldSlot::String, term_reader);
+    writer.write(irs::DictLayout::String, irs::ValueKind::String, term_reader);
     writer.end();
     idx.Commit();
   }
@@ -742,7 +741,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 
     // check terms
     ASSERT_EQ(nullptr, reader->dicts(999));
-    auto term_reader = reader->dicts(field.id)->At(irs::FieldSlot::String);
+    auto term_reader = reader->dicts(field.id)->At(irs::ValueKind::String);
     ASSERT_NE(nullptr, term_reader);
     ASSERT_EQ(field.id, term_reader->meta().id);
     ASSERT_EQ(field.index_features, term_reader->meta().index_features);

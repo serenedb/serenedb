@@ -61,7 +61,7 @@ struct Field {
   irs::field_id id;
   std::vector<Entry> entries;
   bool sample = true;
-  irs::FieldSlot slot = irs::FieldSlot::String;
+  irs::ValueKind slot = irs::ValueKind::String;
 };
 
 class OracleTerms final : public irs::TermIterator {
@@ -453,6 +453,21 @@ irs::bstring OrdinalPrefix(uint32_t ordinal, uint32_t width) {
   return irs::bstring{bytes + sizeof(bytes) - width, width};
 }
 
+irs::DictLayout SmallestLayout(std::span<const Field> dicts) {
+  using enum irs::DictLayout;
+  for (const auto layout :
+       {String, Numeric, Bool, StringList, NumericList, BoolList, Json}) {
+    if (absl::c_all_of(dicts, [&](const Field& field) {
+          return irs::PositionOf(layout, field.slot) != irs::kNoPosition;
+        })) {
+      return layout;
+    }
+  }
+  ADD_FAILURE() << "no layout holds the dictionaries of field "
+                << dicts.front().id;
+  return Json;
+}
+
 class EntriesReader final : public irs::BasicTermReader {
  public:
   explicit EntriesReader(const Field& field)
@@ -516,9 +531,18 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     const uint64_t keyed = absl::c_count_if(
       fields, [](const Field& field) { return irs::IsKeyed(field.slot); });
     writer.prepare(state, std::max(keyed, keyed_bound));
-    for (const auto& field : fields) {
-      EntriesReader reader{field};
-      writer.write(field.slot, reader);
+    for (size_t at = 0; at != fields.size();) {
+      auto end = at + 1;
+      while (end != fields.size() && fields[end].id == fields[at].id) {
+        ++end;
+      }
+      const auto dicts = fields.subspan(at, end - at);
+      const auto layout = SmallestLayout(dicts);
+      for (const auto& field : dicts) {
+        EntriesReader reader{field};
+        writer.write(layout, field.slot, reader);
+      }
+      at = end;
     }
     writer.end();
     idx.Commit();
@@ -536,7 +560,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
   }
 
   const irs::TermReader* Get(
-    irs::field_id id, irs::FieldSlot slot = irs::FieldSlot::String) const {
+    irs::field_id id, irs::ValueKind slot = irs::ValueKind::String) const {
     const auto* dicts = _reader->dicts(id);
     return dicts ? dicts->At(slot) : nullptr;
   }
@@ -917,36 +941,36 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     const Field fields[]{
       {.id = 1,
        .entries = NumericEntries(sequential),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
       {.id = 2,
        .entries = NumericEntries(scattered),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
       {.id = 3,
        .entries = NumericEntries(clustered),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
       {.id = 4,
        .entries = NumericEntries(heavy),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
       {.id = 5,
        .entries = NumericEntries(mixed),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
       {.id = 6,
        .entries = NumericEntries(multi),
-       .slot = irs::FieldSlot::Numeric},
+       .slot = irs::ValueKind::Numeric},
     };
     Write(fields, compaction);
     for (const auto& field : fields) {
       SCOPED_TRACE(testing::Message("field ") << field.id);
       const auto* reader = Get(field);
       ASSERT_NE(nullptr, reader);
-      ASSERT_EQ(irs::FieldSlot::Numeric, reader->meta().slot);
+      ASSERT_EQ(irs::ValueKind::Numeric, reader->meta().kind);
       AssertField(*reader, field.entries);
       AssertLevels(*reader, field.entries);
       AssertVisits(*reader, field.entries, field.id == 4 ? 100 : 10000);
     }
     const auto height = [&](irs::field_id id) {
       return static_cast<const irs::term_dict::TermReaderImpl&>(
-               *Get(id, irs::FieldSlot::Numeric))
+               *Get(id, irs::ValueKind::Numeric))
         .RangeLevels()
         .size();
     };
@@ -966,7 +990,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       irs::bytes_view{OrdinalPrefix(static_cast<uint32_t>(ordinal), width)},
       impl.KeyPrefix());
     AssertField(*reader, field.entries);
-    if (field.slot == irs::FieldSlot::Numeric) {
+    if (field.slot == irs::ValueKind::Numeric) {
       ASSERT_FALSE(impl.RangeLevels().empty());
       AssertLevels(*reader, field.entries);
       AssertVisits(*reader, field.entries, 1000);
@@ -1089,20 +1113,20 @@ TEST_P(TermDictTest, postings_only_slots) {
   const Field fields[]{
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::False},
+     .slot = irs::ValueKind::False},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::True},
+     .slot = irs::ValueKind::True},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::JsonNull},
+     .slot = irs::ValueKind::JsonNull},
     {.id = 2, .entries = MakeEntries({Bytes("a"), Bytes("b")})},
     {.id = 3,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
   };
   Write(fields);
   CountingDirectory counting{dir()};
@@ -1112,7 +1136,7 @@ TEST_P(TermDictTest, postings_only_slots) {
                  << field.id << " slot " << static_cast<int>(field.slot));
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(field.slot, reader->meta().slot);
+    ASSERT_EQ(field.slot, reader->meta().kind);
     const auto& impl =
       static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
     if (!irs::IsKeyed(field.slot)) {
@@ -1124,9 +1148,9 @@ TEST_P(TermDictTest, postings_only_slots) {
     AssertField(*reader, field.entries);
     ASSERT_EQ(before, counting.Reads());
   }
-  ASSERT_EQ(nullptr, Get(1, irs::FieldSlot::String));
-  ASSERT_EQ(nullptr, Get(2, irs::FieldSlot::SqlNull));
-  ASSERT_EQ(nullptr, Get(3, irs::FieldSlot::JsonNull));
+  ASSERT_EQ(nullptr, Get(1, irs::ValueKind::String));
+  ASSERT_EQ(nullptr, Get(2, irs::ValueKind::SqlNull));
+  ASSERT_EQ(nullptr, Get(3, irs::ValueKind::JsonNull));
   ASSERT_EQ(1, static_cast<const irs::term_dict::TermReaderImpl&>(*Get(2))
                  .KeyPrefix()
                  .size());
@@ -1240,7 +1264,7 @@ TEST_P(TermDictTest, single_term_fields) {
     {.id = 2, .entries = MakeEntries({irs::bstring{}})},
     {.id = 3,
      .entries = MakeEntries({BigEndian(0, 42)}),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
     {.id = 4, .entries = MakeEntries(Words(3000, 41))},
     {.id = 5, .entries = MakeEntries({Bytes("world")})},
   };
@@ -1256,7 +1280,7 @@ TEST_P(TermDictTest, single_term_fields) {
     const bool single = field.entries.size() == 1;
     ASSERT_EQ(single, impl.Single());
     ASSERT_EQ(KeyWidth(field.entries), reader->meta().key_width);
-    ASSERT_EQ(field.slot, reader->meta().slot);
+    ASSERT_EQ(field.slot, reader->meta().kind);
     const size_t before = counting.Reads();
     AssertField(*reader, field.entries);
     for (const std::string_view pattern : {".*", "hel.*", "x.*", ".*o"}) {
@@ -1496,7 +1520,7 @@ TEST_P(TermDictTest, open_takes_the_terms_from_the_footer) {
     {.id = 1, .entries = MakeEntries(std::move(keys))},
     {.id = 2,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
     {.id = 3, .entries = MakeEntries({Bytes("false"), Bytes("true")})},
     {.id = 4, .entries = MakeEntries({Bytes("only")})},
   };
@@ -1722,14 +1746,14 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   const Field fields[]{
     {.id = 1,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
     {.id = 2, .entries = MakeEntries(Words(3000, 5))},
     {.id = 3, .entries = MakeEntries({Bytes("single")})},
   };
   Write(fields);
   const auto terms = TakeTerms();
   ASSERT_EQ(3, terms.fields.size());
-  ASSERT_EQ(irs::FieldSlot::Numeric, terms.fields[0].slot);
+  ASSERT_EQ(irs::ValueKind::Numeric, terms.fields[0].kind);
   ASSERT_LT(1, terms.fields[1].term_count);
   ASSERT_EQ(1, terms.fields[2].term_count);
 
@@ -1772,7 +1796,8 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     [](Terms& t) { t.inline_offset = std::numeric_limits<uint64_t>::max(); },
     ERRCODE_INDEX_CORRUPTED);
 
-  const auto refused_field = [&](auto&& write_field) {
+  const auto refused_field = [&](auto&& write_field,
+                                 int code = ERRCODE_INDEX_CORRUPTED) {
     RewriteTermsWith([&](duckdb::BinarySerializer& object) {
       object.WriteProperty<uint32_t>(0, "restart_interval",
                                      irs::term_dict::kRestartInterval);
@@ -1780,27 +1805,37 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
                        [&](duckdb::BinarySerializer::List& list,
                            duckdb::idx_t) { list.WriteObject(write_field); });
     });
-    ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+    ASSERT_SQL_ERROR(Open(dir()), code);
+  };
+  const auto single_string = [](duckdb::BinarySerializer& dict) {
+    dict.WriteProperty<uint32_t>(0, "features", 0);
+    dict.WriteProperty<uint64_t>(1, "term_count", 1);
+    dict.WriteProperty<uint64_t>(2, "doc_count", 1);
+    dict.WriteProperty(8, "record", std::string{"r"});
   };
   refused_field([](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
   });
   refused_field([](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(1, "sql_null", [](duckdb::BinarySerializer& postings) {
+    field.WriteObject(2, "sql_null", [](duckdb::BinarySerializer& postings) {
       postings.WriteProperty(0, "record", std::string{});
     });
   });
-  refused_field([](duckdb::BinarySerializer& field) {
+  refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
-    field.WriteObject(7, "string", [](duckdb::BinarySerializer& dict) {
-      dict.WriteProperty<uint32_t>(0, "features", 0);
-      dict.WriteProperty<uint64_t>(1, "term_count", 1);
-      dict.WriteProperty<uint64_t>(2, "doc_count", 1);
-      dict.WriteProperty(8, "record", std::string{"r"});
+    field.WriteObject(3, "string", [&](duckdb::BinarySerializer& dict) {
+      single_string(dict);
       dict.WriteProperty<uint64_t>(19, "range_size", 1);
     });
   });
+  refused_field(
+    [&](duckdb::BinarySerializer& field) {
+      field.WriteProperty<uint64_t>(0, "id", 1);
+      field.WriteProperty<uint8_t>(1, "layout", irs::kDictLayouts);
+      field.WriteObject(3, "string", single_string);
+    },
+    ERRCODE_FEATURE_NOT_SUPPORTED);
 
   RewriteTerms(terms);
   Open(dir());
@@ -1809,7 +1844,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   }
 }
 
-TEST_P(TermDictTest, six_slots_under_one_field) {
+TEST_P(TermDictTest, json_layout_holds_six_dictionaries) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 5000; ++doc) {
     values.emplace_back(int64_t{doc} * 3, doc);
@@ -1818,29 +1853,32 @@ TEST_P(TermDictTest, six_slots_under_one_field) {
   const Field fields[]{
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::JsonNull},
+     .slot = irs::ValueKind::JsonNull},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::False},
+     .slot = irs::ValueKind::False},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::True},
+     .slot = irs::ValueKind::True},
     {.id = 1,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
     {.id = 1, .entries = MakeEntries(Words(3000, 5))},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
     {.id = 2, .entries = MakeEntries(Words(3000, 6))},
   };
   Write(fields);
   ASSERT_EQ((std::vector<irs::field_id>{1, 2}),
             std::vector<irs::field_id>(_reader->field_ids().begin(),
                                        _reader->field_ids().end()));
+  ASSERT_EQ(irs::DictLayout::Json, _reader->dicts(1)->Layout());
+  ASSERT_EQ(6, _reader->dicts(1)->All().size());
+  ASSERT_EQ(irs::DictLayout::String, _reader->dicts(2)->Layout());
   irs::byte_type ordinal = 0;
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ")
@@ -1848,7 +1886,7 @@ TEST_P(TermDictTest, six_slots_under_one_field) {
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
     ASSERT_EQ(field.id, reader->meta().id);
-    ASSERT_EQ(field.slot, reader->meta().slot);
+    ASSERT_EQ(field.slot, reader->meta().kind);
     const auto& impl =
       static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
     if (irs::IsKeyed(field.slot)) {
@@ -1857,17 +1895,17 @@ TEST_P(TermDictTest, six_slots_under_one_field) {
     } else {
       ASSERT_TRUE(impl.KeyPrefix().empty());
     }
-    ASSERT_EQ(field.slot == irs::FieldSlot::Numeric,
+    ASSERT_EQ(field.slot == irs::ValueKind::Numeric,
               !impl.RangeLevels().empty());
     AssertField(*reader, field.entries);
   }
-  ASSERT_EQ(nullptr, Get(2, irs::FieldSlot::Numeric));
-  ASSERT_EQ(nullptr, Get(2, irs::FieldSlot::True));
+  ASSERT_EQ(nullptr, Get(2, irs::ValueKind::Numeric));
+  ASSERT_EQ(nullptr, Get(2, irs::ValueKind::True));
   ASSERT_EQ(nullptr, Get(3));
   const irs::RegexpAcceptor any{
     irs::ViewCast<irs::byte_type>(std::string_view{".*"})};
   AssertWalk(*Get(1), fields[5].entries, any);
-  AssertWalk(*Get(1, irs::FieldSlot::Numeric), fields[4].entries, any);
+  AssertWalk(*Get(1, irs::ValueKind::Numeric), fields[4].entries, any);
   AssertWalk(*Get(2), fields[7].entries, any);
 }
 
@@ -1877,68 +1915,54 @@ TEST_P(TermDictTest, layouts_resolve_value_kinds) {
   const Field fields[]{
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
     {.id = 1,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::NullElement},
+     .slot = irs::ValueKind::NullElement},
     {.id = 1, .entries = MakeEntries(Words(100, 5))},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::SqlNull},
+     .slot = irs::ValueKind::SqlNull},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::JsonNull},
+     .slot = irs::ValueKind::JsonNull},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::False},
+     .slot = irs::ValueKind::False},
     {.id = 2,
      .entries = MakeEntries({slot_term}),
-     .slot = irs::FieldSlot::True},
+     .slot = irs::ValueKind::True},
     {.id = 2,
      .entries = NumericEntries({{int64_t{7}, irs::doc_id_t{1}}}),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
     {.id = 2, .entries = MakeEntries(Words(100, 6))},
     {.id = 3, .entries = MakeEntries(Words(100, 7))},
   };
   Write(fields);
-  const auto resolve = [&](irs::field_id id, irs::DictLayout layout,
-                           irs::ValueKind kind) {
-    const auto* dicts = _reader->dicts(id);
-    return dicts ? irs::Resolve(*dicts, {.layout = layout, .kind = kind})
-                 : nullptr;
-  };
-  struct Case {
-    irs::field_id id;
-    irs::DictLayout layout;
-    irs::ValueKind kind;
-    irs::FieldSlot slot;
-  };
-  for (const auto& c : {
-         Case{1, irs::DictLayout::Array, Text, irs::FieldSlot::String},
-         Case{1, irs::DictLayout::Array, Null, irs::FieldSlot::SqlNull},
-         Case{1, irs::DictLayout::Array, NullElement,
-              irs::FieldSlot::NullElement},
-         Case{2, irs::DictLayout::Json, Text, irs::FieldSlot::String},
-         Case{2, irs::DictLayout::Json, Numeric, irs::FieldSlot::Numeric},
-         Case{2, irs::DictLayout::Json, False, irs::FieldSlot::False},
-         Case{2, irs::DictLayout::Json, True, irs::FieldSlot::True},
-         Case{2, irs::DictLayout::Json, Null, irs::FieldSlot::SqlNull},
-         Case{2, irs::DictLayout::Json, JsonNull, irs::FieldSlot::JsonNull},
-         Case{3, irs::DictLayout::Scalar, Text, irs::FieldSlot::String},
-       }) {
+  ASSERT_EQ(irs::DictLayout::StringList, _reader->dicts(1)->Layout());
+  ASSERT_EQ(irs::DictLayout::Json, _reader->dicts(2)->Layout());
+  ASSERT_EQ(irs::DictLayout::String, _reader->dicts(3)->Layout());
+  for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ")
-                 << c.id << " kind " << static_cast<int>(c.kind));
-    const auto* reader = resolve(c.id, c.layout, c.kind);
+                 << field.id << " kind " << static_cast<int>(field.slot));
+    const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(Get(c.id, c.slot), reader);
-    ASSERT_EQ(c.slot, reader->meta().slot);
+    ASSERT_EQ(field.slot, reader->meta().kind);
+    ASSERT_EQ(reader, _reader->dicts(field.id)->All()[irs::PositionOf(
+                        _reader->dicts(field.id)->Layout(), field.slot)]);
   }
-  ASSERT_EQ(nullptr, resolve(1, irs::DictLayout::Array, Numeric));
-  ASSERT_EQ(nullptr, resolve(1, irs::DictLayout::Array, True));
-  ASSERT_EQ(nullptr, resolve(3, irs::DictLayout::Scalar, Null));
-  ASSERT_EQ(nullptr, resolve(3, irs::DictLayout::Scalar, Numeric));
-  ASSERT_EQ(nullptr, resolve(4, irs::DictLayout::Scalar, Text));
-  AssertField(*Get(1, irs::FieldSlot::NullElement), fields[1].entries);
+  for (const auto& [id, kind] : {std::pair{irs::field_id{1}, Numeric},
+                                 {irs::field_id{1}, True},
+                                 {irs::field_id{1}, JsonNull},
+                                 {irs::field_id{2}, NullElement},
+                                 {irs::field_id{3}, SqlNull},
+                                 {irs::field_id{3}, Numeric}}) {
+    SCOPED_TRACE(testing::Message("field ")
+                 << id << " kind " << static_cast<int>(kind));
+    ASSERT_EQ(nullptr, Get(id, kind));
+  }
+  ASSERT_EQ(nullptr, _reader->dicts(4));
+  AssertField(*Get(1, irs::ValueKind::NullElement), fields[1].entries);
 }
 
 TEST_P(TermDictTest, ordinal_width_follows_the_bound) {
@@ -1983,7 +2007,7 @@ TEST_P(TermDictTest, three_byte_ordinals_past_two_byte_dictionaries) {
     {.id = kFillers + 3, .entries = MakeEntries({Bytes("xb1"), Bytes("xb2")})});
   fields.push_back({.id = kFillers + 4,
                     .entries = Multiples(20000),
-                    .slot = irs::FieldSlot::Numeric});
+                    .slot = irs::ValueKind::Numeric});
   fields.push_back(
     {.id = kFillers + 4, .entries = MakeEntries(Words(3000, 7))});
   fields.push_back(
@@ -2010,7 +2034,7 @@ TEST_P(TermDictTest, four_byte_ordinals_follow_the_bound) {
   const Field fields[]{
     {.id = 1, .entries = Ladder("az")},
     {.id = 2, .entries = MakeEntries({Bytes("xb1"), Bytes("xb2")})},
-    {.id = 3, .entries = Multiples(20000), .slot = irs::FieldSlot::Numeric},
+    {.id = 3, .entries = Multiples(20000), .slot = irs::ValueKind::Numeric},
     {.id = 3, .entries = MakeEntries(Words(3000, 7))},
   };
   Write(fields, false, irs::term_dict::OrdinalLimit(3) + 1);
@@ -3032,7 +3056,7 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
     {.id = 3, .entries = MakeEntries(Words(20000, 5))},
     {.id = 4,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
   };
   Write(fields);
   const auto docs_of = [](const Entry& entry) {
@@ -3221,7 +3245,7 @@ TEST_P(TermDictTest, held_range_pieces_keep_their_inline_postings) {
   const Field fields[]{
     {.id = 1,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
   };
   for (const bool compaction : {false, true}) {
     SCOPED_TRACE(testing::Message("compaction ") << compaction);
@@ -3361,7 +3385,7 @@ TEST_P(TermDictTest, mapped_range_visits_do_not_allocate) {
   const Field fields[]{
     {.id = 1,
      .entries = NumericEntries(std::move(values)),
-     .slot = irs::FieldSlot::Numeric},
+     .slot = irs::ValueKind::Numeric},
   };
   Write(fields);
   if (!_reader->Base()) {

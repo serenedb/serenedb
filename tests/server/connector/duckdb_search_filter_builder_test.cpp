@@ -305,14 +305,14 @@ class TermRef {
 };
 
 template<typename T>
-irs::DictRef ExpectedDict(const T& value) {
+irs::ValueKind ExpectedDict(const T& value) {
   if constexpr (std::is_same_v<T, bool>) {
-    return {.kind = irs::BoolKind(value)};
+    return irs::BoolKind(value);
   } else if constexpr (std::is_same_v<T, std::string_view> ||
                        std::is_same_v<T, std::string>) {
-    return {.kind = irs::ValueKind::Text};
+    return irs::ValueKind::String;
   } else {
-    return {.kind = irs::ValueKind::Numeric};
+    return irs::ValueKind::Numeric;
   }
 }
 
@@ -414,10 +414,9 @@ irs::Filter& AddRangeFilter(Filter&& root, uint64_t column,
 
 template<typename Filter>
 TermRef AddNullFilter(Filter&& root, uint64_t column) {
-  return {ToTarget(root),
-          irs::TermClause{.field = ExpectedFieldId(column),
-                          .dict = {.kind = irs::ValueKind::Null},
-                          .scorer = &irs::ForceConstScore()}};
+  return {ToTarget(root), irs::TermClause{.field = ExpectedFieldId(column),
+                                          .dict = irs::ValueKind::SqlNull,
+                                          .scorer = &irs::ForceConstScore()}};
 }
 
 template<typename Filter>
@@ -1241,8 +1240,8 @@ void AddInetRange(BoolTarget target, irs::bstring min, irs::BoundType min_type,
 }
 
 void AddInetTerm(BoolTarget target, irs::bstring term) {
-  sdb::connector::AddTerm(target, ExpectedFieldId(1), irs::DictRef{}, term,
-                          irs::kNoBoost, &irs::ForceConstScore());
+  sdb::connector::AddTerm(target, ExpectedFieldId(1), term, irs::kNoBoost,
+                          &irs::ForceConstScore());
 }
 
 std::vector<ColumnSpec> InetColumns() {

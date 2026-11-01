@@ -135,8 +135,8 @@ std::string TermValue(const bstring& term, Kind kind) {
   return TermValue(bytes_view{term}, kind);
 }
 
-std::string DictTermValue(DictRef dict, bytes_view term, Kind kind) {
-  switch (dict.kind) {
+std::string DictTermValue(ValueKind dict, bytes_view term, Kind kind) {
+  switch (dict) {
     case ValueKind::False:
       return "false";
     case ValueKind::True:
@@ -286,10 +286,10 @@ struct FilterPrinter {
   const FieldNameResolver& name_of;
   const FieldKindResolver& kind_of;
 
-  std::string FieldName(field_id fid, DictRef dict) const {
+  std::string FieldName(field_id fid, ValueKind dict) const {
     return name_of(sdb::connector::ColumnId{fid}, dict);
   }
-  Kind FieldKind(field_id fid, DictRef dict) const {
+  Kind FieldKind(field_id fid, ValueKind dict) const {
     return kind_of(sdb::connector::ColumnId{fid}, dict);
   }
 
@@ -637,14 +637,14 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::connector::ColumnId id, DictRef dict) {
-  if (dict.kind == ValueKind::Text) {
+std::string IdentityField(sdb::connector::ColumnId id, ValueKind dict) {
+  if (dict == ValueKind::String) {
     return absl::StrCat(id);
   }
-  return absl::StrCat(id, "(", magic_enum::enum_name(dict.kind), ")");
+  return absl::StrCat(id, "(", magic_enum::enum_name(dict), ")");
 }
 
-Kind UnknownKind(sdb::connector::ColumnId, DictRef) {
+Kind UnknownKind(sdb::connector::ColumnId, ValueKind) {
   return Kind::Unsupported;
 }
 

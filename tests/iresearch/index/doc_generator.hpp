@@ -234,7 +234,7 @@ struct Ifield {
   }
   // Field identity; the on-disk storage key.
   virtual irs::field_id Id() const = 0;
-  virtual irs::FieldSlot Slot() const { return irs::FieldSlot::String; }
+  virtual irs::ValueKind Slot() const { return irs::ValueKind::String; }
   virtual std::string_view Name() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
@@ -282,7 +282,7 @@ class LongField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::FieldSlot Slot() const noexcept final { return irs::FieldSlot::Numeric; }
+  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
 
  private:
   int64_t _value{};
@@ -310,7 +310,7 @@ class IntField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::FieldSlot Slot() const noexcept final { return irs::FieldSlot::Numeric; }
+  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
 
  private:
   int32_t _value{};
@@ -331,7 +331,7 @@ class DoubleField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::FieldSlot Slot() const noexcept final { return irs::FieldSlot::Numeric; }
+  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
 
  private:
   double_t _value{};
@@ -352,7 +352,7 @@ class FloatField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::FieldSlot Slot() const noexcept final { return irs::FieldSlot::Numeric; }
+  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
 
  private:
   float_t _value{};

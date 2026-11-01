@@ -692,7 +692,7 @@ TEST(segment_reader_test, open) {
       // check field
       {
         constexpr irs::field_id id = kSeq;  // "seq"
-        constexpr irs::DictRef kNumeric{.kind = irs::ValueKind::Numeric};
+        constexpr auto kNumeric = irs::ValueKind::Numeric;
         auto field = rdr->field(id, kNumeric);
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(id, field->meta().id);

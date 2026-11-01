@@ -494,7 +494,7 @@ namespace {
 
 struct LeafField {
   field_id field = field_limits::invalid();
-  DictRef dict;
+  ValueKind dict = ValueKind::String;
 };
 
 template<typename... Ts>
@@ -515,9 +515,9 @@ LeafField RequiringLeafFieldOf(const Filter& node) {
     node);
 }
 
-void AddAnchor(field_id field, DictRef dict,
+void AddAnchor(field_id field, ValueKind dict,
                irs::containers::FlatHashSet<field_id>& out) {
-  if (field_limits::valid(field) && dict.kind != ValueKind::Null) {
+  if (field_limits::valid(field) && dict != ValueKind::SqlNull) {
     out.insert(field);
   }
 }
@@ -585,8 +585,8 @@ bool BooleanNullMarkerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   }
   irs::containers::FlatHashSet<field_id> anchors;
   bool ready = false;
-  const auto vacuous = [&](field_id field, DictRef dict) {
-    if (dict.kind != ValueKind::Null || !field_limits::valid(field)) {
+  const auto vacuous = [&](field_id field, ValueKind dict) {
+    if (dict != ValueKind::SqlNull || !field_limits::valid(field)) {
       return false;
     }
     if (!ready) {
@@ -718,7 +718,7 @@ struct OrAcceptorFusionRule {
  private:
   struct AcceptorInfo {
     field_id field;
-    DictRef dict;
+    ValueKind dict;
     score_t boost;
   };
 
@@ -732,7 +732,7 @@ struct AndAcceptorFusionRule {
  private:
   struct Operand {
     field_id field;
-    DictRef dict;
+    ValueKind dict;
     bstring pattern;
     TermBounds bounds;
     TermAcceptorSource::ptr exact;
@@ -779,7 +779,7 @@ size_t DriverRank(const Filter& filter) noexcept {
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
   const auto info = [](const auto& filter) -> std::optional<AcceptorInfo> {
-    if (filter.dict().kind != ValueKind::Text) {
+    if (filter.dict() != ValueKind::String) {
       return std::nullopt;
     }
     return AcceptorInfo{filter.field_id(), filter.dict(), filter.GetBoost()};
@@ -862,7 +862,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   const auto filters = node.Filters(Occur::Should);
 
   field_id field;
-  DictRef dict;
+  ValueKind dict;
   score_t boost;
   const Scorer* scorer;
   if (!terms.empty()) {
@@ -882,8 +882,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   size_t seekable = terms.size();
   for (const auto& term : terms) {
     if (term.field != field || term.dict != dict ||
-        term.dict.kind != ValueKind::Text ||
-        (scores && term.scorer != scorer)) {
+        term.dict != ValueKind::String || (scores && term.scorer != scorer)) {
       return false;
     }
     if (scores && term.boost != boost) {
@@ -933,7 +932,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
 
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const TermClause& term) {
-  if (term.dict.kind != ValueKind::Text) {
+  if (term.dict != ValueKind::String) {
     return std::nullopt;
   }
   return Operand{term.field, term.dict, term.term,
@@ -943,7 +942,7 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const Filter& child) {
   const auto leaf = RequiringLeafFieldOf(child);
-  if (leaf.dict.kind != ValueKind::Text) {
+  if (leaf.dict != ValueKind::String) {
     return std::nullopt;
   }
   const auto type = child.type();

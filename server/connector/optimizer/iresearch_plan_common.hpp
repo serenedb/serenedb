@@ -107,7 +107,8 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
   return {
     .field_id = field,
     .nullable = info != nullptr,
-    .layout = json_leaves ? irs::DictLayout::Json : irs::DictLayout::Scalar,
+    .shape = json_leaves ? connector::ColumnShape::Json
+                         : connector::ColumnShape::Scalar,
     .logical_type = std::move(type),
     .tokenizer = std::move(tokenizer),
   };

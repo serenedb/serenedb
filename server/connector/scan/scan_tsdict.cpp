@@ -34,8 +34,6 @@
 
 namespace sdb::connector {
 
-constexpr irs::DictRef kNullDict{.kind = irs::ValueKind::Null};
-
 struct TsDictLocalState final : public ScanLocalState {
   struct FieldState {
     irs::field_id field_id = irs::field_limits::invalid();
@@ -463,7 +461,8 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
       const bool known =
         !count_all && slot->Nulls().load(std::memory_order_relaxed) != 0;
       const auto* nulls =
-        known ? nullptr : _seg->field(_field->field_id, kNullDict);
+        known ? nullptr
+              : _seg->field(_field->field_id, irs::ValueKind::SqlNull);
       if (nulls) {
         slot->Nulls().fetch_add(NullDocs(*nulls, count_all),
                                 std::memory_order_relaxed);
@@ -691,7 +690,7 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
-  const auto* reader = _seg->field(field.field_id, kNullDict);
+  const auto* reader = _seg->field(field.field_id, irs::ValueKind::SqlNull);
   if (!reader) {
     return 0;
   }

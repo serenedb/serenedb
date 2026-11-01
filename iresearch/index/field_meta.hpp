@@ -25,6 +25,7 @@
 
 #include <compare>
 #include <set>
+#include <span>
 #include <utility>
 
 #include "iresearch/index/index_features.hpp"
@@ -36,30 +37,89 @@
 
 namespace irs {
 
-enum class FieldSlot : uint8_t {
-  SqlNull = 0,
-  JsonNull = 1,
-  NullElement = 2,
-  False = 3,
-  True = 4,
-  Numeric = 5,
-  String = 6,
+enum class ValueKind : uint8_t {
+  String = 0,
+  False = 1,
+  True = 2,
+  Numeric = 3,
+  SqlNull = 4,
+  JsonNull = 5,
+  NullElement = 6,
 };
 
-inline constexpr size_t kFieldSlots = 7;
-inline constexpr size_t kPostingSlots = 5;
-inline constexpr size_t kKeyedSlots = kFieldSlots - kPostingSlots;
+inline constexpr size_t kValueKinds = 7;
+inline constexpr size_t kKeyedKinds = 2;
 
-constexpr bool IsKeyed(FieldSlot slot) noexcept {
-  return slot >= FieldSlot::Numeric;
+constexpr bool IsKeyed(ValueKind kind) noexcept {
+  return kind == ValueKind::String || kind == ValueKind::Numeric;
 }
 
-constexpr size_t KeyedIndex(FieldSlot slot) noexcept {
-  return static_cast<size_t>(slot) - kPostingSlots;
+constexpr size_t KeyedIndex(ValueKind kind) noexcept {
+  return kind == ValueKind::Numeric ? 0 : 1;
 }
 
-constexpr FieldSlot BoolSlot(bool value) noexcept {
-  return value ? FieldSlot::True : FieldSlot::False;
+constexpr ValueKind BoolKind(bool value) noexcept {
+  return value ? ValueKind::True : ValueKind::False;
+}
+
+enum class DictLayout : uint8_t {
+  Bool = 0,
+  Numeric = 1,
+  String = 2,
+  BoolList = 3,
+  NumericList = 4,
+  StringList = 5,
+  Json = 6,
+};
+
+inline constexpr size_t kDictLayouts = 7;
+inline constexpr size_t kMaxLayoutKinds = 6;
+inline constexpr size_t kNoPosition = kMaxLayoutKinds;
+
+constexpr std::span<const ValueKind> LayoutKinds(DictLayout layout) noexcept {
+  using enum ValueKind;
+  switch (layout) {
+    case DictLayout::Bool: {
+      static constexpr ValueKind kKinds[]{SqlNull, False, True};
+      return kKinds;
+    }
+    case DictLayout::Numeric: {
+      static constexpr ValueKind kKinds[]{SqlNull, Numeric};
+      return kKinds;
+    }
+    case DictLayout::String: {
+      static constexpr ValueKind kKinds[]{SqlNull, String};
+      return kKinds;
+    }
+    case DictLayout::BoolList: {
+      static constexpr ValueKind kKinds[]{SqlNull, NullElement, False, True};
+      return kKinds;
+    }
+    case DictLayout::NumericList: {
+      static constexpr ValueKind kKinds[]{SqlNull, NullElement, Numeric};
+      return kKinds;
+    }
+    case DictLayout::StringList: {
+      static constexpr ValueKind kKinds[]{SqlNull, NullElement, String};
+      return kKinds;
+    }
+    case DictLayout::Json: {
+      static constexpr ValueKind kKinds[]{SqlNull, JsonNull, False,
+                                          True,    Numeric,  String};
+      return kKinds;
+    }
+  }
+  return {};
+}
+
+constexpr size_t PositionOf(DictLayout layout, ValueKind kind) noexcept {
+  const auto kinds = LayoutKinds(layout);
+  for (size_t position = 0; position != kinds.size(); ++position) {
+    if (kinds[position] == kind) {
+      return position;
+    }
+  }
+  return kNoPosition;
 }
 
 inline constexpr bytes_view kSlotTerm{};
@@ -82,8 +142,8 @@ struct FieldMeta : FieldProperties {
   FieldMeta(field_id id, IndexFeatures index_features)
     : FieldProperties{.index_features = index_features}, id{id} {}
 
-  FieldMeta(field_id id, FieldSlot slot, IndexFeatures index_features)
-    : FieldProperties{.index_features = index_features}, id{id}, slot{slot} {}
+  FieldMeta(field_id id, ValueKind kind, IndexFeatures index_features)
+    : FieldProperties{.index_features = index_features}, id{id}, kind{kind} {}
 
   FieldMeta() = default;
   FieldMeta(FieldMeta&& rhs) noexcept = default;
@@ -93,11 +153,11 @@ struct FieldMeta : FieldProperties {
 
   bool operator==(const FieldMeta& rhs) const noexcept {
     return index_features == rhs.index_features && id == rhs.id &&
-           slot == rhs.slot;
+           kind == rhs.kind;
   }
 
   field_id id{field_limits::invalid()};
-  FieldSlot slot = FieldSlot::String;
+  ValueKind kind = ValueKind::String;
 };
 
 static_assert(std::is_move_constructible_v<FieldMeta>);

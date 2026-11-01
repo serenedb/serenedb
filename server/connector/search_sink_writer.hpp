@@ -160,8 +160,7 @@ class SearchSinkInsertBaseImpl {
     void PrepareForStringValue(irs::field_id field_id,
                                catalog::ColumnTokenizer& column_analyzer);
 
-    void PrepareForBlockValue(irs::field_id field_id,
-                              irs::FieldSlot value_slot);
+    void PrepareForBlockValue(irs::field_id field_id, irs::ValueKind kind);
 
     irs::analysis::Tokenizer* string_analyzer = nullptr;
     irs::field_id id{irs::field_limits::invalid()};
@@ -169,7 +168,7 @@ class SearchSinkInsertBaseImpl {
     // stores nothing.
     irs::field_id store_column{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
-    irs::FieldSlot slot = irs::FieldSlot::String;
+    irs::ValueKind kind = irs::ValueKind::String;
     bool keyword = false;
   };
 
@@ -241,7 +240,7 @@ class SearchSinkInsertBaseImpl {
   template<typename Insert>
   void WriteColumnBlock(irs::field_id null_id, duckdb::idx_t count,
                         Insert&& insert);
-  void FinishColumnBlocks(irs::field_id null_id, irs::FieldSlot slot,
+  void FinishColumnBlocks(irs::field_id null_id, irs::ValueKind kind,
                           std::vector<irs::doc_id_t>& docs);
 
   struct JsonExpressionFields {

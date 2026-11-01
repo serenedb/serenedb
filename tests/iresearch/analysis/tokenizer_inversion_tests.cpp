@@ -340,7 +340,7 @@ void WriteBlock(IndexWriter::Transaction& trx,
     return;
   }
   const auto first_doc = doc.DocId();
-  if (!doc.WithField(kKey, FieldSlot::String, IndexFeatures::Freq,
+  if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
                      [&](FieldInverter& fld) {
                        return fld.InvertKeywordBlock(key_fmt, n, first_doc);
                      })) {
@@ -384,7 +384,7 @@ void WriteMultiValueDocs(IndexWriter::Transaction& trx,
       return;
     }
     const auto id = doc.DocId();
-    if (!doc.WithField(kKey, FieldSlot::String, IndexFeatures::Freq,
+    if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
                        [&](FieldInverter& fld) {
                          return fld.InvertKeywordBlock(key_fmt, 1, id);
                        })) {
@@ -656,7 +656,7 @@ bool FillDocument(const IndexWriter::Document& doc,
   duckdb::UnifiedVectorFormat text_fmt;
   text_vec.ToUnifiedFormat(1, text_fmt);
 
-  if (!doc.WithField(kKey, FieldSlot::String, IndexFeatures::Freq,
+  if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
                      [&](FieldInverter& fld) {
                        return fld.InvertKeywordBlock(key_fmt, 1, id);
                      })) {

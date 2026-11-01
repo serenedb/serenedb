@@ -161,12 +161,14 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const MultiTermDict* dicts(field_id id) const = 0;
 
-  const TermReader* field(field_id id, DictRef ref) const {
+  const TermReader* field(field_id id, ValueKind kind) const {
     const auto* found = dicts(id);
-    return found ? Resolve(*found, ref) : nullptr;
+    return found ? found->At(kind) : nullptr;
   }
 
-  const TermReader* field(field_id id) const { return field(id, DictRef{}); }
+  const TermReader* field(field_id id) const {
+    return field(id, ValueKind::String);
+  }
 
   virtual const ColReader* GetColReader() const { return nullptr; }
 

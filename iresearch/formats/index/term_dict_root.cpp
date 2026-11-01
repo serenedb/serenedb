@@ -33,6 +33,7 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -157,7 +158,7 @@ IRS_FORCE_INLINE size_t CountNotAfter(const uint64_t* heads,
   return static_cast<size_t>(-(two[0] + two[1]));
 }
 
-bytes_view SharedPrefix(const Separators& separators) noexcept {
+bytes_view SharedPrefix(SeparatorsView separators) noexcept {
   const size_t count = SeparatorCount(separators);
   if (count == 0) {
     return {};
@@ -179,61 +180,60 @@ Separators DecodeSeparators(bytes_view encoded, size_t count) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                     ERR_MSG("term dictionary: bad separators"));
   };
-  Separators separators;
-  separators.offsets.reserve(count + 1);
-  const auto* p = encoded.data();
-  const auto* const end = p + encoded.size();
+  struct Step {
+    uint32_t shared;
+    uint32_t suffix;
+  };
+  const auto* const end = encoded.data() + encoded.size();
+  const auto next = [&](const byte_type*& p) {
+    const auto shared = ReadVarint<uint32_t>(p, end);
+    const auto suffix = ReadVarint<uint32_t>(p, end);
+    if (!shared || !suffix || *suffix == 0 ||
+        *suffix > static_cast<size_t>(end - p)) {
+      corrupted();
+    }
+    return Step{.shared = *shared, .suffix = *suffix};
+  };
+  uint64_t total = 0;
   size_t last = 0;
+  const auto* p = encoded.data();
   for (size_t i = 0; i != count; ++i) {
-    if (p >= end) {
+    const auto [shared, suffix] = next(p);
+    if (shared > last) {
       corrupted();
     }
-    const auto shared = vread<uint32_t>(p);
-    const auto suffix = vread<uint32_t>(p);
-    if (p > end || shared > last || suffix > static_cast<size_t>(end - p)) {
-      corrupted();
-    }
-    auto& arena = separators.arena;
-    const size_t start = arena.size();
-    arena.resize(start + shared + suffix);
-    std::memmove(arena.data() + start, arena.data() + start - last, shared);
-    std::memcpy(arena.data() + start + shared, p, suffix);
     p += suffix;
     last = shared + suffix;
-    separators.offsets.push_back(static_cast<uint32_t>(arena.size()));
+    total += last;
   }
-  if (p != end) {
+  if (p != end || total > std::numeric_limits<uint32_t>::max()) {
     corrupted();
+  }
+  Separators separators;
+  auto& arena = separators.arena;
+  utils::StrResize(arena, total);
+  separators.offsets.resize(count + 1);
+  p = encoded.data();
+  last = 0;
+  for (size_t i = 0, at = 0; i != count; ++i) {
+    const auto [shared, suffix] = next(p);
+    auto* out = arena.data() + at;
+    const auto* previous = out - last;
+    if (shared != last && *p <= previous[shared]) {
+      corrupted();
+    }
+    std::memcpy(out, previous, shared);
+    std::memcpy(out + shared, p, suffix);
+    p += suffix;
+    last = shared + suffix;
+    at += last;
+    separators.offsets[i + 1] = static_cast<uint32_t>(at);
   }
   return separators;
 }
 
-Separators MakeSeparators(std::span<const bytes_view> separators) {
-  Separators out;
-  out.offsets.reserve(separators.size() + 1);
-  for (const auto separator : separators) {
-    out.arena.append(separator);
-    out.offsets.push_back(static_cast<uint32_t>(out.arena.size()));
-  }
-  return out;
-}
-
-size_t SeparatorCount(const Separators& separators) noexcept {
-  return separators.offsets.size() - 1;
-}
-
-bytes_view SeparatorAt(const Separators& separators, size_t i) noexcept {
-  return {separators.arena.data() + separators.offsets[i],
-          separators.offsets[i + 1] - separators.offsets[i]};
-}
-
-size_t SeparatorBytes(const Separators& separators) noexcept {
-  return separators.arena.capacity() +
-         separators.offsets.capacity() * sizeof(uint32_t);
-}
-
-EytzingerRoot::EytzingerRoot(Separators separators)
-  : SeparatorRoot{std::move(separators)},
+EytzingerRoot::EytzingerRoot(SeparatorsView separators)
+  : SeparatorRoot{separators},
     _prefix{SharedPrefix(_separators)},
     _count{SeparatorCount(_separators)} {
   const size_t count = _count;
@@ -271,14 +271,14 @@ EytzingerRoot::EytzingerRoot(Separators separators)
   SDB_ASSERT(next == count);
 }
 
-IRS_FORCE_INLINE bool EytzingerRoot::NotAfter(
-  const Node& node, bytes_view key, const byte_type* padded) const noexcept {
-  SDB_ASSERT(node.skip <= key.size());
-  const auto head = absl::big_endian::Load64(padded + node.skip);
+IRS_FORCE_INLINE bool EytzingerRoot::NotAfter(const Node& node,
+                                              Probe key) const noexcept {
+  SDB_ASSERT(node.skip <= key.size);
+  const auto head = absl::big_endian::Load64(key.data + node.skip);
   if (node.head != head) {
     return node.head < head;
   }
-  return SeparatorAt(_separators, node.rank) <= key;
+  return SeparatorAt(_separators, node.rank) <= KeyOf(key);
 }
 
 IRS_FORCE_INLINE size_t EytzingerRoot::Outside(bytes_view key) const noexcept {
@@ -293,22 +293,21 @@ IRS_FORCE_INLINE size_t EytzingerRoot::Resolve(size_t k) const noexcept {
   return k == 0 ? SeparatorCount(_separators) : _nodes[k].rank;
 }
 
-size_t EytzingerRoot::Find(bytes_view key) const noexcept {
-  if (const auto outside = Outside(key); outside != kInside) {
+size_t EytzingerRoot::Find(Probe key) const noexcept {
+  if (const auto outside = Outside(KeyOf(key)); outside != kInside) {
     return outside;
   }
-  const PaddedKey padded{key};
   size_t k = 1;
   while (k <= _count) {
     __builtin_prefetch(_nodes + 4 * k);
-    k = 2 * k + (NotAfter(_nodes[k], key, padded.Data()) ? 1 : 0);
+    k = 2 * k + (NotAfter(_nodes[k], key) ? 1 : 0);
   }
   return Resolve(k);
 }
 
-size_t EytzingerRoot::FindFrom(size_t from, bytes_view key) const noexcept {
+size_t EytzingerRoot::FindFrom(size_t from, Probe key) const noexcept {
   return GallopIndex(from, SeparatorCount(_separators), [&](size_t i) {
-    return SeparatorAt(_separators, i) <= key;
+    return SeparatorAt(_separators, i) <= KeyOf(key);
   });
 }
 
@@ -321,8 +320,8 @@ std::vector<size_t> TreeRoot::LevelSizes(size_t count) {
   return sizes;
 }
 
-TreeRoot::TreeRoot(Separators separators)
-  : SeparatorRoot{std::move(separators)},
+TreeRoot::TreeRoot(SeparatorsView separators)
+  : SeparatorRoot{separators},
     _prefix{SharedPrefix(_separators)},
     _count{SeparatorCount(_separators)} {
   const auto sizes = LevelSizes(_count);
@@ -396,7 +395,8 @@ size_t TreeRoot::Resolve(size_t from, size_t upper, uint64_t head,
     lower, upper, [&](size_t i) { return SeparatorAt(_separators, i) <= key; });
 }
 
-size_t TreeRoot::Find(bytes_view key) const noexcept {
+size_t TreeRoot::Find(Probe probe) const noexcept {
+  const auto key = KeyOf(probe);
   const auto located = Locate(key);
   if (located.outside != kInside) {
     return located.outside;
@@ -406,10 +406,11 @@ size_t TreeRoot::Find(bytes_view key) const noexcept {
   return Resolve(0, upper, located.head, key);
 }
 
-size_t TreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {
+size_t TreeRoot::FindFrom(size_t from, Probe probe) const noexcept {
   if (from >= _count) {
     return from;
   }
+  const auto key = KeyOf(probe);
   const auto located = Locate(key);
   if (located.outside != kInside) {
     return std::max(from, located.outside);
@@ -426,8 +427,9 @@ size_t TreeRoot::FindFrom(size_t from, bytes_view key) const noexcept {
   return Resolve(from, upper, located.head, key);
 }
 
-bool TreeRoot::NotAfter(size_t block, bytes_view key) const noexcept {
+bool TreeRoot::NotAfter(size_t block, Probe probe) const noexcept {
   SDB_ASSERT(block != 0 && block <= _count);
+  const auto key = KeyOf(probe);
   const auto located = Locate(key);
   if (located.outside != kInside) {
     return located.outside != 0;
@@ -439,7 +441,7 @@ bool TreeRoot::NotAfter(size_t block, bytes_view key) const noexcept {
   return SeparatorAt(_separators, block - 1) <= key;
 }
 
-ArtRoot::ArtRoot(Separators separators) : SeparatorRoot{std::move(separators)} {
+ArtRoot::ArtRoot(SeparatorsView separators) : SeparatorRoot{separators} {
   const size_t count = SeparatorCount(_separators);
   if (count < 2) {
     return;
@@ -542,7 +544,8 @@ IRS_FORCE_INLINE size_t ArtRoot::Leaf(const uint64_t* child, size_t depth,
            : first;
 }
 
-size_t ArtRoot::Find(bytes_view key) const noexcept {
+size_t ArtRoot::Find(Probe probe) const noexcept {
+  const auto key = KeyOf(probe);
   if (_words.empty()) {
     const size_t count = SeparatorCount(_separators);
     return count != 0 && SeparatorAt(_separators, 0) <= key ? 1 : 0;
@@ -608,11 +611,11 @@ size_t ArtRoot::Find(bytes_view key) const noexcept {
   }
 }
 
-Root::Root(Separators separators, bool fixed) {
+Root::Root(SeparatorsView separators, bool fixed) {
   const size_t count = SeparatorCount(separators);
   if (fixed) {
-    ArtRoot art{separators};
-    if (2 * art.Visits() <= TreeRoot::Height(count) * count) {
+    if (ArtRoot art{separators};
+        2 * art.Visits() <= TreeRoot::Height(count) * count) {
       _root.emplace<ArtRoot>(std::move(art));
       return;
     }
@@ -628,9 +631,9 @@ Root::Root(Separators separators, bool fixed) {
     }
   }
   if (2 * ties > count) {
-    _root.emplace<EytzingerRoot>(std::move(separators));
+    _root.emplace<EytzingerRoot>(separators);
   } else {
-    _root.emplace<TreeRoot>(std::move(separators));
+    _root.emplace<TreeRoot>(separators);
   }
 }
 

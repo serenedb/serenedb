@@ -68,6 +68,25 @@ std::vector<bytes_view> Views(const std::vector<bstring>& records) {
   return {records.begin(), records.end()};
 }
 
+using irs::term_dict::Probe;
+
+struct PaddedRecords {
+  std::vector<bstring> keys;
+  std::vector<Probe> probes;
+};
+
+PaddedRecords Pad(const std::vector<bstring>& records) {
+  PaddedRecords padded;
+  padded.keys.reserve(records.size());
+  padded.probes.reserve(records.size());
+  for (const auto& record : records) {
+    auto& key = padded.keys.emplace_back(record);
+    key.append(irs::term_dict::kKeyPad, irs::byte_type{0});
+    padded.probes.push_back({key.data(), record.size()});
+  }
+  return padded;
+}
+
 class KeysIterator : public irs::TermOnlyIterator {
  public:
   explicit KeysIterator(std::span<const bstring> keys) noexcept : _keys{keys} {}
@@ -135,7 +154,7 @@ constexpr std::string_view kCandidates[] = {
 };
 
 Candidate MakeCandidate(std::string_view name,
-                        const irs::term_dict::Separators& separators) {
+                        irs::term_dict::SeparatorsView separators) {
   if (name == "eytzinger") {
     return irs::term_dict::EytzingerRoot{separators};
   }
@@ -207,10 +226,15 @@ void Open(Data& data) {
         impl.GetRoot().Separator(block).substr(impl.KeyPrefix().size()));
     }
   }
-  data.decoded = irs::term_dict::MakeSeparators(separators);
+  for (const auto separator : separators) {
+    data.decoded.arena.append(separator);
+    data.decoded.offsets.push_back(
+      static_cast<uint32_t>(data.decoded.arena.size()));
+  }
+  const auto decoded = irs::term_dict::Slice(data.decoded);
   data.separators.clear();
-  for (size_t i = 0; i != irs::term_dict::SeparatorCount(data.decoded); ++i) {
-    data.separators.push_back(irs::term_dict::SeparatorAt(data.decoded, i));
+  for (size_t i = 0; i != irs::term_dict::SeparatorCount(decoded); ++i) {
+    data.separators.push_back(irs::term_dict::SeparatorAt(decoded, i));
   }
 }
 
@@ -253,16 +277,20 @@ size_t Reference(const Data& data, bytes_view key) {
 std::string Validate(const Data& data, const Candidate& candidate) {
   return std::visit(
     [&](const auto& root) -> std::string {
-      const auto check = [&](const std::vector<bstring>& probes,
+      const auto check = [&](const std::vector<bstring>& records,
                              size_t batch) -> std::string {
-        const auto views = Views(probes);
-        for (size_t i = 0; i < views.size(); i += batch) {
+        const auto padded = Pad(records);
+        const auto& probes = padded.probes;
+        for (size_t i = 0; i < probes.size(); i += batch) {
           const auto chunk =
-            std::span{views}.subspan(i, std::min(batch, views.size() - i));
-          const bool sorted = absl::c_is_sorted(chunk);
+            std::span{probes}.subspan(i, std::min(batch, probes.size() - i));
+          const bool sorted = absl::c_is_sorted(chunk, [](Probe a, Probe b) {
+            return irs::term_dict::KeyOf(a) < irs::term_dict::KeyOf(b);
+          });
           size_t from = 0;
           for (size_t j = 0; j != chunk.size(); ++j) {
-            const auto expected = Reference(data, chunk[j]);
+            const auto expected =
+              Reference(data, irs::term_dict::KeyOf(chunk[j]));
             const auto found = root.Find(chunk[j]);
             if (found != expected) {
               return absl::StrCat("probe ", i + j, " gives ", found,
@@ -313,7 +341,7 @@ const Prepared& Prepare(const std::string& base, std::string_view name) {
   gPrepared.reset();
   const auto& data = Load(base);
   const auto start = std::chrono::steady_clock::now();
-  auto candidate = MakeCandidate(name, data.decoded);
+  auto candidate = MakeCandidate(name, irs::term_dict::Slice(data.decoded));
   const auto elapsed = std::chrono::steady_clock::now() - start;
   gPrepared = std::make_unique<Prepared>(Prepared{
     .data = &data,
@@ -375,19 +403,20 @@ void FindPoint(benchmark::State& state, const std::string& base,
   if (Skip(state, prepared)) {
     return;
   }
-  const auto views = Views(hit ? prepared.data->hit : prepared.data->miss);
+  const auto padded = Pad(hit ? prepared.data->hit : prepared.data->miss);
+  const auto& probes = padded.probes;
   std::visit(
     [&](const auto& root) {
       for (auto _ : state) {
         size_t sum = 0;
-        for (const auto key : views) {
+        for (const auto key : probes) {
           sum += root.Find(key);
         }
         benchmark::DoNotOptimize(sum);
       }
     },
     prepared.candidate);
-  Report(state, prepared, views.size());
+  Report(state, prepared, probes.size());
 }
 
 void FindCold(benchmark::State& state, const std::string& base,
@@ -396,24 +425,26 @@ void FindCold(benchmark::State& state, const std::string& base,
   if (Skip(state, prepared)) {
     return;
   }
-  const auto views = Views(prepared.data->hit);
+  const auto padded = Pad(prepared.data->hit);
+  const auto& probes = padded.probes;
   const size_t bytes = std::visit(
     [](const auto& root) { return root.MemoryBytes(); }, prepared.candidate);
   const size_t copies = std::clamp<size_t>(kColdBytes / bytes, 1, 4096);
   std::vector<Candidate> roots;
   roots.reserve(copies);
   for (size_t i = 0; i != copies; ++i) {
-    roots.push_back(MakeCandidate(name, prepared.data->decoded));
+    roots.push_back(
+      MakeCandidate(name, irs::term_dict::Slice(prepared.data->decoded)));
   }
   for (auto _ : state) {
     size_t sum = 0;
-    for (size_t i = 0; i != views.size(); ++i) {
-      sum += std::visit([&](const auto& root) { return root.Find(views[i]); },
+    for (size_t i = 0; i != probes.size(); ++i) {
+      sum += std::visit([&](const auto& root) { return root.Find(probes[i]); },
                         roots[i % copies]);
     }
     benchmark::DoNotOptimize(sum);
   }
-  Report(state, prepared, views.size());
+  Report(state, prepared, probes.size());
   state.counters["copies"] = static_cast<double>(copies);
 }
 
@@ -423,16 +454,17 @@ void FindFrom(benchmark::State& state, const std::string& base,
   if (Skip(state, prepared)) {
     return;
   }
-  const auto views = Views(prepared.data->batches[0][1]);
+  const auto padded = Pad(prepared.data->batches[0][1]);
+  const auto& probes = padded.probes;
   const size_t batch = kBatchSizes[1];
   std::visit(
     [&](const auto& root) {
       for (auto _ : state) {
         size_t sum = 0;
-        for (size_t i = 0; i < views.size(); i += batch) {
+        for (size_t i = 0; i < probes.size(); i += batch) {
           size_t from = 0;
-          for (size_t j = i; j != std::min(i + batch, views.size()); ++j) {
-            from = root.FindFrom(from, views[j]);
+          for (size_t j = i; j != std::min(i + batch, probes.size()); ++j) {
+            from = root.FindFrom(from, probes[j]);
             sum += from;
           }
         }
@@ -440,7 +472,7 @@ void FindFrom(benchmark::State& state, const std::string& base,
       }
     },
     prepared.candidate);
-  Report(state, prepared, views.size());
+  Report(state, prepared, probes.size());
 }
 
 void Lookup(benchmark::State& state, const std::string& base, bool hit) {

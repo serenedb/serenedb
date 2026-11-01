@@ -863,14 +863,14 @@ class BlockPlan {
       if (!Target(lower)) {
         break;
       }
-      const bytes_view target{_target};
+      const auto target = _target.Key();
       if (block + 1 == blocks ? target <= _field->MaxKey()
                               : target < root.Separator(block + 1)) {
         Add(block++);
         continue;
       }
-      block = std::max(block + 1,
-                       static_cast<uint32_t>(root.FindFrom(block + 1, target)));
+      block = std::max(block + 1, static_cast<uint32_t>(
+                                    root.FindFrom(block + 1, _target.View())));
     }
     Flush();
   }
@@ -891,15 +891,14 @@ class BlockPlan {
       _valid = lower.size() - 1;
       return NextTarget(lower);
     }
-    _target.assign(lower);
-    _target.append(tail.data(), extra);
+    _target.Assign(lower, bytes_view{tail.data(), extra});
     return true;
   }
 
   bool Alive(bytes_view prefix) {
-    size_t depth = std::max(
-      _k, std::min(_valid, CommonPrefixLength(bytes_view{_path}, prefix)));
-    _path.assign(prefix);
+    size_t depth =
+      std::max(_k, std::min(_valid, CommonPrefixLength(_path, prefix)));
+    _path = prefix;
     if (_states.size() <= prefix.size()) {
       _states.resize(prefix.size() + 1);
     }
@@ -922,9 +921,10 @@ class BlockPlan {
         NextBranch(*_field, prefix.substr(_k, depth - _k), _hint, *_a, state,
                    prefix[depth] + 1u, LiveRangeOf(*_a, state));
       if (branch.label != kNoLabel) {
-        _target.assign(prefix.substr(0, depth));
-        _target.push_back(static_cast<byte_type>(branch.label));
-        _target.append(branch.tail.data(), branch.extra);
+        auto* target = _target.Resize(depth + 1 + branch.extra);
+        std::memcpy(target, prefix.data(), depth);
+        target[depth] = static_cast<byte_type>(branch.label);
+        std::memcpy(target + depth + 1, branch.tail.data(), branch.extra);
         return true;
       }
       if (depth == _k) {
@@ -955,8 +955,8 @@ class BlockPlan {
   const A* _a;
   size_t _k;
   containers::SmallVector<State, 64> _states;
-  bstring _path;
-  bstring _target;
+  bytes_view _path;
+  PaddedKey _target;
   size_t _valid;
   const uint32_t* _hint = nullptr;
   uint32_t _run_begin = 0;
@@ -990,8 +990,8 @@ template<typename A>
 void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
   const auto& field = cursor.Field();
   PaddedKey key;
-  key.Assign(field.KeyPrefix(), a.LowerBound());
-  const uint32_t begin = field.BlockOf(key.Key());
+  const uint32_t begin =
+    field.BlockOf(key.Assign(field.KeyPrefix(), a.LowerBound()));
   const uint32_t end = field.BlockEnd(UpperBound(a));
   if (begin >= end) {
     cursor.ReadaheadUntil(0, false);
@@ -1219,7 +1219,7 @@ class AcceptorIterator : public SeekTermIterator {
     if (!TargetFrom(_seek.Key(), valid) || _target.Key() > field.MaxKey()) {
       return false;
     }
-    return Land(field.BlockOf(_target.Key()), valid);
+    return Land(field.BlockOf(_target.View()), valid);
   }
 
   bool InBlock(bytes_view target) {
@@ -1246,11 +1246,10 @@ class AcceptorIterator : public SeekTermIterator {
 
   bool Jump(size_t valid) {
     const auto& field = _cursor.Field();
-    const auto target = _target.Key();
-    if (target > field.MaxKey()) {
+    if (_target.Key() > field.MaxKey()) {
       return false;
     }
-    return Land(field.BlockFrom(_cursor.BlockIndex(), target), valid);
+    return Land(field.BlockFrom(_cursor.BlockIndex(), _target.View()), valid);
   }
 
   bool Land(uint32_t block, size_t valid) {
@@ -1281,8 +1280,8 @@ class AcceptorIterator : public SeekTermIterator {
         if (!TargetFrom(separator, valid) || _target.Key() > field.MaxKey()) {
           return false;
         }
-        block =
-          static_cast<uint32_t>(field.GetRoot().FindFrom(block, _target.Key()));
+        block = static_cast<uint32_t>(
+          field.GetRoot().FindFrom(block, _target.View()));
         continue;
       }
       if (block + 1 == field.Blocks() || !NextTarget(prefix, depth) ||
@@ -1291,7 +1290,7 @@ class AcceptorIterator : public SeekTermIterator {
       }
       valid = depth;
       block = static_cast<uint32_t>(
-        field.GetRoot().FindFrom(block + 1, _target.Key()));
+        field.GetRoot().FindFrom(block + 1, _target.View()));
     }
   }
 
@@ -1309,7 +1308,7 @@ class AcceptorIterator : public SeekTermIterator {
       return false;
     }
     return Land(
-      static_cast<uint32_t>(field.GetRoot().FindFrom(next, _target.Key())),
+      static_cast<uint32_t>(field.GetRoot().FindFrom(next, _target.View())),
       valid);
   }
 

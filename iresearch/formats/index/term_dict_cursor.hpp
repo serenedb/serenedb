@@ -784,7 +784,7 @@ class Cursor {
       return SeekResult::End;
     }
     const auto probe = _probe.Assign(field.KeyPrefix(), key);
-    const uint32_t block = field.BlockOf(_probe.Key());
+    const uint32_t block = field.BlockOf(probe);
     if (block != _block || _entry == kNoEntry) {
       if (prefetch) {
         field.PrefetchLookup(block);

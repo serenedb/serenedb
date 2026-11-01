@@ -235,10 +235,10 @@ class TermReaderImpl final : public TermReader {
   bool Small() const noexcept { return _blocks == 1; }
   const duckdb_fsst_decoder_t* Fsst() const noexcept;
   const Root& GetRoot() const noexcept { return _root; }
-  uint32_t BlockOf(bytes_view key) const noexcept {
+  uint32_t BlockOf(Probe key) const noexcept {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
   }
-  uint32_t BlockFrom(uint32_t block, bytes_view key) const noexcept {
+  uint32_t BlockFrom(uint32_t block, Probe key) const noexcept {
     return block + 1 < _blocks && _root.NotAfter(block + 1, key)
              ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
              : block;
@@ -367,7 +367,7 @@ class FieldReader final {
     byte_type* data;
   };
 
-  Separators Bind(TermsMeta& terms);
+  void Bind(const TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _fields;
@@ -378,6 +378,7 @@ class FieldReader final {
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;
+  Separators _separators;
   InlinePages _inline_pages;
   containers::NodeHashMap<uint64_t, bstring> _copies;
   std::vector<byte_type> _single_inline;

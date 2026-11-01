@@ -30,37 +30,35 @@
 #include <variant>
 #include <vector>
 
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 
 inline constexpr size_t kKeyPad = 2 * sizeof(uint64_t);
+inline constexpr size_t kInlineKeyBytes = 256;
 
 struct Probe {
   const byte_type* data;
   size_t size;
 };
 
+inline bytes_view KeyOf(Probe probe) noexcept {
+  return {probe.data, probe.size};
+}
+
 class PaddedKey {
  public:
-  PaddedKey() = default;
+  PaddedKey() : _bytes(kKeyPad, byte_type{0}) {}
   explicit PaddedKey(bytes_view key) { Assign(key); }
   PaddedKey(const PaddedKey&) = delete;
   PaddedKey& operator=(const PaddedKey&) = delete;
 
   byte_type* Resize(size_t size) {
-    if (size + kKeyPad <= sizeof(_inline)) {
-      _data = _inline;
-    } else {
-      if (_heap.size() < size + kKeyPad) {
-        utils::StrResizeAmortized(_heap, size + kKeyPad);
-      }
-      _data = _heap.data();
-    }
-    std::memset(_data + size, 0, kKeyPad);
-    _size = size;
-    return _data;
+    _bytes.resize(size + kKeyPad, boost::container::default_init);
+    std::memset(_bytes.data() + size, 0, kKeyPad);
+    return _bytes.data();
   }
 
   Probe Assign(bytes_view key) {
@@ -80,15 +78,14 @@ class PaddedKey {
     return View();
   }
 
-  const byte_type* Data() const noexcept { return _data; }
-  Probe View() const noexcept { return {_data, _size}; }
-  bytes_view Key() const noexcept { return {_data, _size}; }
+  const byte_type* Data() const noexcept { return _bytes.data(); }
+  Probe View() const noexcept { return {_bytes.data(), Size()}; }
+  bytes_view Key() const noexcept { return {_bytes.data(), Size()}; }
 
  private:
-  byte_type _inline[256];
-  bstring _heap;
-  byte_type* _data = _inline;
-  size_t _size = 0;
+  size_t Size() const noexcept { return _bytes.size() - kKeyPad; }
+
+  containers::SmallVector<byte_type, kInlineKeyBytes> _bytes;
 };
 
 IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
@@ -114,12 +111,41 @@ struct Separators {
   std::vector<uint32_t> offsets{0};
 };
 
-Separators DecodeSeparators(bytes_view encoded, size_t count);
-Separators MakeSeparators(std::span<const bytes_view> separators);
+inline constexpr uint32_t kNoSeparators[]{0};
 
-size_t SeparatorCount(const Separators& separators) noexcept;
-bytes_view SeparatorAt(const Separators& separators, size_t i) noexcept;
-size_t SeparatorBytes(const Separators& separators) noexcept;
+struct SeparatorsView {
+  const byte_type* arena = nullptr;
+  std::span<const uint32_t> offsets{kNoSeparators};
+};
+
+Separators DecodeSeparators(bytes_view encoded, size_t count);
+
+inline SeparatorsView Slice(const Separators& separators, size_t from,
+                            size_t count) noexcept {
+  SDB_ASSERT(from + count < separators.offsets.size());
+  return {
+    .arena = separators.arena.data(),
+    .offsets = std::span{separators.offsets}.subspan(from, count + 1),
+  };
+}
+
+inline SeparatorsView Slice(const Separators& separators) noexcept {
+  return Slice(separators, 0, separators.offsets.size() - 1);
+}
+
+inline size_t SeparatorCount(SeparatorsView separators) noexcept {
+  return separators.offsets.size() - 1;
+}
+
+inline bytes_view SeparatorAt(SeparatorsView separators, size_t i) noexcept {
+  return {separators.arena + separators.offsets[i],
+          separators.offsets[i + 1] - separators.offsets[i]};
+}
+
+inline size_t SeparatorBytes(const Separators& separators) noexcept {
+  return separators.arena.capacity() +
+         separators.offsets.capacity() * sizeof(uint32_t);
+}
 
 class SeparatorRoot {
  public:
@@ -127,16 +153,16 @@ class SeparatorRoot {
   bytes_view Separator(size_t block) const noexcept {
     return SeparatorAt(_separators, block - 1);
   }
-  bool NotAfter(size_t block, bytes_view key) const noexcept {
-    return Separator(block) <= key;
+  bool NotAfter(size_t block, Probe key) const noexcept {
+    return Separator(block) <= KeyOf(key);
   }
 
  protected:
   SeparatorRoot() = default;
-  explicit SeparatorRoot(Separators separators) noexcept
-    : _separators{std::move(separators)} {}
+  explicit SeparatorRoot(SeparatorsView separators) noexcept
+    : _separators{separators} {}
 
-  Separators _separators;
+  SeparatorsView _separators;
 };
 
 class EytzingerRoot : public SeparatorRoot {
@@ -148,42 +174,41 @@ class EytzingerRoot : public SeparatorRoot {
   };
 
   EytzingerRoot() = default;
-  explicit EytzingerRoot(Separators separators);
+  explicit EytzingerRoot(SeparatorsView separators);
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
 
   using SeparatorRoot::NotAfter;
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept;
+  size_t Find(Probe key) const noexcept;
+  size_t FindFrom(size_t from, Probe key) const noexcept;
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _storage.capacity() * sizeof(Node);
+    return _storage.capacity() * sizeof(Node);
   }
 
  private:
-  bool NotAfter(const Node& node, bytes_view key,
-                const byte_type* padded) const noexcept;
+  bool NotAfter(const Node& node, Probe key) const noexcept;
   size_t Outside(bytes_view key) const noexcept;
   size_t Resolve(size_t k) const noexcept;
 
   std::vector<Node> _storage;
   const Node* _nodes = nullptr;
-  bstring _prefix;
+  bytes_view _prefix;
   size_t _count = 0;
 };
 
 class TreeRoot : public SeparatorRoot {
  public:
   TreeRoot() = default;
-  explicit TreeRoot(Separators separators);
+  explicit TreeRoot(SeparatorsView separators);
 
   static size_t Height(size_t count) { return LevelSizes(count).size(); }
 
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept;
-  bool NotAfter(size_t block, bytes_view key) const noexcept;
+  size_t Find(Probe key) const noexcept;
+  size_t FindFrom(size_t from, Probe key) const noexcept;
+  bool NotAfter(size_t block, Probe key) const noexcept;
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _nodes.capacity() * sizeof(Node) +
-           _levels.capacity() * sizeof(size_t) + _prefix.capacity();
+    return _nodes.capacity() * sizeof(Node) +
+           _levels.capacity() * sizeof(size_t);
   }
 
  private:
@@ -207,7 +232,7 @@ class TreeRoot : public SeparatorRoot {
     return reinterpret_cast<const uint64_t*>(_nodes.data() + _leaves);
   }
 
-  bstring _prefix;
+  bytes_view _prefix;
   std::vector<Node> _nodes;
   std::vector<size_t> _levels;
   size_t _leaves = 0;
@@ -217,14 +242,14 @@ class TreeRoot : public SeparatorRoot {
 class ArtRoot : public SeparatorRoot {
  public:
   ArtRoot() = default;
-  explicit ArtRoot(Separators separators);
+  explicit ArtRoot(SeparatorsView separators);
 
-  size_t Find(bytes_view key) const noexcept;
-  size_t FindFrom(size_t from, bytes_view key) const noexcept {
+  size_t Find(Probe key) const noexcept;
+  size_t FindFrom(size_t from, Probe key) const noexcept {
     return std::max(from, Find(key));
   }
   size_t MemoryBytes() const noexcept {
-    return SeparatorBytes(_separators) + _words.capacity() * sizeof(uint64_t);
+    return _words.capacity() * sizeof(uint64_t);
   }
   uint64_t Visits() const noexcept { return _visits; }
 
@@ -249,18 +274,18 @@ class Root {
 
  public:
   Root() = default;
-  Root(Separators separators, bool fixed);
+  Root(SeparatorsView separators, bool fixed);
 
   size_t Blocks() const noexcept {
     return Visit([](const auto& root) { return root.Blocks(); });
   }
-  size_t Find(bytes_view key) const noexcept {
+  size_t Find(Probe key) const noexcept {
     return Visit([&](const auto& root) { return root.Find(key); });
   }
-  size_t FindFrom(size_t from, bytes_view key) const noexcept {
+  size_t FindFrom(size_t from, Probe key) const noexcept {
     return Visit([&](const auto& root) { return root.FindFrom(from, key); });
   }
-  bool NotAfter(size_t block, bytes_view key) const noexcept {
+  bool NotAfter(size_t block, Probe key) const noexcept {
     return Visit([&](const auto& root) { return root.NotAfter(block, key); });
   }
   bytes_view Separator(size_t block) const noexcept {

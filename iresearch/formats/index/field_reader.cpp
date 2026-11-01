@@ -52,20 +52,14 @@ std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id) {
   prefixes.reserve(
     absl::c_count_if(encoded, [](byte_type b) { return b < 0x80; }));
   uint64_t value = 0;
-  for (const auto* p = encoded.data(); p != encoded.data() + encoded.size();) {
-    uint64_t delta = 0;
-    for (uint32_t shift = 0;; shift += 7) {
-      if (p == encoded.data() + encoded.size() || shift > 28) {
-        Corrupted("prefixes", id);
-      }
-      const byte_type b = *p++;
-      delta |= uint64_t{b & 0x7Fu} << shift;
-      if (b < 0x80) {
-        break;
-      }
+  const auto* const end = encoded.data() + encoded.size();
+  for (const auto* p = encoded.data(); p != end;) {
+    const auto delta = ReadVarint<uint32_t>(p, end);
+    if (!delta) {
+      Corrupted("prefixes", id);
     }
-    value += delta;
-    if ((delta == 0 && !prefixes.empty()) ||
+    value += *delta;
+    if ((*delta == 0 && !prefixes.empty()) ||
         value > std::numeric_limits<uint32_t>::max()) {
       Corrupted("prefixes", id);
     }
@@ -240,9 +234,7 @@ InlinePages::InlinePages(bytes_view starts, uint32_t blocks, uint64_t offset,
   if (blocks > starts.size()) {
     corrupted();
   }
-  bstring padded{starts};
-  padded.append(kSlack, byte_type{0});
-  const auto* p = padded.data();
+  const auto* p = starts.data();
   const auto* const end = p + starts.size();
   const uint64_t first = offset / kPage;
   const uint64_t words = (uint64_t{blocks} + kWordBits - 1) / kWordBits;
@@ -252,17 +244,14 @@ InlinePages::InlinePages(bytes_view starts, uint32_t blocks, uint64_t offset,
   _samples.reserve(words);
   uint64_t start = 0;
   for (uint32_t block = 0; block != blocks; ++block) {
-    if (p >= end) {
+    const auto delta = ReadVarint<uint64_t>(p, end);
+    if (!delta || *delta > size - start) {
       corrupted();
     }
-    const auto delta = vread<uint64_t>(p);
-    if (p > end || delta > size - start) {
-      corrupted();
-    }
-    if (block != 0 && delta == 0) {
+    if (block != 0 && *delta == 0) {
       SetBitOf(_empty, block - 1);
     }
-    start += delta;
+    start += *delta;
     const uint64_t at = block + (offset + start) / kPage - first;
     SetBitOf(_ones, at);
     if (block % kWordBits == 0) {
@@ -374,12 +363,8 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     _blocks = last_block - _first_block + 1;
     uint64_t inline_size = 0;
     if (_blocks > 1) {
-      std::vector<bytes_view> slice;
-      slice.reserve(_blocks - 1);
-      for (uint32_t block = _first_block; block != last_block; ++block) {
-        slice.push_back(SeparatorAt(separators, block));
-      }
-      _root = Root{MakeSeparators(slice), _meta.key_width != 0};
+      _root = Root{Slice(separators, _first_block, _blocks - 1),
+                   _meta.key_width != 0};
       bytes += _root.MemoryBytes();
       if (!head.prefixes.empty()) {
         _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
@@ -563,8 +548,7 @@ uint32_t TermReaderImpl::BlockEnd(bytes_view upper) const {
     return _blocks;
   }
   PaddedKey key;
-  key.Assign(KeyPrefix(), upper);
-  return BlockOf(key.Key()) + 1;
+  return BlockOf(key.Assign(KeyPrefix(), upper)) + 1;
 }
 
 bool TermReaderImpl::Excludes(bytes_view term) const noexcept {
@@ -581,7 +565,7 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   }
   PaddedKey padded;
   const auto probe = padded.Assign(KeyPrefix(), term);
-  const uint32_t block = BlockOf(padded.Key());
+  const uint32_t block = BlockOf(probe);
   PrefetchLookup(block);
   BlockBuffer buffer;
   const auto view = Parse(Block(block, buffer), Fsst());
@@ -625,15 +609,17 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     }
     const auto at = keys.size();
     const auto size = prefix.size() + value.size();
-    keys.resize(at + size + kKeyPad);
-    std::memcpy(keys.data() + at, prefix.data(), prefix.size());
+    keys.resize(at + size + kKeyPad, boost::container::default_init);
+    auto* key = keys.data() + at;
+    std::memcpy(key, prefix.data(), prefix.size());
     if (!value.empty()) {
-      std::memcpy(keys.data() + at + prefix.size(), value.data(), value.size());
+      std::memcpy(key + prefix.size(), value.data(), value.size());
     }
+    std::memset(key + size, 0, kKeyPad);
     uint32_t block = 0;
     if (!Small()) {
-      const bytes_view key{keys.data() + at, size};
-      block = last == kNoBlock ? BlockOf(key) : BlockFrom(last, key);
+      const Probe probe{key, size};
+      block = last == kNoBlock ? BlockOf(probe) : BlockFrom(last, probe);
       if (block != last) {
         ++visited;
         AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));
@@ -767,7 +753,7 @@ void FieldReader::FillCopies() {
   _pending.shrink_to_fit();
 }
 
-Separators FieldReader::Bind(TermsMeta& terms) {
+void FieldReader::Bind(const TermsMeta& terms) {
   _block_count = terms.blocks;
   _first_page = terms.first_page;
   _inline_offset = terms.inline_offset;
@@ -794,14 +780,10 @@ Separators FieldReader::Bind(TermsMeta& terms) {
     Corrupted("block directory");
   }
 
-  Separators decoded;
-  auto& separators = terms.separators;
+  const auto separators =
+    ViewCast<byte_type>(std::string_view{terms.separators});
   if (blocks != 0) {
-    const auto size = separators.size();
-    separators.append(kSlack, '\0');
-    decoded = DecodeSeparators(
-      ViewCast<byte_type>(std::string_view{separators}).substr(0, size),
-      blocks - 1);
+    _separators = DecodeSeparators(separators, blocks - 1);
   } else if (!separators.empty()) {
     Corrupted("separators");
   }
@@ -829,9 +811,8 @@ Separators FieldReader::Bind(TermsMeta& terms) {
                            : Copy(_inline_offset, _inline_size + kSlack).data();
   }
   Account(_spans.capacity() * sizeof(SpanningBlock) +
-          _inline_pages.MemoryBytes() +
+          SeparatorBytes(_separators) + _inline_pages.MemoryBytes() +
           (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0));
-  return decoded;
 }
 
 void FieldReader::prepare(const ReaderState& state) {
@@ -846,9 +827,8 @@ void FieldReader::prepare(const ReaderState& state) {
 
   _base = _in->ReadStable(0, _in->Length());
   const auto& heads = terms.fields;
-  Separators separators;
   if (!heads.empty()) {
-    separators = Bind(terms);
+    Bind(terms);
   }
 
   IndexFeatures features = IndexFeatures::None;
@@ -874,7 +854,7 @@ void FieldReader::prepare(const ReaderState& state) {
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
     }
     const auto& field =
-      _fields.emplace_back(*this, head, prefix, *_in, separators);
+      _fields.emplace_back(*this, head, prefix, *_in, _separators);
     _by_id[head.id].Add(head.slot, field);
     if (_ids.empty() || _ids.back() != head.id) {
       _ids.push_back(head.id);

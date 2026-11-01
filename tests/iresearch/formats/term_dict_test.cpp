@@ -265,9 +265,8 @@ constexpr std::string_view kSegment = "term_dict_segment";
 
 size_t BlockOf(const irs::term_dict::TermReaderImpl& impl,
                irs::bytes_view term) {
-  irs::bstring key{impl.KeyPrefix()};
-  key.append(term);
-  return impl.GetRoot().Find(key);
+  irs::term_dict::PaddedKey key;
+  return impl.GetRoot().Find(key.Assign(impl.KeyPrefix(), term));
 }
 
 std::array<size_t, 3> BlockKinds(const irs::term_dict::TermReaderImpl& reader) {
@@ -353,6 +352,35 @@ std::string EncodeVarints(std::span<const uint64_t> values) {
   auto out = std::back_inserter(bytes);
   for (const auto value : values) {
     irs::WriteVarint(value, out);
+  }
+  return std::string{irs::ViewCast<char>(irs::bytes_view{bytes})};
+}
+
+std::vector<irs::bstring> DecodeSeparatorKeys(std::string_view encoded) {
+  const auto bytes = irs::ViewCast<irs::byte_type>(encoded);
+  std::vector<irs::bstring> keys;
+  const auto* p = bytes.data();
+  while (p != bytes.data() + bytes.size()) {
+    const auto shared = irs::vread<uint32_t>(p);
+    const auto suffix = irs::vread<uint32_t>(p);
+    auto key = keys.empty() ? irs::bstring{} : keys.back().substr(0, shared);
+    key.append(p, suffix);
+    p += suffix;
+    keys.push_back(std::move(key));
+  }
+  return keys;
+}
+
+std::string EncodeSeparatorKeys(std::span<const irs::bstring> keys) {
+  irs::bstring bytes;
+  auto out = std::back_inserter(bytes);
+  irs::bytes_view last;
+  for (const auto& key : keys) {
+    const auto shared = irs::CommonPrefixLength(last, irs::bytes_view{key});
+    irs::WriteVarint(static_cast<uint32_t>(shared), out);
+    irs::WriteVarint(static_cast<uint32_t>(key.size() - shared), out);
+    bytes.append(key, shared);
+    last = key;
   }
   return std::string{irs::ViewCast<char>(irs::bytes_view{bytes})};
 }
@@ -1571,6 +1599,47 @@ TEST_P(TermDictTest, corrupt_inline_starts_are_refused) {
     EncodeVarints(std::vector<uint64_t>(bare.blocks, uint64_t{0}));
   RewriteTerms(bare);
   ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+}
+
+TEST_P(TermDictTest, corrupt_separators_are_refused) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(20000, 5))}};
+  Write(fields);
+  const auto terms = TakeTerms();
+  ASSERT_LT(3, terms.blocks);
+  const auto keys = DecodeSeparatorKeys(terms.separators);
+  ASSERT_EQ(terms.blocks - 1, keys.size());
+  ASSERT_EQ(terms.separators, EncodeSeparatorKeys(keys));
+  const auto refused = [&](std::string separators) {
+    auto corrupt = terms;
+    corrupt.separators = std::move(separators);
+    RewriteTerms(corrupt);
+    ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+  };
+  const std::span all{keys};
+
+  const auto fewer = EncodeSeparatorKeys(all.first(keys.size() - 1));
+  refused(fewer);
+  refused(fewer + '\x80');
+  refused(terms.separators.substr(0, terms.separators.size() - 1));
+  refused(terms.separators + '\x01');
+  refused(EncodeVarints(std::vector<uint64_t>{uint64_t{1} << 32, 1}) + 'z');
+  refused(EncodeSeparatorKeys(all.first(1)) +
+          EncodeVarints(std::vector<uint64_t>{keys[0].size() + 1, 1}) + 'z');
+  auto repeated = keys;
+  repeated[2] = repeated[1];
+  refused(EncodeSeparatorKeys(repeated));
+  size_t i = 1;
+  while (i + 1 != keys.size() && keys[i + 1].starts_with(keys[i])) {
+    ++i;
+  }
+  ASSERT_LT(i + 1, keys.size());
+  auto swapped = keys;
+  std::swap(swapped[i], swapped[i + 1]);
+  refused(EncodeSeparatorKeys(swapped));
+
+  RewriteTerms(terms);
+  Open(dir());
+  AssertField(*Get(2), fields[0].entries);
 }
 
 TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
@@ -3200,7 +3269,12 @@ void AssertRoot(std::vector<irs::bstring> separators) {
                    separators.end());
   const std::vector<irs::bytes_view> views{separators.begin(),
                                            separators.end()};
-  const Root root{irs::term_dict::MakeSeparators(views)};
+  irs::term_dict::Separators owned;
+  for (const auto separator : views) {
+    owned.arena.append(separator);
+    owned.offsets.push_back(static_cast<uint32_t>(owned.arena.size()));
+  }
+  const Root root{irs::term_dict::Slice(owned)};
   ASSERT_EQ(views.size() + 1, root.Blocks());
   std::vector<irs::bstring> probes{
     irs::bstring{},
@@ -3222,14 +3296,16 @@ void AssertRoot(std::vector<irs::bstring> separators) {
   }
   for (const auto& probe : probes) {
     const irs::bytes_view key{probe};
+    const irs::term_dict::PaddedKey padded{key};
+    const auto view = padded.View();
     const size_t expected = absl::c_upper_bound(views, key) - views.begin();
-    ASSERT_EQ(expected, root.Find(key));
+    ASSERT_EQ(expected, root.Find(view));
     for (const size_t from : {size_t{0}, expected / 2, expected}) {
-      ASSERT_EQ(expected, root.FindFrom(from, key));
+      ASSERT_EQ(expected, root.FindFrom(from, view));
     }
-    ASSERT_EQ(views.size() + 1, root.FindFrom(views.size() + 1, key));
+    ASSERT_EQ(views.size() + 1, root.FindFrom(views.size() + 1, view));
     for (size_t block = 1; block < root.Blocks(); block += 1 + block / 64) {
-      ASSERT_EQ(views[block - 1] <= key, root.NotAfter(block, key));
+      ASSERT_EQ(views[block - 1] <= key, root.NotAfter(block, view));
     }
   }
 }
@@ -3293,8 +3369,8 @@ TEST(TermDictRootTest, art_matches_upper_bound) {
 
 template<bool Fixed>
 struct ChosenRoot : irs::term_dict::Root {
-  explicit ChosenRoot(irs::term_dict::Separators separators)
-    : Root{std::move(separators), Fixed} {}
+  explicit ChosenRoot(irs::term_dict::SeparatorsView separators)
+    : Root{separators, Fixed} {}
 };
 
 TEST(TermDictRootTest, root_matches_upper_bound) {

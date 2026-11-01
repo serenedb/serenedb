@@ -11,6 +11,10 @@ CREATE FUNCTION ebr_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''sh
 
 
 statement ok
+CREATE FUNCTION ebr_quas.lower(x text, y text) RETURNS text LANGUAGE sql AS 'SELECT x || y';
+
+
+statement ok
 CREATE TABLE ebr_quas.pg_roles (rolname text);
 
 
@@ -45,6 +49,13 @@ SELECT ebr_quas.lower('ABC') AS result;
 ----
 result
 shadowed
+
+
+query
+SELECT lower('A', 'B') AS result;
+----
+result
+AB
 
 
 query

@@ -1,0 +1,36 @@
+statement ok
+DROP SCHEMA IF EXISTS ebo_quas CASCADE;
+
+
+statement ok
+CREATE SCHEMA ebo_quas;
+
+
+statement ok
+CREATE MACRO ebo_quas.generate_series(a, b, c, d) AS TABLE SELECT a + b + c + d AS total;
+
+
+statement ok
+SET search_path = ebo_quas, public;
+
+
+query
+SELECT total FROM generate_series(1, 2, 3, 4);
+----
+total
+10
+
+
+query
+SELECT count(*) AS n FROM generate_series(1, 3);
+----
+n
+3
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA ebo_quas CASCADE;

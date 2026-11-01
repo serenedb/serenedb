@@ -33,7 +33,7 @@ Select a database and schema together — `USE shop.analytics` sets the database
 
 The "default schema" is just the head of `search_path` — what `current_schema()` returns and where unqualified objects are created. Selecting a database alone resets `search_path` to that database's own default schema; to keep several schemas on the path, set [`search_path`](../set/index.md) directly instead of using `USE`.
 
-An unqualified name is looked up in the session's temporary objects first, then among the built-in functions, types and system catalogs (`pg_catalog`), and only then in the schemas of `search_path`, so a function named like a built-in one, or a table named like a `pg_catalog` table or view, does not replace it for sessions that have its schema on the path. A `search_path` that lists `pg_catalog` itself, such as `SET search_path = myschema, pg_catalog`, searches the built-ins at that position instead, as `current_schemas(true)` shows.
+An unqualified name is looked up in the session's temporary objects first, then among the built-in functions, types and system catalogs (`pg_catalog`), and only then in the schemas of `search_path`, so a function named like a built-in one, or a table named like a `pg_catalog` table or view, does not replace it for sessions that have its schema on the path. A call with a number of arguments that no overload of the built-in function takes reaches the function of that name on the path instead. A `search_path` that lists `pg_catalog` itself, such as `SET search_path = myschema, pg_catalog`, searches the built-ins at that position instead, as `current_schemas(true)` shows.
 
 The effect of each form on the session:
 

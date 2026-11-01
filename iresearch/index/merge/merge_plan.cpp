@@ -80,6 +80,14 @@ struct ColumnRange {
   uint64_t cost = 0;
 };
 
+uint64_t ColumnCost(std::span<const ColumnRange> ranges) {
+  uint64_t cost = 0;
+  for (const auto& range : ranges) {
+    cost += range.cost;
+  }
+  return cost;
+}
+
 void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader,
                       const IndexFieldOptions* field_options) {
@@ -195,6 +203,9 @@ struct MergePlan::State {
   }
 
   struct InputColumn {
+    size_t input = 0;
+    uint64_t begin = KeyOrder::kNotIsolated;
+    uint64_t rows = 0;
     uint64_t bytes = 0;
     bool copyable = false;
   };
@@ -202,127 +213,109 @@ struct MergePlan::State {
   std::vector<InputColumn> InputColumns(field_id id) const {
     std::vector<InputColumn> inputs;
     inputs.reserve(sources.size());
+    uint64_t row = 0;
     for (size_t input = 0; input != sources.size(); ++input) {
+      const uint64_t rows = sources[input].alive_count;
       inputs.push_back({
+        .input = input,
+        .begin = key_order ? key_order->IsolatedBegin(input) : row,
+        .rows = rows,
         .bytes = columns->StoredBytes(id, input),
         .copyable = columns->Copyable(id, input),
       });
+      row += rows;
     }
+    absl::c_sort(inputs, [](const InputColumn& l, const InputColumn& r) {
+      return l.begin != r.begin ? l.begin < r.begin : l.input < r.input;
+    });
     return inputs;
   }
 
-  uint64_t ColumnCost(std::span<const InputColumn> inputs) const {
-    uint64_t cost = 0;
-    for (size_t input = 0; input != inputs.size(); ++input) {
-      const auto& column = inputs[input];
-      const bool copy =
-        column.copyable && (!key_order || key_order->IsolatedBegin(input) !=
-                                            KeyOrder::kNotIsolated);
-      cost += copy ? column.bytes / kCopyCostDivisor
-                   : EncodeCost(column.bytes, sources[input].alive_count);
-    }
-    return cost;
-  }
-
-  void AddEncodeRanges(field_id id, uint64_t begin, uint64_t end,
-                       uint64_t bytes, uint64_t target,
-                       std::vector<ColumnRange>& out) const {
-    if (begin == end) {
-      return;
-    }
-    const uint64_t rows = end - begin;
-    const uint64_t cost = EncodeCost(bytes, rows);
-    const uint64_t row_group_size = columns->RowGroupSize();
-    const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
-    const uint64_t parts =
-      target != 0 && cost > target && columns->Splittable(id)
-        ? std::min((cost + target - 1) / target, row_groups)
-        : 1;
-    for (uint64_t part = 0; part != parts; ++part) {
-      out.push_back({
-        .begin =
-          begin + std::min(rows, part * row_groups / parts * row_group_size),
-        .end = begin +
-               std::min(rows, (part + 1) * row_groups / parts * row_group_size),
-        .input = kEncode,
-        .cost = cost / parts,
-      });
-    }
-  }
-
-  std::vector<ColumnRange> OrderedRangesOf(field_id id,
-                                           std::span<const InputColumn> inputs,
-                                           uint64_t target) const {
-    std::vector<ColumnRange> copies;
-    uint64_t encode_bytes = 0;
-    uint64_t encode_rows = 0;
-    for (size_t input = 0; input != inputs.size(); ++input) {
-      const uint64_t rows = sources[input].alive_count;
-      const auto begin = key_order->IsolatedBegin(input);
-      if (begin == KeyOrder::kNotIsolated || !inputs[input].copyable) {
-        encode_bytes += inputs[input].bytes;
-        encode_rows += rows;
-        continue;
+  std::vector<ColumnRange> RangesOf(std::span<const InputColumn> inputs) const {
+    uint64_t pooled_bytes = 0;
+    uint64_t pooled_rows = 0;
+    for (const auto& column : inputs) {
+      if (column.begin == KeyOrder::kNotIsolated) {
+        pooled_bytes += column.bytes;
+        pooled_rows += column.rows;
       }
-      copies.push_back({
-        .begin = begin,
-        .end = begin + rows,
-        .input = input,
-        .cost = inputs[input].bytes / kCopyCostDivisor,
-      });
     }
-    absl::c_sort(copies, [](const ColumnRange& l, const ColumnRange& r) {
-      return l.begin < r.begin;
-    });
     std::vector<ColumnRange> out;
     uint64_t row = 0;
+    uint64_t placed_bytes = 0;
+    uint64_t placed_rows = 0;
     const auto stretch = [&](uint64_t end) {
-      const auto bytes =
-        encode_rows == 0
+      SDB_ASSERT(row + placed_rows <= end);
+      if (row == end) {
+        return;
+      }
+      const auto pooled =
+        pooled_rows == 0
           ? 0
-          : static_cast<uint64_t>(static_cast<double>(encode_bytes) *
-                                  static_cast<double>(end - row) /
-                                  static_cast<double>(encode_rows));
-      AddEncodeRanges(id, row, end, bytes, target, out);
+          : static_cast<uint64_t>(static_cast<double>(pooled_bytes) *
+                                  static_cast<double>(end - row - placed_rows) /
+                                  static_cast<double>(pooled_rows));
+      out.push_back({
+        .begin = row,
+        .end = end,
+        .input = kEncode,
+        .cost = EncodeCost(placed_bytes + pooled, end - row),
+      });
     };
-    for (const auto& copy : copies) {
-      stretch(copy.begin);
-      out.push_back(copy);
-      row = copy.end;
+    for (const auto& column : inputs) {
+      if (column.begin == KeyOrder::kNotIsolated) {
+        continue;
+      }
+      if (!column.copyable) {
+        placed_bytes += column.bytes;
+        placed_rows += column.rows;
+        continue;
+      }
+      stretch(column.begin);
+      out.push_back({
+        .begin = column.begin,
+        .end = column.begin + column.rows,
+        .input = column.input,
+        .cost = column.bytes / kCopyCostDivisor,
+      });
+      row = column.begin + column.rows;
+      placed_bytes = 0;
+      placed_rows = 0;
     }
     stretch(segment.docs_count);
     return out;
   }
 
-  std::vector<ColumnRange> RangesOf(field_id id,
-                                    std::span<const InputColumn> inputs,
-                                    uint64_t target) const {
-    if (key_order) {
-      return OrderedRangesOf(id, inputs, target);
+  std::vector<ColumnRange> SplitStretches(field_id id,
+                                          std::vector<ColumnRange> unsplit,
+                                          uint64_t target) const {
+    if (target == 0 || !columns->Splittable(id)) {
+      return unsplit;
     }
+    const uint64_t row_group_size = columns->RowGroupSize();
     std::vector<ColumnRange> out;
-    uint64_t row = 0;
-    uint64_t stretch = 0;
-    uint64_t stretch_bytes = 0;
-    for (size_t input = 0; input != inputs.size(); ++input) {
-      const uint64_t rows = sources[input].alive_count;
-      if (!inputs[input].copyable) {
-        stretch_bytes += inputs[input].bytes;
-        row += rows;
+    for (const auto& range : unsplit) {
+      if (range.input != kEncode || range.cost <= target) {
+        out.push_back(range);
         continue;
       }
-      AddEncodeRanges(id, stretch, row, stretch_bytes, target, out);
-      out.push_back({
-        .begin = row,
-        .end = row + rows,
-        .input = input,
-        .cost = inputs[input].bytes / kCopyCostDivisor,
-      });
-      row += rows;
-      stretch = row;
-      stretch_bytes = 0;
+      const uint64_t rows = range.end - range.begin;
+      const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
+      const uint64_t parts =
+        std::min((range.cost + target - 1) / target, row_groups);
+      const auto part_begin = [&](uint64_t part) {
+        return range.begin +
+               std::min(rows, part * row_groups / parts * row_group_size);
+      };
+      for (uint64_t part = 0; part != parts; ++part) {
+        out.push_back({
+          .begin = part_begin(part),
+          .end = part_begin(part + 1),
+          .input = kEncode,
+          .cost = range.cost / parts,
+        });
+      }
     }
-    AddEncodeRanges(id, stretch, row, stretch_bytes, target, out);
     return out;
   }
 
@@ -331,22 +324,23 @@ struct MergePlan::State {
     if (!units.empty()) {
       after_norms.push_back(units.size() - 1);
     }
-    std::vector<std::vector<InputColumn>> inputs;
+    std::vector<std::vector<ColumnRange>> unsplit;
     std::vector<uint64_t> costs;
     uint64_t bytes = 0;
     uint64_t total = 0;
     for (const auto id : columns->Columns()) {
-      const auto& column = inputs.emplace_back(InputColumns(id));
-      for (const auto& input : column) {
+      const auto inputs = InputColumns(id);
+      for (const auto& input : inputs) {
         bytes += input.bytes;
       }
-      total += costs.emplace_back(ColumnCost(column));
+      total +=
+        costs.emplace_back(ColumnCost(unsplit.emplace_back(RangesOf(inputs))));
     }
     const uint64_t target =
       threads > 1 ? total / (kRangesPerThread * threads) : 0;
     for (size_t i = 0; const auto id : columns->Columns()) {
       const auto cost = costs[i];
-      auto column_ranges = RangesOf(id, inputs[i++], target);
+      auto column_ranges = SplitStretches(id, std::move(unsplit[i++]), target);
       if (column_ranges.size() < 2 &&
           (column_ranges.empty() || column_ranges[0].input == kEncode)) {
         AddUnit({.kind = MergeUnitKind::Column, .id = id, .cost = cost},

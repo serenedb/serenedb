@@ -27,7 +27,10 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
+#include <iresearch/formats/column/col_copy_check.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
@@ -345,6 +348,69 @@ TEST_F(SortedMergeTest, InterleavedInputsAreGathered) {
   ASSERT_TRUE(plan.RunOrder());
   EXPECT_EQ(0, CountUnits(plan.Units(), MergeUnitKind::ColumnCopy, kBigint));
   EXPECT_LT(1, CountUnits(plan.Units(), MergeUnitKind::Column, kText));
+  ASSERT_TRUE(irs::RunSerially(plan));
+  EXPECT_EQ("", MergedDifference(out, inputs, spec));
+}
+
+constexpr uint64_t kCopyCostDivisor = 10;
+constexpr double kEncodeCostPerRow = 0.3;
+
+uint64_t EncodeCost(uint64_t bytes, uint64_t rows) {
+  return bytes +
+         static_cast<uint64_t>(static_cast<double>(rows) * kEncodeCostPerRow);
+}
+
+uint64_t ColumnBytes(const irs::SubReader& input, irs::field_id id) {
+  const auto* col = input.GetColReader()->Column(id);
+  return col ? irs::StoredBytes(*col) : 0;
+}
+
+TEST_F(SortedMergeTest, ContiguousInputsThatCannotBeCopiedCostTheirOwnBytes) {
+  AddSegment(Keys(0, 2, 600));
+  AddSegment(Keys(1, 2, 600));
+  AddSegment(Keys(2000, 1, 600));
+  AddSegment(Keys(3000, 1, 600), false, false);
+  std::vector<std::string> removed;
+  for (size_t id = 1800; id < 2400; id += 7) {
+    removed.push_back(absl::StrCat("doc-", id));
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  const auto inputs = Snapshot();
+  ASSERT_EQ(4, inputs.size());
+  ASSERT_LT(inputs[3]->live_docs_count(), inputs[3]->docs_count());
+  const irs::SortSpec spec{{{.column = kBigint}}};
+  irs::MemoryDirectory out;
+  auto plan = MakePlan(out, inputs, spec);
+  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.RunOrder());
+  const auto interleaved =
+    inputs[0]->live_docs_count() + inputs[1]->live_docs_count();
+  for (const auto id : {kBigint, kDouble}) {
+    SCOPED_TRACE(id);
+    std::vector<MergeUnitKind> kinds;
+    std::vector<uint64_t> costs;
+    for (const auto& unit : plan.Units()) {
+      if (unit.id != id || (unit.kind != MergeUnitKind::Column &&
+                            unit.kind != MergeUnitKind::ColumnCopy)) {
+        continue;
+      }
+      EXPECT_EQ(kinds.size(), unit.part);
+      kinds.push_back(unit.kind);
+      costs.push_back(unit.cost);
+    }
+    EXPECT_EQ((std::vector{MergeUnitKind::Column, MergeUnitKind::ColumnCopy,
+                           MergeUnitKind::Column}),
+              kinds);
+    EXPECT_EQ(
+      (std::vector<uint64_t>{
+        EncodeCost(ColumnBytes(*inputs[0], id) + ColumnBytes(*inputs[1], id),
+                   interleaved),
+        ColumnBytes(*inputs[2], id) / kCopyCostDivisor,
+        EncodeCost(ColumnBytes(*inputs[3], id), inputs[3]->live_docs_count()),
+      }),
+      costs);
+  }
+  EXPECT_EQ(0, ColumnBytes(*inputs[3], kDouble));
   ASSERT_TRUE(irs::RunSerially(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }

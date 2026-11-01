@@ -28,6 +28,7 @@
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_block_copy.hpp>
 #include <iresearch/formats/column/col_block_sink.hpp>
+#include <iresearch/formats/column/col_copy_check.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
@@ -989,6 +990,90 @@ TEST_F(ColumnCopyTest, CopiesSitBesideSplitEncodedRanges) {
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kReal).size());
   EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kReal).size());
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
+constexpr uint64_t kCopyCostDivisor = 10;
+constexpr double kEncodeCostPerRow = 0.3;
+constexpr uint64_t kRangesPerThread = 4;
+
+uint64_t EncodeCost(uint64_t bytes, uint64_t rows) {
+  return bytes +
+         static_cast<uint64_t>(static_cast<double>(rows) * kEncodeCostPerRow);
+}
+
+TEST_F(ColumnCopyTest, StretchesBetweenCopiesCostTheirOwnInputs) {
+  constexpr size_t kThreads = 4;
+  const auto dense = [](auto& doc, size_t row) {
+    std::mt19937_64 rng{row};
+    WriteValue(doc, kNumber, duckdb::LogicalType::BIGINT,
+               duckdb::Value::BIGINT(static_cast<int64_t>(rng())));
+  };
+  AddSegment(kEligibleRows, dense);
+  AddSegment(kEligibleRows, dense);
+  std::vector<std::string> removed;
+  for (size_t row = _next - kEligibleRows; row < _next; row += 9) {
+    removed.emplace_back(absl::StrCat("doc-", row));
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  AddSegment(kEligibleRows, dense);
+  AddSegment(4 * kRowGroup, [](auto& doc, size_t row) {
+    if (row % 16 == 0) {
+      WriteValue(doc, kNumber, duckdb::LogicalType::BIGINT,
+                 duckdb::Value::BIGINT(static_cast<int64_t>(row)));
+    }
+  });
+  const auto inputs = Fresh(4);
+  std::vector<uint64_t> rows;
+  std::vector<uint64_t> bytes;
+  for (const auto* input : inputs) {
+    const auto* cs = input->GetColReader();
+    ASSERT_EQ(1, cs->Columns().size());
+    rows.push_back(input->live_docs_count());
+    bytes.push_back(irs::StoredBytes(*cs->Column(kNumber)));
+  }
+  const uint64_t dense_cost = EncodeCost(bytes[1], rows[1]);
+  const uint64_t sparse_cost = EncodeCost(bytes[3], rows[3]);
+  const uint64_t target = (bytes[0] / kCopyCostDivisor + dense_cost +
+                           bytes[2] / kCopyCostDivisor + sparse_cost) /
+                          (kRangesPerThread * kThreads);
+  std::vector<MergeUnitKind> kinds;
+  std::vector<uint64_t> costs;
+  const auto copy = [&](uint64_t input_bytes) {
+    kinds.push_back(MergeUnitKind::ColumnCopy);
+    costs.push_back(input_bytes / kCopyCostDivisor);
+  };
+  const auto stretch = [&](uint64_t cost, uint64_t stretch_rows) {
+    const uint64_t row_groups = (stretch_rows + kRowGroup - 1) / kRowGroup;
+    const uint64_t parts =
+      cost <= target ? 1 : std::min((cost + target - 1) / target, row_groups);
+    kinds.insert(kinds.end(), parts, MergeUnitKind::Column);
+    costs.insert(costs.end(), parts, cost / parts);
+    return parts;
+  };
+  copy(bytes[0]);
+  const auto dense_parts = stretch(dense_cost, rows[1]);
+  copy(bytes[2]);
+  stretch(sparse_cost, rows[3]);
+  ASSERT_LT(1, dense_parts);
+  irs::MemoryDirectory out;
+  std::span<const irs::MergeUnit> units;
+  const auto merged = MergeSegments(out, inputs, kRowGroup, kThreads, &units);
+  ASSERT_NE(nullptr, merged);
+  std::vector<MergeUnitKind> planned_kinds;
+  std::vector<uint64_t> planned_costs;
+  for (const auto& unit : units) {
+    if (unit.kind != MergeUnitKind::Column &&
+        unit.kind != MergeUnitKind::ColumnCopy) {
+      continue;
+    }
+    EXPECT_EQ(kNumber, unit.id);
+    EXPECT_EQ(planned_kinds.size(), unit.part);
+    planned_kinds.push_back(unit.kind);
+    planned_costs.push_back(unit.cost);
+  }
+  EXPECT_EQ(kinds, planned_kinds);
+  EXPECT_EQ(costs, planned_costs);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 

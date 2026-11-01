@@ -7,6 +7,18 @@ DROP VIEW IF EXISTS public.evbn_mop;
 
 
 statement ok
+DROP VIEW IF EXISTS public.evbn_lower;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_quas_first;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_ved_first;
+
+
+statement ok
 DROP SCHEMA IF EXISTS evbn_quas CASCADE;
 
 
@@ -47,6 +59,14 @@ CREATE FUNCTION evbn_ved.evbn_tag(x int) RETURNS int LANGUAGE sql AS 'SELECT x +
 
 
 statement ok
+CREATE FUNCTION evbn_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''shadowed''';
+
+
+statement ok
+CREATE FUNCTION evbn_quas.lower(x text, y text) RETURNS text LANGUAGE sql AS 'SELECT x || y';
+
+
+statement ok
 SET search_path = evbn_quas, public;
 
 
@@ -59,7 +79,19 @@ CREATE VIEW public.evbn_mop AS SELECT count(*) > 0 AS from_catalog FROM pg_roles
 
 
 statement ok
+CREATE VIEW public.evbn_lower AS SELECT lower('A') AS one, lower('A', 'B') AS two;
+
+
+statement ok
+CREATE VIEW public.evbn_quas_first AS SELECT (SELECT a FROM evbn_ved.evbn_iceberg) AS qualified, (SELECT a FROM evbn_iceberg) AS unqualified;
+
+
+statement ok
 SET search_path = evbn_ved, public;
+
+
+statement ok
+CREATE VIEW public.evbn_ved_first AS SELECT (SELECT a FROM evbn_quas.evbn_iceberg) AS qualified, (SELECT a FROM evbn_iceberg) AS unqualified;
 
 
 query
@@ -67,6 +99,56 @@ SELECT tagged FROM public.evbn_clickclack;
 ----
 tagged
 11
+
+
+query
+SELECT one, two FROM public.evbn_lower;
+----
+one	two
+a	AB
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_quas_first;
+----
+qualified	unqualified
+2	1
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_ved_first;
+----
+qualified	unqualified
+1	2
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT one, two FROM public.evbn_lower;
+----
+one	two
+a	AB
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_quas_first;
+----
+qualified	unqualified
+2	1
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_ved_first;
+----
+qualified	unqualified
+1	2
+
+
+statement ok
+SET search_path = evbn_ved, public;
 
 
 statement ok
@@ -113,6 +195,18 @@ DROP VIEW public.evbn_clickclack;
 
 statement ok
 DROP VIEW public.evbn_mop;
+
+
+statement ok
+DROP VIEW public.evbn_lower;
+
+
+statement ok
+DROP VIEW public.evbn_quas_first;
+
+
+statement ok
+DROP VIEW public.evbn_ved_first;
 
 
 statement ok

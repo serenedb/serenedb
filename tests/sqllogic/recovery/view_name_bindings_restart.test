@@ -1,0 +1,71 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA vnbr_quas;
+
+
+statement ok
+CREATE SCHEMA vnbr_ved;
+
+
+statement ok
+CREATE TABLE vnbr_quas.vnbr_iceberg AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TABLE vnbr_ved.vnbr_iceberg AS SELECT 2 AS a;
+
+
+statement ok
+CREATE FUNCTION vnbr_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''shadowed''';
+
+
+statement ok
+CREATE FUNCTION vnbr_quas.lower(x text, y text) RETURNS text LANGUAGE sql AS 'SELECT x || y';
+
+
+statement ok
+SET search_path = vnbr_quas, public;
+
+
+statement ok
+CREATE VIEW public.vnbr_clickclack AS SELECT (SELECT a FROM vnbr_ved.vnbr_iceberg) AS qualified, (SELECT a FROM vnbr_iceberg) AS unqualified, lower('A') AS one, lower('A', 'B') AS two;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_wal
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT qualified, unqualified, one, two FROM public.vnbr_clickclack;
+----
+qualified	unqualified	one	two
+2	1	a	AB
+
+
+connection after_wal
+statement ok
+CHECKPOINT;
+
+
+connection after_wal
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_wal
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT qualified, unqualified, one, two FROM public.vnbr_clickclack;
+----
+qualified	unqualified	one	two
+2	1	a	AB

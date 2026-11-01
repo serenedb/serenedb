@@ -32,9 +32,11 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
+#include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
 #include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -392,6 +394,13 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
     case duckdb::LogicalOperatorType::LOGICAL_DROP:
       if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
         _connection_ctx->PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_CREATE_VIEW:
+      SDB_IF_FAILURE("view_without_name_bindings") {
+        root->Cast<duckdb::LogicalCreate>()
+          .info->Cast<duckdb::CreateViewInfo>()
+          .name_bindings.clear();
       }
       break;
     case duckdb::LogicalOperatorType::LOGICAL_EXECUTE: {

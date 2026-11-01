@@ -49,6 +49,24 @@ espu_vedernikoff
 
 connection c_espu user=espu_vedernikoff password=espu_pw
 statement ok
+CREATE FUNCTION espu_tag() RETURNS int LANGUAGE sql AS 'SELECT 42';
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
+CREATE TYPE espu_mood AS ENUM ('calm');
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+query
+SELECT espu_tag() AS tag, 'calm'::espu_mood AS mood;
+----
+tag	mood
+42	calm
+
+
+connection c_espu user=espu_vedernikoff password=espu_pw
+statement ok
 SET ROLE espu_team;
 
 

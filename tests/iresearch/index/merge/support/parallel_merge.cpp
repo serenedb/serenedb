@@ -146,7 +146,13 @@ bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
   irs::MergeSchedule schedule{plan};
   RunUnits(
     plan, _threads, [&] { return schedule.Done(); },
-    [&] { return schedule.Claim(); },
+    [&]() -> std::optional<size_t> {
+      const auto unit = schedule.Claim();
+      if (unit == irs::MergeSchedule::kNoUnit) {
+        return std::nullopt;
+      }
+      return unit;
+    },
     [&](size_t unit, bool ok) { schedule.Finish(unit, ok); });
   return schedule.Ok();
 }

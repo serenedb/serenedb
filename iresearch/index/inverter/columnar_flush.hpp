@@ -41,7 +41,6 @@ struct ScatterScratch {
       ranked{ManagedTypedAllocator<RankedTerm>{rm}},
       ranked_alt{ManagedTypedAllocator<RankedTerm>{rm}},
       radix_counts{ManagedTypedAllocator<uint32_t>{rm}},
-      term_starts{ManagedTypedAllocator<uint32_t>{rm}},
       inline_docs{ManagedTypedAllocator<doc_id_t>{rm}},
       docs{ManagedTypedAllocator<uint32_t*>{rm}},
       pos{ManagedTypedAllocator<uint32_t*>{rm}},
@@ -54,7 +53,6 @@ struct ScatterScratch {
   ManagedVector<RankedTerm> ranked;
   ManagedVector<RankedTerm> ranked_alt;
   ManagedVector<uint32_t> radix_counts;
-  ManagedVector<uint32_t> term_starts;
   ManagedVector<doc_id_t> inline_docs;
   ManagedVector<uint32_t*> docs;
   ManagedVector<uint32_t*> pos;
@@ -71,25 +69,19 @@ class ScatteredField : util::Noncopyable {
 
   const FieldInverter& Field() const noexcept { return *_field; }
   size_t TermCount() const noexcept {
-    if (_identity) {
-      return _field->InlineDocs().size();
-    }
-    return _s->term_starts.empty() ? _s->ranked.size()
-                                   : _s->term_starts.size() - 1;
+    return _identity ? _field->InlineDocs().size() : _s->ranked.size();
   }
 
   const duckdb::string_t& TermAt(size_t rank) const noexcept {
     const auto entries = _field->Dictionary().Entries();
-    return entries[_identity ? rank : _s->ranked[RankAt(rank)].id];
+    return entries[_identity ? rank : _s->ranked[rank].id];
   }
 
   uint64_t TermBegin(size_t rank) const noexcept {
-    const auto r = RankAt(rank);
-    return _all_inline ? r : _s->bounds[r];
+    return _all_inline ? rank : _s->bounds[rank];
   }
   uint64_t TermEnd(size_t rank) const noexcept {
-    const auto r = RankAt(rank + 1);
-    return _all_inline ? r : _s->bounds[r];
+    return _all_inline ? rank + 1 : _s->bounds[rank + 1];
   }
 
   bool AllInline() const noexcept { return _all_inline; }
@@ -113,15 +105,10 @@ class ScatteredField : util::Noncopyable {
   }
 
  private:
-  size_t RankAt(size_t rank) const noexcept {
-    return _s->term_starts.empty() ? rank : _s->term_starts[rank];
-  }
-
   void BuildHistogram(const PostingLogBase& log, size_t vocab);
   void RankLiveTerms(std::span<const duckdb::string_t> entries);
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);
-  void FoldDuplicateTerms(std::span<const duckdb::string_t> entries);
   uint64_t PrefixSums();
   uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);

@@ -56,7 +56,6 @@ namespace sdb::connector {
 
 using catalog::InvertedIndexConfig;
 using catalog::PkColumnKind;
-using catalog::PkPolicy;
 
 class InvertedStoreIndex final : public duckdb::BoundIndex {
  public:

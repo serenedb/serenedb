@@ -31,7 +31,7 @@
 namespace sdb::connector {
 
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
-               const PkChunk& pk, duckdb::DataChunk& chunk,
+               const duckdb::Vector* pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
                std::span<const ExpressionSlot> expressions,
                irs::CommitOnFlush* commit_on_flush) {

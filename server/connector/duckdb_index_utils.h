@@ -46,7 +46,7 @@ struct ExpressionSlot {
 // (nullable) commits a mid-batch flush and reports it back, which the online
 // build's delete-log tracking follows.
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
-               const PkChunk& pk, duckdb::DataChunk& chunk,
+               const duckdb::Vector* pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
                std::span<const ExpressionSlot> expressions = {},
                irs::CommitOnFlush* commit_on_flush = nullptr);

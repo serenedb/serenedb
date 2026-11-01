@@ -494,18 +494,7 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
                               duckdb::DataChunk& results, duckdb::Vector& rows,
                               duckdb::idx_t count) {
   if (count != 0) {
-    duckdb::UnifiedVectorFormat row_fmt;
-    rows.ToUnifiedFormat(count, row_fmt);
-    const auto* row_data =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(row_fmt);
-    thread_local std::vector<duckdb::string_t> key_views;
-    key_views.resize(count);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      key_views[i] =
-        primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
-    }
-    FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},
-              results, _columns, _expressions);
+    FeedChunk(writer, count, &rows, results, _columns, _expressions);
   }
   trx.AdvanceQueries(1);
 }
@@ -650,7 +639,7 @@ void InvertedStoreIndex::CommitReplaySlots(
 void InvertedStoreIndex::CommitReplayDeletes(
   ReplaySession& session, const irs::SourcePosition& position) {
   session.delete_trx.Remove(
-    irs::TermRemoval{std::exchange(session.deleted_rows, {})});
+    irs::KeyRemoval{std::exchange(session.deleted_rows, {})});
   irs::IndexWriter::Transaction* deletes[] = {&session.delete_trx};
   CommitReplay(deletes, position);
 }
@@ -877,12 +866,12 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
     ReplayDelete(chunk, row_ids);
     return;
   }
-  if (!_config->pk.index_term) {
+  if (_config->pk != PkColumnKind::Has) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("inverted index \"", name.GetIdentifierName(),
               "\" was created WITH (store_pk = 'none') and does not "
-              "index row PKs: DELETE/UPDATE cannot maintain it; drop "
+              "store row PKs: DELETE/UPDATE cannot maintain it; drop "
               "the index first or recreate it without store_pk = "
               "'none'"));
   }
@@ -903,7 +892,7 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                         ERR_MSG("debug failure point"));
       }
-      trx.Remove(irs::TermRemoval{std::move(native)});
+      trx.Remove(irs::KeyRemoval{std::move(native)});
     } catch (const std::exception& e) {
       SDB_ERROR(SEARCH, "removing rows from index '", _index_id,
                 "' failed: ", e.what(),

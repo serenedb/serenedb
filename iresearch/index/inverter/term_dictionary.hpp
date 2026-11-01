@@ -84,11 +84,6 @@ class TermDictionary : util::Noncopyable {
     }
   }
 
-  uint32_t AppendUnique(const duckdb::string_t& term) {
-    _entries.emplace_back(Intern(term));
-    return static_cast<uint32_t>(_entries.size() - 1);
-  }
-
   std::span<const duckdb::string_t> Entries() const noexcept {
     return {_entries.data(), _entries.size()};
   }

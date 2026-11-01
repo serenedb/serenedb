@@ -44,13 +44,6 @@ struct ColumnDescriptor {
   duckdb::LogicalType type;
 };
 
-// PK terms arrive on exactly one lane: `key_terms` (inline string_t, the
-// single-i64 fast path) or `keys` (composite string builders).
-struct PkChunk {
-  std::span<const duckdb::string_t> key_terms;
-  const duckdb::Vector* column = nullptr;
-};
-
 struct ExpressionDescriptor {
   duckdb::LogicalType type;
   irs::field_id field_id = irs::field_limits::invalid();
@@ -63,7 +56,7 @@ class DuckDBSinkIndexWriter {
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size, const PkChunk& pk,
+  virtual void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk,
                     irs::CommitOnFlush* commit_on_flush = nullptr) = 0;
 
   virtual void Finish() = 0;

@@ -298,11 +298,12 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
 }
 
 irs::FieldKind InvertedIndexConfig::GetFieldKind(irs::field_id id) const {
-  if (id == connector::term_dict::kPKFieldId || LookupField(id).entry) {
+  if (LookupField(id).entry) {
     return irs::FieldKind::Index;
   }
-  return table_columns.contains(id) ? irs::FieldKind::Column
-                                    : irs::FieldKind::None;
+  return id == connector::term_dict::kPKFieldId || table_columns.contains(id)
+           ? irs::FieldKind::Column
+           : irs::FieldKind::None;
 }
 
 const irs::AnnInfo* InvertedIndexConfig::FindAnn(

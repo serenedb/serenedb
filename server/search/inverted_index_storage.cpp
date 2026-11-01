@@ -116,7 +116,7 @@ void InvertedIndexStorage::Open() {
 #endif
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
-  writer_options.key_field = connector::term_dict::kPKFieldId;
+  writer_options.key_column = connector::term_dict::kPKFieldId;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
@@ -380,7 +380,7 @@ std::vector<int64_t> InvertedIndexStorage::AppendDeleteLog(
   return native;
 }
 
-std::vector<irs::TermRemoval> InvertedIndexStorage::TakeDeleteLog() {
+std::vector<irs::KeyRemoval> InvertedIndexStorage::TakeDeleteLog() {
   duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
   _delete_log_open.store(false, std::memory_order_release);
   return std::exchange(_delete_log, {});
@@ -404,7 +404,7 @@ void InvertedIndexStorage::CommitRemoval(
 }
 
 void InvertedIndexStorage::CommitRemoval(
-  std::vector<irs::TermRemoval> removals) {
+  std::vector<irs::KeyRemoval> removals) {
   CommitRemovalWith([&](auto& trx) {
     for (auto& removal : removals) {
       trx.Remove(std::move(removal));

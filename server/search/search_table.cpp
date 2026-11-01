@@ -319,7 +319,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   absl::c_for_each(retired, add);
   auto merged = std::make_shared<catalog::InvertedIndexConfig>(
     std::move(keys), std::move(fields));
-  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
+  merged->pk = catalog::PkColumnKind::None;
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;

@@ -106,7 +106,6 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t table_id;
   std::vector<InsertColumnMeta> columns;
 
-  bool pk_term = false;
   connector::PkColumnKind pk_column = connector::PkColumnKind::None;
   PkShape pk_shape = PkShape::Single;
   duckdb::idx_t pk_base_col_idx = 0;
@@ -142,7 +141,6 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
   // so anything rebuilt on the stack there is an allocation per chunk.
-  std::vector<duckdb::string_t> key_views;
   std::vector<FeedColumn> columns;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
@@ -321,9 +319,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   // Off the entry, which owns the definition the store merely points at.
-  const auto policy = created->Cast<catalog::InvertedIndexEntry>().Config()->pk;
-  state->pk_term = policy.index_term;
-  state->pk_column = policy.column;
+  state->pk_column = created->Cast<catalog::InvertedIndexEntry>().Config()->pk;
   if (extras) {
     state->generated_pk_type = extras->generated_pk_type;
     state->file_manifest = extras->manifest;
@@ -473,14 +469,12 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  PkChunk pk;
-  auto& key_views = lstate->key_views;
-  key_views.clear();
+  const duckdb::Vector* pk = nullptr;
   if (gstate.pk_column == connector::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
         SDB_ASSERT(gstate.pk_base_col_idx < chunk.ColumnCount());
-        pk.column = &chunk.data[gstate.pk_base_col_idx];
+        pk = &chunk.data[gstate.pk_base_col_idx];
         break;
       case PkShape::Struct: {
         const auto base = gstate.pk_base_col_idx;
@@ -501,19 +495,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
           entries[i].Reference(chunk.data[base + i]);
         }
-        pk.column = lstate->pk_scratch.get();
+        pk = lstate->pk_scratch.get();
       } break;
     }
-  }
-  if (gstate.pk_term) {
-    SDB_ASSERT(gstate.pk_shape == PkShape::Single);
-    key_views.reserve(num_rows);
-    auto pks = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_views.push_back(
-        primary_key::SignedKeyTerm(pks[row].GetValueUnsafe()));
-    }
-    pk.key_terms = key_views;
   }
 
   auto& columns = lstate->columns;

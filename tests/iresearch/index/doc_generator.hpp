@@ -982,7 +982,7 @@ inline void Remove(irs::IndexWriter& writer,
   trx.Commit();
 }
 
-inline void Remove(irs::IndexWriter& writer, irs::TermRemoval removal) {
+inline void Remove(irs::IndexWriter& writer, irs::KeyRemoval removal) {
   auto trx = writer.GetBatch();
   trx.Remove(std::move(removal));
   trx.Commit();

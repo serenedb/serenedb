@@ -103,11 +103,12 @@ class SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
+    EntryInfoProvider&& entry_info_provider,
+    PkColumnKind pk = PkColumnKind::Has,
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {},
+  void InitImpl(size_t batch_size, const duckdb::Vector* pk = nullptr,
                 irs::CommitOnFlush* commit_on_flush = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
@@ -228,8 +229,6 @@ class SearchSinkInsertBaseImpl {
     return EnsureColumnWriter(field_id, duckdb::LogicalType::BLOB);
   }
   void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
-  void EmitPkTerms(const Field& pk_field,
-                   std::span<const duckdb::string_t> keys);
   void AppendBlobAt(irs::ColumnWriter& writer, irs::doc_id_t doc,
                     duckdb::string_t bytes);
 
@@ -258,7 +257,6 @@ class SearchSinkInsertBaseImpl {
   EntryInfoProvider _entry_info_provider;
   irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
-  Field _pk_field;
   Field _field;
   Field _null_field;
   irs::IndexWriter::Transaction* _trx;
@@ -267,7 +265,7 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
-  PkPolicy _pk_policy;
+  PkColumnKind _pk;
 
   JsonExpressionFields _json_fields;
   duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
@@ -325,12 +323,12 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
-    PkPolicy pk_policy = {})
+    PkColumnKind pk = PkColumnKind::Has)
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
-                               std::move(entry_info_provider), pk_policy},
+                               std::move(entry_info_provider), pk},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
+  void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk,
             irs::CommitOnFlush* commit_on_flush = nullptr) final {
     InitImpl(batch_size, pk, commit_on_flush);
   }

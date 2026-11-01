@@ -130,25 +130,47 @@ int64_t NameKey(std::string_view name) {
   return static_cast<int64_t>(key);
 }
 
-irs::TermRemoval NameRemoval(std::initializer_list<std::string_view> names) {
-  irs::TermRemoval removal;
+irs::KeyRemoval NameRemoval(std::initializer_list<std::string_view> names) {
+  irs::KeyRemoval removal;
   for (const auto name : names) {
-    removal.terms.push_back(NameKey(name));
+    removal.keys.push_back(NameKey(name));
   }
   return removal;
 }
+
+class NameKeyField final : public tests::FieldBase {
+ public:
+  explicit NameKeyField(int64_t key) : _key{key} {
+    name = std::string{kNameKey};
+    id = tests::FieldIdFor(kNameKey);
+  }
+
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final {
+    duckdb::Vector key{duckdb::LogicalType::BIGINT, 1};
+    duckdb::FlatVector::GetDataMutable<int64_t>(key)[0] = _key;
+    duckdb::FlatVector::ValidityMutable(key).SetAllValid(1);
+    doc.GetColWriter()
+      ->OpenColumn(id, duckdb::LogicalType::BIGINT)
+      .Append(doc.DocId() - irs::doc_limits::min(), key, 1);
+    return true;
+  }
+
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final {
+    return std::vector<irs::bstring>{};
+  }
+
+  bool Write(irs::DataOutput&) const final { return true; }
+
+ private:
+  int64_t _key;
+};
 
 void AddNameKey(tests::Document& doc, const std::string& name,
                 const tests::JsonDocGenerator::JsonValue& data) {
   if (name != "name" || !data.is_string()) {
     return;
   }
-  irs::byte_type buf[sizeof(int64_t)];
-  auto key = std::make_shared<tests::StringField>(
-    std::string{kNameKey},
-    irs::ViewCast<char>(irs::TermRemoval::Term(NameKey(data.str), buf)));
-  key->id = tests::FieldIdFor(kNameKey);
-  doc.indexed.push_back(std::move(key));
+  doc.indexed.push_back(std::make_shared<NameKeyField>(NameKey(data.str)));
 }
 
 void NameKeyedJsonFieldFactory(tests::Document& doc, const std::string& name,
@@ -157,15 +179,15 @@ void NameKeyedJsonFieldFactory(tests::Document& doc, const std::string& name,
   AddNameKey(doc, name, data);
 }
 
-irs::TermRemoval RemovalOfName(const tests::Document& src) {
+irs::KeyRemoval RemovalOfName(const tests::Document& src) {
   const auto* name =
     dynamic_cast<const tests::StringField*>(src.indexed.get("name"));
   EXPECT_NE(nullptr, name);
   return NameRemoval({name->value()});
 }
 
-irs::TermRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
-                                         const tests::Document& src) {
+irs::KeyRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
+                                        const tests::Document& src) {
   auto ctx = writer.GetBatch();
   {
     auto doc = ctx.Insert();
@@ -177,9 +199,9 @@ irs::TermRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
   return RemovalOfName(src);
 }
 
-irs::TermRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
-                                         irs::TermRemoval removal,
-                                         const tests::Document& src) {
+irs::KeyRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
+                                        irs::KeyRemoval removal,
+                                        const tests::Document& src) {
   auto ctx = writer.GetBatch();
   ctx.Remove(std::move(removal));
   {
@@ -192,11 +214,10 @@ irs::TermRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
   return RemovalOfName(src);
 }
 
-irs::TermRemoval Merged(std::initializer_list<irs::TermRemoval> parts) {
-  irs::TermRemoval merged;
+irs::KeyRemoval Merged(std::initializer_list<irs::KeyRemoval> parts) {
+  irs::KeyRemoval merged;
   for (const auto& part : parts) {
-    merged.terms.insert(merged.terms.end(), part.terms.begin(),
-                        part.terms.end());
+    merged.keys.insert(merged.keys.end(), part.keys.begin(), part.keys.end());
   }
   return merged;
 }
@@ -317,7 +338,7 @@ namespace tests {
 
 irs::IndexWriterOptions CsDefaultWriterOptions() {
   auto options = irs::tests::DefaultWriterOptions();
-  options.key_field = tests::FieldIdFor(kNameKey);
+  options.key_column = tests::FieldIdFor(kNameKey);
   return options;
 }
 

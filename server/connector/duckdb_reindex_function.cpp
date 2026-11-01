@@ -829,7 +829,7 @@ ReindexOutcome RunRefresh(duckdb::ClientContext& context,
   // the stored row keys its removals are resolved from (an index without them
   // takes the rebuild road).
   if (src.fast_path.supports_delta &&
-      target.index->Config()->pk.column == catalog::PkColumnKind::Has) {
+      target.index->Config()->pk == catalog::PkColumnKind::Has) {
     RunDelta(context, conn_ctx, target, src, files, observe, manifest, storage);
     return {ReindexAction::Delta, files.added, files.changed, files.removed,
             static_cast<int64_t>(files.scan.size()) - files.added};

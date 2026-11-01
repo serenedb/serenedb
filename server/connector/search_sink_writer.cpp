@@ -322,15 +322,14 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
+  EntryInfoProvider&& entry_info_provider, PkColumnKind pk,
   std::vector<IndexedExpression>&& indexed_exprs,
   const catalog::InvertedIndexConfig* config)
   : _tokenizer_provider{std::move(tokenizer_provider)},
     _entry_info_provider{std::move(entry_info_provider)},
     _trx{&trx},
-    _pk_policy{pk_policy},
+    _pk{pk},
     _indexed_expressions{std::move(indexed_exprs)} {
-  _pk_field.PrepareForKeywordStringValue(term_dict::kPKFieldId);
   if (!config) {
     return;
   }
@@ -343,16 +342,6 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
       _terms_by_column[key.column_id].push_back(key.field_id);
     }
   }
-}
-
-void SearchSinkInsertBaseImpl::EmitPkTerms(
-  const Field& pk_field, std::span<const duckdb::string_t> keys) {
-  SDB_ASSERT(_document);
-  _document->NextFieldBatch();
-  const irs::doc_id_t first_doc = _document->DocId();
-  InvertField(pk_field, [&](irs::FieldInverter& fld) {
-    return fld.InvertPrimaryKeyBlock(keys, first_doc);
-  });
 }
 
 template<typename Insert>
@@ -970,7 +959,8 @@ catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
   return tokenizer;
 }
 
-void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
+void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
+                                        const duckdb::Vector* pk,
                                         irs::CommitOnFlush* commit_on_flush) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
@@ -980,18 +970,10 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size, const PkChunk& pk,
   // at the flushed segment while the terms land in the fresh one.
   _column_writers.clear();
   _pk_column_writer = nullptr;
-  if (_pk_policy.column == catalog::PkColumnKind::Has && pk.column) {
+  if (_pk == catalog::PkColumnKind::Has && pk) {
     _pk_column_writer =
-      EnsureColumnWriter(term_dict::kPKFieldId, pk.column->GetType());
-  }
-  if (_pk_column_writer) {
-    AppendPkColumn(*pk.column, batch_size);
-  }
-  if (_pk_policy.index_term) {
-    if (!pk.key_terms.empty()) {
-      SDB_ASSERT(pk.key_terms.size() == batch_size);
-      EmitPkTerms(_pk_field, pk.key_terms);
-    }
+      EnsureColumnWriter(term_dict::kPKFieldId, pk->GetType());
+    AppendPkColumn(*pk, batch_size);
   }
 }
 
@@ -1120,9 +1102,8 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
     [tokenizers](irs::field_id field_id) {
       return tokenizers->Acquire(field_id);
     },
-    std::move(entry_of),
-    PkPolicy{.index_term = false, .column = catalog::PkColumnKind::None},
-    std::move(indexed_exprs), config.get());
+    std::move(entry_of), catalog::PkColumnKind::None, std::move(indexed_exprs),
+    config.get());
 }
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

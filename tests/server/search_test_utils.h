@@ -60,15 +60,13 @@ inline catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
           .features = irs::IndexFeatures::None};
 }
 
-inline void WriteValues(irs::IndexWriter::Transaction& trx,
-                        std::span<const int64_t> values,
-                        const connector::PkChunk& pk = {},
-                        connector::PkPolicy policy = {
-                          .index_term = false,
-                          .column = catalog::PkColumnKind::None}) {
+inline void WriteValues(
+  irs::IndexWriter::Transaction& trx, std::span<const int64_t> values,
+  const duckdb::Vector* pk = nullptr,
+  catalog::PkColumnKind pk_kind = catalog::PkColumnKind::None) {
   connector::DuckDBSearchSinkInsertWriter sink{
     trx, KeywordTokenizer, std::array<connector::ColumnId, 1>{kValueColumn},
-    connector::NoEntryInfoProvider(), policy};
+    connector::NoEntryInfoProvider(), pk_kind};
   duckdb::Vector column{duckdb::LogicalType::BIGINT, values.size()};
   std::ranges::copy(values,
                     duckdb::FlatVector::GetDataMutable<int64_t>(column));

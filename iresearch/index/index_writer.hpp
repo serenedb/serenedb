@@ -141,7 +141,7 @@ struct IndexWriterOptions : public SegmentOptions {
 
   const AnnBuildEnv* ann_env = nullptr;
 
-  field_id key_field = field_limits::invalid();
+  field_id key_column = field_limits::invalid();
 
   IndexWriterOptions() {}
 };
@@ -248,7 +248,7 @@ class IndexWriter : private util::Noncopyable {
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
 
-    ColWriter* GetColWriter() noexcept { return _writer.GetColWriter(); }
+    ColWriter* GetColWriter() const noexcept { return _writer.GetColWriter(); }
 
     doc_id_t DocId() const noexcept { return _doc_id; }
 
@@ -282,7 +282,7 @@ class IndexWriter : private util::Noncopyable {
       Queue(std::move(removal));
     }
 
-    void Remove(TermRemoval removal);
+    void Remove(KeyRemoval removal);
 
     void RemoveAll() { Queue(QueuedRemoval::AllDocs{}); }
 
@@ -576,7 +576,7 @@ class IndexWriter : private util::Noncopyable {
   struct QueuedRemoval {
     struct AllDocs {};
 
-    std::variant<std::shared_ptr<const DocRemoval>, TermRemoval, AllDocs>
+    std::variant<std::shared_ptr<const DocRemoval>, KeyRemoval, AllDocs>
       removal;
     uint64_t tick = 0;
   };
@@ -788,7 +788,7 @@ class IndexWriter : private util::Noncopyable {
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
-  field_id _key_field = field_limits::invalid();
+  field_id _key_column = field_limits::invalid();
   std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;

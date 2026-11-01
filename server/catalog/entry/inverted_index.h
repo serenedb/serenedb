@@ -65,7 +65,6 @@ using ScorerOptions = irs::ScorerOptions;
 
 using persistence::InvertedIndexSettings;
 using persistence::PkColumnKind;
-using persistence::PkPolicy;
 
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
@@ -182,7 +181,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   const std::vector<InvertedIndexKey> keys;
   const InvertedIndexFields fields;
-  PkPolicy pk;
+  PkColumnKind pk = PkColumnKind::Has;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;

@@ -646,7 +646,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   if (!verb) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("unknown serenedb VACUUM option \"", bind_data.option, "\""));
+      ERR_MSG("unrecognized VACUUM option \"", bind_data.option, "\""));
   }
 
   const bool needs_name = verb->scope != Scope::All;

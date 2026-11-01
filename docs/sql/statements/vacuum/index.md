@@ -35,7 +35,7 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 ## Inverted Index Maintenance
 
-SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into four families.
+SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into five families.
 
 ### Refreshing -- `REFRESH_*`
 

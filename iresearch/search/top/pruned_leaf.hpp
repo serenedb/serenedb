@@ -510,6 +510,43 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
     }
   }
 
+  template<typename Visit>
+  IRS_FORCE_INLINE void Matches(const doc_id_t* docs, uint32_t n,
+                                Visit&& visit) {
+    SDB_ASSERT(n <= kScoreBlock);
+    uint32_t blocks[kScoreBlock];
+    uint32_t index[kScoreBlock];
+    const auto landings = Landings(docs, n, blocks);
+    uint32_t landed = 0;
+    for (uint32_t i = 0; i != n;) {
+      if (docs[i] > _max_in_leaf) {
+        if (landed != landings) {
+          LandOn(blocks[landed++]);
+        } else if (!Reach(docs[i])) {
+          _doc = doc_limits::eof();
+          return;
+        }
+      }
+      const auto end = CountLess<kScoreBlock>(docs, _max_in_leaf + 1);
+      SDB_ASSERT(i < end && end <= n);
+      ScoreMask hits = 0;
+      _doc = _leaf.template Match<kScoreBlock>(std::begin(_docs), _base, docs,
+                                               i, end, hits, index);
+      if (hits != 0) {
+        if constexpr (InputType::kVolatileAlways) {
+          if (_lazy != nullptr) [[unlikely]] {
+            DecodeFreqs();
+          }
+        }
+        for (; hits != 0; hits &= hits - 1) {
+          const auto j = static_cast<uint32_t>(std::countr_zero(hits));
+          visit(j, _freqs.data[index[j]]);
+        }
+      }
+      i = end;
+    }
+  }
+
   uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
     if (!_cursor.Armed() || n < 2 || in[n - 1] <= _max_in_leaf ||
         (!_needs_reposition &&

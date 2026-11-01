@@ -611,6 +611,22 @@ TEST_P(PrunedTopTest, required_terms_with_optional_ones) {
   }
 }
 
+TEST_P(PrunedTopTest, required_term_merges_optional_ones_sparser_than_it) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {.must = {"half"}, .should = {"dense", "common"}},
+         {.must = {"dense"}, .should = {"half"}},
+         {.must = {"common"}, .should = {"dense", "mid"}},
+         {.must = {"half"}, .should = {"burst"}},
+         {.must = {"common"}, .should = {"half", "cluster", "run"}},
+         {.must = {"sparse"}, .should = {"mid"}},
+         {.must = {"rare"}, .should = {"mid", "sparse"}},
+         {.must = {"mid"}, .should = {"sparse", "cluster", "holes"}},
+       }) {
+    Check(shape);
+  }
+}
+
 TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
   Build();
   for (const auto& shape : std::vector<Shape>{

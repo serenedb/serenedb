@@ -304,19 +304,17 @@ static void CopyLowCardinality(const clickhouse::Column &col, Vector &out, idx_t
 		return CopyLowCardinality<bool>(*lc, out, src_offset, count, dst_offset,
 		                                [](const clickhouse::ItemView &item) { return item.get<uint8_t>() != 0; });
 	case clickhouse::Type::Date:
-		return CopyLowCardinality<date_t>(*lc, out, src_offset, count, dst_offset,
-		                                  [](const clickhouse::ItemView &item) {
-			                                  return date_t(static_cast<int32_t>(item.get<uint16_t>()));
-		                                  });
+		return CopyLowCardinality<date_t>(
+		    *lc, out, src_offset, count, dst_offset,
+		    [](const clickhouse::ItemView &item) { return date_t(static_cast<int32_t>(item.get<uint16_t>())); });
 	case clickhouse::Type::Date32:
 		return CopyLowCardinality<date_t>(*lc, out, src_offset, count, dst_offset,
 		                                  [](const clickhouse::ItemView &item) { return date_t(item.get<int32_t>()); });
 	case clickhouse::Type::DateTime:
-		return CopyLowCardinality<timestamp_t>(*lc, out, src_offset, count, dst_offset,
-		                                       [](const clickhouse::ItemView &item) {
-			                                       return Timestamp::FromEpochMicroSeconds(
-			                                           static_cast<int64_t>(item.get<uint32_t>()) * 1000000);
-		                                       });
+		return CopyLowCardinality<timestamp_t>(
+		    *lc, out, src_offset, count, dst_offset, [](const clickhouse::ItemView &item) {
+			    return Timestamp::FromEpochMicroSeconds(static_cast<int64_t>(item.get<uint32_t>()) * 1000000);
+		    });
 	default:
 		for (idx_t row = 0; row < count; row++) {
 			if (lc->GetItem(src_offset + row).type != clickhouse::Type::Void) {

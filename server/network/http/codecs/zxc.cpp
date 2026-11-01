@@ -61,9 +61,8 @@ zxc_cstream* CreateCStream(int level) {
     return nullptr;
   }
   absl::Cleanup free_cfg = [cfg] { zxc_free_cctx(cfg); };
-  if (const int rc = zxc_cctx_set_param(cfg, ZXC_C_LEVEL, level); rc < 0) {
-    ThrowCodecError("zxc", zxc_error_name(rc));
-  }
+  [[maybe_unused]] const int rc = zxc_cctx_set_param(cfg, ZXC_C_LEVEL, level);
+  SDB_ASSERT(rc == ZXC_OK);
   return zxc_cstream_create(cfg);
 }
 

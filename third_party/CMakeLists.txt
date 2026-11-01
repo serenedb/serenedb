@@ -321,6 +321,7 @@ else()
         )
     endif()
 endif()
+set(NEED_PIC OFF CACHE BOOL "" FORCE)
 sdb_add_module(OpenBLAS NO_WARNINGS)
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)
@@ -361,6 +362,7 @@ sdb_add_module(libstemmer_c DIR libstemmer_c-cmake)
 
 set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(LZ4_POSITION_INDEPENDENT_LIB OFF CACHE BOOL "" FORCE)
+set(LZ4_JCC_ERRATUM OFF CACHE BOOL "" FORCE)
 sdb_add_module(lz4 DIR lz4/build/cmake)
 
 ################################################################################

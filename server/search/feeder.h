@@ -39,8 +39,6 @@ class Feeder {
   Feeder(duckdb::DatabaseInstance& db, size_t slots, size_t depth, Feed feed);
   ~Feeder();
 
-  size_t Slots() const noexcept { return _queues.size(); }
-
   void Push(std::unique_ptr<duckdb::DataChunk> batch);
   void Finish();
 

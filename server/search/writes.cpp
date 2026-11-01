@@ -200,24 +200,19 @@ const irs::DirectoryReader& Writes::PinnedReader(const Store& store) const {
 
 void Writes::FlushBuffer(const std::shared_ptr<Store>& store,
                          duckdb::ClientContext& context) {
-  const auto it = _writes.find(store->GetId());
-  if (it == _writes.end()) {
-    return;
-  }
-  auto& w = it->second;
+  auto& w = EnsureStoreWrites(store);
+  auto& changes = w.changes;
+  SDB_ASSERT(changes.HasBufferedRows());
   if (!w.buffer_trx) {
     // Exclusive: its segments are named in the record, so they must not also
     // carry another transaction's documents.
     w.buffer_trx = &AddTransaction(w, /*exclusive_segment=*/true);
   }
-  auto& changes = w.changes;
-  if (changes.HasBufferedRows()) {
-    const auto sink = connector::MakeSearchTableInsertSink(
-      *w.buffer_trx, *store, *changes.catalog, context);
-    for (auto& chunk : changes.collection->Chunks()) {
-      connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
-                                        store->GetId(), context);
-    }
+  const auto sink = connector::MakeSearchTableInsertSink(
+    *w.buffer_trx, *store, *changes.catalog, context);
+  for (auto& chunk : changes.collection->Chunks()) {
+    connector::WriteChunkToSearchSink(*sink, chunk, changes.column_ids,
+                                      store->GetId(), context);
   }
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.

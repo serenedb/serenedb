@@ -331,8 +331,6 @@ class IndexWriter : private util::Noncopyable {
 
     bool Valid() const noexcept { return _writer != nullptr; }
 
-    bool Empty() const noexcept { return _active.Segment() == nullptr; }
-
     void SetFieldOptions(
       std::shared_ptr<const IndexFieldOptions> options) noexcept {
       _field_options = std::move(options);

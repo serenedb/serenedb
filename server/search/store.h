@@ -202,13 +202,6 @@ class Store final : public std::enable_shared_from_this<Store>,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env)
     -> yaclib::Future<ResultWithTime>;
-  ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options) {
-    return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr));
-  }
   ResultWithTime CleanupUnsafe();
 
   // The field options a background merge encodes against, pinned for it; null

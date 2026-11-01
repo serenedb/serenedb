@@ -146,9 +146,7 @@ void Replay::MapPositions(
 }
 
 void Replay::Truncate() {
-  if (_feeder) {
-    _feeder->Finish();
-  }
+  SDB_ASSERT(!_feeder);
   for (auto& slot : _slots) {
     slot.Abort();
   }

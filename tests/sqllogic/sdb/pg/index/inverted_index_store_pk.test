@@ -142,6 +142,17 @@ CREATE INDEX spk_glob_bad ON spk_glob_v USING inverted(body store_pk_en) WITH (s
 db error: ERROR: store_pk = 'i64' requires a single-part row key; this index's key is (file_index, row)
 
 
+statement ok
+CREATE INDEX spk_i64 ON spk_v USING inverted(body store_pk_en) WITH (store_pk = 'i64');
+
+query
+SELECT id, body FROM spk_i64 WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
 statement error
 CREATE INDEX spk_glob_bad2 ON spk_glob_v USING inverted(body store_pk_en) WITH (store_pk = 'i256');
 ----

@@ -369,6 +369,34 @@ SELECT count(*) AS n, count(*) FILTER (WHERE id % 200 = 3 AND v <> 'c') AS gone,
 n	gone	newer	fresh
 10800	0	5	1000
 
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+connection reader
+query
+SELECT count(*) AS n FROM pc WHERE v = 'c';
+----
+n
+1000
+
+statement ok
+INSERT INTO pc SELECT i, 'c' FROM generate_series(20000, 20099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+connection reader
+query
+SELECT count(*) AS n FROM pc WHERE v = 'c';
+----
+n
+1100
+
+connection reader
+statement ok
+COMMIT;
+
 statement ok
 DROP TABLE pc;
 

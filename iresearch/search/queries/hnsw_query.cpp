@@ -233,8 +233,8 @@ class WalkFilter {
       _stall_share{stall_share},
       _docs_count{docs_count},
       _points{table.PointReads() != detail::PointRead::None} {
-    _s.known.Reset(docs_count, visits);
-    _s.pass.Reset(docs_count, visits);
+    _s.known.Reset(docs_count, visits, HnswWalks::One);
+    _s.pass.Reset(docs_count, visits, HnswWalks::One);
   }
 
   bool Stalled() const noexcept {

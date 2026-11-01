@@ -258,6 +258,9 @@ A foreign server is owned by the role that created it and carries a single privi
 | `CREATE SERVER` | `CREATE` on the current **database**; a superuser for `duckdb_fdw` and `serenedb_fdw`, whose `path` names a server file |
 | `DROP SERVER` | Ownership of the server, or superuser |
 | Querying through the server | `USAGE` on the server (owner and superusers exempt) |
+| `iceberg_snapshots`, `iceberg_metadata`, `iceberg_column_stats`, `iceberg_partition_stats`, `iceberg_table_properties`, `iceberg_schema_properties`, `iceberg_scan_plan` and `iceberg_view_metadata` on the server's tables, views and schemas | `USAGE` on the server |
+| `set_iceberg_table_properties`, `remove_iceberg_table_properties`, `iceberg_rollback_to_snapshot`, `iceberg_rewrite_data_files`, `set_iceberg_schema_properties` and `remove_iceberg_schema_properties` | Superuser: they change the table or schema as `ALTER` does, which needs its owner, and the server's tables and schemas have none |
+| `iceberg_load_table_response` | Superuser: it returns the storage credentials the catalog hands out |
 | `GRANT` / `REVOKE USAGE` | Ownership, `WITH GRANT OPTION`, or superuser |
 
 Because servers are database children, the create gate is a **database** grant — granting `CREATE` on a schema does not allow it:

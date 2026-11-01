@@ -1,0 +1,180 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+
+statement ok
+CREATE SERVER eifn_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+
+statement ok
+CREATE SCHEMA eifn_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eifn_${__DATABASE__}.${__DATABASE__}.eifn_t (id INTEGER, body TEXT);
+
+
+statement count 2
+INSERT INTO eifn_${__DATABASE__}.${__DATABASE__}.eifn_t VALUES (1, 'pudge'), (2, 'anchin');
+
+
+statement ok
+DROP ROLE IF EXISTS eifn_vedernikoff;
+
+
+statement ok
+CREATE ROLE eifn_vedernikoff LOGIN PASSWORD 'eifn_pw';
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM eifn_${__DATABASE__}.${__DATABASE__}.eifn_t;
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_snapshots('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_metadata('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_column_stats('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_partition_stats('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_scan_plan('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_schema_properties('eifn_${__DATABASE__}.${__DATABASE__}');
+----
+db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_load_table_response('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for function iceberg_load_table_response
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER eifn_${__DATABASE__} TO eifn_vedernikoff;
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+query
+SELECT count(*) FROM eifn_${__DATABASE__}.${__DATABASE__}.eifn_t;
+----
+count
+2
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+query
+SELECT count(*) > 0 FROM iceberg_snapshots('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+?column?
+t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT count(*) FROM iceberg_load_table_response('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: permission denied for function iceberg_load_table_response
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM set_iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t', {'eifn.owner': 'vedernikoff'});
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM remove_iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t', ['eifn.owner']);
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM iceberg_rollback_to_snapshot('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t', 1);
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM iceberg_rewrite_data_files('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM set_iceberg_schema_properties('eifn_${__DATABASE__}.${__DATABASE__}', {'eifn.owner': 'vedernikoff'});
+----
+db error: ERROR: must be owner of schema <slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM remove_iceberg_schema_properties('eifn_${__DATABASE__}.${__DATABASE__}', ['eifn.owner']);
+----
+db error: ERROR: must be owner of schema <slt:ignore>
+
+
+statement ok
+SELECT * FROM set_iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t', {'eifn.owner': 'postgres'});
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+query
+SELECT key, value FROM iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t') WHERE key = 'eifn.owner';
+----
+key	value
+eifn.owner	postgres
+
+
+statement ok
+DROP SERVER eifn_${__DATABASE__};
+
+
+statement ok
+DROP ROLE eifn_vedernikoff;

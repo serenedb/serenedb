@@ -55,6 +55,7 @@ constexpr std::string_view kSuperuserFunctions[] = {
   "enable_checkpoint_on_shutdown",
   "enable_logging",
   "force_checkpoint",
+  "iceberg_load_table_response",
   "iceberg_to_ducklake",
   "json_serialize_plan",
   "pg_clear_cache",

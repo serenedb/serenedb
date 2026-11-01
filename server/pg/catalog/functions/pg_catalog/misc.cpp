@@ -611,12 +611,25 @@ void CountNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+duckdb::Value TypeofValue(const duckdb::LogicalType& type) {
+  return duckdb::Value::BIGINT(static_cast<int64_t>(CatalogTypeOid(type)))
+    .WithType(REGTYPE());
+}
+
 duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
-  const auto oid =
-    static_cast<int64_t>(CatalogTypeOid(input.children[0]->GetReturnType()));
+  auto& argument = *input.children[0];
+  if (argument.IsVolatile() || argument.HasSubquery()) {
+    return nullptr;
+  }
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-    duckdb::Value::BIGINT(oid).WithType(REGTYPE()));
+    TypeofValue(argument.GetReturnType()));
+}
+
+void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  result.Reference(TypeofValue(args.data[0].GetType()),
+                   duckdb::count_t(args.size()));
 }
 
 int32_t AscendingWidthBucket(double operand, double low, double high,
@@ -1470,7 +1483,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   }
 
   {
-    duckdb::ScalarFunction function{{any}, REGTYPE(), nullptr};
+    duckdb::ScalarFunction function{{any}, REGTYPE(), PgTypeofFunction};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     function.SetBindExpressionCallback(BindPgTypeof);
     RegisterScalar(loader, main, "pg_typeof", CONSISTENT_WITHIN_QUERY, nullptr,

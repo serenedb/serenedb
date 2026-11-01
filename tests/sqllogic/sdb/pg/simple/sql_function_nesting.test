@@ -239,59 +239,42 @@ EXPLAIN SELECT sfn_max(i + 1) FROM range(3) t(i)
 ----
 QUERY PLAN
 ╭─ CTE ──────────────────────────────╮
-│ CTE Name: __duckdb_delim_40        │
-│ Table Index: 40                    │
+│ CTE Name: __duckdb_delim_17        │
+│ Table Index: 17                    │
 │ Execution Mode: PIPELINE_DEPENDENT │
 │ ~3 rows                            │
 ╰──────────────────┬─────────────────╯
-                   ├───────────────────────────────────────╮
-╭─ RANGE ──────────┴─────────────────╮  ╭─ CTE ────────────┴─────────────────╮
-│ Function: RANGE                    │  │ CTE Name: __duckdb_delim_dedup_38  │
-│ ~3 rows                            │  │ Table Index: 38                    │
-╰────────────────────────────────────╯  │ Execution Mode: PIPELINE_DEPENDENT │
-                                        │ ~3 rows                            │
-                                        ╰──────────────────┬─────────────────╯
-                                                           ├────────────────────────────────────────╮
-                                        ╭─ HASH_GROUP_BY ──┴─────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
-                                        │ Groups: #0                         │  │ Projections: #1                      │
-                                        │ ~1 row                             │  │ ~3 rows                              │
-                                        ╰──────────────────┬─────────────────╯  ╰───────────────────┬──────────────────╯
-                                        ╭─ CTE_SCAN ───────┴─────────────────╮  ╭─ HASH_JOIN ───────┴──────────────────╮
-                                        │ CTE Index: 40                      │  │ Join Type: SINGLE                    │
-                                        │ ~3 rows                            │  │ Conditions: i IS NOT DISTINCT FROM i │
-                                        ╰────────────────────────────────────╯  │ ~3 rows                              │
-                                                                                ╰───────────────────┬──────────────────╯
-                                                                                                    ├───────────────────────────────────────────╮
-                                                                                ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ────────┴────────────────────╮
-                                                                                │ CTE Index: 40                        │  │ Projections: ?column?, i                 │
-                                                                                │ ~3 rows                              │  │ ~0 rows                                  │
-                                                                                ╰──────────────────────────────────────╯  ╰─────────────────────┬────────────────────╯
-                                                                                                                          ╭─ HASH_JOIN ─────────┴────────────────────╮
-                                                                                                                          │ Join Type: INNER                         │
-                                                                                                                          │ Conditions: 0_x IS NOT DISTINCT FROM 0_x │
-                                                                                                                          │ ~0 rows                                  │
-                                                                                                                          ╰─────────────────────┬────────────────────╯
-                                                                                                                                                ├──────────────────────────────────────────╮
-                                                                                                                          ╭─ PROJECTION ────────┴────────────────────╮  ╭─ PROJECTION ─────┴─────────────────╮
-                                                                                                                          │ Projections: 0_x, i                      │  │ Projections: (max(v) + 0_x) + 0_x, │
-                                                                                                                          │ ~1 row                                   │  │              0_x                   │
-                                                                                                                          ╰─────────────────────┬────────────────────╯  │ ~1 row                             │
-                                                                                                                          ╭─ CTE_SCAN ──────────┴────────────────────╮  ╰──────────────────┬─────────────────╯
-                                                                                                                          │ CTE Index: 38                            │  ╭─ CROSS_PRODUCT ──┴─────────────────╮
-                                                                                                                          │ ~1 row                                   │  ╰──────────────────┬─────────────────╯
-                                                                                                                          ╰──────────────────────────────────────────╯                     ├──────────────────────────────╮
-                                                                                                                                                                        ╭─ UNGROUPED_AGGREGATE ──────────────╮  ╭─ HASH_GROUP_BY ──╮
-                                                                                                                                                                        │ Aggregates: max(#0)                │  │ Groups: #0       │
-                                                                                                                                                                        │ ~1 row                             │  │ ~0 rows          │
-                                                                                                                                                                        ╰──────────────────┬─────────────────╯  ╰─────────┬────────╯
-                                                                                                                                                                        ╭─ RANGE ──────────┴─────────────────╮  ╭─ PROJECTION ─────╮
-                                                                                                                                                                        │ Function: RANGE                    │  │ Projections: 0_x │
-                                                                                                                                                                        │ ~2 rows                            │  │ ~1 row           │
-                                                                                                                                                                        ╰────────────────────────────────────╯  ╰─────────┬────────╯
-                                                                                                                                                                                                                ╭─ CTE_SCAN ───────╮
-                                                                                                                                                                                                                │ CTE Index: 38    │
-                                                                                                                                                                                                                │ ~1 row           │
-                                                                                                                                                                                                                ╰──────────────────╯
+                   ├────────────────────────────────────────╮
+╭─ RANGE ──────────┴─────────────────╮  ╭─ PROJECTION ──────┴──────────────────╮
+│ Function: RANGE                    │  │ Projections: #1                      │
+│ ~3 rows                            │  │ ~3 rows                              │
+╰────────────────────────────────────╯  ╰───────────────────┬──────────────────╯
+                                        ╭─ HASH_JOIN ───────┴──────────────────╮
+                                        │ Join Type: SINGLE                    │
+                                        │ Conditions: i IS NOT DISTINCT FROM i │
+                                        │ ~3 rows                              │
+                                        ╰───────────────────┬──────────────────╯
+                                                            ├───────────────────────────────────────╮
+                                        ╭─ CTE_SCAN ────────┴──────────────────╮  ╭─ PROJECTION ────┴────────────────╮
+                                        │ CTE Index: 17                        │  │ Projections: (max(v) + #1) + #1, │
+                                        │ ~3 rows                              │  │              i                   │
+                                        ╰──────────────────────────────────────╯  │ ~1 row                           │
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                  ╭─ PROJECTION ────┴────────────────╮
+                                                                                  │ Projections: max(v), i + 1, i    │
+                                                                                  │ ~1 row                           │
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                  ╭─ CROSS_PRODUCT ─┴────────────────╮
+                                                                                  ╰─────────────────┬────────────────╯
+                                                                                                    ├────────────────────────────╮
+                                                                                  ╭─ UNGROUPED_AGGREGATE ────────────╮  ╭─ HASH_GROUP_BY ─╮
+                                                                                  │ Aggregates: max(#0)              │  │ Groups: #0      │
+                                                                                  │ ~1 row                           │  │ ~1 row          │
+                                                                                  ╰─────────────────┬────────────────╯  ╰────────┬────────╯
+                                                                                  ╭─ RANGE ─────────┴────────────────╮  ╭─ CTE_SCAN ──────╮
+                                                                                  │ Function: RANGE                  │  │ CTE Index: 17   │
+                                                                                  │ ~2 rows                          │  │ ~3 rows         │
+                                                                                  ╰──────────────────────────────────╯  ╰─────────────────╯
 
 statement ok
 CREATE FUNCTION sfn_sub(x bigint) RETURNS bigint LANGUAGE sql RETURN x + (SELECT count(*) FROM range(3) r(v) WHERE v < x)
@@ -577,3 +560,149 @@ DROP FUNCTION sfn_vs
 
 statement ok
 DROP FUNCTION sfn_va
+
+statement ok
+CREATE FUNCTION sfn_qtri(x BIGINT) RETURNS BIGINT LANGUAGE sql AS 'SELECT x + x - x FROM range(1)'
+
+query
+SELECT sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri((random() * 10)::BIGINT)))))))))))))))))))) BETWEEN 0 AND 10 AS r
+----
+r
+t
+
+query
+SELECT sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(sfn_qtri(1)))))))))))))))))))) AS r
+----
+r
+1
+
+statement ok
+CREATE FUNCTION sfn_inc1(x BIGINT) RETURNS BIGINT LANGUAGE sql RETURN x + 1
+
+query
+SELECT sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_inc1(sfn_qtri(1))))))))))))))))))))) AS r
+----
+r
+21
+
+query
+SELECT i, sum(i) OVER () AS w, sfn_qtri(CAST(sum(i) OVER () AS BIGINT)) AS f FROM range(3) t(i) ORDER BY i
+----
+i	w	f
+0	3	3
+1	3	3
+2	3	3
+
+statement ok
+CREATE FUNCTION sfn_tf0(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT x'
+
+statement ok
+CREATE FUNCTION sfn_tf1(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf0(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf2(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf1(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf3(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf2(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf4(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf3(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf5(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf4(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf6(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf5(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf7(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf6(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf8(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf7(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf9(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf8(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf10(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf9(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf11(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf10(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf12(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf11(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf13(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf12(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf14(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf13(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf15(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf14(x + x - x)'
+
+statement ok
+CREATE FUNCTION sfn_tf16(x BIGINT) RETURNS TABLE(v BIGINT) LANGUAGE sql AS 'SELECT * FROM sfn_tf15(x + x - x)'
+
+query
+SELECT v FROM sfn_tf16(5)
+----
+v
+5
+
+statement ok
+DROP FUNCTION sfn_tf16
+
+statement ok
+DROP FUNCTION sfn_tf15
+
+statement ok
+DROP FUNCTION sfn_tf14
+
+statement ok
+DROP FUNCTION sfn_tf13
+
+statement ok
+DROP FUNCTION sfn_tf12
+
+statement ok
+DROP FUNCTION sfn_tf11
+
+statement ok
+DROP FUNCTION sfn_tf10
+
+statement ok
+DROP FUNCTION sfn_tf9
+
+statement ok
+DROP FUNCTION sfn_tf8
+
+statement ok
+DROP FUNCTION sfn_tf7
+
+statement ok
+DROP FUNCTION sfn_tf6
+
+statement ok
+DROP FUNCTION sfn_tf5
+
+statement ok
+DROP FUNCTION sfn_tf4
+
+statement ok
+DROP FUNCTION sfn_tf3
+
+statement ok
+DROP FUNCTION sfn_tf2
+
+statement ok
+DROP FUNCTION sfn_tf1
+
+statement ok
+DROP FUNCTION sfn_tf0
+
+statement ok
+DROP FUNCTION sfn_inc1
+
+statement ok
+DROP FUNCTION sfn_qtri

@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
@@ -106,6 +107,12 @@ void RequireRoleAdmin(duckdb::ClientContext& context,
   }
 }
 
+std::string_view CanonicalSetting(std::string_view name) {
+  const auto option =
+    duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name});
+  return option ? std::string_view{option->name} : name;
+}
+
 void RequireGrantableRole(duckdb::CatalogTransaction transaction,
                           std::string_view name) {
   auto role = FindRole(transaction, name);
@@ -138,7 +145,7 @@ void CheckCreateRole(duckdb::CatalogTransaction transaction,
 }
 
 void CheckAlterRole(duckdb::CatalogTransaction transaction,
-                    const duckdb::AlterRoleInfo& info) {
+                    duckdb::AlterRoleInfo& info) {
   const auto* caller = Enforced(transaction);
   if (!caller) {
     return;
@@ -165,8 +172,22 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
     RequireAttributeGrant(*caller, "alter", info.set_options);
   }
   for (const std::string_view entry : info.set_config) {
-    RequireSuperuserToSet(context, entry.substr(0, entry.find('=')),
+    RequireSuperuserToSet(context, CanonicalSetting(catalog::ConfigKey(entry)),
                           duckdb::SetScope::SESSION, true);
+  }
+  for (const std::string_view key : info.reset_config) {
+    RequireSuperuserToSet(context, CanonicalSetting(key),
+                          duckdb::SetScope::SESSION, true);
+  }
+  if (info.reset_all_config) {
+    info.reset_all_config = false;
+    for (const std::string_view entry :
+         role->Cast<catalog::RoleCatalogEntry>().Config()) {
+      const auto key = catalog::ConfigKey(entry);
+      if (SettingContext(CanonicalSetting(key)) == "user") {
+        info.reset_config.emplace_back(key);
+      }
+    }
   }
 }
 

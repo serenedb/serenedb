@@ -30,7 +30,7 @@ namespace sdb::auth {
 void CheckCreateRole(duckdb::CatalogTransaction transaction,
                      const duckdb::CreateRoleInfo& info);
 void CheckAlterRole(duckdb::CatalogTransaction transaction,
-                    const duckdb::AlterRoleInfo& info);
+                    duckdb::AlterRoleInfo& info);
 void CheckDropRole(duckdb::CatalogTransaction transaction,
                    const duckdb::DropInfo& info);
 

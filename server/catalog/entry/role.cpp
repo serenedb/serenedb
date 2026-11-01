@@ -109,13 +109,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::Copy(
     catalog, info->Cast<duckdb::CreateRoleInfo>());
 }
 
-namespace {
-
 std::string_view ConfigKey(std::string_view entry) {
   return entry.substr(0, entry.find('='));
 }
-
-}  // namespace
 
 duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {

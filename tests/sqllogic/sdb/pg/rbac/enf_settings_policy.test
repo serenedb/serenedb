@@ -97,6 +97,24 @@ DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+ALTER ROLE esp_vedernikoff SET null_order = 'nulls_first';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+ALTER ROLE esp_vedernikoff SET memory_limit = '1GB';
+----
+db error: ERROR: permission denied to set parameter "max_memory"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+ALTER ROLE esp_vedernikoff RESET ALL;
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SET SESSION enable_logging = true;
 ----

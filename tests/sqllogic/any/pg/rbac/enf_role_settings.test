@@ -57,6 +57,38 @@ session_replication_role
 origin
 
 
+skipif serenedb
+connection c_ved_reset user=ers_vedernikoff password=ers_pw
+statement error
+ALTER ROLE ers_vedernikoff RESET session_replication_role;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+onlyif serenedb
+connection c_ved_reset user=ers_vedernikoff password=ers_pw
+statement error
+ALTER ROLE ers_vedernikoff RESET session_replication_role;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved_reset user=ers_vedernikoff password=ers_pw
+statement ok
+ALTER ROLE ers_vedernikoff RESET ALL;
+
+
+query
+SELECT unnest(s.setconfig) AS setting
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'ers_vedernikoff'
+ORDER BY setting;
+----
+setting
+session_replication_role=replica
+
+
 statement ok
 ALTER ROLE ers_vedernikoff RESET ALL;
 

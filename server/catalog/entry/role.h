@@ -77,4 +77,6 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
   duckdb::vector<std::string> _config;
 };
 
+std::string_view ConfigKey(std::string_view entry);
+
 }  // namespace sdb::catalog

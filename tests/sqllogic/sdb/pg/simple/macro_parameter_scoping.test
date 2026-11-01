@@ -83,11 +83,56 @@ statement ok
 CREATE MACRO mps_field_return(s) AS mps_field_return.s.a + 1;
 
 
+statement ok
+CREATE MACRO mps_qualified_dot(s) AS (SELECT max(mps_qualified_dot.s.lower() || y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_cte(v) AS (WITH c AS (SELECT y + v AS s FROM mps_t) SELECT max(s) - v + v FROM c);
+
+
 query
-SELECT mps_schema('unused') AS schema_call, mps_field_return({'a': 5}) AS field_return;
+SELECT mps_schema('unused') AS schema_call, mps_field_return({'a': 5}) AS field_return, mps_qualified_dot('AB') AS qualified_dot, mps_cte(random() * 0 + 1) AS cte;
 ----
-schema_call	field_return
-X	6
+schema_call	field_return	qualified_dot	cte
+X	6	ab2	3
+
+
+statement ok
+CREATE TABLE mps_outer_t (x int);
+
+
+statement ok
+INSERT INTO mps_outer_t VALUES (100);
+
+
+statement ok
+CREATE TABLE mps_inner_t (c int);
+
+
+statement ok
+INSERT INTO mps_inner_t VALUES (5);
+
+
+statement ok
+CREATE MACRO mps_inner(v) AS (SELECT max(v) FROM mps_inner_t);
+
+
+statement ok
+CREATE MACRO mps_outer(x) AS (SELECT mps_inner(x + c) FROM mps_outer_t);
+
+
+query
+SELECT mps_outer(1) AS written_where_passed;
+----
+written_where_passed
+105
+
+
+statement error
+CREATE MACRO mps_dummy(a) AS (SELECT "0_macro_parameters".b FROM range(1));
+----
+db error: ERROR: Referenced table "0_macro_parameters" not found!<slt:ignore>
 
 
 statement error

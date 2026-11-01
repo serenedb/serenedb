@@ -135,6 +135,10 @@ statement error must appear in the GROUP BY clause
 CREATE FUNCTION sfs.ungrouped(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT x FROM sfs.t GROUP BY y';
 
 
+statement error must appear in the GROUP BY clause
+CREATE FUNCTION sfs.ungrouped_having(x int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t GROUP BY y HAVING x > 0';
+
+
 statement ok
 CREATE FUNCTION sfs.tab_alias(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT tab_alias.y + z FROM sfs.t tab_alias ORDER BY 1';
 
@@ -485,6 +489,13 @@ db error: ERROR: A function whose body modifies data cannot be called for each r
 onlyif serenedb
 statement error
 SELECT sfs.purge(2) FROM (SELECT y FROM sfs.t GROUP BY y) s;
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (SELECT count(*) FROM sfs.t GROUP BY GROUPING SETS ((), ())) s;
 ----
 db error: ERROR: A function whose body modifies data cannot be called for each row of a query
 

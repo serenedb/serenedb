@@ -155,6 +155,7 @@ class FrameDecoder {
 
  private:
   static constexpr uint64_t kNearShare = 32;
+  static constexpr uint64_t kScanCacheDivisor = 2;
 
   void Seek(uint64_t row) {
     if (row >= _begin && row < _end) {
@@ -163,7 +164,8 @@ class FrameDecoder {
     if (Blocked()) {
       DecodeBlock(row);
     } else {
-      Decode(FrameOf(row), row != _next);
+      _scan = row == _next;
+      Decode(FrameOf(row));
     }
   }
 
@@ -377,15 +379,14 @@ class FrameDecoder {
     return m;
   }
 
-  void Decode(uint32_t f, bool sparse) {
+  void Decode(uint32_t f) {
     const auto m = Meta(f);
     const auto end = EndRow(f);
     const auto rows = static_cast<uint32_t>(end - m.frame.first_entry);
-    const auto cached = sparse ? f : kNoFrame;
     if (_h.transform == NumericTransform::RleFfor) {
       LoadPackedRuns(m, rows);
     } else if (_h.transform == NumericTransform::Rle) {
-      LoadRuns(m, rows, cached);
+      LoadRuns(m, rows, f);
     } else if (_h.transform == NumericTransform::Raw && !_h.Shuffled() &&
                m.frame.comp_len == m.frame.raw_len) {
       _view = Data(m);
@@ -393,7 +394,7 @@ class FrameDecoder {
       if (_rows.size() < rows) {
         _rows.resize(rows);
       }
-      DecodeInto(m, rows, _rows.data(), cached);
+      DecodeInto(m, rows, _rows.data(), f);
       _view = reinterpret_cast<const uint8_t*>(_rows.data());
     }
     _begin = m.frame.first_entry;
@@ -420,7 +421,8 @@ class FrameDecoder {
       return 0;
     }
     const auto rows = static_cast<uint32_t>(end - row);
-    DecodeInto(Meta(f), rows, out, kNoFrame);
+    _scan = true;
+    DecodeInto(Meta(f), rows, out, f);
     _next = end;
     return rows;
   }
@@ -429,11 +431,12 @@ class FrameDecoder {
     return _base + _h.off_data + m.frame.comp_off;
   }
 
-  std::string FrameKey(uint32_t frame) {
+  const std::string& FrameKey(uint32_t frame) {
     if (_segment_key.empty()) {
       _segment_key = DictionaryCacheKey(_slot.file_id, _slot.file_offset);
     }
-    return FrameCacheKey(_segment_key, frame);
+    FrameCacheKey(_segment_key, frame, _key);
+    return _key;
   }
 
   const uint8_t* Lookup(const std::string& key, uint32_t raw_len) {
@@ -450,11 +453,16 @@ class FrameDecoder {
     if (m.frame.comp_len == m.frame.raw_len) {
       return Data(m);
     }
-    std::string key;
-    if (frame != kNoFrame && _cache) {
-      key = FrameKey(frame);
-      if (const auto* cached = Lookup(key, m.frame.raw_len)) {
+    ScratchVector<uint8_t> admitted;
+    if (_cache) {
+      if (const auto* cached = Lookup(FrameKey(frame), m.frame.raw_len)) {
         return cached;
+      }
+      const auto room = _scan ? _cache->GetMaxMemory() / kScanCacheDivisor
+                              : _cache->GetMaxMemory();
+      if (Admitted() && _cache->GetCurrentMemory() + m.frame.raw_len <= room) {
+        admitted.resize(m.frame.raw_len);
+        dst = admitted.data();
       }
     }
     if (!dst) {
@@ -470,11 +478,9 @@ class FrameDecoder {
            : _zstd &&
                _zstd->Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
-    if (!key.empty() && Admitted() &&
-        _cache->GetCurrentMemory() + m.frame.raw_len <=
-          _cache->GetMaxMemory()) {
-      _cache->Put(key, duckdb::make_shared_ptr<DecodedFrame>(
-                         std::vector<uint8_t>(dst, dst + m.frame.raw_len)));
+    if (!admitted.empty()) {
+      _held = duckdb::make_shared_ptr<DecodedFrame>(std::move(admitted));
+      _cache->Put(_key, _held);
     }
     return dst;
   }
@@ -714,6 +720,7 @@ class FrameDecoder {
   duckdb::ObjectCache* _cache;
   ReadContext::CacheSlot _slot;
   std::string _segment_key;
+  std::string _key;
   duckdb::shared_ptr<DecodedFrame> _held;
   int8_t _admit = -1;
   uint32_t _per_frame = 0;
@@ -722,6 +729,7 @@ class FrameDecoder {
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint64_t _next = 0;
+  bool _scan = false;
   const uint8_t* _view = nullptr;
   ScratchVector<U> _rows;
   ScratchVector<U> _run_values;

@@ -26,10 +26,13 @@
 #include <duckdb/common/optional_idx.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/storage/object_cache.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
 
@@ -63,7 +66,7 @@ class DecodedFrame final : public duckdb::ObjectCacheEntry {
  public:
   static std::string ObjectType() { return "col-frame"; }
 
-  explicit DecodedFrame(std::vector<uint8_t> bytes) noexcept
+  explicit DecodedFrame(ScratchVector<uint8_t> bytes) noexcept
     : _bytes{std::move(bytes)} {}
 
   std::string GetObjectType() final { return ObjectType(); }
@@ -72,14 +75,16 @@ class DecodedFrame final : public duckdb::ObjectCacheEntry {
     return _bytes.size();
   }
 
-  const std::vector<uint8_t>& Bytes() const noexcept { return _bytes; }
+  std::span<const uint8_t> Bytes() const noexcept { return _bytes; }
 
  private:
-  std::vector<uint8_t> _bytes;
+  ScratchVector<uint8_t> _bytes;
 };
 
-inline std::string FrameCacheKey(std::string_view segment, uint32_t frame) {
-  return absl::StrCat(segment, "#", frame);
+inline void FrameCacheKey(std::string_view segment, uint32_t frame,
+                          std::string& key) {
+  key.assign(segment);
+  absl::StrAppend(&key, "#", frame);
 }
 
 }  // namespace irs::codecs

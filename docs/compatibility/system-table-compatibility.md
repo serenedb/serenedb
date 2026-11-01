@@ -175,7 +175,7 @@ name:
 | enabled_roles | 🟢 |  |
 | foreign_data_wrapper_options | 🟡 |  |
 | foreign_data_wrappers | 🟡 |  |
-| foreign_server_options | 🟡 |  |
+| foreign_server_options | 🟡 | `option_value` is shown only to superusers, since server options carry credentials. |
 | foreign_servers | 🟡 |  |
 | foreign_table_options | 🟡 |  |
 | foreign_tables | 🟡 |  |

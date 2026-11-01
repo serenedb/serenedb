@@ -2891,12 +2891,7 @@
             AND u.oid = s.srvowner
             AND (pg_has_role(s.srvowner, 'USAGE')
                  OR has_server_privilege(s.oid, 'USAGE')))"},
-{"information_schema", "foreign_server_options", 12434, 12436, 12435, false, "",
- R"(SELECT foreign_server_catalog,
-             foreign_server_name,
-             CAST((pg_options_to_table(s.srvoptions)).option_name AS sql_identifier) AS option_name,
-             CAST((pg_options_to_table(s.srvoptions)).option_value AS character_data) AS option_value
-      FROM information_schema._pg_foreign_servers s)"},
+{"information_schema", "foreign_server_options", 12434, 12436, 12435, false, "", {}},
 {"information_schema", "foreign_servers", 12437, 12439, 12438, false, "",
  R"(SELECT foreign_server_catalog,
              foreign_server_name,

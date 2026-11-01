@@ -243,7 +243,7 @@ WHERE s.srvname = 'analytics';
 
 <DocCallout type="attention">
 
-**`pg_foreign_server` is superuser-only.** Because server `OPTIONS` carry credentials, and option values are shown **verbatim with no redaction**, the whole catalog is restricted rather than filtered — a non-superuser reading it gets `permission denied for table pg_foreign_server`. This mirrors PostgreSQL's treatment of `pg_user_mapping`, not its world-readable `pg_foreign_server`.
+**`pg_foreign_server` is superuser-only.** Because server `OPTIONS` carry credentials, and option values are shown **verbatim with no redaction**, the whole catalog is restricted rather than filtered — a non-superuser reading it gets `permission denied for table pg_foreign_server`. This mirrors PostgreSQL's treatment of `pg_user_mapping`, not its world-readable `pg_foreign_server`. For the same reason, `information_schema.foreign_server_options` lists a server's options to the roles that own it or hold `USAGE` on it, but shows `option_value` only to superusers.
 
 </DocCallout>
 

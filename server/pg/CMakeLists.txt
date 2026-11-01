@@ -70,6 +70,7 @@ target_sources(
         catalog/utils/columns.cpp
         catalog/utils/lookup.cpp
         catalog/utils/session.cpp
+        catalog/views/information_schema/foreign_server_options.cpp
         catalog/views/information_schema/triggers.cpp
         catalog/views/pg_catalog/pg_stat_progress_create_index.cpp
         catalog/views/sdb/pg_stat_progress_create_table_as.cpp

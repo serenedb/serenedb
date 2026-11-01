@@ -20,17 +20,14 @@
 
 #include "iresearch/formats/term_reader.hpp"
 
-#include <absl/algorithm/container.h>
-
-#include "iresearch/utils/assert.hpp"
-
 namespace irs {
 
-void TermReader::LookupBatch(std::span<const bytes_view> terms,
-                             std::span<PostingMeta> out) const {
-  SDB_ASSERT(terms.size() == out.size());
-  absl::c_transform(terms, out.begin(),
-                    [&](bytes_view term) { return Lookup(term); });
+void TermReader::LookupBatch(size_t count, TermAt term, FoundTerm found) const {
+  for (size_t i = 0; i != count; ++i) {
+    if (const auto meta = Lookup(term(i)); meta.docs_count != 0) {
+      found(i, meta);
+    }
+  }
 }
 
 void TermReader::VisitRange(bytes_view from, bytes_view to,

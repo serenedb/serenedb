@@ -20,26 +20,37 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 
 namespace irs {
 
+inline constexpr size_t kPrefetchedExtents = 64;
+
+using FileRanges = containers::SmallVector<FileRange, kPrefetchedExtents>;
+
 template<typename Metas>
 void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
-  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+  FileRanges extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {
-      ranges.emplace_back(meta.doc_start, meta.doc_start + extent);
+      extents.emplace_back(meta.doc_start, meta.doc_start + extent);
     }
   }
-  PrefetchRanges(in, ranges);
+  absl::c_sort(extents);
+  FileRanges ranges;
+  for (const auto& [from, to] : extents) {
+    AppendRange(ranges, from, to);
+  }
+  HintRanges(in, ranges);
 }
 
 inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,

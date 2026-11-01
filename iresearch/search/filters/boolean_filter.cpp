@@ -416,23 +416,35 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
         SDB_ASSERT(collector->Size() == run.size());
         collector->Field(ctx.thread).Collect(*reader);
       }
-      containers::Fixed<bytes_view> terms{
-        run.size(), [&](bytes_view& term, size_t i) { term = run[i].term; }};
-      containers::Fixed<PostingMeta> metas{run.size()};
-      reader->LookupBatch(terms, metas);
-      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
-        PrefetchDocExtents(*doc, metas);
-      }
-      for (size_t i = 0; i != run.size(); ++i) {
-        const auto& meta = metas[i];
-        if (collector && meta.docs_count != 0) {
-          collector->Term(ctx.thread, i).Collect(meta);
-        }
+      const auto add = [&](size_t i, const PostingMeta& meta) {
         builder.AddTerm(
           reader, meta,
           occur == Occur::MustNot ? kNoBoost : composite_boost * run[i].boost,
           occur,
           collector != nullptr ? collector->Record(i) : detail::StatsRecord{});
+      };
+      FileRanges docs;
+      size_t next = 0;
+      reader->LookupBatch(
+        run.size(), [&](size_t i) -> bytes_view { return run[i].term; },
+        [&](size_t i, const PostingMeta& meta) {
+          for (; next != i; ++next) {
+            add(next, kNoPosting);
+          }
+          if (collector) {
+            collector->Term(ctx.thread, i).Collect(meta);
+          }
+          if (const auto extent = DocExtent(meta); extent != 0) {
+            AppendRange(docs, meta.doc_start, meta.doc_start + extent);
+          }
+          add(i, meta);
+          ++next;
+        });
+      for (; next != run.size(); ++next) {
+        add(next, kNoPosting);
+      }
+      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
+        HintRanges(*doc, docs);
       }
     },
     [&](const Filter& filter, Occur occur) {

@@ -203,8 +203,7 @@ class TermReaderImpl final : public TermReader {
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;
 
   PostingMeta Lookup(bytes_view term) const final;
-  void LookupBatch(std::span<const bytes_view> terms,
-                   std::span<PostingMeta> out) const final;
+  void LookupBatch(size_t count, TermAt term, FoundTerm found) const final;
   void ReadDocs(bytes_view term, Acceptor acceptor) const final;
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;

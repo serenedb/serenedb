@@ -53,6 +53,8 @@ struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
   using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
+  using TermAt = absl::FunctionRef<bytes_view(size_t)>;
+  using FoundTerm = absl::FunctionRef<void(size_t, const PostingMeta&)>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
@@ -76,8 +78,7 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
-  virtual void LookupBatch(std::span<const bytes_view> terms,
-                           std::span<PostingMeta> out) const;
+  virtual void LookupBatch(size_t count, TermAt term, FoundTerm found) const;
 
   virtual void VisitRange(bytes_view from, bytes_view to,
                           RangeVisitor visit) const;

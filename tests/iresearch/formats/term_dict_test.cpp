@@ -290,6 +290,15 @@ Docs MakeDocs(size_t count, uint32_t seed) {
   return docs;
 }
 
+std::vector<irs::PostingMeta> BatchLookup(
+  const irs::TermReader& reader, std::span<const irs::bytes_view> terms) {
+  std::vector<irs::PostingMeta> metas(terms.size());
+  reader.LookupBatch(
+    terms.size(), [&](size_t i) { return terms[i]; },
+    [&](size_t i, const irs::PostingMeta& meta) { metas[i] = meta; });
+  return metas;
+}
+
 std::vector<Entry> MakeEntries(std::vector<irs::bstring> keys) {
   absl::c_sort(keys);
   keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
@@ -591,17 +600,16 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       return irs::bytes_view{entry.key} < key;
     };
     std::vector<irs::bytes_view> terms{probes.begin(), probes.end()};
-    std::vector<irs::PostingMeta> metas(terms.size());
-    for (const bool sorted : {false, true}) {
-      if (sorted) {
-        absl::c_sort(terms);
-      }
-      reader.LookupBatch(terms, metas);
-      for (size_t i = 0; i != terms.size(); ++i) {
-        SCOPED_TRACE(testing::Message("batch probe ")
-                     << i << " sorted " << sorted);
-        AssertSameMeta(reader.Lookup(terms[i]), metas[i]);
-      }
+    absl::c_sort(terms);
+    const auto metas = BatchLookup(reader, terms);
+    std::vector<irs::PostingMeta> fallback(terms.size());
+    reader.irs::TermReader::LookupBatch(
+      terms.size(), [&](size_t i) { return terms[i]; },
+      [&](size_t i, const irs::PostingMeta& meta) { fallback[i] = meta; });
+    for (size_t i = 0; i != terms.size(); ++i) {
+      SCOPED_TRACE(testing::Message("batch probe ") << i);
+      AssertSameMeta(reader.Lookup(terms[i]), metas[i]);
+      AssertSameMeta(fallback[i], metas[i]);
     }
     auto shared = reader.iterator();
     for (const auto& probe : probes) {
@@ -1594,7 +1602,9 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   refused([](Terms& t) { std::swap(t.fields[0].id, t.fields[1].id); },
           ERRCODE_INDEX_CORRUPTED);
   refused(
-    [](Terms& t) { t.fields[1].features = static_cast<irs::IndexFeatures>(0x80); },
+    [](Terms& t) {
+      t.fields[1].features = static_cast<irs::IndexFeatures>(0x80);
+    },
     ERRCODE_FEATURE_NOT_SUPPORTED);
   refused([](Terms& t) { t.fields[1].term_count = 0; },
           ERRCODE_INDEX_CORRUPTED);
@@ -1603,10 +1613,10 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   refused([](Terms& t) { t.fields[0].prefixes = "p"; },
           ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.fields[0].norm = 7; }, ERRCODE_INDEX_CORRUPTED);
-  refused([](Terms& t) { t.ordinal_bytes = 0; },
-          ERRCODE_FEATURE_NOT_SUPPORTED);
-  refused([](Terms& t) { t.ordinal_bytes = irs::term_dict::kMaxOrdinalBytes + 1; },
-          ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused([](Terms& t) { t.ordinal_bytes = 0; }, ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused(
+    [](Terms& t) { t.ordinal_bytes = irs::term_dict::kMaxOrdinalBytes + 1; },
+    ERRCODE_FEATURE_NOT_SUPPORTED);
   refused(
     [](Terms& t) {
       const auto keyed = t.fields[1];
@@ -1626,9 +1636,8 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
       object.WriteProperty<uint32_t>(0, "restart_interval",
                                      irs::term_dict::kRestartInterval);
       object.WriteList(9, "fields", 1,
-                       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
-                         list.WriteObject(write_field);
-                       });
+                       [&](duckdb::BinarySerializer::List& list,
+                           duckdb::idx_t) { list.WriteObject(write_field); });
     });
     ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
   };
@@ -2356,7 +2365,7 @@ TEST_P(TermDictTest, batch_lookup_hints_before_reading) {
   offsets.clear();
   hinted.clear();
 
-  reader->LookupBatch(terms, metas);
+  metas = BatchLookup(*reader, terms);
   ASSERT_GT(absl::c_count_if(metas,
                              [](const irs::PostingMeta& meta) {
                                return meta.inline_size != 0;
@@ -2452,8 +2461,7 @@ TEST_P(TermDictTest, cold_lookups_prefetch_inline_postings_with_the_block) {
     ASSERT_GT(batch.size(), 8);
 
     cold();
-    std::vector<irs::PostingMeta> metas(batch.size());
-    reader->LookupBatch(batch, metas);
+    const auto metas = BatchLookup(*reader, batch);
     for (size_t i = 0; i != batch.size(); ++i) {
       with_the_block(batch[i], metas[i]);
       ASSERT_TRUE(hinted(impl.BlockOffset(BlockOf(impl, batch[i]))));
@@ -2490,14 +2498,14 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
     ASSERT_EQ(entries.size(), walked);
   };
   walk();
-  reader->LookupBatch(terms, metas);
+  metas = BatchLookup(*reader, terms);
   irs::file_utils::SyncResidency();
   prefetched.clear();
 
   counting.MarkWarm();
   const auto epoch = irs::file_utils::ResidencyEpoch();
   walk();
-  reader->LookupBatch(terms, metas);
+  metas = BatchLookup(*reader, terms);
   ASSERT_TRUE(prefetched.empty());
   ASSERT_EQ(epoch, irs::file_utils::ResidencyEpoch());
 
@@ -2515,12 +2523,11 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   for (size_t i = 0; i < entries.size(); i += entries.size() / 50) {
     sparse.emplace_back(entries[i].key);
   }
-  metas.resize(sparse.size());
   irs::file_utils::InvalidateResidency();
   prefetched.clear();
   offsets.clear();
   hinted.clear();
-  reader->LookupBatch(sparse, metas);
+  metas = BatchLookup(*reader, sparse);
   ASSERT_FALSE(offsets.empty());
   for (size_t i = 0; i != offsets.size(); ++i) {
     const auto offset = offsets[i];
@@ -2876,8 +2883,7 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
       saved.emplace_back(reader->Lookup(entry.key), docs_of(entry));
       terms.emplace_back(entry.key);
     }
-    std::vector<irs::PostingMeta> metas(terms.size());
-    reader->LookupBatch(terms, metas);
+    const auto metas = BatchLookup(*reader, terms);
     for (size_t i = 0; i != terms.size(); ++i) {
       saved.emplace_back(metas[i], docs_of(entries[i]));
     }
@@ -3118,6 +3124,31 @@ TEST_P(TermDictTest, mapped_lookups_do_not_allocate) {
       ASSERT_EQ(before, ThreadAllocatedBytes());
     }
   }
+}
+
+TEST_P(TermDictTest, mapped_batch_lookups_do_not_allocate) {
+  if constexpr (!kHaveCounter) {
+    GTEST_SKIP() << "needs a jemalloc build to count allocations";
+  }
+  const Field fields[]{{.id = 1, .entries = MakeEntries(Words(20000, 9))}};
+  Write(fields);
+  if (!_reader->Base()) {
+    GTEST_SKIP() << "only a mapped input reads blocks in place";
+  }
+  const auto& entries = fields[0].entries;
+  std::vector<irs::bytes_view> terms;
+  for (size_t i = 0; i < entries.size(); i += entries.size() / 60) {
+    terms.emplace_back(entries[i].key);
+  }
+  const auto* reader = Get(fields[0]);
+  ASSERT_NE(nullptr, reader);
+  size_t found = 0;
+  const uint64_t before = ThreadAllocatedBytes();
+  reader->LookupBatch(
+    terms.size(), [&](size_t i) { return terms[i]; },
+    [&](size_t, const irs::PostingMeta&) { ++found; });
+  ASSERT_EQ(before, ThreadAllocatedBytes());
+  ASSERT_EQ(terms.size(), found);
 }
 
 TEST_P(TermDictTest, range_levels_oracle) { RangeLevelsOracle(false); }

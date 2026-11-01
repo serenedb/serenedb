@@ -123,24 +123,34 @@ void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   }
 }
 
-template<typename Input>
-void PrefetchRanges(const Input& in,
-                    std::span<std::pair<uint64_t, uint64_t>> ranges) {
-  absl::c_sort(ranges);
-  size_t n = 0;
-  for (const auto& range : ranges) {
-    if (n != 0 && range.first <= ranges[n - 1].second + file_utils::kPage) {
-      ranges[n - 1].second = std::max(ranges[n - 1].second, range.second);
-    } else {
-      ranges[n++] = range;
+using FileRange = std::pair<uint64_t, uint64_t>;
+
+template<typename Ranges>
+void AppendRange(Ranges& ranges, uint64_t from, uint64_t to) {
+  SDB_ASSERT(from <= to);
+  if (!ranges.empty()) {
+    auto& last = ranges.back();
+    SDB_ASSERT(last.first <= from);
+    if (from <= last.second + file_utils::kPage) {
+      last.second = std::max(last.second, to);
+      return;
     }
   }
-  uint64_t budget = kMaxPrefetch;
-  for (size_t i = 0; i != n && budget != 0; ++i) {
-    const auto size = std::min(ranges[i].second - ranges[i].first, budget);
-    file_utils::Hint(in, ranges[i].first, size);
+  ranges.emplace_back(from, to);
+}
+
+template<typename Input>
+uint64_t HintRanges(const Input& in, std::span<const FileRange> ranges,
+                    uint64_t budget = kMaxPrefetch) {
+  for (const auto& [from, to] : ranges) {
+    if (budget == 0) {
+      break;
+    }
+    const auto size = std::min(to - from, budget);
+    file_utils::Hint(in, from, size);
     budget -= size;
   }
+  return budget;
 }
 
 class GrowingHint {

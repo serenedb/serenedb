@@ -45,6 +45,7 @@ namespace irs::term_dict {
 namespace {
 
 constexpr size_t kBatchTerms = 64;
+constexpr size_t kBatchKeyBytes = 4096;
 
 std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id) {
   std::vector<uint32_t> prefixes;
@@ -532,11 +533,11 @@ void TermReaderImpl::PrefetchLookup(uint32_t block) const {
   if (span.from == span.to) {
     return;
   }
-  std::array ranges{
-    std::pair{BlockOffset(block), BlockOffset(block + 1)},
-    std::pair{span.from, span.to},
+  const std::array ranges{
+    FileRange{BlockOffset(block), BlockOffset(block + 1)},
+    FileRange{span.from, span.to},
   };
-  PrefetchRanges(_owner->Input(), ranges);
+  HintRanges(_owner->Input(), ranges);
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
@@ -591,66 +592,85 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   return DecodeRecord(*this, view, block, entry);
 }
 
-void TermReaderImpl::LookupBatch(std::span<const bytes_view> terms,
-                                 std::span<PostingMeta> out) const {
-  SDB_ASSERT(terms.size() == out.size());
+void TermReaderImpl::LookupBatch(size_t count, TermAt term,
+                                 FoundTerm found) const {
   if (Single()) {
-    for (size_t i = 0; i != terms.size(); ++i) {
-      out[i] = Excludes(terms[i]) ? PostingMeta{} : _single;
+    for (size_t i = 0; i != count; ++i) {
+      if (!Excludes(term(i))) {
+        found(i, _single);
+      }
     }
     return;
   }
-  containers::SmallVector<uint32_t, kBatchTerms> blocks(terms.size(), kNoBlock);
-  containers::SmallVector<std::pair<uint64_t, uint64_t>, 2 * kBatchTerms>
-    ranges;
-  PaddedKey padded;
-  uint32_t last = kNoBlock;
-  bytes_view last_term;
+  struct Probed {
+    uint32_t index;
+    uint32_t block;
+    uint32_t key;
+    uint32_t size;
+  };
+  containers::SmallVector<Probed, kBatchTerms> probes;
+  containers::SmallVector<byte_type, kBatchKeyBytes> keys;
+  containers::SmallVector<FileRange, kBatchTerms> blocks;
+  containers::SmallVector<FileRange, kBatchTerms> inlines;
+  const auto prefix = KeyPrefix();
   const bool mapped = _owner->Base() != nullptr;
-  for (size_t i = 0; i != terms.size(); ++i) {
-    const auto term = terms[i];
-    if (Excludes(term)) {
+  uint32_t last = kNoBlock;
+  size_t visited = 0;
+  bytes_view last_term;
+  for (size_t i = 0; i != count; ++i) {
+    const auto value = term(i);
+    SDB_ASSERT(probes.empty() || last_term <= value);
+    if (Excludes(value)) {
       continue;
     }
-    if (Small()) {
-      blocks[i] = 0;
-      continue;
+    const auto at = keys.size();
+    const auto size = prefix.size() + value.size();
+    keys.resize(at + size + kKeyPad);
+    std::memcpy(keys.data() + at, prefix.data(), prefix.size());
+    if (!value.empty()) {
+      std::memcpy(keys.data() + at + prefix.size(), value.data(), value.size());
     }
-    padded.Assign(KeyPrefix(), term);
-    const auto block = last == kNoBlock || term < last_term
-                         ? BlockOf(padded.Key())
-                         : BlockFrom(last, padded.Key());
-    if (block != last) {
-      ranges.emplace_back(BlockOffset(block), BlockOffset(block + 1));
-      const auto span = mapped ? InlineSpan(block) : InlinePages::Span{};
-      if (span.from != span.to) {
-        ranges.emplace_back(span.from, span.to);
+    uint32_t block = 0;
+    if (!Small()) {
+      const bytes_view key{keys.data() + at, size};
+      block = last == kNoBlock ? BlockOf(key) : BlockFrom(last, key);
+      if (block != last) {
+        ++visited;
+        AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));
+        if (mapped) {
+          if (const auto span = InlineSpan(block); span.from != span.to) {
+            AppendRange(inlines, span.from, span.to);
+          }
+        }
       }
     }
-    blocks[i] = last = block;
-    last_term = term;
+    probes.push_back({
+      .index = static_cast<uint32_t>(i),
+      .block = block,
+      .key = static_cast<uint32_t>(at),
+      .size = static_cast<uint32_t>(size),
+    });
+    last = block;
+    last_term = value;
   }
-  if (ranges.size() > 1) {
-    PrefetchRanges(_owner->Input(), ranges);
+  if (visited > 1 || !inlines.empty()) {
+    const auto budget = HintRanges(_owner->Input(), blocks);
+    HintRanges(_owner->Input(), inlines, budget);
   }
 
   BlockBuffer buffer;
   BlockView view{};
   uint32_t parsed = kNoBlock;
-  for (size_t i = 0; i != terms.size(); ++i) {
-    out[i] = {};
-    if (blocks[i] == kNoBlock) {
-      continue;
-    }
-    if (blocks[i] != parsed) {
-      parsed = blocks[i];
+  for (const auto& probe : probes) {
+    if (probe.block != parsed) {
+      parsed = probe.block;
       view = Parse(Block(parsed, buffer), Fsst());
     }
-    const auto entry = Find(view, padded.Assign(KeyPrefix(), terms[i]), Fsst());
-    if (entry == kNoEntry) {
-      continue;
+    const auto entry =
+      Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst());
+    if (entry != kNoEntry) {
+      found(probe.index, DecodeRecord(*this, view, parsed, entry));
     }
-    out[i] = DecodeRecord(*this, view, parsed, entry);
   }
 }
 

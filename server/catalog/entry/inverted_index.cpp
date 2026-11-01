@@ -77,6 +77,7 @@ constexpr std::string_view kPayloadOption = "sdb_payload";
 constexpr std::string_view kKeyColumnsOption = "key_columns";
 constexpr std::string_view kStorePkOption = "store_pk";
 
+#ifdef SDB_FAULT_INJECTION
 struct ReleasedFieldRecord {
   irs::field_id numeric_field_id = irs::field_limits::invalid();
   irs::field_id bool_field_id = irs::field_limits::invalid();
@@ -122,12 +123,15 @@ std::string PackReleased(const persistence::InvertedIndexData& data) {
   }
   return persistence::Pack(released);
 }
+#endif
 
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {
   auto bytes = persistence::Pack(data);
+#ifdef SDB_FAULT_INJECTION
   SDB_IF_FAILURE("inverted_index_catalog_with_typed_field_ids") {
     bytes = PackReleased(data);
   }
+#endif
   return duckdb::Value::BLOB(
     reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data()), bytes.size());
 }

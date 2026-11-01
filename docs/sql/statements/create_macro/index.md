@@ -186,7 +186,7 @@ In a macro whose body contains a subquery, an aggregate over a parameter aggrega
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_042" />
 
-An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`.
+An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`. A volatile argument of a macro or function whose body is a query or contains a subquery is evaluated together with that subquery rather than once for each row: a subquery that reads no column of the calling query runs once, so every row sees the same value.
 
 ## Limitations
 

@@ -1432,6 +1432,163 @@ SELECT 1 AS k, mn_sq_item(k) AS c, mn_sq_item(k + 1) AS d
 k	c	d
 1	1	2
 
+query
+SELECT i + 1 AS a, count(*) FILTER (WHERE a > 1) AS c FROM range(3) t(i) GROUP BY ALL ORDER BY a
+----
+a	c
+1	0
+2	1
+3	1
+
+query
+SELECT * RENAME (i AS j), j + 1 AS k FROM range(2) t(i) ORDER BY j
+----
+j	k
+0	1
+1	2
+
+statement ok
+CREATE MACRO mn_body_col(x) AS (SELECT x FROM range(3) t(r) ORDER BY r LIMIT 1)
+
+query
+SELECT mn_body_col((SELECT 10) + r) AS a, mn_body_col((SELECT 10) + sum(r) OVER ()) AS b, mn_body_col(r + 10) AS c
+----
+a	b	c
+10	13	10
+
+statement ok
+CREATE MACRO mn_where_alias(x) AS (SELECT x AS y FROM range(3) t(r) WHERE y = r)
+
+query
+SELECT i, mn_where_alias(i) AS v FROM range(4) t(i) ORDER BY i
+----
+i	v
+0	0
+1	1
+2	2
+3	NULL
+
+statement ok
+CREATE MACRO mn_sq_once(x) AS (SELECT x FROM range(1))
+
+query
+SELECT mn_sq_once(unnest([7])) AS a, mn_sq_once(repeat('x', 5000)) = repeat('x', 5000) AS b, mn_sq_once(random()) BETWEEN 0 AND 1 AS c
+----
+a	b	c
+7	t	t
+
+query
+SELECT (SELECT 4) + 1 AS a FROM range(2) t(i) WHERE mn_sq_once(a) = 5
+----
+a
+5
+5
+
+statement ok
+PREPARE mn_sq_param AS SELECT mn_sq_once($1::INT + 1) AS a
+
+query
+EXECUTE mn_sq_param(4)
+----
+a
+5
+
+statement ok
+DEALLOCATE mn_sq_param
+
+statement error
+SELECT 1 AS a WHERE mn_sq_once((SELECT 1) + count(*) OVER ()) > 0
+----
+db error: ERROR: WHERE clause cannot contain window functions!
+
+
+statement error
+SELECT sum(mn_sq_once((SELECT 1) + row_number() OVER ())) AS s FROM range(3)
+----
+db error: ERROR: aggregate function calls cannot contain window function calls
+
+
+query
+SELECT i, mn_sqtri((SELECT 1) + i) AS s FROM range(3) t(i) GROUP BY i ORDER BY i
+----
+i	s
+0	1
+1	2
+2	3
+
+query
+SELECT i % 2 AS g, mn_sqtri((SELECT 1) + g) AS s FROM range(4) t(i) GROUP BY g ORDER BY g
+----
+g	s
+0	1
+1	2
+
+statement ok
+CREATE MACRO mn_in_range(x) AS x IN (SELECT r FROM range(3) t(r))
+
+statement ok
+CREATE MACRO mn_exists_range(x) AS EXISTS (SELECT 1 FROM range(3) t(r) WHERE r = x)
+
+query
+SELECT mn_in_range((SELECT 1)) AS a, mn_in_range((SELECT 5)) AS b, mn_exists_range((SELECT 1)) AS c, mn_exists_range((SELECT 5)) AS d
+----
+a	b	c	d
+t	f	t	f
+
+statement ok
+CREATE MACRO mn_item_plus(x) AS (SELECT x + 1)
+
+query
+SELECT mn_item_plus(unnest([7])) AS r
+----
+r
+8
+
+statement ok
+CREATE MACRO mn_typed_window(x BIGINT) AS x + x + count(*) OVER ()
+
+query
+SELECT i, mn_typed_window(i + 1) AS r FROM range(3) t(i) ORDER BY i
+----
+i	r
+0	5
+1	7
+2	9
+
+statement ok
+CREATE MACRO mn_typed_double(x BIGINT) AS x * 2
+
+query
+SELECT mn_typed_double((SELECT 5)) AS a, mn_typed_double(unnest([1, 2])) AS b ORDER BY b
+----
+a	b
+10	2
+10	4
+
+statement ok
+CREATE MACRO mn_shared_blocked(x, y) AS x + x + y
+
+query
+SELECT i, mn_shared_blocked(i + 1, unnest([5])) AS r FROM range(2) t(i) ORDER BY i
+----
+i	r
+0	7
+1	9
+
+statement ok
+CREATE SEQUENCE mn_seq_next
+
+statement ok
+CREATE MACRO mn_next() AS nextval('mn_seq_next')
+
+query
+SELECT mn_seq_twice(mn_next()) AS r FROM range(3) ORDER BY r
+----
+r
+2
+4
+6
+
 statement ok
 CREATE TABLE mn_body_t (c INT)
 
@@ -1558,6 +1715,56 @@ i	v
 2	2
 
 statement ok
+CREATE MACRO mn_tm_len(x) AS TABLE SELECT length(x) + length(x) AS n
+
+query
+SELECT n FROM mn_tm_len(repeat('y', 5000))
+----
+n
+10000
+
+query
+SELECT n FROM mn_tm_len('{"a": 1}'::JSON)
+----
+n
+16
+
+statement ok
+PREPARE mn_tm_param AS SELECT n FROM mn_tm_len($1::VARCHAR)
+
+query
+EXECUTE mn_tm_param('abc')
+----
+n
+6
+
+statement ok
+DEALLOCATE mn_tm_param
+
+statement ok
+CREATE TABLE mn_gen_mix (c0 BIGINT, c1 BIGINT GENERATED ALWAYS AS (c0 + 1), c2 BIGINT GENERATED ALWAYS AS (c1 + 1), c3 BIGINT GENERATED ALWAYS AS (c2 * c2 + c0))
+
+statement ok
+INSERT INTO mn_gen_mix (c0) VALUES (1), (2)
+
+query
+SELECT c0, c3 FROM mn_gen_mix ORDER BY c0
+----
+c0	c3
+1	10
+2	18
+
+statement ok
+ALTER TABLE mn_gen_mix RENAME c0 TO c00
+
+query
+SELECT c00, c3 FROM mn_gen_mix ORDER BY c00
+----
+c00	c3
+1	10
+2	18
+
+statement ok
 CREATE TABLE mn_gen_chain (c0 BIGINT, c1 BIGINT GENERATED ALWAYS AS (c0 + c0 - c0), c2 BIGINT GENERATED ALWAYS AS (c1 + c1 - c1), c3 BIGINT GENERATED ALWAYS AS (c2 + c2 - c2), c4 BIGINT GENERATED ALWAYS AS (c3 + c3 - c3), c5 BIGINT GENERATED ALWAYS AS (c4 + c4 - c4), c6 BIGINT GENERATED ALWAYS AS (c5 + c5 - c5), c7 BIGINT GENERATED ALWAYS AS (c6 + c6 - c6), c8 BIGINT GENERATED ALWAYS AS (c7 + c7 - c7), c9 BIGINT GENERATED ALWAYS AS (c8 + c8 - c8), c10 BIGINT GENERATED ALWAYS AS (c9 + c9 - c9), c11 BIGINT GENERATED ALWAYS AS (c10 + c10 - c10), c12 BIGINT GENERATED ALWAYS AS (c11 + c11 - c11), c13 BIGINT GENERATED ALWAYS AS (c12 + c12 - c12), c14 BIGINT GENERATED ALWAYS AS (c13 + c13 - c13), c15 BIGINT GENERATED ALWAYS AS (c14 + c14 - c14), c16 BIGINT GENERATED ALWAYS AS (c15 + c15 - c15))
 
 statement ok
@@ -1599,6 +1806,12 @@ DROP TABLE mn_gen_stored
 
 statement ok
 DROP TABLE mn_gen_chain
+
+statement ok
+DROP TABLE mn_gen_mix
+
+statement ok
+DROP MACRO mn_tm_len
 
 statement ok
 DROP MACRO mn_tm16
@@ -1668,6 +1881,39 @@ DROP TABLE mn_body_t
 
 statement ok
 DROP MACRO mn_sq_item
+
+statement ok
+DROP MACRO mn_body_col
+
+statement ok
+DROP MACRO mn_where_alias
+
+statement ok
+DROP MACRO mn_sq_once
+
+statement ok
+DROP MACRO mn_in_range
+
+statement ok
+DROP MACRO mn_exists_range
+
+statement ok
+DROP MACRO mn_item_plus
+
+statement ok
+DROP MACRO mn_typed_window
+
+statement ok
+DROP MACRO mn_typed_double
+
+statement ok
+DROP MACRO mn_shared_blocked
+
+statement ok
+DROP MACRO mn_next
+
+statement ok
+DROP SEQUENCE mn_seq_next
 
 statement ok
 DROP MACRO mn_sqtri

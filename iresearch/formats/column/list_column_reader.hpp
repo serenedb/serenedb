@@ -394,19 +394,62 @@ class ListColumnReader final : public ColumnReader {
       }
     }
     const auto& validity = duckdb::FlatVector::Validity(result);
-    const duckdb::idx_t offset = kDictionary ? 0 : result_offset;
-    duckdb::SelectionVector sel{scan_count};
-    const auto fill = [&](auto index) {
-      for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-        sel.set_index(i, validity.RowIsValid(offset + i)
-                           ? static_cast<duckdb::idx_t>(index(codes[i]))
-                           : 0);
+    const auto emit = [&](auto index) {
+      if constexpr (kDictionary) {
+        duckdb::SelectionVector sel{scan_count};
+        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+          sel.set_index(i, validity.RowIsValid(i)
+                             ? static_cast<duckdb::idx_t>(index(codes[i]))
+                             : 0);
+        }
+        result.Dictionary(d.lists, sel, scan_count);
+      } else {
+        const auto* lists =
+          duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
+        auto* entries =
+          duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
+          result_offset;
+        uint64_t total = 0;
+        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+          if (validity.RowIsValid(result_offset + i)) {
+            total += lists[index(codes[i])].length;
+          }
+        }
+        duckdb::ListVector::Reserve(
+          result, static_cast<duckdb::idx_t>(child_base + total));
+        auto& picked = s.list_picked;
+        if (picked.size() < total) {
+          picked.resize(total);
+        }
+        uint64_t pos = 0;
+        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+          if (!validity.RowIsValid(result_offset + i)) {
+            entries[i] = duckdb::list_entry_t{child_base + pos, 0};
+            continue;
+          }
+          const auto& list = lists[index(codes[i])];
+          entries[i] = duckdb::list_entry_t{child_base + pos, list.length};
+          for (uint64_t k = 0; k < list.length; ++k) {
+            picked[pos++] = static_cast<duckdb::sel_t>(list.offset + k);
+          }
+        }
+        if (total != 0) {
+          duckdb::ImmutableStrings::Copy(
+            duckdb::ListVector::GetChild(d.lists->data),
+            duckdb::ListVector::GetChildMutable(result),
+            duckdb::SelectionVector{picked.data(),
+                                    static_cast<duckdb::idx_t>(total)},
+            static_cast<duckdb::idx_t>(total), 0,
+            static_cast<duckdb::idx_t>(child_base));
+        }
+        duckdb::ListVector::SetListSize(
+          result, static_cast<duckdb::idx_t>(child_base + total));
       }
     };
     if (d.decoded.empty()) {
-      fill([begin = d.begin](uint64_t code) { return code - begin + 1; });
+      emit([begin = d.begin](uint64_t code) { return code - begin + 1; });
     } else {
-      fill([begin = d.begin, words = d.decoded.data(),
+      emit([begin = d.begin, words = d.decoded.data(),
             ranks = d.ranks.data()](uint64_t code) {
         const uint64_t off = code - begin;
         const auto below = words[off / 64] & ((uint64_t{1} << (off % 64)) - 1);
@@ -414,40 +457,6 @@ class ListColumnReader final : public ColumnReader {
                static_cast<uint64_t>(std::popcount(below));
       });
     }
-    if constexpr (kDictionary) {
-      result.Dictionary(d.lists, sel, scan_count);
-      return scan_count;
-    }
-    const auto* lists =
-      duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
-    auto* entries =
-      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
-      result_offset;
-    uint64_t total = 0;
-    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-      total += lists[sel.get_index(i)].length;
-    }
-    duckdb::ListVector::Reserve(result,
-                                static_cast<duckdb::idx_t>(child_base + total));
-    duckdb::SelectionVector picked{static_cast<duckdb::idx_t>(total)};
-    uint64_t pos = 0;
-    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-      const auto& list = lists[sel.get_index(i)];
-      entries[i] = duckdb::list_entry_t{child_base + pos, list.length};
-      for (uint64_t k = 0; k < list.length; ++k) {
-        picked.set_index(static_cast<duckdb::idx_t>(pos++),
-                         static_cast<duckdb::idx_t>(list.offset + k));
-      }
-    }
-    if (total != 0) {
-      duckdb::ImmutableStrings::Copy(
-        duckdb::ListVector::GetChild(d.lists->data),
-        duckdb::ListVector::GetChildMutable(result), picked,
-        static_cast<duckdb::idx_t>(total), 0,
-        static_cast<duckdb::idx_t>(child_base));
-    }
-    duckdb::ListVector::SetListSize(
-      result, static_cast<duckdb::idx_t>(child_base + total));
     return scan_count;
   }
 

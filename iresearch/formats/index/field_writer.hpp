@@ -88,7 +88,7 @@ class FieldWriter final {
   bytes_view EncodeSuffix(bytes_view suffix);
   void Add(bytes_view term, const PostingMeta& meta);
   void Commit(bytes_view term, const PostingMeta& meta);
-  bool Append(bytes_view key, const PostingMeta& meta);
+  bool Append(bytes_view term, const PostingMeta& meta);
   bool AppendFixedKey(bytes_view key, uint64_t records);
   bool AppendVarKey(bytes_view key, uint64_t records);
   void AppendVarColumns(uint32_t index, bytes_view key);
@@ -118,7 +118,7 @@ class FieldWriter final {
   bstring _range_regions;
   std::vector<FieldHead> _heads;
   std::vector<uint32_t> _prefixes;
-  bstring _key;
+  bstring _key_prefix;
   bstring _min;
   PostingMeta _single;
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
@@ -132,7 +132,6 @@ class FieldWriter final {
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
   uint32_t _ordinal_bytes = 1;
-  uint32_t _prefix_size = 0;
   field_id _last_id = field_limits::invalid();
   FieldSlot _slot = FieldSlot::String;
   uint32_t _first_block = 0;

@@ -427,14 +427,13 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
       std::memcpy(_single_inline.data(), meta.inline_data, meta.inline_size);
       _single.inline_data = _single_inline.data();
     }
-    _key.clear();
+    _key_prefix.clear();
     if (IsKeyed(_slot)) {
       SDB_ENSURE(_ordinal < OrdinalLimit(_ordinal_bytes),
                  "term dictionary: more keyed dictionaries than ",
                  OrdinalLimit(_ordinal_bytes));
-      AppendOrdinal(_key, _ordinal++, _ordinal_bytes);
+      AppendOrdinal(_key_prefix, _ordinal++, _ordinal_bytes);
     }
-    _prefix_size = static_cast<uint32_t>(_key.size());
     return;
   }
   SDB_ASSERT(IsKeyed(_slot));
@@ -445,12 +444,9 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
 }
 
 void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
-  _key.resize(_prefix_size);
-  _key.append(term);
-  const bytes_view key{_key};
-  if (!Append(key, meta)) {
+  if (!Append(term, meta)) {
     Cut();
-    Append(key, meta);
+    Append(term, meta);
   }
   _inline.append(meta.Inline());
   if (_first_block == kNoBlock) {
@@ -461,7 +457,7 @@ void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
   }
 }
 
-bool FieldWriter::Append(bytes_view key, const PostingMeta& meta) {
+bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
   auto& block = _block;
   const bool record_start = block.ends.size() % kRecordInterval == 0;
   if (record_start) {
@@ -471,18 +467,22 @@ bool FieldWriter::Append(bytes_view key, const PostingMeta& meta) {
   _pw.EncodeDetached(_record, meta, _inline.size());
   const auto record = _record.View();
   const uint64_t records = block.records.size() + record.size();
+  const auto at = block.keys.size();
+  block.keys.append(_key_prefix);
+  block.keys.append(term);
+  const auto key = bytes_view{block.keys}.substr(at);
   const bool fixed =
     _width != 0 &&
     (block.ends.empty() ||
      (block.kind == BlockKind::FixedStride && block.width == key.size()));
   if (!(fixed ? AppendFixedKey(key, records) : AppendVarKey(key, records))) {
+    block.keys.resize(at);
     return false;
   }
   if (record_start) {
     block.record_starts.push_back(static_cast<uint16_t>(block.records.size()));
   }
   block.records.append(record);
-  block.keys.append(key);
   block.ends.push_back(static_cast<uint32_t>(block.keys.size()));
   return true;
 }
@@ -638,7 +638,9 @@ void FieldWriter::EndField(field_id id, FieldSlot slot,
     head.record_inline = ViewCast<char>(_single.Inline());
     return;
   }
-  head.max = ViewCast<char>(bytes_view{_key}.substr(_prefix_size));
+  const auto max =
+    KeyAt(_block, _block.ends.size() - 1).substr(_key_prefix.size());
+  head.max = ViewCast<char>(max);
   head.first_block = _first_block;
   head.first_entry = _first_entry;
   head.first_record = _first_record;
@@ -656,8 +658,7 @@ void FieldWriter::EndField(field_id id, FieldSlot slot,
     }
   }
   if (slot == FieldSlot::Numeric && _width != 0) {
-    const auto prefix = CommonPrefixLength(
-      bytes_view{_min}, bytes_view{_key}.substr(_prefix_size));
+    const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
     const auto offset = _range_regions.size();
     _ranges.Write(_range_regions, prefix, head.range_counts);
     if (!head.range_counts.empty()) {

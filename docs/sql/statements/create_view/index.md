@@ -37,3 +37,5 @@ The SQL query behind an existing view can be read from the PostgreSQL-compatible
 `CREATE OR REPLACE VIEW` is similar, but if a view of the same name already exists, it is replaced.
 
 If a schema name is given then the view is created in the specified schema. Otherwise, it is created in the current schema. Temporary views exist in a special schema, so a schema name cannot be given when creating a temporary view. The name of the view must be distinct from the name of any other view or table in the same schema.
+
+A view's query keeps the tables, views and functions its names referred to when the view was created: the `search_path` and temporary objects of a session that queries the view do not change what it reads or calls. Only a temporary view resolves names among the temporary objects of its session.

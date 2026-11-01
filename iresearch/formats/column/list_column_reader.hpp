@@ -379,9 +379,7 @@ class ListColumnReader final : public ColumnReader {
         child_base, kAnyElems);
       return scan_count;
     }
-    const auto [lo_at, hi_at] = absl::c_minmax_element(codes);
-    const uint64_t lo = *lo_at;
-    const uint64_t hi = *hi_at;
+    const auto [lo, hi] = std::ranges::minmax(codes);
     SDB_ENSURE(hi < _children[1]->RowCount(),
                "list column: corrupted list codes");
     if (!s.list_dict) {

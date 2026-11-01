@@ -22,7 +22,6 @@
 
 #include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/composite_reader_impl.hpp>
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,7 +53,6 @@ struct Spec {
   uint64_t bytes = 0;
   uint32_t docs = 100;
   uint32_t live_docs = 100;
-  irs::SegmentRange range;
 };
 
 class Index final : public irs::CompositeReaderImpl<std::vector<SegmentStub>> {
@@ -88,14 +86,7 @@ class AdjacentRunPolicyTest : public ::testing::Test {
  protected:
   std::vector<std::string> Pick(const std::vector<Spec>& specs,
                                 const irs::CompactingSegments& taken = {}) {
-    std::map<std::string, irs::SegmentRange> ranges;
-    for (const auto& spec : specs) {
-      ranges.emplace(spec.name, spec.range);
-    }
-    const auto policy =
-      irs::MakeAdjacentRunPolicy(options, [&](const irs::SubReader& segment) {
-        return ranges.at(segment.Meta().name);
-      });
+    const auto policy = irs::MakeAdjacentRunPolicy(options);
     const Index index{specs};
     irs::Compaction candidates;
     policy(candidates, index, taken);
@@ -112,11 +103,7 @@ class AdjacentRunPolicyTest : public ::testing::Test {
 std::vector<Spec> Equal(size_t count, uint64_t bytes) {
   std::vector<Spec> specs;
   for (size_t i = 0; i != count; ++i) {
-    specs.emplace_back(Spec{
-      .name = "s" + std::to_string(i),
-      .bytes = bytes,
-      .range = irs::SegmentRange{.first = static_cast<int64_t>(i * 100),
-                                 .last = static_cast<int64_t>(i * 100 + 99)}});
+    specs.emplace_back(Spec{.name = "s" + std::to_string(i), .bytes = bytes});
   }
   return specs;
 }
@@ -155,17 +142,10 @@ TEST_F(AdjacentRunPolicyTest, KeepsABigSegmentOutOfSmallMerges) {
   EXPECT_EQ((Names{"s1", "s2", "s3", "s4", "s5", "s6"}), Pick(specs));
 }
 
-TEST_F(AdjacentRunPolicyTest, MergesNeighboursInRowIdOrder) {
+TEST_F(AdjacentRunPolicyTest, MergesNeighboursInReaderOrder) {
   auto specs = Equal(7, 10 * kMiB);
-  specs[0].bytes = 1000 * kMiB;
-  std::swap(specs[0].range, specs[3].range);
+  specs[3].bytes = 1000 * kMiB;
   EXPECT_EQ(Names{}, Pick(specs));
-}
-
-TEST_F(AdjacentRunPolicyTest, SegmentsWithoutARangeComeLast) {
-  auto specs = Equal(6, 10 * kMiB);
-  specs[0].range = {};
-  EXPECT_EQ((Names{"s1", "s2", "s3", "s4", "s5", "s0"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, NeverMergesAcrossAReservedSegment) {

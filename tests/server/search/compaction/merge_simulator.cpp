@@ -46,7 +46,7 @@ struct Segment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
 };
 
 uint32_t DocsOf(uint64_t docs) noexcept {
@@ -64,14 +64,12 @@ class SimulatedIndex final
     explicit Init(std::span<const Segment> segments) {
       readers.reserve(segments.size());
       for (const auto& segment : segments) {
-        const auto& reader = readers.emplace_back(
-          irs::SegmentInfo{
-            .name = segment.name,
-            .docs_count = DocsOf(segment.docs),
-            .live_docs_count = DocsOf(segment.live_docs),
-            .byte_size = segment.bytes,
-          },
-          segment.rowids);
+        const auto& reader = readers.emplace_back(irs::SegmentInfo{
+          .name = segment.name,
+          .docs_count = DocsOf(segment.docs),
+          .live_docs_count = DocsOf(segment.live_docs),
+          .byte_size = segment.bytes,
+        });
         docs_count += reader.docs_count();
         live_docs_count += reader.live_docs_count();
       }
@@ -245,7 +243,7 @@ void SimulatedJob::Finish() {
     }
     event.docs += segment.live_docs;
     event.input_bytes += segment.bytes;
-    event.rowids = irs::Union(event.rowids, segment.rowids);
+    event.rowids = Union(event.rowids, segment.rowids);
     return true;
   });
   event.live_docs = event.docs;
@@ -315,7 +313,7 @@ void Simulation::Record(const Relation& relation, SimulatedEvent event) {
   event.relation_id = relation.id;
   event.segments = relation.segments.size();
   long double covered = 0;
-  irs::SegmentRange span;
+  RowIdRange span;
   for (const auto& segment : relation.segments) {
     event.segment_bytes += segment.bytes;
     if (segment.rowids.Empty()) {
@@ -323,7 +321,7 @@ void Simulation::Record(const Relation& relation, SimulatedEvent event) {
     }
     covered += static_cast<long double>(segment.rowids.last) -
                static_cast<long double>(segment.rowids.first) + 1;
-    span = irs::Union(span, segment.rowids);
+    span = Union(span, segment.rowids);
   }
   if (!span.Empty()) {
     event.overlap =

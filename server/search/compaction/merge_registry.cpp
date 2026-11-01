@@ -38,7 +38,7 @@ int64_t NowMicros() noexcept { return absl::ToUnixMicros(absl::Now()); }
 
 struct Inputs {
   irs::MergeStats stats;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
 };
 
 Inputs InputsOf(irs::CompactionView candidates) {
@@ -50,7 +50,7 @@ Inputs InputsOf(irs::CompactionView candidates) {
     inputs.stats.input_docs += segment.docs;
     inputs.stats.input_live_docs += segment.live_docs;
     inputs.stats.input_bytes += segment.bytes;
-    inputs.rowids = irs::Union(inputs.rowids, segment.rowids);
+    inputs.rowids = Union(inputs.rowids, segment.rowids);
   }
   return inputs;
 }

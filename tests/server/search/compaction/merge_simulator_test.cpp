@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -102,29 +103,17 @@ TEST(SimulatedSegment, ExposesOnlyItsMetadata) {
   EXPECT_EQ(nullptr, segment.norms(0));
 }
 
-TEST(SimulatedSegment, KeepsItsRowIdRange) {
-  const SimulatedSegment ranged{irs::SegmentInfo{.name = "_1"},
-                                irs::SegmentRange{.first = 5, .last = 9}};
-  const auto range = SimulatedSegment::RangeOf(ranged);
-  ASSERT_FALSE(range.Empty());
-  EXPECT_EQ(5, range.first);
-  EXPECT_EQ(9, range.last);
-  const SimulatedSegment unranged{irs::SegmentInfo{.name = "_2"}};
-  EXPECT_TRUE(SimulatedSegment::RangeOf(unranged).Empty());
-}
-
-TEST(MergeSimulator, TheAdjacentPolicyMergesInRowIdOrder) {
+TEST(MergeSimulator, TheAdjacentPolicyMergesInFlushOrder) {
   auto options = Options(1);
   irs::AdjacentRunOptions adjacent;
   adjacent.max_segments = 3;
-  options.policy =
-    irs::MakeAdjacentRunPolicy(adjacent, SimulatedSegment::RangeOf);
+  options.policy = irs::MakeAdjacentRunPolicy(adjacent);
   const auto events = SimulateMerges(
     {Ranged(0, 201, 300), Ranged(0, 1, 100), Ranged(0, 101, 200)}, options);
   ASSERT_EQ(4, events.size());
   const auto& merge = events[3];
   EXPECT_EQ(SimulatedEventType::Merge, merge.type);
-  EXPECT_EQ(Names({"_2", "_3", "_1"}), merge.inputs);
+  EXPECT_EQ(Names({"_1", "_2", "_3"}), merge.inputs);
   EXPECT_EQ(1, merge.rowids.first);
   EXPECT_EQ(300, merge.rowids.last);
 }

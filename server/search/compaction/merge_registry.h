@@ -25,11 +25,12 @@
 
 #include <cstdint>
 #include <deque>
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <string>
 #include <vector>
+
+#include "search/compaction/rowid_range.h"
 
 namespace sdb::search {
 
@@ -74,7 +75,7 @@ struct MergeRecord {
   int64_t finished_us = 0;
   irs::MergeStats stats;
   uint64_t output_live_docs = 0;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
   std::string error;
 
   bool Queued() const noexcept { return started_us == 0; }

@@ -46,11 +46,6 @@ namespace {
 
 constexpr uint64_t kOptimizeRowGroups = 4;
 
-int64_t FirstRow(const irs::SubReader& segment) {
-  const auto rowids = DescribeSegment(segment).rowids;
-  return rowids.Empty() ? 0 : rowids.first;
-}
-
 std::string Segments(uint64_t count) {
   return absl::StrCat(count, count == 1 ? " segment" : " segments");
 }
@@ -204,40 +199,24 @@ void PlaceInSteps(std::span<const irs::SubReader* const> group,
 void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
                    std::string_view reason, size_t inputs_max,
                    const CopyChecker* checker, MergeRoundPlan& plan) {
-  struct Placed {
-    const irs::SubReader* segment;
-    int64_t first_row;
-    uint64_t live_docs;
-  };
-  std::vector<Placed> order;
-  order.reserve(reader.size());
-  absl::uint128 total = 0;
-  for (const auto& segment : reader) {
-    const auto& placed = order.emplace_back(Placed{
-      .segment = &segment,
-      .first_row = FirstRow(segment),
-      .live_docs = segment.live_docs_count(),
-    });
-    total += placed.live_docs;
-  }
-  absl::c_stable_sort(order, [](const Placed& lhs, const Placed& rhs) {
-    return lhs.first_row < rhs.first_row;
-  });
+  const absl::uint128 total = reader.live_docs_count();
   std::vector<irs::Compaction> buckets(target);
   size_t group = 0;
   absl::uint128 taken = 0;
-  for (size_t i = 0; i < order.size(); ++i) {
-    const auto& placed = order[i];
+  size_t left = reader.size();
+  for (const auto& segment : reader) {
+    const uint64_t live_docs = segment.live_docs_count();
     if (!buckets[group].empty() && group + 1 < target) {
       const bool middle_past_share =
-        (2 * taken + placed.live_docs) * target >= 2 * (group + 1) * total;
-      const bool one_per_group_left = order.size() - i == target - group - 1;
+        (2 * taken + live_docs) * target >= 2 * (group + 1) * total;
+      const bool one_per_group_left = left == target - group - 1;
       if (middle_past_share || one_per_group_left) {
         ++group;
       }
     }
-    buckets[group].emplace_back(placed.segment);
-    taken += placed.live_docs;
+    buckets[group].emplace_back(&segment);
+    taken += live_docs;
+    --left;
   }
   const auto alone = [](const irs::Compaction& bucket) {
     return bucket.size() == 1 && !irs::HasRemovals(bucket.front()->Meta());
@@ -308,21 +287,6 @@ void PlanSegments(const irs::IndexReader& reader,
     return;
   }
   if (candidates.size() > request.inputs_max) {
-    struct Ranked {
-      int64_t first_row = 0;
-      const irs::SubReader* segment = nullptr;
-    };
-    std::vector<Ranked> by_row;
-    by_row.reserve(candidates.size());
-    for (const auto* segment : candidates) {
-      by_row.emplace_back(FirstRow(*segment), segment);
-    }
-    absl::c_stable_sort(by_row, [](const Ranked& lhs, const Ranked& rhs) {
-      return lhs.first_row < rhs.first_row;
-    });
-    for (size_t i = 0; i < by_row.size(); ++i) {
-      candidates[i] = by_row[i].segment;
-    }
     PlaceInSteps(candidates, request.inputs_max, "listed segments", plan);
     return;
   }

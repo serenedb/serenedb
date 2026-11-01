@@ -28,18 +28,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
-#include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
 namespace sdb::search {
-namespace {
-
-irs::SegmentRange RowIdRange(const irs::SubReader& segment) {
-  return DescribeSegment(segment).rowids;
-}
-
-}  // namespace
 
 irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
                                       size_t inputs_max) {
@@ -48,7 +40,7 @@ irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
     std::min<size_t>(settings.compaction_max_segments, inputs_max);
   options.max_bytes = settings.compaction_max_segments_bytes;
   options.segment_cost = settings.compaction_floor_segment_bytes;
-  return irs::MakeAdjacentRunPolicy(options, RowIdRange);
+  return irs::MakeAdjacentRunPolicy(options);
 }
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {

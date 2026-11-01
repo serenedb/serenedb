@@ -23,7 +23,6 @@
 #include <absl/time/time.h>
 
 #include <cstdint>
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <optional>
@@ -32,18 +31,14 @@
 #include <vector>
 
 #include "search/compaction/merge_registry.h"
+#include "search/compaction/rowid_range.h"
 
 namespace sdb::search {
 
 class SimulatedSegment final : public irs::SubReader {
  public:
-  explicit SimulatedSegment(irs::SegmentInfo meta,
-                            irs::SegmentRange range = {}) noexcept
-    : _meta{std::move(meta)}, _range{range} {}
-
-  static irs::SegmentRange RangeOf(const irs::SubReader& segment) noexcept {
-    return static_cast<const SimulatedSegment&>(segment)._range;
-  }
+  explicit SimulatedSegment(irs::SegmentInfo meta) noexcept
+    : _meta{std::move(meta)} {}
 
   const SimulatedSegment& operator*() const noexcept { return *this; }
 
@@ -57,7 +52,6 @@ class SimulatedSegment final : public irs::SubReader {
 
  private:
   irs::SegmentInfo _meta;
-  irs::SegmentRange _range;
 };
 
 struct SimulatedFlush {
@@ -66,7 +60,7 @@ struct SimulatedFlush {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
 };
 
 struct MergeSimulation {
@@ -90,7 +84,7 @@ struct SimulatedEvent {
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
   uint64_t input_bytes = 0;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
   absl::Duration queued;
   absl::Duration started;
   size_t threads = 0;

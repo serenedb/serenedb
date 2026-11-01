@@ -20,31 +20,13 @@
 
 #pragma once
 
-#include <algorithm>
-#include <compare>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 
 #include "iresearch/index/index_writer.hpp"
 
 namespace irs {
-
-struct SegmentRange {
-  int64_t first = std::numeric_limits<int64_t>::max();
-  int64_t last = std::numeric_limits<int64_t>::min();
-
-  constexpr bool Empty() const noexcept { return first > last; }
-  constexpr auto operator<=>(const SegmentRange&) const = default;
-};
-
-constexpr SegmentRange Union(SegmentRange lhs, SegmentRange rhs) noexcept {
-  return {.first = std::min(lhs.first, rhs.first),
-          .last = std::max(lhs.last, rhs.last)};
-}
-
-using SegmentRangeOf = std::function<SegmentRange(const SubReader& segment)>;
 
 struct AdjacentRunOptions {
   size_t max_segments = 10;
@@ -53,7 +35,6 @@ struct AdjacentRunOptions {
   uint64_t segment_cost = uint64_t{2} << 20;
 };
 
-CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
-                                       SegmentRangeOf range_of);
+CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options);
 
 }  // namespace irs

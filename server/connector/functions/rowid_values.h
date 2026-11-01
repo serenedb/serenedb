@@ -21,7 +21,8 @@
 #pragma once
 
 #include <duckdb/common/types/value.hpp>
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
+
+#include "search/compaction/rowid_range.h"
 
 namespace sdb::connector {
 
@@ -30,7 +31,7 @@ struct RowIdValues {
   duckdb::Value max;
 };
 
-inline RowIdValues RowIdValuesOf(irs::SegmentRange rowids) {
+inline RowIdValues RowIdValuesOf(search::RowIdRange rowids) {
   if (rowids.Empty()) {
     return {.min = duckdb::Value{duckdb::LogicalType::BIGINT},
             .max = duckdb::Value{duckdb::LogicalType::BIGINT}};

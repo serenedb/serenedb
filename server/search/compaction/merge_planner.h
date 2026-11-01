@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/main/client_context.hpp>
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -32,6 +31,7 @@
 #include <string_view>
 #include <vector>
 
+#include "search/compaction/rowid_range.h"
 #include "search/maintenance.h"
 
 namespace sdb::search {
@@ -52,7 +52,7 @@ struct PlannedSegment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  irs::SegmentRange rowids;
+  RowIdRange rowids;
 };
 
 struct PlannedMerge {

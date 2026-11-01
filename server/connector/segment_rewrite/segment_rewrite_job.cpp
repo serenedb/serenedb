@@ -60,12 +60,12 @@ std::string JoinLimited(const Range& items, Format format) {
 }
 
 std::string RowIdRange(const search::PlannedMerge& merge) {
-  irs::SegmentRange rowids;
+  search::RowIdRange rowids;
   for (const auto& input : merge.inputs) {
     if (input.rowids.Empty()) {
       return {};
     }
-    rowids = irs::Union(rowids, input.rowids);
+    rowids = search::Union(rowids, input.rowids);
   }
   if (rowids.Empty()) {
     return {};

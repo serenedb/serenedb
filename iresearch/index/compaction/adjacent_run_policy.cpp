@@ -20,12 +20,9 @@
 
 #include "iresearch/index/compaction/adjacent_run_policy.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <limits>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include "iresearch/index/index_meta.hpp"
@@ -45,7 +42,6 @@ struct Candidate {
   long double bytes = 0;
   uint64_t live_docs = 0;
   long double deleted_share = 0;
-  SegmentRange range;
 };
 
 struct Window {
@@ -54,7 +50,7 @@ struct Window {
   long double score = std::numeric_limits<long double>::max();
 };
 
-Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
+Candidate Describe(const SubReader& segment) {
   const auto& meta = segment.Meta();
   const auto live = static_cast<long double>(meta.live_docs_count) /
                     static_cast<long double>(meta.docs_count);
@@ -63,7 +59,6 @@ Candidate Describe(const SubReader& segment, const SegmentRangeOf& range_of) {
     .bytes = LiveBytes(meta),
     .live_docs = meta.live_docs_count,
     .deleted_share = 1 - live,
-    .range = range_of(segment),
   };
 }
 
@@ -110,22 +105,17 @@ void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
 
 }  // namespace
 
-CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options,
-                                       SegmentRangeOf range_of) {
+CompactionPolicy MakeAdjacentRunPolicy(AdjacentRunOptions options) {
   options.max_docs = std::min(options.max_docs, kMergeDocsMax);
-  return [options, range_of = std::move(range_of)](
-           Compaction& candidates, const IndexReader& index,
-           const CompactingSegments& compacting) {
+  return [options](Compaction& candidates, const IndexReader& index,
+                   const CompactingSegments& compacting) {
     std::vector<Candidate> segments;
     segments.reserve(index.size());
     for (const auto& segment : index) {
       if (segment.Meta().live_docs_count != 0) {
-        segments.emplace_back(Describe(segment, range_of));
+        segments.emplace_back(Describe(segment));
       }
     }
-    absl::c_stable_sort(segments, [](const Candidate& l, const Candidate& r) {
-      return l.range < r.range;
-    });
     const auto taken = [&](size_t i) {
       return compacting.contains(segments[i].segment->Meta().name);
     };

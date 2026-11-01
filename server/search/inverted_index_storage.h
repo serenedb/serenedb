@@ -46,7 +46,6 @@
 #include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
-#include "search/compaction/merge_registry.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
@@ -164,15 +163,10 @@ class InvertedIndexStorage final
   void CommitRemoval(std::vector<irs::TermRemoval> removals);
   void CommitRemoveAll();
 
-  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
-                          const irs::MergeProgress& progress,
-                          const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::MergeExecutor& executor, irs::LoneSegment lone)
-    -> yaclib::Future<MergeResult>;
-
-  irs::MergeReservation ReserveMerges(auto&& planner) {
-    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner));
+  irs::MergeReservation ReserveMerges(
+    auto&& planner, irs::LoneSegment lone = irs::LoneSegment::Skip) {
+    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
+                                  lone);
   }
 
   auto RunMergeAsync(irs::MergeTicket ticket,

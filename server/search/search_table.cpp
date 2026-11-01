@@ -514,32 +514,6 @@ void SearchTable::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-auto SearchTable::CompactUnsafeAsync(
-  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::MergeExecutor& executor, irs::LoneSegment lone)
-  -> yaclib::Future<MergeResult> {
-  MergeRecorder recorder{GetTableId(), origin};
-  const irs::CompactionPolicy current_config_policy =
-    [&](irs::Compaction& candidates, const irs::IndexReader& index,
-        const irs::CompactingSegments& compacting_segments) {
-      if (IsCurrentConfig(field_options)) {
-        policy(candidates, index, compacting_segments);
-      }
-    };
-  const auto recorded = recorder.Wrap(current_config_policy);
-  auto result = co_await AwaitMerge([&] {
-    return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 &executor, lone);
-  });
-  if (result.res.ok()) {
-    recorder.Finish(result.outcome);
-  } else {
-    recorder.Fail(result.error);
-  }
-  co_return result;
-}
-
 auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
                                 const irs::MergeProgress& progress,
                                 const irs::IndexFieldOptions* field_options,

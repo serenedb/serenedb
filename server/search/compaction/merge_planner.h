@@ -108,8 +108,6 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
 std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
                                          std::span<const std::string> names);
 
-irs::CompactionPolicy ExplicitPolicy(std::span<const std::string> names);
-
 irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
                             const irs::IndexReader& index,
                             irs::CompactingSegments taken, size_t wanted);

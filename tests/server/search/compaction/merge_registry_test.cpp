@@ -293,15 +293,11 @@ TEST(MergeRegistry, StepTimesWithoutInputsAreKept) {
 TEST(MergeRecorder, DroppedMidMergeRecordsAFailure) {
   constexpr uint64_t kRelation = 0x5eed'000c;
   const SegmentStub segment{"_1", 10};
-  const irs::CompactionPolicy policy =
-    [&](irs::Compaction& candidates, const irs::IndexReader&,
-        const irs::CompactingSegments&) { candidates.emplace_back(&segment); };
+  const irs::Compaction candidates{&segment};
   {
     MergeRecorder recorder{kRelation, MergeOrigin::Background};
-    const auto wrapped = recorder.Wrap(policy);
     for (int round = 0; round < 2; ++round) {
-      irs::Compaction candidates;
-      wrapped(candidates, irs::SubReader::empty(), {});
+      recorder.Begin(candidates);
     }
     EXPECT_TRUE(IsRunning(kRelation));
   }
@@ -339,18 +335,11 @@ TEST(MergeRecorder, FailureIsRecordedWithItsError) {
   EXPECT_EQ("disk full", history.front().error);
 }
 
-TEST(MergeRecorder, WrappedPolicyThatPicksNothingStartsNothing) {
+TEST(MergeRecorder, BeginWithoutCandidatesStartsNothing) {
   constexpr uint64_t kRelation = 0x5eed'0007;
-  bool called = false;
-  const irs::CompactionPolicy policy =
-    [&](irs::Compaction&, const irs::IndexReader&,
-        const irs::CompactingSegments&) { called = true; };
   {
     MergeRecorder recorder{kRelation, MergeOrigin::Sql};
-    const auto wrapped = recorder.Wrap(policy);
-    irs::Compaction candidates;
-    wrapped(candidates, irs::SubReader::empty(), {});
-    EXPECT_TRUE(called);
+    recorder.Begin({});
     EXPECT_FALSE(IsRunning(kRelation));
     recorder.Finish(Result(irs::CompactionError::Ok, 0));
   }

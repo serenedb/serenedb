@@ -115,12 +115,11 @@ class MergeRecorder {
   MergeRecorder& operator=(const MergeRecorder&) = delete;
   ~MergeRecorder();
 
-  irs::CompactionPolicy Wrap(const irs::CompactionPolicy& policy);
+  void Begin(irs::CompactionView candidates);
   void Finish(irs::CompactionResult result);
   void Fail(std::string error);
 
  private:
-  void Begin(irs::CompactionView candidates);
   void Start();
 
   uint64_t _relation_id;

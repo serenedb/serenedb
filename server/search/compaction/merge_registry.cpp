@@ -202,15 +202,6 @@ void MergeRecorder::Start() {
   }
 }
 
-irs::CompactionPolicy MergeRecorder::Wrap(const irs::CompactionPolicy& policy) {
-  return
-    [this, &policy](irs::Compaction& candidates, const irs::IndexReader& index,
-                    const irs::CompactingSegments& compacting) {
-      policy(candidates, index, compacting);
-      Begin(candidates);
-    };
-}
-
 void MergeRecorder::Begin(irs::CompactionView candidates) {
   if (candidates.empty()) {
     return;

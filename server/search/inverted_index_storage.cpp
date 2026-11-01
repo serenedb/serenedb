@@ -124,7 +124,7 @@ void InvertedIndexStorage::Open() {
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
   // serenedb transaction) and a merge hands the compaction task's snapshot
-  // index (CompactUnsafe). The long-lived writer therefore never reaches into
+  // index (RunMergeAsync). The long-lived writer therefore never reaches into
   // the live catalog, so a concurrent DROP can no longer dangle it.
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
@@ -262,25 +262,6 @@ ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
                        .count();
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
-}
-
-auto InvertedIndexStorage::CompactUnsafeAsync(
-  const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::MergeExecutor& executor, irs::LoneSegment lone)
-  -> yaclib::Future<MergeResult> {
-  MergeRecorder recorder{GetId(), origin};
-  const auto recorded = recorder.Wrap(policy);
-  auto result = co_await AwaitMerge([&] {
-    return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 &executor, lone);
-  });
-  if (result.res.ok()) {
-    recorder.Finish(result.outcome);
-  } else {
-    recorder.Fail(result.error);
-  }
-  co_return result;
 }
 
 auto InvertedIndexStorage::RunMergeAsync(

@@ -374,18 +374,6 @@ std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
   return unknown;
 }
 
-irs::CompactionPolicy ExplicitPolicy(std::span<const std::string> names) {
-  return [names = std::vector<std::string>{names.begin(), names.end()}](
-           irs::Compaction& candidates, const irs::IndexReader& reader,
-           const irs::CompactingSegments&) {
-    for (const auto& segment : reader) {
-      if (absl::c_linear_search(names, segment.Meta().name)) {
-        candidates.emplace_back(&segment);
-      }
-    }
-  };
-}
-
 irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
                             const irs::IndexReader& index,
                             irs::CompactingSegments taken, size_t wanted) {

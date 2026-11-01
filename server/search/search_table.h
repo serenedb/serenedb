@@ -53,7 +53,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "search/compaction/merge_registry.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/search_table_changes.h"
@@ -99,6 +98,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> CompactionConfig();
+  bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
@@ -178,19 +178,15 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void StartTasks();
 
   // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
-  // inserts, CompactUnsafeAsync merges segments, CleanupUnsafe reclaims
+  // inserts, RunMergeAsync merges reserved segments, CleanupUnsafe reclaims
   // unreferenced files.
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
-  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
-                          const irs::MergeProgress& progress,
-                          const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::MergeExecutor& executor, irs::LoneSegment lone)
-    -> yaclib::Future<MergeResult>;
-  irs::MergeReservation ReserveMerges(auto&& planner) {
-    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner));
+  irs::MergeReservation ReserveMerges(
+    auto&& planner, irs::LoneSegment lone = irs::LoneSegment::Skip) {
+    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
+                                  lone);
   }
   auto RunMergeAsync(irs::MergeTicket ticket,
                      const irs::MergeProgress& progress,
@@ -308,7 +304,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void RebuildConfig(Configs&& configs,
                      std::optional<duckdb::idx_t> building_index)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_layout_mutex);
-  bool IsCurrentConfig(const irs::IndexFieldOptions* options) const;
   void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
   void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
   ReplaySession* BeginReplay(duckdb::AttachedDatabase& db);

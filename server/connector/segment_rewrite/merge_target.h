@@ -98,12 +98,11 @@ class MergeTarget {
   search::MergeRoundPlan Plan(const irs::IndexReader& snapshot,
                               const MergeRequest& request,
                               const search::CopyChecker& checker) const;
-  ExecutedMerge Compact(const irs::CompactionPolicy& policy,
+  ExecutedMerge Compact(const search::PlannedMerge& planned,
                         const irs::MergeProgress& progress,
                         const irs::IndexFieldOptions* field_options,
                         const irs::AnnBuildEnv* env, search::MergeOrigin origin,
-                        irs::MergeExecutor& executor,
-                        irs::LoneSegment lone) const;
+                        irs::MergeExecutor& executor) const;
   search::MergeScheduler::Lease TakeOver() const;
   void Publish() const;
 

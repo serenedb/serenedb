@@ -66,6 +66,12 @@ std::string QualifiedDisplayName(const duckdb::CatalogEntry& entry) {
                       entry.name.GetIdentifierName());
 }
 
+bool IsInput(const search::PlannedMerge& merge, std::string_view segment) {
+  return absl::c_any_of(merge.inputs, [&](const search::PlannedSegment& input) {
+    return input.name == segment;
+  });
+}
+
 }  // namespace
 
 void MergeTarget::SetDatabase(const duckdb::InCatalogEntry& entry) {
@@ -212,18 +218,49 @@ search::MergeRoundPlan MergeTarget::Plan(
               });
 }
 
-ExecutedMerge MergeTarget::Compact(const irs::CompactionPolicy& policy,
+ExecutedMerge MergeTarget::Compact(const search::PlannedMerge& planned,
                                    const irs::MergeProgress& progress,
                                    const irs::IndexFieldOptions* field_options,
                                    const irs::AnnBuildEnv* env,
                                    search::MergeOrigin origin,
-                                   irs::MergeExecutor& executor,
-                                   irs::LoneSegment lone) const {
+                                   irs::MergeExecutor& executor) const {
+  search::MergeRecorder recorder{_table ? _table->GetId() : _index->GetId(),
+                                 origin};
+  const auto pick = [&](const irs::IndexReader& index,
+                        const irs::CompactingSegments&,
+                        irs::MergeGroups& groups) {
+    if (_table && !_table->IsCurrentConfig(field_options)) {
+      return;
+    }
+    auto& group = groups.emplace_back();
+    for (const auto& segment : index) {
+      if (IsInput(planned, segment.Meta().name)) {
+        group.emplace_back(&segment);
+      }
+    }
+    recorder.Begin(group);
+  };
+  auto reservation = _table ? _table->ReserveMerges(pick, planned.lone)
+                            : _index->ReserveMerges(pick, planned.lone);
+  if (reservation.tickets.empty()) {
+    const irs::CompactionResult result{0, reservation.busy
+                                            ? irs::CompactionError::Busy
+                                            : irs::CompactionError::Ok};
+    recorder.Finish(result);
+    return {.outcome = search::OutcomeOf(result)};
+  }
+  SDB_ASSERT(reservation.tickets.size() == 1);
+  auto ticket = std::move(reservation.tickets.front());
   auto merged =
-    _table ? irs::GetBlocking(_table->CompactUnsafeAsync(
-               policy, progress, field_options, env, origin, executor, lone))
-           : irs::GetBlocking(_index->CompactUnsafeAsync(
-               policy, progress, field_options, env, origin, executor, lone));
+    _table ? irs::GetBlocking(_table->RunMergeAsync(
+               std::move(ticket), progress, field_options, env, executor))
+           : irs::GetBlocking(_index->RunMergeAsync(
+               std::move(ticket), progress, field_options, env, executor));
+  if (merged.res.ok()) {
+    recorder.Finish(merged.outcome);
+  } else {
+    recorder.Fail(merged.error);
+  }
   return {
     .outcome = merged.res.ok() ? search::OutcomeOf(merged.outcome)
                                : search::MergeOutcome::Failed,
@@ -284,26 +321,22 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
     Plan();
   }
   const auto& planned = _plan.merges[_next++];
-  std::vector<std::string> names;
-  names.reserve(planned.inputs.size());
-  for (const auto& segment : planned.inputs) {
-    names.emplace_back(segment.name);
-  }
-  merge = _target.Compact(search::ExplicitPolicy(names), progress,
-                          _options.field_options, _slot.AnnEnv(), origin,
-                          executor, planned.lone);
+  merge = _target.Compact(planned, progress, _options.field_options,
+                          _slot.AnnEnv(), origin, executor);
   if (search::Produced(merge.outcome)) {
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
     _target.Publish();
     if (_request.mode == search::MergeMode::Segments) {
-      std::erase_if(_request.segments, [&](const std::string& name) {
-        return absl::c_linear_search(names, name);
+      std::erase_if(_request.segments, [&](std::string_view name) {
+        return IsInput(planned, name);
       });
       _request.segments.emplace_back(merge.stats.output);
     }
   }
   if (merge.stats.inputs.empty()) {
-    merge.stats.inputs = std::move(names);
+    for (const auto& input : planned.inputs) {
+      merge.stats.inputs.emplace_back(input.name);
+    }
   }
   return true;
 }

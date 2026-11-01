@@ -578,9 +578,14 @@ absl::Status SearchTable::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status SearchTable::Publish() {
+void SearchTable::Publish() {
   RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, nullptr, code).res;
+  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (!result.res.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("search table ", _table_id,
+                            ": publish failed: ", result.res.message()));
+  }
 }
 
 SearchTable::ReplaySession* SearchTable::BeginReplay(

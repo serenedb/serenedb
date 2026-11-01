@@ -144,7 +144,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                            std::vector<std::string> segments);
   bool FinishReplay(duckdb::AttachedDatabase& db);
 
-  [[nodiscard]] absl::Status Publish();
+  void Publish();
   void FinishCheckpoint() { _durability.FinishCheckpointIfIdle(*_writer); }
   void MarkStaged(const irs::SourcePosition& position) {
     _durability.MarkStaged(position);

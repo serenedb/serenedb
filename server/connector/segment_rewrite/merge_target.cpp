@@ -276,10 +276,14 @@ search::MergeScheduler::Lease MergeTarget::TakeOver() const {
 void MergeTarget::Publish() const {
   if (!_table) {
     search::ThrowIfRefreshFailed(_index->Refresh(), _name);
-  } else if (const auto status = _table->Publish(); !status.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("failed to refresh search table '", _name,
-                            "': ", status.message()));
+  } else {
+    search::RefreshResult code = search::RefreshResult::Undefined;
+    if (const auto status = _table->RefreshUnsafe(true, nullptr, code).res;
+        !status.ok()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("failed to refresh search table '", _name,
+                              "': ", status.message()));
+    }
   }
   const auto cleaned =
     _table ? _table->CleanupUnsafe() : _index->CleanupUnsafe();

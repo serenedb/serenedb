@@ -53,12 +53,6 @@ class SearchTable;
 }  // namespace sdb::search
 namespace sdb::connector {
 
-struct ExecutedMerge {
-  search::MergeOutcome outcome = search::MergeOutcome::Running;
-  irs::MergeStats stats;
-  std::string error;
-};
-
 struct MergeRequest {
   search::MergeMode mode = search::MergeMode::Compact;
   uint32_t target_segments = 1;
@@ -92,11 +86,12 @@ class MergeTarget {
   search::MergeRoundPlan Plan(const irs::IndexReader& snapshot,
                               const MergeRequest& request,
                               const search::CopyChecker& checker) const;
-  ExecutedMerge Compact(const search::PlannedMerge& planned,
-                        const irs::MergeProgress& progress,
-                        const irs::IndexFieldOptions* field_options,
-                        const irs::AnnBuildEnv* env, search::MergeOrigin origin,
-                        const irs::PipelineMergeExecutor& executor) const;
+  void Compact(const search::PlannedMerge& planned,
+               const irs::MergeProgress& progress,
+               const irs::IndexFieldOptions* field_options,
+               const irs::AnnBuildEnv* env, search::MergeOrigin origin,
+               const irs::PipelineMergeExecutor& executor,
+               search::MergeResult& merged) const;
   search::MergeScheduler::Lease TakeOver() const {
     return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
   }
@@ -122,7 +117,8 @@ class ManualCompaction {
                    duckdb::TaskScheduler& scheduler);
 
   bool Next(const irs::MergeProgress& progress, search::MergeOrigin origin,
-            const irs::PipelineMergeExecutor& executor, ExecutedMerge& merge);
+            const irs::PipelineMergeExecutor& executor,
+            search::MergeResult& merge);
 
  private:
   void Plan();

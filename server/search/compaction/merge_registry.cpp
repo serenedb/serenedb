@@ -87,18 +87,20 @@ uint64_t MergeRecord::EstimatedBytes() const noexcept {
     irs::LiveBytes(stats.input_bytes, stats.input_live_docs, stats.input_docs));
 }
 
-uint64_t MergeRegistry::Queue(uint64_t relation_id,
+uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
                               irs::CompactionView candidates) {
   auto inputs = InputsOf(candidates);
   absl::MutexLock lock{&_mutex};
   const auto id = _next_id++;
-  _active.emplace(id, MergeRecord{
-                        .id = id,
-                        .relation_id = relation_id,
-                        .queued_us = NowMicros(),
-                        .stats = std::move(inputs.stats),
-                        .rowids = inputs.rowids,
-                      });
+  _active.emplace(
+    id, MergeRecord{
+          .id = id,
+          .relation_id = relation_id,
+          .origin = origin,
+          .queued_us = origin == MergeOrigin::Background ? NowMicros() : 0,
+          .stats = std::move(inputs.stats),
+          .rowids = inputs.rowids,
+        });
   return id;
 }
 
@@ -112,27 +114,6 @@ void MergeRegistry::Dispatch(uint64_t id) {
 void MergeRegistry::Drop(uint64_t id) {
   absl::MutexLock lock{&_mutex};
   _active.erase(id);
-}
-
-uint64_t MergeRegistry::Start(uint64_t relation_id, MergeOrigin origin) {
-  absl::MutexLock lock{&_mutex};
-  const auto id = _next_id++;
-  _active.emplace(id, MergeRecord{
-                        .id = id,
-                        .relation_id = relation_id,
-                        .origin = origin,
-                        .started_us = NowMicros(),
-                      });
-  return id;
-}
-
-void MergeRegistry::SetInputs(uint64_t id, irs::CompactionView candidates) {
-  auto inputs = InputsOf(candidates);
-  absl::MutexLock lock{&_mutex};
-  if (auto it = _active.find(id); it != _active.end()) {
-    it->second.stats = std::move(inputs.stats);
-    it->second.rowids = inputs.rowids;
-  }
 }
 
 void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
@@ -187,42 +168,6 @@ std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
                     return record.relation_id == relation_id;
                   });
   return records;
-}
-
-MergeRecorder::~MergeRecorder() {
-  if (_id != 0 && !_finished) {
-    MergeRegistry::Instance().Finish(_id, MergeOutcome::Failed, {}, {});
-  }
-}
-
-void MergeRecorder::Start() {
-  if (_id == 0) {
-    _id = MergeRegistry::Instance().Start(_relation_id, _origin);
-  }
-}
-
-void MergeRecorder::Begin(irs::CompactionView candidates) {
-  if (candidates.empty()) {
-    return;
-  }
-  Start();
-  MergeRegistry::Instance().SetInputs(_id, candidates);
-}
-
-void MergeRecorder::Finish(irs::CompactionResult result) {
-  _finished = true;
-  if (_id == 0) {
-    return;
-  }
-  MergeRegistry::Instance().Finish(_id, OutcomeOf(result),
-                                   std::move(result.stats), {});
-}
-
-void MergeRecorder::Fail(std::string error) {
-  _finished = true;
-  Start();
-  MergeRegistry::Instance().Finish(_id, MergeOutcome::Failed, {},
-                                   std::move(error));
 }
 
 }  // namespace sdb::search

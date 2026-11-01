@@ -49,23 +49,27 @@ struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
 
   duckdb::idx_t threads;
   std::unique_ptr<ManualCompaction> compaction;
-  std::vector<ExecutedMerge> executed;
+  std::vector<search::MergeResult> executed;
   irs::PipelineMergeExecutor::Profiles pipelines;
 };
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
 
+std::string OutcomeName(const search::MergeResult& merge) {
+  return std::string{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))};
+}
+
 duckdb::unique_ptr<duckdb::ProfilingNode> MergeNode(
-  size_t number, const ExecutedMerge& merge,
+  size_t number, const search::MergeResult& merge,
   irs::PipelineMergeExecutor::Profiles queries) {
+  const auto& stats = merge.outcome.stats;
   auto node = duckdb::make_uniq<duckdb::ProfilingNode>();
   auto& metrics = node->GetOperatorMetrics();
   metrics.name = absl::StrCat("MERGE ", number);
   metrics.operator_type = duckdb::PhysicalOperatorType::EXTENSION;
-  metrics.time = static_cast<double>(merge.stats.profile.TotalNanos()) / 1e9;
-  metrics.AddExtraInfo("Outcome",
-                       std::string{irs::SnakeCaseName(merge.outcome)});
-  metrics.AddExtraInfo("Inputs", std::to_string(merge.stats.inputs.size()));
+  metrics.time = static_cast<double>(stats.profile.TotalNanos()) / 1e9;
+  metrics.AddExtraInfo("Outcome", OutcomeName(merge));
+  metrics.AddExtraInfo("Inputs", std::to_string(stats.inputs.size()));
   node->children = std::move(queries);
   return node;
 }
@@ -110,8 +114,9 @@ void GraftPipelines(duckdb::ClientContext& context,
 }
 
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
-               const ExecutedMerge& merge) {
-  const auto& stats = merge.stats;
+               const search::MergeResult& merge) {
+  const auto& stats = merge.outcome.stats;
+  const auto error = merge.res.message();
   duckdb::vector<duckdb::Value> inputs;
   inputs.reserve(stats.inputs.size());
   for (const auto& input : stats.inputs) {
@@ -122,7 +127,7 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
     chunk.data[column++].Append(std::move(value));
   };
   append(duckdb::Value::BIGINT(static_cast<int64_t>(number)));
-  append(duckdb::Value{std::string{irs::SnakeCaseName(merge.outcome)}});
+  append(duckdb::Value{OutcomeName(merge)});
   append(duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(inputs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_live_docs)));
@@ -132,8 +137,8 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_bytes)));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
-  append(merge.error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
-                             : duckdb::Value{merge.error});
+  append(error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                       : duckdb::Value{std::string{error}});
 }
 
 bool DeterministicRendering(duckdb::ClientContext& context) {
@@ -186,7 +191,7 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
   irs::PipelineMergeExecutor::Profiles queries;
   const irs::PipelineMergeExecutor executor{
     *client.db, &scheduler, state.threads, profiled ? &queries : nullptr};
-  ExecutedMerge executed;
+  search::MergeResult executed;
   if (state.compaction->Next(progress, search::MergeOrigin::Sql, executor,
                              executed)) {
     client.InterruptCheck();

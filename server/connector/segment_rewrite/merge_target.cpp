@@ -21,6 +21,7 @@
 #include "connector/segment_rewrite/merge_target.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -221,41 +222,53 @@ search::MergeRoundPlan MergeTarget::Plan(
     });
 }
 
-ExecutedMerge MergeTarget::Compact(
-  const search::PlannedMerge& planned, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  search::MergeOrigin origin,
-  const irs::PipelineMergeExecutor& executor) const {
-  search::MergeRecorder recorder{_store->MergeRelation()->id, origin};
-  const irs::CompactionPolicy pick = [&](irs::Compaction& candidates,
-                                         const irs::IndexReader& index,
-                                         const irs::CompactingSegments&) {
+void MergeTarget::Compact(const search::PlannedMerge& planned,
+                          const irs::MergeProgress& progress,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env,
+                          search::MergeOrigin origin,
+                          const irs::PipelineMergeExecutor& executor,
+                          search::MergeResult& merged) const {
+  auto& registry = search::MergeRegistry::Instance();
+  uint64_t id = 0;
+  merged = {};
+  absl::Cleanup record = [&] {
+    registry.Finish(id, search::OutcomeOf(merged.outcome), merged.outcome.stats,
+                    merged.error);
+  };
+  const auto planner = [&](const irs::IndexReader& index,
+                           const irs::CompactingSegments&,
+                           irs::MergeGroups& groups) {
     if (_table && !_table->IsCurrentConfig(field_options)) {
       return;
     }
+    auto& candidates = groups.emplace_back();
     for (const auto& segment : index) {
       if (IsInput(planned, segment.Meta().name)) {
         candidates.emplace_back(&segment);
       }
     }
-    recorder.Begin(candidates);
+    if (candidates.empty()) {
+      return;
+    }
+    id = registry.Queue(_store->MergeRelation()->id, origin, candidates);
+    registry.Dispatch(id);
   };
-  auto merged =
-    _table ? irs::GetBlocking(_table->CompactAsync(
-               pick, progress, field_options, env, executor, planned.lone))
-           : irs::GetBlocking(_index->CompactAsync(
-               pick, progress, field_options, env, executor, planned.lone));
-  if (merged.res.ok()) {
-    recorder.Finish(merged.outcome);
-  } else {
-    recorder.Fail(merged.error);
+  bool busy = false;
+  auto tickets = _table ? _table->ReserveMerges(planner, busy, planned.lone)
+                        : _index->ReserveMerges(planner, busy, planned.lone);
+  if (tickets.empty()) {
+    merged.outcome.error =
+      busy ? irs::CompactionError::Busy : irs::CompactionError::Ok;
+    return;
   }
-  return {
-    .outcome = merged.res.ok() ? search::OutcomeOf(merged.outcome)
-                               : search::MergeOutcome::Failed,
-    .stats = std::move(merged.outcome.stats),
-    .error = std::string{merged.res.message()},
-  };
+  auto& ticket = tickets.front();
+  merged.outcome.error = irs::CompactionError::Fail;
+  merged = _table
+             ? irs::GetBlocking(_table->RunMergeAsync(
+                 std::move(ticket), progress, field_options, env, executor))
+             : irs::GetBlocking(_index->RunMergeAsync(
+                 std::move(ticket), progress, field_options, env, executor));
 }
 
 void MergeTarget::Publish() const {
@@ -302,7 +315,7 @@ void ManualCompaction::Plan() {
 bool ManualCompaction::Next(const irs::MergeProgress& progress,
                             search::MergeOrigin origin,
                             const irs::PipelineMergeExecutor& executor,
-                            ExecutedMerge& merge) {
+                            search::MergeResult& merge) {
   while (_next == _plan.merges.size()) {
     if (!_plan.partial || _target.Snapshot().size() >= _plan.segments) {
       return false;
@@ -310,21 +323,22 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
     Plan();
   }
   const auto& planned = _plan.merges[_next++];
-  merge = _target.Compact(planned, progress, _options.field_options,
-                          _slot.AnnEnv(), origin, executor);
-  if (search::Produced(merge.outcome)) {
+  _target.Compact(planned, progress, _options.field_options, _slot.AnnEnv(),
+                  origin, executor, merge);
+  auto& stats = merge.outcome.stats;
+  if (search::Produced(search::OutcomeOf(merge.outcome))) {
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
     _target.Publish();
     if (_request.mode == search::MergeMode::Segments) {
       std::erase_if(_request.segments, [&](std::string_view name) {
         return IsInput(planned, name);
       });
-      _request.segments.emplace_back(merge.stats.output);
+      _request.segments.emplace_back(stats.output);
     }
   }
-  if (merge.stats.inputs.empty()) {
+  if (stats.inputs.empty()) {
     for (const auto& input : planned.inputs) {
-      merge.stats.inputs.emplace_back(input.name);
+      stats.inputs.emplace_back(input.name);
     }
   }
   return true;

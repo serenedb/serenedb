@@ -273,13 +273,13 @@ void CompactTarget(Action action, const MergeTarget& target,
       .target_segments = search::DefaultTarget(mode, context),
     },
     duckdb::TaskScheduler::GetScheduler(context)};
-  ExecutedMerge merge;
+  search::MergeResult merge;
   while (compaction.Next(tick, search::MergeOrigin::Vacuum, executor, merge)) {
     context.InterruptCheck();
-    if (merge.outcome == search::MergeOutcome::Failed) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("failed to ", verb, " '", target.Name(), "': ", merge.error));
+    if (search::OutcomeOf(merge.outcome) == search::MergeOutcome::Failed) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("failed to ", verb, " '", target.Name(),
+                              "': ", merge.res.message()));
     }
   }
 }

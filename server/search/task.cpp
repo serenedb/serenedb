@@ -204,13 +204,15 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   const auto blocked = merges.Blocked(*relation);
   const auto policy =
     MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
-  auto tickets = idx->ReserveMerges([&](const irs::IndexReader& index,
-                                        const irs::CompactingSegments& reserved,
-                                        irs::MergeGroups& groups) {
+  const auto planner = [&](const irs::IndexReader& index,
+                           const irs::CompactingSegments& reserved,
+                           irs::MergeGroups& groups) {
     irs::CompactingSegments taken = reserved;
     taken.insert(blocked.begin(), blocked.end());
     groups = PickMerges(policy, index, std::move(taken), wanted);
-  });
+  };
+  bool busy = false;
+  auto tickets = idx->ReserveMerges(planner, busy);
   std::vector<std::unique_ptr<MergeJob>> jobs;
   jobs.reserve(tickets.size());
   for (auto& ticket : tickets) {

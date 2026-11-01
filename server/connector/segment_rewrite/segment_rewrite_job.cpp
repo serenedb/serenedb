@@ -177,20 +177,21 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
 }
 
 void AppendSegmentRewriteActuals(
-  std::span<const ExecutedMerge> merges, bool zero_times,
+  std::span<const search::MergeResult> merges, bool zero_times,
   duckdb::InsertionOrderPreservingMap<std::string>& params) {
   std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
   irs::MergeProfile total;
   uint64_t written = 0;
   for (const auto& merge : merges) {
-    ++outcomes[static_cast<size_t>(merge.outcome)];
-    written += merge.stats.output_bytes;
+    const auto& stats = merge.outcome.stats;
+    ++outcomes[static_cast<size_t>(search::OutcomeOf(merge.outcome))];
+    written += stats.output_bytes;
     if (zero_times) {
       continue;
     }
     for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
       const auto id = static_cast<irs::MergeStep>(step);
-      total.Add(id, merge.stats.profile.Nanos(id));
+      total.Add(id, stats.profile.Nanos(id));
     }
   }
   std::vector<std::string> summary;

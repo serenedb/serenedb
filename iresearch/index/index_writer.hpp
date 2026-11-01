@@ -456,9 +456,8 @@ class IndexWriter : private util::Noncopyable {
                     LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
-  std::vector<MergeTicket> ReserveMerges(auto&& planner,
+  std::vector<MergeTicket> ReserveMerges(auto&& planner, bool& busy,
                                          LoneSegment lone = LoneSegment::Skip) {
-    bool busy = false;
     return Reserve(planner, lone, busy);
   }
 

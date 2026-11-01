@@ -165,9 +165,10 @@ class InvertedIndexStorage final
   void CommitRemoveAll();
 
   std::vector<irs::MergeTicket> ReserveMerges(
-    auto&& planner, irs::LoneSegment lone = irs::LoneSegment::Skip) {
+    auto&& planner, bool& busy,
+    irs::LoneSegment lone = irs::LoneSegment::Skip) {
     return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
-                                  lone);
+                                  busy, lone);
   }
 
   yaclib::Future<MergeResult> RunMergeAsync(
@@ -177,16 +178,6 @@ class InvertedIndexStorage final
     const auto begin = std::chrono::steady_clock::now();
     return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
                                                progress, env, executor));
-  }
-
-  yaclib::Future<MergeResult> CompactAsync(
-    const irs::CompactionPolicy& policy, const irs::MergeProgress& progress,
-    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    const irs::PipelineMergeExecutor& executor, irs::LoneSegment lone) {
-    const auto begin = std::chrono::steady_clock::now();
-    return AwaitMerge(
-      begin, _writer->CompactAsync(policy, field_options, progress, env,
-                                   executor, lone));
   }
 
   ResultWithTime RefreshUnsafe(bool wait,

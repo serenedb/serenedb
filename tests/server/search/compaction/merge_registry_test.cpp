@@ -34,7 +34,6 @@ namespace {
 using sdb::search::MergeOrigin;
 using sdb::search::MergeOutcome;
 using sdb::search::MergeRecord;
-using sdb::search::MergeRecorder;
 using sdb::search::MergeRegistry;
 
 std::vector<MergeRecord> HistoryOf(uint64_t relation_id) {
@@ -119,7 +118,7 @@ TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
   const SegmentStub first{"_1", 10};
   const SegmentStub second{"_2", 30};
   const irs::SubReader* const segments[] = {&first, &second};
-  const auto id = registry.Queue(7, segments);
+  const auto id = registry.Queue(7, MergeOrigin::Background, segments);
   auto active = registry.Active(7);
   ASSERT_EQ(1, active.size());
   EXPECT_TRUE(active[0].Queued());
@@ -146,11 +145,32 @@ TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
 TEST(MergeRegistry, ADroppedQueuedMergeLeavesNoHistory) {
   MergeRegistry registry;
   const SegmentStub segment{"_1", 10};
-  const auto id = registry.Queue(7, irs::Compaction{&segment});
+  const auto id =
+    registry.Queue(7, MergeOrigin::Background, irs::Compaction{&segment});
   registry.Drop(id);
   registry.Dispatch(id);
   EXPECT_TRUE(registry.Active(7).empty());
   EXPECT_TRUE(registry.History(7).empty());
+}
+
+TEST(MergeRegistry, AForegroundMergeIsNeverQueued) {
+  MergeRegistry registry;
+  const SegmentStub segment{"_1", 10};
+  const auto id =
+    registry.Queue(7, MergeOrigin::Vacuum, irs::Compaction{&segment});
+  auto active = registry.Active(7);
+  ASSERT_EQ(1, active.size());
+  EXPECT_EQ(MergeOrigin::Vacuum, active[0].origin);
+  EXPECT_EQ(0, active[0].queued_us);
+  EXPECT_EQ(10, active[0].stats.input_docs);
+
+  registry.Dispatch(id);
+  active = registry.Active(7);
+  ASSERT_EQ(1, active.size());
+  EXPECT_FALSE(active[0].Queued());
+  EXPECT_EQ(0, active[0].queued_us);
+  EXPECT_LT(0, active[0].started_us);
+  registry.Finish(id, MergeOutcome::Busy, {}, {});
 }
 
 TEST(MergeRegistry, EstimatedBytesFollowTheLiveShare) {
@@ -168,9 +188,9 @@ TEST(MergeRegistry, MergesThatProduceASegmentCountTheirBytes) {
     sdb::metrics::Get(sdb::metrics::Gauge::CompactionWrittenBytes);
   irs::MergeStats stats;
   stats.output_bytes = 70;
-  registry.Finish(registry.Start(7, MergeOrigin::Sql), MergeOutcome::Merged,
+  registry.Finish(registry.Queue(7, MergeOrigin::Sql, {}), MergeOutcome::Merged,
                   stats, {});
-  registry.Finish(registry.Start(7, MergeOrigin::Sql), MergeOutcome::Failed,
+  registry.Finish(registry.Queue(7, MergeOrigin::Sql, {}), MergeOutcome::Failed,
                   stats, {});
   EXPECT_EQ(before + 70,
             sdb::metrics::Get(sdb::metrics::Gauge::CompactionWrittenBytes));
@@ -179,7 +199,8 @@ TEST(MergeRegistry, MergesThatProduceASegmentCountTheirBytes) {
 TEST(MergeRegistry, FinishedMergeMovesToHistory) {
   constexpr uint64_t kRelation = 0x5eed'0001;
   auto& registry = MergeRegistry::Instance();
-  const auto id = registry.Start(kRelation, MergeOrigin::Sql);
+  const auto id = registry.Queue(kRelation, MergeOrigin::Sql, {});
+  registry.Dispatch(id);
   EXPECT_TRUE(IsRunning(kRelation));
 
   irs::MergeStats stats;
@@ -211,7 +232,7 @@ TEST(MergeRegistry, FinishedMergeMovesToHistory) {
 TEST(MergeRegistry, NothingIsNotKept) {
   constexpr uint64_t kRelation = 0x5eed'0002;
   auto& registry = MergeRegistry::Instance();
-  const auto id = registry.Start(kRelation, MergeOrigin::Background);
+  const auto id = registry.Queue(kRelation, MergeOrigin::Background, {});
   registry.Finish(id, MergeOutcome::Nothing, {}, {});
   EXPECT_FALSE(IsRunning(kRelation));
   EXPECT_TRUE(HistoryOf(kRelation).empty());
@@ -229,7 +250,7 @@ TEST(MergeRegistry, HistoryIsBounded) {
   const auto total = MergeRegistry::kHistoryCapacity + 5;
   std::vector<uint64_t> ids;
   for (size_t i = 0; i < total; ++i) {
-    ids.emplace_back(registry.Start(kRelation, MergeOrigin::Vacuum));
+    ids.emplace_back(registry.Queue(kRelation, MergeOrigin::Vacuum, {}));
     registry.Finish(ids.back(), MergeOutcome::Busy, {}, {});
   }
   const auto history = HistoryOf(kRelation);
@@ -242,9 +263,9 @@ TEST(MergeRegistry, RunningMergesAreOrderedById) {
   constexpr uint64_t kRelation = 0x5eed'0008;
   auto& registry = MergeRegistry::Instance();
   const std::vector<uint64_t> started{
-    registry.Start(kRelation, MergeOrigin::Sql),
-    registry.Start(kRelation, MergeOrigin::Sql),
-    registry.Start(kRelation, MergeOrigin::Sql)};
+    registry.Queue(kRelation, MergeOrigin::Sql, {}),
+    registry.Queue(kRelation, MergeOrigin::Sql, {}),
+    registry.Queue(kRelation, MergeOrigin::Sql, {})};
   std::vector<uint64_t> running;
   for (const auto& record : registry.Active(kRelation)) {
     running.emplace_back(record.id);
@@ -255,22 +276,10 @@ TEST(MergeRegistry, RunningMergesAreOrderedById) {
   }
 }
 
-TEST(MergeRegistry, InputsOfAFinishedMergeAreIgnored) {
-  constexpr uint64_t kRelation = 0x5eed'0009;
-  auto& registry = MergeRegistry::Instance();
-  const auto id = registry.Start(kRelation, MergeOrigin::Sql);
-  registry.Finish(id, MergeOutcome::Busy, {}, {});
-  const SegmentStub segment{"_1", 10};
-  registry.SetInputs(id, irs::Compaction{&segment});
-  const auto history = HistoryOf(kRelation);
-  ASSERT_EQ(1, history.size());
-  EXPECT_TRUE(history.front().stats.inputs.empty());
-}
-
 TEST(MergeRegistry, NothingWithAnErrorIsKept) {
   constexpr uint64_t kRelation = 0x5eed'000a;
   auto& registry = MergeRegistry::Instance();
-  const auto id = registry.Start(kRelation, MergeOrigin::Background);
+  const auto id = registry.Queue(kRelation, MergeOrigin::Background, {});
   registry.Finish(id, MergeOutcome::Nothing, {}, "interrupted");
   const auto history = HistoryOf(kRelation);
   ASSERT_EQ(1, history.size());
@@ -281,69 +290,13 @@ TEST(MergeRegistry, NothingWithAnErrorIsKept) {
 TEST(MergeRegistry, StepTimesWithoutInputsAreKept) {
   constexpr uint64_t kRelation = 0x5eed'000b;
   auto& registry = MergeRegistry::Instance();
-  const auto id = registry.Start(kRelation, MergeOrigin::Vacuum);
+  const auto id = registry.Queue(kRelation, MergeOrigin::Vacuum, {});
   irs::MergeStats stats;
   stats.profile.Add(irs::MergeStep::Prepare, 5);
   registry.Finish(id, MergeOutcome::Failed, stats, {});
   const auto history = HistoryOf(kRelation);
   ASSERT_EQ(1, history.size());
   EXPECT_EQ(5, history.front().stats.profile.Nanos(irs::MergeStep::Prepare));
-}
-
-TEST(MergeRecorder, DroppedMidMergeRecordsAFailure) {
-  constexpr uint64_t kRelation = 0x5eed'000c;
-  const SegmentStub segment{"_1", 10};
-  const irs::Compaction candidates{&segment};
-  {
-    MergeRecorder recorder{kRelation, MergeOrigin::Background};
-    for (int round = 0; round < 2; ++round) {
-      recorder.Begin(candidates);
-    }
-    EXPECT_TRUE(IsRunning(kRelation));
-  }
-  EXPECT_FALSE(IsRunning(kRelation));
-  const auto history = HistoryOf(kRelation);
-  ASSERT_EQ(1, history.size());
-  EXPECT_EQ(MergeOutcome::Failed, history.front().outcome);
-  EXPECT_EQ(std::vector<std::string>{"_1"}, history.front().stats.inputs);
-  EXPECT_EQ(10, history.front().stats.input_docs);
-}
-
-TEST(MergeRecorder, UnstartedRecorderLeavesNothing) {
-  constexpr uint64_t kRelation = 0x5eed'0005;
-  {
-    MergeRecorder recorder{kRelation, MergeOrigin::Background};
-    recorder.Finish(Result(irs::CompactionError::Ok, 0));
-  }
-  {
-    MergeRecorder recorder{kRelation, MergeOrigin::Background};
-  }
-  EXPECT_FALSE(IsRunning(kRelation));
-  EXPECT_TRUE(HistoryOf(kRelation).empty());
-}
-
-TEST(MergeRecorder, FailureIsRecordedWithItsError) {
-  constexpr uint64_t kRelation = 0x5eed'0006;
-  {
-    MergeRecorder recorder{kRelation, MergeOrigin::Vacuum};
-    recorder.Fail("disk full");
-  }
-  const auto history = HistoryOf(kRelation);
-  ASSERT_EQ(1, history.size());
-  EXPECT_EQ(MergeOutcome::Failed, history.front().outcome);
-  EXPECT_EQ(MergeOrigin::Vacuum, history.front().origin);
-  EXPECT_EQ("disk full", history.front().error);
-}
-
-TEST(MergeRecorder, BeginWithoutCandidatesStartsNothing) {
-  constexpr uint64_t kRelation = 0x5eed'0007;
-  {
-    MergeRecorder recorder{kRelation, MergeOrigin::Sql};
-    recorder.Begin({});
-    EXPECT_FALSE(IsRunning(kRelation));
-    recorder.Finish(Result(irs::CompactionError::Ok, 0));
-  }
-  EXPECT_TRUE(HistoryOf(kRelation).empty());
 }
 
 }  // namespace

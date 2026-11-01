@@ -210,7 +210,8 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
     if (!_stopping && relation->paused == 0) {
       const auto now = Now();
       for (auto& entry : entries) {
-        entry->id = _registry.Queue(relation->id, entry->job->Candidates());
+        entry->id = _registry.Queue(relation->id, MergeOrigin::Background,
+                                    entry->job->Candidates());
         entry->queued = now;
         _queue.emplace_back(std::move(entry));
         ++relation->queued;

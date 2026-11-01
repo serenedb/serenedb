@@ -46,7 +46,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
   const SegmentRewriteJob& job);
 
 void AppendSegmentRewriteActuals(
-  std::span<const ExecutedMerge> merges, bool zero_times,
+  std::span<const search::MergeResult> merges, bool zero_times,
   duckdb::InsertionOrderPreservingMap<std::string>& params);
 
 }  // namespace sdb::connector

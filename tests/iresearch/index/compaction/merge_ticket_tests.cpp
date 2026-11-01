@@ -102,24 +102,30 @@ class MergeTicketTest : public ::testing::Test {
 
   std::vector<irs::MergeTicket> Reserve(
     const Positions& positions, std::vector<std::string>* seen = nullptr,
-    bool* called = nullptr) {
-    return _writer->ReserveMerges([&](const irs::IndexReader& index,
-                                      const irs::CompactingSegments& reserved,
-                                      irs::MergeGroups& groups) {
-      if (called) {
-        *called = true;
-      }
-      if (seen) {
-        seen->assign(reserved.begin(), reserved.end());
-        std::ranges::sort(*seen);
-      }
-      for (const auto& group : positions) {
-        auto& candidates = groups.emplace_back();
-        for (const auto i : group) {
-          candidates.emplace_back(&index[i]);
+    bool* called = nullptr, bool* busy = nullptr) {
+    bool blocked = false;
+    auto tickets = _writer->ReserveMerges(
+      [&](const irs::IndexReader& index,
+          const irs::CompactingSegments& reserved, irs::MergeGroups& groups) {
+        if (called) {
+          *called = true;
         }
-      }
-    });
+        if (seen) {
+          seen->assign(reserved.begin(), reserved.end());
+          std::ranges::sort(*seen);
+        }
+        for (const auto& group : positions) {
+          auto& candidates = groups.emplace_back();
+          for (const auto i : group) {
+            candidates.emplace_back(&index[i]);
+          }
+        }
+      },
+      blocked);
+    if (busy) {
+      *busy = blocked;
+    }
+    return tickets;
   }
 
   std::vector<std::string> ReservedNames() {
@@ -205,8 +211,10 @@ TEST_F(MergeTicketTest, OverlappingGroupsAreBusy) {
   ASSERT_EQ(1, first.size());
   EXPECT_EQ(Names({{0, 1}}), NamesOf(first[0]));
 
-  auto second = Reserve({{1, 2}});
+  bool busy = false;
+  auto second = Reserve({{1, 2}}, nullptr, nullptr, &busy);
   EXPECT_TRUE(second.empty());
+  EXPECT_TRUE(busy);
 
   EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
   EXPECT_EQ(Names({{0, 1}}), ReservedNames());
@@ -219,8 +227,10 @@ TEST_F(MergeTicketTest, ReservesNothingWithoutWork) {
   EXPECT_TRUE(empty.empty());
 
   AddSegments(1);
-  auto none = Reserve({{}, {0}});
+  bool busy = true;
+  auto none = Reserve({{}, {0}}, nullptr, nullptr, &busy);
   EXPECT_TRUE(none.empty());
+  EXPECT_FALSE(busy);
   EXPECT_TRUE(ReservedNames().empty());
 
   AddSegments(1, 0.5);
@@ -335,9 +345,11 @@ TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
   auto pending = _writer->ArmCompactionFloor();
   EXPECT_FALSE(pending.Held());
   bool called = false;
-  auto blocked = Reserve({{2, 3}}, nullptr, &called);
+  bool busy = false;
+  auto blocked = Reserve({{2, 3}}, nullptr, &called, &busy);
   EXPECT_FALSE(called);
   EXPECT_TRUE(blocked.empty());
+  EXPECT_TRUE(busy);
   EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
 
   pending = _writer->ArmCompactionFloor();
@@ -511,6 +523,7 @@ TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
   std::atomic_bool reserved{false};
   std::vector<std::string> names;
   std::thread planner{[&] {
+    bool blocked = false;
     auto reservation = _writer->ReserveMerges(
       [](const irs::IndexReader& index, const irs::CompactingSegments& busy,
          irs::MergeGroups& groups) {
@@ -520,7 +533,8 @@ TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
             group.emplace_back(&segment);
           }
         }
-      });
+      },
+      blocked);
     for (const auto& ticket : reservation) {
       for (const auto* candidate : ticket.Candidates()) {
         names.emplace_back(candidate->Meta().name);
@@ -547,6 +561,7 @@ TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {
   std::atomic_size_t reserved{0};
   std::thread planner{[&] {
     while (!done.load(std::memory_order_relaxed)) {
+      bool blocked = false;
       auto reservation = _writer->ReserveMerges(
         [](const irs::IndexReader& index, const irs::CompactingSegments& busy,
            irs::MergeGroups& groups) {
@@ -556,7 +571,8 @@ TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {
               group.emplace_back(&segment);
             }
           }
-        });
+        },
+        blocked);
       if (reservation.empty()) {
         continue;
       }

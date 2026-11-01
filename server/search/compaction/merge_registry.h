@@ -76,11 +76,10 @@ class MergeRegistry {
 
   static MergeRegistry& Instance();
 
-  uint64_t Queue(uint64_t relation_id, irs::CompactionView candidates);
+  uint64_t Queue(uint64_t relation_id, MergeOrigin origin,
+                 irs::CompactionView candidates);
   void Dispatch(uint64_t id);
   void Drop(uint64_t id);
-  uint64_t Start(uint64_t relation_id, MergeOrigin origin);
-  void SetInputs(uint64_t id, irs::CompactionView candidates);
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,
               std::string error);
 
@@ -93,27 +92,6 @@ class MergeRegistry {
   irs::containers::NodeHashMap<uint64_t, MergeRecord> _active
     ABSL_GUARDED_BY(_mutex);
   std::deque<MergeRecord> _history ABSL_GUARDED_BY(_mutex);
-};
-
-class MergeRecorder {
- public:
-  MergeRecorder(uint64_t relation_id, MergeOrigin origin) noexcept
-    : _relation_id{relation_id}, _origin{origin} {}
-  MergeRecorder(const MergeRecorder&) = delete;
-  MergeRecorder& operator=(const MergeRecorder&) = delete;
-  ~MergeRecorder();
-
-  void Begin(irs::CompactionView candidates);
-  void Finish(irs::CompactionResult result);
-  void Fail(std::string error);
-
- private:
-  void Start();
-
-  uint64_t _relation_id;
-  MergeOrigin _origin;
-  uint64_t _id = 0;
-  bool _finished = false;
 };
 
 }  // namespace sdb::search

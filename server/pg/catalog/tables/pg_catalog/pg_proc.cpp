@@ -192,6 +192,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       [](const auto& row) { return ReturnsSet(row.macro) ? 1000.0F : 0.0F; }),
     Col<"prokind">(
       [](const auto& row) { return row.macro.is_procedure ? 'p' : 'f'; }),
+    Col<"proisstrict">([](const auto& row) { return row.macro.strict; }),
     Col<"proretset">([](const auto& row) { return ReturnsSet(row.macro); }),
     Col<"provolatile">([](const auto&) { return 'v'; }),
     Col<"proparallel">([](const auto&) { return 'u'; }),

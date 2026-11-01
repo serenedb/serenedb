@@ -602,8 +602,9 @@ Definition FunctionDefinition(const Session& session, int64_t oid) {
   if (const auto result = FunctionResult(session, macro)) {
     absl::StrAppend(&definition, " RETURNS ", *result, "\n");
   }
-  absl::StrAppend(&definition, " LANGUAGE sql\nAS ", tag, MacroBody(macro), tag,
-                  "\n");
+  absl::StrAppend(&definition, " LANGUAGE sql\n",
+                  macro.strict ? " STRICT\n" : "", "AS ", tag, MacroBody(macro),
+                  tag, "\n");
   return definition;
 }
 

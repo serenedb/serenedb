@@ -56,13 +56,11 @@ void SearchEngine::RequestStop() noexcept {
   _merges->Interrupt();
 }
 
-size_t SearchEngine::TryAcquireCompactions(size_t wanted) noexcept {
-  return _merges->TryAcquireHelpers(wanted);
+bool SearchEngine::TryAcquireCompaction() noexcept {
+  return _merges->TryAcquireThread();
 }
 
-void SearchEngine::ReleaseCompactions(size_t count) noexcept {
-  _merges->ReleaseHelpers(count);
-}
+void SearchEngine::ReleaseCompaction() noexcept { _merges->ReleaseThread(); }
 
 size_t SearchEngine::MergeRoundSize() const noexcept {
   return _merges->RoundSize();
@@ -94,11 +92,11 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }  // namespace
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
-  : _held{GetSearchEngine().TryAcquireCompactions(1) == 1} {}
+  : _held{GetSearchEngine().TryAcquireCompaction()} {}
 
 ManualCompactionSlot::~ManualCompactionSlot() {
   if (_held) {
-    GetSearchEngine().ReleaseCompactions(1);
+    GetSearchEngine().ReleaseCompaction();
   }
 }
 

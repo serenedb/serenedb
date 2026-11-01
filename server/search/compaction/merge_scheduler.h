@@ -113,7 +113,7 @@ class MergeScheduler {
   size_t FreeThreads() const;
 
   void Enqueue(const std::shared_ptr<Relation>& relation,
-               std::unique_ptr<MergeJob> job);
+               std::vector<std::unique_ptr<MergeJob>> jobs);
   void CancelQueued(const Relation& relation);
   void StopRunning(const Relation& relation);
   Lease TakeOver(const std::shared_ptr<Relation>& relation);
@@ -122,8 +122,8 @@ class MergeScheduler {
 
   size_t RoundSize() const noexcept { return RelationCap() + 1; }
 
-  size_t TryAcquireHelpers(size_t wanted) noexcept;
-  void ReleaseHelpers(size_t count) noexcept;
+  [[nodiscard]] bool TryAcquireThread() noexcept;
+  void ReleaseThread() noexcept;
 
  private:
   struct Entry;
@@ -133,6 +133,7 @@ class MergeScheduler {
 
   size_t BigThreads() const noexcept;
   size_t RelationCap() const noexcept;
+  size_t GrantBigThreads(size_t wanted) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   bool Admits(const Entry& entry) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   bool NoneRunning() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   static bool NoneRunningFor(const Relation* relation);

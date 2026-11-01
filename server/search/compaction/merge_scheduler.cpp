@@ -94,6 +94,17 @@ size_t MergeScheduler::RelationCap() const noexcept {
   return std::max<size_t>(1, _options.threads / 2);
 }
 
+size_t MergeScheduler::GrantBigThreads(size_t wanted) {
+  if (_big >= BigThreads() || _threads >= _options.threads) {
+    return 0;
+  }
+  const auto granted =
+    std::min({wanted, BigThreads() - _big, _options.threads - _threads});
+  _big += granted;
+  _threads += granted;
+  return granted;
+}
+
 absl::Time MergeScheduler::Now() const {
   return _options.now ? _options.now() : absl::Now();
 }
@@ -179,30 +190,40 @@ size_t MergeScheduler::FreeThreads() const {
 }
 
 void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
-                             std::unique_ptr<MergeJob> job) {
-  auto entry = std::make_unique<Entry>();
-  entry->relation = relation;
-  const auto candidates = job->Candidates();
-  entry->estimate = EstimateMerge(candidates);
-  SDB_IF_FAILURE("compaction_lane_big") {
-    entry->estimate.lane = MergeLane::Big;
+                             std::vector<std::unique_ptr<MergeJob>> jobs) {
+  if (jobs.empty()) {
+    return;
   }
-  entry->inputs.reserve(candidates.size());
-  for (const auto* candidate : candidates) {
-    entry->inputs.emplace_back(candidate->Meta().name);
+  Queue entries;
+  entries.reserve(jobs.size());
+  for (auto& job : jobs) {
+    auto& entry = entries.emplace_back(std::make_unique<Entry>());
+    entry->relation = relation;
+    const auto candidates = job->Candidates();
+    entry->estimate = EstimateMerge(candidates);
+    SDB_IF_FAILURE("compaction_lane_big") {
+      entry->estimate.lane = MergeLane::Big;
+    }
+    entry->inputs.reserve(candidates.size());
+    for (const auto* candidate : candidates) {
+      entry->inputs.emplace_back(candidate->Meta().name);
+    }
+    entry->job = std::move(job);
   }
-  entry->job = std::move(job);
   {
     absl::MutexLock lock{&_mutex};
     if (!_stopping && relation->_paused == 0) {
-      entry->id = _registry.Queue(relation->Id(), candidates);
-      entry->queued = Now();
-      _queue.emplace_back(std::move(entry));
-      ++relation->_queued;
+      const auto now = Now();
+      for (auto& entry : entries) {
+        entry->id = _registry.Queue(relation->Id(), entry->job->Candidates());
+        entry->queued = now;
+        _queue.emplace_back(std::move(entry));
+        ++relation->_queued;
+      }
       UpdateGauges();
     }
   }
-  entry.reset();
+  entries.clear();
   Pump();
 }
 
@@ -258,28 +279,21 @@ void MergeScheduler::Stop() {
   _mutex.Await(absl::Condition(this, &MergeScheduler::NoneRunning));
 }
 
-size_t MergeScheduler::TryAcquireHelpers(size_t wanted) noexcept {
+bool MergeScheduler::TryAcquireThread() noexcept {
   absl::MutexLock lock{&_mutex};
-  if (_stopping || _big >= BigThreads() || _threads >= _options.threads) {
-    return 0;
+  if (_stopping || GrantBigThreads(1) == 0) {
+    return false;
   }
-  const auto granted =
-    std::min({wanted, BigThreads() - _big, _options.threads - _threads});
-  _big += granted;
-  _threads += granted;
   UpdateGauges();
-  return granted;
+  return true;
 }
 
-void MergeScheduler::ReleaseHelpers(size_t count) noexcept {
-  if (count == 0) {
-    return;
-  }
+void MergeScheduler::ReleaseThread() noexcept {
   {
     absl::MutexLock lock{&_mutex};
-    SDB_ASSERT(_big >= count && _threads >= count);
-    _big -= count;
-    _threads -= count;
+    SDB_ASSERT(_big != 0 && _threads != 0);
+    --_big;
+    --_threads;
     UpdateGauges();
   }
   Pump();
@@ -328,12 +342,16 @@ void MergeScheduler::Pump() {
       } else {
         ++_big;
         ++relation._running_big;
-        entry->helpers = _options.threads / 2;
       }
       _registry.Dispatch(entry->id);
       auto* raw = entry.get();
       _running.emplace(raw, std::move(entry));
       started.emplace_back(raw);
+    }
+    for (auto* entry : started) {
+      if (entry->estimate.lane == MergeLane::Big) {
+        entry->helpers = GrantBigThreads(_options.threads / 2);
+      }
     }
     UpdateGauges();
   }
@@ -380,11 +398,11 @@ void MergeScheduler::Finish(Entry& raw, MergeResult result) noexcept {
     _running.erase(it);
     auto& relation = *entry->relation;
     --relation._running;
-    --_threads;
+    _threads -= 1 + entry->helpers;
     if (entry->estimate.lane == MergeLane::Small) {
       --_small;
     } else {
-      --_big;
+      _big -= 1 + entry->helpers;
       --relation._running_big;
     }
     if (Produced(outcome)) {

@@ -33,16 +33,18 @@ TEST(SearchEngineTest, ManualCompactionKeepsAnnWorkersWhenEverySlotIsBusy) {
   scheduler.start();
   SearchEngine engine;
   engine.start();
-  size_t held = 0;
-  while (engine.TryAcquireCompactions(1) == 1) {
+  int held = 0;
+  while (engine.TryAcquireCompaction()) {
     ++held;
   }
-  EXPECT_LT(size_t{0}, held);
+  EXPECT_LT(0, held);
   {
     const ManualCompactionSlot slot;
     EXPECT_TRUE(slot.AnnEnv());
   }
-  engine.ReleaseCompactions(held);
+  for (; held != 0; --held) {
+    engine.ReleaseCompaction();
+  }
   engine.stop();
   scheduler.stop();
 }

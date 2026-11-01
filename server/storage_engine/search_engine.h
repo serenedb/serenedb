@@ -77,8 +77,8 @@ class SearchEngine final {
   // Signal the loops to stop without joining.
   void RequestStop() noexcept;
 
-  size_t TryAcquireCompactions(size_t wanted) noexcept;
-  void ReleaseCompactions(size_t count) noexcept;
+  [[nodiscard]] bool TryAcquireCompaction() noexcept;
+  void ReleaseCompaction() noexcept;
 
   uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
                              uint32_t most = MaxAnnWorkersPerBuild()) noexcept {

@@ -163,11 +163,30 @@ class MergeSchedulerTest : public ::testing::Test {
     return std::make_shared<MergeScheduler::Relation>(id);
   }
 
+  struct Job {
+    std::string name;
+    uint64_t bytes = 0;
+  };
+
   void Enqueue(MergeScheduler& scheduler,
                const std::shared_ptr<MergeScheduler::Relation>& relation,
                std::string name, uint64_t bytes, size_t segments = 4) {
-    scheduler.Enqueue(relation, std::make_unique<FakeJob>(
-                                  _board, std::move(name), bytes, segments));
+    std::vector<std::unique_ptr<MergeJob>> jobs;
+    jobs.emplace_back(
+      std::make_unique<FakeJob>(_board, std::move(name), bytes, segments));
+    scheduler.Enqueue(relation, std::move(jobs));
+  }
+
+  void EnqueueRound(MergeScheduler& scheduler,
+                    const std::shared_ptr<MergeScheduler::Relation>& relation,
+                    std::vector<Job> round) {
+    std::vector<std::unique_ptr<MergeJob>> jobs;
+    jobs.reserve(round.size());
+    for (auto& job : round) {
+      jobs.emplace_back(
+        std::make_unique<FakeJob>(_board, std::move(job.name), job.bytes, 4));
+    }
+    scheduler.Enqueue(relation, std::move(jobs));
   }
 
   void Complete(const std::string& name, MergeOutcome outcome) {
@@ -244,7 +263,7 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
             512 * kMiB);
   }
   EXPECT_TRUE(Started("big1"));
-  EXPECT_TRUE(Started("big2"));
+  EXPECT_FALSE(Started("big2"));
   EXPECT_FALSE(Started("big3"));
   EXPECT_EQ(1, _board.helpers["big1"]);
   EXPECT_EQ(1, scheduler->FreeThreads());
@@ -252,10 +271,13 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
   Enqueue(*scheduler, relations[0], "small", kMiB);
   EXPECT_TRUE(Started("small"));
   EXPECT_EQ(0, scheduler->FreeThreads());
-  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
+  EXPECT_FALSE(scheduler->TryAcquireThread());
 
   Complete("big1", MergeOutcome::Merged);
+  EXPECT_TRUE(Started("big2"));
   EXPECT_TRUE(Started("big3"));
+  EXPECT_EQ(0, _board.helpers["big2"]);
+  EXPECT_EQ(0, _board.helpers["big3"]);
   CompleteAll(MergeOutcome::Merged);
   EXPECT_EQ(3, scheduler->FreeThreads());
 }
@@ -265,20 +287,24 @@ TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
   auto first = Relation(1);
   auto second = Relation(2);
   EXPECT_EQ(3, scheduler->Wanted(*first));
-  Enqueue(*scheduler, first, "a1", 512 * kMiB);
-  Enqueue(*scheduler, first, "a2", 512 * kMiB);
-  Enqueue(*scheduler, first, "a3", 512 * kMiB);
+  EnqueueRound(*scheduler, first,
+               {{.name = "a1", .bytes = 512 * kMiB},
+                {.name = "a2", .bytes = 512 * kMiB},
+                {.name = "a3", .bytes = 512 * kMiB}});
   EXPECT_TRUE(Started("a1"));
   EXPECT_TRUE(Started("a2"));
   EXPECT_FALSE(Started("a3"));
+  EXPECT_EQ(1, _board.helpers["a1"]);
+  EXPECT_EQ(0, _board.helpers["a2"]);
   EXPECT_EQ(0, scheduler->Wanted(*first));
 
   Enqueue(*scheduler, second, "b1", 512 * kMiB);
-  EXPECT_TRUE(Started("b1"));
+  EXPECT_FALSE(Started("b1"));
   EXPECT_EQ(2, scheduler->Wanted(*second));
 
   Complete("a1", MergeOutcome::Merged);
   EXPECT_TRUE(Started("a3"));
+  EXPECT_TRUE(Started("b1"));
   EXPECT_EQ(1, scheduler->Wanted(*first));
   CompleteAll(MergeOutcome::Merged);
   EXPECT_EQ(3, scheduler->Wanted(*first));
@@ -372,7 +398,7 @@ TEST_F(MergeSchedulerTest, StopRunningRaisesOnlyThatRelationsFlags) {
   auto first = Relation(1);
   auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
-  Enqueue(*scheduler, second, "b", 512 * kMiB);
+  Enqueue(*scheduler, second, "b", kMiB);
   scheduler->StopRunning(*first);
   EXPECT_TRUE(_board.stops["a"]->load());
   EXPECT_FALSE(_board.stops["b"]->load());
@@ -431,16 +457,58 @@ TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
   auto first = Relation(1);
   auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
-  EXPECT_EQ(2, scheduler->TryAcquireHelpers(3));
-  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
+  EXPECT_EQ(2, _board.helpers["a"]);
+  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_FALSE(scheduler->TryAcquireThread());
   Enqueue(*scheduler, second, "b", 512 * kMiB);
   EXPECT_FALSE(Started("b"));
   Enqueue(*scheduler, second, "small", kMiB);
   EXPECT_TRUE(Started("small"));
+  EXPECT_EQ(0, scheduler->FreeThreads());
 
-  scheduler->ReleaseHelpers(1);
+  Complete("a", MergeOutcome::Merged);
   EXPECT_TRUE(Started("b"));
-  scheduler->ReleaseHelpers(1);
+  EXPECT_EQ(2, _board.helpers["b"]);
+  CompleteAll(MergeOutcome::Merged);
+  EXPECT_EQ(4, scheduler->FreeThreads());
+}
+
+TEST_F(MergeSchedulerTest, AManualCompactionHoldsABigThread) {
+  auto scheduler = Make(4);
+  auto relation = Relation(1);
+  EXPECT_TRUE(scheduler->TryAcquireThread());
+  EXPECT_TRUE(scheduler->TryAcquireThread());
+  EXPECT_TRUE(scheduler->TryAcquireThread());
+  EXPECT_FALSE(scheduler->TryAcquireThread());
+  Enqueue(*scheduler, relation, "big", 512 * kMiB);
+  EXPECT_FALSE(Started("big"));
+  Enqueue(*scheduler, relation, "small", kMiB);
+  EXPECT_TRUE(Started("small"));
+
+  scheduler->ReleaseThread();
+  EXPECT_TRUE(Started("big"));
+  EXPECT_EQ(0, _board.helpers["big"]);
+  scheduler->ReleaseThread();
+  scheduler->ReleaseThread();
+  CompleteAll(MergeOutcome::Merged);
+  EXPECT_EQ(4, scheduler->FreeThreads());
+}
+
+TEST_F(MergeSchedulerTest, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
+  auto scheduler = Make(4);
+  auto relation = Relation(1);
+  EnqueueRound(*scheduler, relation,
+               {{.name = "big1", .bytes = 512 * kMiB},
+                {.name = "big2", .bytes = 512 * kMiB},
+                {.name = "small", .bytes = kMiB}});
+  EXPECT_TRUE(Started("big1"));
+  EXPECT_TRUE(Started("big2"));
+  EXPECT_TRUE(Started("small"));
+  EXPECT_EQ(1, _board.helpers["big1"]);
+  EXPECT_EQ(0, _board.helpers["big2"]);
+  EXPECT_EQ(0, _board.helpers["small"]);
+  EXPECT_EQ(0, scheduler->FreeThreads());
+
   CompleteAll(MergeOutcome::Merged);
   EXPECT_EQ(4, scheduler->FreeThreads());
 }
@@ -468,11 +536,34 @@ TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
   EXPECT_TRUE(Destroyed("queued"));
 
   EXPECT_EQ(0, scheduler->Wanted(*relation));
-  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
+  EXPECT_FALSE(scheduler->TryAcquireThread());
   Enqueue(*scheduler, relation, "late", 512 * kMiB);
   EXPECT_TRUE(Destroyed("late"));
   EXPECT_FALSE(Started("late"));
   EXPECT_TRUE(_registry.Active(1).empty());
+  EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
+  EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
+}
+
+TEST_F(MergeSchedulerTest, StopReturnsTheHelpersOfRunningMerges) {
+  auto scheduler = Make(4);
+  auto first = Relation(1);
+  auto second = Relation(2);
+  Enqueue(*scheduler, first, "running", 512 * kMiB);
+  Enqueue(*scheduler, second, "queued", 512 * kMiB);
+  EXPECT_EQ(2, _board.helpers["running"]);
+  EXPECT_FALSE(Started("queued"));
+  EXPECT_EQ(1, scheduler->FreeThreads());
+  EXPECT_EQ(3, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
+
+  std::thread stopper{[&] { scheduler->Stop(); }};
+  while (!_board.stops["running"]->load()) {
+    std::this_thread::yield();
+  }
+  Complete("running", MergeOutcome::Cancelled);
+  stopper.join();
+  EXPECT_TRUE(Destroyed("queued"));
+  EXPECT_EQ(4, scheduler->FreeThreads());
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
@@ -491,13 +582,14 @@ TEST_F(MergeSchedulerTest, SmallMergesFillingTheThreadsHoldBackBigOnes) {
   auto scheduler = Make(3);
   auto first = Relation(1);
   auto second = Relation(2);
-  Enqueue(*scheduler, first, "big1", 512 * kMiB);
   Enqueue(*scheduler, first, "small1", kMiB);
   Enqueue(*scheduler, second, "small2", kMiB);
-  EXPECT_TRUE(Started("small2"));
+  Enqueue(*scheduler, first, "big1", 512 * kMiB);
+  EXPECT_TRUE(Started("big1"));
+  EXPECT_EQ(0, _board.helpers["big1"]);
   Enqueue(*scheduler, second, "big2", 512 * kMiB);
   EXPECT_FALSE(Started("big2"));
-  EXPECT_EQ(0, scheduler->TryAcquireHelpers(1));
+  EXPECT_FALSE(scheduler->TryAcquireThread());
 
   Complete("small1", MergeOutcome::Merged);
   EXPECT_TRUE(Started("big2"));
@@ -592,6 +684,16 @@ TEST_F(MergeSchedulerTest, ADroppedSubmissionCountsAsCancelled) {
   EXPECT_EQ(0, relation->CompactionGeneration());
   EXPECT_EQ(1, scheduler->FreeThreads());
   EXPECT_EQ(2, scheduler->Wanted(*relation));
+}
+
+TEST_F(MergeSchedulerTest, ABigMergeThatNeverRunsReturnsItsHelpers) {
+  auto scheduler = Make(4, yaclib::MakeInline(yaclib::StopTag{}));
+  auto relation = Relation(1);
+  Enqueue(*scheduler, relation, "a", 512 * kMiB);
+  EXPECT_FALSE(Started("a"));
+  EXPECT_TRUE(Destroyed("a"));
+  EXPECT_EQ(4, scheduler->FreeThreads());
+  EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
 
 TEST_F(MergeSchedulerTest, AMergeKeepsOneIdFromTheQueueToTheHistory) {

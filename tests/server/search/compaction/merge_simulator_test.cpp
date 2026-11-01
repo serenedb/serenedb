@@ -202,6 +202,34 @@ TEST(MergeSimulator, HelpersComeOnlyFromFreeThreads) {
   EXPECT_EQ(absl::Seconds(4), events[2].at);
 }
 
+TEST(MergeSimulator, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
+  auto options = Options(4);
+  options.bytes_per_second = double{32 * kMiB};
+  options.policy = [](irs::Compaction& candidates,
+                      const irs::IndexReader& index,
+                      const irs::CompactingSegments& taken) {
+    if (index.size() < 4) {
+      return;
+    }
+    for (const auto& segment : index) {
+      if (candidates.size() != 2 && !taken.contains(segment.Meta().name)) {
+        candidates.emplace_back(&segment);
+      }
+    }
+  };
+  const auto events = SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB),
+                                      Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)},
+                                     options);
+  ASSERT_EQ(6, events.size());
+  EXPECT_EQ(2, events[3].merges_running);
+  EXPECT_EQ(Names({"_1", "_2"}), events[4].inputs);
+  EXPECT_EQ(2, events[4].threads);
+  EXPECT_EQ(absl::Seconds(2), events[4].at);
+  EXPECT_EQ(Names({"_3", "_4"}), events[5].inputs);
+  EXPECT_EQ(1, events[5].threads);
+  EXPECT_EQ(absl::Seconds(4), events[5].at);
+}
+
 TEST(MergeSimulator, RelationsShareTheMergeThreads) {
   const auto events =
     SimulateMerges({Flush(0, 2 * kMiB, 1), Flush(0, 2 * kMiB, 1),

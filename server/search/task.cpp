@@ -21,7 +21,6 @@
 
 #include "task.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -171,13 +170,9 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    const auto granted = GetSearchEngine().TryAcquireCompactions(helpers);
-    absl::Cleanup release = [granted] {
-      GetSearchEngine().ReleaseCompactions(granted);
-    };
     PipelineMergeExecutor executor{irs::DuckDBEngine::Instance().instance(),
                                    &GetSearchEngine().MergeTasks(),
-                                   1 + granted};
+                                   1 + helpers};
     auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
                                                    opts.field_options,
                                                    &AnnBuildEnv(), executor);
@@ -217,10 +212,13 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
       taken.insert(blocked.begin(), blocked.end());
       groups = PickMerges(policy, index, std::move(taken), wanted);
     });
+  std::vector<std::unique_ptr<MergeJob>> jobs;
+  jobs.reserve(reservation.tickets.size());
   for (auto& ticket : reservation.tickets) {
-    merges.Enqueue(relation, std::make_unique<StorageMergeJob<Storage>>(
-                               idx, std::move(ticket)));
+    jobs.emplace_back(
+      std::make_unique<StorageMergeJob<Storage>>(idx, std::move(ticket)));
   }
+  merges.Enqueue(relation, std::move(jobs));
   return reservation.tickets.size();
 }
 

@@ -114,7 +114,6 @@ class SimulatedJob final : public MergeJob {
 
  private:
   bool Merges(std::string_view name) const noexcept;
-  void ReleaseHelpers();
 
   Simulation& _simulation;
   Relation& _relation;
@@ -135,7 +134,6 @@ class Simulation {
   std::vector<SimulatedEvent> Run(std::vector<SimulatedFlush> trace);
 
   const MergeSimulation& Options() const noexcept { return _options; }
-  MergeScheduler& Scheduler() noexcept { return *_scheduler; }
   absl::Time Now() const noexcept { return _now; }
   absl::Duration Since(absl::Time time) const noexcept {
     return time - _origin;
@@ -200,13 +198,9 @@ bool SimulatedJob::Merges(std::string_view name) const noexcept {
   });
 }
 
-void SimulatedJob::ReleaseHelpers() {
-  _simulation.Scheduler().ReleaseHelpers(std::exchange(_helpers, 0));
-}
-
 yaclib::Future<MergeResult> SimulatedJob::Run(const std::atomic_bool&,
                                               size_t helpers) {
-  _helpers = _simulation.Scheduler().TryAcquireHelpers(helpers);
+  _helpers = helpers;
   _started = _simulation.Now();
   const auto threads = static_cast<double>(1 + _helpers);
   const auto seconds = static_cast<double>(_estimate.rewrite_bytes) /
@@ -227,7 +221,6 @@ void SimulatedJob::Finish() {
     .score = _estimate.score,
     .lane = _estimate.lane,
   };
-  ReleaseHelpers();
   event.inputs.reserve(_segments.size());
   for (const auto& segment : _segments) {
     event.inputs.emplace_back(segment.Meta().name);
@@ -265,7 +258,6 @@ void SimulatedJob::Finish() {
 }
 
 void SimulatedJob::Cancel() {
-  ReleaseHelpers();
   _simulation.Finished();
   auto promise = std::move(_promise);
   std::move(promise).Set(
@@ -368,11 +360,13 @@ void Simulation::Plan(Relation& relation) {
   taken.insert(blocked.begin(), blocked.end());
   const auto groups =
     PickMerges(_options.policy, index, std::move(taken), wanted);
+  std::vector<std::unique_ptr<MergeJob>> jobs;
+  jobs.reserve(groups.size());
   for (const auto& group : groups) {
-    ++_queued;
-    _scheduler->Enqueue(relation.handle,
-                        std::make_unique<SimulatedJob>(*this, relation, group));
+    jobs.emplace_back(std::make_unique<SimulatedJob>(*this, relation, group));
   }
+  _queued += jobs.size();
+  _scheduler->Enqueue(relation.handle, std::move(jobs));
 }
 
 std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {

@@ -83,27 +83,33 @@ std::vector<NormPiece> NormPieces(field_id id,
 
 void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
                     std::vector<uint32_t>& values) {
+  const auto& planned = piece.planned;
   if (piece.reader == nullptr) {
-    for (auto left = piece.planned.rows; left != 0;) {
-      const auto n = std::min<uint64_t>(left, kNormMergeChunk);
-      values.assign(n, 0);
-      writer.Write(values);
-      left -= n;
-    }
+    writer.WriteRepeated(planned.rows, 0);
     return;
   }
   const auto& src = *piece.source;
   const auto& region = piece.reader->Region(piece.region);
   const bool has_mask = HasRemovals(src.reader->Meta());
   auto mask = MakeGenericDocsMask(*src.reader);
+  if (planned.min == planned.max) {
+    const uint64_t rows = region.end_doc - region.first_doc;
+    writer.WriteRepeated(
+      has_mask ? rows - mask.CountIn(region.first_doc, region.end_doc) : rows,
+      planned.min);
+    return;
+  }
   for (auto doc = region.first_doc; doc != region.end_doc;) {
     const auto n = std::min<size_t>(region.end_doc - doc, kNormMergeChunk);
-    values.resize(n);
-    piece.reader->Decode(doc, n, values.data());
-    if (has_mask) {
-      values.resize(KeepLive(mask, doc, values));
+    if (values.size() < n) {
+      values.resize(n);
     }
-    writer.Write(values);
+    std::span<uint32_t> chunk{values.data(), n};
+    piece.reader->Decode(doc, n, chunk.data());
+    if (has_mask) {
+      chunk = chunk.first(KeepLive(mask, doc, chunk));
+    }
+    writer.Write(chunk);
     doc += static_cast<doc_id_t>(n);
   }
 }
@@ -121,7 +127,7 @@ class OrderedNormInput {
     if (!_reader) {
       return 0;
     }
-    while (_at == _values.size()) {
+    while (_at == _end) {
       Refill();
     }
     return _values[_at++];
@@ -136,11 +142,11 @@ class OrderedNormInput {
       return;
     }
     const auto n = std::min<size_t>(region.end_doc - _doc, kOrderedNormChunk);
-    _values.resize(n);
-    _reader->Decode(_doc, n, _values.data());
-    if (_has_mask) {
-      _values.resize(KeepLive(_mask, _doc, _values));
+    if (_values.size() < n) {
+      _values.resize(n);
     }
+    _reader->Decode(_doc, n, _values.data());
+    _end = _has_mask ? KeepLive(_mask, _doc, {_values.data(), n}) : n;
     _doc += static_cast<doc_id_t>(n);
     _at = 0;
   }
@@ -150,6 +156,7 @@ class OrderedNormInput {
   bool _has_mask;
   std::vector<uint32_t> _values;
   size_t _at = 0;
+  size_t _end = 0;
   size_t _region = 0;
   doc_id_t _doc = doc_limits::min();
 };
@@ -161,14 +168,20 @@ void MergeOrderedNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
   for (const auto& piece : NormPieces(id, sources)) {
     planned.Merge(piece.planned);
   }
+  auto& writer = col_writer.StreamNormColumn(out_id);
+  writer.OpenRegion(planned);
+  const auto rows = order.Inputs();
+  if (planned.min == planned.max) {
+    writer.WriteRepeated(rows.size(), planned.min);
+    writer.CloseRegion();
+    writer.Finalize();
+    return;
+  }
   std::vector<OrderedNormInput> inputs;
   inputs.reserve(sources.size());
   for (const auto& src : sources) {
     inputs.emplace_back(src, SourceNormColumn(src, id));
   }
-  auto& writer = col_writer.StreamNormColumn(out_id);
-  writer.OpenRegion(planned);
-  const auto rows = order.Inputs();
   std::vector<uint32_t> values;
   for (size_t row = 0; row != rows.size();) {
     const auto n = std::min(rows.size() - row, kNormMergeChunk);

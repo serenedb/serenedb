@@ -396,7 +396,11 @@ class ListColumnReader final : public ColumnReader {
     const auto& validity = duckdb::FlatVector::Validity(result);
     const auto emit = [&](auto index) {
       if constexpr (kDictionary) {
-        duckdb::SelectionVector sel{scan_count};
+        auto& sel = s.list_sel;
+        if (sel.Capacity() < scan_count || sel.sel_data().use_count() != 1) {
+          sel.Initialize(
+            std::max<duckdb::idx_t>(scan_count, STANDARD_VECTOR_SIZE));
+        }
         for (duckdb::idx_t i = 0; i < scan_count; ++i) {
           sel.set_index(i, validity.RowIsValid(i)
                              ? static_cast<duckdb::idx_t>(index(codes[i]))

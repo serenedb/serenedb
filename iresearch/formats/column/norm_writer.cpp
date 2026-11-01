@@ -59,6 +59,19 @@ void NormStats::Add(std::span<const uint32_t> values) noexcept {
   }
 }
 
+void NormStats::AddRepeated(uint64_t count, uint32_t value) noexcept {
+  if (count == 0) {
+    return;
+  }
+  rows += count;
+  sum += count * value;
+  non_zero += value != 0 ? count : 0;
+  wide8 += value >= NormFirstCode(8) ? count : 0;
+  wide16 += value >= NormFirstCode(16) ? count : 0;
+  min = std::min(min, value);
+  max = std::max(max, value);
+}
+
 void NormStats::Merge(const NormStats& other) noexcept {
   rows += other.rows;
   sum += other.sum;
@@ -125,35 +138,41 @@ void NormColumnWriter::Reorder(std::span<const uint32_t> new2old) {
   SDB_ASSERT(_staged_row_group_size != 0);
   SDB_ASSERT(_meta.row_count == 0);
   SDB_ASSERT(new2old.empty() || _values.size() == new2old.size());
-  const auto values = std::exchange(_values, {});
   _row_group_size = std::exchange(_staged_row_group_size, 0);
-  const auto append = [&](uint32_t value) {
-    _values.push_back(value);
+  if (new2old.empty()) {
+    const std::span<const uint32_t> staged = _values;
+    const auto sealed = staged.size() - staged.size() % _row_group_size;
+    for (size_t at = 0; at != sealed; at += _row_group_size) {
+      EncodeRowGroup(staged.subspan(at, _row_group_size));
+    }
+    _values.erase(_values.begin(), _values.begin() + sealed);
+    return;
+  }
+  const auto values = std::exchange(_values, {});
+  _values.reserve(std::min<size_t>(values.size(), _row_group_size));
+  for (const auto old : new2old) {
+    _values.push_back(values[old]);
     if (_values.size() == _row_group_size) {
       FlushRowGroup();
     }
-  };
-  if (new2old.empty()) {
-    for (const auto value : values) {
-      append(value);
-    }
-    return;
-  }
-  for (const auto old : new2old) {
-    append(values[old]);
   }
 }
 
 void NormColumnWriter::FlushRowGroup() {
-  if (_values.empty()) {
+  EncodeRowGroup(_values);
+  _values.clear();
+}
+
+void NormColumnWriter::EncodeRowGroup(std::span<const uint32_t> values) {
+  if (values.empty()) {
     return;
   }
   NormStats stats;
-  stats.Add(_values);
+  stats.Add(values);
   Begin(PickNormLayout(stats), stats.rows, stats.max);
-  Encode(_values);
+  _region.stats = stats;
+  EncodeValues(values, 0);
   End();
-  _values.clear();
 }
 
 void NormColumnWriter::OpenRegion(const NormStats& planned) {
@@ -169,6 +188,12 @@ void NormColumnWriter::Write(std::span<const uint32_t> values) {
   if (!values.empty()) {
     Encode(values);
   }
+}
+
+void NormColumnWriter::WriteRepeated(uint64_t rows, uint32_t value) {
+  SDB_ASSERT(rows == 0 ||
+             (_open_region && _region.bits == 0 && _region.value == value));
+  _region.stats.AddRepeated(rows, value);
 }
 
 void NormColumnWriter::CloseRegion() {
@@ -224,7 +249,10 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
   for (size_t at = 0; at < values.size(); at += kStagingRows) {
     const auto chunk =
       values.subspan(at, std::min(kStagingRows, values.size() - at));
-    _staging.resize(chunk.size() * Bytes);
+    const auto bytes = chunk.size() * Bytes;
+    if (_staging.size() < bytes) {
+      _staging.resize(bytes);
+    }
     auto* out = _staging.data();
     for (size_t i = 0; i != chunk.size(); ++i) {
       auto v = chunk[i];
@@ -240,14 +268,18 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _blocks->Append(
-      {reinterpret_cast<const char*>(_staging.data()), _staging.size()});
+    _blocks->Append({reinterpret_cast<const char*>(out), bytes});
   }
 }
 
 void NormColumnWriter::Encode(std::span<const uint32_t> values) {
   const uint64_t first_row = _region.stats.rows;
   _region.stats.Add(values);
+  EncodeValues(values, first_row);
+}
+
+void NormColumnWriter::EncodeValues(std::span<const uint32_t> values,
+                                    uint64_t first_row) {
   switch (_region.bits) {
     case 0:
       SDB_ASSERT(std::all_of(values.begin(), values.end(),
@@ -279,10 +311,13 @@ void NormColumnWriter::End() {
     region.exceptions = static_cast<uint32_t>(exceptions);
     region.overflow = static_cast<uint32_t>(_overflow_rows.size());
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
-    _staging.resize(
+    const auto bytes =
       (_bases.size() + _overflow_rows.size() + _overflow_values.size() + 1) *
         sizeof(uint32_t) +
-      _direct.size() * region.exception_bytes);
+      _direct.size() * region.exception_bytes;
+    if (_staging.size() < bytes) {
+      _staging.resize(bytes);
+    }
     auto* at = _staging.data();
     const auto put32 = [&at](uint32_t v) {
       absl::little_endian::Store32(at, v);
@@ -306,8 +341,9 @@ void NormColumnWriter::End() {
       }
     }
     put32(0);
-    region.table_offset = _blocks->Append(
-      {reinterpret_cast<const char*>(_staging.data()), _staging.size()});
+    SDB_ASSERT(at == _staging.data() + bytes);
+    region.table_offset =
+      _blocks->Append({reinterpret_cast<const char*>(_staging.data()), bytes});
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);

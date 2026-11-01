@@ -191,6 +191,7 @@ class ColumnReader {
     std::unique_ptr<VectorScratch> list_ends;
     std::unique_ptr<ListDictionary> list_dict;
     std::vector<duckdb::sel_t> list_picked;
+    duckdb::SelectionVector list_sel;
     struct Fetch {
       std::unique_ptr<duckdb::ColumnSegment> segment;
       duckdb::ColumnFetchState state;

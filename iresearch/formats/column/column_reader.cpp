@@ -378,11 +378,6 @@ void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
   } else if (_row_count > 0 && !_children.empty()) {
-    // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
-    // plumbing, e.g. list offsets), so the null flags only come from the
-    // validity child -- and its absence means the writer counted every row
-    // valid (ColumnWriter::SealValidity). Scalars need none of this: their
-    // data block stats already carry the flags.
     SDB_ASSERT(!stats.CanHaveNull(),
                "column without a validity payload carries null-bearing stats");
     stats.SetHasNoNull();
@@ -848,9 +843,6 @@ duckdb::idx_t ColumnReader::GatherFilter(
   auto& seg = *s.segments.back();
   const auto& codec = seg.GetCompressionFunction();
   duckdb::idx_t approved = sel_count;
-  // The codec filter operates on one segment; a span that crosses the block
-  // boundary (blocks are not vector-aligned, e.g. dictionary-full splits on
-  // string columns) takes the decode path below -- ScanVector walks segments.
   const bool within_segment =
     (s.window.end - s.window.begin) - s.st.offset_in_column >= span;
   const bool self_valid =

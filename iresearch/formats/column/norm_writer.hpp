@@ -57,6 +57,7 @@ struct NormStats {
   uint32_t max = 0;
 
   void Add(std::span<const uint32_t> values) noexcept;
+  void AddRepeated(uint64_t count, uint32_t value) noexcept;
   void Merge(const NormStats& other) noexcept;
 };
 
@@ -128,6 +129,8 @@ class NormColumnWriter final {
 
   void Write(std::span<const uint32_t> values);
 
+  void WriteRepeated(uint64_t rows, uint32_t value);
+
   void CloseRegion();
 
   void Finalize();
@@ -142,8 +145,10 @@ class NormColumnWriter final {
 
  private:
   void FlushRowGroup();
+  void EncodeRowGroup(std::span<const uint32_t> values);
   void Begin(const NormLayout& layout, uint64_t rows, uint32_t max);
   void Encode(std::span<const uint32_t> values);
+  void EncodeValues(std::span<const uint32_t> values, uint64_t first_row);
   template<size_t Bytes>
   void EncodeSlots(std::span<const uint32_t> values, uint64_t first_row);
   uint32_t Escape(uint64_t row, uint32_t value);

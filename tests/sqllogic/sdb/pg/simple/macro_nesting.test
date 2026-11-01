@@ -468,7 +468,7 @@ query
 SELECT count(DISTINCT mn_rand()) AS r FROM range(100)
 ----
 r
-1
+100
 
 statement ok
 CREATE MACRO mn_pair(x, y) AS (SELECT x + x + y FROM (VALUES (1)) v(c))
@@ -1001,11 +1001,8 @@ i	l	s
 0	6	3
 1	18	6
 
-statement ok
-CREATE MACRO mn_arrow(x, l) AS (SELECT sum(list_sum(list_transform(l, x -> x + 1))) FROM range(2) r(v))
-
 statement error
-SELECT mn_arrow(5, [1, 2])
+CREATE MACRO mn_arrow(x, l) AS (SELECT sum(list_sum(list_transform(l, x -> x + 1))) FROM range(2) r(v))
 ----
 db error: ERROR: Invalid lambda parameters! Parameters must be unqualified comma-separated names like x or (x, y).
 
@@ -1190,9 +1187,6 @@ DROP MACRO mn_caller
 
 statement ok
 DROP MACRO mn_callee
-
-statement ok
-DROP MACRO mn_arrow
 
 statement ok
 DROP MACRO mn_agg_sub

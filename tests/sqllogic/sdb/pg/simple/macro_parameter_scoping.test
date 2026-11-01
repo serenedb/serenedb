@@ -1,0 +1,75 @@
+statement ok
+CREATE TABLE mps_t (x int, y int);
+
+
+statement ok
+INSERT INTO mps_t VALUES (10, 1), (20, 2);
+
+
+statement ok
+CREATE MACRO mps_col(x) AS (SELECT max(x) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_qualified(x) AS (SELECT max(mps_qualified.x) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_in(x) AS (SELECT x IN (SELECT x FROM mps_t));
+
+
+statement ok
+CREATE MACRO mps_field(s) AS (SELECT max(s.a + y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_dot(s) AS (SELECT max(s.lower() || y) FROM mps_t);
+
+
+statement ok
+CREATE MACRO mps_lambda(z) AS (SELECT list_transform([1, 2], e -> e + z + x) FROM mps_t WHERE x = 10);
+
+
+query
+SELECT mps_col(5) AS col, mps_qualified(5) AS qualified, mps_in(20) AS in_twenty, mps_in(5) AS in_five, mps_field({'a': 100}) AS field, mps_dot('AB') AS dot, mps_lambda(10) AS lambda;
+----
+col	qualified	in_twenty	in_five	field	dot	lambda
+20	5	t	f	102	ab2	{21,22}
+
+
+query
+SELECT x, mps_col(1) AS col FROM mps_t ORDER BY x;
+----
+x	col
+10	20
+20	20
+
+
+statement ok
+CREATE MACRO mps_table(x) AS TABLE SELECT x FROM mps_t ORDER BY 1;
+
+
+statement ok
+CREATE MACRO mps_table_qualified(x) AS TABLE SELECT mps_table_qualified.x + y AS v FROM mps_t ORDER BY 1;
+
+
+statement ok
+CREATE MACRO mps_table_dot(s) AS TABLE SELECT s.upper() AS u;
+
+
+query
+SELECT (SELECT array_agg(x ORDER BY x) FROM mps_table(5)) AS table_col, (SELECT array_agg(v ORDER BY v) FROM mps_table_qualified(5)) AS table_qualified, (SELECT u FROM mps_table_dot('ab')) AS table_dot;
+----
+table_col	table_qualified	table_dot
+{10,20}	{6,7}	AB
+
+
+statement ok
+CREATE VIEW mps_rows AS SELECT rowid AS r, x FROM mps_t;
+
+
+query
+SELECT count(*) AS rows FROM mps_rows;
+----
+rows
+2

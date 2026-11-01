@@ -183,12 +183,6 @@ Root::ptr MakePrunedDisjunction(
   SDB_IF_FAILURE("irs::PruningIterator") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  const auto args_of = [&](const irs::detail::PostingClause& posting) {
-    return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                  .stats = posting.stats.stats,
-                                  .fetcher = &ctx.fetcher,
-                                  .boost = posting.boost};
-  };
   if (!filters.empty()) {
     std::vector<UnionMember::ptr> members;
     std::vector<uint32_t> costs;
@@ -204,7 +198,7 @@ Root::ptr MakePrunedDisjunction(
         *doc, [&]<typename Input> -> UnionMember::ptr {
           return memory::make_managed<TermUnionMember<Input>>(
             posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment,
-            own, args_of(posting));
+            own, posting.Args(&ctx.fetcher));
         }));
       costs.push_back(posting.state.cookie.docs_count);
       postings += costs.back();
@@ -235,7 +229,7 @@ Root::ptr MakePrunedDisjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, args_of(posting));
+                   segment, own, posting.Args(&ctx.fetcher));
       return posting.state.cookie.docs_count;
     };
     return MakeDisjunctionOf<kExcludes, Leaf>(

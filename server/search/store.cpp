@@ -57,7 +57,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
-#include "search/row_position_wal.h"
+#include "search/replay.h"
 #include "search/scorer_options.h"
 #include "storage_engine/search_engine.h"
 
@@ -102,9 +102,10 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
 }  // namespace
 
 struct Store::ReplaySession {
-  irs::IndexWriter::Transaction trx;
-  irs::DocRemoval removal;
-  irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> doc_maps;
+  ReplaySession(duckdb::AttachedDatabase& db, Store& store)
+    : replay{db, store} {}
+
+  Replay replay;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
 };
 
@@ -803,18 +804,24 @@ void Store::ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept {
   }
 }
 
-Store::ReplaySession* Store::BeginReplay(duckdb::AttachedDatabase& db) {
+bool Store::Replays(duckdb::AttachedDatabase& db) const {
   if (!_writer) {
-    return nullptr;
+    return false;
   }
   auto& manager = duckdb::DuckTransactionManager::Get(db);
   const irs::SourcePosition position{manager.GetReplayGeneration(),
                                      manager.GetReplayCommitOffset()};
-  if (position.offset != 0 && position < _durability.Position()) {
+  SDB_ENSURE(position.offset != 0, "store ", _id,
+             ": a write outside a commit and a replay");
+  return !(position < _durability.Position());
+}
+
+Store::ReplaySession* Store::BeginReplay(duckdb::AttachedDatabase& db) {
+  if (!Replays(db)) {
     return nullptr;
   }
   if (!_replay) {
-    _replay = std::make_unique<ReplaySession>(GetTransaction());
+    _replay = std::make_unique<ReplaySession>(db, *this);
   }
   return _replay.get();
 }
@@ -828,8 +835,8 @@ void Store::ReplayInsert(duckdb::ClientContext& context,
     return;
   }
   if (!session->sink) {
-    session->sink = connector::MakeSearchTableInsertSink(session->trx, *this,
-                                                         catalog, context);
+    session->sink = connector::MakeSearchTableInsertSink(
+      session->replay.Slot(), *this, catalog, context);
   }
   connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids, _id,
                                     context);
@@ -838,93 +845,38 @@ void Store::ReplayInsert(duckdb::ClientContext& context,
 void Store::ReplayDeleteRowPositions(
   duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
   std::span<const duckdb::WALFrozenRowPositionGroup> groups) {
-  auto* session = BeginReplay(db);
-  if (!session) {
-    return;
-  }
-  if (groups.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
-                    ERR_MSG("Malformed doc removal: it names no segment"));
-  }
-  for (const auto& group : groups) {
-    session->removal.groups.push_back(
-      {.segment = group.segment,
-       .docs =
-         irs::DocumentMask{{entry, group.docs.data()}, group.docs.size()}});
+  if (auto* session = BeginReplay(db)) {
+    session->replay.RemovePositions(std::move(entry), groups);
   }
 }
 
 void Store::ReplayRowPositionMaps(
   duckdb::AttachedDatabase& db, std::shared_ptr<const duckdb::data_t> entry,
   uint64_t source, std::span<const duckdb::WALFrozenRowPositionMap> maps) {
-  auto* session = BeginReplay(db);
-  if (!session) {
-    return;
-  }
-  auto& doc_maps = session->doc_maps[source];
-  doc_maps.clear();
-  doc_maps.reserve(maps.size());
-  for (const auto& map : maps) {
-    if (source >= map.target) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DATA_CORRUPTED),
-        ERR_MSG("Malformed doc map: it does not lead to a newer segment"));
-    }
-    doc_maps.push_back({.source = source,
-                        .target = map.target,
-                        .mask = map.mask.empty()
-                                  ? nullptr
-                                  : std::make_shared<const irs::DocumentMask>(
-                                      std::shared_ptr<const irs::byte_type>{
-                                        entry, map.mask.data()},
-                                      map.mask.size()),
-                        .rank_begin = map.rank_begin,
-                        .rank_end = map.rank_end,
-                        .base = map.base});
+  if (auto* session = BeginReplay(db)) {
+    session->replay.MapPositions(std::move(entry), source, maps);
   }
 }
 
 void Store::ReplayTruncate(duckdb::AttachedDatabase& db) {
   if (auto* session = BeginReplay(db)) {
-    session->trx.RemoveAll();
+    session->replay.Truncate();
   }
 }
 
 void Store::ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                                 std::vector<std::string> segments) {
-  auto* session = BeginReplay(db);
-  if (!session) {
-    return;
-  }
-  for (const auto& segment : segments) {
-    try {
-      session->trx.Adopt(segment);
-    } catch (const std::exception& e) {
-      SDB_FATAL(SEARCH, "search-table WAL recovery: failed to adopt segment '",
-                segment, "' for table ", _id, ": ",
-                duckdb::ErrorData{e}.RawMessage());
-    }
+  if (auto* session = BeginReplay(db)) {
+    session->replay.Adopt(segments);
   }
 }
 
-bool Store::FinishReplay(duckdb::AttachedDatabase& db) {
+bool Store::FinishReplay() {
   if (!_replay) {
     return false;
   }
-  auto& session = *_replay;
-  session.sink.reset();
-  if (!session.removal.groups.empty()) {
-    session.trx.Remove(ReplayRemoval(std::move(session.removal),
-                                     _writer->GetSnapshot(), session.doc_maps));
-  }
-  auto& storage = db.GetStorageManager();
-  const irs::SourcePosition end{
-    storage.GetBlockManager().GetCheckpointIteration(), storage.GetWALSize()};
-  SDB_FATAL_IF(SEARCH, !session.trx.Commit(end),
-               "search-table WAL recovery: iresearch trx Commit failed for "
-               "table ",
-               _id);
-  _durability.MarkStaged(end);
+  _replay->sink.reset();
+  _replay->replay.Finish();
   _replay.reset();
   return true;
 }

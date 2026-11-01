@@ -1,7 +1,9 @@
 target_sources(
     sereneserver
     PRIVATE
+        feeder.cpp
         index_durability.cpp
+        replay.cpp
         row_position_wal.cpp
         store.cpp
         store_stats.cpp

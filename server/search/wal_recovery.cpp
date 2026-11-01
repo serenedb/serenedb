@@ -125,9 +125,7 @@ void RecoverSearchStorages() {
   std::vector<
     std::pair<std::optional<BoundIndexHandle>, std::shared_ptr<Store>>>
     recovering;
-  std::vector<std::pair<duckdb::reference<duckdb::AttachedDatabase>,
-                        std::shared_ptr<Store>>>
-    tables;
+  std::vector<std::shared_ptr<Store>> tables;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> databases;
   const auto add_database = [&](duckdb::AttachedDatabase& db) {
     if (absl::c_none_of(databases, [&](const auto& synced) {
@@ -148,7 +146,7 @@ void RecoverSearchStorages() {
     auto& db = catalog.get().GetAttached();
     for (auto& table : catalog::SearchTableStorages(catalog.get())) {
       add_database(db);
-      tables.emplace_back(db, std::move(table));
+      tables.push_back(std::move(table));
     }
   }
   for (auto& db : databases) {
@@ -170,10 +168,10 @@ void RecoverSearchStorages() {
         }
       }));
   }
-  for (auto& [db, table] : tables) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed_tables, &db = db.get(), table] {
-        if (table->FinishReplay(db)) {
+  for (auto& table : tables) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<FinishReplayTask>(executor, [&replayed_tables, table] {
+        if (table->FinishReplay()) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
         if (const auto status = table->VacuumRefresh(); !status.ok()) {

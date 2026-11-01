@@ -311,7 +311,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ReplayTruncate(duckdb::AttachedDatabase& db);
   void ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                            std::vector<std::string> segments);
-  bool FinishReplay(duckdb::AttachedDatabase& db);
+  bool FinishReplay();
+  bool Replays(duckdb::AttachedDatabase& db) const;
 
   // Delete-log for online CREATE INDEX: open while the build runs, drained
   // once by TakeDeleteLog after the backfill is committed, then latched

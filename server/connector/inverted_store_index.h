@@ -45,7 +45,10 @@
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "query/transaction.h"
+#include "search/feeder.h"
+#include "search/replay.h"
 #include "search/store.h"
+#include "search/writes.h"
 
 namespace duckdb {
 
@@ -133,46 +136,26 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::row_t row_start, duckdb::ErrorData& error);
 
  private:
-  struct ReplayOp;
-  struct FeedQueue;
-  struct ReplaySlot;
-  struct ReplaySession;
-  struct LiveFeed;
-  struct FeedTask;
   struct RangeTask;
 
   duckdb::ErrorData AppendImpl(duckdb::DataChunk& chunk,
                                duckdb::Vector& row_ids);
 
-  irs::IndexWriter::Transaction NewTransaction();
   duckdb::idx_t Evaluate(duckdb::ClientContext& context,
                          duckdb::DataChunk& chunk, duckdb::Vector& row_ids,
                          duckdb::DataChunk& results, duckdb::Vector& rows,
                          duckdb::ExpressionExecutor* executor = nullptr);
   void Feed(DuckDBSinkIndexWriter& writer, duckdb::DataChunk& results,
             duckdb::Vector& rows, duckdb::idx_t count);
+  std::unique_ptr<duckdb::DataChunk> Batch(search::Writes* writes,
+                                           duckdb::DataChunk& chunk,
+                                           duckdb::DataChunk& results,
+                                           duckdb::Vector& rows,
+                                           duckdb::idx_t count);
 
-  ReplaySession* ReplaySessionForEntry();
-  void Enqueue(duckdb::TaskExecutor& executor, FeedQueue& queue,
-               std::unique_ptr<ReplayOp> op);
-  void Apply(FeedQueue& queue, ReplayOp& op);
-  static std::unique_ptr<ReplayOp> CopyInsert(duckdb::DataChunk& results,
-                                              duckdb::Vector& rows,
-                                              duckdb::idx_t count);
-  std::unique_ptr<ReplayOp> CopyInsertShared(query::Transaction& transaction,
-                                             duckdb::DataChunk& chunk,
-                                             duckdb::DataChunk& results,
-                                             duckdb::Vector& rows,
-                                             duckdb::idx_t count);
+  search::Replay* BeginReplay();
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
-  irs::SourcePosition ReplayPosition() const;
-  void CommitReplay(std::span<irs::IndexWriter::Transaction* const> trxs,
-                    const irs::SourcePosition& position);
-  void CommitReplaySlots(ReplaySession& session,
-                         const irs::SourcePosition& position);
-  void CommitReplayDeletes(ReplaySession& session,
-                           const irs::SourcePosition& position);
 
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;
@@ -184,8 +167,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::vector<ExpressionSlot> _expressions;
   bool _has_predicate = false;
 
-  std::unique_ptr<ReplaySession> _replay;
-  std::unique_ptr<LiveFeed> _live;
+  duckdb::ClientContext* _context = nullptr;
+  std::unique_ptr<search::Replay> _replay;
+  std::optional<search::Feeder> _live;
 };
 
 struct PublishedInvertedIndex {

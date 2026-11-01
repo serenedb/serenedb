@@ -31,7 +31,8 @@ bool HasTerms(const FieldInverter* field) noexcept {
   return field && (field->Log().Size() != 0 || !field->InlineDocs().empty());
 }
 
-bool PostingsFit(const PostingSlots& slots, DictLayout layout) noexcept {
+[[maybe_unused]] bool PostingsFit(const PostingSlots& slots,
+                                  DictLayout layout) noexcept {
   for (size_t i = 0; i != kValueKinds; ++i) {
     const auto kind = static_cast<ValueKind>(i);
     if (!IsKeyed(kind) && PositionOf(layout, kind) == kNoPosition &&

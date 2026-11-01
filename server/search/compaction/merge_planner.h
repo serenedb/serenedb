@@ -106,6 +106,8 @@ std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
 
 irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
                             const irs::IndexReader& index,
-                            irs::CompactingSegments taken, size_t wanted);
+                            const irs::CompactingSegments& unavailable,
+                            std::span<const std::string> blocked,
+                            size_t wanted);
 
 }  // namespace sdb::search

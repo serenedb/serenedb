@@ -118,7 +118,8 @@ TEST(CompactionPoliciesTest, SegmentsUnderCompactionAreNeverPicked) {
   AddSegment(meta, "empty", 10, 0, 1);
   AddSegment(meta, "full", 10, 10, 100);
   IndexReaderMock reader{meta};
-  const irs::CompactingSegments compacting_segments{"busy"};
+  const irs::SegmentNames busy{"busy"};
+  const irs::CompactingSegments compacting_segments{busy};
   const irs::CompactionPolicy policies[] = {
     irs::index_utils::MakePolicy(
       irs::index_utils::CompactionBytes{.threshold = 1}),
@@ -144,7 +145,8 @@ TEST(CompactionPoliciesTest, FullyDeletedSegmentsArePicked) {
   AddSegment(meta, "empty", 10, 0, 1);
   AddSegment(meta, "full", 10, 10, 100);
   IndexReaderMock reader{meta};
-  const irs::CompactingSegments compacting_segments;
+  const irs::SegmentNames none;
+  const irs::CompactingSegments compacting_segments{none};
   const irs::CompactionPolicy policies[] = {
     irs::index_utils::MakePolicy(
       irs::index_utils::CompactionDocsLive{.threshold = 0.1f}),

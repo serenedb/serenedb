@@ -25,6 +25,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/synchronization/mutex.h>
 
 #include <array>
@@ -87,7 +88,25 @@ enum OpenMode {
 
 ENABLE_BITMASK_ENUM(OpenMode);
 
-using CompactingSegments = absl::flat_hash_set<std::string_view>;
+using SegmentNames = absl::flat_hash_set<std::string_view>;
+
+class CompactingSegments {
+ public:
+  explicit CompactingSegments(const SegmentNames& reserved, uint64_t floor = 0,
+                              const SegmentNames* picked = nullptr) noexcept
+    : _reserved{&reserved}, _picked{picked}, _floor{floor} {}
+
+  bool contains(std::string_view name) const noexcept;
+
+  CompactingSegments With(const SegmentNames& picked) const noexcept {
+    return CompactingSegments{*_reserved, _floor, &picked};
+  }
+
+ private:
+  const SegmentNames* _reserved;
+  const SegmentNames* _picked;
+  uint64_t _floor;
+};
 
 using CompactionPolicy =
   std::function<void(Compaction& candidates, const IndexReader& index,
@@ -458,7 +477,20 @@ class IndexWriter : private util::Noncopyable {
 
   std::vector<MergeTicket> ReserveMerges(auto&& planner, bool& busy,
                                          LoneSegment lone = LoneSegment::Skip) {
-    return Reserve(planner, lone, busy);
+    absl::MutexLock lock{&_compacting.lock};
+    if (_compacting.floor_requests != 0) {
+      busy = true;
+      return {};
+    }
+    auto snapshot = GetSnapshotImpl();
+    if (snapshot->size() == 0) {
+      return {};
+    }
+    MergeGroups groups;
+    planner(*snapshot,
+            CompactingSegments{_compacting.segments, _compacting.floor},
+            groups);
+    return ReserveLocked(std::move(snapshot), groups, lone, busy);
   }
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
@@ -552,26 +584,6 @@ class IndexWriter : private util::Noncopyable {
  private:
   friend class MergeTicket;
 
-  CompactingSegments UnavailableLocked(const IndexReader& snapshot) const;
-  std::vector<MergeTicket> Reserve(auto&& planner, LoneSegment lone,
-                                   bool& busy) {
-    std::lock_guard lock{_compacting.lock};
-    if (_compacting.floor_requests != 0) {
-      busy = true;
-      return {};
-    }
-    auto snapshot = GetSnapshotImpl();
-    if (snapshot->size() == 0) {
-      return {};
-    }
-    MergeGroups groups;
-    if (_compacting.floor == 0) {
-      planner(*snapshot, _compacting.segments, groups);
-    } else {
-      planner(*snapshot, UnavailableLocked(*snapshot), groups);
-    }
-    return ReserveLocked(std::move(snapshot), groups, lone, busy);
-  }
   std::vector<MergeTicket> ReserveLocked(
     std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
     LoneSegment lone, bool& busy);
@@ -763,7 +775,7 @@ class IndexWriter : private util::Noncopyable {
     yaclib::WaitGroup<> pending{1};
     absl::Mutex pending_mutex;
 
-    CompactingSegments segment_mask;
+    SegmentNames segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
     // pinned reader in `incoming`. A deque so an append never invalidates the
     // views already handed to segment_mask.
@@ -798,7 +810,7 @@ class IndexWriter : private util::Noncopyable {
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
-        std::lock_guard lock{writer._compacting.lock};
+        absl::MutexLock lock{&writer._compacting.lock};
         writer.Cleanup(*curr);
       }
     }
@@ -862,8 +874,8 @@ class IndexWriter : private util::Noncopyable {
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;
   struct {
-    std::recursive_mutex lock;
-    CompactingSegments segments;
+    absl::Mutex lock;
+    SegmentNames segments;
     irs::containers::FlatHashSet<MergeTicket::State*> tickets;
     uint64_t floor = 0;
     uint32_t floor_requests = 0;

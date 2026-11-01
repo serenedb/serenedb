@@ -227,13 +227,13 @@ size_t IncomingPlace(const DirectoryReaderImpl& committed, const auto& entry) {
   const auto& readers = committed.GetReaders();
   size_t place = readers.size();
   for (const auto& input : entry.compaction_ctx.inputs) {
-    const auto id = input.GetImpl()->Id();
-    for (size_t r = 0; r != place; ++r) {
-      if (readers[r].GetImpl()->Id() == id) {
-        place = r;
-        break;
-      }
-    }
+    const std::span before{readers.data(), place};
+    place = static_cast<size_t>(
+      absl::c_find_if(before,
+                      [id = input.GetImpl()->Id()](const auto& reader) {
+                        return reader.GetImpl()->Id() == id;
+                      }) -
+      before.begin());
   }
   return place;
 }
@@ -297,7 +297,7 @@ bool MergePublished(DocumentMaskBuilder& removed,
 }
 
 PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
-                             const CompactingSegments& segment_mask,
+                             const SegmentNames& segment_mask,
                              uint64_t all_tick,
                              std::span<DocumentMaskBuilder> removed,
                              Directory& dir,
@@ -500,9 +500,9 @@ void ResolveTerms(const TermRemoval& removal, field_id key_field, uint64_t tick,
 
 uint64_t ResolveRemovals(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  const DirectoryReaderImpl& committed_reader,
-  const CompactingSegments& segment_mask, const auto& incoming,
-  const auto& merges, std::span<FlushedSegmentContext> flushed,
+  const DirectoryReaderImpl& committed_reader, const SegmentNames& segment_mask,
+  const auto& incoming, const auto& merges,
+  std::span<FlushedSegmentContext> flushed,
   std::span<DocumentMaskBuilder> removed, field_id key_field) {
   if (merges.empty() && absl::c_all_of(segments, [](const auto& segment) {
         return segment->queries.empty();
@@ -1204,7 +1204,7 @@ void IndexWriter::Clear(const SourcePosition& position) {
   ApplyFlush(std::move(to_commit));
   Finish();
 
-  std::lock_guard lock{_compacting.lock};
+  absl::MutexLock lock{&_compacting.lock};
   RevokeTicketsLocked();
   _compacting.segments.clear();
 }
@@ -1334,15 +1334,9 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
-CompactingSegments IndexWriter::UnavailableLocked(
-  const IndexReader& snapshot) const {
-  CompactingSegments unavailable = _compacting.segments;
-  for (const auto& segment : snapshot) {
-    if (BelowFloor(segment.Meta().name, _compacting.floor)) {
-      unavailable.insert(segment.Meta().name);
-    }
-  }
-  return unavailable;
+bool CompactingSegments::contains(std::string_view name) const noexcept {
+  return _reserved->contains(name) || (_picked && _picked->contains(name)) ||
+         (_floor != 0 && BelowFloor(name, _floor));
 }
 
 std::vector<MergeTicket> IndexWriter::ReserveLocked(
@@ -1355,16 +1349,24 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
       });
     }
   }
-  std::vector<MergeTicket> tickets;
-  tickets.reserve(groups.size());
+  std::vector<std::unique_ptr<MergeTicket::State>> states;
+  size_t reserved = 0;
+  const auto taken = [&](const SubReader* candidate) {
+    const std::string_view name = candidate->Meta().name;
+    return _compacting.segments.contains(name) ||
+           absl::c_any_of(states, [name](const auto& state) {
+             return absl::c_any_of(state->candidates,
+                                   [name](const SubReader* other) {
+                                     return other->Meta().name == name;
+                                   });
+           });
+  };
   for (auto& group : groups) {
     if (group.empty() || (group.size() == 1 && lone == LoneSegment::Skip &&
                           !HasRemovals(group.front()->Meta()))) {
       continue;
     }
-    if (absl::c_any_of(group, [this](const SubReader* candidate) {
-          return _compacting.segments.contains(candidate->Meta().name);
-        })) {
+    if (absl::c_any_of(group, taken)) {
       busy = true;
       continue;
     }
@@ -1380,7 +1382,7 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
       SDB_ASSERT(found == sorted.size());
     }
 #endif
-    auto state = std::make_unique<MergeTicket::State>();
+    auto& state = states.emplace_back(std::make_unique<MergeTicket::State>());
     state->snapshot = snapshot;
     state->inputs.reserve(group.size());
     state->candidates.reserve(group.size());
@@ -1388,9 +1390,13 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
       state->candidates.emplace_back(&state->inputs.emplace_back(
         static_cast<const SegmentReader&>(*candidate)));
     }
-    _compacting.segments.reserve(_compacting.segments.size() +
-                                 state->candidates.size());
-    _compacting.tickets.reserve(_compacting.tickets.size() + 1);
+    reserved += state->candidates.size();
+  }
+  _compacting.segments.reserve(_compacting.segments.size() + reserved);
+  _compacting.tickets.reserve(_compacting.tickets.size() + states.size());
+  std::vector<MergeTicket> tickets;
+  tickets.reserve(states.size());
+  for (auto& state : states) {
     for (const auto* candidate : state->candidates) {
       _compacting.segments.emplace(candidate->Meta().name);
     }
@@ -1401,7 +1407,7 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
 }
 
 void IndexWriter::ReleaseTicket(MergeTicket::State& state) noexcept {
-  std::lock_guard lock{_compacting.lock};
+  absl::MutexLock lock{&_compacting.lock};
   if (state.registered) {
     for (const auto* candidate : state.candidates) {
       _compacting.segments.erase(candidate->Meta().name);
@@ -1432,12 +1438,12 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                LoneSegment lone)
   -> yaclib::Future<CompactionResult> {
   bool busy = false;
-  auto tickets = Reserve(
+  auto tickets = ReserveMerges(
     [&policy](const IndexReader& index, const CompactingSegments& reserved,
               MergeGroups& groups) {
       policy(groups.emplace_back(), index, reserved);
     },
-    lone, busy);
+    busy, lone);
   if (tickets.empty()) {
     co_return CompactionResult{
       0, busy ? CompactionError::Busy : CompactionError::Ok};
@@ -1458,7 +1464,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   auto& state = *owned._state;
   auto& candidates = state.candidates;
   const bool registered = [&] {
-    std::lock_guard lock{_compacting.lock};
+    absl::MutexLock lock{&_compacting.lock};
     state.running = state.registered;
     return state.registered;
   }();
@@ -1636,7 +1642,7 @@ void IndexWriter::CompactionFloorGuard::Release() noexcept {
   if (_writer == nullptr) {
     return;
   }
-  std::lock_guard lock{_writer->_compacting.lock};
+  absl::MutexLock lock{&_writer->_compacting.lock};
   if (_pending) {
     SDB_ASSERT(_writer->_compacting.floor_requests != 0);
     --_writer->_compacting.floor_requests;
@@ -1647,7 +1653,7 @@ void IndexWriter::CompactionFloorGuard::Release() noexcept {
 }
 
 IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
-  std::lock_guard lock{_compacting.lock};
+  absl::MutexLock lock{&_compacting.lock};
   if (_compacting.floor != 0) {
     return {};  // already armed; one holder at a time
   }
@@ -1887,14 +1893,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   ctx->pending.Reset(1);
   ctx->FlushPending();
 
-  std::unique_lock cleanup_lock{_compacting.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
     if (ctx == nullptr) {
       return;
     }
-    if (!cleanup_lock) {
-      cleanup_lock.lock();
-    }
+    absl::MutexLock lock{&_compacting.lock};
     Cleanup(*ctx);
   };
 
@@ -2102,7 +2105,7 @@ void IndexWriter::Finish() {
   // noexcept part!
   _pending_state.ctx->doc_maps.clear();
   {
-    std::lock_guard lock{_compacting.lock};
+    absl::MutexLock lock{&_compacting.lock};
     Cleanup(*_pending_state.ctx);
     SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_before_reader_swap");
     // after this line transaction is successful (only noexcept operations

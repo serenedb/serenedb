@@ -207,9 +207,7 @@ bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   const auto planner = [&](const irs::IndexReader& index,
                            const irs::CompactingSegments& reserved,
                            irs::MergeGroups& groups) {
-    irs::CompactingSegments taken = reserved;
-    taken.insert(blocked.begin(), blocked.end());
-    groups = PickMerges(policy, index, std::move(taken), wanted);
+    groups = PickMerges(policy, index, reserved, blocked, wanted);
   };
   bool busy = false;
   auto tickets = idx->ReserveMerges(planner, busy);

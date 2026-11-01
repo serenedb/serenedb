@@ -111,7 +111,12 @@ class MergeTicketTest : public ::testing::Test {
           *called = true;
         }
         if (seen) {
-          seen->assign(reserved.begin(), reserved.end());
+          seen->clear();
+          for (const auto& segment : index) {
+            if (reserved.contains(segment.Meta().name)) {
+              seen->emplace_back(segment.Meta().name);
+            }
+          }
           std::ranges::sort(*seen);
         }
         for (const auto& group : positions) {
@@ -260,6 +265,20 @@ TEST_F(MergeTicketTest, RunMergePublishesAndHandsTheReservationToTheCommit) {
   EXPECT_EQ(2, snapshot.size());
   EXPECT_EQ(live, snapshot.live_docs_count());
   EXPECT_EQ(snapshot.docs_count(), snapshot.live_docs_count());
+  EXPECT_TRUE(ReservedNames().empty());
+}
+
+TEST_F(MergeTicketTest, AReservedMergeWhoseInputIsDroppedIsBusy) {
+  AddSegments(2);
+  auto reservation = Reserve({{0, 1}});
+  ASSERT_EQ(1, reservation.size());
+  std::vector<std::string> first;
+  for (size_t i = 0; i != 50; ++i) {
+    first.emplace_back(absl::StrCat("doc-", i));
+  }
+  RemoveTerms(*_writer, kIdField, first);
+  ASSERT_EQ(1, _writer->GetSnapshot().size());
+  EXPECT_EQ(CompactionError::Busy, Run(std::move(reservation[0])).error);
   EXPECT_TRUE(ReservedNames().empty());
 }
 

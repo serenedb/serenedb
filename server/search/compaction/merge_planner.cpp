@@ -98,11 +98,12 @@ void PlanBackground(const irs::IndexReader& reader,
     plan.notes.emplace_back(
       "background compaction is disabled (compaction_interval = 0)");
   }
-  irs::CompactingSegments picked;
+  irs::SegmentNames picked;
+  const irs::SegmentNames none;
   constexpr std::string_view kReason = "adjacent policy";
   for (const auto& candidates :
-       PickMerges(MakeMergePolicy(settings, request.inputs_max), reader, {},
-                  request.merges)) {
+       PickMerges(MakeMergePolicy(settings, request.inputs_max), reader,
+                  irs::CompactingSegments{none}, {}, request.merges)) {
     if (candidates.size() == 1 &&
         !irs::HasRemovals(candidates.front()->Meta())) {
       break;
@@ -368,8 +369,12 @@ std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
 
 irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
                             const irs::IndexReader& index,
-                            irs::CompactingSegments taken, size_t wanted) {
+                            const irs::CompactingSegments& unavailable,
+                            std::span<const std::string> blocked,
+                            size_t wanted) {
   irs::MergeGroups groups;
+  irs::SegmentNames picked{blocked.begin(), blocked.end()};
+  const auto taken = unavailable.With(picked);
   for (size_t merge = 0; merge != wanted; ++merge) {
     irs::Compaction candidates;
     policy(candidates, index, taken);
@@ -377,7 +382,7 @@ irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
       break;
     }
     for (const auto* candidate : candidates) {
-      taken.emplace(candidate->Meta().name);
+      picked.emplace(candidate->Meta().name);
     }
     groups.emplace_back(std::move(candidates));
   }

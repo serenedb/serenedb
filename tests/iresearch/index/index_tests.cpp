@@ -39,6 +39,7 @@
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -67,6 +68,34 @@ namespace {
 // per-doc bytes after insertion.
 inline constexpr irs::field_id kNameColumnId = 1;
 inline constexpr irs::field_id kNameUpper = 2;
+
+size_t CountCompacting(const irs::IndexReader& reader,
+                       const irs::CompactingSegments& compacting) {
+  size_t count = 0;
+  for (const auto& segment : reader) {
+    count += static_cast<size_t>(compacting.contains(segment.Meta().name));
+  }
+  return count;
+}
+
+std::vector<irs::MergeTicket> ReserveCountMerge(irs::IndexWriter& writer) {
+  bool busy = false;
+  return writer.ReserveMerges(
+    [](const irs::IndexReader& reader,
+       const irs::CompactingSegments& compacting, irs::MergeGroups& groups) {
+      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())(
+        groups.emplace_back(), reader, compacting);
+    },
+    busy);
+}
+
+irs::CompactionResult RunReservedMerge(irs::IndexWriter& writer,
+                                       irs::MergeTicket ticket) {
+  const irs::PipelineMergeExecutor executor{
+    irs::DuckDBEngine::Instance().instance(), nullptr, 1};
+  return irs::GetReady(
+    writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor));
+}
 
 inline void CaptureNameLikeFields(irs::IndexWriter::Document& d,
                                   const tests::Particle& indexed) {
@@ -5797,7 +5826,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
       irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
       const irs::CompactingSegments& compacting_segments) {
       ASSERT_EQ(expected_compacting_segments.size(),
-                compacting_segments.size());
+                CountCompacting(reader, compacting_segments));
       for (auto i : expected_compacting_segments) {
         auto& expected_compacting_segment = reader[i];
         ASSERT_TRUE(compacting_segments.contains(
@@ -5973,7 +6002,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
           const irs::CompactingSegments& compacting_segments) {
           ASSERT_EQ(expected_compacting_segments.size(),
-                    compacting_segments.size());
+                    CountCompacting(reader, compacting_segments));
           for (auto i : expected_compacting_segments) {
             const auto& expected_compacting_segment = reader[i];
             ASSERT_TRUE(compacting_segments.contains(
@@ -6135,9 +6164,9 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
                   .error);  // compact
 
       auto check_compacting_segments =
-        [](irs::Compaction& /*candidates*/, const irs::IndexReader& /*meta*/,
+        [](irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
            const irs::CompactingSegments& compacting_segments) {
-          ASSERT_TRUE(compacting_segments.empty());
+          ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
         };
       // check segments registered for compaction
       ASSERT_TRUE(writer->Compact(check_compacting_segments));
@@ -6294,7 +6323,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
           const irs::CompactingSegments& compacting_segments) {
           ASSERT_EQ(expected_compacting_segments.size(),
-                    compacting_segments.size());
+                    CountCompacting(reader, compacting_segments));
           for (auto i : expected_compacting_segments) {
             const auto& expected_compacting_segment = reader[i];
             ASSERT_TRUE(compacting_segments.contains(
@@ -6437,7 +6466,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
           const irs::CompactingSegments& compacting_segments) {
           ASSERT_EQ(expected_compacting_segments.size(),
-                    compacting_segments.size());
+                    CountCompacting(reader, compacting_segments));
           for (auto i : expected_compacting_segments) {
             const auto& expected_compacting_segment = reader[i];
             ASSERT_TRUE(compacting_segments.contains(
@@ -6552,7 +6581,7 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
       irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
       const irs::CompactingSegments& compacting_segments) {
       ASSERT_EQ(expected_compacting_segments.size(),
-                compacting_segments.size());
+                CountCompacting(reader, compacting_segments));
       for (auto i : expected_compacting_segments) {
         const auto& expected_compacting_segment = reader[i];
         ASSERT_TRUE(compacting_segments.contains(
@@ -6716,7 +6745,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
       const irs::CompactingSegments& compacting_segments) {
       ASSERT_EQ(expected_compacting_segments.size(),
-                compacting_segments.size());
+                CountCompacting(reader, compacting_segments));
       for (auto i : expected_compacting_segments) {
         const auto& expected_compacting_segment = reader[i];
         ASSERT_TRUE(compacting_segments.contains(
@@ -7096,9 +7125,9 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
   // ensure compacting segments is empty
   {
     auto check_compacting_segments =
-      [](irs::Compaction& /*candidates*/, const irs::IndexReader& /*reader*/,
+      [](irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
          const irs::CompactingSegments& compacting_segments) {
-        ASSERT_TRUE(compacting_segments.empty());
+        ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
       };
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
   }
@@ -7130,7 +7159,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
     auto check_compacting_segments =
       [](irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
          const irs::CompactingSegments& compacting_segments) {
-        ASSERT_EQ(reader.size(), compacting_segments.size());
+        ASSERT_EQ(reader.size(), CountCompacting(reader, compacting_segments));
         for (auto& expected_compacting_segment : reader) {
           ASSERT_TRUE(compacting_segments.contains(
             expected_compacting_segment.Meta().name));
@@ -7145,9 +7174,9 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
   // ensure compacting segments is empty
   {
     auto check_compacting_segments =
-      [](irs::Compaction& /*candidates*/, const irs::IndexReader& /*reader*/,
+      [](irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
          const irs::CompactingSegments& compacting_segments) {
-        ASSERT_TRUE(compacting_segments.empty());
+        ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
       };
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
   }
@@ -7207,7 +7236,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
       const irs::CompactingSegments& compacting_segments) {
       ASSERT_EQ(expected_compacting_segments.size(),
-                compacting_segments.size());
+                CountCompacting(reader, compacting_segments));
       for (auto i : expected_compacting_segments) {
         const auto& expected_compacting_segment = reader[i];
         ASSERT_TRUE(compacting_segments.contains(
@@ -7220,7 +7249,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       irs::Compaction& /*candidates*/, const irs::IndexReader& reader,
       const irs::CompactingSegments& compacting_segments) {
       ASSERT_EQ(expected_compacting_segments.size(),
-                compacting_segments.size());
+                CountCompacting(reader, compacting_segments));
       for (auto i : expected_compacting_segments) {
         const auto& expected_compacting_segment = reader[i];
         ASSERT_TRUE(compacting_segments.contains(
@@ -7982,17 +8011,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    auto do_commit_and_compact_count =
-      [&](irs::Compaction& candidates, const irs::IndexReader& reader,
-          const irs::CompactingSegments& compacting_segments) {
-        auto sub_policy =
-          irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
-        sub_policy(candidates, reader, compacting_segments);
-        writer->RefreshCommit();
-        AssertSnapshotEquality(*writer);
-      };
-
-    ASSERT_TRUE(writer->Compact(do_commit_and_compact_count));
+    auto tickets = ReserveCountMerge(*writer);
+    ASSERT_EQ(1, tickets.size());
+    writer->RefreshCommit();
+    AssertSnapshotEquality(*writer);
+    ASSERT_TRUE(RunReservedMerge(*writer, std::move(tickets.front())));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
@@ -8165,24 +8188,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(0, result.size);
     }
 
-    auto do_commit_and_compact_count =
-      [&](irs::Compaction& candidates, const irs::IndexReader& reader,
-          const irs::CompactingSegments& compacting_segments) {
-        writer->RefreshCommit();
-        AssertSnapshotEquality(*writer);
-        writer->RefreshBegin();  // another commit to process pending
-                                 // compacting_segments
-        writer->RefreshCommit();
-        AssertSnapshotEquality(*writer);
-        auto sub_policy =
-          irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
-        sub_policy(candidates, reader, compacting_segments);
-      };
-
-    // The candidates were already compacted by the commit the test policy ran,
-    // so they are no longer in the merged snapshot: transient Busy, not Fail.
-    ASSERT_EQ(irs::CompactionError::Busy,
-              writer->Compact(do_commit_and_compact_count).error);
+    writer->RefreshCommit();
+    AssertSnapshotEquality(*writer);
+    writer->RefreshBegin();
+    writer->RefreshCommit();
+    AssertSnapshotEquality(*writer);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
     // check all data is deleted
     const auto one_segment_count = count;
@@ -8246,27 +8256,13 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ(0, result.size);
     }
 
-    auto do_commit_and_compact_count =
-      [&](irs::Compaction& candidates, const irs::IndexReader& reader,
-          const irs::CompactingSegments& compacting_segments) {
-        writer->RefreshCommit();
-        AssertSnapshotEquality(*writer);
-        writer->RefreshBegin();  // another commit to process pending
-                                 // compacting_segments
-        writer->RefreshCommit();
-        AssertSnapshotEquality(*writer);
-        // new transaction with passed 1st phase
-        tests::Remove(*writer, query_doc4);
-        writer->RefreshBegin();
-        auto sub_policy =
-          irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
-        sub_policy(candidates, reader, compacting_segments);
-      };
-
-    // The candidates were already compacted by the commit the test policy ran,
-    // so they are no longer in the merged snapshot: transient Busy, not Fail.
-    ASSERT_EQ(irs::CompactionError::Busy,
-              writer->Compact(do_commit_and_compact_count).error);
+    writer->RefreshCommit();
+    AssertSnapshotEquality(*writer);
+    writer->RefreshBegin();
+    writer->RefreshCommit();
+    AssertSnapshotEquality(*writer);
+    tests::Remove(*writer, query_doc4);
+    writer->RefreshBegin();
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));

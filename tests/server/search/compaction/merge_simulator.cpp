@@ -354,11 +354,10 @@ void Simulation::Plan(Relation& relation) {
   const auto wanted = _scheduler->Wanted(*relation.handle);
   const auto blocked = _scheduler->StartRound(*relation.handle);
   const SimulatedIndex index{relation.segments};
-  irs::CompactingSegments taken{relation.reserved.begin(),
-                                relation.reserved.end()};
-  taken.insert(blocked.begin(), blocked.end());
-  const auto groups =
-    PickMerges(_options.policy, index, std::move(taken), wanted);
+  const irs::SegmentNames reserved{relation.reserved.begin(),
+                                   relation.reserved.end()};
+  const auto groups = PickMerges(
+    _options.policy, index, irs::CompactingSegments{reserved}, blocked, wanted);
   std::vector<std::unique_ptr<MergeJob>> jobs;
   jobs.reserve(groups.size());
   for (const auto& group : groups) {

@@ -85,11 +85,11 @@ class Index final : public irs::CompositeReaderImpl<std::vector<SegmentStub>> {
 class AdjacentRunPolicyTest : public ::testing::Test {
  protected:
   std::vector<std::string> Pick(const std::vector<Spec>& specs,
-                                const irs::CompactingSegments& taken = {}) {
+                                const irs::SegmentNames& taken = {}) {
     const auto policy = irs::MakeAdjacentRunPolicy(options);
     const Index index{specs};
     irs::Compaction candidates;
-    policy(candidates, index, taken);
+    policy(candidates, index, irs::CompactingSegments{taken});
     std::vector<std::string> names;
     for (const auto* candidate : candidates) {
       names.emplace_back(candidate->Meta().name);

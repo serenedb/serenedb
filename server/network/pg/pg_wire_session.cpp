@@ -1027,12 +1027,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  // Method (from HBA) x stored form, matching PostgreSQL:
-  //  scram    : only a SCRAM secret works (md5 storage cannot do SCRAM).
-  //  md5      : an md5 secret drives an md5 exchange; a SCRAM secret falls back
-  //             to SCRAM (PG's md5-line-over-scram-password behavior); a
-  //             cleartext (flag) secret is hashed to the md5 form.
-  //  password : cleartext exchange verified against whatever is stored.
   bool ok = false;
   bool method_ok = true;
   if (hba_method == hba::Method::Scram) {
@@ -1046,9 +1040,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
       ok = co_await AuthenticateMd5(*credential->md5);
     } else if (credential->scram) {
       ok = co_await AuthenticateScram(*credential->scram);
-    } else if (credential->cleartext) {
-      ok = co_await AuthenticateMd5(
-        BuildMd5Verifier(UserName(), *credential->cleartext));
     } else {
       method_ok = false;
     }
@@ -1117,14 +1108,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
   const std::string given{payload};
   _frames.Consume(frame);
   bool ok = false;
-  if (credential.cleartext) {
-    const std::string given_prepared = SaslPrep(given);
-    const std::string want = SaslPrep(*credential.cleartext);
-    ok = ConstantTimeEqual(
-      {reinterpret_cast<const uint8_t*>(given_prepared.data()),
-       given_prepared.size()},
-      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
-  } else if (credential.scram) {
+  if (credential.scram) {
     ok = VerifyCleartextAgainstScram(*credential.scram, given);
   } else if (credential.md5) {
     ok = VerifyCleartextAgainstMd5(*credential.md5, UserName(), given);
@@ -2840,9 +2824,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
 
-    // PostgreSQL requires a non-empty user name in the startup packet; the role
-    // itself is verified later (once RBAC lands) via the CredentialProvider
-    // seam.
     const auto user = _params.find("user");
     if (user == _params.end() || user->second.empty()) {
       WriteFatalResponse(

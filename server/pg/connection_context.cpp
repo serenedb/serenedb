@@ -20,17 +20,21 @@
 
 #include "pg/connection_context.h"
 
+#include <absl/strings/str_split.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <string_view>
+#include <utility>
 
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "network/pg/wire_frames.h"
 #include "query/transaction.h"
 #include "server/utils/app_server.h"
 
@@ -117,19 +121,17 @@ void ConnectionContext::ApplyRoleSettings() {
     config = role.Config();
   });
   for (const std::string_view entry : config) {
-    const auto separator = entry.find('=');
-    if (separator == std::string_view::npos || separator + 1 == entry.size()) {
+    const std::pair<std::string_view, std::string_view> setting =
+      absl::StrSplit(entry, absl::MaxSplits('=', 1));
+    if (setting.second.empty()) {
       continue;
     }
     try {
       GetClientContext().RunFunctionInTransaction([&] {
-        SetSettingChecked(entry.substr(0, separator),
-                          std::string{entry.substr(separator + 1)}, false);
+        SetSettingChecked(setting.first, std::string{setting.second}, false);
       });
     } catch (const std::exception& exception) {
-      AddNotice(
-        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
-                       ERR_MSG(duckdb::ErrorData{exception}.RawMessage())));
+      AddNotice(network::pg::ToSqlError(exception));
     }
   }
 }

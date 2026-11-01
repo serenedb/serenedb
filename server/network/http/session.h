@@ -213,7 +213,6 @@ class HttpSession final
                                         .progress_source};
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _connection_ctx->ApplyRoleSettings();
-      _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
       _conn_user = _user;
     }
     return *_conn;
@@ -754,6 +753,12 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
               writer.Error(http::HttpStatus::InternalError, "internal");
             }
           }
+          if (_connection_ctx) {
+            // No NoticeResponse equivalent on this protocol (and the
+            // ConnectionContext dtor asserts the queue is empty).
+            _connection_ctx->ConsumeNotices(
+              [](const irs::pg::SqlErrorData&) {});
+          }
           if (writer.HeadWritten() && !writer.Finished()) {
             // The head promised a body that never fully materialized; a clean
             // HTTP error is no longer possible -- drop the connection so the
@@ -763,12 +768,6 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           if (!writer.HeadWritten()) {
             writer.Error(http::HttpStatus::InternalError, "internal");
-          }
-          if (_connection_ctx) {
-            // No NoticeResponse equivalent on this protocol (and the
-            // ConnectionContext dtor asserts the queue is empty).
-            _connection_ctx->ConsumeNotices(
-              [](const irs::pg::SqlErrorData&) {});
           }
         } else {
           writer.Error(http::HttpStatus::NotFound, "not_found");

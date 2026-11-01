@@ -41,21 +41,14 @@ struct ScramVerifier {
   int iterations = 0;
 };
 
-// What's needed to authenticate a user -- NOT how it's stored. `scram` enables
-// the SCRAM mechanism; `cleartext` enables AuthenticationCleartextPassword and
-// is what a future RBAC layer that only has plaintext would supply.
 struct Credential {
   std::optional<ScramVerifier> scram;
-  std::optional<std::string> cleartext;
   std::optional<std::string> md5;
   int64_t valid_until = 0;
 };
 
 bool PasswordExpired(const Credential& credential);
 
-// The storage-decoupled seam. Returning nullopt => no credential for this user
-// => trust (unconfigured-server behavior). The colleague's RBAC provides a real
-// implementation later; nothing else in the auth path changes.
 class CredentialProvider {
  public:
   virtual ~CredentialProvider() = default;
@@ -97,9 +90,6 @@ std::string BuildMd5Response(std::string_view stored_md5,
 bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
                                std::string_view username,
                                std::string_view cleartext);
-
-// RFC 4013 SASLprep; falls back to the raw bytes on invalid-UTF8/prohibited.
-std::string SaslPrep(std::string_view password);
 
 // Cryptographically strong random bytes (pg_strong_random). false on failure.
 bool RandomBytes(std::span<uint8_t> out);

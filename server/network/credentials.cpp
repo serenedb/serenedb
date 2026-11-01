@@ -55,6 +55,11 @@ std::string Md5Hex(std::string_view data) {
     {reinterpret_cast<const char*>(digest), sizeof(digest)});
 }
 
+std::string SaslPrep(std::string_view password) {
+  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
+  return std::string{password};
+}
+
 }  // namespace
 
 bool PasswordExpired(const Credential& credential) {
@@ -72,11 +77,6 @@ std::optional<std::string> Base64Decode(std::string_view in) {
 
 bool RandomBytes(std::span<uint8_t> out) {
   return RAND_bytes(out.data(), static_cast<int>(out.size())) == 1;
-}
-
-std::string SaslPrep(std::string_view password) {
-  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
-  return std::string{password};
 }
 
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password) {

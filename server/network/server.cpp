@@ -119,11 +119,6 @@ ABSL_FLAG(absl::Duration, http_body_timeout, absl::Seconds(30),
 namespace sdb {
 namespace {
 
-// Per-role credential source: looks the connecting user up in the catalog and,
-// if the role carries a stored SCRAM verifier (rolpassword), returns it so the
-// connection must authenticate. A role with no stored password returns nullopt
-// -> the pg-wire/http layer treats that as trust (logs in without a password),
-// matching PostgreSQL's "no password set" behaviour.
 class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(

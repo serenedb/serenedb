@@ -96,6 +96,14 @@ In the body, a parameter is a value of the call: it can stand next to an aggrega
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_040" />
 
+Inside a query of the body, a column of that query, or of a query of the body around it, takes precedence over a parameter of the same name. The parameter is then reached by qualifying it with the name of the function, as `function_name.parameter`, which also works anywhere else in the body. A parameter of a composite type gives its fields as `parameter.field`:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_044" />
+
+`STRICT`, or `RETURNS NULL ON NULL INPUT`, makes the function return `NULL` without running its body when any argument is `NULL`, and a set-returning function return no rows. `CALLED ON NULL INPUT`, the default, runs the body:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_045" />
+
 Without `SETOF`, the function returns the first row of the body, also when its result calls a set-returning function such as `unnest`. `RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_037" />
@@ -186,7 +194,11 @@ In a macro whose body contains a subquery, an aggregate over a parameter aggrega
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_042" />
 
-An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`. A volatile argument of a macro or function whose body is a query or contains a subquery is evaluated together with that subquery rather than once for each row: a subquery that reads no column of the calling query runs once, so every row sees the same value.
+An argument is evaluated in the calling query: its names are the calling query's columns, an aggregate or window function in it is computed over the rows of the calling query, and a nested call of a macro with a subquery is evaluated once for each row of the calling query, even when the subquery returns no rows. Only an argument that names something the calling query does not have is replaced as written, so that the body can resolve it, such as a column of the table the body reads with `query_table`.
+
+A macro or function whose body is a query or contains a subquery runs that query for each call, so a volatile argument, or a volatile function in the body, gives every row its own value:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_046" />
 
 ## Limitations
 

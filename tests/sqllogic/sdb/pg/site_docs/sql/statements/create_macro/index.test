@@ -502,3 +502,56 @@ i	result
 0	0
 1	4
 2	8
+
+# DOCS_TEST: example_044
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE menu (item text, price int);
+
+statement ok
+INSERT INTO menu VALUES ('tea', 3), ('cake', 5), ('pie', 4);
+
+statement ok
+CREATE FUNCTION cheaper_than(price int) RETURNS SETOF text LANGUAGE sql AS 'SELECT item FROM menu WHERE price < cheaper_than.price ORDER BY item';
+
+query
+SELECT * FROM cheaper_than(5);
+----
+cheaper_than
+pie
+tea
+
+# DOCS_TEST: example_045
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION plus_one(x int) RETURNS int LANGUAGE sql STRICT AS 'SELECT coalesce(x, 0) + 1';
+
+query
+SELECT plus_one(NULL) AS for_null, plus_one(1) AS for_one;
+----
+for_null	for_one
+NULL	2
+
+# DOCS_TEST: example_046
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE counter;
+
+statement ok
+CREATE FUNCTION twice(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + x FROM (VALUES (1)) v(one)';
+
+query
+SELECT twice(nextval('counter')) AS result
+FROM range(3)
+ORDER BY result;
+----
+result
+2
+4
+6

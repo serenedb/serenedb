@@ -270,6 +270,28 @@ CREATE OR REPLACE FUNCTION sfs.add(v integer) RETURNS void LANGUAGE sql AS $func
 
 
 statement ok
+CREATE SEQUENCE sfs.void_seq;
+
+
+statement ok
+CREATE FUNCTION sfs.advance(n int) RETURNS void LANGUAGE sql AS 'SELECT nextval(''sfs.void_seq''), nextval(''sfs.void_seq'') FROM generate_series(1, n)';
+
+
+query
+SELECT sfs.advance(3) IS NULL AS advanced, sfs.advance(0) IS NULL AS no_rows;
+----
+advanced	no_rows
+t	t
+
+
+query
+SELECT currval('sfs.void_seq') AS calls;
+----
+calls
+6
+
+
+statement ok
 CREATE FUNCTION sfs.take(d int) RETURNS SETOF int LANGUAGE sql AS 'UPDATE sfs.log SET v = v + d RETURNING v';
 
 

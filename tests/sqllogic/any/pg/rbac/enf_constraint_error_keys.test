@@ -11,6 +11,10 @@ DROP TABLE IF EXISTS ecek_iceberg;
 
 
 statement ok
+DROP TABLE IF EXISTS ecek_deferred;
+
+
+statement ok
 DROP ROLE IF EXISTS ecek_vedernikoff;
 
 
@@ -28,6 +32,20 @@ CREATE TABLE ecek_iceberg (a int, b int, UNIQUE (a, b));
 
 statement ok
 INSERT INTO ecek_iceberg VALUES (1, 4242), (2, 4242);
+
+
+skipif serenedb
+statement ok
+CREATE TABLE ecek_deferred (a int, b int, UNIQUE (a, b) DEFERRABLE INITIALLY DEFERRED);
+
+
+onlyif serenedb
+statement ok
+CREATE TABLE ecek_deferred (a int, b int, UNIQUE (a, b) DEFERRED);
+
+
+statement ok
+INSERT INTO ecek_deferred VALUES (1, 4242), (2, 4242);
 
 
 statement ok
@@ -60,6 +78,14 @@ CREATE ROLE ecek_kostya;
 
 statement ok
 GRANT UPDATE (a) ON ecek_iceberg TO ecek_vedernikoff;
+
+
+statement ok
+GRANT UPDATE (a) ON ecek_deferred TO ecek_vedernikoff;
+
+
+statement ok
+GRANT SELECT, UPDATE ON ecek_deferred TO ecek_babsky;
 
 
 statement ok
@@ -162,6 +188,42 @@ INSERT INTO ecek_clickclack VALUES (8);
 db error: ERROR: Violates foreign key constraint because a key does not exist in the referenced table
 
 
+skipif serenedb
+statement error
+UPDATE ecek_deferred SET a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_deferred_a_b_key"
+
+
+onlyif serenedb
+statement error
+UPDATE ecek_deferred SET a = 1;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+UPDATE ecek_deferred SET a = 1;
+
+
+skipif serenedb
+statement error
+COMMIT;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_deferred_a_b_key"
+
+
+onlyif serenedb
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key
+
+
 statement ok
 RESET ROLE;
 
@@ -183,6 +245,21 @@ statement error
 UPDATE ecek_iceberg SET a = 1;
 ----
 db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1, 4242"
+
+
+skipif serenedb
+statement error
+UPDATE ecek_deferred SET a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "ecek_deferred_a_b_key"
+DETAIL: Key (a, b)=(1, 4242) already exists.
+
+
+onlyif serenedb
+statement error
+UPDATE ecek_deferred SET a = 1;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1, 4242"
 
 
 statement ok
@@ -222,6 +299,10 @@ DROP TABLE ecek_mop;
 
 statement ok
 DROP TABLE ecek_iceberg;
+
+
+statement ok
+DROP TABLE ecek_deferred;
 
 
 statement ok

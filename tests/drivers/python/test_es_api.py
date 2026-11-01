@@ -783,6 +783,10 @@ def test_search_paging_and_source(conn, corpus):
 
 
 def test_search_visibility_follows_refresh(conn, corpus):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute(
+            f'ALTER INDEX es."{corpus}$text" SET (refresh_interval = 0)')
+    _request(conn, "POST", f"/{corpus}/_refresh")
     match_quick = {"query": {"match": {"title": "quick"}}}
     status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
     assert body["count"] == 2

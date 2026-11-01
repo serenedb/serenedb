@@ -3109,7 +3109,7 @@ TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
   ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
 }
 
-TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreNoCodes) {
+TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   irs::MemoryDirectory dir{};
   std::vector<duckdb::Value> expected;
@@ -3124,7 +3124,7 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreNoCodes) {
   ASSERT_FALSE(col->DataBlocks().empty());
   for (const auto& block : col->DataBlocks()) {
     EXPECT_EQ(block.codec->type,
-              duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
+              duckdb::CompressionType::COMPRESSION_BITPACKING);
   }
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,
@@ -3145,10 +3145,6 @@ TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
   const auto* col = r.Column(63);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->DataBlocks().size(), 2u);
-  EXPECT_EQ(col->DataBlocks()[0].codec->type,
-            duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
-  EXPECT_NE(col->DataBlocks()[1].codec->type,
-            duckdb::CompressionType::COMPRESSION_COL_SEQUENCE);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 4095, 4096, 4097, 8191}},
                  false);

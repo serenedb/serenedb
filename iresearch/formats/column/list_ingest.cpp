@@ -32,8 +32,6 @@
 #include <numeric>
 #include <utility>
 
-#include "iresearch/utils/assert.hpp"
-
 namespace irs {
 
 void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
@@ -137,9 +135,6 @@ void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
   if (!_dedup) {
     _dedup = true;
     OpenWindow();
-    FlushTail();
-    _elems.push_back(
-      WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
   }
   _keys.SetChunk(ListKeys::kSource, child,
                  duckdb::ListVector::GetListSize(vec));
@@ -160,6 +155,9 @@ void ListIngest::CheckDistinct() {
     _dedup = false;
     _off_chunks = 0;
     Forget();
+    if (_borrow) {
+      FlushTail();
+    }
   }
 }
 
@@ -168,18 +166,10 @@ ListParts ListIngest::Take() {
   out.codes = _codes.Take();
   out.ends = _ends.Take();
   FlushTail();
-  out.elems.reserve(_elems.size());
-  for (auto& c : _elems) {
-    if (c.count == 0) {
-      continue;
-    }
-    duckdb::FlatVector::SetSize(c.data, c.count);
-    out.elems.push_back(std::move(c));
-  }
+  out.elems = std::move(_elems);
   out.elem_count = _running - _elem_base;
   out.distinct = _next_code - _code_base;
   out.next_code = _next_code;
-  out.sequence = _sequence && _next_code != _code_base;
   out.runs = _runs;
   out.longest_run = std::max(_longest_run, _run);
   out.running = _running;
@@ -205,6 +195,13 @@ void ListIngest::Reset(uint64_t code_base, uint64_t running) {
   _prev = kNoRep;
   _off_chunks = 0;
   OpenWindow();
+}
+
+duckdb::Vector& ListIngest::Tail() {
+  if (!_tail) {
+    _tail.emplace(duckdb::LogicalType::LIST(_child_type), 0);
+  }
+  return *_tail;
 }
 
 void ListIngest::FlushTail() {
@@ -251,7 +248,7 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
       continue;
     }
     const auto picked = _picked.size();
-    _fresh.push_back(Fresh{rep, picked, entry.length});
+    _fresh.push_back(Fresh{rep, picked});
     _picked.resize(picked + entry.length);
     std::iota(_picked.begin() + picked, _picked.end(),
               static_cast<duckdb::sel_t>(entry.offset));
@@ -321,12 +318,9 @@ void ListIngest::AppendRange(const duckdb::Vector& child, uint64_t begin,
     SliceChunks(_elems, child, begin, length);
     return;
   }
-  if (!_tail) {
-    _tail.emplace(duckdb::LogicalType::LIST(_child_type), 0);
-  }
   const duckdb::Vector range{child, static_cast<duckdb::idx_t>(begin),
                              static_cast<duckdb::idx_t>(begin + length)};
-  duckdb::ImmutableStrings::Append(*_tail, range,
+  duckdb::ImmutableStrings::Append(Tail(), range,
                                    static_cast<duckdb::idx_t>(length));
 }
 
@@ -352,64 +346,25 @@ void ListIngest::Forget() {
 }
 
 void ListIngest::Store(const duckdb::Vector& child) {
-  size_t i = 0;
-  while (i < _fresh.size()) {
-    if (_elems.empty() ||
-        _elems.back().count + _fresh[i].length > STANDARD_VECTOR_SIZE) {
-      if (_elems.empty() || _elems.back().count != 0) {
-        _elems.push_back(
-          WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
-      }
-    }
-    auto& target = _elems.back();
-    const auto chunk = _elems.size();
-    const auto begin = _fresh[i].picked;
-    const auto first = i;
-    uint64_t take = 0;
-    while (i < _fresh.size() &&
-           target.count + take + _fresh[i].length <= STANDARD_VECTOR_SIZE) {
-      if (_fresh[i].rep != kNoRep) {
-        auto& r = _reps[_fresh[i].rep];
-        r.chunk = static_cast<uint32_t>(chunk);
-        r.offset = static_cast<uint32_t>(target.count + take);
-      }
-      take += _fresh[i].length;
-      ++i;
-    }
-    if (i == first) {
-      const auto length = _fresh[i].length;
-      for (uint64_t done = 0; done < length;) {
-        if (_elems.back().count == STANDARD_VECTOR_SIZE) {
-          _elems.push_back(
-            WriteChunk{duckdb::Vector{_child_type, STANDARD_VECTOR_SIZE}, 0});
-        }
-        auto& part = _elems.back();
-        const auto n =
-          std::min<uint64_t>(length - done, STANDARD_VECTOR_SIZE - part.count);
-        Copy(child, part, _fresh[i].picked + done, n);
-        done += n;
-      }
-      ++i;
-      continue;
-    }
-    if (take == 0) {
-      continue;
-    }
-    Copy(child, target, begin, take);
-    _keys.SetChunk(chunk, target.data, target.count);
+  if (_picked.empty()) {
+    return;
   }
-}
-
-void ListIngest::Copy(const duckdb::Vector& child, WriteChunk& target,
-                      size_t begin, uint64_t count) {
-  SDB_ASSERT(begin + count <= _picked.size());
-  duckdb::SelectionVector sel{_picked.data() + begin,
-                              static_cast<duckdb::idx_t>(count)};
-  duckdb::ImmutableStrings::Copy(child, target.data, sel,
-                                 static_cast<duckdb::idx_t>(count), 0,
-                                 target.count);
-  target.count += count;
-  duckdb::FlatVector::SetSize(target.data, target.count);
+  auto& tail = Tail();
+  const auto base = duckdb::ListVector::GetListSize(tail);
+  const auto count = static_cast<duckdb::idx_t>(_picked.size());
+  const duckdb::Vector picked{
+    child, duckdb::SelectionVector{_picked.data(), count}, count};
+  duckdb::ImmutableStrings::Append(tail, picked, count);
+  for (const auto& fresh : _fresh) {
+    if (fresh.rep == kNoRep) {
+      continue;
+    }
+    auto& rep = _reps[fresh.rep];
+    rep.offset = base + fresh.picked;
+    rep.chunk = ListKeys::kStore;
+  }
+  _keys.SetChunk(ListKeys::kStore, duckdb::ListVector::GetChild(tail),
+                 base + count);
 }
 
 }  // namespace irs

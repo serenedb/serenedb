@@ -39,8 +39,6 @@ const duckdb::CompressionFunction& DictFsstFunction();
 const duckdb::CompressionFunction& FsstFunction();
 const duckdb::CompressionFunction* NumericFunction(
   duckdb::PhysicalType physical);
-const duckdb::CompressionFunction* SequenceFunction(
-  duckdb::PhysicalType physical);
 
 const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             duckdb::CompressionType type,

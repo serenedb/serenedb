@@ -83,9 +83,6 @@ const TextCodec* TextCodecOf(CompressionType type) noexcept {
 const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             CompressionType type,
                                             duckdb::PhysicalType physical) {
-  if (type == CompressionType::COMPRESSION_COL_SEQUENCE) {
-    return SequenceFunction(physical);
-  }
   if (type == CompressionType::COMPRESSION_COL_NUMERIC) {
     return NumericFunction(physical);
   }

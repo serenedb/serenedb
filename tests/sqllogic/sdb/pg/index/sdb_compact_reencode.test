@@ -35,7 +35,7 @@ column	type	rows	codecs	verdict
 body	VARCHAR	8192	Uncompressed	copy
 meta	STRUCT(k INTEGER)	8192	NULL	NULL
 pair	INTEGER[2]	8192	NULL	NULL
-tags	INTEGER[]	8192	Sequence	NULL
+tags	INTEGER[]	8192	BitPacking	NULL
 
 
 query

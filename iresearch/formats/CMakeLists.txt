@@ -7,7 +7,6 @@ target_sources(
         column/codecs/numeric.cpp
         column/codecs/registry.cpp
         column/codecs/segment_builder.cpp
-        column/codecs/sequence.cpp
         column/codecs/string_scan.cpp
         column/codecs/string_writer.cpp
         column/codecs/trained_dictionary.cpp

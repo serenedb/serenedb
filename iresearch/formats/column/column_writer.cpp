@@ -553,18 +553,7 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
   auto parts = ingest.Take();
   meta.write_list_running = parts.running;
   meta.write_list_distinct = parts.next_code;
-  if (parts.sequence) {
-    const uint64_t first = parts.next_code - parts.distinct;
-    const std::string_view payload{reinterpret_cast<const char*>(&first),
-                                   sizeof(first)};
-    CaptureBlock(WriteCtx().Database(),
-                 *codecs::SequenceFunction(type.InternalType()),
-                 duckdb::BaseStatistics::CreateEmpty(type), parts.distinct,
-                 std::span<const std::string_view>{&payload, 1},
-                 WriteCtx().Blocks(), meta.data);
-  } else {
-    CompressPlain(type, CodesCodec(parts, row_count), parts.codes, meta);
-  }
+  CompressPlain(type, CodesCodec(parts, row_count), parts.codes, meta);
   SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
              parts.elem_count, /*skip_validity=*/false, forced,
              meta.children[0]);

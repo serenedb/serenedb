@@ -62,11 +62,7 @@ Root::ptr MakePrunedConjunction(
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own,
-                   irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   segment, own, posting.Args(&ctx.fetcher));
     };
     const auto docs = static_cast<doc_id_t>(segment.docs_count());
     std::vector<size_t> joined;

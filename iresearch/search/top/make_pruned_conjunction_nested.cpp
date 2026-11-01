@@ -229,18 +229,12 @@ Root::ptr MakeNestedPrunedConjunction(
     using Window =
       probe::BooleanWindow<irs::detail::OrGroup<fill::SetLeaves<fill::Erased>>,
                            irs::detail::Scored, true>;
-    const auto args = [&](const irs::detail::PostingClause& posting) {
-      return irs::detail::ScoreArgs{.scorer = posting.stats.scorer,
-                                    .stats = posting.stats.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = posting.boost};
-    };
     const auto prepare = [&](auto& leaf,
                              const irs::detail::PostingClause& posting) {
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own, args(posting));
+                   segment, own, posting.Args(&ctx.fetcher));
     };
     const auto each = [&](const NestedClause& clause) {
       return [&clause, &prepare](auto& one, size_t j) {
@@ -266,7 +260,7 @@ Root::ptr MakeNestedPrunedConjunction(
         const auto& own = *posting.state.reader;
         return memory::make_managed<PrunedClauseImpl<Leaf>>(
           posting.state.cookie, *doc, irs::detail::LayoutOf(own), segment, own,
-          args(posting));
+          posting.Args(&ctx.fetcher));
       }
       return memory::make_managed<PrunedClauseImpl<Group>>(clause.terms.size(),
                                                            each(clause));
@@ -319,7 +313,7 @@ Root::ptr MakeNestedPrunedConjunction(
       return make.template operator()<PostingPrunedLead<Input>>(
         std::forward_as_tuple(posting.state.cookie, *doc,
                               irs::detail::LayoutOf(own), segment, own,
-                              args(posting)));
+                              posting.Args(&ctx.fetcher)));
     }
     return make.template operator()<DisjunctionLead<Input>>(
       std::forward_as_tuple(first.terms.size(), each(first)));

@@ -161,8 +161,10 @@ class MergeCharacterizationTest : public ::testing::Test {
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
 };
 
 TEST_F(MergeCharacterizationTest, CompleteMergeMatchesTheInputs) {
@@ -231,8 +233,10 @@ TEST_F(MergeCharacterizationTest, ScoredMergeReadsTheMergedNorms) {
 
 TEST_F(MergeCharacterizationTest, InvalidNormColumnIdIsRefused) {
   irs::FunctionFieldOptions no_norm_ids{
-    PlainColumns, [](irs::field_id) { return irs::field_limits::invalid(); },
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    [](irs::field_id) { return irs::field_limits::invalid(); },
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::SegmentMeta meta;
   const auto merge = [&] {
     Merge(meta, {}, irs::IResourceManager::gNoop, &no_norm_ids);
@@ -283,9 +287,11 @@ TEST_F(MergeCharacterizationTest, FullyDeletedInputYieldsNoSegment) {
 }
 
 irs::IndexWriter::ptr MakeWriter(irs::Directory& dir,
-                                 irs::ColumnOptionsProvider columns) {
+                                 irs::ColumnOptionsProvider columns,
+                                 irs::AnnFieldsByColumn anns = {}) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = std::move(columns);
+  options.anns = std::move(anns);
   return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
 }
 
@@ -310,8 +316,10 @@ TEST(MergeColumnsTest, InputWithoutColumnsIsPaddedWithNulls) {
   const WithoutColumnStore storeless{reader[0]};
 
   irs::FunctionFieldOptions field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SubReader* firsts[] = {&reader[0], &storeless};
   for (const auto* first : firsts) {
     const irs::SubReader* inputs[] = {first, &reader[1]};
@@ -358,8 +366,10 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
   const WithoutColumnStore storeless_deleted{*deleted};
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const std::vector<std::vector<const irs::SubReader*>> cases{
     {first_merged.reader.get(), &reader[1]},
     {first_merged.reader.get(), second_merged.reader.get()},
@@ -397,8 +407,10 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
   }
 
   irs::FunctionFieldOptions field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
@@ -426,7 +438,7 @@ TEST(MergeColumnsTest, EachColumnEndsBeforeTheNextOneStarts) {
   ASSERT_EQ(3, inputs.size());
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kRowGroup};
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kRowGroup, {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
@@ -497,8 +509,10 @@ TEST(MergeColumnsTest, DictionarySamplingSkipsInputsWithoutTheColumn) {
   ASSERT_EQ(3, inputs.size());
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
@@ -557,8 +571,10 @@ TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowBytes) {
   ASSERT_EQ(kRows, inputs.front()->docs_count());
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
@@ -581,8 +597,10 @@ TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowVectors) {
   ASSERT_EQ(kRows, inputs.front()->docs_count());
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
@@ -602,8 +620,8 @@ irs::ColumnOptions IvfColumns(irs::field_id id) {
   if (id == kLowVector || id == kHighVector) {
     out.ann_info = irs::AnnInfo{
       .kind = irs::AnnKind::Ivf,
-      .centroids_id = id,
-      .postings_id = id,
+      .index_id = id,
+      .column_id = id,
       .d = kVectorDim,
       .metric = irs::VectorMetric::L2Sqr,
       .quant = {.kind = irs::VectorQuantization::SQ8},
@@ -612,6 +630,14 @@ irs::ColumnOptions IvfColumns(irs::field_id id) {
     };
   }
   return out;
+}
+
+irs::AnnFieldsByColumn IvfAnns() {
+  irs::AnnFieldsByColumn anns;
+  for (const auto id : {kLowVector, kHighVector}) {
+    anns[id].push_back(id);
+  }
+  return anns;
 }
 
 void WriteVectors(irs::IndexWriter& writer, size_t docs, uint64_t seed) {
@@ -642,7 +668,8 @@ void WriteVectors(irs::IndexWriter& writer, size_t docs, uint64_t seed) {
 void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs,
                     irs::MergeExecutor* executor) {
   irs::FunctionFieldOptions field_options{
-    IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
+    IvfAnns()};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options, {},
                                irs::IResourceManager::gNoop, nullptr, executor);
@@ -685,7 +712,7 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
 
 TEST(MergeIvfTest, ClusterPostingsReplaceTheInputs) {
   irs::MemoryDirectory dir;
-  auto writer = MakeWriter(dir, IvfColumns);
+  auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 700, 1);
   WriteVectors(*writer, 500, 2);
   const auto reader = writer->GetSnapshot();
@@ -709,7 +736,7 @@ TEST(MergeIvfTest, ClusterPostingsAreWrittenAroundTheOtherFields) {
 
 TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
   irs::MemoryDirectory dir;
-  auto writer = MakeWriter(dir, IvfColumns);
+  auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 300, 7);
   WriteVectors(*writer, 200, 8);
   const auto reader = writer->GetSnapshot();
@@ -732,14 +759,15 @@ TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
   }
   ASSERT_EQ(2, inputs.size());
   irs::FunctionFieldOptions field_options{
-    IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
+    IvfAnns()};
   irs::MemoryDirectory out;
   EXPECT_FALSE(RunMerge(out, inputs, &field_options).flushed);
 }
 
 TEST(MergeIvfTest, ClusterFieldsWithoutIvfOptionsAreDropped) {
   irs::MemoryDirectory dir;
-  auto writer = MakeWriter(dir, IvfColumns);
+  auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 700, 5);
   WriteVectors(*writer, 500, 6);
   const auto reader = writer->GetSnapshot();
@@ -748,8 +776,10 @@ TEST(MergeIvfTest, ClusterFieldsWithoutIvfOptionsAreDropped) {
   ASSERT_NE(nullptr, inputs.front()->field(kLowVector));
 
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory out;
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);

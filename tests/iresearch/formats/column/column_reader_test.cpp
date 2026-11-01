@@ -1214,7 +1214,7 @@ TEST_F(ColumnReaderTest, BlobPointReaderHoldsOnlyTheLastValue) {
     w.Commit(0);
   }
 
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   irs::ColumnReader::BlobPointReader reader{r, *r.Column(kS)};
   const auto walk = [&] {
     for (uint64_t g = 0; g != kRows; ++g) {
@@ -1336,7 +1336,7 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
 
   std::vector<PrefetchRange> prefetched;
   PrefetchRecordingDirectory dir{mem, prefetched};
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto& col = *r.Column(kS);
   const auto& block = col.DataBlocks().back();
   const auto covers_block = [&](const PrefetchRange& p) {
@@ -1387,7 +1387,7 @@ TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
 
   std::vector<PrefetchRange> prefetched;
   PrefetchRecordingDirectory dir{mem, prefetched};
-  irs::ColReader r{dir, "seg", Db()};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto& col = *r.Column(kS);
   ASSERT_TRUE(col.HasDictionaries());
   irs::ReadContext ctx{r, true};
@@ -2442,7 +2442,7 @@ TEST_F(ColumnReaderTest, RepeatedMapsAreStoredOnce) {
               4096, expected);
   ASSERT_EQ(expected.size(), 20000u);
 
-  irs::ColReader r{dir, "mseg", Db()};
+  irs::ColReader r{dir, "mseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(40);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 20000u);
@@ -2467,7 +2467,7 @@ TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
               "|| (i % 3), repeat('x', (i % 4) * 20)] END FROM range(12000) "
               "t(i)",
               1024, expected);
-  irs::ColReader r{dir, "lseg", Db()};
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(41);
   ASSERT_NE(col, nullptr);
   EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
@@ -2491,7 +2491,7 @@ TEST_F(ColumnReaderTest, OneRepeatedListAmongUniqueListsScans) {
               "SELECT CASE WHEN i % 2 = 0 THEN [] ELSE ['value-' || i, 'tail-' "
               "|| (i * 7)] END FROM range(40000) t(i)",
               40000, expected);
-  irs::ColReader r{dir, "lseg", Db()};
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(41);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
@@ -2511,7 +2511,7 @@ TEST_F(ColumnReaderTest, RepeatedNestedLists) {
               "SELECT CASE WHEN i % 13 = 0 THEN NULL ELSE [[i % 3, i % 2], "
               "[i % 4], []] END FROM range(9000) t(i)",
               2048, expected);
-  irs::ColReader r{dir, "nseg", Db()};
+  irs::ColReader r{dir, "nseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(42);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
@@ -2528,7 +2528,7 @@ TEST_F(ColumnReaderTest, UniqueNestedListsKeepEveryRow) {
               "SELECT CASE WHEN i % 11 = 0 THEN NULL ELSE [[i, i * 7], [], "
               "[i % 5]] END FROM range(12000) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "unseg", Db()};
+  irs::ColReader r{dir, "unseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(47);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
@@ -2574,7 +2574,7 @@ void ExpectDoubleBitsRoundTrip(duckdb::DatabaseInstance& db,
     cw.Append(vec, rows.size());
     w.Commit(0);
   }
-  irs::ColReader r{dir, "zseg", db};
+  irs::ColReader r{dir, "zseg", db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(60);
   ASSERT_NE(col, nullptr);
   const auto got = ScanValues(*col, r.Ctx());
@@ -2631,7 +2631,7 @@ TEST_F(ColumnReaderTest, NestedListsKeepEqualComparingIntervalsApart) {
               "THEN [[INTERVAL '30 days']] ELSE [[INTERVAL '720 hours']] END "
               "FROM range(300) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "iseg", Db()};
+  irs::ColReader r{dir, "iseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(61);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
@@ -2652,7 +2652,7 @@ TEST_F(ColumnReaderTest, ListsInsideStructs) {
               "10000 THEN 'v' || ((i // 50) % 7) ELSE 'w' || i || k END}))} "
               "END FROM range(20000) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "sseg", Db()};
+  irs::ColReader r{dir, "sseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(48);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 20000u);
@@ -2671,7 +2671,7 @@ TEST_F(ColumnReaderTest, RepeatedMapsWithHyperLogLog) {
               "list_transform(range(4), lambda k: {'key': 'k' || k, 'value': "
               "((i // 25) % 40)::INTEGER})) END FROM range(20000) t(i)",
               4096, expected, /*hyperloglog=*/true);
-  irs::ColReader r{dir, "hseg", Db()};
+  irs::ColReader r{dir, "hseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(49);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 20000u);
@@ -2697,7 +2697,7 @@ TEST_F(ColumnReaderTest, SparseRepeatedMapsPadNulls) {
                     " END FROM range(12000) t(i)",
                     4096, 1500, expected);
   ASSERT_GT(expected.size(), 12000u);
-  irs::ColReader r{dir, "pseg", Db()};
+  irs::ColReader r{dir, "pseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(50);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), expected.size());
@@ -2721,7 +2721,7 @@ TEST_F(ColumnReaderTest, RewrittenRepeatedListsKeepTheirValues) {
               "'value': 'v' || ((i // 7) % 50) || '-' || k})) END "
               "FROM range(30000) t(i)",
               8192, source);
-  irs::ColReader src{dir, "rsrc", Db()};
+  irs::ColReader src{dir, "rsrc", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = src.Column(51);
   ASSERT_NE(col, nullptr);
   for (const bool sliced : {false, true}) {
@@ -2756,7 +2756,7 @@ TEST_F(ColumnReaderTest, RewrittenRepeatedListsKeepTheirValues) {
       }
       w.Commit(0);
     }
-    irs::ColReader r{dir, segment, Db()};
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* out = r.Column(52);
     ASSERT_NE(out, nullptr);
     ASSERT_EQ(out->RowCount(), expected.size());
@@ -2793,7 +2793,7 @@ TEST_F(ColumnReaderTest, RewrittenStructsKeepTheirListFieldsDeduplicated) {
     }
     return ElementCount(tags);
   };
-  irs::ColReader src{dir, "ssrc", Db()};
+  irs::ColReader src{dir, "ssrc", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = src.Column(51);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->StructFieldCount(), 3u);
@@ -2830,7 +2830,7 @@ TEST_F(ColumnReaderTest, RewrittenStructsKeepTheirListFieldsDeduplicated) {
       }
       w.Commit(0);
     }
-    irs::ColReader r{dir, segment, Db()};
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* out = r.Column(52);
     ASSERT_NE(out, nullptr);
     ASSERT_EQ(out->RowCount(), expected.size());
@@ -2852,7 +2852,7 @@ TEST_F(ColumnReaderTest, RepeatedListsStayDeduplicatedAcrossSplitAppends) {
                     "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE ['tag.' || (i "
                     "% 3), 'env'] END FROM range(40000) t(i)",
                     8192, 1, expected);
-  irs::ColReader r{dir, "split", Db()};
+  irs::ColReader r{dir, "split", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(51);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), expected.size());
@@ -2913,7 +2913,7 @@ TEST_F(ColumnReaderTest, ListDictionariesKeepTheirValuesAcrossAppends) {
       }
       w.Commit(0);
     }
-    irs::ColReader r{dir, segment, Db()};
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(51);
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->RowCount(), expected.size());
@@ -2931,7 +2931,7 @@ TEST_F(ColumnReaderTest,
               "SELECT CASE WHEN i % 29 = 0 THEN NULL ELSE ['loc' || (i // 4), "
               "'z'] END FROM range(40000) t(i)",
               8192, source);
-  irs::ColReader src{dir, "lsrc", Db()};
+  irs::ColReader src{dir, "lsrc", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = src.Column(51);
   ASSERT_NE(col, nullptr);
   struct Arm {
@@ -2961,7 +2961,7 @@ TEST_F(ColumnReaderTest,
       }
       w.Commit(0);
     }
-    irs::ColReader r{dir, arm.segment, Db()};
+    irs::ColReader r{dir, arm.segment, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* out = r.Column(52);
     ASSERT_NE(out, nullptr);
     ASSERT_EQ(out->RowCount(), source.size());
@@ -2981,7 +2981,7 @@ TEST_F(ColumnReaderTest, SparseListsInsideStructsPadNulls) {
     "% 4), 'x'] ELSE ['u' || i] END} END FROM range(12000) t(i)",
     4096, 1500, expected);
   ASSERT_GT(expected.size(), 12000u);
-  irs::ColReader r{dir, "sps", Db()};
+  irs::ColReader r{dir, "sps", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(51);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), expected.size());
@@ -3004,7 +3004,7 @@ TEST_F(ColumnReaderTest, LongListsInsideStructs) {
               "i % 5), lambda k: 'u' || i || '-' || k) ELSE ['s' || i] END} "
               "FROM range(8192) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "lls", Db()};
+  irs::ColReader r{dir, "lls", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(52);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 8192u);
@@ -3023,7 +3023,7 @@ TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
               "SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE ['u' || i, 'v' || (i "
               "* 31)] END FROM range(10000) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "useg", Db()};
+  irs::ColReader r{dir, "useg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(43);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
@@ -3040,7 +3040,7 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreNoCodes) {
               "[]::VARCHAR[] ELSE ['u' || i, 'v' || (i * 31)] END FROM "
               "range(10000) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "sseg", Db()};
+  irs::ColReader r{dir, "sseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(62);
   ASSERT_NE(col, nullptr);
   ASSERT_FALSE(col->DataBlocks().empty());
@@ -3063,7 +3063,7 @@ TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
               "SELECT CASE WHEN i < 4096 THEN ['u' || i] ELSE ['r' || (i % 5)] "
               "END FROM range(8192) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "kseg", Db()};
+  irs::ColReader r{dir, "kseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(63);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->DataBlocks().size(), 2u);
@@ -3095,7 +3095,7 @@ void ScanCorruptedLists(duckdb::DatabaseInstance& db, std::string_view segment,
   const auto file = irs::FileName(segment);
   std::string bytes;
   {
-    auto in = dir.open(file, irs::IOAdvice::NORMAL);
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
     ASSERT_NE(in, nullptr);
     bytes.resize(in->Length());
     in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());
@@ -3112,7 +3112,7 @@ void ScanCorruptedLists(duckdb::DatabaseInstance& db, std::string_view segment,
     out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
                    bytes.size());
   }
-  irs::ColReader r{dir, segment, db};
+  irs::ColReader r{dir, segment, db, irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kId);
   ASSERT_NE(col, nullptr);
 #ifdef SDB_DEV
@@ -3147,7 +3147,7 @@ TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {
     "SELECT CASE WHEN i % 17 = 0 THEN NULL WHEN i < 4096 THEN ['u' || "
     "i] ELSE ['r' || (i % 5), 'x'] END FROM range(65536) t(i)",
     32768, expected);
-  irs::ColReader r{dir, "aseg", Db()};
+  irs::ColReader r{dir, "aseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(64);
   ASSERT_NE(col, nullptr);
   EXPECT_LT(col->Child()->RowCount(), 40000u);
@@ -3166,7 +3166,7 @@ TEST_F(ColumnReaderTest, StructListsTurningRepetitiveAreDeduplicatedAgain) {
               "THEN ['u' || i] ELSE ['r' || (i % 5), 'x'] END} FROM "
               "range(32768) t(i)",
               32768, expected);
-  irs::ColReader r{dir, "bseg", Db()};
+  irs::ColReader r{dir, "bseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(65);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
@@ -3186,7 +3186,7 @@ TEST_F(ColumnReaderTest, RepeatedWideMapsAcrossRowGroups) {
               "'value': 'v' || ((i // 37) % 300) || '-' || k})) END "
               "FROM range(30000) t(i)",
               12288, expected);
-  irs::ColReader r{dir, "wseg", Db()};
+  irs::ColReader r{dir, "wseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(44);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 30000u);
@@ -3206,7 +3206,7 @@ TEST_F(ColumnReaderTest, ListsLongerThanAVector) {
     "% 5), lambda k: 'e' || k) WHEN i % 9 = 1 THEN NULL ELSE ['a' || (i "
     "% 4), 'b'] END FROM range(20000) t(i)",
     8192, expected);
-  irs::ColReader r{dir, "lseg", Db()};
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(45);
   ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
@@ -3223,7 +3223,7 @@ TEST_F(ColumnReaderTest, EmptyMapsOnly) {
               "SELECT CASE WHEN i % 5 = 0 THEN NULL ELSE map([], "
               "[])::MAP(VARCHAR, VARCHAR) END FROM range(10000) t(i)",
               4096, expected);
-  irs::ColReader r{dir, "eseg", Db()};
+  irs::ColReader r{dir, "eseg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(46);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 10000u);

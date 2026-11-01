@@ -26,7 +26,6 @@
 #include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 
@@ -137,14 +136,9 @@ void RemoveTerms(irs::IndexWriter& writer, irs::field_id field,
   if (terms.empty()) {
     return;
   }
+  const tests::Terms removed{field, {terms.begin(), terms.end()}};
   auto trx = writer.GetBatch();
-  for (const auto& term : terms) {
-    auto filter = std::make_unique<irs::ByTerm>();
-    *filter->mutable_field_id() = field;
-    filter->mutable_options()->term =
-      irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{term})};
-    trx.Remove(irs::Filter::ptr{std::move(filter)});
-  }
+  trx.Remove(tests::RemovalOf(writer, removed));
   trx.Commit();
   ASSERT_TRUE(writer.RefreshCommit());
 }

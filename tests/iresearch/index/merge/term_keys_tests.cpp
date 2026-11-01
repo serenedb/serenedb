@@ -437,8 +437,10 @@ TEST_P(TermMergeTest, LongRunsAndSharedTermsMatchTheOracle) {
   ASSERT_EQ(segments, inputs.size());
 
   irs::FunctionFieldOptions field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SegmentWriterOptions options{
     .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,

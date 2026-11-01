@@ -75,10 +75,12 @@ irs::ColumnOptions PlainColumns(irs::field_id) { return {}; }
 
 irs::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
                                  irs::ColumnOptionsProvider columns,
-                                 irs::SortSpec sort = {}) {
+                                 irs::SortSpec sort = {},
+                                 irs::AnnFieldsByColumn anns = {}) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = std::move(columns);
   options.row_group_size = row_group_size;
+  options.anns = std::move(anns);
   options.sort = std::move(sort);
   return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
 }
@@ -100,9 +102,10 @@ std::shared_ptr<const irs::SegmentReaderImpl> SortedMerge(
   const irs::SortSpec* spec, uint32_t row_group_size,
   irs::ColumnOptionsProvider columns, bool& flushed,
   irs::MergeExecutor* executor = nullptr, irs::ScorerPtr scorer = nullptr,
-  irs::SegmentMeta* written = nullptr) {
+  irs::SegmentMeta* written = nullptr, irs::AnnFieldsByColumn anns = {}) {
   irs::FunctionFieldOptions field_options{
-    std::move(columns), irs::tests::MakeNormColumnIdProvider(), row_group_size};
+    std::move(columns), irs::tests::MakeNormColumnIdProvider(), row_group_size,
+    std::move(anns)};
   irs::SegmentMeta local;
   auto& meta = written != nullptr ? *written : local;
   const irs::SegmentWriterOptions options{
@@ -312,7 +315,7 @@ class SortedMergeTest : public ::testing::Test {
   irs::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   irs::FunctionFieldOptions _field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup};
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup, {}};
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
   size_t _next = 0;
@@ -925,8 +928,8 @@ irs::ColumnOptions IvfColumns(irs::field_id id) {
   if (id == kVector) {
     out.ann_info = irs::AnnInfo{
       .kind = irs::AnnKind::Ivf,
-      .centroids_id = id,
-      .postings_id = id,
+      .index_id = id,
+      .column_id = id,
       .d = kVectorDim,
       .metric = irs::VectorMetric::L2Sqr,
       .quant = {.kind = irs::VectorQuantization::SQ8},
@@ -937,9 +940,16 @@ irs::ColumnOptions IvfColumns(irs::field_id id) {
   return out;
 }
 
+irs::AnnFieldsByColumn IvfAnns() {
+  irs::AnnFieldsByColumn anns;
+  anns[kVector].push_back(kVector);
+  return anns;
+}
+
 TEST(SortedMergeAnnTest, IvfClustersCoverTheSortedDocs) {
   irs::MemoryDirectory dir;
-  auto writer = MakeWriter(dir, DEFAULT_ROW_GROUP_SIZE, IvfColumns);
+  auto writer =
+    MakeWriter(dir, DEFAULT_ROW_GROUP_SIZE, IvfColumns, {}, IvfAnns());
   const auto type =
     duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kVectorDim);
   std::mt19937_64 rng{17};
@@ -973,8 +983,9 @@ TEST(SortedMergeAnnTest, IvfClustersCoverTheSortedDocs) {
   const irs::SortSpec spec{{{.column = kBigint, .descending = true}}};
   irs::MemoryDirectory out;
   bool flushed = false;
-  const auto merged = SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE,
-                                  IvfColumns, flushed);
+  const auto merged =
+    SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE, IvfColumns, flushed,
+                nullptr, nullptr, nullptr, IvfAnns());
   ASSERT_TRUE(flushed);
   ASSERT_NE(nullptr, merged);
   const auto* ann = merged->Ann(kVector);
@@ -1058,7 +1069,7 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
       std::ranges::sort(files);
       std::string content;
       for (const auto& file : files) {
-        auto in = out.open(file, irs::IOAdvice::NORMAL);
+        auto in = out.open(file, irs::IOAdvice::SEQUENTIAL);
         EXPECT_NE(nullptr, in) << file;
         const auto at = content.size();
         content.resize(at + in->Length());

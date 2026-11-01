@@ -71,7 +71,7 @@ struct Written {
 
 irs::FunctionFieldOptions AutoOptions(uint32_t row_group = kRowGroup) {
   return irs::FunctionFieldOptions{
-    [](irs::field_id) { return irs::ColumnOptions{}; }, nullptr, row_group};
+    [](irs::field_id) { return irs::ColumnOptions{}; }, nullptr, row_group, {}};
 }
 
 irs::FunctionFieldOptions UncompressedText() {
@@ -83,7 +83,9 @@ irs::FunctionFieldOptions UncompressedText() {
       return irs::ColumnOptions{
         .compression = duckdb::CompressionType::COMPRESSION_UNCOMPRESSED};
     },
-    nullptr, kRowGroup};
+    nullptr,
+    kRowGroup,
+    {}};
 }
 
 class ColCopyCheckTest : public ::testing::Test {
@@ -147,7 +149,8 @@ class ColCopyCheckTest : public ::testing::Test {
       }
     }
     ASSERT_TRUE(writer.Commit(spec.rows));
-    _reader = std::make_unique<irs::ColReader>(_dir, kSegment, Db());
+    _reader = std::make_unique<irs::ColReader>(_dir, kSegment, Db(),
+                                               irs::IOAdvice::SEQUENTIAL);
   }
 
   const irs::ColumnReader& Column(irs::field_id id) const {
@@ -219,7 +222,9 @@ TEST_F(ColCopyCheckTest, ConstantRowGroupsDoNotHideADeclaredCodecChange) {
                                       duckdb::CompressionType::COMPRESSION_RLE}
                : irs::ColumnOptions{};
     },
-    nullptr, kRowGroup};
+    nullptr,
+    kRowGroup,
+    {}};
   const auto estimate = Estimate(kNumber, rle_numbers);
   ASSERT_TRUE(estimate);
   EXPECT_TRUE(estimate->codec_changed);

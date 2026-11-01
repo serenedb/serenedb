@@ -62,7 +62,7 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
 uint64_t ColFileId(const Directory& dir, std::string_view segment_name,
                    duckdb::DatabaseInstance& db) {
   const auto name = FileName(segment_name);
-  auto in = dir.open(name, IOAdvice::NORMAL);
+  auto in = dir.open(name, IOAdvice::RANDOM);
   SDB_ASSERT(in);
   uint64_t file_id = 0;
   format_utils::ReadFooter(

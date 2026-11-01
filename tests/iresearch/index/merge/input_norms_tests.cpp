@@ -210,8 +210,10 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
   std::vector<const irs::SubReader*> _inputs;
   std::shared_ptr<const irs::SegmentReaderImpl> _deleted;
   irs::FunctionFieldOptions _field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
   std::shared_ptr<const irs::SegmentReaderImpl> _merged;
@@ -351,8 +353,10 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
     doc_map.emplace_back(input, irs::IResourceManager::gNoop);
   }
   irs::FunctionFieldOptions field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::SegmentMeta meta;
   irs::MemoryDirectory out;
   irs::MergePlan plan{out,

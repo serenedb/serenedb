@@ -40,7 +40,7 @@ namespace {
 constexpr std::string_view kFile = "blocks";
 
 std::string ReadAll(const irs::MemoryDirectory& dir) {
-  auto in = dir.open(kFile, irs::IOAdvice::NORMAL);
+  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
   EXPECT_NE(in, nullptr);
   std::string bytes(in->Length(), '\0');
   in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),

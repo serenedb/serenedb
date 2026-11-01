@@ -58,8 +58,10 @@ std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
   irs::Directory& out, std::span<const irs::SubReader* const> inputs,
   bool& flushed, irs::MergeExecutor* executor = nullptr) {
   irs::FunctionFieldOptions field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::SegmentMeta meta;
   const irs::SegmentWriterOptions options{
     .db = &irs::DuckDBEngine::Instance().instance(),
@@ -237,8 +239,10 @@ TEST(MergeGoldenTest, ParallelMergesMatchTheRecording) {
 uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
                           irs::MergeExecutor* executor = nullptr) {
   irs::FunctionFieldOptions field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::BM25 bm25;
   irs::SegmentMeta meta;
   const irs::SegmentWriterOptions options{
@@ -257,7 +261,7 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
     if (file.ends_with(".col")) {
       continue;
     }
-    auto in = out.open(file, irs::IOAdvice::NORMAL);
+    auto in = out.open(file, irs::IOAdvice::SEQUENTIAL);
     EXPECT_NE(nullptr, in) << file;
     const auto at = bytes.size();
     bytes.resize(at + in->Length());

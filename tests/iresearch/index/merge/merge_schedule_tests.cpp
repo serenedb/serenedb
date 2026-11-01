@@ -54,6 +54,13 @@ irs::ColumnOptions VectorColumns(irs::field_id id) {
   return options;
 }
 
+irs::AnnFieldsByColumn VectorAnns() {
+  irs::AnnFieldsByColumn anns;
+  anns[kHnswColumn].push_back(kHnswColumn);
+  anns[kIvfColumn].push_back(kIvfColumn);
+  return anns;
+}
+
 class MergeScheduleTest : public ::testing::Test {
  protected:
   void SetUp() final {
@@ -109,10 +116,11 @@ class MergeScheduleTest : public ::testing::Test {
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _plain{PlainColumns,
                                    irs::tests::MakeNormColumnIdProvider(),
-                                   DEFAULT_ROW_GROUP_SIZE};
+                                   DEFAULT_ROW_GROUP_SIZE,
+                                   {}};
   irs::FunctionFieldOptions _vectors{VectorColumns,
                                      irs::tests::MakeNormColumnIdProvider(),
-                                     DEFAULT_ROW_GROUP_SIZE};
+                                     DEFAULT_ROW_GROUP_SIZE, VectorAnns()};
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
 };
@@ -262,11 +270,14 @@ TEST_F(MergeScheduleTest, VectorUnitsRunOneAfterAnotherAfterTheFooter) {
 }
 
 TEST_F(MergeScheduleTest, VectorUnitsWithoutIvfLeavePostingsFree) {
+  irs::AnnFieldsByColumn hnsw_anns;
+  hnsw_anns[kHnswColumn].push_back(kHnswColumn);
   irs::FunctionFieldOptions hnsw_only{
     [](irs::field_id id) {
       return id == kIvfColumn ? irs::ColumnOptions{} : VectorColumns(id);
     },
-    irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
+    std::move(hnsw_anns)};
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, hnsw_only);
   EXPECT_TRUE(plan->Dependencies(Find(*plan, MergeUnitKind::Postings)).empty());

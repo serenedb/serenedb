@@ -42,7 +42,7 @@ TEST(memory_directory_tests, open_input_outlives_removed_file) {
     out->Flush();
   }
 
-  auto in = dir.open("payload", irs::IOAdvice::NORMAL);
+  auto in = dir.open("payload", irs::IOAdvice::RANDOM);
   ASSERT_NE(in, nullptr);
   ASSERT_EQ(in->Length(), payload.size());
   auto clone = in->Reopen();
@@ -75,7 +75,7 @@ TEST(memory_directory_tests, recreated_file_does_not_alias_open_input) {
                    first.size());
     out->Flush();
   }
-  auto in = dir.open("payload", irs::IOAdvice::NORMAL);
+  auto in = dir.open("payload", irs::IOAdvice::RANDOM);
   ASSERT_NE(in, nullptr);
   const auto* stable = in->ReadStable(0, kStable);
   ASSERT_NE(stable, nullptr);
@@ -91,7 +91,7 @@ TEST(memory_directory_tests, recreated_file_does_not_alias_open_input) {
 
   EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(stable), kStable),
             std::string_view(first).substr(0, kStable));
-  auto reopened = dir.open("payload", irs::IOAdvice::NORMAL);
+  auto reopened = dir.open("payload", irs::IOAdvice::RANDOM);
   ASSERT_NE(reopened, nullptr);
   std::string readback(second.size(), '\0');
   reopened->ReadData(0, reinterpret_cast<irs::byte_type*>(readback.data()),

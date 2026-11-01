@@ -33,12 +33,9 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/search/filters/filter.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/memory.hpp>
 #include <limits>
 #include <numeric>
 #include <span>
@@ -76,128 +73,36 @@ const auto kFullMerge = irs::index_utils::MakePolicy(
 
 const irs::SortSpec kByNameDesc{{{.column = kNameColumn, .descending = true}}};
 
+int64_t RemovalKey(std::string_view key) {
+  EXPECT_LE(key.size(), sizeof(int64_t));
+  uint64_t packed = 0;
+  for (const auto byte : key) {
+    packed = packed << 8 | static_cast<uint8_t>(byte);
+  }
+  return static_cast<int64_t>(packed);
+}
+
+void InsertRemovalKey(irs::IndexWriter::Document& doc, std::string_view key) {
+  irs::byte_type buf[sizeof(int64_t)];
+  tests::StringField field{
+    "name_key",
+    irs::ViewCast<char>(irs::TermRemoval::Term(RemovalKey(key), buf))};
+  field.id = tests::FieldIdFor("name_key");
+  ASSERT_TRUE(tests::InsertField(doc, field));
+}
+
 void InsertName(irs::IndexWriter::Transaction& trx, std::string_view name) {
   auto doc = trx.Insert();
   tests::StringField field{"name", name};
   field.id = kNameField;
   ASSERT_TRUE(tests::InsertField(doc, field));
+  InsertRemovalKey(doc, name);
   WriteValue(doc, kNameColumn, duckdb::LogicalType::VARCHAR,
              duckdb::Value{std::string{name}});
 }
 
-irs::Filter::ptr ByName(std::string_view name) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = kNameField;
-  filter->mutable_options()->term =
-    irs::bstring{irs::ViewCast<irs::byte_type>(name)};
-  return filter;
-}
-
-void InsertKeyed(irs::IndexWriter::Transaction& trx, std::string_view key,
-                 std::string_view name) {
-  auto doc = trx.Insert();
-  tests::StringField pk{"pk", key};
-  pk.id = kPkField;
-  ASSERT_TRUE(tests::InsertField(doc, pk));
-  tests::StringField field{"name", name};
-  field.id = kNameField;
-  ASSERT_TRUE(tests::InsertField(doc, field));
-  WriteValue(doc, kNameColumn, duckdb::LogicalType::VARCHAR,
-             duckdb::Value{std::string{name}});
-}
-
-class FirstLiveFilter final : public irs::Filter, public irs::lead::Node {
- public:
-  explicit FirstLiveFilter(std::string_view key)
-    : _key{irs::ViewCast<irs::byte_type>(key)} {}
-
-  irs::TypeInfo::type_id type() const noexcept final {
-    return irs::Type<FirstLiveFilter>::id();
-  }
-
-  irs::QueryBuilder::ptr PrepareSegment(
-    const irs::SubReader& segment, const irs::PrepareContext& ctx) const final;
-
-  irs::lead::Node::ptr MakeLead(const irs::SubReader& segment,
-                                const irs::DocumentMaskBuilder* pending) const {
-    _segment_mask = segment.MaskedDocs();
-    _pending_mask = pending;
-    _field = segment.field(kPkField);
-    _done = _field == nullptr;
-    return irs::memory::to_managed<irs::lead::Node>(
-      const_cast<FirstLiveFilter&>(*this));
-  }
-
-  irs::doc_id_t Next() final {
-    if (_done) {
-      return irs::doc_limits::eof();
-    }
-    _done = true;
-    auto doc = irs::doc_limits::eof();
-    _field->ReadDocs(_key, [&](irs::doc_id_t found) {
-      if (_segment_mask.Contains(found) ||
-          (_pending_mask && _pending_mask->Contains(found))) {
-        return true;
-      }
-      doc = found;
-      return false;
-    });
-    return doc;
-  }
-
-  irs::doc_id_t Seek(irs::doc_id_t) noexcept final {
-    return irs::doc_limits::eof();
-  }
-
- private:
-  irs::bstring _key;
-  mutable irs::DocumentMask::Iterator _segment_mask;
-  mutable const irs::DocumentMaskBuilder* _pending_mask = nullptr;
-  mutable const irs::TermReader* _field = nullptr;
-  mutable bool _done = true;
-};
-
-class FirstLiveQuery : public irs::QueryBuilder {
- public:
-  FirstLiveQuery(const irs::SubReader& segment, const FirstLiveFilter& filter,
-                 const irs::DocumentMaskBuilder* pending)
-    : irs::QueryBuilder{segment}, _filter{filter}, _pending{pending} {}
-
-  irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx&) const final {
-    return _filter.MakeLead(_segment, _pending);
-  }
-  irs::count::Root::ptr PlanCount(const irs::count::Context&) const final {
-    return {};
-  }
-  irs::docs::Root::ptr PlanDocs(const irs::docs::Context&) const final {
-    return {};
-  }
-  irs::hits::Root::ptr PlanScored(const irs::hits::Context&) const final {
-    return {};
-  }
-  irs::top::Root::ptr PlanTop(const irs::top::Context&) const final {
-    return {};
-  }
-  irs::probe::Node::ptr PlanProbe(const irs::detail::ScoredCtx&,
-                                  uint64_t) const final {
-    return {};
-  }
-  irs::fill::Node::ptr PlanFill(const irs::detail::ScoredCtx&,
-                                irs::ScoreMergeType) const final {
-    return {};
-  }
-  void Visit(irs::PreparedStateVisitor&, irs::score_t) const final {}
-  irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
-
- private:
-  const FirstLiveFilter& _filter;
-  const irs::DocumentMaskBuilder* _pending;
-};
-
-irs::QueryBuilder::ptr FirstLiveFilter::PrepareSegment(
-  const irs::SubReader& segment, const irs::PrepareContext& ctx) const {
-  return irs::memory::make_tracked<FirstLiveQuery>(ctx.memory, segment, *this,
-                                                   ctx.pending_docs_mask);
+irs::TermRemoval ByName(std::string_view name) {
+  return {.terms = {RemovalKey(name)}};
 }
 
 std::vector<std::string> LiveNames(const irs::SubReader& segment) {
@@ -492,8 +397,7 @@ TEST_P(SortedIndexTestCase, reader_components) {
 
   {
     auto trx = writer->GetBatch();
-    trx.Remove(ByName("A"));
-    trx.Remove(ByName("~"));
+    trx.Remove(tests::RemovalOf(*writer, {kNameField, {"A", "~"}}));
     ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(writer->RefreshCommit());
@@ -698,49 +602,6 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx) {
   EXPECT_EQ(4, reader[0].docs_count());
   EXPECT_EQ(2, reader[0].live_docs_count());
   EXPECT_EQ((std::vector<std::string>{"D", "C"}), LiveNames(reader[0]));
-}
-
-TEST_P(SortedIndexTestCase, doc_removal_positions_within_trx) {
-  std::vector<irs::DocRemoval::Row> rows;
-  for (uint64_t segment = 0; segment != 64; ++segment) {
-    for (irs::doc_id_t doc = 0; doc != 3; ++doc) {
-      rows.emplace_back(segment, irs::doc_limits::min() + doc, int64_t{0});
-    }
-  }
-  auto positions = std::make_shared<const irs::DocRemoval>(
-    irs::DocRemoval::Build(irs::field_limits::invalid(), std::move(rows)));
-  auto writer = OpenSorted(kByNameDesc);
-  {
-    auto trx = writer->GetBatch();
-    InsertName(trx, "A");
-    InsertName(trx, "B");
-    trx.Remove(std::move(positions));
-    InsertName(trx, "C");
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(writer->RefreshCommit());
-  AssertSnapshotEquality(*writer);
-  const auto reader = writer->GetSnapshot();
-  ASSERT_EQ(1, reader.size());
-  EXPECT_EQ(3, reader[0].docs_count());
-  EXPECT_EQ((std::vector<std::string>{"C"}), LiveNames(reader[0]));
-}
-
-TEST_P(SortedIndexTestCase, doc_removal_first_live_within_trx) {
-  auto writer = OpenSorted(kByNameDesc);
-  {
-    auto trx = writer->GetBatch();
-    InsertKeyed(trx, "k", "A");
-    trx.Remove(std::make_shared<FirstLiveFilter>("k"));
-    InsertKeyed(trx, "k", "Z");
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(writer->RefreshCommit());
-  AssertSnapshotEquality(*writer);
-  const auto reader = writer->GetSnapshot();
-  ASSERT_EQ(1, reader.size());
-  EXPECT_EQ(2, reader[0].docs_count());
-  EXPECT_EQ((std::vector<std::string>{"Z"}), LiveNames(reader[0]));
 }
 
 TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx_flush) {

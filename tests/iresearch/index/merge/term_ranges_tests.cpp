@@ -161,7 +161,7 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
     writer.FinishPart();
   }
   ASSERT_LT(irs::doc_limits::kBlockSize, part_meta.docs_count);
-  const auto part_doc = part_dir.open("part.doc", irs::IOAdvice::NORMAL);
+  const auto part_doc = part_dir.open("part.doc", irs::IOAdvice::SEQUENTIAL);
   ASSERT_NE(nullptr, part_doc);
   for (size_t lead = 20; lead != 140; ++lead) {
     SCOPED_TRACE(lead);
@@ -186,7 +186,7 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
     EXPECT_EQ(0, irs::BlockIndex::Pad(base));
     auto meta = part_meta;
     meta.doc_start += base;
-    auto in = dir.open("final.doc", irs::IOAdvice::NORMAL);
+    auto in = dir.open("final.doc", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, in);
     irs::BlockCursor cursor;
     cursor.Arm(meta, irs::BlockIndexShapeOf(kFeatures, false));
@@ -375,8 +375,10 @@ class TermRangeMergeTest : public ::testing::Test {
   irs::IndexWriter::ptr _writer;
   irs::DirectoryReader _reader;
   irs::FunctionFieldOptions _field_options{
-    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    SketchedColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
 };

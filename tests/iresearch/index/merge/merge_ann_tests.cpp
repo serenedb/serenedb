@@ -66,8 +66,8 @@ irs::IndexWriterOptions HnswWriterOptions(irs::SortSpec sort = {}) {
     if (id == kVec) {
       col.ann_info = irs::AnnInfo{
         .kind = irs::AnnKind::Hnsw,
-        .centroids_id = kVec,
-        .postings_id = kVec,
+        .index_id = kVec,
+        .column_id = kVec,
         .d = kDim,
         .metric = irs::VectorMetric::L2Sqr,
         .quant = {.kind = irs::VectorQuantization::None},
@@ -77,6 +77,7 @@ irs::IndexWriterOptions HnswWriterOptions(irs::SortSpec sort = {}) {
     }
     return col;
   };
+  opts.anns[kVec].push_back(kVec);
   opts.sort = std::move(sort);
   return opts;
 }
@@ -163,8 +164,8 @@ double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
     *filter.mutable_field_id() = kVec;
     auto& opts = *filter.mutable_options();
     opts.query = query;
-    opts.centroids_id = kVec;
-    opts.postings_id = kVec;
+    opts.column_id = kVec;
+    opts.ann_id = kVec;
     opts.metric = irs::VectorMetric::L2Sqr;
     opts.quant = irs::VectorQuantization::None;
     opts.nprobe = ef;

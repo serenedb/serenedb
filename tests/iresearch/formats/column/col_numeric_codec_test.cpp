@@ -247,7 +247,7 @@ class ColNumericCodecTest : public TestBase {
 
   void Verify(irs::Directory& dir, const duckdb::LogicalType& type,
               uint64_t rows, const Gen& gen) {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->RowCount(), rows);
@@ -358,7 +358,7 @@ class ColNumericCodecTest : public TestBase {
 
   std::vector<std::string> SegmentInfo(irs::Directory& dir,
                                        const std::string& key) {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::string> out;
@@ -379,7 +379,7 @@ class ColNumericCodecTest : public TestBase {
   }
 
   uint64_t NumericBytes(irs::Directory& dir) {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     uint64_t bytes = 0;
@@ -390,7 +390,7 @@ class ColNumericCodecTest : public TestBase {
   }
 
   std::vector<std::string> Transforms(irs::Directory& dir) {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::string> out;
@@ -497,7 +497,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
           60000, 60000, shape.gen);
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto& block = col->DataBlocks().front();
@@ -525,7 +525,7 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   }
   irs::MMapDirectory dir{path};
   const auto scan = [&] {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     auto state = col->InitScan(r.Ctx());
     duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
@@ -611,7 +611,7 @@ TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
   };
   irs::MemoryDirectory dir{};
   Write(dir, duckdb::LogicalType::BIGINT, {}, kRows, 16384, clustered);
-  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   uint64_t bytes = 0;
@@ -678,7 +678,7 @@ TEST_F(ColNumericCodecTest, AutoFollowsTheDataAcrossRowGroups) {
           gen);
     Verify(dir, duckdb::LogicalType::BIGINT, kRows, gen);
 
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     std::optional<uint64_t> back;
@@ -717,7 +717,7 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
     return t.ends_with("/zstd") || t.ends_with("/lz4");
   }));
   auto& cache = Db().GetObjectCache();
-  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   const auto file_id = irs::tests::ColFileId(dir, kSeg, Db());
@@ -784,7 +784,7 @@ TEST_F(ColNumericCodecTest, FiltersMatchTheValues) {
     const auto type = duckdb::LogicalType::BIGINT;
     irs::MemoryDirectory dir{};
     Write(dir, type, {}, kRows, 8192, shape.gen);
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     std::vector<int64_t> keys{0, 7};
@@ -859,7 +859,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   {
     irs::MMapDirectory dir{path};
     Write(dir, duckdb::LogicalType::BIGINT, {}, 20000, 20000, clustered);
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const auto& block = col->DataBlocks().front();
@@ -887,7 +887,7 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
   }
   irs::MMapDirectory dir{path};
   const auto scan = [&] {
-    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kField);
     auto state = col->InitScan(r.Ctx());
     duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};

@@ -144,12 +144,17 @@ class MergePlanTest : public ::testing::Test {
   irs::DirectoryReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
-    DEFAULT_ROW_GROUP_SIZE};
+    PlainColumns,
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::FunctionFieldOptions _small_row_groups{
-    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup};
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup, {}};
   irs::FunctionFieldOptions _uncompressed_text{
-    UncompressedText, irs::tests::MakeNormColumnIdProvider(), kSmallRowGroup};
+    UncompressedText,
+    irs::tests::MakeNormColumnIdProvider(),
+    kSmallRowGroup,
+    {}};
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
 };
@@ -476,7 +481,8 @@ class ColumnSplitTest : public ::testing::Test {
       _doc_map.emplace_back(input, irs::IResourceManager::gNoop);
     }
     _options = std::make_unique<irs::FunctionFieldOptions>(
-      _merge_columns, irs::tests::MakeNormColumnIdProvider(), row_group);
+      _merge_columns, irs::tests::MakeNormColumnIdProvider(), row_group,
+      _merge_anns);
     _plan = std::make_unique<irs::MergePlan>(
       out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
       _with_options ? _options.get() : nullptr, _progress, nullptr);
@@ -551,6 +557,7 @@ class ColumnSplitTest : public ::testing::Test {
   std::unique_ptr<irs::FunctionFieldOptions> _options;
   std::unique_ptr<irs::MergePlan> _plan;
   irs::ColumnOptionsProvider _merge_columns = PlainColumns;
+  irs::AnnFieldsByColumn _merge_anns;
   irs::MergeProgress _progress;
   bool _with_options = true;
   bool _serial = false;
@@ -648,6 +655,7 @@ TEST_F(ColumnSplitTest, VectorIndexColumnsStayWhole) {
     }
     return options;
   };
+  _merge_anns[kVector].push_back(kVector);
   TakeSnapshot();
   irs::MemoryDirectory out;
   const auto units = PrepareInputs(out, kInputRowGroup, 16);
@@ -1374,7 +1382,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
   const auto file = irs::FileName(meta.name);
   std::string bytes;
   {
-    auto in = dir.open(file, irs::IOAdvice::NORMAL);
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
     ASSERT_NE(in, nullptr);
     bytes.resize(in->Length());
     in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());

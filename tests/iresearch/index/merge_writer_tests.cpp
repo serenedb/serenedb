@@ -2378,7 +2378,9 @@ TEST_P(MergeWriterTestCase, MergeKeepsTheColumnCompressionLevel) {
           .compression = duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
           .compression_level = column_level};
       },
-      irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+      irs::tests::MakeNormColumnIdProvider(),
+      DEFAULT_ROW_GROUP_SIZE,
+      {}};
     field_options.codec_params = irs::ColCodecParams{.compression_level = 2};
     irs::MemoryDirectory merged_dir;
     irs::SegmentMeta merged_meta;
@@ -2467,7 +2469,9 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
 
   irs::FunctionFieldOptions field_options{
     [](irs::field_id) { return irs::ColumnOptions{}; },
-    irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   irs::MemoryDirectory merged_dir;
   irs::SegmentMeta merged_meta;
   const irs::SegmentWriterOptions options{
@@ -2549,7 +2553,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
 
   irs::FunctionFieldOptions field_options{
     [](irs::field_id) { return irs::ColumnOptions{}; },
-    irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE,
+    {}};
   const irs::SortSpec sort{
     {{.column = kDocStringId, .descending = true, .nulls_first = true}}};
   irs::MemoryDirectory merged_dir;

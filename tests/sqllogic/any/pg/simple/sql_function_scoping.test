@@ -1,0 +1,601 @@
+statement ok
+DROP SCHEMA IF EXISTS sfs CASCADE;
+
+
+statement ok
+CREATE SCHEMA sfs;
+
+
+statement ok
+CREATE TABLE sfs.t (x int, y int);
+
+
+statement ok
+INSERT INTO sfs.t VALUES (10, 1), (20, 2);
+
+
+statement ok
+CREATE FUNCTION sfs.col(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT x FROM sfs.t ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.qualified(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT qualified.x + y FROM sfs.t ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.outer_level(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT (SELECT x) FROM sfs.t ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.param(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT z + x FROM sfs.t ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.order_alias(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT -y AS x FROM sfs.t ORDER BY x';
+
+
+statement ok
+CREATE FUNCTION sfs.where_param(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT y AS z FROM sfs.t WHERE z = 1 ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.sum_col(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sum(x) FROM sfs.t';
+
+
+statement ok
+CREATE FUNCTION sfs.sum_param(x int) RETURNS bigint LANGUAGE sql AS 'SELECT sum(sum_param.x) FROM sfs.t';
+
+
+statement ok
+CREATE FUNCTION sfs.text_param(x text) RETURNS int LANGUAGE sql AS 'SELECT x FROM sfs.t ORDER BY 1 LIMIT 1';
+
+
+query
+SELECT
+    (SELECT array_agg(v ORDER BY v) FROM sfs.col(5) v) AS col,
+    (SELECT array_agg(v ORDER BY v) FROM sfs.qualified(5) v) AS qualified,
+    (SELECT array_agg(v ORDER BY v) FROM sfs.outer_level(5) v) AS outer_level,
+    (SELECT array_agg(v ORDER BY v) FROM sfs.param(5) v) AS param;
+----
+col	qualified	outer_level	param
+{10,20}	{6,7}	{10,20}	{15,25}
+
+
+query
+SELECT
+    (SELECT array_agg(v) FROM sfs.order_alias(5) v) AS order_alias,
+    (SELECT array_agg(v ORDER BY v) FROM sfs.where_param(1) v) AS where_one,
+    (SELECT array_agg(v ORDER BY v) FROM sfs.where_param(0) v) AS where_zero,
+    sfs.sum_col(5) AS sum_col,
+    sfs.sum_param(5) AS sum_param,
+    sfs.text_param('a') AS text_param;
+----
+order_alias	where_one	where_zero	sum_col	sum_param	text_param
+{-2,-1}	{1,2}	NULL	30	10	10
+
+
+statement error (is ambiguous|Ambiguous reference)
+CREATE FUNCTION sfs.ambiguous(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT a.x FROM sfs.t a JOIN sfs.t b USING (y) WHERE x = 1';
+
+statement ok
+CREATE TABLE sfs.q (k int, p int);
+
+
+statement ok
+INSERT INTO sfs.q VALUES (5, 100), (6, 200);
+
+
+statement ok
+CREATE FUNCTION sfs.inner_table(v int) RETURNS TABLE (n bigint) LANGUAGE sql AS 'SELECT count(*) FROM sfs.q WHERE k = v';
+
+
+statement ok
+CREATE FUNCTION sfs.outer_table(p int) RETURNS bigint LANGUAGE sql AS 'SELECT n FROM sfs.inner_table(p)';
+
+
+statement ok
+CREATE FUNCTION sfs.inner_scalar(v int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.q WHERE k = v';
+
+
+statement ok
+CREATE FUNCTION sfs.outer_scalar(p int) RETURNS bigint LANGUAGE sql AS 'SELECT sfs.inner_scalar(p) FROM sfs.t LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION sfs.joined(z int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t a JOIN sfs.t b ON a.x + z = b.x';
+
+
+query
+SELECT sfs.outer_table(5) AS table_five, sfs.outer_table(7) AS table_seven, sfs.outer_scalar(5) AS scalar_five, sfs.outer_scalar(7) AS scalar_seven, sfs.joined(10) AS joined;
+----
+table_five	table_seven	scalar_five	scalar_seven	joined
+1	0	1	0	1
+
+
+statement ok
+CREATE FUNCTION sfs.group_alias(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT k * 100 AS x FROM sfs.q GROUP BY x HAVING x > 0 ORDER BY 1';
+
+
+query
+SELECT * FROM sfs.group_alias(1);
+----
+group_alias
+500
+600
+
+
+query
+SELECT count(*) AS rows FROM sfs.group_alias(0);
+----
+rows
+0
+
+
+statement error must appear in the GROUP BY clause
+CREATE FUNCTION sfs.ungrouped(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT x FROM sfs.t GROUP BY y';
+
+
+statement error must appear in the GROUP BY clause
+CREATE FUNCTION sfs.ungrouped_having(x int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t GROUP BY y HAVING x > 0';
+
+
+statement error (must appear in the GROUP BY clause|subquery uses ungrouped column)
+CREATE FUNCTION sfs.ungrouped_nested(x int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t GROUP BY y HAVING (SELECT x) > 0';
+
+
+statement ok
+CREATE FUNCTION sfs.tab_alias(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT tab_alias.y + z FROM sfs.t tab_alias ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.qual_ret(x int) RETURNS int LANGUAGE sql RETURN qual_ret.x + 1;
+
+
+statement ok
+CREATE TYPE sfs.pair AS (a int, b int);
+
+
+statement ok
+CREATE FUNCTION sfs.qual_field(s sfs.pair) RETURNS int LANGUAGE sql RETURN qual_field.s.a + 1;
+
+
+query
+SELECT (SELECT array_agg(v ORDER BY v) FROM sfs.tab_alias(10) v) AS tab_alias, sfs.qual_ret(1) AS qual_ret, sfs.qual_field(ROW(5, 6)::sfs.pair) AS qual_field;
+----
+tab_alias	qual_ret	qual_field
+{11,12}	2	6
+
+
+statement ok
+CREATE FUNCTION sfs.strict_one(x int) RETURNS int LANGUAGE sql STRICT AS 'SELECT coalesce(x, 0) + 1';
+
+
+statement ok
+CREATE FUNCTION sfs.null_input(x int, y int) RETURNS int LANGUAGE sql RETURNS NULL ON NULL INPUT AS 'SELECT coalesce(x, 0) + coalesce(y, 0)';
+
+
+statement ok
+CREATE FUNCTION sfs.called(x int) RETURNS int LANGUAGE sql CALLED ON NULL INPUT AS 'SELECT coalesce(x, 0) + 1';
+
+
+statement ok
+CREATE FUNCTION sfs.strict_set(x int) RETURNS SETOF int LANGUAGE sql STRICT AS 'SELECT coalesce(x, 0) UNION ALL SELECT 7';
+
+
+statement ok
+CREATE FUNCTION sfs.strict_return(x int) RETURNS int LANGUAGE sql STRICT RETURN coalesce(x, 0) + 1;
+
+
+query
+SELECT
+    sfs.strict_one(NULL) AS strict_null,
+    sfs.strict_one(1) AS strict_one,
+    sfs.null_input(1, NULL) AS null_input,
+    sfs.called(NULL) AS called,
+    sfs.strict_return(NULL) AS strict_return,
+    (SELECT count(*) FROM sfs.strict_set(NULL)) AS set_null,
+    (SELECT count(*) FROM sfs.strict_set(1)) AS set_one;
+----
+strict_null	strict_one	null_input	called	strict_return	set_null	set_one
+NULL	2	NULL	1	NULL	0	2
+
+
+query
+SELECT x, sfs.strict_one(x) AS result FROM (VALUES (1), (NULL)) v(x) ORDER BY x NULLS LAST;
+----
+x	result
+1	2
+NULL	NULL
+
+
+query
+SELECT p.proname, p.proisstrict
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'sfs' AND p.proname IN ('strict_one', 'null_input', 'called', 'strict_return')
+ORDER BY p.proname;
+----
+proname	proisstrict
+called	f
+null_input	t
+strict_one	t
+strict_return	t
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.strict_one'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.strict_one(x integer) RETURNS integer LANGUAGE sql STRICT AS $function$SELECT coalesce(x, 0) + 1$function$
+
+
+statement ok
+CREATE SEQUENCE sfs.seq;
+
+
+statement ok
+CREATE FUNCTION sfs.twice(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + x FROM (VALUES (1)) v(one)';
+
+
+query
+SELECT sfs.twice(nextval('sfs.seq')) AS v FROM generate_series(1, 3) ORDER BY v;
+----
+v
+2
+4
+6
+
+
+statement ok
+CREATE FUNCTION sfs.next() RETURNS bigint LANGUAGE sql AS 'SELECT nextval(''sfs.seq'') FROM (VALUES (1)) v(one)';
+
+
+query
+SELECT count(DISTINCT sfs.next()) AS distinct_values FROM generate_series(1, 3);
+----
+distinct_values
+3
+
+
+statement ok
+CREATE FUNCTION sfs.doubled(x int) RETURNS int LANGUAGE sql AS 'SELECT x * 2 FROM (VALUES (1)) v(one)';
+
+
+query
+SELECT sfs.doubled(unnest(ARRAY[1, 2])) AS v ORDER BY v;
+----
+v
+2
+4
+
+
+statement ok
+CREATE FUNCTION sfs.pick(t bigint) RETURNS text LANGUAGE sql AS 'SELECT ''bigint''';
+
+
+statement ok
+CREATE FUNCTION sfs.pick(t text) RETURNS text LANGUAGE sql AS 'SELECT ''text''';
+
+
+query
+SELECT sfs.pick(count(*) OVER ()) AS window_pick, sfs.pick(row_number() OVER ()) AS row_pick FROM generate_series(1, 2) LIMIT 1;
+----
+window_pick	row_pick
+bigint	bigint
+
+
+statement ok
+CREATE TABLE sfs.log (v int);
+
+
+statement ok
+CREATE FUNCTION sfs.add(v int) RETURNS void LANGUAGE sql AS 'INSERT INTO sfs.log VALUES (v)';
+
+
+statement ok
+CREATE FUNCTION sfs.bump(d int) RETURNS void LANGUAGE sql AS 'UPDATE sfs.log SET v = v + d';
+
+
+query
+SELECT sfs.add(1) IS NULL AS added;
+----
+added
+t
+
+
+query
+SELECT pg_typeof(sfs.bump(10))::text AS type;
+----
+type
+void
+
+
+query
+SELECT v FROM sfs.log;
+----
+v
+11
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.add'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.add(v integer) RETURNS void LANGUAGE sql AS $function$INSERT INTO sfs.log VALUES (v)$function$
+
+
+statement ok
+CREATE SEQUENCE sfs.lazy_seq;
+
+
+statement ok
+CREATE FUNCTION sfs.lazy_next() RETURNS bigint LANGUAGE sql AS 'SELECT nextval(''sfs.lazy_seq'')';
+
+
+query
+SELECT CASE WHEN g > 2 THEN sfs.lazy_next() END AS v FROM generate_series(1, 3) g ORDER BY g;
+----
+v
+NULL
+NULL
+1
+
+
+query
+SELECT currval('sfs.lazy_seq') AS calls;
+----
+calls
+1
+
+
+statement ok
+CREATE FUNCTION sfs.code() RETURNS text LANGUAGE sql AS 'SELECT md5(random()::text)';
+
+
+statement ok
+CREATE TABLE sfs.codes (id int, code text DEFAULT sfs.code() CHECK (length(sfs.code()) = 32));
+
+
+statement ok
+INSERT INTO sfs.codes (id) VALUES (1), (2);
+
+
+query
+SELECT count(DISTINCT code) AS distinct_codes FROM sfs.codes;
+----
+distinct_codes
+2
+
+
+statement error language "nosuchlang" (does not exist|is not supported)
+CREATE FUNCTION sfs.foreign_body() RETURNS int LANGUAGE nosuchlang AS 'SELECT 1';
+
+
+statement ok
+CREATE SEQUENCE sfs.void_seq;
+
+
+statement ok
+CREATE FUNCTION sfs.advance(n int) RETURNS void LANGUAGE sql AS 'SELECT nextval(''sfs.void_seq''), nextval(''sfs.void_seq'') FROM generate_series(1, n)';
+
+
+query
+SELECT sfs.advance(3) IS NULL AS advanced, sfs.advance(0) IS NULL AS no_rows;
+----
+advanced	no_rows
+t	t
+
+
+query
+SELECT currval('sfs.void_seq') AS calls;
+----
+calls
+6
+
+
+statement ok
+CREATE FUNCTION sfs.take(d int) RETURNS SETOF int LANGUAGE sql AS 'UPDATE sfs.log SET v = v + d RETURNING v';
+
+
+query
+SELECT * FROM sfs.take(100);
+----
+take
+111
+
+
+statement ok
+CREATE PROCEDURE sfs.set_all(v int) LANGUAGE sql AS 'UPDATE sfs.log SET v = set_all.v';
+
+
+statement ok
+CALL sfs.set_all(5);
+
+
+statement ok
+CREATE PROCEDURE sfs.remove(v int) LANGUAGE sql AS 'DELETE FROM sfs.log WHERE log.v = remove.v';
+
+
+statement ok
+CALL sfs.remove(6);
+
+
+query
+SELECT v FROM sfs.log;
+----
+v
+5
+
+
+statement ok
+CALL sfs.remove(5);
+
+
+onlyif serenedb
+statement error
+SELECT sfs.add(g) FROM generate_series(1, 2) g;
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT * FROM generate_series(1, 2) g, LATERAL sfs.take(g);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+skipif serenedb
+statement ok
+SELECT sfs.add(g) FROM generate_series(1, 2) g;
+
+
+skipif serenedb
+statement ok
+DELETE FROM sfs.log;
+
+
+query
+SELECT count(*) AS logged FROM sfs.log;
+----
+logged
+0
+
+
+statement ok
+CREATE FUNCTION sfs.purge(v int) RETURNS void LANGUAGE sql AS 'DELETE FROM sfs.log WHERE log.v = purge.v';
+
+
+statement ok
+INSERT INTO sfs.log VALUES (1), (2), (3);
+
+
+query
+SELECT sfs.purge(1) IS NULL AS purged;
+----
+purged
+t
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM generate_series(1, 2);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (VALUES (1), (2)) v(a);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (SELECT y FROM sfs.t GROUP BY y) s;
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (SELECT count(*) FROM sfs.t GROUP BY GROUPING SETS ((), ())) s;
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+query
+SELECT sfs.purge(2) IS NULL AS after_aggregate FROM (SELECT count(*) FROM sfs.t) s;
+----
+after_aggregate
+t
+
+
+query
+SELECT sfs.purge(3) IS NULL AS after_values FROM (VALUES (1)) v(a);
+----
+after_values
+t
+
+
+query
+SELECT count(*) AS logged FROM sfs.log;
+----
+logged
+0
+
+
+statement ok
+CREATE FUNCTION sfs.void_return() RETURNS void LANGUAGE sql RETURN NULL;
+
+
+statement ok
+CREATE FUNCTION sfs.strict_none() RETURNS int LANGUAGE sql STRICT AS 'SELECT 5';
+
+
+query
+SELECT sfs.void_return() IS NULL AS void_return, pg_typeof(sfs.void_return())::text AS type, sfs.strict_none() AS strict_none;
+----
+void_return	type	strict_none
+t	void	5
+
+
+statement ok
+CREATE FUNCTION sfs.defaults(a int, b int DEFAULT 10, c int = 100) RETURNS int LANGUAGE sql AS 'SELECT a + b + c';
+
+
+query
+SELECT sfs.defaults(1) AS one, sfs.defaults(1, 2) AS two, sfs.defaults(1, 2, 3) AS three, sfs.defaults(1, c => 5) AS named;
+----
+one	two	three	named
+111	103	6	16
+
+
+statement ok
+CREATE FUNCTION sfs.fixed(x int) RETURNS int LANGUAGE sql IMMUTABLE STRICT AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION sfs.stable_one(x int) RETURNS int LANGUAGE sql STABLE AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION sfs.decorated(x int) RETURNS int LANGUAGE sql VOLATILE COST 10 PARALLEL SAFE AS 'SELECT x';
+
+
+query
+SELECT p.proname, p.provolatile
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'sfs' AND p.proname IN ('decorated', 'fixed', 'stable_one', 'strict_one')
+ORDER BY p.proname;
+----
+proname	provolatile
+decorated	v
+fixed	i
+stable_one	s
+strict_one	v
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.stable_one'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.stable_one(x integer) RETURNS integer LANGUAGE sql STABLE AS $function$SELECT x$function$
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.fixed'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.fixed(x integer) RETURNS integer LANGUAGE sql IMMUTABLE STRICT AS $function$SELECT x$function$
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.defaults'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.defaults(a integer, b integer DEFAULT 10, c integer DEFAULT 100) RETURNS integer LANGUAGE sql AS $function$SELECT a + b + c$function$
+
+
+statement ok
+DROP SCHEMA sfs CASCADE;

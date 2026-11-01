@@ -324,6 +324,14 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
+    if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
+      for (const auto ann : AnnFields(id)) {
+        if (const auto compression = FindEntry(ann)->column_options.compression;
+            compression != duckdb::CompressionType::COMPRESSION_AUTO) {
+          declared = compression;
+        }
+      }
+    }
     return {.compression = declared};
   }
   // The pk column is written for every row of every segment, so its validity

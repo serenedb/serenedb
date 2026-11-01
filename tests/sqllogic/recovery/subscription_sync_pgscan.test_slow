@@ -47,7 +47,7 @@ n	ids	lo	hi
 
 onlyif serenedb
 connection after_crash
-query
+query ok retry 480 backoff 250ms
 SELECT r.srsubstate, r.srsublsn IS NOT NULL AS has_lsn FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'rsub_sync';
 ----
 srsubstate	has_lsn

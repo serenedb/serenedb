@@ -32,11 +32,8 @@ namespace sdb::search {
 class InvertedIndexStorage;
 class SearchTable;
 
-irs::SegmentRange RowIdRange(const irs::SubReader& segment);
-
-irs::CompactionPolicy MakeMergePolicy(
-  const TasksSettings& settings, size_t inputs_max,
-  irs::SegmentRangeOf range_of = RowIdRange);
+irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
+                                      size_t inputs_max);
 
 struct CompactionOptions {
   bool alive = false;

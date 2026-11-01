@@ -119,24 +119,11 @@ SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
        error
 FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
-  AND type = 'merge'
 ORDER BY id
 ----
 origin	outcome	inputs	input_docs	output_docs	output_live_docs	ordered	rowid_min	rowid_max	error
 sql	merged	2	200	200	200	t	1	200	NULL
 sql	merged	2	200	200	200	t	201	400	NULL
-
-
-query
-SELECT count(*) AS flushes, sum(output_docs) AS docs, min(rowid_min) AS first,
-       max(rowid_max) AS last, bool_and(origin IS NULL AND outcome IS NULL
-         AND started IS NULL AND inputs IS NULL AND total_ms IS NULL) AS bare
-FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
-  AND type = 'flush'
-----
-flushes	docs	first	last	bare
-4	400	1	400	t
 
 
 query
@@ -408,15 +395,13 @@ segments	docs
 
 
 query
-SELECT type, origin, outcome, input_docs, output_docs
+SELECT origin, outcome, input_docs, output_docs
 FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc_idx')
 ORDER BY id
 ----
-type	origin	outcome	input_docs	output_docs
-flush	NULL	NULL	NULL	100
-flush	NULL	NULL	NULL	100
-merge	sql	merged	200	200
+origin	outcome	input_docs	output_docs
+sql	merged	200	200
 
 
 statement ok

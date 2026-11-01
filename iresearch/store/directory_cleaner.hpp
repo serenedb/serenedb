@@ -23,8 +23,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
 #include <functional>
 
 #include "iresearch/store/directory_attributes.hpp"
@@ -34,11 +32,6 @@
 namespace irs {
 
 struct Directory;
-
-struct RemovedFiles {
-  size_t count = 0;
-  uint64_t bytes = 0;
-};
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class directory_cleaner
@@ -50,8 +43,8 @@ class DirectoryCleaner {
   typedef std::function<bool(std::string_view)> removal_acceptor_t;
 
   // @param acceptor returns if removal candidates should actually be removed
-  // @return count and size of the files removed
-  static RemovedFiles clean(
+  // @return count of files removed
+  static size_t clean(
     Directory& dir,
     const removal_acceptor_t& acceptor = [](std::string_view) -> bool {
       return true;

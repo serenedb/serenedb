@@ -55,32 +55,20 @@ statement ok
 ALTER TABLE mq SET (compaction_interval = 100);
 
 query ok retry 40 backoff 250ms
-SELECT state, origin, lane, score > 0 AS scored, queued IS NOT NULL AS since,
-       started IS NULL AS waiting, elapsed_ms IS NULL AS idle,
-       threads IS NULL AS unthreaded, cardinality(inputs) AS inputs,
-       input_docs, estimated_bytes > 0 AS estimated
+SELECT state, origin, queued IS NOT NULL AS since, started IS NULL AS waiting,
+       elapsed_ms IS NULL AS idle, cardinality(inputs) AS inputs, input_docs,
+       estimated_bytes > 0 AS estimated
 FROM sdb_merges
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
 ----
-state	origin	lane	scored	since	waiting	idle	unthreaded	inputs	input_docs	estimated
-queued	background	small	t	t	t	t	t	4	400	t
+state	origin	since	waiting	idle	inputs	input_docs	estimated
+queued	background	t	t	t	4	400	t
 
 query
 SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
 ----
 pending
 1
-
-query
-SELECT metric, value > 0 AS positive FROM sdb_metrics
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq')
-  AND metric IN ('merges_queued', 'merges_running', 'merge_pending_bytes')
-ORDER BY metric;
-----
-metric	positive
-merge_pending_bytes	t
-merges_queued	t
-merges_running	f
 
 statement ok
 CREATE TABLE mq_ids AS
@@ -97,13 +85,13 @@ statement ok
 ALTER TABLE mq_nudge SET (compaction_interval = 100);
 
 query ok retry 40 backoff 250ms
-SELECT state, threads, started IS NOT NULL AS started, elapsed_ms >= 0 AS timed,
+SELECT state, started IS NOT NULL AS started, elapsed_ms >= 0 AS timed,
        merge_id = (SELECT merge_id FROM mq_ids) AS same_id
 FROM sdb_merges
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
 ----
-state	threads	started	timed	same_id
-running	1	t	t	t
+state	started	timed	same_id
+running	t	t	t
 
 query
 SELECT value >= 1 AS held FROM sdb_metrics WHERE metric = 'compaction_threads';
@@ -117,7 +105,7 @@ SET sdb_faults = '-pause_merge_unit';
 query ok retry 40 backoff 250ms
 SELECT origin, outcome, id = (SELECT merge_id FROM mq_ids) AS same_id
 FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq') AND type = 'merge';
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
 ----
 origin	outcome	same_id
 background	merged	t
@@ -183,7 +171,7 @@ pending
 
 query
 SELECT count(*) AS finished FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq') AND type = 'merge';
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
 ----
 finished
 1

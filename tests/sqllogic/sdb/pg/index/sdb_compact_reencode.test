@@ -181,7 +181,7 @@ Uncompressed	copy
 
 query
 SELECT origin, count(*) AS merges FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc')
 GROUP BY origin ORDER BY origin
 ----
 origin	merges
@@ -230,7 +230,7 @@ segments	docs
 
 query
 SELECT count(*) AS merges FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc_idx') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc_idx')
 ----
 merges
 0

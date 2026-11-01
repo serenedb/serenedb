@@ -148,13 +148,6 @@ VACUUM (CLEANUP_ALL);
 
 
 query
-SELECT files, bytes FROM sdb_cleanup('public.docs_idx');
-----
-files	bytes
-0	0
-
-
-query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
 ----
 count

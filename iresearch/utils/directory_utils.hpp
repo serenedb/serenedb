@@ -36,7 +36,8 @@ namespace directory_utils {
 IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 
 // Remove all (tracked and non-tracked) files if they are unreferenced
-RemovedFiles RemoveAllUnreferenced(Directory& dir);
+// return success
+bool RemoveAllUnreferenced(Directory& dir);
 
 }  // namespace directory_utils
 

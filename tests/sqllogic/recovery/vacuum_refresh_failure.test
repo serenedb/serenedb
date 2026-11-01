@@ -49,7 +49,7 @@ db error: ERROR: failed to refresh search table 'vrf_st': debug failure point
 statement error
 VACUUM (COMPACT_TABLE) vrf_st;
 ----
-db error: ERROR: failed to compact search table 'vrf_st': debug failure point
+db error: ERROR: failed to refresh search table 'vrf_st': debug failure point
 
 
 statement ok

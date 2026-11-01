@@ -65,6 +65,7 @@ add_executable(
     connector/writer_generations_test.cpp
     search/compaction/merge_registry_test.cpp
     search/compaction/merge_scheduler_test.cpp
+    search/compaction/merge_simulator.cpp
     search/compaction/merge_simulator_test.cpp
     search/compaction/pipeline_merge_executor_test.cpp
 )

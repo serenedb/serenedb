@@ -15,7 +15,6 @@ target_sources(
         metrics.cpp
         otel.cpp
         sdb_maintenance.cpp
-        sdb_merge_simulate.cpp
         sdb_segments.cpp
         string.cpp
         minhash.cpp

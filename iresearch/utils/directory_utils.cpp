@@ -50,7 +50,7 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
                                             : IndexFileRefs::ref_t{nullptr};
 }
 
-RemovedFiles RemoveAllUnreferenced(Directory& dir) {
+bool RemoveAllUnreferenced(Directory& dir) {
   duckdb::TaskScheduler::BlockingScope blocking;
   auto& refs = dir.attributes().refs();
 
@@ -59,7 +59,8 @@ RemovedFiles RemoveAllUnreferenced(Directory& dir) {
     return true;
   });
 
-  return DirectoryCleaner::clean(dir);
+  DirectoryCleaner::clean(dir);
+  return true;
 }
 
 }  // namespace directory_utils

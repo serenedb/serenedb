@@ -23,7 +23,6 @@
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
-#include <absl/status/statusor.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -87,7 +86,7 @@ class IndexDurability {
   std::pair<irs::DirectoryReader, irs::SourcePosition> Snapshot(
     irs::IndexWriter& writer);
 
-  absl::StatusOr<irs::RemovedFiles> Cleanup(irs::Directory& dir);
+  absl::Status Cleanup(irs::Directory& dir);
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }

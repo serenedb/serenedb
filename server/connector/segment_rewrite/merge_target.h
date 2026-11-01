@@ -27,17 +27,22 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
+#include "search/compaction/copy_check.h"
+#include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
+#include "storage_engine/search_engine.h"
 
 namespace duckdb {
 
 class ClientContext;
+class TaskScheduler;
 
 }  // namespace duckdb
 namespace sdb::search {
@@ -54,10 +59,23 @@ struct ExecutedMerge {
   std::string error;
 };
 
+struct MergeRequest {
+  search::MergeMode mode = search::MergeMode::Compact;
+  uint32_t target_segments = 1;
+  bool exact_target = false;
+  std::vector<std::string> segments;
+};
+
 class MergeTarget {
  public:
   static MergeTarget Resolve(duckdb::ClientContext& context,
                              std::string_view relation);
+  static MergeTarget Of(std::shared_ptr<search::SearchTable> table,
+                        std::string name);
+  static MergeTarget Of(
+    std::shared_ptr<search::InvertedIndexStorage> index,
+    std::shared_ptr<const catalog::InvertedIndexConfig> options,
+    std::string name);
 
   const std::string& Name() const noexcept { return _name; }
   const std::string& Database() const noexcept { return _database; }
@@ -77,19 +95,21 @@ class MergeTarget {
   search::CompactionOptions PinOptions() const;
   std::string ColumnName(irs::field_id id) const;
 
+  search::MergeRoundPlan Plan(const irs::IndexReader& snapshot,
+                              const MergeRequest& request,
+                              const search::CopyChecker& checker) const;
   ExecutedMerge Compact(const irs::CompactionPolicy& policy,
                         const irs::MergeProgress& progress,
                         const irs::IndexFieldOptions* field_options,
-                        search::MergeOrigin origin,
+                        const irs::AnnBuildEnv* env, search::MergeOrigin origin,
                         irs::MergeExecutor& executor,
                         irs::LoneSegment lone) const;
   search::MergeScheduler::Lease TakeOver() const;
   void Publish() const;
-  void Refresh() const;
-  irs::RemovedFiles Cleanup() const;
 
  private:
   void SetDatabase(const duckdb::InCatalogEntry& entry);
+  void SetStore();
 
   std::string _name;
   std::string _database;
@@ -99,6 +119,27 @@ class MergeTarget {
   std::shared_ptr<search::InvertedIndexStorage> _index;
   search::MaintainedStore* _store = nullptr;
   irs::containers::FlatHashMap<irs::field_id, std::string> _column_names;
+};
+
+class ManualCompaction {
+ public:
+  ManualCompaction(const MergeTarget& target, MergeRequest request,
+                   duckdb::TaskScheduler& scheduler);
+
+  bool Next(const irs::MergeProgress& progress, search::MergeOrigin origin,
+            irs::MergeExecutor& executor, ExecutedMerge& merge);
+
+ private:
+  void Plan();
+
+  const MergeTarget& _target;
+  search::CompactionOptions _options;
+  search::CopyChecker _checker;
+  MergeRequest _request;
+  search::MergeRoundPlan _plan;
+  size_t _next = 0;
+  search::MergeScheduler::Lease _lease;
+  search::ManualCompactionSlot _slot;
 };
 
 }  // namespace sdb::connector

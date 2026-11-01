@@ -32,12 +32,12 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
 #include <iresearch/utils/enum_name.hpp>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "connector/query_deadline.h"
-#include "search/compaction/merge_scheduler.h"
 #include "search/compaction/pipeline_merge_executor.h"
 
 namespace sdb::connector {
@@ -48,10 +48,7 @@ struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
     : threads{threads} {}
 
   duckdb::idx_t threads;
-  search::CompactionOptions options;
-  search::MergeScheduler::Lease lease;
-  bool pinned = false;
-  size_t next = 0;
+  std::unique_ptr<ManualCompaction> compaction;
   std::vector<ExecutedMerge> executed;
   search::PipelineMergeExecutor::Profiles pipelines;
 };
@@ -135,10 +132,6 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_bytes)));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
-  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-    append(duckdb::Value::DOUBLE(
-      Millis(stats.profile.Nanos(static_cast<irs::MergeStep>(step)))));
-  }
   append(merge.error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                              : duckdb::Value{merge.error});
 }
@@ -179,52 +172,33 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
   auto& state = input.global_state.Cast<SegmentRewriteSourceState>();
-  const auto& merges = _job->plan.merges;
   auto& client = context.client;
   client.InterruptCheck();
-  if (!state.pinned) {
-    state.options = _job->target.PinOptions();
-    state.pinned = true;
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(client);
+  if (!state.compaction) {
+    state.compaction = std::make_unique<ManualCompaction>(
+      _job->target, _job->request, scheduler);
   }
-  if (state.next < merges.size()) {
-    if (!state.lease) {
-      state.lease = _job->target.TakeOver();
-    }
-    const auto& planned = merges[state.next];
-    std::vector<std::string> names;
-    names.reserve(planned.inputs.size());
-    for (const auto& segment : planned.inputs) {
-      names.emplace_back(segment.name);
-    }
-    const irs::MergeProgress progress = [&client] {
-      return StatementRunning(client);
-    };
-    const bool profiled = context.thread.profiler.IsEnabled();
-    search::PipelineMergeExecutor::Profiles queries;
-    search::PipelineMergeExecutor executor{
-      *client.db, &duckdb::TaskScheduler::GetScheduler(client), state.threads,
-      profiled ? &queries : nullptr};
-    auto executed = _job->target.Compact(
-      search::ExplicitPolicy(names), progress, state.options.field_options,
-      search::MergeOrigin::Sql, executor, planned.lone);
+  const irs::MergeProgress progress = [&client] {
+    return StatementRunning(client);
+  };
+  const bool profiled = context.thread.profiler.IsEnabled();
+  search::PipelineMergeExecutor::Profiles queries;
+  search::PipelineMergeExecutor executor{*client.db, &scheduler, state.threads,
+                                         profiled ? &queries : nullptr};
+  ExecutedMerge executed;
+  if (state.compaction->Next(progress, search::MergeOrigin::Sql, executor,
+                             executed)) {
     client.InterruptCheck();
-    if (executed.stats.inputs.empty()) {
-      executed.stats.inputs = std::move(names);
-    }
-    if (search::Produced(executed.outcome)) {
-      _job->target.Publish();
-    }
-    ++state.next;
-    AppendRow(chunk, state.next, executed);
+    const auto number = state.executed.size() + 1;
+    AppendRow(chunk, number, executed);
     if (profiled) {
       state.pipelines.emplace_back(
-        MergeNode(state.next, executed, std::move(queries)));
+        MergeNode(number, executed, std::move(queries)));
     }
     state.executed.emplace_back(std::move(executed));
-    if (state.next < merges.size()) {
-      SDB_PARK_ONCE_ON_FAILURE("pause_segment_rewrite_between_merges");
-      return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
-    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_segment_rewrite_between_merges");
+    return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
   }
   auto& profiler = context.thread.profiler;
   if (profiler.IsEnabled()) {

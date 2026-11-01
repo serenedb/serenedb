@@ -378,7 +378,7 @@ docs	rowid_min	rowid_max
 
 query
 SELECT origin, count(*) AS merges FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'optv') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'optv')
 GROUP BY origin
 ----
 origin	merges

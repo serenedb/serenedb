@@ -35,7 +35,7 @@ segments	docs
 
 query
 SELECT outcome, cardinality(inputs) AS inputs, input_docs FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'iiss_idx') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'iiss_idx')
 ORDER BY id;
 ----
 outcome	inputs	input_docs
@@ -75,6 +75,7 @@ FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
 ----
 merge	outcome	inputs
 1	merged	149
+2	merged	1024
 
 
 query
@@ -82,7 +83,6 @@ SELECT merge, outcome, cardinality(inputs) AS inputs
 FROM sdb_compact('iiss_opt', mode := 'optimize', target_segments := 1);
 ----
 merge	outcome	inputs
-1	merged	1024
 
 
 query

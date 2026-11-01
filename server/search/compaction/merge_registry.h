@@ -28,16 +28,10 @@
 #include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
-#include <span>
 #include <string>
 #include <vector>
 
 namespace sdb::search {
-
-enum class SegmentEvent : uint8_t {
-  Flush = 0,
-  Merge,
-};
 
 enum class MergeOrigin : uint8_t {
   Background = 0,
@@ -73,15 +67,11 @@ struct MergeEstimate {
 struct MergeRecord {
   uint64_t id = 0;
   uint64_t relation_id = 0;
-  SegmentEvent event = SegmentEvent::Merge;
   MergeOrigin origin = MergeOrigin::Background;
   MergeOutcome outcome = MergeOutcome::Running;
   int64_t queued_us = 0;
   int64_t started_us = 0;
   int64_t finished_us = 0;
-  MergeLane lane = MergeLane::Big;
-  double score = 0;
-  size_t threads = 0;
   irs::MergeStats stats;
   uint64_t output_live_docs = 0;
   irs::SegmentRange rowids;
@@ -94,16 +84,11 @@ struct MergeRecord {
 class MergeRegistry {
  public:
   static constexpr size_t kHistoryCapacity = 256;
-  static constexpr size_t kFlushHistoryCapacity = 8192;
 
   static MergeRegistry& Instance();
 
-  void RecordFlushes(uint64_t relation_id,
-                     std::span<const irs::SubReader* const> segments);
-
-  uint64_t Queue(uint64_t relation_id, irs::CompactionView candidates,
-                 const MergeEstimate& estimate);
-  void Dispatch(uint64_t id, size_t threads);
+  uint64_t Queue(uint64_t relation_id, irs::CompactionView candidates);
+  void Dispatch(uint64_t id);
   void Drop(uint64_t id);
   uint64_t Start(uint64_t relation_id, MergeOrigin origin);
   void SetInputs(uint64_t id, irs::CompactionView candidates);
@@ -119,7 +104,6 @@ class MergeRegistry {
   irs::containers::NodeHashMap<uint64_t, MergeRecord> _active
     ABSL_GUARDED_BY(_mutex);
   std::deque<MergeRecord> _history ABSL_GUARDED_BY(_mutex);
-  std::deque<MergeRecord> _flushes ABSL_GUARDED_BY(_mutex);
 };
 
 class MergeRecorder {

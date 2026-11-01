@@ -36,7 +36,6 @@ namespace {
 constexpr SystemSqlColumn kSdbCompactHistoryColumns[] = {
   {"id", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"relation_id", kOid, 0, false, false, 0, 0, SystemKey::None},
-  {"type", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"origin", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"outcome", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"started", kTimestamptz, 0, false, false, 0, 0, SystemKey::None},
@@ -52,13 +51,6 @@ constexpr SystemSqlColumn kSdbCompactHistoryColumns[] = {
   {"rowid_min", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"rowid_max", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"total_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"prepare_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"norms_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"columns_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"columns_commit_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"ann_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"postings_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"commit_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
   {"error", kText, 0, false, false, kCCollation, 0, SystemKey::None},
 };
 
@@ -75,15 +67,11 @@ constexpr SystemIndex kStoreIndexes[] = {
 
 using search::MergeRecord;
 
-template<irs::MergeStep Step>
-double StepMillis(const MergeRecord& record) {
-  return static_cast<double>(record.stats.profile.Nanos(Step)) / 1e6;
-}
-
-constexpr std::tuple kSegment{
+constexpr std::tuple kMergeColumns{
   Col<"id">(&MergeRecord::id),
   Col<"relation_id">(&MergeRecord::relation_id),
-  Col<"type">([](const auto& r) { return irs::SnakeCaseName(r.event); }),
+  Col<"origin">([](const auto& r) { return irs::SnakeCaseName(r.origin); }),
+  Col<"outcome">([](const auto& r) { return irs::SnakeCaseName(r.outcome); }),
   Col<"started">([](const auto& r) { return At(r.started_us); }),
   Col<"finished">([](const auto& r) { return At(r.finished_us); }),
   Col<"output">(
@@ -99,22 +87,11 @@ constexpr std::tuple kSegment{
     return r.rowids.Empty() ? std::nullopt
                             : std::optional<int64_t>{r.rowids.last};
   }),
-  Col<"error">(
-    [](const auto& r) { return NonEmpty(std::string_view{r.error}); })};
-
-constexpr std::tuple kMergeOnly{
-  Col<"origin">([](const auto& r) { return irs::SnakeCaseName(r.origin); }),
-  Col<"outcome">([](const auto& r) { return irs::SnakeCaseName(r.outcome); }),
   Col<"total_ms">([](const auto& r) {
     return static_cast<double>(r.stats.profile.TotalNanos()) / 1e6;
   }),
-  Col<"prepare_ms">(&StepMillis<irs::MergeStep::Prepare>),
-  Col<"norms_ms">(&StepMillis<irs::MergeStep::Norms>),
-  Col<"columns_ms">(&StepMillis<irs::MergeStep::Columns>),
-  Col<"columns_commit_ms">(&StepMillis<irs::MergeStep::ColumnsCommit>),
-  Col<"ann_ms">(&StepMillis<irs::MergeStep::Ann>),
-  Col<"postings_ms">(&StepMillis<irs::MergeStep::Postings>),
-  Col<"commit_ms">(&StepMillis<irs::MergeStep::Commit>)};
+  Col<"error">(
+    [](const auto& r) { return NonEmpty(std::string_view{r.error}); })};
 
 class SdbCompactHistory final : public SystemTableScan<kSdbCompactHistorySql> {
  public:
@@ -123,10 +100,8 @@ class SdbCompactHistory final : public SystemTableScan<kSdbCompactHistorySql> {
   static constexpr std::tuple kSources{
     CatalogSource{kStoreTypes, SystemSchemas::Skip, kStoreIndexes}};
 
-  static constexpr auto kFlush = Shape<kSql, const MergeRecord>(kSegment);
-
   static constexpr auto kMerge =
-    Shape<kSql, const MergeRecord>(kSegment, kMergeOnly, kMergeInputColumns);
+    Shape<kSql, const MergeRecord>(kMergeColumns, kMergeInputColumns);
 
   void Row(const duckdb::IndexCatalogEntry& index) {
     if (!Allows<"relation_id">(index.oid) || !OwnsStore(index)) {
@@ -146,11 +121,7 @@ class SdbCompactHistory final : public SystemTableScan<kSdbCompactHistorySql> {
   void Events(duckdb::idx_t relation) {
     for (const auto& record :
          search::MergeRegistry::Instance().History(relation)) {
-      if (record.event == search::SegmentEvent::Flush) {
-        Emit<kFlush>(record);
-      } else {
-        Emit<kMerge>(record);
-      }
+      Emit<kMerge>(record);
     }
   }
 };

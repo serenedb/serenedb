@@ -257,12 +257,12 @@ bool SearchTableOnly(duckdb::CompressionType type) noexcept {
 }
 
 void CheckCompressionLevel(std::string_view column_name,
-                           duckdb::CompressionType type, uint8_t level,
+                           duckdb::CompressionType type, uint32_t level,
                            bool columnstore) {
   if (level == 0) {
     return;
   }
-  const uint8_t max_level =
+  const uint32_t max_level =
     columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
       ? irs::codecs::MaxLevel(type)
       : 0;
@@ -276,9 +276,8 @@ void CheckCompressionLevel(std::string_view column_name,
   if (level > max_level) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Column \"", column_name, "\": compression_level ",
-              static_cast<uint32_t>(level), " is out of range for '", name,
-              "' (1 to ", static_cast<uint32_t>(max_level), ")"));
+      ERR_MSG("Column \"", column_name, "\": compression_level ", level,
+              " is out of range for '", name, "' (1 to ", max_level, ")"));
   }
 }
 

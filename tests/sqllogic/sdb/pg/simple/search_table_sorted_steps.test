@@ -55,7 +55,7 @@ segments	docs
 
 query
 SELECT outcome, cardinality(inputs) AS inputs, input_docs, output_docs FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_compact') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_compact')
 ORDER BY id;
 ----
 outcome	inputs	input_docs	output_docs
@@ -110,18 +110,18 @@ FROM sdb_compact('sts_listed', mode := 'segments', segments := getvariable('sts_
 ----
 merge	outcome	inputs	input_docs
 1	merged	150	305252
+2	merged	1024	2400100
 
 query
 SELECT count(*) AS segments, max(docs) AS largest FROM sdb_segments('sts_listed');
 ----
 segments	largest
-1024	305252
+1	2400100
 
 query
 SELECT merge, outcome, cardinality(inputs) AS inputs FROM sdb_compact('sts_listed', mode := 'compact');
 ----
 merge	outcome	inputs
-1	merged	1024
 
 query
 SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sts_listed');
@@ -159,7 +159,7 @@ merged	1024
 
 query
 SELECT bool_and(outcome = 'merged') AS merged, max(cardinality(inputs)) AS widest FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_background') AND type = 'merge';
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_background');
 ----
 merged	widest
 t	1024

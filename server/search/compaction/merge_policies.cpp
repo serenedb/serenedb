@@ -33,20 +33,22 @@
 #include "search/search_table.h"
 
 namespace sdb::search {
+namespace {
 
 irs::SegmentRange RowIdRange(const irs::SubReader& segment) {
   return DescribeSegment(segment).rowids;
 }
 
+}  // namespace
+
 irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
-                                      size_t inputs_max,
-                                      irs::SegmentRangeOf range_of) {
+                                      size_t inputs_max) {
   irs::AdjacentRunOptions options;
   options.max_segments =
     std::min<size_t>(settings.compaction_max_segments, inputs_max);
   options.max_bytes = settings.compaction_max_segments_bytes;
   options.segment_cost = settings.compaction_floor_segment_bytes;
-  return irs::MakeAdjacentRunPolicy(options, std::move(range_of));
+  return irs::MakeAdjacentRunPolicy(options, RowIdRange);
 }
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {

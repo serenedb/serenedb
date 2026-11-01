@@ -1,6 +1,6 @@
 # Per-column compression levels on search tables: USING COMPRESSION
-# codec(compression_level = N) on a column, 'codec(compression_level = N)' on
-# an INCLUDE column, and every rejection: codecs that take no level, levels out of each codec's
+# codec(compression_level = N) on a column, compression_level = N beside
+# compression on an INCLUDE column, and every rejection: codecs that take no level, levels out of each codec's
 # range, unknown or malformed options, and levels on transactional tables.
 
 statement ok
@@ -139,18 +139,19 @@ count
 statement ok
 DROP TABLE lvl_merge;
 
-# INCLUDE columns take the same string form and the same rules. On a search
-# table the index has no store of its own: its codec applies to the table's
-# column and wins over the column's USING COMPRESSION while the index exists.
+# INCLUDE columns take the level as the compression_level option, with the same
+# rules. On a search table the index has no store of its own: its codec applies
+# to the table's column and wins over the column's USING COMPRESSION while the
+# index exists.
 statement ok
 CREATE TABLE lvl_incl (pk INTEGER PRIMARY KEY, body TEXT, p1 TEXT, p2 TEXT, p3 TEXT USING COMPRESSION dict_fsst, p4 TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
 CREATE INDEX lvl_incl_idx ON lvl_incl USING inverted(body)
-  INCLUDE (pk, p1 included (compression = 'dict_zstd(compression_level=9)'),
-           p2 included (compression = 'zxc(compression_level = 7)'),
-           p3 included (compression = 'lz4(compression_level=12)'),
+  INCLUDE (pk, p1 included (compression = 'dict_zstd', compression_level = 9),
+           p2 included (compression = 'zxc', compression_level = 7),
+           p3 included (compression_level = 12, compression = 'lz4'),
            p4 included (compression = 'dict_lz4'));
 
 statement ok
@@ -316,39 +317,45 @@ CREATE TABLE lvl_bad (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION lz4(compre
 db error: ERROR: Compression option compression_level is specified more than once
 
 
-# Rejections on INCLUDE columns, through the string form.
+# Rejections on INCLUDE columns, through the compression_level option.
 statement ok
 CREATE TABLE lvl_incl_bad (pk INTEGER PRIMARY KEY, body TEXT, p TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement error
-CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'dict_fsst(compression_level=2)'));
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'dict_fsst', compression_level = 2));
 ----
 db error: ERROR: Column "p": compression 'dict_fsst' takes no compression_level
 
 
 statement error
-CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=13)'));
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4', compression_level = 13));
 ----
 db error: ERROR: Column "p": compression_level 13 is out of range for 'lz4' (1 to 12)
 
 
 statement error
-CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(speed=1)'));
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4', compression_level = 300));
 ----
-db error: ERROR: Column 'p': compression 'lz4(speed=1)': unknown option 'speed', expected compression_level
+db error: ERROR: Column "p": compression_level 300 is out of range for 'lz4' (1 to 12)
 
 
 statement error
-CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=1'));
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression_level = 3));
 ----
-db error: ERROR: Column 'p': compression 'lz4(compression_level=1': expected name(compression_level = N)
+db error: ERROR: Column "p": compression 'auto' takes no compression_level
 
 
 statement error
-CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4(compression_level=x)'));
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4', compression_level = 0));
 ----
-db error: ERROR: Column 'p': compression 'lz4(compression_level=x)': compression_level must be an integer between 1 and 255
+db error: ERROR: Column 'p': included option 'compression_level' must be positive, got 0
+
+
+statement error
+CREATE INDEX lvl_incl_bad_idx ON lvl_incl_bad USING inverted(body) INCLUDE (p included (compression = 'lz4', compression_level = 'x'));
+----
+db error: ERROR: Column 'p': included option 'compression_level' must be an integer, got 'x'
 
 
 statement ok

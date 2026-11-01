@@ -88,8 +88,7 @@ uint64_t MergeRecord::EstimatedBytes() const noexcept {
 }
 
 uint64_t MergeRegistry::Queue(uint64_t relation_id,
-                              irs::CompactionView candidates,
-                              const MergeEstimate& estimate) {
+                              irs::CompactionView candidates) {
   auto inputs = InputsOf(candidates);
   absl::MutexLock lock{&_mutex};
   const auto id = _next_id++;
@@ -97,47 +96,16 @@ uint64_t MergeRegistry::Queue(uint64_t relation_id,
                         .id = id,
                         .relation_id = relation_id,
                         .queued_us = NowMicros(),
-                        .lane = estimate.lane,
-                        .score = estimate.score,
                         .stats = std::move(inputs.stats),
                         .rowids = inputs.rowids,
                       });
   return id;
 }
 
-void MergeRegistry::RecordFlushes(
-  uint64_t relation_id, std::span<const irs::SubReader* const> segments) {
-  const auto now = NowMicros();
-  std::vector<MergeRecord> records;
-  records.reserve(segments.size());
-  for (const auto* segment : segments) {
-    auto described = DescribeSegment(*segment);
-    auto& record = records.emplace_back(MergeRecord{
-      .relation_id = relation_id,
-      .event = SegmentEvent::Flush,
-      .finished_us = now,
-      .output_live_docs = described.live_docs,
-      .rowids = described.rowids,
-    });
-    record.stats.output = std::move(described.name);
-    record.stats.output_docs = described.docs;
-    record.stats.output_bytes = described.bytes;
-  }
-  absl::MutexLock lock{&_mutex};
-  for (auto& record : records) {
-    record.id = _next_id++;
-    if (_flushes.size() == kFlushHistoryCapacity) {
-      _flushes.pop_front();
-    }
-    _flushes.emplace_back(std::move(record));
-  }
-}
-
-void MergeRegistry::Dispatch(uint64_t id, size_t threads) {
+void MergeRegistry::Dispatch(uint64_t id) {
   absl::MutexLock lock{&_mutex};
   if (auto it = _active.find(id); it != _active.end()) {
     it->second.started_us = NowMicros();
-    it->second.threads = threads;
   }
 }
 
@@ -213,19 +181,12 @@ std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
 }
 
 std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
-  const auto of_relation = [relation_id](const MergeRecord& record) {
-    return record.relation_id == relation_id;
-  };
   std::vector<MergeRecord> records;
-  {
-    absl::MutexLock lock{&_mutex};
-    absl::c_copy_if(_history, std::back_inserter(records), of_relation);
-    absl::c_copy_if(_flushes, std::back_inserter(records), of_relation);
-  }
-  absl::c_stable_sort(records,
-                      [](const MergeRecord& lhs, const MergeRecord& rhs) {
-                        return lhs.finished_us < rhs.finished_us;
-                      });
+  absl::MutexLock lock{&_mutex};
+  absl::c_copy_if(_history, std::back_inserter(records),
+                  [relation_id](const MergeRecord& record) {
+                    return record.relation_id == relation_id;
+                  });
   return records;
 }
 

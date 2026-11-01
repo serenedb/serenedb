@@ -23,14 +23,12 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/binder.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -46,7 +44,6 @@
 #include "connector/segment_rewrite/merge_target.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -141,28 +138,24 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
                               " not found in ", target.Name()));
     }
   }
-  auto target_count = target_segments != 0
-                        ? target_segments
-                        : search::DefaultTarget(mode, context);
+  MergeRequest request{
+    .mode = mode,
+    .target_segments = target_segments != 0
+                         ? target_segments
+                         : search::DefaultTarget(mode, context),
+    .exact_target = target_segments != 0,
+    .segments = segments,
+  };
   if (target.IsIndex() && mode == search::MergeMode::Compact) {
-    target_count = 1;
+    request.target_segments = 1;
   }
   const search::CopyChecker checker{
     target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
-  search::MergeRoundRequest request{
-    .mode = mode,
-    .settings = &target.Settings(),
-    .merges = search::GetSearchEngine().MergeRoundSize(),
-    .target_segments = target_count,
-    .exact_target = target_segments != 0,
-    .row_group_size = target.RowGroupSize(),
-    .inputs_max = target.MergeInputsMax(),
-    .segments = segments,
-    .copy_check = &checker,
-  };
-  auto plan = search::PlanMergeRound(snapshot, request);
+  auto plan = target.Plan(snapshot, request, checker);
   auto job = std::make_shared<SegmentRewriteJob>(
-    SegmentRewriteJob{.target = std::move(target), .plan = std::move(plan)});
+    SegmentRewriteJob{.target = std::move(target),
+                      .request = std::move(request),
+                      .plan = std::move(plan)});
 
   for (auto& name : SegmentRewriteColumnNames()) {
     names.emplace_back(duckdb::Identifier{std::move(name)});
@@ -171,114 +164,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
                                                   std::move(job));
 }
 
-struct MaintenanceBindData final : duckdb::TableFunctionData {
-  std::string relation;
-};
-
-struct MaintenanceState final : duckdb::GlobalTableFunctionState {
-  bool done = false;
-
-  static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
-    duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-    return duckdb::make_uniq<MaintenanceState>();
-  }
-};
-
-duckdb::unique_ptr<duckdb::FunctionData> BindRelation(
-  duckdb::ClientContext& context, const duckdb::TableFunctionBindInput& input,
-  std::string_view function) {
-  auto data = duckdb::make_uniq<MaintenanceBindData>();
-  data->relation = ReadRelation(input, function);
-  ResolveWritable(context, data->relation, function);
-  return data;
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> RefreshBind(
-  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
-  duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::Identifier>& names) {
-  for (const auto* name : {"segments", "docs", "bytes", "total_ms"}) {
-    names.emplace_back(name);
-  }
-  return_types.insert(return_types.end(), 3, duckdb::LogicalType::BIGINT);
-  return_types.emplace_back(duckdb::LogicalType::DOUBLE);
-  return BindRelation(context, input, "sdb_refresh");
-}
-
-duckdb::unique_ptr<duckdb::FunctionData> CleanupBind(
-  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
-  duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::Identifier>& names) {
-  for (const auto* name : {"files", "bytes", "total_ms"}) {
-    names.emplace_back(name);
-  }
-  return_types.insert(return_types.end(), 2, duckdb::LogicalType::BIGINT);
-  return_types.emplace_back(duckdb::LogicalType::DOUBLE);
-  return BindRelation(context, input, "sdb_cleanup");
-}
-
-double MillisSince(std::chrono::steady_clock::time_point begin) {
-  return std::chrono::duration<double, std::milli>(
-           std::chrono::steady_clock::now() - begin)
-    .count();
-}
-
-void RefreshExecute(duckdb::ClientContext& context,
-                    duckdb::TableFunctionInput& input,
-                    duckdb::DataChunk& output) {
-  auto& state = input.global_state->Cast<MaintenanceState>();
-  if (std::exchange(state.done, true)) {
-    return;
-  }
-  const auto& data = input.bind_data->Cast<MaintenanceBindData>();
-  const auto target = ResolveWritable(context, data.relation, "sdb_refresh");
-  const auto begin = std::chrono::steady_clock::now();
-  irs::containers::FlatHashSet<std::string> published;
-  for (const auto& segment : target.Snapshot()) {
-    published.emplace(segment.Meta().name);
-  }
-  target.Refresh();
-  uint64_t segments = 0;
-  uint64_t docs = 0;
-  uint64_t bytes = 0;
-  for (const auto& segment : target.Snapshot()) {
-    if (published.contains(segment.Meta().name)) {
-      continue;
-    }
-    const auto described = search::DescribeSegment(segment);
-    ++segments;
-    docs += described.docs;
-    bytes += described.bytes;
-  }
-  output.data[0].Append(Bigint(segments));
-  output.data[1].Append(Bigint(docs));
-  output.data[2].Append(Bigint(bytes));
-  output.data[3].Append(duckdb::Value::DOUBLE(MillisSince(begin)));
-}
-
-void CleanupExecute(duckdb::ClientContext& context,
-                    duckdb::TableFunctionInput& input,
-                    duckdb::DataChunk& output) {
-  auto& state = input.global_state->Cast<MaintenanceState>();
-  if (std::exchange(state.done, true)) {
-    return;
-  }
-  const auto& data = input.bind_data->Cast<MaintenanceBindData>();
-  const auto target = ResolveWritable(context, data.relation, "sdb_cleanup");
-  const auto begin = std::chrono::steady_clock::now();
-  const auto removed = target.Cleanup();
-  output.data[0].Append(Bigint(removed.count));
-  output.data[1].Append(Bigint(removed.bytes));
-  output.data[2].Append(duckdb::Value::DOUBLE(MillisSince(begin)));
-}
-
-duckdb::FunctionSignature RelationSignature() {
-  return duckdb::FunctionSignature().AddPositionalOnly(
-    "relation", duckdb::LogicalType::VARCHAR);
-}
-
 duckdb::TableFunction CompactFunction() {
-  duckdb::TableFunction function{"sdb_compact", RelationSignature(), nullptr};
+  duckdb::TableFunction function{"sdb_compact",
+                                 duckdb::FunctionSignature().AddPositionalOnly(
+                                   "relation", duckdb::LogicalType::VARCHAR),
+                                 nullptr};
   function.bind_operator = CompactBindOperator;
   const auto segments_type =
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
@@ -297,12 +187,6 @@ duckdb::TableFunction CompactFunction() {
 void RegisterSdbMaintenanceFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   loader.RegisterFunction(CompactFunction());
-  loader.RegisterFunction(
-    duckdb::TableFunction{"sdb_refresh", RelationSignature(), RefreshExecute,
-                          RefreshBind, MaintenanceState::Init});
-  loader.RegisterFunction(
-    duckdb::TableFunction{"sdb_cleanup", RelationSignature(), CleanupExecute,
-                          CleanupBind, MaintenanceState::Init});
 }
 
 }  // namespace sdb::connector

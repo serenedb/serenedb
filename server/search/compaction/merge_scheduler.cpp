@@ -195,7 +195,7 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   {
     absl::MutexLock lock{&_mutex};
     if (!_stopping && relation->_paused == 0) {
-      entry->id = _registry.Queue(relation->Id(), candidates, entry->estimate);
+      entry->id = _registry.Queue(relation->Id(), candidates);
       entry->queued = Now();
       _queue.emplace_back(std::move(entry));
       ++relation->_queued;
@@ -330,7 +330,7 @@ void MergeScheduler::Pump() {
         ++relation._running_big;
         entry->helpers = _options.threads / 2;
       }
-      _registry.Dispatch(entry->id, 1 + entry->helpers);
+      _registry.Dispatch(entry->id);
       auto* raw = entry.get();
       _running.emplace(raw, std::move(entry));
       started.emplace_back(raw);

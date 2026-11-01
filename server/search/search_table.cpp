@@ -58,8 +58,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
-#include "search/compaction/copy_check.h"
-#include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/row_position_wal.h"
 #include "search/scorer_options.h"
@@ -584,18 +582,15 @@ auto SearchTable::AwaitMerge(
   co_return result;
 }
 
-CleanupResult SearchTable::CleanupUnsafe() {
+ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto removed = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup(*_dir);
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
-  _maintenance.RecordCleanup(removed.status(), time_ms);
-  if (!removed.ok()) {
-    return {.res = std::move(removed).status(), .time_ms = time_ms};
-  }
-  return {.time_ms = time_ms, .removed = *removed};
+  _maintenance.RecordCleanup(result, time_ms);
+  return {std::move(result), time_ms};
 }
 
 absl::Status SearchTable::VacuumRefresh() {
@@ -609,68 +604,9 @@ absl::Status SearchTable::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status SearchTable::VacuumCompact(MergeMode mode,
-                                        uint32_t target_segments,
-                                        const irs::MergeProgress& progress,
-                                        irs::MergeExecutor& executor) {
-  const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
+absl::Status SearchTable::Publish() {
   RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  const ManualCompactionSlot slot;
-  const irs::AnnBuildEnv* env = slot.AnnEnv();
-  for (auto more = true; more;) {
-    const auto field_options = CompactionConfig();
-    const CopyChecker checker{*field_options, *executor.Scheduler()};
-    const auto plan =
-      PlanMergeRound(_writer->GetSnapshot(),
-                     MergeRoundRequest{.mode = mode,
-                                       .target_segments = target_segments,
-                                       .row_group_size = _row_group_size,
-                                       .inputs_max = MergeInputsMax(),
-                                       .copy_check = &checker});
-    more = plan.partial;
-    for (const auto& planned : plan.merges) {
-      if (!progress()) {
-        more = false;
-        break;
-      }
-      std::vector<std::string> names;
-      names.reserve(planned.inputs.size());
-      for (const auto& segment : planned.inputs) {
-        names.emplace_back(segment.name);
-      }
-      if (auto res = irs::GetReady(
-                       CompactUnsafeAsync(
-                         ExplicitPolicy(names), progress, field_options.get(),
-                         env, MergeOrigin::Vacuum, executor, planned.lone))
-                       .res;
-          !res.ok()) {
-        return res;
-      }
-      SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-      if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res;
-          !res.ok()) {
-        return res;
-      }
-      if (auto res = CleanupUnsafe().res; !res.ok()) {
-        return res;
-      }
-    }
-    more = more && _writer->GetSnapshot().size() < plan.segments;
-  }
-  return CleanupUnsafe().res;
-}
-
-void SearchTable::Publish() {
-  RefreshResult code = RefreshResult::Undefined;
-  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
-  if (!result.res.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("search table ", _table_id,
-                            ": publish failed: ", result.res.message()));
-  }
+  return RefreshUnsafe(/*wait=*/true, nullptr, code).res;
 }
 
 SearchTable::ReplaySession* SearchTable::BeginReplay(

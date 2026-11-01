@@ -1298,7 +1298,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
   writer->_ann_env = options.ann_env;
   writer->_key_field = options.key_field;
   writer->_sort = std::move(options.sort);
-  writer->_on_flushed = std::move(options.on_flushed);
   writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
@@ -1960,7 +1959,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     segment_ctx.RemoveAll(all_tick);
   }
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
-  const auto flushed_count = flushed.segments.size();
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
@@ -2021,8 +2019,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto position = ctx->position;
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
-                .position = position,
-                .flushed = flushed_count},
+                .position = position},
     std::move(pending_meta),  // Retain meta pending flush
     std::move(readers),
     std::move(files_to_sync),
@@ -2117,8 +2114,6 @@ void IndexWriter::Finish() {
       ERR_MSG("Failed to commit index metadata: no commit is prepared"));
   }
 
-  const auto flushed = _pending_state.flushed;
-  const auto commit = _pending_state.commit;
   // noexcept part!
   _pending_state.ctx->doc_maps.clear();
   {
@@ -2132,22 +2127,6 @@ void IndexWriter::Finish() {
                                std::memory_order_release);
   }
   _pending_state.FinishReset();
-  if (flushed != 0 && _on_flushed) {
-    ReportFlushed(*commit, flushed);
-  }
-}
-
-void IndexWriter::ReportFlushed(const DirectoryReaderImpl& commit,
-                                size_t count) noexcept {
-  try {
-    std::vector<const SubReader*> segments;
-    segments.reserve(count);
-    for (auto i = commit.size() - count; i != commit.size(); ++i) {
-      segments.emplace_back(&commit[i]);
-    }
-    _on_flushed(segments);
-  } catch (...) {
-  }
 }
 
 void IndexWriter::Abort() noexcept {

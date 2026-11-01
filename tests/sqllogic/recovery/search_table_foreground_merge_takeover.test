@@ -55,7 +55,7 @@ wait
 
 query
 SELECT origin, outcome FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv')
 ORDER BY id;
 ----
 origin	outcome
@@ -129,7 +129,7 @@ wait
 
 query
 SELECT origin, outcome FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc')
 ORDER BY id;
 ----
 origin	outcome
@@ -207,7 +207,7 @@ segments
 
 query
 SELECT origin, outcome FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tt') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tt')
 ORDER BY id;
 ----
 origin	outcome
@@ -237,7 +237,7 @@ VACUUM (COMPACT_TABLE) tk;
 
 connection default
 query ok retry 40 backoff 250ms
-SELECT origin, state, lane IS NULL AS unscheduled FROM sdb_merges
+SELECT origin, state, queued IS NULL AS unscheduled FROM sdb_merges
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk');
 ----
 origin	state	unscheduled
@@ -260,7 +260,7 @@ segments
 
 query
 SELECT origin, outcome FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk')
 ORDER BY id;
 ----
 origin	outcome

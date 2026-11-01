@@ -48,7 +48,7 @@ segments	docs
 
 query
 SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_idx') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_idx')
 ORDER BY id;
 ----
 outcome	inputs
@@ -57,7 +57,7 @@ merged	149
 statement ok
 SET sdb_faults = 'irs::KeyOrder::Finish';
 
-statement error compact_index: compaction failed
+statement error failed to compact 'scs_idx'
 VACUUM (COMPACT_INDEX) scs_idx;
 
 statement ok
@@ -107,7 +107,7 @@ VACUUM (COMPACT_TABLE) scs_t;
 connection default
 query ok retry 40 backoff 250ms
 SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_t') AND type = 'merge';
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_t');
 ----
 outcome	inputs
 merged	149
@@ -129,7 +129,7 @@ segments	docs
 
 query
 SELECT count(*) AS merges FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_t') AND type = 'merge';
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'scs_t');
 ----
 merges
 1

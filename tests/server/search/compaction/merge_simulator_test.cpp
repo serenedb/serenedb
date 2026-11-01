@@ -25,14 +25,14 @@
 #include <string>
 #include <vector>
 
-#include "search/compaction/merge_simulator.h"
+#include "merge_simulator.h"
 
 namespace {
 
 using sdb::search::MergeLane;
 using sdb::search::MergeSimulation;
-using sdb::search::SegmentEvent;
 using sdb::search::SimulatedEvent;
+using sdb::search::SimulatedEventType;
 using sdb::search::SimulatedFlush;
 using sdb::search::SimulatedSegment;
 using sdb::search::SimulateMerges;
@@ -123,7 +123,7 @@ TEST(MergeSimulator, TheAdjacentPolicyMergesInRowIdOrder) {
     {Ranged(0, 201, 300), Ranged(0, 1, 100), Ranged(0, 101, 200)}, options);
   ASSERT_EQ(4, events.size());
   const auto& merge = events[3];
-  EXPECT_EQ(SegmentEvent::Merge, merge.type);
+  EXPECT_EQ(SimulatedEventType::Merge, merge.type);
   EXPECT_EQ(Names({"_2", "_3", "_1"}), merge.inputs);
   EXPECT_EQ(1, merge.rowids.first);
   EXPECT_EQ(300, merge.rowids.last);
@@ -137,7 +137,7 @@ TEST(MergeSimulator, FlushesReplayInTimeOrder) {
   const auto events =
     SimulateMerges({Flush(2, 3 * kMiB), Flush(1, 2 * kMiB)}, Options(1, 3));
   ASSERT_EQ(2, events.size());
-  EXPECT_EQ(SegmentEvent::Flush, events[0].type);
+  EXPECT_EQ(SimulatedEventType::Flush, events[0].type);
   EXPECT_EQ(absl::ZeroDuration(), events[0].at);
   EXPECT_EQ(1, events[0].relation_id);
   EXPECT_EQ("_1", events[0].segment);
@@ -160,7 +160,7 @@ TEST(MergeSimulator, AMergeTakesItsBytesOverTheThroughput) {
   ASSERT_EQ(3, events.size());
   EXPECT_EQ(1, events[1].merges_running);
   const auto& merge = events[2];
-  EXPECT_EQ(SegmentEvent::Merge, merge.type);
+  EXPECT_EQ(SimulatedEventType::Merge, merge.type);
   EXPECT_EQ(absl::Seconds(5), merge.at);
   EXPECT_EQ("_3", merge.segment);
   EXPECT_EQ(Names({"_1", "_2"}), merge.inputs);
@@ -239,12 +239,12 @@ TEST(MergeSimulator, AFlushAtAMergesEndComesFirst) {
     {Flush(0, kMiB), Flush(0, kMiB), Flush(2, kMiB), Flush(3, kMiB)},
     Options(1, 2));
   ASSERT_EQ(7, events.size());
-  EXPECT_EQ(SegmentEvent::Flush, events[2].type);
+  EXPECT_EQ(SimulatedEventType::Flush, events[2].type);
   EXPECT_EQ(absl::Seconds(2), events[2].at);
-  EXPECT_EQ(SegmentEvent::Merge, events[3].type);
+  EXPECT_EQ(SimulatedEventType::Merge, events[3].type);
   EXPECT_EQ(absl::Seconds(2), events[3].at);
   EXPECT_EQ(Names({"_1", "_2"}), events[3].inputs);
-  EXPECT_EQ(SegmentEvent::Flush, events[4].type);
+  EXPECT_EQ(SimulatedEventType::Flush, events[4].type);
   EXPECT_EQ(absl::Seconds(3), events[4].at);
   EXPECT_EQ(absl::Seconds(5), events[5].at);
   EXPECT_EQ(Names({"_3", "_4"}), events[5].inputs);
@@ -273,25 +273,6 @@ TEST(MergeSimulator, AMergeOfUnrangedSegmentsHasNoRange) {
   ASSERT_EQ(3, events.size());
   EXPECT_TRUE(events[2].rowids.Empty());
   EXPECT_FALSE(events[2].overlap);
-}
-
-TEST(MergeSimulator, TheReplayChecksForInterruptsAtEveryEvent) {
-  size_t checks = 0;
-  const auto events = SimulateMerges({Flush(0, kMiB), Flush(0, kMiB)},
-                                     Options(1), [&checks] { ++checks; });
-  EXPECT_EQ(3, events.size());
-  EXPECT_EQ(3, checks);
-}
-
-TEST(MergeSimulator, AnInterruptStopsTheReplay) {
-  size_t checks = 0;
-  EXPECT_THROW(SimulateMerges({Flush(0, kMiB), Flush(0, kMiB)}, Options(1),
-                              [&checks] {
-                                if (++checks == 3) {
-                                  throw std::runtime_error{"interrupted"};
-                                }
-                              }),
-               std::runtime_error);
 }
 
 TEST(MergeSimulator, AFailingPolicyStopsTheReplay) {

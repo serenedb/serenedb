@@ -126,20 +126,15 @@ std::string_view StepLabel(irs::MergeStep step) {
 }  // namespace
 
 std::vector<std::string> SegmentRewriteColumnNames() {
-  std::vector<std::string> names{
-    "merge",       "outcome", "inputs",      "input_docs",   "input_live_docs",
-    "input_bytes", "output",  "output_docs", "output_bytes", "total_ms",
+  return {
+    "merge",           "outcome",     "inputs", "input_docs",
+    "input_live_docs", "input_bytes", "output", "output_docs",
+    "output_bytes",    "total_ms",    "error",
   };
-  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-    names.emplace_back(absl::StrCat(
-      irs::SnakeCaseName(static_cast<irs::MergeStep>(step)), "_ms"));
-  }
-  names.emplace_back("error");
-  return names;
 }
 
 std::vector<duckdb::LogicalType> SegmentRewriteColumnTypes() {
-  std::vector<duckdb::LogicalType> types{
+  return {
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::VARCHAR,
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
@@ -150,10 +145,8 @@ std::vector<duckdb::LogicalType> SegmentRewriteColumnTypes() {
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::DOUBLE,
+    duckdb::LogicalType::VARCHAR,
   };
-  types.insert(types.end(), irs::kMergeStepCount, duckdb::LogicalType::DOUBLE);
-  types.emplace_back(duckdb::LogicalType::VARCHAR);
-  return types;
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(

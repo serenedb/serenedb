@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search/compaction/merge_simulator.h"
+#include "merge_simulator.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/container/btree_set.h>
@@ -131,8 +131,7 @@ class SimulatedJob final : public MergeJob {
 
 class Simulation {
  public:
-  Simulation(const MergeSimulation& options,
-             const std::function<void()>& check_interrupt);
+  explicit Simulation(const MergeSimulation& options);
   ~Simulation();
 
   std::vector<SimulatedEvent> Run(std::vector<SimulatedFlush> trace);
@@ -166,7 +165,6 @@ class Simulation {
   void Plan(Relation& relation);
 
   const MergeSimulation& _options;
-  const std::function<void()>& _check_interrupt;
   absl::Time _origin;
   absl::Time _now;
   MergeRegistry _registry;
@@ -223,7 +221,7 @@ yaclib::Future<MergeResult> SimulatedJob::Run(const std::atomic_bool&,
 
 void SimulatedJob::Finish() {
   SimulatedEvent event{
-    .type = SegmentEvent::Merge,
+    .type = SimulatedEventType::Merge,
     .segment = absl::StrCat("_", _relation.next_segment++),
     .queued = _simulation.Since(_queued),
     .started = _simulation.Since(_started),
@@ -276,9 +274,7 @@ void SimulatedJob::Cancel() {
     MergeResult{.outcome = {.error = irs::CompactionError::Cancelled}});
 }
 
-Simulation::Simulation(const MergeSimulation& options,
-                       const std::function<void()>& check_interrupt)
-  : _options{options}, _check_interrupt{check_interrupt} {
+Simulation::Simulation(const MergeSimulation& options) : _options{options} {
   _scheduler = std::make_unique<MergeScheduler>(
     yaclib::MakeInline(), MergeScheduler::Options{
                             .threads = options.threads,
@@ -348,7 +344,7 @@ void Simulation::Flush(const SimulatedFlush& flush) {
     .rowids = flush.rowids,
   });
   Record(relation, SimulatedEvent{
-                     .type = SegmentEvent::Flush,
+                     .type = SimulatedEventType::Flush,
                      .segment = segment.name,
                      .docs = segment.docs,
                      .live_docs = segment.live_docs,
@@ -394,9 +390,6 @@ std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
   _now = _origin;
   size_t next = 0;
   while (next != trace.size() || !_pending.empty()) {
-    if (_check_interrupt) {
-      _check_interrupt();
-    }
     const auto first = _events.size();
     if (_pending.empty() ||
         (next != trace.size() && trace[next].time <= _pending.top().finish)) {
@@ -421,10 +414,9 @@ std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
 
 }  // namespace
 
-std::vector<SimulatedEvent> SimulateMerges(
-  std::vector<SimulatedFlush> trace, const MergeSimulation& options,
-  const std::function<void()>& check_interrupt) {
-  Simulation simulation{options, check_interrupt};
+std::vector<SimulatedEvent> SimulateMerges(std::vector<SimulatedFlush> trace,
+                                           const MergeSimulation& options) {
+  Simulation simulation{options};
   return simulation.Run(std::move(trace));
 }
 

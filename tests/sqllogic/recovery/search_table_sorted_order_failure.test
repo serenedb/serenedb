@@ -74,7 +74,7 @@ SET sdb_faults = 'irs::KeyOrder::Finish';
 statement error
 VACUUM (COMPACT_TABLE) sof_steps;
 ----
-db error: ERROR: failed to compact search table 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 149 segments does not hold every live document once
+db error: ERROR: failed to compact 'sof_steps': consolidation failed for search table <slt:ignore>: the order of a sorted merge of 149 segments does not hold every live document once
 
 
 statement ok
@@ -88,7 +88,7 @@ segments	docs
 
 query
 SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sof_steps') AND type = 'merge'
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sof_steps')
 ORDER BY id;
 ----
 outcome	inputs

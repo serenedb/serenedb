@@ -23,7 +23,6 @@
 #include <absl/time/time.h>
 
 #include <cstdint>
-#include <functional>
 #include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -76,10 +75,15 @@ struct MergeSimulation {
   double bytes_per_second = double{uint64_t{16} << 20};
 };
 
+enum class SimulatedEventType : uint8_t {
+  Flush = 0,
+  Merge,
+};
+
 struct SimulatedEvent {
   absl::Duration at;
   uint64_t relation_id = 0;
-  SegmentEvent type = SegmentEvent::Flush;
+  SimulatedEventType type = SimulatedEventType::Flush;
   std::string segment;
   std::vector<std::string> inputs;
   uint64_t docs = 0;
@@ -99,8 +103,7 @@ struct SimulatedEvent {
   size_t merges_running = 0;
 };
 
-std::vector<SimulatedEvent> SimulateMerges(
-  std::vector<SimulatedFlush> trace, const MergeSimulation& options,
-  const std::function<void()>& check_interrupt = {});
+std::vector<SimulatedEvent> SimulateMerges(std::vector<SimulatedFlush> trace,
+                                           const MergeSimulation& options);
 
 }  // namespace sdb::search

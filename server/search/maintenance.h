@@ -26,7 +26,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/directory_cleaner.hpp>
 #include <string>
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
@@ -65,12 +64,6 @@ struct MergeResult {
   uint64_t time_ms = 0;
   irs::CompactionResult outcome;
   std::string error;
-};
-
-struct CleanupResult {
-  absl::Status res;
-  uint64_t time_ms = 0;
-  irs::RemovedFiles removed;
 };
 
 }  // namespace sdb::search

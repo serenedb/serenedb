@@ -7,11 +7,15 @@ statement ok
 INSERT INTO src_t SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
 
 
+statement ok
+VACUUM (REFRESH_TABLE) src_t
+
+
 query
-SELECT segments, docs, bytes > 0 AS sized, total_ms >= 0 AS timed FROM sdb_refresh('src_t')
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('src_t')
 ----
-segments	docs	sized	timed
-1	100	t	t
+segments	docs
+1	100
 
 
 query
@@ -21,22 +25,23 @@ n
 100
 
 
+statement ok
+VACUUM (REFRESH_TABLE) src_t
+
+
 query
-SELECT segments, docs, bytes FROM sdb_refresh('src_t')
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('src_t')
 ----
-segments	docs	bytes
-0	0	0
+segments	docs
+1	100
 
 
 statement ok
 DELETE FROM src_t WHERE id <= 10
 
 
-query
-SELECT segments, docs FROM sdb_refresh('src_t')
-----
-segments	docs
-0	0
+statement ok
+VACUUM (REFRESH_TABLE) src_t
 
 
 query
@@ -47,17 +52,14 @@ n
 
 
 query
-SELECT sum(docs) AS docs, sum(live_docs) AS live FROM sdb_segments('src_t')
+SELECT count(*) AS segments, sum(docs) AS docs, sum(live_docs) AS live FROM sdb_segments('src_t')
 ----
-docs	live
-100	90
+segments	docs	live
+1	100	90
 
 
-query
-SELECT files, bytes FROM sdb_cleanup('src_t')
-----
-files	bytes
-0	0
+statement ok
+VACUUM (CLEANUP_TABLE) src_t
 
 
 statement ok
@@ -77,32 +79,19 @@ statement ok
 INSERT INTO src_docs SELECT i, 'w' || (i % 7) FROM generate_series(301, 400) s(i)
 
 
+statement ok
+VACUUM (REFRESH_INDEX) src_idx
+
+
 query
-SELECT segments, docs FROM sdb_refresh('src_idx')
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('src_idx')
 ----
 segments	docs
-1	100
+2	400
 
 
-query
-SELECT files > 0 AS removed, bytes > 0 AS freed FROM sdb_cleanup('src_idx')
-----
-removed	freed
-t	t
-
-
-query
-SELECT files, bytes FROM sdb_cleanup('src_idx')
-----
-files	bytes
-0	0
-
-
-query
-SELECT count(*) AS segments FROM sdb_segments('src_idx')
-----
-segments
-2
+statement ok
+VACUUM (CLEANUP_INDEX) src_idx
 
 
 query
@@ -110,13 +99,6 @@ SELECT outcome FROM sdb_compact('src_idx', mode := 'compact')
 ----
 outcome
 merged
-
-
-query
-SELECT files, bytes FROM sdb_cleanup('src_idx')
-----
-files	bytes
-0	0
 
 
 query
@@ -146,10 +128,10 @@ VACUUM (COMPACT_INDEX) src_idx
 
 
 query
-SELECT files, bytes FROM sdb_cleanup('src_idx')
+SELECT count(*) AS segments FROM sdb_segments('src_idx')
 ----
-files	bytes
-0	0
+segments
+1
 
 
 statement ok
@@ -172,34 +154,10 @@ VACUUM (COMPACT_TABLE) src_t
 
 
 query
-SELECT files, bytes FROM sdb_cleanup('src_t')
+SELECT count(*) AS segments, sum(live_docs) AS live FROM sdb_segments('src_t')
 ----
-files	bytes
-0	0
-
-
-statement error
-SELECT * FROM sdb_refresh(NULL)
-----
-db error: ERROR: sdb_refresh requires a relation name
-
-
-statement error
-SELECT * FROM sdb_cleanup(NULL)
-----
-db error: ERROR: sdb_cleanup requires a relation name
-
-
-statement error
-SELECT * FROM sdb_refresh('src_missing')
-----
-db error: ERROR: relation "src_missing" does not exist
-
-
-statement error
-SELECT * FROM sdb_cleanup('src_docs')
-----
-db error: ERROR: "src_docs" is not a search table or an inverted index
+segments	live
+1	190
 
 
 statement ok

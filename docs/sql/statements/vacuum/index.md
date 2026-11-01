@@ -53,7 +53,7 @@ Inverted indexes and search tables also compact in the background by default (se
 
 A merge of a search table or an index with a sort key ([`SORTED BY`](../create_table/index.md#sort-keys)) takes at most 1024 segments. When more segments are to become one, `COMPACT_*` and `OPTIMIZE_*` merge them in steps: the first step merges just enough neighbouring segments, choosing those with the fewest live rows, to leave at most 1024, and the next step merges what is left. Only the rows of the first step are written twice.
 
-While `COMPACT_*` works on a table or an index, its background merges pause: those in progress stop, and none starts until `COMPACT_*` ends. Each merge becomes visible as soon as it finishes, so the disk holds at most one merge's extra copy at a time. Cancelling the statement or reaching `statement_timeout` stops the merge in progress and leaves its segments as they were; merges that finished before remain.
+While `COMPACT_*` merges segments of a table or an index, its background merges pause: those in progress stop, and none starts until `COMPACT_*` ends. Each merge becomes visible as soon as it finishes, so the disk holds at most one merge's extra copy at a time. Cancelling the statement or reaching `statement_timeout` stops the merge in progress and leaves its segments as they were; merges that finished before remain.
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_011" />
 
@@ -73,7 +73,7 @@ Background merges pause and resume, and cancelling works, as for `COMPACT_*`. [`
 
 ### Cleaning up -- `CLEANUP_*`
 
-`CLEANUP_*` deletes the files of inverted indexes and search tables that no snapshot uses anymore, such as the segments a merge replaced. Files that a running query still reads stay until a later cleanup. [`sdb_cleanup`](../../indexes/inverted/maintenance.md#sdb-refresh) does the same for one relation and reports how many files and bytes it deleted.
+`CLEANUP_*` deletes the files of inverted indexes and search tables that no snapshot uses anymore, such as the segments a merge replaced. Files that a running query still reads stay until a later cleanup.
 
 ### Recomputing statistics -- `RECOMPUTE_STATS_*`
 

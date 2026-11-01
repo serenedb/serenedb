@@ -40,12 +40,9 @@ constexpr SystemSqlColumn kSdbMergesColumns[] = {
   {"relation_id", kOid, 0, false, false, 0, 0, SystemKey::None},
   {"origin", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
-  {"lane", kText, 0, false, false, kCCollation, 0, SystemKey::None},
-  {"score", kFloat8, 0, false, false, 0, 0, SystemKey::None},
   {"queued", kTimestamptz, 0, false, false, 0, 0, SystemKey::None},
   {"started", kTimestamptz, 0, false, false, 0, 0, SystemKey::None},
   {"elapsed_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"threads", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"inputs", kTextArray, kText, false, false, kCCollation, 1, SystemKey::None},
   {"input_docs", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"input_live_docs", kInt8, 0, false, false, 0, 0, SystemKey::None},
@@ -80,14 +77,6 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
     Col<"state">([](const auto& r) {
       return std::string_view{r.Queued() ? "queued" : "running"};
     }),
-    Col<"lane">([](const auto& r) {
-      return r.queued_us == 0
-               ? std::nullopt
-               : std::optional<std::string_view>{irs::SnakeCaseName(r.lane)};
-    }),
-    Col<"score">([](const auto& r) {
-      return r.queued_us == 0 ? std::nullopt : std::optional<double>{r.score};
-    }),
     Col<"queued">([](const auto& r) { return At(r.queued_us); }),
     Col<"started">([](const auto& r) { return At(r.started_us); }),
     Col<"elapsed_ms">([](const auto& r) {
@@ -97,9 +86,6 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
       return std::optional<double>{
         static_cast<double>(absl::ToUnixMicros(absl::Now()) - r.started_us) /
         1000};
-    }),
-    Col<"threads">([](const auto& r) {
-      return r.threads == 0 ? std::nullopt : std::optional<uint64_t>{r.threads};
     }),
     kMergeInputColumns,
     Col<"estimated_bytes">([](const auto& r) { return r.EstimatedBytes(); }));

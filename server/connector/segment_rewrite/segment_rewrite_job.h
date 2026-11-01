@@ -35,6 +35,7 @@ namespace sdb::connector {
 
 struct SegmentRewriteJob {
   MergeTarget target;
+  MergeRequest request;
   search::MergeRoundPlan plan;
 };
 

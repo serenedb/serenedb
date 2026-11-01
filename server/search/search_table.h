@@ -53,7 +53,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_registry.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
@@ -145,7 +144,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                            std::vector<std::string> segments);
   bool FinishReplay(duckdb::AttachedDatabase& db);
 
-  void Publish();
+  [[nodiscard]] absl::Status Publish();
   void FinishCheckpoint() { _durability.FinishCheckpointIfIdle(*_writer); }
   void MarkStaged(const irs::SourcePosition& position) {
     _durability.MarkStaged(position);
@@ -198,7 +197,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
                      const irs::IndexFieldOptions* field_options,
                      const irs::AnnBuildEnv* env, irs::MergeExecutor& executor)
     -> yaclib::Future<MergeResult>;
-  CleanupResult CleanupUnsafe();
+  ResultWithTime CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
     return _topk_options;
@@ -207,10 +206,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   StoreStats GetStats() const;
 
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(MergeMode mode,
-                                           uint32_t target_segments,
-                                           const irs::MergeProgress& progress,
-                                           irs::MergeExecutor& executor);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();

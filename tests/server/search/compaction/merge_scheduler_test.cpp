@@ -298,18 +298,13 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   const auto blocking = _registry.Active(1);
   ASSERT_EQ(1, blocking.size());
   EXPECT_FALSE(blocking[0].Queued());
-  EXPECT_EQ(2, blocking[0].threads);
   const auto huge = _registry.Active(2);
   ASSERT_EQ(1, huge.size());
   EXPECT_TRUE(huge[0].Queued());
-  EXPECT_EQ(0, huge[0].threads);
   EXPECT_EQ(std::vector<std::string>({"huge.0", "huge.1"}),
             huge[0].stats.inputs);
   EXPECT_EQ(2, huge[0].relation_id);
-  EXPECT_EQ(MergeLane::Big, huge[0].lane);
-  const auto cheap = _registry.Active(3);
-  ASSERT_EQ(1, cheap.size());
-  EXPECT_GT(huge[0].score, cheap[0].score);
+  EXPECT_EQ(1, _registry.Active(3).size());
   EXPECT_EQ(2, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(1, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 

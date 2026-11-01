@@ -20,11 +20,13 @@
 
 #include "connector/segment_rewrite/merge_target.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/qualified_name.hpp>
@@ -125,14 +127,11 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     }
   }
 
-  if (target._table) {
-    target._store = target._table.get();
-  } else if (target._index) {
-    target._store = target._index.get();
-  } else {
+  if (!target._table && !target._index) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", relation, "\" does not exist"));
   }
+  target.SetStore();
   if (table) {
     for (const auto& column : table->GetColumns().Logical()) {
       target._column_names.emplace(TableColumnId(column),
@@ -141,6 +140,36 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
   }
   target._column_names.emplace(kGeneratedPKId, "rowid");
   return target;
+}
+
+MergeTarget MergeTarget::Of(std::shared_ptr<search::SearchTable> table,
+                            std::string name) {
+  MergeTarget target;
+  target._name = std::move(name);
+  target._options = table->Config();
+  target._table = std::move(table);
+  target.SetStore();
+  return target;
+}
+
+MergeTarget MergeTarget::Of(
+  std::shared_ptr<search::InvertedIndexStorage> index,
+  std::shared_ptr<const catalog::InvertedIndexConfig> options,
+  std::string name) {
+  MergeTarget target;
+  target._name = std::move(name);
+  target._options = std::move(options);
+  target._index = std::move(index);
+  target.SetStore();
+  return target;
+}
+
+void MergeTarget::SetStore() {
+  if (_table) {
+    _store = _table.get();
+  } else {
+    _store = _index.get();
+  }
 }
 
 irs::DirectoryReader MergeTarget::Snapshot() const {
@@ -166,13 +195,30 @@ std::string MergeTarget::ColumnName(irs::field_id id) const {
   return absl::StrCat("#", id);
 }
 
+search::MergeRoundPlan MergeTarget::Plan(
+  const irs::IndexReader& snapshot, const MergeRequest& request,
+  const search::CopyChecker& checker) const {
+  return search::PlanMergeRound(
+    snapshot, search::MergeRoundRequest{
+                .mode = request.mode,
+                .settings = &Settings(),
+                .merges = search::GetSearchEngine().MergeRoundSize(),
+                .target_segments = request.target_segments,
+                .exact_target = request.exact_target,
+                .row_group_size = RowGroupSize(),
+                .inputs_max = MergeInputsMax(),
+                .segments = request.segments,
+                .copy_check = &checker,
+              });
+}
+
 ExecutedMerge MergeTarget::Compact(const irs::CompactionPolicy& policy,
                                    const irs::MergeProgress& progress,
                                    const irs::IndexFieldOptions* field_options,
+                                   const irs::AnnBuildEnv* env,
                                    search::MergeOrigin origin,
                                    irs::MergeExecutor& executor,
                                    irs::LoneSegment lone) const {
-  const auto* env = &search::AnnBuildEnv();
   auto merged =
     _table ? irs::GetBlocking(_table->CompactUnsafeAsync(
                policy, progress, field_options, env, origin, executor, lone))
@@ -191,35 +237,75 @@ search::MergeScheduler::Lease MergeTarget::TakeOver() const {
 }
 
 void MergeTarget::Publish() const {
-  if (_table) {
-    _table->Publish();
-  } else {
-    search::ThrowIfRefreshFailed(_index->Refresh(), _name);
-  }
-  Cleanup();
-}
-
-void MergeTarget::Refresh() const {
   if (!_table) {
     search::ThrowIfRefreshFailed(_index->Refresh(), _name);
-    return;
-  }
-  if (const auto status = _table->VacuumRefresh(); !status.ok()) {
+  } else if (const auto status = _table->Publish(); !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("failed to refresh search table '", _name,
                             "': ", status.message()));
   }
-}
-
-irs::RemovedFiles MergeTarget::Cleanup() const {
-  const auto result =
+  const auto cleaned =
     _table ? _table->CleanupUnsafe() : _index->CleanupUnsafe();
-  if (!result.res.ok()) {
+  if (!cleaned.res.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("failed to clean up '", _name, "': ", result.res.message()));
+      ERR_MSG("failed to clean up '", _name, "': ", cleaned.res.message()));
   }
-  return result.removed;
+}
+
+ManualCompaction::ManualCompaction(const MergeTarget& target,
+                                   MergeRequest request,
+                                   duckdb::TaskScheduler& scheduler)
+  : _target{target},
+    _options{target.PinOptions()},
+    _checker{*_options.field_options, scheduler},
+    _request{std::move(request)} {
+  _target.Publish();
+  Plan();
+  if (!_plan.merges.empty()) {
+    _lease = _target.TakeOver();
+    Plan();
+  }
+}
+
+void ManualCompaction::Plan() {
+  _plan = _target.Plan(_target.Snapshot(), _request, _checker);
+  _next = 0;
+}
+
+bool ManualCompaction::Next(const irs::MergeProgress& progress,
+                            search::MergeOrigin origin,
+                            irs::MergeExecutor& executor,
+                            ExecutedMerge& merge) {
+  while (_next == _plan.merges.size()) {
+    if (!_plan.partial || _target.Snapshot().size() >= _plan.segments) {
+      return false;
+    }
+    Plan();
+  }
+  const auto& planned = _plan.merges[_next++];
+  std::vector<std::string> names;
+  names.reserve(planned.inputs.size());
+  for (const auto& segment : planned.inputs) {
+    names.emplace_back(segment.name);
+  }
+  merge = _target.Compact(search::ExplicitPolicy(names), progress,
+                          _options.field_options, _slot.AnnEnv(), origin,
+                          executor, planned.lone);
+  if (search::Produced(merge.outcome)) {
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
+    _target.Publish();
+    if (_request.mode == search::MergeMode::Segments) {
+      std::erase_if(_request.segments, [&](const std::string& name) {
+        return absl::c_linear_search(names, name);
+      });
+      _request.segments.emplace_back(merge.stats.output);
+    }
+  }
+  if (merge.stats.inputs.empty()) {
+    merge.stats.inputs = std::move(names);
+  }
+  return true;
 }
 
 }  // namespace sdb::connector

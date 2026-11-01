@@ -418,10 +418,36 @@ class ListColumnReader final : public ColumnReader {
       result.Dictionary(d.lists, sel, scan_count);
       return scan_count;
     }
-    duckdb::ListVector::SetListSize(result,
-                                    static_cast<duckdb::idx_t>(child_base));
-    duckdb::ImmutableStrings::Copy(d.lists->data, result, sel, scan_count, 0,
-                                   result_offset);
+    const auto* lists =
+      duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
+      result_offset;
+    uint64_t total = 0;
+    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+      total += lists[sel.get_index(i)].length;
+    }
+    duckdb::ListVector::Reserve(result,
+                                static_cast<duckdb::idx_t>(child_base + total));
+    duckdb::SelectionVector picked{static_cast<duckdb::idx_t>(total)};
+    uint64_t pos = 0;
+    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+      const auto& list = lists[sel.get_index(i)];
+      entries[i] = duckdb::list_entry_t{child_base + pos, list.length};
+      for (uint64_t k = 0; k < list.length; ++k) {
+        picked.set_index(static_cast<duckdb::idx_t>(pos++),
+                         static_cast<duckdb::idx_t>(list.offset + k));
+      }
+    }
+    if (total != 0) {
+      duckdb::ImmutableStrings::Copy(
+        duckdb::ListVector::GetChild(d.lists->data),
+        duckdb::ListVector::GetChildMutable(result), picked,
+        static_cast<duckdb::idx_t>(total), 0,
+        static_cast<duckdb::idx_t>(child_base));
+    }
+    duckdb::ListVector::SetListSize(
+      result, static_cast<duckdb::idx_t>(child_base + total));
     return scan_count;
   }
 

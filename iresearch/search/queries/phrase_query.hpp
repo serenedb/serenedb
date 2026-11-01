@@ -60,23 +60,31 @@ class PhraseQuery : public QueryBuilder {
       static_cast<double>(std::max<uint64_t>(segment.docs_count(), 1));
     double density = 1.0;
     uint64_t postings = 0;
+    uint32_t leaves = 0;
+    const std::span<const PostingMeta> metas{this->state.metas.data(),
+                                             this->state.metas.size()};
+    const bool fixed = this->state.Fixed();
     for (size_t i = 0, n = this->state.Slots(); i != n; ++i) {
       uint64_t slot = 0;
       for (auto j = this->state.offsets[i]; j != this->state.offsets[i + 1];
            ++j) {
-        slot += this->state.metas[j].docs_count;
+        slot += metas[j].docs_count;
       }
       least = std::min(least, ClampEstimate(slot, segment));
       density *=
         std::sqrt(std::min(static_cast<double>(slot), docs_count) / docs_count);
+      if (fixed && absl::c_linear_search(metas.first(i), metas[i])) {
+        continue;
+      }
       postings += slot;
+      leaves += this->state.offsets[i + 1] - this->state.offsets[i];
     }
     _kind = QueryKind::Phrase;
     _estimate_max = least == std::numeric_limits<uint32_t>::max() ? 0 : least;
     _estimate_matches = static_cast<uint32_t>(std::ceil(
       std::sqrt(static_cast<double>(_estimate_max) * docs_count) * density));
     _postings = postings;
-    _leaves = static_cast<uint32_t>(this->state.metas.size());
+    _leaves = leaves;
   }
 
   score_t Boost() const noexcept final { return boost; }

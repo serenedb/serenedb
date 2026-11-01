@@ -90,13 +90,18 @@ class PostingPos {
       }
     }
 
+    PreparePositions(_pos, meta, pos_in, pay_in);
+  }
+
+  void PreparePositions(Position& pos, const PostingMeta& meta,
+                        const IndexInput& pos_in, const IndexInput* pay_in) {
     const DocState state{
       .pos_in = &pos_in,
       .pay_in = pay_in,
       .term_state = &meta,
       .enc_buf = Enc(),
     };
-    _pos.template Prepare<InputType>(state);
+    pos.template Prepare<InputType>(state);
   }
 
   doc_id_t Value() const noexcept { return _doc; }

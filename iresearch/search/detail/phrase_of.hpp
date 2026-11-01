@@ -72,8 +72,7 @@ template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
 auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
-  const std::span<const PostingMeta> metas{state.metas.data(),
-                                           state.metas.size()};
+  const PhraseTerms terms{{state.metas.data(), state.metas.size()}};
   const std::span<const TermInterval> intervals{query.positions};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
@@ -82,15 +81,17 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
         return ResolveMatcherOf<M, N, HasFreq, Offs>(
           query, [&]<typename Matcher>(auto&&... args) {
             return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
-              metas, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
+              terms, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
               std::forward<decltype(args)>(args)...);
           });
       };
-      if constexpr (Offs) {
-        return build.template operator()<0>();
-      } else {
-        return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), build);
+      if constexpr (!Offs) {
+        if (terms.repeats.empty()) {
+          return ResolveArity<kSlotArity, kSlotFloor>(terms.metas.size(),
+                                                      build);
+        }
       }
+      return build.template operator()<0>();
     });
   });
 }

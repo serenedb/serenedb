@@ -40,6 +40,7 @@
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
+#include "phrase_families.hpp"
 #include "phrase_slop_run.hpp"
 #include "tests_shared.hpp"
 
@@ -377,6 +378,52 @@ std::string Describe(std::span<const std::string_view> doc,
   return out;
 }
 
+std::vector<ReferenceSlot> Adjacent(std::string_view text) {
+  std::vector<ReferenceSlot> slots;
+  for (const auto word : absl::StrSplit(text, ' ')) {
+    slots.push_back({.words = {{word, irs::kNoBoost}}, .min = 1, .max = 1});
+  }
+  return slots;
+}
+
+class PhraseIndex : public tests::FamilyIndex {
+ public:
+  explicit PhraseIndex(std::span<const std::string> values) {
+    auto writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    EXPECT_NE(nullptr, writer);
+    WhitespaceTokenizer whitespace;
+    Field field{.tokenizer = &whitespace};
+    auto ctx = writer->GetBatch();
+    for (const auto& value : values) {
+      field.value = value;
+      auto doc = ctx.Insert();
+      EXPECT_TRUE(tests::InsertField(doc, field));
+    }
+    ctx.Commit();
+    writer->RefreshCommit();
+    Open();
+  }
+};
+
+tests::Families Expected(std::span<const Outcome> outcomes) {
+  tests::Families out;
+  for (irs::doc_id_t doc = 0; doc != outcomes.size(); ++doc) {
+    if (!outcomes[doc].matched) {
+      continue;
+    }
+    const auto freq = static_cast<irs::score_t>(outcomes[doc].freq);
+    ++out.count;
+    out.docs.push_back(doc);
+    out.hits.emplace(doc, freq);
+    out.top.push_back(freq);
+  }
+  out.top_total = out.count;
+  absl::c_sort(out.top, std::greater<>{});
+  out.top.resize(std::min(out.top.size(), tests::kTop));
+  return out;
+}
+
 void WidenOneGap(std::span<ReferenceSlot> slots, std::mt19937& rng) {
   if (std::ranges::none_of(slots.subspan(1), [](const ReferenceSlot& slot) {
         return slot.min != slot.max;
@@ -685,6 +732,101 @@ TEST(PhrasePositionsTest, slop_agrees_with_engine_sweep) {
   EXPECT_FLOAT_EQ(static_cast<irs::score_t>(expected.weight /
                                             static_cast<double>(expected.freq)),
                   out.scale);
+}
+
+TEST(PhrasePositionsTest, repeated_terms_agree_with_reference_across_docs) {
+  constexpr std::string_view kWords[] = {"a", "b", "r", "x"};
+  std::mt19937 rng{20261101};
+  std::vector<std::vector<std::string_view>> docs(4000);
+  std::vector<std::string> values;
+  values.reserve(docs.size());
+  for (auto& doc : docs) {
+    doc.resize(std::bernoulli_distribution{0.03}(rng)
+                 ? std::uniform_int_distribution<size_t>{150, 400}(rng)
+                 : std::uniform_int_distribution<size_t>{0, 24}(rng));
+    const double rare = std::bernoulli_distribution{0.05}(rng) ? 2.0 : 0.0;
+    std::discrete_distribution<size_t> pick{6.0, 3.0, rare, 4.0};
+    for (auto& word : doc) {
+      word = kWords[pick(rng)];
+    }
+    values.push_back(absl::StrJoin(doc, " "));
+  }
+  const PhraseIndex index{values};
+  ASSERT_EQ(1U, index.Reader().size());
+
+  const auto check = [&](const irs::ByPhraseOptions& phrase,
+                         const auto& reference) {
+    std::vector<Outcome> outcomes;
+    outcomes.reserve(docs.size());
+    for (const auto& doc : docs) {
+      outcomes.push_back(reference(doc));
+    }
+    irs::ByPhrase filter;
+    *filter.mutable_field_id() = kField;
+    *filter.mutable_options() = phrase;
+    tests::ExpectFamilies(Expected(outcomes),
+                          index.Run(filter, tests::sort::FrequencyScore{}));
+  };
+
+  for (const auto& slots : std::vector<std::vector<ReferenceSlot>>{
+         Adjacent("a a"),
+         Adjacent("a b a"),
+         Adjacent("a a a"),
+         Adjacent("b a b a"),
+         Adjacent("r a r"),
+         Adjacent("a r a"),
+         Adjacent("a b r a b"),
+         Adjacent("r r"),
+         {{.words = {{"a", irs::kNoBoost}}},
+          {.words = {{"a", irs::kNoBoost}}, .min = 1, .max = 2}},
+         {{.words = {{"r", irs::kNoBoost}}},
+          {.words = {{"a", irs::kNoBoost}}, .min = 1, .max = 3},
+          {.words = {{"r", irs::kNoBoost}}, .min = 1, .max = 2}},
+         {{.words = {{"a", irs::kNoBoost}}},
+          {.words = {{"b", irs::kNoBoost}}, .min = 1, .max = 3},
+          {.words = {{"a", irs::kNoBoost}}, .min = 1, .max = 2}},
+       }) {
+    irs::ByPhraseOptions phrase;
+    for (size_t s = 0; s != slots.size(); ++s) {
+      Push<irs::ByTermOptions>(phrase, slots[s], s == 0).term =
+        Bytes(slots[s].words.front().first);
+    }
+    SCOPED_TRACE(Describe({}, slots));
+    check(phrase, [&](std::span<const std::string_view> doc) {
+      return Reference(doc, slots);
+    });
+  }
+
+  for (const auto& [text, slop] :
+       std::vector<std::pair<std::string_view, irs::PosAttr::value_t>>{
+         {"a b a", 2}, {"r a r", 1}, {"a a", 1}, {"b a r a", 2}}) {
+    auto phrase = Phrase(text);
+    phrase.set_slop(slop);
+    const std::vector<std::string_view> words = absl::StrSplit(text, ' ');
+    std::vector<uint32_t> groups;
+    for (const auto word : words) {
+      groups.push_back(
+        static_cast<uint32_t>(absl::c_find(words, word) - words.begin()));
+    }
+    const std::vector<irs::PosAttr::value_t> steps(words.size() - 1, 1);
+    irs::detail::slop::MatchScratch scratch;
+    SCOPED_TRACE(absl::StrCat(text, " slop ", slop));
+    check(phrase, [&](std::span<const std::string_view> doc) {
+      std::vector<std::vector<irs::PosAttr::value_t>> positions;
+      for (const auto word : words) {
+        auto& at = positions.emplace_back();
+        for (uint32_t i = 0; i != doc.size(); ++i) {
+          if (doc[i] == word) {
+            at.push_back(irs::pos_limits::min() + i);
+          }
+        }
+      }
+      const auto res =
+        irs::detail::slop::Run(positions, slop, steps, scratch, false, groups);
+      return Outcome{.matched = res.any,
+                     .freq = static_cast<uint32_t>(res.freq)};
+    });
+  }
 }
 
 TEST(PhraseTokenBatchTest, matches_across_token_batches) {

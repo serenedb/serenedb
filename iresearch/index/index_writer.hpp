@@ -152,10 +152,6 @@ struct CommitInfo {
   bool payload_changed = false;
 };
 
-struct CommitOnFlush {
-  bool committed = false;
-};
-
 class IndexWriter : private util::Noncopyable {
  public:
   struct SegmentContext;
@@ -272,9 +268,8 @@ class IndexWriter : private util::Noncopyable {
 
     ~Transaction() { Abort(); }
 
-    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1,
-                    CommitOnFlush* commit_on_flush = nullptr) {
-      UpdateSegment(disable_flush, commit_on_flush);
+    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
+      UpdateSegment(disable_flush);
       return {*_active.Segment(), _queries, batch_size};
     }
 
@@ -345,11 +340,11 @@ class IndexWriter : private util::Noncopyable {
 
    private:
     bool CommitImpl(const SourcePosition& position) noexcept;
-    void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
+    void UpdateSegment(bool disable_flush);
 
     template<typename Op>
     void Queue(Op op) {
-      UpdateSegment(true, nullptr);
+      UpdateSegment(true);
       _active.Segment()->queries.emplace_back(std::move(op), _queries++);
     }
 

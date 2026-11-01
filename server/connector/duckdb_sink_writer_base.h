@@ -32,11 +32,6 @@
 #include "connector/column_id.h"
 #include "connector/index_expression.hpp"
 
-namespace irs {
-
-struct CommitOnFlush;
-
-}  // namespace irs
 namespace sdb::connector {
 
 struct ColumnDescriptor {
@@ -56,8 +51,7 @@ class DuckDBSinkIndexWriter {
   DuckDBSinkIndexWriter() = default;
   virtual ~DuckDBSinkIndexWriter() = default;
 
-  virtual void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk,
-                    irs::CommitOnFlush* commit_on_flush = nullptr) = 0;
+  virtual void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk) = 0;
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;

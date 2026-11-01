@@ -960,11 +960,10 @@ catalog::ColumnTokenizer& SearchSinkInsertBaseImpl::ResolveTokenizer(
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
-                                        const duckdb::Vector* pk,
-                                        irs::CommitOnFlush* commit_on_flush) {
+                                        const duckdb::Vector* pk) {
   SDB_ASSERT(batch_size > 0);
   _document.reset();
-  _document.emplace(_trx->Insert(false, batch_size, commit_on_flush));
+  _document.emplace(_trx->Insert(false, batch_size));
   // Insert may flush the segment mid-transaction (a pooled segment with
   // mismatched options, a full segment): cached column writers then point
   // at the flushed segment while the terms land in the fresh one.

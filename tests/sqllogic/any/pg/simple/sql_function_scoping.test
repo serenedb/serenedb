@@ -339,4 +339,49 @@ logged
 
 
 statement ok
+CREATE FUNCTION sfs.defaults(a int, b int DEFAULT 10, c int = 100) RETURNS int LANGUAGE sql AS 'SELECT a + b + c';
+
+
+query
+SELECT sfs.defaults(1) AS one, sfs.defaults(1, 2) AS two, sfs.defaults(1, 2, 3) AS three, sfs.defaults(1, c => 5) AS named;
+----
+one	two	three	named
+111	103	6	16
+
+
+statement ok
+CREATE FUNCTION sfs.fixed(x int) RETURNS int LANGUAGE sql IMMUTABLE STRICT AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION sfs.stable_one(x int) RETURNS int LANGUAGE sql STABLE AS 'SELECT x';
+
+
+query
+SELECT p.proname, p.provolatile
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'sfs' AND p.proname IN ('fixed', 'stable_one', 'strict_one')
+ORDER BY p.proname;
+----
+proname	provolatile
+fixed	i
+stable_one	s
+strict_one	v
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.fixed'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.fixed(x integer) RETURNS integer LANGUAGE sql IMMUTABLE STRICT AS $function$SELECT x$function$
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.defaults'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.defaults(a integer, b integer DEFAULT 10, c integer DEFAULT 100) RETURNS integer LANGUAGE sql AS $function$SELECT a + b + c$function$
+
+
+statement ok
 DROP SCHEMA sfs CASCADE;

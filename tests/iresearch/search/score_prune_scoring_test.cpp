@@ -42,7 +42,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/formats/posting/score_bound_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
-#include "typed_terms.hpp"
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
@@ -62,6 +61,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 

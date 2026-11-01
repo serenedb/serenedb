@@ -226,8 +226,7 @@ class SlotTermIterator final : public TermOnlyIterator {
   bool _done = true;
 };
 
-class SlotTermReader final : public BasicTermReader,
-                             private util::Noncopyable {
+class SlotTermReader final : public BasicTermReader, private util::Noncopyable {
  public:
   void Reset(field_id id, std::span<const doc_id_t> docs) noexcept {
     SDB_ASSERT(!docs.empty());

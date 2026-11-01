@@ -105,19 +105,20 @@ std::string PackReleased(const persistence::InvertedIndexData& data) {
     .top_k_scorer = data.top_k_scorer,
   };
   for (const auto& [id, field] : data.fields) {
-    released.fields.try_emplace(id, ReleasedFieldRecord{
-                                      .numeric_field_id = id + 1,
-                                      .bool_field_id = id + 2,
-                                      .null_field_id = id + 3,
-                                      .synthetic_column = field.synthetic_column,
-                                      .features = field.features,
-                                      .store_values = field.store_values,
-                                      .indexed_term_dict = field.indexed_term_dict,
-                                      .whole_value = field.whole_value,
-                                      .is_keyword = field.is_keyword,
-                                      .column_options = field.column_options,
-                                      .text_dictionary = field.text_dictionary,
-                                    });
+    released.fields.try_emplace(id,
+                                ReleasedFieldRecord{
+                                  .numeric_field_id = id + 1,
+                                  .bool_field_id = id + 2,
+                                  .null_field_id = id + 3,
+                                  .synthetic_column = field.synthetic_column,
+                                  .features = field.features,
+                                  .store_values = field.store_values,
+                                  .indexed_term_dict = field.indexed_term_dict,
+                                  .whole_value = field.whole_value,
+                                  .is_keyword = field.is_keyword,
+                                  .column_options = field.column_options,
+                                  .text_dictionary = field.text_dictionary,
+                                });
   }
   return persistence::Pack(released);
 }

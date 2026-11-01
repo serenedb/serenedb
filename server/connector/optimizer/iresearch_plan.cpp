@@ -632,8 +632,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return ResolveColumnId(ref.Binding(), bind_data, get);
   };
 
-  return fn(SearchGetters{getter, expr_getter, analyzed_fields,
-                          column_id});
+  return fn(SearchGetters{getter, expr_getter, analyzed_fields, column_id});
 }
 
 namespace {

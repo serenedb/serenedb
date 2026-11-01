@@ -35,7 +35,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/iterators.hpp>
-#include "typed_terms.hpp"
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -47,6 +46,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 

@@ -269,6 +269,10 @@ definition
 CREATE OR REPLACE FUNCTION sfs.add(v integer) RETURNS void LANGUAGE sql AS $function$INSERT INTO sfs.log VALUES (v)$function$
 
 
+statement error language "nosuchlang" (does not exist|is not supported)
+CREATE FUNCTION sfs.foreign_body() RETURNS int LANGUAGE nosuchlang AS 'SELECT 1';
+
+
 statement ok
 CREATE SEQUENCE sfs.void_seq;
 

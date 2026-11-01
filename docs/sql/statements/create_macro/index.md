@@ -88,7 +88,7 @@ An argument that is a constant expression takes the place of its parameter as it
 
 ### SQL Functions
 
-`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
+`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. Any language other than `sql` is not supported. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_036" />
 

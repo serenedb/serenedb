@@ -111,6 +111,9 @@ inline IRS_FORCE_INLINE uint32_t FilterFreqs(
       _mm256_loadu_si256(reinterpret_cast<const __m256i*>(freqs + i));
     const auto mask = static_cast<uint32_t>(_mm256_movemask_ps(
       _mm256_castsi256_ps(_mm256_cmpgt_epi32(values, edge))));
+    if (mask == 0) {
+      continue;
+    }
     const auto control = LeftPackControl(mask);
     const auto ids =
       _mm256_loadu_si256(reinterpret_cast<const __m256i*>(docs + i));

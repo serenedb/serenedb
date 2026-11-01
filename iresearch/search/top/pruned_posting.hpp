@@ -76,6 +76,9 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       _doc = doc_limits::min() + meta.doc_delta;
     }
     _least_score = BoundScore({.freq = 1, .norm = 1});
+    if (_cursor.Armed()) {
+      _most_freq = _cursor.Index().Root().freq;
+    }
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -152,7 +155,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   IRS_FORCE_INLINE void EmitCompetitive(doc_id_t* docs, uint32_t len,
                                         Visitor&& visit) {
     const auto* const freqs = _freqs.data + (docs - std::begin(_docs));
-    const auto least = LeastFreq(freqs, len);
+    const auto least = LeastFreq();
     if (least == 1) {
       Emit(docs, len, visit);
       return;
@@ -169,12 +172,11 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     visit(_kept_docs, kept, _kept_scores);
   }
 
-  uint32_t LeastFreq(const uint32_t* freqs, uint32_t len) {
+  uint32_t LeastFreq() {
     if (_least_score > _threshold) {
       return _least_freq;
     }
-    const auto most = *std::max_element(freqs, freqs + len);
-    while (_least_freq <= most) {
+    while (_least_freq <= _most_freq) {
       ++_least_freq;
       _least_score = BoundScore({.freq = _least_freq, .norm = _least_freq});
       if (_least_score > _threshold) {
@@ -191,6 +193,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   [[no_unique_address]] Admit<Table> _admit;
   score_t _least_score = std::numeric_limits<score_t>::lowest();
   uint32_t _least_freq = 1;
+  uint32_t _most_freq = 0;
 };
 
 }  // namespace irs::top

@@ -1440,12 +1440,11 @@ a	c
 2	1
 3	1
 
-query
-SELECT * RENAME (i AS j), j + 1 AS k FROM range(2) t(i) ORDER BY j
+statement error
+SELECT unnest({'a': 1, 'b': 2}) AS s, s FROM range(1)
 ----
-j	k
-0	1
-1	2
+db error: ERROR: UNNEST() on a struct column can only be applied as the root element of a SELECT expression
+
 
 statement ok
 CREATE MACRO mn_body_col(x) AS (SELECT x FROM range(3) t(r) ORDER BY r LIMIT 1)
@@ -1472,10 +1471,16 @@ statement ok
 CREATE MACRO mn_sq_once(x) AS (SELECT x FROM range(1))
 
 query
-SELECT mn_sq_once(unnest([7])) AS a, mn_sq_once(repeat('x', 5000)) = repeat('x', 5000) AS b, mn_sq_once(random()) BETWEEN 0 AND 1 AS c
+SELECT mn_sq_once(unnest([7])) AS a, len(mn_sq_once(range(10000))) AS b, mn_sq_once(random()) BETWEEN 0 AND 1 AS c, mn_sq_once((SELECT * FROM range(3) t(c) WHERE c = 2)) AS d
 ----
-a	b	c
-7	t	t
+a	b	c	d
+7	10000	t	2
+
+statement error
+SELECT mn_sq_once(abs('x'::INT)) AS a
+----
+db error: ERROR: Could not convert string 'x' to INT32
+
 
 query
 SELECT (SELECT 4) + 1 AS a FROM range(2) t(i) WHERE mn_sq_once(a) = 5
@@ -1718,16 +1723,28 @@ statement ok
 CREATE MACRO mn_tm_len(x) AS TABLE SELECT length(x) + length(x) AS n
 
 query
-SELECT n FROM mn_tm_len(repeat('y', 5000))
+SELECT n FROM mn_tm_len(json_object('a', 1))
 ----
 n
-10000
+14
+
+statement ok
+CREATE MACRO mn_tm_cnt(x) AS TABLE SELECT len(x) + len(x) AS n
 
 query
-SELECT n FROM mn_tm_len('{"a": 1}'::JSON)
+SELECT n FROM mn_tm_cnt(range(10000))
 ----
 n
-16
+20000
+
+statement ok
+CREATE MACRO mn_tm_cols(x) AS TABLE SELECT x + x AS v FROM (SELECT 1 AS c) s
+
+query
+SELECT v FROM mn_tm_cols(c + 0)
+----
+v
+2
 
 statement ok
 PREPARE mn_tm_param AS SELECT n FROM mn_tm_len($1::VARCHAR)
@@ -1812,6 +1829,12 @@ DROP TABLE mn_gen_mix
 
 statement ok
 DROP MACRO mn_tm_len
+
+statement ok
+DROP MACRO mn_tm_cnt
+
+statement ok
+DROP MACRO mn_tm_cols
 
 statement ok
 DROP MACRO mn_tm16

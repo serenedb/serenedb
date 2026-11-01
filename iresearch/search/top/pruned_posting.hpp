@@ -103,8 +103,28 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       _admit.Flush(collector);
       return;
     }
+    if (_least_freq != 1 || Blocks<false>(min, max, emit)) {
+      FilteredBlocks(min, max, emit);
+    }
+    _doc = doc_limits::eof();
+    _admit.Flush(collector);
+  }
+
+ private:
+  template<typename Visitor>
+  IRS_NO_INLINE void FilteredBlocks(doc_id_t min, doc_id_t max, Visitor& emit) {
+    Blocks<true>(min, max, emit);
+  }
+
+  template<bool Filter, typename Visitor>
+  IRS_FORCE_INLINE bool Blocks(doc_id_t min, doc_id_t max, Visitor& emit) {
     auto* const end = std::end(_docs);
     for (;;) {
+      if constexpr (!Filter) {
+        if (_least_score <= _threshold) {
+          return true;
+        }
+      }
       if (_left_in_leaf == 0) {
         if (_left_in_list == 0) {
           break;
@@ -140,42 +160,40 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
       }
       _left_in_leaf = static_cast<uint32_t>(end - stop);
       if (stop != first) {
-        EmitCompetitive(first, static_cast<uint32_t>(stop - first), emit);
+        if constexpr (Filter) {
+          EmitKept(first, static_cast<uint32_t>(stop - first), emit);
+        } else {
+          Emit(first, static_cast<uint32_t>(stop - first), emit);
+        }
       }
       if (straddles) {
         break;
       }
     }
-    _doc = doc_limits::eof();
-    _admit.Flush(collector);
+    return false;
   }
 
- private:
   template<typename Visitor>
-  IRS_FORCE_INLINE void EmitCompetitive(doc_id_t* docs, uint32_t len,
-                                        Visitor&& visit) {
+  IRS_FORCE_INLINE void EmitKept(doc_id_t* docs, uint32_t len, Visitor& visit) {
+    const auto least =
+      _least_score > _threshold ? _least_freq : RaiseLeastFreq();
+    ABSL_CACHELINE_ALIGNED doc_id_t kept_docs[doc_limits::kBlockSize];
+    ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
+    ABSL_CACHELINE_ALIGNED score_t kept_scores[doc_limits::kBlockSize];
     const auto* const freqs = _freqs.data + (docs - std::begin(_docs));
-    const auto least = LeastFreq();
-    if (least == 1) {
-      Emit(docs, len, visit);
-      return;
-    }
-    const auto kept = irs::detail::FilterFreqs(docs, freqs, len, least,
-                                               _kept_docs, _kept_freqs);
+    const auto kept =
+      irs::detail::FilterFreqs(docs, freqs, len, least, kept_docs, kept_freqs);
     if (kept == 0) {
       return;
     }
-    _fetcher->Fetch(std::span<const doc_id_t>{_kept_docs, kept});
-    _provider.freq.value = _kept_freqs;
-    _score.Score(_kept_scores, static_cast<scores_size_t>(kept));
+    _fetcher->Fetch(std::span<const doc_id_t>{kept_docs, kept});
+    _provider.freq.value = kept_freqs;
+    _score.Score(kept_scores, static_cast<scores_size_t>(kept));
     _provider.freq.value = _freqs.data;
-    visit(_kept_docs, kept, _kept_scores);
+    visit(kept_docs, kept, kept_scores);
   }
 
-  uint32_t LeastFreq() {
-    if (_least_score > _threshold) {
-      return _least_freq;
-    }
+  IRS_NO_INLINE uint32_t RaiseLeastFreq() {
     while (_least_freq <= _most_freq) {
       ++_least_freq;
       _least_score = BoundScore({.freq = _least_freq, .norm = _least_freq});
@@ -186,9 +204,6 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     return _least_freq;
   }
 
-  ABSL_CACHELINE_ALIGNED doc_id_t _kept_docs[doc_limits::kBlockSize];
-  ABSL_CACHELINE_ALIGNED uint32_t _kept_freqs[doc_limits::kBlockSize];
-  ABSL_CACHELINE_ALIGNED score_t _kept_scores[doc_limits::kBlockSize];
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] Admit<Table> _admit;
   score_t _least_score = std::numeric_limits<score_t>::lowest();

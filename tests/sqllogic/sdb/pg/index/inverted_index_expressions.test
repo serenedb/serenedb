@@ -1472,7 +1472,7 @@ statement error
 CREATE INDEX inc_e_zstd_bad ON inc_e_num USING inverted(
     id, (a + b) included (compression='zstd'));
 ----
-db error: ERROR: Column '(a + b)': compression 'ZSTD' is not supported for type INTEGER
+db error: ERROR: Can't compress column "(a + b)" with type 'INTEGER' (physical: INT32) using compression type 'ZSTD'
 
 
 statement ok

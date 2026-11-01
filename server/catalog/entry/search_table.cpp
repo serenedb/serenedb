@@ -32,6 +32,7 @@
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
@@ -190,6 +191,60 @@ void CollectLeafPhysicalTypes(const duckdb::LogicalType& type,
   }
 }
 
+duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
+  const duckdb::LogicalType& type) {
+  duckdb::vector<duckdb::PhysicalType> leaves;
+  CollectLeafPhysicalTypes(type, leaves);
+  return leaves;
+}
+
+duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
+  const auto leaves = LeafPhysicalTypes(type);
+  return leaves.size() == 1 ? leaves.front() : duckdb::PhysicalType::STRUCT;
+}
+
+bool SearchTableOnly(duckdb::CompressionType type) noexcept {
+  return duckdb::IsSereneDBCompressionType(type) ||
+         type == duckdb::CompressionType::COMPRESSION_FSST;
+}
+
+void CheckCompressionLevel(std::string_view column_name,
+                           duckdb::CompressionType type, uint32_t level,
+                           bool columnstore) {
+  if (level == 0) {
+    return;
+  }
+  const uint32_t max_level =
+    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
+      ? irs::codecs::MaxLevel(type)
+      : 0;
+  const auto name =
+    duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
+  if (max_level == 0) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Column \"", column_name, "\": compression '", name,
+                            "' takes no compression_level"));
+  }
+  if (level > max_level) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Column \"", column_name, "\": compression_level ", level,
+              " is out of range for '", name, "' (1 to ", max_level, ")"));
+  }
+}
+
+[[noreturn]] void ThrowCodecMismatch(std::string_view column_name,
+                                     duckdb::CompressionType type,
+                                     const duckdb::LogicalType& column_type,
+                                     duckdb::PhysicalType physical) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                  ERR_MSG("Can't compress column \"", column_name,
+                          "\" with type '", column_type.ToString(),
+                          "' (physical: ", duckdb::EnumUtil::ToString(physical),
+                          ") using compression type '",
+                          duckdb::CompressionTypeToString(type), "'"));
+}
+
 }  // namespace
 
 TableEngine ReadStorageEngine(const WithOptions& options) {
@@ -239,74 +294,57 @@ void RequireSearchTableIndexOption(std::string_view name) {
   }
 }
 
-duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
-  const duckdb::LogicalType& type) {
-  duckdb::vector<duckdb::PhysicalType> leaves;
-  CollectLeafPhysicalTypes(type, leaves);
-  return leaves;
-}
-
-duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
-  const auto leaves = LeafPhysicalTypes(type);
-  return leaves.size() == 1 ? leaves.front() : duckdb::PhysicalType::STRUCT;
-}
-
-bool SearchTableOnly(duckdb::CompressionType type) noexcept {
-  return duckdb::IsSereneDBCompressionType(type) ||
-         type == duckdb::CompressionType::COMPRESSION_FSST;
-}
-
-void CheckCompressionLevel(std::string_view column_name,
-                           duckdb::CompressionType type, uint32_t level,
-                           bool columnstore) {
-  if (level == 0) {
+void CheckColumnCodec(duckdb::ClientContext& context,
+                      duckdb::optional_ptr<duckdb::StorageManager> storage,
+                      std::string_view column_name,
+                      duckdb::CompressionType type, uint32_t level,
+                      const duckdb::LogicalType& column_type,
+                      TableEngine engine) {
+  const bool columnstore = engine == TableEngine::Search;
+  CheckCompressionLevel(column_name, type, level, columnstore);
+  if (SearchTableOnly(type)) {
+    if (!columnstore) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "Column \"", column_name, "\": compression '",
+          duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
+          "' is only available on search tables (WITH (storage = "
+          "'search'))"));
+    }
+    const auto leaf = LeafPhysicalType(column_type);
+    if (leaf != duckdb::PhysicalType::VARCHAR) {
+      ThrowCodecMismatch(column_name, type, column_type, leaf);
+    }
     return;
   }
-  const uint32_t max_level =
-    columnstore || type != duckdb::CompressionType::COMPRESSION_ZSTD
-      ? irs::codecs::MaxLevel(type)
-      : 0;
-  const auto name =
-    duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type));
-  if (max_level == 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Column \"", column_name, "\": compression '", name,
-                            "' takes no compression_level"));
-  }
-  if (level > max_level) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Column \"", column_name, "\": compression_level ", level,
-              " is out of range for '", name, "' (1 to ", max_level, ")"));
-  }
-}
-
-void CheckColumnCompression(const duckdb::ColumnDefinition& column,
-                            TableEngine engine) {
-  const auto type = column.CompressionType();
-  const auto& name = column.Name().GetIdentifierName();
-  CheckCompressionLevel(name, type, column.CompressionLevel(),
-                        engine == TableEngine::Search);
-  if (!SearchTableOnly(type)) {
+  if (!columnstore || type == duckdb::CompressionType::COMPRESSION_AUTO) {
     return;
   }
-  if (engine != TableEngine::Search) {
+  if (const auto available = duckdb::CompressionTypeIsAvailable(type, storage);
+      !available.IsAvailable()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("Column \"", name, "\": compression '",
-              duckdb::StringUtil::Lower(duckdb::CompressionTypeToString(type)),
-              "' is only available on search tables (WITH (storage = "
-              "'search'))"));
+      ERR_MSG("Can't compress using user-provided compression type '",
+              duckdb::CompressionTypeToString(type), "', that type is ",
+              available.IsDeprecated()
+                ? "deprecated and only has decompress support"
+                : "not available yet"));
   }
-  const auto physical = LeafPhysicalType(column.GetType());
-  if (physical != duckdb::PhysicalType::VARCHAR) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                    ERR_MSG("Can't compress column \"", name, "\" with type '",
-                            column.GetType().ToString(), "' (physical: ",
-                            duckdb::EnumUtil::ToString(physical),
-                            ") using compression type '",
-                            duckdb::CompressionTypeToString(type), "'"));
+  const auto& config = duckdb::DBConfig::GetConfig(context);
+  const auto compresses = [&](duckdb::PhysicalType physical) {
+    const auto function = config.TryGetCompressionFunction(type, physical);
+    return function && function->init_analyze;
+  };
+  const auto physical = column_type.InternalType();
+  if (compresses(physical)) {
+    return;
   }
+  if (const auto leaves = LeafPhysicalTypes(column_type);
+      !leaves.empty() && absl::c_all_of(leaves, compresses)) {
+    return;
+  }
+  ThrowCodecMismatch(column_name, type, column_type, physical);
 }
 
 SearchTableEntry::SearchTableEntry(

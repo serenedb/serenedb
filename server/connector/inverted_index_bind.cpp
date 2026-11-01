@@ -34,10 +34,8 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/execution/expression_executor.hpp>
-#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
@@ -231,54 +229,6 @@ void ParseBitsOption(std::string_view kind, std::string_view column_name,
   }
   quant.nb_bits = static_cast<uint32_t>(whole);
   quant.half_bit = frac != 0.0;
-}
-
-// Parse a user-supplied compression name into a duckdb::CompressionType.
-duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
-                                             std::string_view column_name,
-                                             std::string_view name) {
-  const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
-  if (catalog::SearchTableOnly(type)) {
-    return type;
-  }
-  auto& storage =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
-      .GetAttached()
-      .GetStorageManager();
-  if (!duckdb::CompressionTypeIsAvailable(type, &storage).IsAvailable()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Column '", column_name, "': compression '", name,
-                            "' is not available"));
-  }
-  return type;
-}
-
-// Reject the `compression` option if the named codec doesn't support
-// the column's leaf physical type. Without this check, the failure
-// surfaces only during the asynchronous segment commit (logged, not
-// returned), so CREATE INDEX would falsely report success.
-void ValidateColumnCompression(duckdb::ClientContext& context,
-                               std::string_view column_name,
-                               duckdb::CompressionType compression,
-                               const duckdb::LogicalType& column_type) {
-  if (compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-    return;
-  }
-  const auto& db_config = duckdb::DBConfig::GetConfig(context);
-  const auto leaf = catalog::LeafPhysicalType(column_type);
-  if (catalog::SearchTableOnly(compression)) {
-    if (leaf == duckdb::PhysicalType::VARCHAR) {
-      return;
-    }
-  } else if (auto fn = db_config.TryGetCompressionFunction(compression, leaf);
-             fn && fn->init_analyze) {
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-    ERR_MSG("Column '", column_name, "': compression '",
-            duckdb::CompressionTypeToString(compression),
-            "' is not supported for type ", column_type.ToString()));
 }
 
 std::string DescribeKnownOpclassTypes() {
@@ -658,9 +608,9 @@ void ApplyIncludedOpclass(
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
       entry.column_options.compression =
-        ParseCompressionName(context, owner_label,
-                             GetIndexStringOption(catalog::kIncludedKind,
-                                                  owner_label, key, raw_val));
+        duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+          GetIndexStringOption(catalog::kIncludedKind, owner_label, key,
+                               raw_val));
     } else if (key == kCompressionLevelField) {
       level = ParsePositiveUintOption(catalog::kIncludedKind, owner_label, key,
                                       raw_val);
@@ -676,10 +626,13 @@ void ApplyIncludedOpclass(
                 "hyperloglog (bool, default false)"));
     }
   }
-  ValidateColumnCompression(context, owner_label,
-                            entry.column_options.compression, value_type);
-  catalog::CheckCompressionLevel(owner_label, entry.column_options.compression,
-                                 level, /*columnstore=*/true);
+  auto& storage =
+    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
+      .GetAttached()
+      .GetStorageManager();
+  catalog::CheckColumnCodec(context, &storage, owner_label,
+                            entry.column_options.compression, level, value_type,
+                            catalog::TableEngine::Search);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 

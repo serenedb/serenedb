@@ -521,19 +521,19 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     return duckdb::ErrorData{
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
   }
-  for (const auto& column : info.Base().columns.Logical()) {
-    CheckColumnCompression(
-      column, search ? TableEngine::Search : TableEngine::Transactional);
-  }
   return {};
 }
 
-duckdb::vector<duckdb::PhysicalType> SereneDBCatalog::CompressionLeafTypes(
-  const duckdb::CreateTableInfo& info, const duckdb::LogicalType& type) const {
-  if (ReadStorageEngine(info.options) != TableEngine::Search) {
-    return {};
-  }
-  return LeafPhysicalTypes(type);
+bool SereneDBCatalog::VerifyColumnCompression(
+  duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::StorageManager> storage_manager,
+  const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
+  const duckdb::LogicalType& type) const {
+  const auto engine = ReadStorageEngine(info.options);
+  CheckColumnCodec(context, storage_manager, column.Name().GetIdentifierName(),
+                   column.CompressionType(), column.CompressionLevel(), type,
+                   engine);
+  return engine == TableEngine::Search;
 }
 
 std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(
@@ -730,29 +730,6 @@ static void RefuseViewAlter(const duckdb::AlterTableInfo& info,
                   ERR_DETAIL("This operation is not supported for views."));
 }
 
-static void CheckAlterCompression(const duckdb::AlterTableInfo& info,
-                                  const duckdb::TableCatalogEntry& table) {
-  const auto engine = dynamic_cast<const SearchTableEntry*>(&table)
-                        ? TableEngine::Search
-                        : TableEngine::Transactional;
-  if (info.alter_table_type == duckdb::AlterTableType::ADD_COLUMN) {
-    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
-                           engine);
-    return;
-  }
-  if (info.alter_table_type != duckdb::AlterTableType::SET_COLUMN_COMPRESSION) {
-    return;
-  }
-  const auto& set = info.Cast<duckdb::SetColumnCompressionInfo>();
-  if (!table.ColumnExists(set.column_name)) {
-    return;
-  }
-  auto column = table.GetColumn(set.column_name).Copy();
-  column.SetCompressionType(set.compression_type);
-  column.SetCompressionLevel(set.compression_level);
-  CheckColumnCompression(column, engine);
-}
-
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
                                              duckdb::AlterInfo& info) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -774,11 +751,6 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   if (lookup.entry->type == duckdb::CatalogType::VIEW_ENTRY) {
     RefuseViewAlter(info.Cast<duckdb::AlterTableInfo>(), name);
-    return;
-  }
-  if (lookup.entry->type == duckdb::CatalogType::TABLE_ENTRY) {
-    CheckAlterCompression(info.Cast<duckdb::AlterTableInfo>(),
-                          lookup.entry->Cast<duckdb::TableCatalogEntry>());
   }
 }
 

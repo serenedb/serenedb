@@ -387,6 +387,26 @@ db error: ERROR: Column "w": compression 'dict_zstd' is only available on search
 statement ok
 DROP TABLE lvl_plain;
 
+# A type change keeps the declared codec, so the new type must take it.
+statement ok
+CREATE TABLE lvl_retype (a INTEGER USING COMPRESSION bitpacking);
+
+statement error
+ALTER TABLE lvl_retype ALTER COLUMN a TYPE TEXT;
+----
+db error: ERROR: Can't compress column "a" with type 'VARCHAR' (physical: VARCHAR) using compression type 'BitPacking'
+
+
+statement ok
+DROP TABLE lvl_retype;
+
+# A search table only takes a codec its columnstore can choose for the data.
+statement error
+CREATE TABLE lvl_constant (a INTEGER PRIMARY KEY, v INTEGER USING COMPRESSION constant) WITH (storage = 'search');
+----
+db error: ERROR: Can't compress column "v" with type 'INTEGER' (physical: INT32) using compression type 'Constant'
+
+
 statement error
 CREATE TEMP TABLE lvl_temp (a INTEGER, v TEXT USING COMPRESSION dict_lz4);
 ----

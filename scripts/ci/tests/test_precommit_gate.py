@@ -8,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github" / "workflows" / "simple.yml"
+STATUS_WORKFLOW = ROOT / ".github" / "workflows" / "gitlink-status.yml"
 
 
 def load_ci():
@@ -17,17 +18,17 @@ def load_ci():
     return module
 
 
-def step_lines():
-    return WORKFLOW.read_text().splitlines()
+def step_lines(workflow=WORKFLOW):
+    return workflow.read_text().splitlines()
 
 
-def step_index(marker):
-    return next(i for i, line in enumerate(step_lines()) if marker in line)
+def step_index(marker, workflow=WORKFLOW):
+    return next(i for i, line in enumerate(step_lines(workflow)) if marker in line)
 
 
-def step_script(name):
-    lines = step_lines()
-    start = step_index(f"name: {name}")
+def step_script(name, workflow=WORKFLOW):
+    lines = step_lines(workflow)
+    start = step_index(f"name: {name}", workflow)
     run = next(i for i in range(start, len(lines)) if lines[i].strip() == "run: |")
     indent = len(lines[run]) - len(lines[run].lstrip()) + 2
     body = []
@@ -47,67 +48,110 @@ def test_one_gitlink_check_runs_before_the_hooks_and_the_family_checks_around_th
     assert "".join(step_lines()).count("check_submodule_pointers.py") == 1
 
 
+def stub_check(root):
+    (root / "scripts").mkdir()
+    (root / "scripts" / "check_submodule_pointers.py").write_text(
+        "import os, sys\nprint(os.environ['STUB_LINE'])\n"
+        "open('check.log', 'w').write(' '.join(sys.argv[1:]))\n"
+        "sys.exit(int(os.environ['STUB_RC']))\n")
+
+
 @pytest.fixture()
 def gate(tmp_path):
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "check_submodule_pointers.py").write_text(
-        "import os, sys\nprint(os.environ['STUB_LINE'])\nsys.exit(int(os.environ['STUB_RC']))\n")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    gh = bin_dir / "gh"
-    gh.write_text('#!/bin/bash\necho "$*" >> "$GH_LOG"\n'
-                  'if [[ "$*" == *"/status --jq"* ]]; then printf "%s\\n" $STUB_CONTEXTS; fi\n')
-    gh.chmod(0o755)
+    stub_check(tmp_path)
     script = tmp_path / "step.sh"
     script.write_text(step_script("Check submodule gitlinks"))
 
-    def run(rc, line="", from_fork="false", contexts="", head_sha="abc123"):
-        log = tmp_path / "gh.log"
-        log.unlink(missing_ok=True)
-        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", GH_LOG=str(log),
-                   STUB_RC=str(rc), STUB_LINE=line, STUB_CONTEXTS=contexts, HEAD_SHA=head_sha,
-                   FROM_FORK=from_fork, RUN_URL="https://example.invalid/run",
-                   GITHUB_REPOSITORY="serenedb/serenedb")
-        res = subprocess.run(["bash", "-eo", "pipefail", str(script)], cwd=tmp_path, env=env,
-                             capture_output=True, text=True)
-        return res.returncode, log.read_text() if log.exists() else ""
+    def run(rc, event):
+        env = dict(os.environ, STUB_RC=str(rc), STUB_LINE="", EVENT=event)
+        return subprocess.run(["bash", "-eo", "pipefail", str(script)], cwd=tmp_path, env=env,
+                              capture_output=True, text=True).returncode
 
     return run
 
 
-PENDING = ("third_party/duckdb: gitlink 1234 is pending: head of open serenedb/duckdb#211 "
+@pytest.mark.parametrize("rc, event, passes", [
+    (0, "pull_request", True),
+    (3, "pull_request", True),
+    (1, "pull_request", False),
+    (0, "push", True),
+    (3, "push", False),
+])
+def test_a_gitlink_at_an_open_fork_pr_head_passes_any_pr_but_not_main(gate, rc, event, passes):
+    assert (gate(rc, event) == 0) == passes
+
+
+HEAD = "a" * 40
+BASE = "b" * 40
+PENDING = (f"third_party/duckdb: gitlink {'c' * 40} is pending: head of open serenedb/duckdb#193 "
            "into v2026.10.06")
 
 
-def test_a_gitlink_at_an_open_fork_pr_head_posts_a_pending_status(gate):
-    rc, log = gate(3, PENDING)
+@pytest.fixture()
+def status(tmp_path):
+    stub_check(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text('#!/bin/bash\necho "gh $*" >> "$CALLS"\n'
+                                'if [[ "$*" == *"/compare/main..."* ]]; then echo "$STUB_BASE"; fi\n'
+                                'if [[ "$*" == *"/status --jq"* ]]; then printf "%s\\n" $STUB_CONTEXTS; fi\n')
+    (bin_dir / "git").write_text('#!/bin/bash\necho "git $*" >> "$CALLS"\n')
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text(step_script("Post the pre-commit status of the gitlinks", STATUS_WORKFLOW))
+
+    def run(rc, line="", event="workflow_run", contexts="", head_sha=HEAD):
+        calls = tmp_path / "calls.log"
+        calls.unlink(missing_ok=True)
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", CALLS=str(calls),
+                   STUB_RC=str(rc), STUB_LINE=line, STUB_CONTEXTS=contexts, STUB_BASE=BASE,
+                   EVENT=event, HEAD_SHA=head_sha, RUN_URL="https://example.invalid/run",
+                   GITHUB_REPOSITORY="serenedb/serenedb")
+        res = subprocess.run(["bash", "-eo", "pipefail", str(script)], cwd=tmp_path, env=env,
+                             capture_output=True, text=True)
+        return res.returncode, calls.read_text() if calls.exists() else ""
+
+    return run
+
+
+def test_a_gitlink_at_an_open_fork_pr_head_gets_a_pending_status_on_the_pr_head(status, tmp_path):
+    rc, calls = status(3, PENDING)
     assert rc == 0
-    assert "-f state=pending" in log
-    assert "Waiting for serenedb/duckdb#211" in log
+    assert f"git fetch --quiet --no-tags --depth=1 origin {HEAD} {BASE}" in calls
+    assert (tmp_path / "check.log").read_text() == f"--rev {HEAD} --base {BASE}"
+    assert f"statuses/{HEAD} -f state=pending -f context=pre-commit" in calls
+    assert "Waiting for serenedb/duckdb#193" in calls
 
 
-def test_a_pending_gitlink_from_a_forked_pr_fails_the_job(gate):
-    rc, log = gate(3, PENDING, from_fork="true")
+def test_landed_gitlinks_turn_an_earlier_pending_status_green(status):
+    rc, calls = status(0, contexts="pre-commit")
+    assert rc == 0
+    assert f"statuses/{HEAD} -f state=success" in calls
+
+
+def test_landed_gitlinks_post_nothing_when_no_status_is_pending(status):
+    rc, calls = status(0)
+    assert rc == 0
+    assert f"statuses/{HEAD}" not in calls
+
+
+def test_a_run_land_sh_dispatches_posts_success_without_a_pending_status(status):
+    rc, calls = status(0, event="workflow_dispatch")
+    assert rc == 0
+    assert f"statuses/{HEAD} -f state=success" in calls
+
+
+def test_a_gitlink_off_every_version_branch_posts_no_status(status):
+    rc, calls = status(1, "third_party/duckdb: gitlink 1234 not reachable from any version branch")
     assert rc == 1
-    assert "statuses/abc123" not in log
+    assert f"statuses/{HEAD}" not in calls
 
 
-def test_a_gitlink_off_every_version_branch_fails_without_a_status(gate):
-    rc, log = gate(1, "third_party/duckdb: gitlink 1234 not reachable from any version branch")
+def test_a_dispatch_with_anything_but_a_commit_hash_does_nothing(status):
+    rc, calls = status(0, event="workflow_dispatch", head_sha="main")
     assert rc == 1
-    assert log == ""
-
-
-def test_landed_gitlinks_turn_an_earlier_pending_status_green(gate):
-    rc, log = gate(0, contexts="pre-commit")
-    assert rc == 0
-    assert "-f state=success" in log
-
-
-def test_landed_gitlinks_post_nothing_when_no_status_is_pending(gate):
-    rc, log = gate(0, contexts="")
-    assert rc == 0
-    assert "statuses/abc123" not in log
+    assert calls == ""
 
 
 @pytest.mark.parametrize("event, changed, all_files", [

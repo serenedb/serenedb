@@ -17,11 +17,13 @@ satisfy rule 1.
 
 A gitlink that breaks rule 1 but is the head of an open fork PR into
 main's version branch or a newer one is pending, not failed: the PR is
-waiting for that fork PR to land: the script exits 3, which the PR's
-pre-commit job turns into a pending `pre-commit` status. --rev checks the gitlinks
-of a commit instead of the index, --base compares with another commit.
---reachable also checks that every gitlink, changed or not, can be
-fetched from its URL, all of them at once.
+waiting for that fork PR to land, whether its branch lives in the fork
+or in a fork of it: the script exits 3, which the PR's pre-commit job
+passes and `auto | gitlink status` turns into a pending `pre-commit`
+status. --rev checks the gitlinks of a commit instead of the index,
+--base compares with another commit. --reachable also checks that every
+gitlink, changed or not, can be fetched from its URL, all of them at
+once.
 
 Validation prefers the local submodule clone (pure git, works offline);
 without one (CI checks out with submodules: false) it falls back to the
@@ -273,20 +275,18 @@ class Unreachable(Exception):
 
 
 def open_fork_pr(repo: str, sha: str) -> tuple[str, str] | None:
-    code, body = api_get(f"repos/{repo}/commits/{sha}/pulls")
-    if code in (404, 422):
-        return None
-    if code != 200 or not isinstance(body, list):
-        raise Unreachable(f"cannot list the pull requests of {sha} on {repo}")
-    for pr in body:
-        base = pr.get("base", {}).get("ref", "")
-        if (
-            pr.get("state") == "open"
-            and pr.get("head", {}).get("sha") == sha
-            and VERSION_BRANCH.match(base)
-        ):
-            return f"{repo}#{pr['number']} into {base}", base
-    return None
+    page = 1
+    while True:
+        code, body = api_get(f"repos/{repo}/pulls?state=open&per_page=100&page={page}")
+        if code != 200 or not isinstance(body, list):
+            raise Unreachable(f"cannot list the open pull requests of {repo}")
+        for pr in body:
+            base = pr.get("base", {}).get("ref", "")
+            if pr.get("head", {}).get("sha") == sha and VERSION_BRANCH.match(base):
+                return f"{repo}#{pr['number']} into {base}", base
+        if len(body) < 100:
+            return None
+        page += 1
 
 
 def validate_api(
@@ -417,34 +417,39 @@ def reachable(rev: str | None) -> bool:
     return not any(errors)
 
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument(
-    "--reachable",
-    action="store_true",
-    help="also check that every gitlink of the commit can be fetched from its URL",
-)
-parser.add_argument("--path", help="check only this submodule path")
-parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
-parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
-parser.add_argument(
-    "--base",
-    help="check only the gitlinks that differ from this commit "
-    "(default: the merge base with origin/main)",
-)
-args, _ = parser.parse_known_args()
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="also check that every gitlink of the commit can be fetched from its URL",
+    )
+    parser.add_argument("--path", help="check only this submodule path")
+    parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
+    parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
+    parser.add_argument(
+        "--base",
+        help="check only the gitlinks that differ from this commit "
+        "(default: the merge base with origin/main)",
+    )
+    args, _ = parser.parse_known_args()
 
-if args.path:
-    paths = [args.path]
-else:
-    base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
-    paths = checked_paths(args.rev, base)
-    if paths is None:
-        print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
-        sys.exit(1)
-fetchable = not args.reachable or reachable(args.rev)
-results = [check(path, args.sha, args.rev) for path in paths]
-if not fetchable or "fail" in results:
-    sys.exit(1)
-if "pending" in results:
-    sys.exit(3)
-sys.exit(0)
+    if args.path:
+        paths = [args.path]
+    else:
+        base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
+        paths = checked_paths(args.rev, base)
+        if paths is None:
+            print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
+            return 1
+    fetchable = not args.reachable or reachable(args.rev)
+    results = [check(path, args.sha, args.rev) for path in paths]
+    if not fetchable or "fail" in results:
+        return 1
+    if "pending" in results:
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

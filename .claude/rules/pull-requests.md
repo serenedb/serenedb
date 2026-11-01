@@ -14,10 +14,10 @@
 
 Every submodule under `third_party/` is our fork, except the upstream ones `scripts/check_submodule_pointers.py` excludes (`cmocka`, `yaclib`); the in-tree directories there are ordinary serenedb code.
 
-- A fork change is a PR into the fork's current version branch (`vYYYY.MM.DD`, the one main's gitlink is on), and the serenedb PR points the gitlink at that PR's head: CI builds both together. Until the fork PR lands, the PR's `pre-commit` job reports the gitlink as pending with a pending `pre-commit` status, which blocks the merge; `scripts/check_submodule_pointers.py` runs the same check locally (exit 3: pending).
+- A fork change is a PR into the fork's current version branch (`vYYYY.MM.DD`, the one main's gitlink is on), and the serenedb PR points the gitlink at that PR's head: CI builds both together. Either PR may come from your own fork of the repository it targets, as an outside contributor's do. Until the fork PR lands, the PR has a pending `pre-commit` status, which blocks the merge; `scripts/check_submodule_pointers.py` runs the same check locally (exit 3: pending).
 - Fork PRs land by fast-forward, so their commits, with the hashes CI built, are the fork history reviewers keep: one concern per commit, complete across every path it spans, a conventional subject with a scope (`fix(planner): ...`), every message final.
 - A fix to lines one of our fork commits introduced is a `fixup! <that commit's subject>` commit, found by blaming those lines, so the next update folds it into its commit.
-- Land only when the user says to, with `scripts/land.sh <serenedb PR>`: a dry run prints the plan, `--yes` fast-forwards each version branch to its fork PR's head, reruns the PR's `pre-commit` run and squash-merges the PR. It stops when a fork PR no longer fast-forwards its version branch: rebase the fork PR onto it and usually the serenedb PR onto main, point the gitlink at the new head and run CI again: a green run proves only the tree it built.
+- Land only when the user says to, with `scripts/land.sh <serenedb PR>`: a dry run prints the plan, `--yes` fast-forwards each version branch to its fork PR's head, waits for the PR's `pre-commit` status to turn green and squash-merges the PR. It stops when a fork PR no longer fast-forwards its version branch: rebase the fork PR onto it and usually the serenedb PR onto main, point the gitlink at the new head and run CI again: a green run proves only the tree it built.
 
 ## Pushing
 

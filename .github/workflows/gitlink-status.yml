@@ -1,0 +1,60 @@
+name: auto | gitlink status
+
+on:
+  workflow_run:
+    workflows: ['auto | pre-commit']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      SHA:
+        description: 'Head commit of the PR whose pre-commit status to post (scripts/land.sh dispatches it after landing)'
+        type: string
+        required: true
+
+jobs:
+  status:
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
+    concurrency:
+      group: gitlink-status-${{ inputs.SHA || github.event.workflow_run.head_sha }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - name: Post the pre-commit status of the gitlinks
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ github.token }}
+        EVENT: ${{ github.event_name }}
+        HEAD_SHA: ${{ inputs.SHA || github.event.workflow_run.head_sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$HEAD_SHA is not a commit hash"; exit 1; }
+        base=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$HEAD_SHA" --jq .merge_base_commit.sha)
+        git fetch --quiet --no-tags --depth=1 origin "$HEAD_SHA" "$base"
+        rc=0
+        python3 scripts/check_submodule_pointers.py --rev "$HEAD_SHA" --base "$base" 2>&1 | tee gitlinks.log || rc=$?
+        [[ $rc == 0 || $rc == 3 ]] || exit 1
+        if [[ $rc == 3 ]]; then
+          state=pending
+          description="Waiting for $(sed -n 's/.* is pending: head of open \([^ ]*\) .*/\1/p' gitlinks.log | paste -sd' ')"
+        else
+          if [[ "$EVENT" == workflow_run ]]; then
+            contexts=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/status" --jq '.statuses[].context')
+            grep -qx pre-commit <<<"$contexts" || exit 0
+          fi
+          state=success
+          description='Every gitlink is on a version branch'
+        fi
+        gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" -f state=$state -f context=pre-commit \
+          -f description="${description:0:140}" -f target_url="$RUN_URL" >/dev/null

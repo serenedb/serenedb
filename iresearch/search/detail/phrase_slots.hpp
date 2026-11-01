@@ -36,28 +36,69 @@
 
 namespace irs::detail {
 
+struct PhraseTerms {
+  struct Repeat {
+    uint32_t slot;
+    uint32_t first;
+  };
+
+  explicit PhraseTerms(std::span<const PostingMeta> metas) : metas{metas} {
+    for (uint32_t slot = 0; slot != metas.size(); ++slot) {
+      const auto first = static_cast<uint32_t>(
+        std::find(metas.begin(), metas.begin() + slot, metas[slot]) -
+        metas.begin());
+      if (first == slot) {
+        leaves.push_back(slot);
+      } else {
+        repeats.push_back({slot, first});
+      }
+    }
+  }
+
+  std::span<const PostingMeta> metas;
+  absl::InlinedVector<uint32_t, 8> leaves;
+  absl::InlinedVector<Repeat, 4> repeats;
+};
+
 template<typename Matcher, typename Leaf, size_t N = 0, typename Slot = Leaf>
 class PhraseSlots {
   static constexpr bool kVariadic = !std::is_same_v<Slot, Leaf>;
+  static constexpr bool kRepeats = !kVariadic && N == 0;
 
  public:
   template<typename... Args>
-  PhraseSlots(std::span<const PostingMeta> metas,
-              std::span<const TermInterval> intervals, const IndexInput& doc_in,
-              IndexFeatures layout, const IndexInput& pos_in,
-              const IndexInput* pay_in, Args&&... args)
-    : _matcher{metas.size(), std::forward<Args>(args)...},
-      _leaves{metas.size(), [&](uint32_t j) { return metas[j].docs_count; },
+  PhraseSlots(const PhraseTerms& terms, std::span<const TermInterval> intervals,
+              const IndexInput& doc_in, IndexFeatures layout,
+              const IndexInput& pos_in, const IndexInput* pay_in,
+              Args&&... args)
+    : _matcher{terms.metas.size(), std::forward<Args>(args)...},
+      _repeats{terms.repeats.size()},
+      _leaves{terms.leaves,
+              [&](uint32_t j) { return terms.metas[j].docs_count; },
               [&](uint32_t j) {
-                return std::forward_as_tuple(metas[j], doc_in, layout, pos_in,
-                                             pay_in);
+                return std::forward_as_tuple(terms.metas[j], doc_in, layout,
+                                             pos_in, pay_in);
               },
               [&](uint32_t j, Leaf& leaf) {
                 _matcher.Position(j) = {&leaf.Positions(), intervals[j]};
+                if constexpr (kRepeats) {
+                  for (size_t i = 0; i != terms.repeats.size(); ++i) {
+                    const auto [slot, first] = terms.repeats[i];
+                    if (first != j) {
+                      continue;
+                    }
+                    auto& repeat = _repeats[i];
+                    leaf.PreparePositions(repeat.pos, terms.metas[slot], pos_in,
+                                          pay_in);
+                    repeat.lead = &leaf.Positions();
+                    _matcher.Position(slot) = {&repeat.pos, intervals[slot]};
+                  }
+                }
               }} {
     static_assert(!kVariadic);
-    SDB_ASSERT(metas.size() == intervals.size());
-    SDB_ASSERT(metas.size() > 1);
+    SDB_ASSERT(terms.metas.size() == intervals.size());
+    SDB_ASSERT(terms.metas.size() > 1);
+    SDB_ASSERT(kRepeats || terms.repeats.empty());
     _matcher.Finish();
   }
 
@@ -270,11 +311,28 @@ class PhraseSlots {
       for (auto& slot : _leaves) {
         slot.OnMatch();
       }
+    } else if constexpr (kRepeats) {
+      if (!_repeats.empty()) {
+        FollowRepeats();
+      }
     }
   }
 
+  IRS_NO_INLINE void FollowRepeats() noexcept {
+    for (auto& repeat : _repeats) {
+      repeat.pos.Follow(*repeat.lead);
+    }
+  }
+
+  struct Repeat {
+    typename Leaf::Position pos;
+    const typename Leaf::Position* lead = nullptr;
+  };
+
   [[no_unique_address]] utils::Need<kVariadic, containers::Fixed<Leaf>> _terms;
   Matcher _matcher;
+  [[no_unique_address]] utils::Need<kRepeats, containers::Fixed<Repeat>>
+    _repeats;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
   containers::Fixed<SlotGate, N> _gates{

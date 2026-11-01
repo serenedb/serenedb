@@ -580,6 +580,23 @@ TEST_P(PrunedTopTest, phrases_probe_dense_terms_when_most_candidates_pass) {
   CheckRanking(*PhraseOf(std::vector<std::string_view>{"brass", "band"}));
 }
 
+TEST_P(PrunedTopTest, phrases_with_repeated_terms) {
+  Build(PhrasesText);
+  for (const auto& parts : std::vector<std::vector<std::string_view>>{
+         {"brass", "brass"},
+         {"brass", "brass", "band"},
+         {"of", "of"},
+         {"brass", "brass", "brass", "brass"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(parts, " "));
+    CheckRanking(*PhraseOf(parts));
+  }
+  for (const auto occur : {irs::Occur::Should, irs::Occur::Must}) {
+    CheckMixed({{{"brass", "brass"}}, {"band"}, {}}, occur);
+    CheckMixed({{{"of", "of"}}, {"town"}, {}}, occur);
+  }
+}
+
 TEST_P(PrunedTopTest, unions_with_phrases) {
   Build(PhrasesText);
   for (const auto& shape : std::vector<Mixed>{

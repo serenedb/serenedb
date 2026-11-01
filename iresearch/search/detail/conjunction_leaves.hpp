@@ -42,6 +42,15 @@ class ConjunctionLeaves {
                                estimate),
                         make, emit} {}
 
+  template<typename Estimate, typename Make, typename Emit>
+  ConjunctionLeaves(std::span<const uint32_t> indices, Estimate&& estimate,
+                    Make&& make, Emit&& emit)
+    : ConjunctionLeaves{
+        SortBy(Order{indices.size(),
+                     [&](uint32_t& j, size_t i) noexcept { j = indices[i]; }},
+               estimate),
+        make, emit} {}
+
   ConjunctionLeaves(ConjunctionLeaves&&) = delete;
   ConjunctionLeaves& operator=(ConjunctionLeaves&&) = delete;
 

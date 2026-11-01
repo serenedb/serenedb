@@ -35,6 +35,7 @@
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -463,13 +464,16 @@ class PhraseSlopMatcher {
     }
 
 #ifdef SDB_DEV
-    if constexpr (N != 0) {
-      if (detail::slop::StaticArityDisabled()) [[unlikely]] {
-        return Run<0>();
-      }
+    if (detail::slop::StaticArityDisabled()) [[unlikely]] {
+      return Run<0>();
     }
 #endif
-    return Run<N>();
+    if constexpr (N == 0) {
+      return detail::ResolveArity<detail::kSlotArity, detail::kSlotFloor>(
+        _pos.size(), [&]<size_t Arity> { return Run<Arity>(); });
+    } else {
+      return Run<N>();
+    }
   }
 
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
@@ -497,8 +501,6 @@ class PhraseSlopMatcher {
   }
 
  private:
-  using Cursors = detail::slop::IterCursors<Positions, Offs, HasBoost>;
-
   uint32_t NextPosition() {
     if constexpr (!Offs || !HasFreq) {
       return 0;
@@ -515,7 +517,18 @@ class PhraseSlopMatcher {
 
   template<size_t Arity>
   bool Run() {
-    Cursors cur{_pos, _match_scratch};
+    if constexpr (N == 0 && Arity != 0) {
+      containers::Fixed<TermPosition, Arity> slots{
+        Arity, [&](TermPosition& slot, size_t i) noexcept { slot = _pos[i]; }};
+      return Run<Arity>(slots);
+    } else {
+      return Run<Arity>(_pos);
+    }
+  }
+
+  template<size_t Arity, typename Slots>
+  bool Run(Slots& slots) {
+    detail::slop::IterCursors<Slots, Offs, HasBoost> cur{slots, _match_scratch};
     const auto res = detail::slop::Sweep<Arity>(
       cur, {_offsets.data(), _offsets.size()}, _max_slop, _pairs,
       _match_scratch, !HasFreq, [&] {

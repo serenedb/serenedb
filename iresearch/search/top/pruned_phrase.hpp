@@ -193,6 +193,9 @@ class PrunedPhrase : public Root {
     for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
       const auto bound = _slots.FreqBound();
+      if (bound == 0) {
+        continue;
+      }
       _freqs[0] = bound;
       if (!Gated || fetched != doc) {
         _fetcher.Fetch(doc);

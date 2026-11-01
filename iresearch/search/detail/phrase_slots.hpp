@@ -40,6 +40,7 @@ struct PhraseTerms {
   struct Repeat {
     uint32_t slot;
     uint32_t first;
+    uint32_t rank;
   };
 
   explicit PhraseTerms(std::span<const PostingMeta> metas) : metas{metas} {
@@ -50,7 +51,9 @@ struct PhraseTerms {
       if (first == slot) {
         leaves.push_back(slot);
       } else {
-        repeats.push_back({slot, first});
+        const auto rank = static_cast<uint32_t>(std::count(
+          metas.begin() + first + 1, metas.begin() + slot + 1, metas[slot]));
+        repeats.push_back({slot, first, rank});
       }
     }
   }
@@ -82,8 +85,12 @@ class PhraseSlots {
               [&](uint32_t j, Leaf& leaf) {
                 _matcher.Position(j) = {&leaf.Positions(), intervals[j]};
                 if constexpr (kRepeats) {
+                  const bool distinct = absl::c_none_of(
+                    intervals.subspan(1), [](const TermInterval& interval) {
+                      return interval.offs_min == 0;
+                    });
                   for (size_t i = 0; i != terms.repeats.size(); ++i) {
-                    const auto [slot, first] = terms.repeats[i];
+                    const auto [slot, first, rank] = terms.repeats[i];
                     if (first != j) {
                       continue;
                     }
@@ -91,6 +98,7 @@ class PhraseSlots {
                     leaf.PreparePositions(repeat.pos, terms.metas[slot], pos_in,
                                           pay_in);
                     repeat.lead = &leaf.Positions();
+                    repeat.rank = distinct ? rank : 0;
                     _matcher.Position(slot) = {&repeat.pos, intervals[slot]};
                   }
                 }
@@ -158,10 +166,7 @@ class PhraseSlots {
     return _leaves.Probe(target);
   }
 
-  bool Match(doc_id_t) {
-    Collect();
-    return _matcher.Match();
-  }
+  bool Match(doc_id_t) { return Collect() && _matcher.Match(); }
 
   static constexpr bool kHasFreqBound =
     requires(Matcher& m) { m.DocFreqBound(); };
@@ -169,8 +174,7 @@ class PhraseSlots {
   uint32_t FreqBound()
     requires(kHasFreqBound)
   {
-    Collect();
-    return _matcher.DocFreqBound();
+    return Collect() ? _matcher.DocFreqBound() : 0;
   }
 
   template<typename Gates>
@@ -306,27 +310,32 @@ class PhraseSlots {
     return slot.Positions().DocFreq();
   }
 
-  void Collect() {
+  bool Collect() {
     if constexpr (kVariadic) {
       for (auto& slot : _leaves) {
         slot.OnMatch();
       }
     } else if constexpr (kRepeats) {
       if (!_repeats.empty()) {
-        FollowRepeats();
+        return FollowRepeats();
       }
     }
+    return true;
   }
 
-  IRS_NO_INLINE void FollowRepeats() noexcept {
+  IRS_NO_INLINE bool FollowRepeats() noexcept {
+    bool enough = true;
     for (auto& repeat : _repeats) {
       repeat.pos.Follow(*repeat.lead);
+      enough &= repeat.lead->DocFreq() > repeat.rank;
     }
+    return enough;
   }
 
   struct Repeat {
     typename Leaf::Position pos;
     const typename Leaf::Position* lead = nullptr;
+    uint32_t rank = 0;
   };
 
   [[no_unique_address]] utils::Need<kVariadic, containers::Fixed<Leaf>> _terms;

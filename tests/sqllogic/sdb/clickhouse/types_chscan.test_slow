@@ -97,3 +97,14 @@ id	b	nb
 0	f	t
 1	t	f
 2	f	NULL
+
+query
+SELECT id, s, d
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT number AS id, toLowCardinality(CAST(multiIf(number = 0, ''x'', number = 1, '''', NULL) AS Nullable(String))) AS s, toLowCardinality(CAST(if(number = 2, NULL, toDate(''2026-11-01'') + number) AS Nullable(Date))) AS d FROM numbers(3)')
+ORDER BY id;
+----
+id	s	d
+0	x	2026-11-01
+1	(empty)	2026-11-02
+2	NULL	NULL

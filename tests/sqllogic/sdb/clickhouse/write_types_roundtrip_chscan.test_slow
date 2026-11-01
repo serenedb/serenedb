@@ -227,6 +227,29 @@ id	v_int	v_dbl
 2	NULL	NULL
 3	-7	-2.5
 
+statement ok
+CREATE TABLE chwt.default.wt_nullable_wide (id BIGINT PRIMARY KEY, v_huge HUGEINT, v_uhuge UHUGEINT, v_dec4 DECIMAL(4,1), v_dec9 DECIMAL(9,2));
+
+statement ok
+INSERT INTO chwt.default.wt_nullable_wide VALUES
+  (1, -170141183460469231731687303715884105728, 340282366920938463463374607431768211455, 999.9, 9999999.99),
+  (2, NULL, NULL, NULL, NULL),
+  (3, 1, 18446744073709551616, -999.9, -0.01);
+
+query
+SELECT id, v_huge, v_uhuge, v_dec4, v_dec9 FROM chwt.default.wt_nullable_wide ORDER BY id;
+----
+id	v_huge	v_uhuge	v_dec4	v_dec9
+1	-170141183460469231731687303715884105728	340282366920938463463374607431768211455	999.9	9999999.99
+2	NULL	NULL	NULL	NULL
+3	1	18446744073709551616	-999.9	-0.01
+
+query
+SELECT DISTINCT typeof(v_dec4) AS t4, typeof(v_dec9) AS t9 FROM chwt.default.wt_nullable_wide;
+----
+t4	t9
+DECIMAL(4,1)	DECIMAL(9,2)
+
 # ---------------------------------------------------------------------
 # Out-of-scope boundary: a DuckDB type with no ClickHouse equivalent (TIME;
 # LIST/STRUCT/MAP are now supported -- see write_array / write_struct_map) cannot
@@ -268,6 +291,9 @@ DROP TABLE chwt.default.wt_wide;
 
 statement ok
 DROP TABLE chwt.default.wt_nullable;
+
+statement ok
+DROP TABLE chwt.default.wt_nullable_wide;
 
 statement ok
 DETACH chwt;

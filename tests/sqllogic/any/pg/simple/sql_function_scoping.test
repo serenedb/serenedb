@@ -139,6 +139,10 @@ statement error must appear in the GROUP BY clause
 CREATE FUNCTION sfs.ungrouped_having(x int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t GROUP BY y HAVING x > 0';
 
 
+statement error (must appear in the GROUP BY clause|subquery uses ungrouped column)
+CREATE FUNCTION sfs.ungrouped_nested(x int) RETURNS SETOF bigint LANGUAGE sql AS 'SELECT count(*) FROM sfs.t GROUP BY y HAVING (SELECT x) > 0';
+
+
 statement ok
 CREATE FUNCTION sfs.tab_alias(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT tab_alias.y + z FROM sfs.t tab_alias ORDER BY 1';
 

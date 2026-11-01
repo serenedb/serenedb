@@ -103,7 +103,7 @@ void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
   const std::string_view part{reinterpret_cast<const char*>(bytes),
                               bytes ? segment_size : 0};
   CaptureBlock(segment.GetDatabase(), segment.GetCompressionFunction(),
-               segment.GetStats().Copy(), segment.count.load(),
+               std::move(segment.GetStatsMutable()), segment.count.load(),
                std::span<const std::string_view>{&part, 1}, blocks, sink);
 }
 
@@ -797,6 +797,10 @@ void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
     const auto n = std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - first);
     for (duckdb::idx_t i = 0; i != n; ++i) {
       sel.set_index(i, new2old[first + i]);
+    }
+    if (_ingest.empty()) {
+      Append(duckdb::Vector{all, sel, n}, n);
+      continue;
     }
     duckdb::Vector out{_type, n};
     duckdb::ImmutableStrings::Copy(all, out, sel, n, 0, 0);

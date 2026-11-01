@@ -29,7 +29,7 @@
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
-#include <numeric>
+#include <ranges>
 #include <utility>
 
 namespace irs {
@@ -247,11 +247,10 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
       _sequence = false;
       continue;
     }
-    const auto picked = _picked.size();
-    _fresh.push_back(Fresh{rep, picked});
-    _picked.resize(picked + entry.length);
-    std::iota(_picked.begin() + picked, _picked.end(),
-              static_cast<duckdb::sel_t>(entry.offset));
+    const auto first = static_cast<duckdb::sel_t>(entry.offset);
+    _fresh.push_back(Fresh{rep, _picked.size()});
+    _picked.append_range(std::views::iota(
+      first, first + static_cast<duckdb::sel_t>(entry.length)));
     _running += entry.length;
     _ends.Push(_running);
   }

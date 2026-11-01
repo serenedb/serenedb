@@ -76,7 +76,7 @@ void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
              ": a merged part trained its own dictionary");
   if (meta.type.id() == duckdb::LogicalTypeId::INVALID) {
     meta.id = part.id;
-    meta.type = part.type;
+    meta.type = std::move(part.type);
   }
   if (meta.children.empty()) {
     meta.children.resize(part.children.size());

@@ -22,8 +22,10 @@
 
 #include <absl/algorithm/container.h>
 
+#include <array>
+#include <cstddef>
+#include <cstring>
 #include <duckdb/common/enums/compression_type.hpp>
-#include <duckdb/common/helper.hpp>
 #include <duckdb/main/config.hpp>
 #include <span>
 #include <string>
@@ -39,17 +41,21 @@
 namespace irs {
 namespace {
 
-void PatchDictionary(std::string& bytes,
-                     std::span<const uint16_t> dictionaries) {
-  auto* data = reinterpret_cast<duckdb::data_ptr_t>(bytes.data());
-  auto header = codecs::Header::Parse(data, bytes.size());
+bool PatchDictionary(std::string_view block,
+                     std::span<const uint16_t> dictionaries,
+                     std::array<char, sizeof(codecs::Header)>& head) {
+  const auto header = codecs::Header::Parse(
+    reinterpret_cast<duckdb::const_data_ptr_t>(block.data()), block.size());
   if (header.flags != codecs::FrameDictionary::Trained) {
-    return;
+    return false;
   }
   SDB_ENSURE(header.dictionary <= dictionaries.size(),
              "col codec: missing trained dictionary ", header.dictionary);
-  header.dictionary = dictionaries[header.dictionary - 1];
-  duckdb::Store(header, data);
+  const uint16_t dictionary = dictionaries[header.dictionary - 1];
+  std::memcpy(head.data(), block.data(), head.size());
+  std::memcpy(head.data() + offsetof(codecs::Header, dictionary), &dictionary,
+              sizeof(dictionary));
+  return true;
 }
 
 bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
@@ -68,22 +74,27 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     if (block.byte_size == 0) {
       continue;
     }
-    const bool patch = !dictionaries.empty() &&
-                       duckdb::IsSereneDBCompressionType(block.codec->type);
     std::string_view view;
     if (const auto* stable =
-          patch ? nullptr
-                : ctx.TryReadStable(block.file_offset, block.byte_size)) {
+          ctx.TryReadStable(block.file_offset, block.byte_size)) {
       view = {reinterpret_cast<const char*>(stable), block.byte_size};
     } else {
       bytes.resize(block.byte_size);
       ctx.Read(block.file_offset,
                reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
                block.byte_size);
-      if (patch) {
-        PatchDictionary(bytes, dictionaries);
-      }
       view = bytes;
+    }
+    std::array<char, sizeof(codecs::Header)> head{};
+    if (!dictionaries.empty() &&
+        duckdb::IsSereneDBCompressionType(block.codec->type) &&
+        PatchDictionary(view, dictionaries, head)) {
+      const std::array<std::string_view, 2> parts{
+        std::string_view{head.data(), head.size()},
+        view.substr(head.size()),
+      };
+      copy.file_offset = sink.AppendAligned(parts);
+      continue;
     }
     copy.file_offset = sink.AppendAligned({&view, 1});
   }

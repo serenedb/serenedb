@@ -1471,10 +1471,10 @@ statement ok
 CREATE MACRO mn_sq_once(x) AS (SELECT x FROM range(1))
 
 query
-SELECT mn_sq_once(unnest([7])) AS a, len(mn_sq_once(range(10000))) AS b, mn_sq_once(random()) BETWEEN 0 AND 1 AS c, mn_sq_once((SELECT * FROM range(3) t(c) WHERE c = 2)) AS d
+SELECT mn_sq_once(unnest([7])) AS a, len(mn_sq_once(range(10000))) AS b, mn_sq_once(random()) BETWEEN 0 AND 1 AS c, mn_sq_once((SELECT * FROM range(3) t(c) WHERE c = 2)) AS d, mn_sq_once(unnest([7]) + 1) AS e
 ----
-a	b	c	d
-7	10000	t	2
+a	b	c	d	e
+7	10000	t	2	8
 
 statement error
 SELECT mn_sq_once(abs('x'::INT)) AS a

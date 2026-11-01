@@ -156,7 +156,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(segment, *reader, terms.GetImpl());
+  mtv.Prepare(terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
@@ -205,7 +205,7 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(segment, *reader, terms.GetImpl());
+  mtv.Prepare(terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), sub_ctx);
 }

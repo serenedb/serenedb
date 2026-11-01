@@ -33,7 +33,8 @@ namespace irs::term_dict {
 class RangeWriter final {
  public:
   bool Active() const noexcept { return _pw != nullptr; }
-  void Begin(PostingsWriter& pw);
+  DocTee Tee() noexcept;
+  void Begin(PostingsWriter& pw) noexcept { _pw = &pw; }
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,
@@ -75,7 +76,6 @@ class RangeWriter final {
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);
-  void TeeLeaf() noexcept;
 
   std::array<Level, kMaxRangeLevels> _levels;
   PostingsWriter* _pw = nullptr;

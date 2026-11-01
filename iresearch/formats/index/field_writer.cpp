@@ -386,11 +386,12 @@ void FieldWriter::write(FieldSlot slot, const BasicTermReader& reader) {
   auto terms = reader.iterator();
   SDB_ASSERT(terms);
 
+  const auto tee = _ranges.Tee();
   if (_compaction) {
     while (terms->next()) {
       PostingMeta meta;
       auto postings = terms->postings(props.index_features);
-      _pw.Write(*postings, meta);
+      _pw.Write(*postings, meta, tee);
       consume(terms->value(), meta);
     }
   } else {
@@ -401,7 +402,7 @@ void FieldWriter::write(FieldSlot slot, const BasicTermReader& reader) {
              term_batch, posting_batch, props.index_features)) {
       for (size_t i = 0; i != n; ++i) {
         PostingMeta meta;
-        _pw.WritePostings(posting_batch[i], meta);
+        _pw.WritePostings(posting_batch[i], meta, tee);
         consume(term_batch[i], meta);
       }
     }

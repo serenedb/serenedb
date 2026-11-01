@@ -174,11 +174,7 @@ class MultiTermVisitor : util::Noncopyable {
     _collector->Field(_thread).Collect(field);
   }
 
-  void Prepare(const SubReader&, const TermReader& field,
-               TermIterator& terms) noexcept {
-    SDB_ASSERT(_state.Reader() == &field);
-    _terms = &terms;
-  }
+  void Prepare(TermIterator& terms) noexcept { _terms = &terms; }
 
   bool Visit(score_t boost) {
     SDB_ASSERT(_terms);

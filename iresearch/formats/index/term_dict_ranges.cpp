@@ -157,13 +157,11 @@ class RangeWalk {
 
 }  // namespace
 
-void RangeWriter::Begin(PostingsWriter& pw) {
-  _pw = &pw;
-  TeeLeaf();
-}
-
-void RangeWriter::TeeLeaf() noexcept {
-  _pw->Tee(&_levels[0].group.docs, 2 * kHeavyDocs);
+DocTee RangeWriter::Tee() noexcept {
+  if (!Active()) {
+    return {};
+  }
+  return {.docs = &_levels[0].group.docs, .limit = 2 * kHeavyDocs};
 }
 
 void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
@@ -248,13 +246,11 @@ void RangeWriter::Release(size_t level) {
     absl::c_sort(piece.docs);
     piece.docs.erase(std::ranges::unique(piece.docs).begin(), piece.docs.end());
     piece.meta = {};
-    _pw->Tee(nullptr, 0);
     _pw->WritePostings(
       PostingRows{
         .span = {.docs = piece.docs.data(), .count = piece.docs.size()},
       },
       piece.meta);
-    TeeLeaf();
     piece.docs_count = piece.meta.docs_count;
   } else if (piece.meta.inline_size != 0) {
     piece.meta.inline_data = piece.inline_bytes.data();
@@ -334,9 +330,6 @@ void RangeWriter::Clear() noexcept {
     range.count = 0;
     range.children = 0;
     range.holding = false;
-  }
-  if (_pw) {
-    _pw->Tee(nullptr, 0);
   }
   _pw = nullptr;
   _height = 0;

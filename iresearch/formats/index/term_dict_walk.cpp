@@ -1151,8 +1151,16 @@ class AcceptorIterator : public SeekTermIterator {
     return depth;
   }
 
+  byte_type* Retarget(bytes_view path, size_t keep, size_t extra) {
+    const bool own = path.data() == _target.Data();
+    auto* target = _target.Resize(keep + extra);
+    if (!own) {
+      std::memcpy(target, path.data(), keep);
+    }
+    return target + keep;
+  }
+
   bool NextTarget(bytes_view path, size_t& depth) {
-    SDB_ASSERT(path.data() != _target.Data());
     SDB_ASSERT(depth >= _k);
     const auto& field = _cursor.Field();
     for (;;) {
@@ -1160,10 +1168,9 @@ class AcceptorIterator : public SeekTermIterator {
         NextBranch(field, path.substr(_k, depth - _k), _hint, *_a,
                    _states[depth], path[depth] + 1u, LiveRange(depth));
       if (branch.label != kNoLabel) {
-        auto* target = _target.Resize(depth + 1 + branch.extra);
-        std::memcpy(target, path.data(), depth);
-        target[depth] = static_cast<byte_type>(branch.label);
-        std::memcpy(target + depth + 1, branch.tail.data(), branch.extra);
+        auto* target = Retarget(path, depth, 1 + branch.extra);
+        target[0] = static_cast<byte_type>(branch.label);
+        std::memcpy(target + 1, branch.tail.data(), branch.extra);
         return true;
       }
       if (depth == _k) {
@@ -1189,7 +1196,7 @@ class AcceptorIterator : public SeekTermIterator {
       const size_t extra =
         Continuation(field, TermHead{term, _hint}, *_a, _states[depth], tail);
       if (extra != kDeadEnd) {
-        _target.Assign(key, bytes_view{tail.data(), extra});
+        std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
         valid = depth;
         return true;
       }
@@ -1215,8 +1222,8 @@ class AcceptorIterator : public SeekTermIterator {
     if (field.size() == 0 || target > field.max()) {
       return false;
     }
-    _seek.Assign(field.KeyPrefix(), target);
-    if (!TargetFrom(_seek.Key(), valid) || _target.Key() > field.MaxKey()) {
+    _target.Assign(field.KeyPrefix(), target);
+    if (!TargetFrom(_target.Key(), valid) || _target.Key() > field.MaxKey()) {
       return false;
     }
     return Land(field.BlockOf(_target.View()), valid);
@@ -1399,7 +1406,6 @@ class AcceptorIterator : public SeekTermIterator {
   containers::SmallVector<State, 64> _states;
   containers::SmallVector<LabelRange, 64> _ranges;
   PaddedKey _target;
-  PaddedKey _seek;
   const uint32_t* _hint = nullptr;
   PayAttr _pay;
   KeyFilter _filter;

@@ -64,7 +64,7 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   auto terms = options().source->Iterator(*reader);
   SDB_ASSERT(terms);
   if (terms->next()) {
-    mtv.Prepare(segment, *reader, *terms);
+    mtv.Prepare(*terms);
     VisitTerms(*terms, mtv);
   }
   return MultiTermQuery::Finish(std::move(query), ctx);

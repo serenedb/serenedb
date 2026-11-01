@@ -67,6 +67,7 @@ yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
       empty_compaction = result.outcome.size == 0;
     }
   } catch (const std::exception& e) {
+    result.outcome.error = irs::CompactionError::Fail;
     result.error = duckdb::ErrorData{e}.RawMessage();
     result.res = absl::InternalError(absl::StrCat(
       "merge of relation ", _merge_relation->id, " failed: ", result.error));

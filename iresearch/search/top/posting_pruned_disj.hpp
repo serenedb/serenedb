@@ -44,7 +44,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   using Base::_provider;
   using Base::_score;
   using Base::_scored;
-  using Base::DecodeFreqs;
+  using Base::DecodeLazyFreqs;
   using Base::FirstNotBelow;
   using Base::Members;
   using Base::ReadLeaf;
@@ -253,9 +253,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     const auto len = _leaf.Len();
     if (_max_in_leaf != _masked_max) {
       _leaf.Materialize(_base, std::end(_docs) - len);
-      if (_lazy != nullptr) {
-        DecodeFreqs();
-      }
+      DecodeLazyFreqs();
       _len = len;
       _scored = false;
     }

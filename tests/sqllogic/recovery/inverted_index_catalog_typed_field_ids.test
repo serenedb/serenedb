@@ -1,0 +1,245 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY typed_ids_keyword AS keyword() WITH (frequency);
+
+
+statement ok
+CREATE TABLE typed_ids_checkpointed (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR, content JSON);
+
+
+statement ok
+CREATE TABLE typed_ids_logged (id INTEGER PRIMARY KEY, b BOOLEAN, n BIGINT, s VARCHAR, content JSON);
+
+
+statement ok
+INSERT INTO typed_ids_checkpointed VALUES
+  (1, true, 10, 'apple', '{"val":42}'),
+  (2, false, NULL, 'pear', '{"val":null}'),
+  (3, NULL, 30, NULL, '{"other":1}'),
+  (4, true, 40, 'apple', '{"val":8}');
+
+
+statement ok
+INSERT INTO typed_ids_logged SELECT * FROM typed_ids_checkpointed;
+
+
+statement ok
+SET sdb_faults = 'inverted_index_catalog_with_typed_field_ids';
+
+
+statement ok
+CREATE INDEX typed_ids_checkpointed_idx ON typed_ids_checkpointed
+  USING inverted(id, b, n, s typed_ids_keyword, (content->'val') typed_ids_keyword);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE INDEX typed_ids_logged_idx ON typed_ids_logged
+  USING inverted(id, b, n, s typed_ids_keyword, (content->'val') typed_ids_keyword);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed_idx WHERE b IS NULL OR n IS NULL ORDER BY id;
+----
+id
+2
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed WHERE b IS NULL OR n IS NULL ORDER BY id;
+----
+id
+2
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed_idx WHERE b = true AND n BETWEEN 5 AND 45 ORDER BY id;
+----
+id
+1
+4
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed WHERE b = true AND n BETWEEN 5 AND 45 ORDER BY id;
+----
+id
+1
+4
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed_idx WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed_idx WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed_idx WHERE (content->'val')::int = 42 ORDER BY id;
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_checkpointed WHERE (content->'val')::int = 42 ORDER BY id;
+----
+id
+1
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE b IS NULL OR n IS NULL ORDER BY id;
+----
+id
+2
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE b = true AND n BETWEEN 5 AND 45 ORDER BY id;
+----
+id
+1
+4
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE NOT (s = 'apple') ORDER BY id;
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+3
+
+
+connection after_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE (content->'val')::int = 42 ORDER BY id;
+----
+id
+1
+
+
+connection after_crash
+statement ok
+INSERT INTO typed_ids_logged VALUES (5, NULL, 50, 'fig', '{"val":7}');
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM typed_ids_logged_idx WHERE b IS NULL OR n IS NULL ORDER BY id;
+----
+id
+2
+3
+5
+
+
+connection after_second_crash
+query
+SELECT id FROM typed_ids_logged WHERE b IS NULL OR n IS NULL ORDER BY id;
+----
+id
+2
+3
+5
+
+
+connection after_second_crash
+query
+SELECT id FROM typed_ids_logged_idx WHERE (content->'val')::int = 7 ORDER BY id;
+----
+id
+5
+
+
+connection after_second_crash
+query
+SELECT id FROM typed_ids_logged WHERE (content->'val')::int = 7 ORDER BY id;
+----
+id
+5

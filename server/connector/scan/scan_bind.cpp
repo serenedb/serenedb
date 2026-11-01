@@ -93,7 +93,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : snapshot->reader) {
-        if (const auto* field = segment.field(req.field_id, irs::DictRef{})) {
+        if (const auto* field = segment.field(req.field_id)) {
           terms += field->size();
         }
       }

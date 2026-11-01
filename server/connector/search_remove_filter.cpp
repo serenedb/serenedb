@@ -101,7 +101,7 @@ irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
   _pending = pending;
-  _pk_field = segment.field(_pk_field_id, irs::DictRef{});
+  _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
   auto& self = const_cast<SearchRemoveFilter&>(*this);
@@ -200,7 +200,7 @@ irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::DocumentMaskBuilder* pending) const {
   _segment_mask = segment.MaskedDocs();
   _pending = pending;
-  _pk_field = segment.field(_pk_field_id, irs::DictRef{});
+  _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _terms.reset();
   _postings.reset();

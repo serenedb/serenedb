@@ -489,6 +489,13 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
   }
 
   void RewriteTerms(const irs::term_dict::TermsMeta& terms) {
+    RewriteTermsWith([&](duckdb::BinarySerializer& object) {
+      irs::term_dict::WriteTerms(object, terms);
+    });
+  }
+
+  void RewriteTermsWith(
+    absl::FunctionRef<void(duckdb::BinarySerializer&)> write) {
     _reader.reset();
     _idx.reset();
     const auto name = absl::StrCat(kSegment, ".", irs::kIdxFormatExt);
@@ -506,10 +513,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     ASSERT_NE(nullptr, out);
     out->WriteData(data.data(), data.size());
     irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
-      meta.WriteObject(irs::kIdxFieldTerms, "terms",
-                       [&](duckdb::BinarySerializer& object) {
-                         irs::term_dict::WriteTerms(object, terms);
-                       });
+      meta.WriteObject(irs::kIdxFieldTerms, "terms", write);
     });
   }
 
@@ -1559,6 +1563,100 @@ TEST_P(TermDictTest, corrupt_inline_starts_are_refused) {
     EncodeVarints(std::vector<uint64_t>(bare.blocks, uint64_t{0}));
   RewriteTerms(bare);
   ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+}
+
+TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 5000; ++doc) {
+    values.emplace_back(int64_t{doc} * 3, doc);
+  }
+  const Field fields[]{
+    {.id = 1,
+     .entries = NumericEntries(std::move(values)),
+     .slot = irs::FieldSlot::Numeric},
+    {.id = 2, .entries = MakeEntries(Words(3000, 5))},
+    {.id = 3, .entries = MakeEntries({Bytes("single")})},
+  };
+  Write(fields);
+  const auto terms = TakeTerms();
+  ASSERT_EQ(3, terms.fields.size());
+  ASSERT_EQ(irs::FieldSlot::Numeric, terms.fields[0].slot);
+  ASSERT_LT(1, terms.fields[1].term_count);
+  ASSERT_EQ(1, terms.fields[2].term_count);
+
+  const auto refused = [&](auto&& corrupt, int code) {
+    auto copy = terms;
+    corrupt(copy);
+    RewriteTerms(copy);
+    ASSERT_SQL_ERROR(Open(dir()), code);
+  };
+  using Terms = irs::term_dict::TermsMeta;
+  refused([](Terms& t) { std::swap(t.fields[0].id, t.fields[1].id); },
+          ERRCODE_INDEX_CORRUPTED);
+  refused(
+    [](Terms& t) { t.fields[1].features = static_cast<irs::IndexFeatures>(0x80); },
+    ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused([](Terms& t) { t.fields[1].term_count = 0; },
+          ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.fields[2].record.clear(); },
+          ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.fields[0].prefixes = "p"; },
+          ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.fields[0].norm = 7; }, ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.ordinal_bytes = 0; },
+          ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused([](Terms& t) { t.ordinal_bytes = irs::term_dict::kMaxOrdinalBytes + 1; },
+          ERRCODE_FEATURE_NOT_SUPPORTED);
+  refused(
+    [](Terms& t) {
+      const auto keyed = t.fields[1];
+      t.fields.assign(irs::term_dict::OrdinalLimit(1) + 1, keyed);
+      for (size_t i = 0; i != t.fields.size(); ++i) {
+        t.fields[i].id = i + 1;
+      }
+      t.ordinal_bytes = 1;
+    },
+    ERRCODE_INDEX_CORRUPTED);
+  refused(
+    [](Terms& t) { t.inline_offset = std::numeric_limits<uint64_t>::max(); },
+    ERRCODE_INDEX_CORRUPTED);
+
+  const auto refused_field = [&](auto&& write_field) {
+    RewriteTermsWith([&](duckdb::BinarySerializer& object) {
+      object.WriteProperty<uint32_t>(0, "restart_interval",
+                                     irs::term_dict::kRestartInterval);
+      object.WriteList(9, "fields", 1,
+                       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+                         list.WriteObject(write_field);
+                       });
+    });
+    ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+  };
+  refused_field([](duckdb::BinarySerializer& field) {
+    field.WriteProperty<uint64_t>(0, "id", 1);
+  });
+  refused_field([](duckdb::BinarySerializer& field) {
+    field.WriteProperty<uint64_t>(0, "id", 1);
+    field.WriteObject(1, "sql_null", [](duckdb::BinarySerializer& postings) {
+      postings.WriteProperty(0, "record", std::string{});
+    });
+  });
+  refused_field([](duckdb::BinarySerializer& field) {
+    field.WriteProperty<uint64_t>(0, "id", 1);
+    field.WriteObject(7, "string", [](duckdb::BinarySerializer& dict) {
+      dict.WriteProperty<uint32_t>(0, "features", 0);
+      dict.WriteProperty<uint64_t>(1, "term_count", 1);
+      dict.WriteProperty<uint64_t>(2, "doc_count", 1);
+      dict.WriteProperty(8, "record", std::string{"r"});
+      dict.WriteProperty<uint64_t>(19, "range_size", 1);
+    });
+  });
+
+  RewriteTerms(terms);
+  Open(dir());
+  for (const auto& field : fields) {
+    AssertField(*Get(field), field.entries);
+  }
 }
 
 TEST_P(TermDictTest, six_slots_under_one_field) {

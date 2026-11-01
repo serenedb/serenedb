@@ -166,9 +166,7 @@ struct SubReader : public IndexReader, public NormProvider {
     return found ? Resolve(*found, ref) : nullptr;
   }
 
-#ifdef SDB_GTEST
   const TermReader* field(field_id id) const { return field(id, DictRef{}); }
-#endif
 
   virtual const ColReader* GetColReader() const { return nullptr; }
 

@@ -583,7 +583,7 @@ bool TsDictLocalState::NextField() {
     _term_ordinal = 0;
     _counts = nullptr;
     _reader = nullptr;
-    if (const auto* reader = _seg->field(field.field_id, irs::DictRef{});
+    if (const auto* reader = _seg->field(field.field_id);
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
@@ -748,7 +748,7 @@ void BuildTsDictCounts(ScanGlobalState& g) {
     auto& per_field = g.ts_dict_counts[seg];
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
-      const auto* terms = reader[seg].field(reqs[i].field_id, irs::DictRef{});
+      const auto* terms = reader[seg].field(reqs[i].field_id);
       per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }

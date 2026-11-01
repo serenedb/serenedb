@@ -31,6 +31,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -76,8 +77,56 @@ constexpr std::string_view kPayloadOption = "sdb_payload";
 constexpr std::string_view kKeyColumnsOption = "key_columns";
 constexpr std::string_view kStorePkOption = "store_pk";
 
+struct ReleasedFieldRecord {
+  irs::field_id numeric_field_id = irs::field_limits::invalid();
+  irs::field_id bool_field_id = irs::field_limits::invalid();
+  irs::field_id null_field_id = irs::field_limits::invalid();
+  irs::field_id synthetic_column = irs::field_limits::invalid();
+  search::Features features;
+  bool store_values = false;
+  bool indexed_term_dict = false;
+  bool whole_value = false;
+  bool is_keyword = false;
+  irs::ColumnOptions column_options;
+  duckdb::idx_t text_dictionary = 0;
+};
+
+struct ReleasedIndexData {
+  persistence::PkPolicy pk;
+  std::vector<persistence::KeyRecord> keys;
+  irs::containers::NodeHashMap<irs::field_id, ReleasedFieldRecord> fields;
+  std::optional<irs::ScorerOptions> top_k_scorer;
+};
+
+std::string PackReleased(const persistence::InvertedIndexData& data) {
+  ReleasedIndexData released{
+    .pk = data.pk,
+    .keys = data.keys,
+    .top_k_scorer = data.top_k_scorer,
+  };
+  for (const auto& [id, field] : data.fields) {
+    released.fields.try_emplace(id, ReleasedFieldRecord{
+                                      .numeric_field_id = id + 1,
+                                      .bool_field_id = id + 2,
+                                      .null_field_id = id + 3,
+                                      .synthetic_column = field.synthetic_column,
+                                      .features = field.features,
+                                      .store_values = field.store_values,
+                                      .indexed_term_dict = field.indexed_term_dict,
+                                      .whole_value = field.whole_value,
+                                      .is_keyword = field.is_keyword,
+                                      .column_options = field.column_options,
+                                      .text_dictionary = field.text_dictionary,
+                                    });
+  }
+  return persistence::Pack(released);
+}
+
 duckdb::Value Pack(const persistence::InvertedIndexData& data) {
-  const auto bytes = persistence::Pack(data);
+  auto bytes = persistence::Pack(data);
+  SDB_IF_FAILURE("inverted_index_catalog_with_typed_field_ids") {
+    bytes = PackReleased(data);
+  }
   return duckdb::Value::BLOB(
     reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data()), bytes.size());
 }

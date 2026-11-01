@@ -131,6 +131,33 @@ rows
 0
 
 
+statement error must appear in the GROUP BY clause
+CREATE FUNCTION sfs.ungrouped(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT x FROM sfs.t GROUP BY y';
+
+
+statement ok
+CREATE FUNCTION sfs.tab_alias(z int) RETURNS SETOF int LANGUAGE sql AS 'SELECT tab_alias.y + z FROM sfs.t tab_alias ORDER BY 1';
+
+
+statement ok
+CREATE FUNCTION sfs.qual_ret(x int) RETURNS int LANGUAGE sql RETURN qual_ret.x + 1;
+
+
+statement ok
+CREATE TYPE sfs.pair AS (a int, b int);
+
+
+statement ok
+CREATE FUNCTION sfs.qual_field(s sfs.pair) RETURNS int LANGUAGE sql RETURN qual_field.s.a + 1;
+
+
+query
+SELECT (SELECT array_agg(v ORDER BY v) FROM sfs.tab_alias(10) v) AS tab_alias, sfs.qual_ret(1) AS qual_ret, sfs.qual_field(ROW(5, 6)::sfs.pair) AS qual_field;
+----
+tab_alias	qual_ret	qual_field
+{11,12}	2	6
+
+
 statement ok
 CREATE FUNCTION sfs.strict_one(x int) RETURNS int LANGUAGE sql STRICT AS 'SELECT coalesce(x, 0) + 1';
 
@@ -427,6 +454,78 @@ logged
 
 
 statement ok
+CREATE FUNCTION sfs.purge(v int) RETURNS void LANGUAGE sql AS 'DELETE FROM sfs.log WHERE log.v = purge.v';
+
+
+statement ok
+INSERT INTO sfs.log VALUES (1), (2), (3);
+
+
+query
+SELECT sfs.purge(1) IS NULL AS purged;
+----
+purged
+t
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM generate_series(1, 2);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (VALUES (1), (2)) v(a);
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+onlyif serenedb
+statement error
+SELECT sfs.purge(2) FROM (SELECT y FROM sfs.t GROUP BY y) s;
+----
+db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+query
+SELECT sfs.purge(2) IS NULL AS after_aggregate FROM (SELECT count(*) FROM sfs.t) s;
+----
+after_aggregate
+t
+
+
+query
+SELECT sfs.purge(3) IS NULL AS after_values FROM (VALUES (1)) v(a);
+----
+after_values
+t
+
+
+query
+SELECT count(*) AS logged FROM sfs.log;
+----
+logged
+0
+
+
+statement ok
+CREATE FUNCTION sfs.void_return() RETURNS void LANGUAGE sql RETURN NULL;
+
+
+statement ok
+CREATE FUNCTION sfs.strict_none() RETURNS int LANGUAGE sql STRICT AS 'SELECT 5';
+
+
+query
+SELECT sfs.void_return() IS NULL AS void_return, pg_typeof(sfs.void_return())::text AS type, sfs.strict_none() AS strict_none;
+----
+void_return	type	strict_none
+t	void	5
+
+
+statement ok
 CREATE FUNCTION sfs.defaults(a int, b int DEFAULT 10, c int = 100) RETURNS int LANGUAGE sql AS 'SELECT a + b + c';
 
 
@@ -445,16 +544,28 @@ statement ok
 CREATE FUNCTION sfs.stable_one(x int) RETURNS int LANGUAGE sql STABLE AS 'SELECT x';
 
 
+statement ok
+CREATE FUNCTION sfs.decorated(x int) RETURNS int LANGUAGE sql VOLATILE COST 10 PARALLEL SAFE AS 'SELECT x';
+
+
 query
 SELECT p.proname, p.provolatile
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'sfs' AND p.proname IN ('fixed', 'stable_one', 'strict_one')
+WHERE n.nspname = 'sfs' AND p.proname IN ('decorated', 'fixed', 'stable_one', 'strict_one')
 ORDER BY p.proname;
 ----
 proname	provolatile
+decorated	v
 fixed	i
 stable_one	s
 strict_one	v
+
+
+query
+SELECT trim(regexp_replace(pg_get_functiondef('sfs.stable_one'::regproc), '[[:space:]]+', ' ', 'g')) AS definition;
+----
+definition
+CREATE OR REPLACE FUNCTION sfs.stable_one(x integer) RETURNS integer LANGUAGE sql STABLE AS $function$SELECT x$function$
 
 
 query

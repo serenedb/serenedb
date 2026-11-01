@@ -73,3 +73,60 @@ SELECT count(*) AS rows FROM mps_rows;
 ----
 rows
 2
+
+
+statement ok
+CREATE MACRO mps_schema(main) AS (SELECT main.upper('x'));
+
+
+statement ok
+CREATE MACRO mps_field_return(s) AS mps_field_return.s.a + 1;
+
+
+query
+SELECT mps_schema('unused') AS schema_call, mps_field_return({'a': 5}) AS field_return;
+----
+schema_call	field_return
+X	6
+
+
+statement error
+CREATE MACRO mps_no_function(s) AS (SELECT s.no_such_function());
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+CREATE MACRO mps_other(s) AS (SELECT other.s.lower());
+----
+db error: ERROR: Referenced table "other" not found!<slt:ignore>
+
+
+statement ok
+CREATE MACRO mps_twice(x) AS x + x;
+
+
+statement ok
+CREATE MACRO mps_select(x) AS (SELECT x + x);
+
+
+statement ok
+CREATE FUNCTION mps_typed(x int) RETURNS int LANGUAGE sql RETURN x + x;
+
+
+statement error
+SELECT mps_twice(coalesce(no_such_function(1), 2));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+SELECT mps_select(no_such_function(1));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>
+
+
+statement error
+SELECT mps_typed(no_such_function(1));
+----
+db error: ERROR: Scalar Function with name no_such_function does not exist!<slt:ignore>

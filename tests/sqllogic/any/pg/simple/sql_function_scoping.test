@@ -113,6 +113,25 @@ table_five	table_seven	scalar_five	scalar_seven	joined
 
 
 statement ok
+CREATE FUNCTION sfs.group_alias(x int) RETURNS SETOF int LANGUAGE sql AS 'SELECT k * 100 AS x FROM sfs.q GROUP BY x HAVING x > 0 ORDER BY 1';
+
+
+query
+SELECT * FROM sfs.group_alias(1);
+----
+group_alias
+500
+600
+
+
+query
+SELECT count(*) AS rows FROM sfs.group_alias(0);
+----
+rows
+0
+
+
+statement ok
 CREATE FUNCTION sfs.strict_one(x int) RETURNS int LANGUAGE sql STRICT AS 'SELECT coalesce(x, 0) + 1';
 
 
@@ -267,6 +286,49 @@ SELECT trim(regexp_replace(pg_get_functiondef('sfs.add'::regproc), '[[:space:]]+
 ----
 definition
 CREATE OR REPLACE FUNCTION sfs.add(v integer) RETURNS void LANGUAGE sql AS $function$INSERT INTO sfs.log VALUES (v)$function$
+
+
+statement ok
+CREATE SEQUENCE sfs.lazy_seq;
+
+
+statement ok
+CREATE FUNCTION sfs.lazy_next() RETURNS bigint LANGUAGE sql AS 'SELECT nextval(''sfs.lazy_seq'')';
+
+
+query
+SELECT CASE WHEN g > 2 THEN sfs.lazy_next() END AS v FROM generate_series(1, 3) g ORDER BY g;
+----
+v
+NULL
+NULL
+1
+
+
+query
+SELECT currval('sfs.lazy_seq') AS calls;
+----
+calls
+1
+
+
+statement ok
+CREATE FUNCTION sfs.code() RETURNS text LANGUAGE sql AS 'SELECT md5(random()::text)';
+
+
+statement ok
+CREATE TABLE sfs.codes (id int, code text DEFAULT sfs.code() CHECK (length(sfs.code()) = 32));
+
+
+statement ok
+INSERT INTO sfs.codes (id) VALUES (1), (2);
+
+
+query
+SELECT count(DISTINCT code) AS distinct_codes FROM sfs.codes;
+----
+distinct_codes
+2
 
 
 statement error language "nosuchlang" (does not exist|is not supported)

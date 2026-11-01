@@ -470,6 +470,51 @@ SELECT count(DISTINCT mn_rand()) AS r FROM range(100)
 r
 100
 
+query
+EXPLAIN SELECT mn_rand() FROM range(3)
+----
+QUERY PLAN
+╭─ PROJECTION ──────────╮
+│ Projections: random() │
+│ ~3 rows               │
+╰───────────┬───────────╯
+╭─ RANGE ───┴───────────╮
+│ Function: RANGE       │
+│ ~3 rows               │
+╰───────────────────────╯
+
+statement ok
+CREATE TABLE mn_defaults (id int, r double DEFAULT mn_rand() CHECK (mn_rand() >= 0))
+
+statement ok
+INSERT INTO mn_defaults (id) VALUES (1), (2)
+
+query
+SELECT count(DISTINCT r) AS r FROM mn_defaults
+----
+r
+2
+
+statement ok
+CREATE SEQUENCE mn_lazy_seq
+
+statement ok
+CREATE MACRO mn_lazy_next() AS (SELECT nextval('mn_lazy_seq'))
+
+query
+SELECT CASE WHEN i > 1 THEN mn_lazy_next() END AS v FROM range(3) t(i) ORDER BY i
+----
+v
+NULL
+NULL
+1
+
+query
+SELECT currval('mn_lazy_seq') AS calls
+----
+calls
+1
+
 statement ok
 CREATE MACRO mn_pair(x, y) AS (SELECT x + x + y FROM (VALUES (1)) v(c))
 
@@ -1292,6 +1337,9 @@ DROP MACRO mn_shadow
 
 statement ok
 DROP MACRO mn_pair
+
+statement ok
+DROP TABLE mn_defaults
 
 statement ok
 DROP MACRO mn_rand

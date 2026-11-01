@@ -214,7 +214,7 @@ Table macros as well as scalar macros defined using scalar subqueries cannot be 
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_035" />
 
-A scalar subquery made of a single expression, with no `FROM` or other clause, such as `(SELECT 5)`, expands to that expression, so a macro defined with it has no such limitation, unless the expression calls an aggregate, window, set-returning or volatile function or contains a subquery.
+A scalar subquery made of a single expression, with no `FROM` or other clause, such as `(SELECT 5)`, expands to that expression, so a macro defined with it has no such limitation, unless the expression calls an aggregate, window or set-returning function or contains a subquery. The same limitation keeps a macro or function whose body is a query, such as one that reads a table, out of `CHECK` constraints, `DEFAULT` values, generated columns and index expressions.
 
 
 ### Recursive Functions

@@ -36,10 +36,7 @@ Root::ptr Family::MakePosting(const irs::detail::PostingClause& posting,
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
-  const irs::detail::ScoreArgs args{.scorer = posting.stats.scorer,
-                                    .stats = posting.stats.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = posting.boost};
+  const auto args = posting.Args(&ctx.fetcher);
   if (meta.docs_count == 1) {
     return MakePrepared(ctx, [&](auto table) -> Root::ptr {
       auto root = memory::make_managed<SinglePosting<decltype(table)>>(table);

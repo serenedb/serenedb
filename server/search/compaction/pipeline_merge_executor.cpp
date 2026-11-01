@@ -21,10 +21,14 @@
 #include "search/compaction/pipeline_merge_executor.h"
 
 #include <algorithm>
+#include <duckdb/common/enums/set_scope.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_profiler.hpp>
 #include <duckdb/main/query_result.hpp>
+#include <duckdb/main/settings.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <memory>
 
@@ -33,12 +37,6 @@
 
 namespace sdb::search {
 namespace {
-
-void Check(const duckdb::QueryResult& result) {
-  if (result.HasError()) {
-    result.ThrowError();
-  }
-}
 
 void TakeProfile(duckdb::ClientContext& context,
                  PipelineMergeExecutor::Profiles& profiles) {
@@ -83,11 +81,17 @@ bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
   duckdb::Connection connection{_db};
   auto& context = *connection.context;
   context.task_scheduler = _scheduler;
+  context.SetSchedulerAccount(
+    duckdb::TaskScheduler::GetScheduler(context).CreateAccount(
+      duckdb::SchedulerClass::FOREGROUND));
   context.config.threads = threads;
-  Check(*connection.Query("SET SESSION max_execution_time = 0"));
-  Check(*connection.Query("SET SESSION preserve_insertion_order = false"));
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    context, duckdb::SetScope::SESSION, duckdb::Value::BIGINT(0));
+  duckdb::Settings::Set<duckdb::PreserveInsertionOrderSetting>(
+    context, duckdb::SetScope::SESSION, duckdb::Value::BOOLEAN(false));
   if (_profiles) {
-    Check(*connection.Query("SET SESSION enable_profiling = 'no_output'"));
+    duckdb::EnableProfilingSetting::SetLocal(context,
+                                             duckdb::Value{"no_output"});
   }
   if (plan.OrderPending()) {
     if (!Execute(connection, duckdb::make_uniq<LogicalMergeOrder>(plan),

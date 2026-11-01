@@ -189,15 +189,11 @@ class PrunedConjunction : public Root {
   }
 
   doc_id_t SkipLead(doc_id_t target, doc_id_t max, score_t threshold) {
-    if constexpr (requires {
-                    _lead.SkipNonCompetitive(target, max, threshold);
-                  }) {
-      target = _lead.SkipNonCompetitive(target, max, threshold);
-      if (target >= max) {
-        return target;
-      }
+    if constexpr (requires { _lead.SeekCompetitive(target, max, threshold); }) {
+      return _lead.SeekCompetitive(target, max, threshold);
+    } else {
+      return _lead.SkipTo(target);
     }
-    return _lead.SkipTo(target);
   }
 
   std::pair<uint32_t, uint32_t> ScoreFirst(doc_id_t last, score_t others_max,

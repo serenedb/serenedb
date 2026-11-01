@@ -67,6 +67,11 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return _cursor.Armed() ? last : *(std::end(_docs) - 1);
   }
 
+  doc_id_t SeekCompetitive(doc_id_t target, doc_id_t max, score_t threshold) {
+    target = Base::SkipNonCompetitive(target, max, threshold);
+    return target < max ? SkipTo(target) : target;
+  }
+
   doc_id_t SkipTo(doc_id_t target) {
     if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
       return Seek(target);

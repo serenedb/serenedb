@@ -42,7 +42,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_recipe;
-  using Base::DecodeFreqs;
+  using Base::DecodeLazyFreqs;
   using Base::Matches;
   using Base::Members;
   using Base::ReadFill;
@@ -140,11 +140,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
 
  private:
   IRS_FORCE_INLINE uint32_t Freq() noexcept {
-    if constexpr (InputType::kVolatileAlways) {
-      if (_lazy != nullptr) {
-        DecodeFreqs();
-      }
-    }
+    DecodeLazyFreqs();
     return _freqs.data[_leaf.Index()];
   }
 

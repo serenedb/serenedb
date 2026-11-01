@@ -31,6 +31,7 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
+#include "iresearch/search/top/phrase_bound.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -55,6 +56,7 @@ class PrunedPhrase : public Root {
   PrunedPhrase(Table table, const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, Args&&... slots)
     : _slots{std::forward<Args>(slots)...},
+      _bound{segment, field, args},
       _fetcher{*args.fetcher},
       _admit{table} {
     _provider.freq.value = _freqs;
@@ -67,17 +69,6 @@ class PrunedPhrase : public Root {
       .stats = args.stats,
       .boost = args.boost,
     });
-    if (auto source = args.scorer->PrepareScoreBoundSource()) {
-      _bound_func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
-      _bound_source = std::move(source);
-    }
     _slots.Gate([](uint64_t lead, auto leaves) {
       double cost = 0;
       for (const auto& leaf : leaves) {
@@ -112,30 +103,24 @@ class PrunedPhrase : public Root {
   }
 
  private:
-  score_t BoundScore(BoundPair bound) {
-    _bound_source->Set(_slots.FreqBoundOf(bound.freq), bound.norm);
-    return _bound_func.Score();
-  }
-
   score_t RunScore(const BlockIndex& index, uint32_t r) {
     if (_run != r) {
       _run = r;
-      _run_score = BoundScore(index.RunBound(r));
+      _run_score = _bound.Score(_slots, index.RunBound(r));
     }
     return _run_score;
   }
 
   doc_id_t SkipBlocks(doc_id_t doc, score_t threshold) {
-    auto* const leaf = _bound_source ? _slots.BoundLeaf() : nullptr;
-    const auto* const index = leaf ? leaf->Blocks() : nullptr;
+    const auto* const index = _bound.Index(_slots);
     if (!index) {
       _block_last = doc_limits::eof();
       return doc;
     }
-    const auto first = leaf->LeafBlock();
+    const auto first = _slots.BoundLeaf()->LeafBlock();
     const auto b = FirstCompetitive(
       *index, first, threshold, [&](uint32_t r) { return RunScore(*index, r); },
-      [&](uint32_t k) { return BoundScore(index->Bound(k)); });
+      [&](uint32_t k) { return _bound.Score(_slots, index->Bound(k)); });
     if (b == first) {
       _block_last = index->Last(b);
       return doc;
@@ -249,8 +234,7 @@ class PrunedPhrase : public Root {
   Slots _slots;
   irs::detail::LeafProvider _provider;
   ScoreFunction _score;
-  ScoreFunction _bound_func;
-  ScoreBoundSource::ptr _bound_source;
+  PhraseBound _bound;
   ColumnArgsFetcher& _fetcher;
   doc_id_t _block_last = doc_limits::invalid();
   uint32_t _run = std::numeric_limits<uint32_t>::max();

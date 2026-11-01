@@ -438,10 +438,17 @@ class ListColumnReader final : public ColumnReader {
     }
     if constexpr (kDictionary) {
       duckdb::SelectionVector sel{scan_count};
-      for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-        sel.set_index(i, validity.RowIsValid(i)
-                           ? static_cast<duckdb::idx_t>(Index(d, codes[i]))
-                           : 0);
+      const auto fill = [&](auto index) {
+        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+          sel.set_index(i, validity.RowIsValid(i)
+                             ? static_cast<duckdb::idx_t>(index(codes[i]))
+                             : 0);
+        }
+      };
+      if (d.decoded.empty()) {
+        fill([begin = d.begin](uint64_t code) { return code - begin + 1; });
+      } else {
+        fill([&d](uint64_t code) { return Index(d, code); });
       }
       result.Dictionary(d.lists, sel, scan_count);
       return scan_count;

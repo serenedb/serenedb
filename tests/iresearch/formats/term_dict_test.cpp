@@ -430,6 +430,29 @@ std::vector<irs::bstring> Words(size_t count, uint32_t seed) {
   return words;
 }
 
+std::vector<Entry> Ladder(std::string_view last) {
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 3000; ++i) {
+    keys.emplace_back(Bytes(absl::StrCat("ay", absl::Dec(i, absl::kZeroPad4))));
+  }
+  keys.emplace_back(Bytes(last));
+  return MakeEntries(std::move(keys));
+}
+
+std::vector<Entry> Multiples(irs::doc_id_t count) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= count; ++doc) {
+    values.emplace_back(int64_t{doc} * 3, doc);
+  }
+  return NumericEntries(std::move(values));
+}
+
+irs::bstring OrdinalPrefix(uint32_t ordinal, uint32_t width) {
+  irs::byte_type bytes[sizeof(uint32_t)];
+  absl::big_endian::Store32(bytes, ordinal);
+  return irs::bstring{bytes + sizeof(bytes) - width, width};
+}
+
 class EntriesReader final : public irs::BasicTermReader {
  public:
   explicit EntriesReader(const Field& field)
@@ -471,7 +494,8 @@ class EntriesReader final : public irs::BasicTermReader {
 
 class TermDictTest : public tests::DirectoryTestCaseBase<> {
  protected:
-  void Write(std::span<const Field> fields, bool compaction = false) {
+  void Write(std::span<const Field> fields, bool compaction = false,
+             uint64_t keyed_bound = 0) {
     irs::doc_id_t docs = 0;
     for (const auto& field : fields) {
       for (const auto& entry : field.entries) {
@@ -489,9 +513,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     irs::IdxWriter idx{dir(), kSegment};
     irs::term_dict::FieldWriter writer{compaction};
     writer.SetIdxWriter(idx);
-    writer.prepare(state, absl::c_count_if(fields, [](const Field& field) {
-                     return irs::IsKeyed(field.slot);
-                   }));
+    const uint64_t keyed = absl::c_count_if(
+      fields, [](const Field& field) { return irs::IsKeyed(field.slot); });
+    writer.prepare(state, std::max(keyed, keyed_bound));
     for (const auto& field : fields) {
       EntriesReader reader{field};
       writer.write(field.slot, reader);
@@ -928,6 +952,54 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     };
     ASSERT_EQ(3, height(1));
     ASSERT_EQ(0, height(4));
+  }
+
+  void AssertOrdinal(std::span<const Field> fields, size_t ordinal,
+                     uint32_t width) const {
+    const auto& field = fields[ordinal];
+    SCOPED_TRACE(testing::Message("ordinal ") << ordinal);
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    const auto& impl =
+      static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
+    ASSERT_EQ(
+      irs::bytes_view{OrdinalPrefix(static_cast<uint32_t>(ordinal), width)},
+      impl.KeyPrefix());
+    AssertField(*reader, field.entries);
+    if (field.slot == irs::FieldSlot::Numeric) {
+      ASSERT_FALSE(impl.RangeLevels().empty());
+      AssertLevels(*reader, field.entries);
+      AssertVisits(*reader, field.entries, 1000);
+      return;
+    }
+    for (const std::string_view pattern :
+         {".b.*", "a[a-x].*|b.*", "x.*", ".*ing"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(*reader, field.entries,
+                 irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+    std::vector<irs::bytes_view> targets{field.entries.back().key};
+    if (ordinal + 1 != fields.size()) {
+      targets.emplace_back(fields[ordinal + 1].entries.front().key);
+    }
+    const auto description = irs::MakeParametricDescription(1, false);
+    for (const auto target : targets) {
+      SCOPED_TRACE(testing::Message("target ") << irs::ViewCast<char>(target));
+      const irs::LevenshteinAcceptor acceptor{description, {}, target};
+      std::vector<irs::bytes_view> expected;
+      for (const auto& entry : field.entries) {
+        if (acceptor.Matches(entry.key)) {
+          expected.emplace_back(entry.key);
+        }
+      }
+      auto it = reader->iterator(acceptor);
+      size_t i = 0;
+      for (; it->next(); ++i) {
+        ASSERT_LT(i, expected.size());
+        ASSERT_EQ(expected[i], it->value());
+      }
+      ASSERT_EQ(expected.size(), i);
+    }
   }
 
   irs::SegmentMeta _meta;
@@ -1893,6 +1965,58 @@ TEST_P(TermDictTest, ordinal_width_follows_the_bound) {
                                   static_cast<irs::byte_type>(ordinal)};
     ASSERT_EQ(irs::bytes_view(prefix, 2), impl.KeyPrefix());
     AssertField(*Get(field), field.entries);
+  }
+}
+
+TEST_P(TermDictTest, three_byte_ordinals_past_two_byte_dictionaries) {
+  constexpr irs::field_id kFillers = 0xFFFE;
+  std::vector<Field> fields;
+  fields.reserve(kFillers + 6);
+  for (irs::field_id id = 1; id <= kFillers; ++id) {
+    fields.push_back({.id = id,
+                      .entries = MakeEntries({Bytes(absl::StrCat("a", id)),
+                                              Bytes(absl::StrCat("b", id))})});
+  }
+  fields.push_back({.id = kFillers + 1, .entries = Ladder("az")});
+  fields.push_back({.id = kFillers + 2, .entries = Ladder("az0000")});
+  fields.push_back(
+    {.id = kFillers + 3, .entries = MakeEntries({Bytes("xb1"), Bytes("xb2")})});
+  fields.push_back({.id = kFillers + 4,
+                    .entries = Multiples(20000),
+                    .slot = irs::FieldSlot::Numeric});
+  fields.push_back(
+    {.id = kFillers + 4, .entries = MakeEntries(Words(3000, 7))});
+  fields.push_back(
+    {.id = kFillers + 5,
+     .entries = MakeEntries({Bytes("xb1000"), Bytes("xb2000")})});
+  Write(fields);
+  ASSERT_EQ(3, TakeTerms().ordinal_bytes);
+  const auto& last_two_byte =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*Get(kFillers + 2));
+  const auto& first_three_byte =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*Get(kFillers + 3));
+  ASSERT_LT(1, last_two_byte.Blocks());
+  ASSERT_NE(0, first_three_byte.FirstEntry());
+  for (const size_t ordinal :
+       {size_t{0}, size_t{0xFF}, size_t{0x100}, size_t{kFillers - 1}}) {
+    AssertOrdinal(fields, ordinal, 3);
+  }
+  for (size_t ordinal = kFillers; ordinal != fields.size(); ++ordinal) {
+    AssertOrdinal(fields, ordinal, 3);
+  }
+}
+
+TEST_P(TermDictTest, four_byte_ordinals_follow_the_bound) {
+  const Field fields[]{
+    {.id = 1, .entries = Ladder("az")},
+    {.id = 2, .entries = MakeEntries({Bytes("xb1"), Bytes("xb2")})},
+    {.id = 3, .entries = Multiples(20000), .slot = irs::FieldSlot::Numeric},
+    {.id = 3, .entries = MakeEntries(Words(3000, 7))},
+  };
+  Write(fields, false, irs::term_dict::OrdinalLimit(3) + 1);
+  ASSERT_EQ(4, TakeTerms().ordinal_bytes);
+  for (size_t ordinal = 0; ordinal != std::size(fields); ++ordinal) {
+    AssertOrdinal(fields, ordinal, 4);
   }
 }
 

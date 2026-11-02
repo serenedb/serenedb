@@ -71,7 +71,7 @@ struct PostingsMergeGlobalState final : duckdb::GlobalSinkState {
 };
 
 struct PostingsMergeSinkState final : duckdb::LocalSinkState {
-  std::unique_ptr<TermRangeWriter> writer;
+  bool open = false;
   uint64_t partition = 0;
   duckdb::vector<duckdb::PresortedRun> runs;
 };
@@ -178,18 +178,19 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
     auto& state = input.local_state.Cast<PostingsMergeSinkState>();
     const auto* partitions =
       duckdb::FlatVector::GetData<uint64_t>(chunk.data[0]);
-    if (state.writer && state.partition != partitions[0]) {
+    if (state.open && state.partition != partitions[0]) {
       FinishPartition(input.global_state, state);
     }
-    if (!state.writer) {
+    if (!state.open) {
       state.partition = partitions[0];
-      state.writer = _merge.BeginPart(state.partition);
+      _merge.BeginPart(state.partition);
+      state.open = true;
     }
     ReadRuns(chunk, state.runs);
     SDB_ASSERT(absl::c_all_of(
       std::span{partitions, chunk.size()},
       [&](uint64_t partition) { return partition == state.partition; }));
-    if (!state.writer->Consume(state.runs)) {
+    if (!_merge.Consume(state.partition, state.runs)) {
       context.client.Interrupt();
     }
     SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_sink");
@@ -231,11 +232,11 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
   void FinishPartition(duckdb::GlobalSinkState& global,
                        duckdb::LocalSinkState& local) const {
     auto& state = local.Cast<PostingsMergeSinkState>();
-    if (!state.writer) {
+    if (!state.open) {
       return;
     }
-    _merge.FinishPart(state.partition, *state.writer);
-    state.writer.reset();
+    _merge.FinishPart(state.partition);
+    state.open = false;
     if (global.Cast<PostingsMergeGlobalState>().left.fetch_sub(1) == 1) {
       _schedule->RangeDone();
       return;

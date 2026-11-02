@@ -87,7 +87,7 @@ catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
 constexpr ColumnId kValueColumn{1};
 
 bool MergePart(irs::TermRangeMerge& range, size_t part) {
-  auto writer = range.BeginPart(part);
+  range.BeginPart(part);
   const auto& merge = *range.KeyMerge();
   const auto state = merge.BeginMerge(part);
   duckdb::vector<duckdb::PresortedRun> runs;
@@ -98,11 +98,11 @@ bool MergePart(irs::TermRangeMerge& range, size_t part) {
           *state, runs, STANDARD_VECTOR_SIZE, [] { return true; }, unsorted)) {
       return false;
     }
-    if (!writer->Consume(runs)) {
+    if (!range.Consume(part, runs)) {
       break;
     }
   }
-  return range.FinishPart(part, *writer);
+  return range.FinishPart(part);
 }
 
 const irs::CompactionPolicy& FullMerge() {

@@ -44,19 +44,6 @@ namespace irs {
 struct NormProvider;
 struct TermReader;
 
-class TermRangeWriter {
- public:
-  virtual ~TermRangeWriter() = default;
-
-  virtual bool Consume(std::span<const duckdb::PresortedRun> runs) = 0;
-
-  virtual bool Finish() = 0;
-
-  virtual const bitset& Docs() const noexcept = 0;
-
-  virtual TermPartWriter& Terms() noexcept = 0;
-};
-
 class TermRangeMerge {
  public:
   struct Input {
@@ -89,9 +76,11 @@ class TermRangeMerge {
     return _merge;
   }
 
-  std::unique_ptr<TermRangeWriter> BeginPart(size_t part);
+  void BeginPart(size_t part);
 
-  bool FinishPart(size_t part, TermRangeWriter& writer);
+  bool Consume(size_t part, std::span<const duckdb::PresortedRun> runs);
+
+  bool FinishPart(size_t part);
 
   bool Done() const noexcept;
 

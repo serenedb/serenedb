@@ -24,8 +24,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -42,7 +44,7 @@ namespace {
 constexpr std::string_view kPartName = "part";
 
 template<typename Postings>
-class RangeWriter final : public TermRangeWriter {
+class RangeWriter {
  public:
   RangeWriter(std::span<const TermRangeMerge::Input> sources,
               std::span<const duckdb::shared_ptr<TermKeys>> keys,
@@ -67,7 +69,7 @@ class RangeWriter final : public TermRangeWriter {
     _writer.BeginField(props);
   }
 
-  bool Consume(std::span<const duckdb::PresortedRun> runs) final {
+  bool Consume(std::span<const duckdb::PresortedRun> runs) {
     for (const auto& run : runs) {
       const auto i = static_cast<size_t>(run.input);
       SDB_ENSURE(i < _inputs.size(), "TermRangeWriter: run of input ", i,
@@ -81,7 +83,7 @@ class RangeWriter final : public TermRangeWriter {
     return !_postings.Aborted();
   }
 
-  bool Finish() final {
+  bool Finish() {
     if (_open) {
       Close();
     }
@@ -90,9 +92,9 @@ class RangeWriter final : public TermRangeWriter {
     return !_postings.Aborted();
   }
 
-  const bitset& Docs() const noexcept final { return _writer.Docs(); }
+  const bitset& Docs() const noexcept { return _writer.Docs(); }
 
-  TermPartWriter& Terms() noexcept final { return _terms; }
+  TermPartWriter& Terms() noexcept { return _terms; }
 
  private:
   struct InputState {
@@ -189,6 +191,9 @@ class RangeWriter final : public TermRangeWriter {
 
 struct TermRangeMerge::Part {
   MemoryDirectory dir;
+  std::optional<
+    std::variant<RangeWriter<SortedPostings>, RangeWriter<CompoundPostings>>>
+    writer;
   bstring terms;
   uint64_t count = 0;
   uint64_t total_doc_freq = 0;
@@ -239,47 +244,62 @@ void TermRangeMerge::Partition(size_t parts, const Target& target,
   _docs.assign(bitset::bits_to_words(target.doc_count + doc_limits::min()), 0);
 }
 
-std::unique_ptr<TermRangeWriter> TermRangeMerge::BeginPart(size_t part) {
+void TermRangeMerge::BeginPart(size_t part) {
   SDB_ASSERT(part < _parts.size());
-  _parts[part]->started = std::chrono::steady_clock::now();
-  auto& dir = _parts[part]->dir;
+  auto& p = *_parts[part];
+  SDB_ASSERT(!p.writer);
+  p.started = std::chrono::steady_clock::now();
   if (_sorted) {
-    return std::make_unique<RangeWriter<SortedPostings>>(
-      _inputs, _keys, _props, _target, dir, *_progress);
+    p.writer.emplace(std::in_place_type<RangeWriter<SortedPostings>>, _inputs,
+                     _keys, _props, _target, p.dir, *_progress);
+    return;
   }
-  return std::make_unique<RangeWriter<CompoundPostings>>(
-    _inputs, _keys, _props, _target, dir, *_progress);
+  p.writer.emplace(std::in_place_type<RangeWriter<CompoundPostings>>, _inputs,
+                   _keys, _props, _target, p.dir, *_progress);
 }
 
-bool TermRangeMerge::FinishPart(size_t part, TermRangeWriter& writer) {
+bool TermRangeMerge::Consume(size_t part,
+                             std::span<const duckdb::PresortedRun> runs) {
   SDB_ASSERT(part < _parts.size());
-  const bool ok = writer.Finish();
+  auto& writer = _parts[part]->writer;
+  SDB_ASSERT(writer);
+  return std::visit([&](auto& w) { return w.Consume(runs); }, *writer);
+}
+
+bool TermRangeMerge::FinishPart(size_t part) {
+  SDB_ASSERT(part < _parts.size());
   auto& p = *_parts[part];
-  auto& terms = writer.Terms();
-  p.count = terms.Count();
-  p.total_doc_freq = terms.TotalDocFreq();
-  p.total_term_freq = terms.TotalTermFreq();
-  p.terms = std::move(terms).TakeTerms();
-  const auto open = [&](std::string_view ext) -> IndexInput::ptr {
-    const auto name = FileName(kPartName, ext);
-    bool exists = false;
-    if (!p.dir.exists(exists, name) || !exists) {
-      return nullptr;
-    }
-    return p.dir.open(name, IOAdvice::SEQUENTIAL);
-  };
-  p.doc = open(PostingsWriter::kDocExt);
-  p.pos = open(PostingsWriter::kPosExt);
-  p.pay = open(PostingsWriter::kPayExt);
-  const auto& docs = writer.Docs();
-  {
-    absl::MutexLock lock{&_mutex};
-    SDB_ASSERT(docs.words() <= _docs.size());
-    for (size_t w = 0; w != docs.words(); ++w) {
-      _docs[w] |= docs.data()[w];
-    }
-    p.done = ok;
-  }
+  SDB_ASSERT(p.writer);
+  const bool ok = std::visit(
+    [&](auto& writer) {
+      const bool finished = writer.Finish();
+      auto& terms = writer.Terms();
+      p.count = terms.Count();
+      p.total_doc_freq = terms.TotalDocFreq();
+      p.total_term_freq = terms.TotalTermFreq();
+      p.terms = std::move(terms).TakeTerms();
+      const auto open = [&](std::string_view ext) -> IndexInput::ptr {
+        const auto name = FileName(kPartName, ext);
+        bool exists = false;
+        if (!p.dir.exists(exists, name) || !exists) {
+          return nullptr;
+        }
+        return p.dir.open(name, IOAdvice::SEQUENTIAL);
+      };
+      p.doc = open(PostingsWriter::kDocExt);
+      p.pos = open(PostingsWriter::kPosExt);
+      p.pay = open(PostingsWriter::kPayExt);
+      const auto& docs = writer.Docs();
+      absl::MutexLock lock{&_mutex};
+      SDB_ASSERT(docs.words() <= _docs.size());
+      for (size_t w = 0; w != docs.words(); ++w) {
+        _docs[w] |= docs.data()[w];
+      }
+      p.done = finished;
+      return finished;
+    },
+    *p.writer);
+  p.writer.reset();
   _nanos +=
     static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now() - p.started)

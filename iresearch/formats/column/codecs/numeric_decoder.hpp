@@ -259,8 +259,7 @@ class FrameDecoder {
 
   void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need,
                   bool scan) {
-    const bool prefix =
-      _lz4 && f != _source_frame && need < m.frame.raw_len;
+    const bool prefix = _lz4 && f != _source_frame && need < m.frame.raw_len;
     _summed = 0;
     _source_first = m.frame.first_entry;
     _source_base = static_cast<U>(m.base);
@@ -276,10 +275,10 @@ class FrameDecoder {
       if (_raw.size() < m.frame.raw_len) {
         _raw.resize(m.frame.raw_len);
       }
-      SDB_ENSURE(_lz4->DecompressPrefix(
-                   reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
-                   reinterpret_cast<char*>(_raw.data()), need,
-                   m.frame.raw_len) != 0,
+      SDB_ENSURE(_lz4->DecompressPrefix(reinterpret_cast<const char*>(Data(m)),
+                                        m.frame.comp_len,
+                                        reinterpret_cast<char*>(_raw.data()),
+                                        need, m.frame.raw_len) != 0,
                  "numeric codec: corrupted frame");
       _source = _raw.data();
       _source_len = need;

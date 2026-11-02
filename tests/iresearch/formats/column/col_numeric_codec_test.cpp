@@ -782,8 +782,7 @@ TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
       irs::MemoryDirectory dir{};
       Write(dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, 8192,
             shape.gen);
-      irs::ColReader r{dir, std::string{kSeg}, Db(),
-                       irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (int pass = 0; pass < 3; ++pass) {

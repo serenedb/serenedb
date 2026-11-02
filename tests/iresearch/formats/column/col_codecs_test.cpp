@@ -1044,8 +1044,7 @@ TEST_F(ColCodecsTest, PointReadsCacheDecodedFrames) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       for (uint64_t g = 17; g < kRows; g += 211) {
         duckdb::FlatVector::ValidityMutable(out).Reset();
-        EXPECT_EQ(cursor.FetchRow(g, out, 0),
-                  kLongTextWithNulls(g).has_value())
+        EXPECT_EQ(cursor.FetchRow(g, out, 0), kLongTextWithNulls(g).has_value())
           << g;
         ExpectRow(out, 0, g, kLongTextWithNulls);
       }

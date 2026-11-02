@@ -59,7 +59,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | ALTER DEFAULT PRIVILEGES | Yes        | Applied to the objects the role creates afterwards, in the whole database or in one schema |
 | REASSIGN OWNED        | Yes           | Objects in the current database, databases and subscriptions; see [Dropping roles](../security/roles.md#dropping-roles) |
 | DROP OWNED            | Yes           | Objects in the current database; privileges in it and on databases; see [Dropping roles](../security/roles.md#dropping-roles) |
-| Row Security Policies | No            | See [issue](https://github.com/serenedb/serenedb/issues/212) |
+| Row Security Policies | No            | `CREATE POLICY`, `ALTER POLICY`, `DROP POLICY` and `ALTER TABLE ... ROW LEVEL SECURITY` fail with `row-level security is not supported` |
 
 ### Indexes
 | Feature                 | Support State | Details                                                     |

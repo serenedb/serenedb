@@ -1858,10 +1858,9 @@ pgonly("CREATE FUNCTION pgonly.touch() RETURNS trigger LANGUAGE plpgsql AS $$ BE
        'language "plpgsql" is not supported')
 pgonly("CREATE TRIGGER parent_touch BEFORE UPDATE ON pgonly.parent FOR EACH ROW EXECUTE FUNCTION pgonly.touch()",
        'syntax error at or near "EXECUTE"')
-pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY",
-       "Pragma Function with name serenedb_alter_table_row_security does not exist!")
+pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY", "row-level security is not supported")
 pgonly("CREATE POLICY parent_reader ON pgonly.parent FOR SELECT TO conf_reader USING (id > 0)",
-       "Pragma Function with name serenedb_create_policy does not exist!")
+       "row-level security is not supported")
 pgonly("COMMENT ON SCHEMA pgonly IS 'Objects SereneDB cannot create yet'", "Adding comments to schemas is not implemented")
 pgonly("COMMENT ON CONSTRAINT identity_tab_qty_check ON pgonly.identity_tab IS 'Allowed quantities'",
        'syntax error at or near "CONSTRAINT"')

@@ -45,7 +45,6 @@ class WriterGenerations {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   absl::Mutex _mutex;
-  absl::CondVar _cv;
   unsigned _generation ABSL_GUARDED_BY(_mutex) = 0;
   uint64_t _writers[2] ABSL_GUARDED_BY(_mutex) = {0, 0};
   bool _truncating ABSL_GUARDED_BY(_mutex) = false;

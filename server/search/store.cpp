@@ -226,6 +226,9 @@ void Store::Open() {
     SDB_IF_FAILURE("segment_1000_docs_max") {
       writer_options.segment_docs_max = 1000;
     }
+    if (IsBackupActive()) {
+      writer_options.cleanup_on_open = false;
+    }
     manifest = [this] { return GetFileManifest(); };
   }
 
@@ -312,9 +315,11 @@ auto Store::ReindexClaim::Acquire(Store& store,
   absl::Cleanup leave = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS noexcept {
     --store._reindex_waiters;
   };
-  while (store._reindex_in_flight) {
-    if (store._reindex_cv.WaitWithTimeout(&store._reindex_mutex, poll) &&
-        cancelled()) {
+  const auto idle = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    return !store._reindex_in_flight;
+  };
+  while (!store._reindex_mutex.AwaitWithTimeout(absl::Condition{&idle}, poll)) {
+    if (cancelled()) {
       return ReindexClaim{nullptr};
     }
   }
@@ -328,7 +333,6 @@ Store::ReindexClaim::~ReindexClaim() {
   }
   absl::MutexLock lock{&_store->_reindex_mutex};
   _store->_reindex_in_flight = false;
-  _store->_reindex_cv.SignalAll();
 }
 
 ResultWithTime Store::RefreshUnsafe(bool wait,
@@ -364,6 +368,10 @@ void Store::Publish() {
 }
 
 ResultWithTime Store::CleanupUnsafe() {
+  const auto maintenance = ClaimMaintenance();
+  if (!maintenance) {
+    return {absl::OkStatus(), 0};
+  }
   const auto begin = std::chrono::steady_clock::now();
   auto result = _durability.Cleanup(*_dir);
   const auto time_ms = MillisSince(begin);
@@ -377,10 +385,21 @@ auto Store::CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                                const irs::IndexFieldOptions* field_options,
                                const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
+  empty_compaction = false;
+  const auto maintenance = ClaimMaintenance();
+  if (!maintenance) {
+    co_return ResultWithTime{BackupInProgressError(), 0};
+  }
+  const irs::MergeWriter::FlushProgress interruptible = [&progress] {
+    return !IsBackupActive() && progress();
+  };
   const auto begin = std::chrono::steady_clock::now();
-  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
-                                           field_options, env);
+  auto result = co_await CompactUnsafeImpl(
+    policy, interruptible, empty_compaction, field_options, env);
   const auto time_ms = MillisSince(begin);
+  if (result.ok() && empty_compaction && IsBackupActive()) {
+    co_return ResultWithTime{BackupInProgressError(), time_ms};
+  }
   _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   co_return ResultWithTime{std::move(result), time_ms};
 }
@@ -452,8 +471,11 @@ absl::Status Store::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status Store::VacuumCompact(uint32_t target_segments) {
-  static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
+absl::Status Store::VacuumCompact(uint32_t target_segments,
+                                  absl::FunctionRef<bool()> cancelled) {
+  const irs::MergeWriter::FlushProgress progress = [&cancelled] {
+    return !cancelled();
+  };
   const auto target = std::max<uint32_t>(1, target_segments);
   RefreshResult code = RefreshResult::Undefined;
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
@@ -488,11 +510,23 @@ absl::Status Store::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      const auto field_options = CompactionOptions();
-      status.Update(
-        irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
-                                            field_options.get(), env))
-          .res);
+      const auto compact = [&] {
+        const auto field_options = CompactionOptions();
+        return irs::GetBlocking(CompactUnsafeAsync(bucket, progress, empty,
+                                                   field_options.get(), env))
+          .res;
+      };
+      auto res = compact();
+      while (absl::IsUnavailable(res)) {
+        if (!GetSearchEngine().Maintenance().WaitOpen(cancelled)) {
+          return absl::CancelledError("compaction cancelled");
+        }
+        res = compact();
+      }
+      if (cancelled()) {
+        return absl::CancelledError("compaction cancelled");
+      }
+      status.Update(res);
       merged = merged || !empty;
     }
     if (!status.ok()) {

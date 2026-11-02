@@ -1,0 +1,62 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bfc (x BIGINT);
+
+
+connection failer
+statement ok
+SET debug_force_commit_failure = true;
+
+
+connection failer
+statement error
+INSERT INTO bfc VALUES (1);
+----
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+
+
+connection default
+statement ok
+RESET debug_force_commit_failure;
+
+
+connection starter
+statement async ok
+SELECT pg_backup_start('bfc');
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) > 0 AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+cut
+t
+
+
+wait
+
+
+connection starter
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+connection default
+statement ok
+INSERT INTO bfc VALUES (2);
+
+
+connection default
+query
+SELECT x FROM bfc ORDER BY x;
+----
+x
+2

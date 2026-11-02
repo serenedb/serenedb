@@ -179,6 +179,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
   void FinishCheckpointIfIdle();
+  bool HasPendingCheckpoint() { return _durability.HasPendingCheckpoint(); }
 
   // Launch this store's refresh + compaction loops (via SearchEngine). Call
   // once, after the store is open and recovery (if any) finalized.
@@ -212,7 +213,8 @@ class Store final : public std::enable_shared_from_this<Store>,
     const irs::ProgressReportCallback& progress = nullptr);
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
+  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments,
+                                           absl::FunctionRef<bool()> cancelled);
   void Publish();
 
   StoreStats GetStats() const;
@@ -411,7 +413,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::unique_ptr<ReplaySession> _replay;
 
   absl::Mutex _reindex_mutex;
-  absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
   uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
 

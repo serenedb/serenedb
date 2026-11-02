@@ -42,6 +42,7 @@ Revoke role membership:
 
 - Revoking requires the same authority as granting: object ownership (or `GRANT OPTION`) for privileges, `ADMIN OPTION` / `CREATEROLE` / superuser for membership.
 - Revoking a privilege the role does not hold is not an error — the statement simply has no effect.
+- Several objects, roles and members can be listed, separated by commas: `REVOKE SELECT ON t1, t2 FROM r1, r2` revokes from every pair, and if any part fails nothing is revoked.
 
 ## See also
 

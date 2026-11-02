@@ -1,0 +1,259 @@
+statement ok
+DROP SCHEMA IF EXISTS gl_s1 CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS gl_s2 CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS gl_t1;
+
+
+statement ok
+DROP TABLE IF EXISTS gl_t2;
+
+
+statement ok
+DROP FUNCTION IF EXISTS gl_f1(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS gl_f2();
+
+
+statement ok
+DROP ROLE IF EXISTS gl_alice, gl_bob, gl_group1, gl_group2;
+
+
+statement ok
+CREATE ROLE gl_alice LOGIN PASSWORD 'gl_pw';
+
+
+statement ok
+CREATE ROLE gl_bob LOGIN PASSWORD 'gl_pw';
+
+
+statement ok
+CREATE ROLE gl_group1;
+
+
+statement ok
+CREATE ROLE gl_group2;
+
+
+statement ok
+CREATE TABLE gl_t1 (a int);
+
+
+statement ok
+CREATE TABLE gl_t2 (a int);
+
+
+statement ok
+GRANT SELECT, INSERT ON gl_t1, gl_t2 TO gl_alice, gl_bob;
+
+
+query
+SELECT has_table_privilege('gl_alice', 'gl_t1', 'SELECT') AS a1,
+       has_table_privilege('gl_alice', 'gl_t2', 'INSERT') AS a2,
+       has_table_privilege('gl_bob', 'gl_t1', 'INSERT') AS b1,
+       has_table_privilege('gl_bob', 'gl_t2', 'SELECT') AS b2;
+----
+a1	a2	b1	b2
+t	t	t	t
+
+
+statement ok
+REVOKE SELECT, INSERT ON gl_t1, gl_t2 FROM gl_alice, gl_bob;
+
+
+query
+SELECT has_table_privilege('gl_alice', 'gl_t1', 'SELECT') AS a1,
+       has_table_privilege('gl_alice', 'gl_t2', 'INSERT') AS a2,
+       has_table_privilege('gl_bob', 'gl_t1', 'INSERT') AS b1,
+       has_table_privilege('gl_bob', 'gl_t2', 'SELECT') AS b2;
+----
+a1	a2	b1	b2
+f	f	f	f
+
+
+statement error
+GRANT SELECT ON gl_t1, gl_nosuch TO gl_alice;
+----
+db error: ERROR: relation "gl_nosuch" does not exist
+
+
+query
+SELECT has_table_privilege('gl_alice', 'gl_t1', 'SELECT') AS granted;
+----
+granted
+f
+
+
+statement ok
+GRANT gl_group1, gl_group2 TO gl_alice, gl_bob;
+
+
+query
+SELECT pg_has_role('gl_alice', 'gl_group1', 'MEMBER') AS a1,
+       pg_has_role('gl_alice', 'gl_group2', 'MEMBER') AS a2,
+       pg_has_role('gl_bob', 'gl_group1', 'MEMBER') AS b1,
+       pg_has_role('gl_bob', 'gl_group2', 'MEMBER') AS b2;
+----
+a1	a2	b1	b2
+t	t	t	t
+
+
+statement ok
+REVOKE gl_group1, gl_group2 FROM gl_alice, gl_bob;
+
+
+query
+SELECT pg_has_role('gl_alice', 'gl_group1', 'MEMBER') AS a1,
+       pg_has_role('gl_alice', 'gl_group2', 'MEMBER') AS a2,
+       pg_has_role('gl_bob', 'gl_group1', 'MEMBER') AS b1,
+       pg_has_role('gl_bob', 'gl_group2', 'MEMBER') AS b2;
+----
+a1	a2	b1	b2
+f	f	f	f
+
+
+statement ok
+GRANT gl_group1 TO gl_alice, gl_bob WITH ADMIN OPTION;
+
+
+statement ok
+REVOKE ADMIN OPTION FOR gl_group1 FROM gl_alice, gl_bob;
+
+
+query
+SELECT m.member::regrole::text AS member, m.admin_option
+FROM pg_auth_members m
+WHERE m.roleid = 'gl_group1'::regrole
+ORDER BY 1;
+----
+member	admin_option
+gl_alice	f
+gl_bob	f
+
+
+statement ok
+REVOKE gl_group1 FROM gl_alice, gl_bob;
+
+
+statement ok
+CREATE FUNCTION gl_f1(a int) RETURNS int LANGUAGE sql AS 'SELECT a';
+
+
+statement ok
+CREATE FUNCTION gl_f2() RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION gl_f1(int), gl_f2() FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION gl_f1(int), gl_f2() TO gl_alice;
+
+
+query
+SELECT has_function_privilege('gl_alice', 'gl_f1(int)', 'EXECUTE') AS a1,
+       has_function_privilege('gl_alice', 'gl_f2()', 'EXECUTE') AS a2,
+       has_function_privilege('gl_bob', 'gl_f1(int)', 'EXECUTE') AS b1;
+----
+a1	a2	b1
+t	t	f
+
+
+statement ok
+CREATE SCHEMA gl_s1;
+
+
+statement ok
+CREATE SCHEMA gl_s2;
+
+
+statement ok
+CREATE TABLE gl_s1.t (a int);
+
+
+statement ok
+CREATE TABLE gl_s2.t (a int);
+
+
+statement ok
+GRANT USAGE ON SCHEMA gl_s1, gl_s2 TO gl_alice;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA gl_s1, gl_s2 TO gl_alice;
+
+
+query
+SELECT has_schema_privilege('gl_alice', 'gl_s2', 'USAGE') AS usage2,
+       has_table_privilege('gl_alice', 'gl_s1.t', 'SELECT') AS t1,
+       has_table_privilege('gl_alice', 'gl_s2.t', 'SELECT') AS t2;
+----
+usage2	t1	t2
+t	t	t
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE gl_group1, gl_group2 IN SCHEMA gl_s1, gl_s2 GRANT SELECT ON TABLES TO gl_alice, gl_bob;
+
+
+query
+SELECT d.defaclrole::regrole::text AS role, d.defaclnamespace::regnamespace::text AS nsp,
+       array_to_string(d.defaclacl, ',') AS acl
+FROM pg_default_acl d
+WHERE d.defaclrole IN ('gl_group1'::regrole, 'gl_group2'::regrole)
+ORDER BY 1, 2;
+----
+role	nsp	acl
+gl_group1	gl_s1	gl_alice=r/gl_group1,gl_bob=r/gl_group1
+gl_group1	gl_s2	gl_alice=r/gl_group1,gl_bob=r/gl_group1
+gl_group2	gl_s1	gl_alice=r/gl_group2,gl_bob=r/gl_group2
+gl_group2	gl_s2	gl_alice=r/gl_group2,gl_bob=r/gl_group2
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE gl_group1, gl_group2 IN SCHEMA gl_s1, gl_s2 REVOKE SELECT ON TABLES FROM gl_alice, gl_bob;
+
+
+query
+SELECT count(*) AS n
+FROM pg_default_acl d
+WHERE d.defaclrole IN ('gl_group1'::regrole, 'gl_group2'::regrole);
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA gl_s1 CASCADE;
+
+
+statement ok
+DROP SCHEMA gl_s2 CASCADE;
+
+
+statement ok
+DROP FUNCTION gl_f1(int);
+
+
+statement ok
+DROP FUNCTION gl_f2();
+
+
+statement ok
+DROP TABLE gl_t1;
+
+
+statement ok
+DROP TABLE gl_t2;
+
+
+statement ok
+DROP ROLE gl_alice, gl_bob, gl_group1, gl_group2;

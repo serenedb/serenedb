@@ -647,7 +647,7 @@ bool SearchSinkInsertBaseImpl::DispatchListBatch(
 bool SearchSinkInsertBaseImpl::InvertJsonLeaf(
   irs::MemberDocs& members, irs::TokenSink& sink, irs::TokenLayout layout,
   irs::doc_id_t doc, std::string_view json, irs::ColumnWriter* store_writer) {
-  const auto& strings = _json_fields.string_field;
+  const auto& strings = _field;
   const auto leaf = _json_reader.Read(json);
   switch (leaf.kind) {
     case irs::JsonLeafKind::String: {
@@ -692,7 +692,10 @@ void SearchSinkInsertBaseImpl::InvertJsonNumbers() {
   if (_json_nums.empty()) {
     return;
   }
-  InvertField(_json_fields.numeric_field, [&](irs::FieldInverter& fld) {
+  Field numbers;
+  numbers.PrepareForNumericValue(
+    {.layout = _layout, .member = irs::DictMember::Numbers});
+  InvertField(numbers, [&](irs::FieldInverter& fld) {
     return fld.InvertNumerics<double>([&](auto&& emit) {
       for (size_t j = 0; j != _json_nums.size(); ++j) {
         emit(_json_nums[j], _json_num_docs[j]);
@@ -714,7 +717,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
 
-  const auto& strings = _json_fields.string_field;
+  const auto& strings = _field;
   auto* store_writer = irs::field_limits::valid(strings.store_column)
                          ? EnsureBlobColumnWriter(strings.store_column)
                          : nullptr;
@@ -771,7 +774,7 @@ void SearchSinkInsertBaseImpl::WriteJsonListBatch(duckdb::idx_t count,
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(child_fmt);
 
-  const auto& strings = _json_fields.string_field;
+  const auto& strings = _field;
   auto traits = strings.GetTokens().Traits();
   traits.unique = false;
   const irs::doc_id_t first_doc = _document->DocId();
@@ -867,9 +870,9 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   };
 
   if (_layout == irs::DictLayout::Json) {
-    _json_fields.Prepare(_layout, ResolveTokenizer(field_id));
-    if (irs::field_limits::valid(_json_fields.string_field.store_column)) {
-      EnsureBlobColumnWriter(_json_fields.string_field.store_column);
+    _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
+    if (irs::field_limits::valid(_field.store_column)) {
+      EnsureBlobColumnWriter(_field.store_column);
     }
     append_stored();
     WriteJsonBatch(vec, count);
@@ -894,7 +897,7 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
     if (_layout == irs::DictLayout::JsonList) {
-      _json_fields.Prepare(_layout, ResolveTokenizer(field_id));
+      _field.PrepareForJsonValue(ResolveTokenizer(field_id), _layout);
       append_stored();
       WriteJsonListBatch(count, array_size);
       return;
@@ -993,18 +996,6 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size,
   }
 }
 
-void SearchSinkInsertBaseImpl::JsonFields::Prepare(
-  irs::DictLayout layout, catalog::ColumnTokenizer& string_analyzer) {
-  SDB_ASSERT(irs::IsJson(layout));
-  string_field.PrepareForStringValue(
-    string_analyzer, {.layout = layout, .member = irs::DictMember::Strings});
-  string_field.store_column = layout == irs::DictLayout::Json
-                                ? string_analyzer.tokenizer_column
-                                : irs::field_limits::invalid();
-  numeric_field.PrepareForNumericValue(
-    {.layout = layout, .member = irs::DictMember::Numbers});
-}
-
 void SearchSinkInsertBaseImpl::FinishImpl() {
   _column_writers.clear();
   _pk_column_writer = nullptr;
@@ -1091,6 +1082,16 @@ void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue(
   irs::DictRef value_dict) {
   PrepareForBlockValue(value_dict);
   index_features = irs::IndexFeatures::Ranges;
+}
+
+void SearchSinkInsertBaseImpl::Field::PrepareForJsonValue(
+  catalog::ColumnTokenizer& column_analyzer, irs::DictLayout layout) {
+  SDB_ASSERT(irs::IsJson(layout));
+  PrepareForStringValue(column_analyzer,
+                        {.layout = layout, .member = irs::DictMember::Strings});
+  store_column = layout == irs::DictLayout::Json
+                   ? column_analyzer.tokenizer_column
+                   : irs::field_limits::invalid();
 }
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(

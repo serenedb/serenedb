@@ -725,8 +725,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
     return duckdb::Value{std::string{value}}.DefaultCastAs(json);
   };
   duckdb::Vector vec{type, 4};
-  vec.SetValue(0, duckdb::Value::LIST(json, {element(R"("a")"), element("1"),
-                                             element("true")}));
+  vec.SetValue(0, duckdb::Value::LIST(
+                    json, {element(R"("a")"), element("1"), element("true")}));
   vec.SetValue(1, duckdb::Value{type});
   vec.SetValue(2, duckdb::Value::LIST(json, {element(R"("b")"), element("null"),
                                              duckdb::Value{json}}));
@@ -782,14 +782,11 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
             pks_of(irs::JsonListLayout::kNumbers, number(1)));
   EXPECT_EQ((std::vector<int64_t>{4}),
             pks_of(irs::JsonListLayout::kNumbers, number(2.5)));
-  EXPECT_EQ((std::vector<int64_t>{1}),
-            pks_of(irs::JsonListLayout::kTrue, {}));
-  EXPECT_EQ((std::vector<int64_t>{4}),
-            pks_of(irs::JsonListLayout::kFalse, {}));
+  EXPECT_EQ((std::vector<int64_t>{1}), pks_of(irs::JsonListLayout::kTrue, {}));
+  EXPECT_EQ((std::vector<int64_t>{4}), pks_of(irs::JsonListLayout::kFalse, {}));
   EXPECT_EQ((std::vector<int64_t>{3}),
             pks_of(irs::JsonListLayout::kJsonNulls, {}));
-  EXPECT_EQ((std::vector<int64_t>{2}),
-            pks_of(irs::JsonListLayout::kNulls, {}));
+  EXPECT_EQ((std::vector<int64_t>{2}), pks_of(irs::JsonListLayout::kNulls, {}));
   EXPECT_EQ((std::vector<int64_t>{3}),
             pks_of(irs::JsonListLayout::kNullElements, {}));
 }

@@ -80,9 +80,9 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
         if (field->size() == 0) {
           continue;
         }
-        const auto [it, emplaced] = term_ranges.try_emplace(
-          std::pair{id, field->meta().dict},
-          FieldTermRange{field->min(), field->max()});
+        const auto [it, emplaced] =
+          term_ranges.try_emplace(std::pair{id, field->meta().dict},
+                                  FieldTermRange{field->min(), field->max()});
         if (!emplaced) {
           it->second.min = std::min(it->second.min, field->min());
           it->second.max = std::max(it->second.max, field->max());

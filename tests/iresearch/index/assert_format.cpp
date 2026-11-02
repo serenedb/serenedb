@@ -799,11 +799,15 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         irs::field_limits::valid(actual_meta.norm));
 
       auto* actual_freq = irs::get<irs::FreqAttr>(*actual_terms);
-      ASSERT_NE(nullptr, actual_freq);
-      if (irs::IndexFeatures::None !=
-          (expected_field->second.index_features & irs::IndexFeatures::Freq)) {
+      if (expected_field->second.dict.member != irs::DictMember::Strings) {
+        ASSERT_EQ(nullptr, actual_freq);
+      } else if (irs::IndexFeatures::None !=
+                 (expected_field->second.index_features &
+                  irs::IndexFeatures::Freq)) {
+        ASSERT_NE(nullptr, actual_freq);
         ASSERT_EQ(expected_field->second.total_freq(), actual_freq->value);
       } else {
+        ASSERT_NE(nullptr, actual_freq);
         ASSERT_EQ(expected_field->second.total_doc_freq(), actual_freq->value);
       }
 

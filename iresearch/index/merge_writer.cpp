@@ -381,7 +381,6 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
-  uint32_t KeyWidth() const noexcept;
   void SampleTerms(
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
@@ -482,6 +481,10 @@ bool CompoundFieldIterator::Next() {
       _field_iterator_mask.empty()
         ? features
         : _synthesized_meta.index_features & features;
+    key_width =
+      _field_iterator_mask.empty() || key_width == field_terms->key_width
+        ? field_terms->key_width
+        : 0;
     _current = key;
     _field_iterator_mask.emplace_back(TermIteratorImpl{i, field_terms});
   }
@@ -493,18 +496,6 @@ bool CompoundFieldIterator::Next() {
   _synthesized_meta.id = _current.id;
   _current_meta = &_synthesized_meta;
   return true;
-}
-
-uint32_t CompoundFieldIterator::KeyWidth() const noexcept {
-  uint32_t width = 0;
-  for (const auto& segment : _field_iterator_mask) {
-    const auto source = segment.reader->meta().key_width;
-    if (source == 0 || (width != 0 && source != width)) {
-      return 0;
-    }
-    width = source;
-  }
-  return width;
 }
 
 void CompoundFieldIterator::SampleTerms(
@@ -710,17 +701,13 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            const IndexFieldOptions* field_options) {
   MergedNormIdMap out;
   for (const auto& [id, field] : field_meta_map) {
-    const auto normed =
-      absl::c_find_if(field.members, [](const MergedMember& member) {
-        return member.present &&
-               IsSubsetOf(IndexFeatures::Norm, member.features);
-      });
-    if (normed == field.members.end()) {
+    const auto& strings =
+      field.members[static_cast<size_t>(DictMember::Strings)];
+    if (!strings.present ||
+        !IsSubsetOf(IndexFeatures::Norm, strings.features)) {
       continue;
     }
-    const DictRef dict{
-      .layout = *field.layout,
-      .member = static_cast<DictMember>(normed - field.members.begin())};
+    const DictRef dict{.layout = *field.layout, .member = DictMember::Strings};
     const auto new_norm_id =
       MergeNormColumnFromSources(col_writer, id, dict, sources, field_options);
     if (field_limits::valid(new_norm_id)) {
@@ -788,9 +775,17 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
       continue;
     }
 
+    if (!IsTermMember(dict.member)) {
+      if (auto terms = field_itr.iterator(); terms->next()) {
+        SDB_ASSERT(terms->value() == kSlotTerm);
+        field_writer->WriteSlot(key.id, dict,
+                                *terms->postings(IndexFeatures::None));
+      }
+      continue;
+    }
+
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
-    props.key_width = field_itr.KeyWidth();
 
     if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(key.id);

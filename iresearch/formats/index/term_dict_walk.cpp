@@ -1407,9 +1407,6 @@ class AcceptorIterator : public SeekTermIterator {
 
 template<typename A>
 SeekTermIterator::ptr Walk(const TermReaderImpl& field, const A& a) {
-  if (field.Single()) {
-    return SingleFor(field, a);
-  }
   return memory::make_managed<AcceptorIterator<A>>(field, a);
 }
 

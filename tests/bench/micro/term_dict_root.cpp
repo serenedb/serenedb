@@ -121,23 +121,20 @@ class KeysIterator : public irs::TermOnlyIterator {
 
 class KeysReader final : public irs::BasicTermReader {
  public:
-  explicit KeysReader(std::span<const bstring> keys) noexcept : _keys{keys} {}
+  explicit KeysReader(std::span<const bstring> keys) noexcept : _keys{keys} {
+    const auto width = keys.front().size();
+    key_width = absl::c_all_of(
+                  keys, [&](const bstring& key) { return key.size() == width; })
+                  ? static_cast<uint32_t>(width)
+                  : 0;
+  }
 
   irs::TermOnlyIterator::ptr iterator() const final {
     return irs::memory::make_managed<irs::TermOnlyIterator, KeysIterator>(
       _keys);
   }
   irs::field_id id() const final { return 1; }
-  irs::FieldProperties properties() const final {
-    const auto width = _keys.front().size();
-    return {
-      .key_width =
-        absl::c_all_of(_keys,
-                       [&](const bstring& key) { return key.size() == width; })
-          ? static_cast<uint32_t>(width)
-          : 0,
-    };
-  }
+  irs::FieldProperties properties() const final { return {}; }
 
  private:
   std::span<const bstring> _keys;

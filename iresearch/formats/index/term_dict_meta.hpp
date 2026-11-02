@@ -32,6 +32,20 @@
 
 namespace irs::term_dict {
 
+struct TextHead {
+  uint64_t total_freq = 0;
+  field_id norm = field_limits::invalid();
+  bool has_score_bounds = false;
+  std::string prefixes;
+};
+
+struct RangesHead {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  uint32_t prefix = 0;
+  std::vector<uint64_t> counts;
+};
+
 struct FieldHead {
   field_id id = field_limits::invalid();
   DictLayout layout = DictLayout::String;
@@ -39,9 +53,6 @@ struct FieldHead {
   IndexFeatures features = IndexFeatures::None;
   uint64_t term_count = 0;
   uint64_t doc_count = 0;
-  uint64_t total_freq = 0;
-  field_id norm = field_limits::invalid();
-  bool has_score_bounds = false;
   uint32_t width = 0;
   std::string min;
   std::string max;
@@ -54,11 +65,8 @@ struct FieldHead {
   uint32_t last_entry = 0;
   uint64_t inline_base = 0;
   uint64_t inline_size = 0;
-  uint64_t range_offset = 0;
-  uint64_t range_size = 0;
-  uint32_t range_prefix = 0;
-  std::vector<uint64_t> range_counts;
-  std::string prefixes;
+  TextHead text;
+  RangesHead ranges;
 };
 
 struct SpanningBlock {

@@ -223,7 +223,6 @@ struct FieldStats {
 struct FieldProperties {
   field_id norm{field_limits::invalid()};
   IndexFeatures index_features{IndexFeatures::None};
-  uint32_t key_width = 0;
 };
 
 struct FieldMeta : FieldProperties {

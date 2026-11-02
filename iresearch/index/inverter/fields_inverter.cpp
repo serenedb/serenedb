@@ -80,7 +80,6 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   ScatterScratch scratch{_mem.rm};
   ScatteredField scattered{_mem, scratch};
   ColumnarTermReader terms;
-  SlotTermReader slot_terms;
 
   fw.prepare(state, keyed_dicts);
   size_t ei = 0;
@@ -98,8 +97,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
       if (!IsTermMember(member)) {
         if (const auto& docs = _docs[entry.docs + DocIndex(member)];
             !docs.empty()) {
-          slot_terms.Reset(id, {docs.data(), docs.size()});
-          fw.write(dict, slot_terms);
+          fw.WriteSlot(id, dict, {docs.data(), docs.size()});
         }
         continue;
       }

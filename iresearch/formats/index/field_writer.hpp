@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -80,9 +81,14 @@ class FieldWriter final {
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void prepare(const FlushState& state, uint64_t keyed_dicts);
   void write(DictRef dict, const BasicTermReader& reader);
+  void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
   void end();
 
  private:
+  void Begin(field_id id, DictRef dict) noexcept;
+  void BeginSlot(field_id id, DictRef dict);
+  void EndSlot(field_id id, const PostingMeta& meta);
   void SampleFsst(const BasicTermReader& reader);
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);

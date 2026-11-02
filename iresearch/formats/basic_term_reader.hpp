@@ -59,6 +59,8 @@ struct BasicTermReader : public memory::Managed {
     uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
 
   virtual TermPayloadWriter* PayloadWriter() const { return nullptr; }
+
+  uint32_t key_width = 0;
 };
 
 }  // namespace irs

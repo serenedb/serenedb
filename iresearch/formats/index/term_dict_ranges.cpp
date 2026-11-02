@@ -55,7 +55,7 @@ class RangeWalk {
       _from{from},
       _to{to},
       _prefix{field.RangePrefix()},
-      _stride{field.meta().key_width - field.RangePrefix()} {
+      _stride{field.key_width - field.RangePrefix()} {
     if (!_levels.empty()) {
       std::memcpy(_lower, field.min().data(), _prefix);
       std::memcpy(_upper, field.min().data(), _prefix);
@@ -346,8 +346,7 @@ void RangeWriter::Clear() noexcept {
 
 void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
                                 RangeVisitor visit) const {
-  if (_terms == 0 || (!from.empty() && from > max()) ||
-      (!to.empty() && to <= min())) {
+  if ((!from.empty() && from > max()) || (!to.empty() && to <= min())) {
     return;
   }
   if (to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from)) {
@@ -361,10 +360,6 @@ void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
   }
   if (!to.empty() && to > max()) {
     to = {};
-  }
-  if (Single()) {
-    visit(min(), _single);
-    return;
   }
   RangeWalk{*this, from, to, visit}.Run();
 }

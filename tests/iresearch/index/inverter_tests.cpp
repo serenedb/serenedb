@@ -767,7 +767,7 @@ TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
     reader.Reset(scattered);
     EXPECT_EQ(width, scattered.KeyWidth());
     EXPECT_EQ(bytes, scattered.TermBytes());
-    EXPECT_EQ(width, reader.properties().key_width);
+    EXPECT_EQ(width, reader.key_width);
   };
   const auto keywords = [&](field_id id,
                             std::span<const std::string_view> vals) {

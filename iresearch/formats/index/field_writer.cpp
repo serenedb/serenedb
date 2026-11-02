@@ -350,19 +350,66 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   _pw.Prepare(state);
 }
 
-void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
-  const auto id = reader.id();
+void FieldWriter::Begin(field_id id, DictRef dict) noexcept {
   SDB_ASSERT(Contains(dict));
   SDB_ASSERT(!field_limits::valid(_last_id) || _last_id < id ||
              (_last_id == id && _dict.layout == dict.layout &&
               _dict.member < dict.member));
   _last_id = id;
   _dict = dict;
+}
+
+void FieldWriter::WriteSlot(field_id id, DictRef dict,
+                            std::span<const doc_id_t> docs) {
+  BeginSlot(id, dict);
+  PostingMeta meta;
+  _pw.WritePostings(
+    PostingRows{.span = {.docs = docs.data(), .count = docs.size()}}, meta);
+  EndSlot(id, meta);
+}
+
+void FieldWriter::WriteSlot(field_id id, DictRef dict, TermPostings& docs) {
+  BeginSlot(id, dict);
+  PostingMeta meta;
+  _pw.Write(docs, meta);
+  EndSlot(id, meta);
+}
+
+void FieldWriter::BeginSlot(field_id id, DictRef dict) {
+  SDB_ASSERT(!IsTermMember(dict.member));
+  Begin(id, dict);
+  _pw.SetTermPayloadWriter(nullptr);
+  _pw.BeginField({});
+}
+
+void FieldWriter::EndSlot(field_id id, const PostingMeta& meta) {
+  std::string record_inline{ViewCast<char>(meta.Inline())};
+  _pw.EndField();
+  if (meta.docs_count == 0) {
+    return;
+  }
+  _record.Clear();
+  _pw.Encode(_record, meta);
+  _heads.push_back({
+    .id = id,
+    .layout = _dict.layout,
+    .member = _dict.member,
+    .term_count = 1,
+    .doc_count = meta.docs_count,
+    .record = std::string{ViewCast<char>(_record.View())},
+    .record_inline = std::move(record_inline),
+  });
+}
+
+void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
+  const auto id = reader.id();
+  SDB_ASSERT(IsTermMember(dict.member));
+  Begin(id, dict);
   const auto props = reader.properties();
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
   _group_inline = false;
-  _width = props.key_width <= kMaxStride ? props.key_width : 0;
+  _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
   if (_width == 0) {
     SampleFsst(reader);
   }
@@ -636,9 +683,12 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   head.features = props.index_features;
   head.term_count = _terms;
   head.doc_count = stats.docs_count;
-  head.total_freq = total_freq;
-  head.norm = props.norm;
-  head.has_score_bounds = stats.has_score_bounds;
+  const bool text = _dict.member == DictMember::Strings;
+  if (text) {
+    head.text.total_freq = total_freq;
+    head.text.norm = props.norm;
+    head.text.has_score_bounds = stats.has_score_bounds;
+  }
   head.width = _width;
   head.min = ViewCast<char>(bytes_view{_min});
   if (_terms == 1) {
@@ -659,8 +709,8 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   if (_first_block == _blocks) {
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
-  } else if (_width == 0) {
-    auto out = std::back_inserter(head.prefixes);
+  } else if (text && _width == 0) {
+    auto out = std::back_inserter(head.text.prefixes);
     uint32_t last = 0;
     for (const auto prefix : _prefixes) {
       WriteVarint(prefix - last, out);
@@ -670,13 +720,15 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   if (_ranges.Active()) {
     const auto prefix = CommonPrefixLength(bytes_view{_min}, max);
     const auto offset = _range_regions.size();
-    _ranges.Write(_range_regions, prefix, head.range_counts);
-    if (!head.range_counts.empty()) {
-      head.range_offset = offset;
-      head.range_size = _range_regions.size() - offset;
-      head.range_prefix = static_cast<uint32_t>(prefix);
+    auto& ranges = head.ranges;
+    _ranges.Write(_range_regions, prefix, ranges.counts);
+    if (!ranges.counts.empty()) {
+      SDB_ASSERT(_dict.member == DictMember::Numbers);
+      ranges.offset = offset;
+      ranges.size = _range_regions.size() - offset;
+      ranges.prefix = static_cast<uint32_t>(prefix);
     }
-    SDB_ASSERT(!head.range_counts.empty() || _range_regions.size() == offset);
+    SDB_ASSERT(!ranges.counts.empty() || _range_regions.size() == offset);
   }
 }
 

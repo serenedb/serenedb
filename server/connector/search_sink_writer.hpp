@@ -168,6 +168,8 @@ class SearchSinkInsertBaseImpl {
 
     void PrepareForBlockValue(irs::DictRef dict);
     void PrepareForNumericValue(irs::DictRef dict);
+    void PrepareForJsonValue(catalog::ColumnTokenizer& column_analyzer,
+                             irs::DictLayout layout);
 
     irs::analysis::Tokenizer* string_analyzer = nullptr;
     // Blob column receiving per-value stored bytes; invalid when the field
@@ -248,14 +250,6 @@ class SearchSinkInsertBaseImpl {
   template<typename Insert>
   void WriteColumnBlock(duckdb::idx_t count, Insert&& insert);
 
-  struct JsonFields {
-    Field string_field;
-    Field numeric_field;
-
-    void Prepare(irs::DictLayout layout,
-                 catalog::ColumnTokenizer& string_analyzer);
-  };
-
   // Per-field tokenizer leases resolved once per sink: SwitchFieldImpl runs
   // per column per chunk, and re-resolving costs a catalog lookup plus an
   // analyzer pool round-trip each time.
@@ -276,7 +270,6 @@ class SearchSinkInsertBaseImpl {
   irs::ColumnWriter* _pk_column_writer = nullptr;
   PkColumnKind _pk;
 
-  JsonFields _json_fields;
   duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
   irs::JsonLeafReader _json_reader{_json_strings};
 

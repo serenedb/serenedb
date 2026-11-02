@@ -239,8 +239,11 @@ class TermsIterator : public irs::TermOnlyIterator {
 
 class TermsReader final : public irs::BasicTermReader {
  public:
-  TermsReader(const Terms& terms, Ladder ladder) noexcept
-    : _terms{&terms}, _ladder{ladder} {}
+  TermsReader(const Terms& terms, Ladder ladder) noexcept : _terms{&terms} {
+    key_width = ladder == Ladder::Adaptive
+                  ? static_cast<uint32_t>(terms.keys.front().size())
+                  : 0;
+  }
 
   irs::TermOnlyIterator::ptr iterator() const final {
     return irs::memory::make_managed<irs::TermOnlyIterator, TermsIterator>(
@@ -248,17 +251,11 @@ class TermsReader final : public irs::BasicTermReader {
   }
   irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final {
-    const bool adaptive = _ladder == Ladder::Adaptive;
-    return {
-      .index_features = irs::IndexFeatures::Ranges,
-      .key_width =
-        adaptive ? static_cast<uint32_t>(_terms->keys.front().size()) : 0,
-    };
+    return {.index_features = irs::IndexFeatures::Ranges};
   }
 
  private:
   const Terms* _terms;
-  Ladder _ladder;
 };
 
 void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,

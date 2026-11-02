@@ -586,9 +586,9 @@ bool TsDictLocalState::NextField() {
     _term_ordinal = 0;
     _counts = nullptr;
     _reader = nullptr;
-    if (const auto* reader =
-          _seg->field(field.field_id, {.layout = field.layout,
-                                       .member = irs::DictMember::Strings});
+    if (const auto* reader = _seg->field(
+          field.field_id,
+          {.layout = field.layout, .member = irs::DictMember::Strings});
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
@@ -696,9 +696,8 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
-  const auto* reader =
-    _seg->field(field.field_id,
-                {.layout = field.layout, .member = irs::DictMember::Nulls});
+  const auto* reader = _seg->field(
+    field.field_id, {.layout = field.layout, .member = irs::DictMember::Nulls});
   if (!reader) {
     return 0;
   }

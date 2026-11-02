@@ -127,6 +127,7 @@ class ColumnarTermReader final : public BasicTermReader,
   void Reset(const ScatteredField& scattered) {
     _it.Reset(scattered);
     _scattered = &scattered;
+    key_width = scattered.KeyWidth();
   }
 
   void SampleTerms(
@@ -154,11 +155,7 @@ class ColumnarTermReader final : public BasicTermReader,
   }
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
   field_id id() const noexcept final { return Meta().id; }
-  FieldProperties properties() const noexcept final {
-    FieldProperties props = Meta();
-    props.key_width = _scattered->KeyWidth();
-    return props;
-  }
+  FieldProperties properties() const noexcept final { return Meta(); }
 
   irs::TermOnlyIterator::ptr iterator() const noexcept final {
     return memory::to_managed<irs::TermOnlyIterator>(_it);
@@ -167,68 +164,6 @@ class ColumnarTermReader final : public BasicTermReader,
  private:
   mutable ColumnarTermIterator _it;
   const ScatteredField* _scattered = nullptr;
-};
-
-class SlotTermIterator final : public TermOnlyIterator {
- public:
-  void Reset(std::span<const doc_id_t> docs) noexcept {
-    _docs = docs;
-    _done = false;
-  }
-
-  bytes_view value() const noexcept final { return kSlotTerm; }
-
-  bool next() final {
-    SDB_ENSURE(false, "slot terms are batch-only");
-    return false;
-  }
-
-  TermPostings::ptr postings(IndexFeatures) const final {
-    SDB_ENSURE(false, "slot postings are span-only");
-    return {};
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-
-  size_t NextTermsWithPostings(std::span<bytes_view> terms,
-                               std::span<PostingRows> postings,
-                               IndexFeatures) final {
-    if (_done || terms.empty() || postings.empty()) {
-      return 0;
-    }
-    _done = true;
-    terms[0] = kSlotTerm;
-    postings[0] = {.span = {.docs = _docs.data(),
-                            .pos = nullptr,
-                            .offs_start = nullptr,
-                            .offs_end = nullptr,
-                            .count = _docs.size()}};
-    return 1;
-  }
-
- private:
-  std::span<const doc_id_t> _docs;
-  bool _done = true;
-};
-
-class SlotTermReader final : public BasicTermReader, private util::Noncopyable {
- public:
-  void Reset(field_id id, std::span<const doc_id_t> docs) noexcept {
-    SDB_ASSERT(!docs.empty());
-    _id = id;
-    _it.Reset(docs);
-  }
-
-  field_id id() const noexcept final { return _id; }
-  FieldProperties properties() const noexcept final { return {}; }
-
-  irs::TermOnlyIterator::ptr iterator() const noexcept final {
-    return memory::to_managed<irs::TermOnlyIterator>(_it);
-  }
-
- private:
-  mutable SlotTermIterator _it;
-  field_id _id = field_limits::invalid();
 };
 
 }  // namespace irs

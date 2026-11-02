@@ -315,11 +315,10 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
-  return MakeTsDictAggregate(root, context, found, index->TermField(col_id),
-                             connector::term_dict::LayoutOf(
-                               col_type, info->HasJsonLeafFields()),
-                             col_id, kind, agg_name,
-                             col_ref->Binding().table_index, agg.GetAlias());
+  return MakeTsDictAggregate(
+    root, context, found, index->TermField(col_id),
+    connector::term_dict::LayoutOf(col_type, info->HasJsonLeafFields()), col_id,
+    kind, agg_name, col_ref->Binding().table_index, agg.GetAlias());
 }
 
 struct TsDictColRef {
@@ -1681,12 +1680,11 @@ void RewriteFieldRefsToTerm(duckdb::unique_ptr<duckdb::Expression>& expr,
 template<typename... Fs>
 bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   const auto type = filter.type();
-  return (
-    (type == irs::Type<Fs>::id() &&
-     irs::utils::downCast<Fs>(filter).field_id() == field &&
-     irs::utils::downCast<Fs>(filter).dict().member ==
-       irs::DictMember::Strings) ||
-    ...);
+  return ((type == irs::Type<Fs>::id() &&
+           irs::utils::downCast<Fs>(filter).field_id() == field &&
+           irs::utils::downCast<Fs>(filter).dict().member ==
+             irs::DictMember::Strings) ||
+          ...);
 }
 
 bool IsSingleAcceptor(const irs::Filter& filter, irs::field_id field) {

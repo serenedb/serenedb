@@ -121,6 +121,8 @@ struct TermReader : public AttributeProvider {
 
   // The streams this field's postings live in.
   virtual PostingsHandles Handles() const noexcept = 0;
+
+  uint32_t key_width = 0;
 };
 
 }  // namespace irs

@@ -55,9 +55,9 @@ namespace irs {
 namespace {
 
 using duckdb::ExplainNode;
-using irs::utils::downCast;
 using duckdb::LogicalType;
 using duckdb::LogicalTypeId;
+using irs::utils::downCast;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
   return IsConstScoreSingleton(scorer) ? nullptr : scorer;

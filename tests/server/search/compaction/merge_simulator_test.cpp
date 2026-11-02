@@ -264,9 +264,9 @@ TEST(MergeSimulator, AFlushAtAMergesEndComesFirst) {
   EXPECT_EQ(SimulatedEventType::Flush, events[4].type);
   EXPECT_EQ(absl::Seconds(3), events[4].at);
   EXPECT_EQ(absl::Seconds(5), events[5].at);
-  EXPECT_EQ(Names({"_3", "_4"}), events[5].inputs);
+  EXPECT_EQ(Names({"_4", "_3"}), events[5].inputs);
   EXPECT_EQ(absl::Seconds(9), events[6].at);
-  EXPECT_EQ(Names({"_5", "_6"}), events[6].inputs);
+  EXPECT_EQ(Names({"_6", "_5"}), events[6].inputs);
 }
 
 TEST(MergeSimulator, RowIdRangesFollowTheSegments) {

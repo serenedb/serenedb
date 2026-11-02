@@ -83,7 +83,7 @@ class BackupSession final {
   static BackupSession& Instance();
 
   std::optional<StartedBackup> Begin(BackupOwner owner, std::string_view label,
-                                     pg::ProgressMetrics* progress,
+                                     pg::ProgressMetrics& progress,
                                      absl::FunctionRef<bool()> cancelled);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;

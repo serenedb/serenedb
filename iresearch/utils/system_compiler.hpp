@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/operating_system.hpp"
 
@@ -61,4 +62,4 @@ inline constexpr int kPlannedCrashExitCode = 75;
 
 }  // namespace irs
 
-#define SDB_IMMEDIATE_ABORT() std::quick_exit(::irs::kPlannedCrashExitCode)
+#define SDB_IMMEDIATE_ABORT() ::irs::PlannedCrashExit()

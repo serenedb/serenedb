@@ -37,7 +37,7 @@ class InvertedIndexStorage;
 }  // namespace sdb::search
 namespace sdb::connector {
 
-std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
+std::vector<std::shared_ptr<search::InvertedIndexStorage>> InvertedStorages(
   duckdb::AttachedDatabase& db);
 
 // Register the storage extension with a DuckDB config (before DB creation).

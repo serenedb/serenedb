@@ -249,11 +249,12 @@ void SereneDBClientState::TransactionPreCommit(
         }
         for (auto entry :
              table.get().GetDataTableInfo()->GetIndexes().IndexEntries()) {
-          if (entry->GetBindState() == duckdb::IndexBindState::BOUND &&
-              entry->GetIndexType() == InvertedStoreIndex::kTypeName) {
-            auto index = entry->GetWriteHandle<InvertedStoreIndex>();
-            index->PrepareFeed(*_connection_ctx, context, rows);
+          if (entry->GetIndexType() != InvertedStoreIndex::kTypeName) {
+            continue;
           }
+          SDB_ASSERT(entry->GetBindState() == duckdb::IndexBindState::BOUND);
+          auto index = entry->GetWriteHandle<InvertedStoreIndex>();
+          index->PrepareFeed(*_connection_ctx, context, rows);
         }
       }
     }

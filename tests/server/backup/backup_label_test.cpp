@@ -216,6 +216,7 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
     {"START WAL LOCATION: 65DD1/B480E1C3 ",
      "START WAL LOCATION: 65DD1-B480E1C3 "},
     {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: 1 1\n"},
+    {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: x\n"},
     {"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n",
      "SERENEDB SYSTEM IDENTIFIER: x7696604830604944365\n"},
     {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
@@ -226,9 +227,15 @@ TEST(BackupLabelTest, RejectsMalformedLines) {
      "SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 28x6\n"},
     {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: cut\n"},
     {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: 5 3 361 cut\n"},
+    {"SERENEDB DATABASE: 5 3 361 1 cut\n",
+     "SERENEDB DATABASE: x 3 361 1 cut\n"},
+    {"SERENEDB DATABASE: 5 3 361 1 cut\n",
+     "SERENEDB DATABASE: 5 x 361 1 cut\n"},
     {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5 69276 1\n"},
     {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: x/69276 1\n"},
     {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276\n"},
+    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/x 1\n"},
+    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276 x\n"},
   };
   for (const auto& c : kCases) {
     const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});

@@ -278,3 +278,31 @@ SELECT count(*) AS n FROM bcmd_merge;
 ----
 n
 400
+
+
+connection default
+query
+SELECT pg_backup_start(NULL) IS NULL AS started;
+----
+started
+t
+
+
+connection default
+statement error
+SELECT * FROM pg_backup_stop();
+----
+db error: ERROR: backup is not in progress
+HINT: Did you call pg_backup_start()?
+
+
+connection default
+statement ok
+CREATE JOB bcmd_job AFTER 1 HOUR SUSPENDED AS SELECT pg_backup_start('bcmd_job');
+
+
+connection default
+statement error
+EXECUTE JOB bcmd_job;
+----
+db error: ERROR: <slt:ignore>pg_backup_start requires a PG wire connection<slt:ignore>

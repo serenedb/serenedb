@@ -98,20 +98,13 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
     });
 }
 
-void SetPhase(pg::ProgressMetrics* progress,
-              pg::progress_phase::BaseBackup phase) {
-  if (progress) {
-    progress->SetPhase(phase);
-  }
-}
-
 std::optional<Cut> RecordCut(
   const std::filesystem::path& backup_dir,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  pg::ProgressMetrics* progress, absl::FunctionRef<bool()> cancelled) {
+  pg::ProgressMetrics& progress, absl::FunctionRef<bool()> cancelled) {
   Cut cut;
   auto& gate = CommitGate();
-  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForCommits);
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
   if (!gate.Close(cancelled)) {
     return std::nullopt;
   }
@@ -151,12 +144,10 @@ BackupSession& BackupSession::Instance() {
 }
 
 std::optional<StartedBackup> BackupSession::Begin(
-  BackupOwner owner, std::string_view label, pg::ProgressMetrics* progress,
+  BackupOwner owner, std::string_view label, pg::ProgressMetrics& progress,
   absl::FunctionRef<bool()> cancelled) {
-  if (progress) {
-    progress->SetCommand(pg::ProgressCommand::BaseBackup);
-  }
-  SetPhase(progress, pg::progress_phase::BaseBackup::Initializing);
+  progress.SetCommand(pg::ProgressCommand::BaseBackup);
+  progress.SetPhase(pg::progress_phase::BaseBackup::Initializing);
   absl::MutexLock lock{&_mutex};
   if (_active && _owner.session == owner.session) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -169,7 +160,7 @@ std::optional<StartedBackup> BackupSession::Begin(
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
   auto& checkpoints = CheckpointGate();
   if (!checkpoints.Close(cancelled)) {
     return std::nullopt;
@@ -203,7 +194,7 @@ std::optional<StartedBackup> BackupSession::Begin(
       with_failed_checkpoint.push_back(db->GetName().GetIdentifierName());
       continue;
     }
-    for (const auto& storage : connector::BoundStorages(*db)) {
+    for (const auto& storage : connector::InvertedStorages(*db)) {
       SDB_ENSURE(!storage->HasPendingCheckpoint(),
                  "cannot start a backup: inverted index ", storage->GetId(),
                  " in database \"", db->GetName().GetIdentifierName(),
@@ -226,7 +217,7 @@ std::optional<StartedBackup> BackupSession::Begin(
     Resume();
     catalog::RemoveTree(backup_dir);
   };
-  SetPhase(progress, pg::progress_phase::BaseBackup::WaitingForMaintenance);
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
   if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
     return std::nullopt;
   }
@@ -275,10 +266,10 @@ void BackupSession::AbortIfOwnedBy(const void* session) noexcept {
 }
 
 void BackupSession::End() noexcept {
+#ifdef SDB_DEV
   absl::MutexLock lock{&_mutex};
-  if (_active) {
-    Stop();
-  }
+  SDB_ASSERT(!_active);
+#endif
 }
 
 void BackupSession::Stop() noexcept {

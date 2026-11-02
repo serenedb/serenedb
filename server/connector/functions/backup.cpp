@@ -66,7 +66,10 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
                            duckdb::Vector& result) {
   auto& context = state.GetContext();
   auth::RequireSuperuser(context, kPgBackupStart);
-  auto& conn = GetSereneDBContext(context);
+  auto client_state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
+  SDB_ASSERT(client_state);
+  auto& conn = client_state->GetConnectionContext();
   if (!conn.GetSendBuffer()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG(kPgBackupStart, " requires a PG wire connection"));
@@ -80,16 +83,10 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
     const auto& text = label.GetValue();
     const auto ownership =
       context.registered_state->GetOrCreate<BackupOwnership>(kOwnershipKey);
-    pg::ProgressMetrics* progress = nullptr;
-    if (auto client_state = context.registered_state->Get<SereneDBClientState>(
-          kSereneDBClientStateKey);
-        client_state && client_state->progress_source) {
-      progress = &client_state->Progress();
-    }
     const auto start = backup::BackupSession::Instance().Begin(
       {ownership.get(), conn.GetBackendPid()},
-      std::string_view{text.GetData(), text.GetSize()}, progress,
-      [&] { return context.IsInterrupted(); });
+      std::string_view{text.GetData(), text.GetSize()},
+      client_state->Progress(), [&] { return context.IsInterrupted(); });
     if (!start) {
       context.InterruptCheck();
     }

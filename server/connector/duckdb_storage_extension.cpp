@@ -181,7 +181,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
     std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
-    for (auto& storage : BoundStorages(db)) {
+    for (auto& storage : InvertedStorages(db)) {
       storage->PrepareCheckpoint(iteration);
       saves.push_back(storage);
     }
@@ -237,7 +237,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
 
 }  // namespace
 
-std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
+std::vector<std::shared_ptr<search::InvertedIndexStorage>> InvertedStorages(
   duckdb::AttachedDatabase& db) {
   std::vector<std::shared_ptr<search::InvertedIndexStorage>> storages;
   if (!InvertedStoreIndex::AnyBound()) {
@@ -256,11 +256,12 @@ std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
                             .GetDataTableInfo()
                             ->GetIndexes();
           for (auto index : indexes.IndexEntries()) {
-            if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
-                index->GetIndexType() == InvertedStoreIndex::kTypeName) {
-              const auto handle = index->GetReadHandle<InvertedStoreIndex>();
-              storages.push_back(handle->Storage());
+            if (index->GetIndexType() != InvertedStoreIndex::kTypeName) {
+              continue;
             }
+            SDB_ASSERT(index->GetBindState() == duckdb::IndexBindState::BOUND);
+            const auto handle = index->GetReadHandle<InvertedStoreIndex>();
+            storages.push_back(handle->Storage());
           }
         });
     });

@@ -24,5 +24,6 @@
 namespace irs {
 
 [[noreturn]] void FatalErrorExit() noexcept;
+[[noreturn]] void PlannedCrashExit() noexcept;
 
 }  // namespace irs

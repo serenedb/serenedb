@@ -689,10 +689,9 @@ def _subscription_enabled(server: Serened) -> bool:
     return enabled
 
 
-def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> None:
+def _back_up_an_enabled_subscription(tmp_path: Path) -> Path:
     source = Serened(SERENED_BIN, datadir_root=str(tmp_path),
                      log_path=str(tmp_path / "source.log"))
-    restored = None
     try:
         source.start()
         with _connect(source) as conn:
@@ -711,11 +710,17 @@ def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> N
             (label,) = backup.execute("SELECT labelfile FROM pg_backup_stop()").fetchone()
         source.restart()
         assert _subscription_enabled(source)
+    finally:
         source.stop()
+    (copy / "backup_label").write_text(label)
+    return copy
 
-        (copy / "backup_label").write_text(label)
-        restored = Serened(SERENED_BIN, datadir=str(copy),
-                           log_path=str(tmp_path / "restored.log"))
+
+def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> None:
+    copy = _back_up_an_enabled_subscription(tmp_path)
+    restored = Serened(SERENED_BIN, datadir=str(copy),
+                       log_path=str(tmp_path / "restored.log"))
+    try:
         restored.start()
         assert not _subscription_enabled(restored)
         assert not (copy / "engine_v1" / "subscriptions.hold").exists()
@@ -724,13 +729,20 @@ def test_restored_server_starts_with_subscriptions_disabled(tmp_path: Path) -> N
             'subscription "bsub" in database "postgres" was disabled because the '
             "server was restored from a backup; check its replication slot, then "
             "ALTER SUBSCRIPTION ... ENABLE")
+    finally:
+        restored.stop()
 
+
+def test_restored_subscriptions_stay_disabled_after_a_crash(tmp_path: Path) -> None:
+    copy = _back_up_an_enabled_subscription(tmp_path)
+    restored = Serened(SERENED_BIN, datadir=str(copy),
+                       log_path=str(tmp_path / "restored.log"))
+    try:
+        restored.start()
         restored.restart()
         assert not _subscription_enabled(restored)
         with _connect(restored) as conn:
             conn.execute("ALTER SUBSCRIPTION bsub ENABLE")
         assert _subscription_enabled(restored)
     finally:
-        source.stop()
-        if restored is not None:
-            restored.stop()
+        restored.stop()

@@ -77,6 +77,23 @@ TEST_F(PgControlTest, ACorruptedFileIsRefused) {
   EXPECT_THROW(ReadPgControl(_root), irs::SqlException);
 }
 
+TEST_F(PgControlTest, ATruncatedFileIsRefused) {
+  WritePgControl(_root, {.system_identifier = 123, .checkpoint = 456});
+  std::filesystem::resize_file(_root / kPgControlFile, 100);
+  EXPECT_THROW(ReadPgControl(_root), irs::SqlException);
+}
+
+TEST_F(PgControlTest, AnotherControlVersionIsRefused) {
+  WritePgControl(_root, {.system_identifier = 123, .checkpoint = 456});
+  {
+    std::fstream file{_root / kPgControlFile,
+                      std::ios::in | std::ios::out | std::ios::binary};
+    file.seekp(sizeof(uint64_t));
+    file.put('\x7f');
+  }
+  EXPECT_THROW(ReadPgControl(_root), irs::SqlException);
+}
+
 TEST_F(PgControlTest, OpeningANewDirectoryCreatesAStableIdentity) {
   auto& positions = PositionSource::Instance();
   positions.Open(_root);

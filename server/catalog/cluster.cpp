@@ -213,10 +213,7 @@ duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
   {
     auto lock = GetAttached().GetStorageManager().GetCommitLock();
     const auto log = CatalogLog();
-    if (!log) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                      ERR_MSG("the catalog log is not open"));
-    }
+    SDB_ASSERT(log);
     std::filesystem::create_hard_link(log->GetPath(), link, ec);
     if (!ec) {
       size = std::filesystem::file_size(link, ec);

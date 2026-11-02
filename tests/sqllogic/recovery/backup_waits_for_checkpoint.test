@@ -40,6 +40,31 @@ checkpointing
 1
 
 
+connection cancelled
+statement async error
+SELECT pg_backup_start('bwc_cancelled');
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_basebackup;
+----
+phase
+waiting for checkpoint to finish
+
+
+connection default
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_basebackup;
+
+
+connection cancelled
+statement ok
+SELECT 1;
+
+
 connection starter
 statement async ok
 SELECT pg_backup_start('bwc');

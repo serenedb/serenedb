@@ -53,7 +53,6 @@ TEST(DrainGateTest, CloseWaitsForPassesInFlight) {
   pass.Release();
   ASSERT_EQ(close.wait_for(kJoin), std::future_status::ready);
   EXPECT_TRUE(close.get());
-  gate.Open();
 }
 
 TEST(DrainGateTest, EnterWaitsWhileClosed) {
@@ -116,7 +115,17 @@ TEST(DrainGateTest, MovedPassLeavesOnce) {
     return true;
   }));
   EXPECT_EQ(polls, 0);
-  gate.Open();
+}
+
+TEST(DrainGateTest, SelfMoveAssignedPassStaysInFlight) {
+  DrainGate gate;
+  auto pass = gate.Enter();
+  auto& alias = pass;
+  pass = std::move(alias);
+  ASSERT_TRUE(pass);
+  EXPECT_FALSE(gate.Close([] { return true; }));
+  pass.Release();
+  EXPECT_TRUE(gate.Close([] { return true; }));
 }
 
 }  // namespace

@@ -27,7 +27,6 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/strip.h>
 
-#include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -35,11 +34,12 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/extension_helper.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -50,57 +50,6 @@
 
 namespace sdb::catalog {
 namespace {
-
-constexpr auto kClickHouseOptions = std::to_array<std::string_view>({
-  "host",
-  "hostname",
-  "port",
-  "user",
-  "username",
-  "password",
-  "passwd",
-  "database",
-  "dbname",
-  "db",
-  "secure",
-  "ssl",
-  "compression",
-});
-
-constexpr auto kPostgresOptions = std::to_array<std::string_view>({
-  "host",
-  "hostname",
-  "hostaddr",
-  "port",
-  "dbname",
-  "database",
-  "user",
-  "username",
-  "password",
-  "connect_timeout",
-  "client_encoding",
-  "options",
-  "application_name",
-  "keepalives",
-  "keepalives_idle",
-  "keepalives_interval",
-  "keepalives_count",
-  "tcp_user_timeout",
-  "sslmode",
-  "sslnegotiation",
-  "sslcompression",
-  "sslsni",
-  "ssl_min_protocol_version",
-  "ssl_max_protocol_version",
-  "min_protocol_version",
-  "max_protocol_version",
-  "target_session_attrs",
-  "load_balance_hosts",
-  "channel_binding",
-  "schema",
-  "isolation_level",
-  "use_text_protocol",
-});
 
 std::string ConnectionString(const ServerOptions& options) {
   return absl::StrJoin(options, " ", [](std::string* out, const auto& option) {
@@ -116,14 +65,9 @@ bool OwnedBySuperuser(duckdb::ClientContext& context, duckdb::idx_t owner) {
 
 }  // namespace
 
-void ForeignServerCatalogEntry::CheckRestrictedOwner() const {
-  const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
-  std::span<const std::string_view> allowed;
-  if (type == "postgres") {
-    allowed = kPostgresOptions;
-  } else if (type == "clickhouse") {
-    allowed = kClickHouseOptions;
-  } else {
+void ForeignServerCatalogEntry::CheckRestrictedOwner(
+  duckdb::optional_ptr<const duckdb::StorageExtension> storage) const {
+  if (!storage || storage->user_options.empty()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied for foreign-data wrapper ", _fdw_name),
@@ -133,13 +77,14 @@ void ForeignServerCatalogEntry::CheckRestrictedOwner() const {
   }
   bool password = false;
   for (const auto& [key, value] : _options) {
-    if (!absl::c_linear_search(allowed, key)) {
+    if (!absl::c_linear_search(storage->user_options, key)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied to use option \"", key, "\""),
                       ERR_DETAIL("Only roles with the SUPERUSER attribute may "
                                  "own a server that sets it."));
     }
-    password |= (key == "password" || key == "passwd") && !value.empty();
+    password |=
+      absl::c_linear_search(storage->password_options, key) && !value.empty();
   }
   if (!password) {
     THROW_SQL_ERROR(
@@ -159,10 +104,13 @@ void ForeignServerCatalogEntry::Attach(
   duckdb::ClientContext& context, bool superuser_owner,
   duckdb::OnCreateConflict on_conflict) const {
   const bool restricted = !superuser_owner;
-  if (restricted) {
-    CheckRestrictedOwner();
-  }
   const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
+  const auto storage = duckdb::StorageExtension::Find(
+    duckdb::DBConfig::GetConfig(context),
+    duckdb::ExtensionHelper::ApplyExtensionAlias(std::string{type}));
+  if (restricted) {
+    CheckRestrictedOwner(storage.get());
+  }
   duckdb::AttachInfo info;
   info.name = name;
   info.on_conflict = on_conflict;
@@ -185,15 +133,23 @@ void ForeignServerCatalogEntry::Attach(
       info.path = path.mapped().ToString();
       access_mode = type == "serenedb" ? duckdb::AccessMode::READ_ONLY
                                        : duckdb::AccessMode::AUTOMATIC;
-    } else if (type == "postgres" && restricted) {
-      info.options.insert_or_assign(
-        "require_auth", duckdb::Value{"password,md5,scram-sha-256"});
+    }
+    if (restricted) {
+      for (const auto& [key, value] : storage->user_forced_options) {
+        info.options.insert_or_assign(key, value);
+      }
     }
   }
-  absl::Cleanup restore_secrets =
-    [&context, hidden = std::exchange(context.hide_secrets,
-                                      context.hide_secrets || restricted)] {
-      context.hide_secrets = hidden;
+  if (!restricted) {
+    catalog::Attach(context, info, type, access_mode,
+                    duckdb::AttachVisibility::SHOWN);
+    return;
+  }
+  const auto owner = context.AccessOf(permissions.owner);
+  const duckdb::ClientContext::AccessScope scope{.role = &owner};
+  absl::Cleanup restore_scope =
+    [&context, previous = std::exchange(context.access_scope, &scope)] {
+      context.access_scope = previous;
     };
   catalog::Attach(context, info, type, access_mode,
                   duckdb::AttachVisibility::SHOWN);

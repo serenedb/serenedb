@@ -52,6 +52,7 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
@@ -800,20 +801,40 @@ struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
 
 struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
   static constexpr std::string_view kName = "has_parameter_privilege";
+  static constexpr CatalogType kType = CatalogType::PARAMETER_ENTRY;
   static constexpr AclMode kModes = AclMode::Set | AclMode::AlterSystem;
   static constexpr bool kSuperuserFirst = false;
 
-  static uint64_t Resolve(const Session&, std::string_view) {
-    return kInvalidOid;
+  struct Parameter {
+    std::string name;
+    duckdb::Permissions permissions;
+  };
+
+  struct Scope : ObjectScope {
+    std::vector<Parameter> parameters;
+  };
+
+  static Scope Begin(duckdb::ClientContext& context) {
+    Scope scope{ObjectPrivileges::Begin(context)};
+    auto& cluster = catalog::ClusterOf(context);
+    const auto root = cluster.GetOidIndex().GetVisible(
+      kRootUser, cluster.GetCatalogTransaction(context).view);
+    if (root) {
+      for (const auto& row : root->permissions.parameters) {
+        scope.parameters.push_back(
+          {row.name, duckdb::Permissions{.owner = kRootUser, .acl = row.acl}});
+      }
+    }
+    return scope;
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t) {
-    return ObjectTarget{&kBuiltinPermissions};
-  }
-
-  static bool Check(const ObjectScope&, const auth::RoleClosure& closure,
-                    duckdb::idx_t, const ObjectTarget&, const PrivilegeModes&) {
-    return closure.is_superuser;
+  static std::optional<ObjectTarget> FindNamed(const Scope& scope,
+                                               std::string_view name) {
+    const auto row = absl::c_find_if(scope.parameters, [&](const auto& entry) {
+      return absl::EqualsIgnoreCase(entry.name, name);
+    });
+    return ObjectTarget{row == scope.parameters.end() ? &kBuiltinPermissions
+                                                      : &row->permissions};
   }
 };
 

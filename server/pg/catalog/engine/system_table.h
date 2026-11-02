@@ -1113,6 +1113,7 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
     case duckdb::CatalogType::JOB_ENTRY:
     case duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY:
     case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+    case duckdb::CatalogType::PARAMETER_ENTRY:
     case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
     case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
     case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:

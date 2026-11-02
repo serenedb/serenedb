@@ -59,7 +59,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_opclass                  | 🟢            | Contains information about operator classes. |
 | pg_operator                 | 🟡            | Stores information about operators. |
 | pg_opfamily                 | 🟡            | Contains information about operator families. |
-| pg_parameter_acl            | 🟡            | Stores access privileges for server parameters. |
+| pg_parameter_acl            | 🟢            | Lists the parameters that have `GRANT SET` or `GRANT ALTER SYSTEM ON PARAMETER` grants, with their access privileges. |
 | pg_partitioned_table        | 🟡            | Contains information about partitioned tables. |
 | pg_policy                   | 🟡            | Stores information about row-level security policies. |
 | pg_proc                     | 🟢            | Contains information about functions and procedures. |

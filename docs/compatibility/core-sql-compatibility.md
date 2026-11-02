@@ -836,7 +836,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | makeaclitem                        | Yes           |  |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
 | has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `duckdb_fdw`, `iceberg_fdw`, `postgres_fdw` and `serenedb_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
-| has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
+| has_parameter_privilege            | Yes           | Reads the grants of `GRANT SET` and `GRANT ALTER SYSTEM ON PARAMETER` |
 | has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
 | pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |
 | unicode_version                    | Yes           | Also `icu_unicode_version` and `unicode_assigned`; both versions are `17.0` |

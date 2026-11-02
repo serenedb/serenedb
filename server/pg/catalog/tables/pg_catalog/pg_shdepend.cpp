@@ -80,6 +80,16 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
       return;
     }
     for (auto* entry : Referencing(role.oid)) {
+      if (entry->type == duckdb::CatalogType::ROLE_ENTRY) {
+        duckdb::idx_t oid = 0;
+        for (const auto& row : entry->permissions.parameters) {
+          ++oid;
+          if (Names(row.acl, role.oid)) {
+            Depend(kInvalidOid, kPgParameterAclTable, oid, 0, role.oid, 'a');
+          }
+        }
+        continue;
+      }
       if (entry->type != duckdb::CatalogType::DATABASE_ENTRY) {
         Entry(entry->ParentCatalog().GetAttached().oid, role.oid, *entry);
         continue;

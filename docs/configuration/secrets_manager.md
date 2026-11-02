@@ -88,6 +88,10 @@ CREATE SECRET (TYPE clickhouse, host 'clickhouse.internal', user 'reader', passw
 ATTACH 'database=events' AS analytics (TYPE clickhouse);
 ```
 
+## Who Uses Secrets
+
+A function that reads files or URLs, such as `read_parquet`, uses secrets only for a superuser: for another role it reads without them, also when the role may read server files and URLs. A view reads with its owner's secrets when its owner is a superuser. A [foreign server](../sql/statements/create_server/index.md) owned by a role that is not a superuser connects without secrets.
+
 ## Listing Secrets
 
 Secrets can be listed using the built-in table-producing function, e.g., by using the [`sdb_secrets()` table function](../sql/functions/metadata.md#sdb_secrets):

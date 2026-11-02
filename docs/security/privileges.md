@@ -35,12 +35,15 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 | `TYPE` | `USAGE` |
 | `FOREIGN SERVER` | `USAGE` |
 | `FOREIGN DATA WRAPPER` | `USAGE` |
+| `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
 `USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema. The expressions a table stores, its column defaults, `CHECK` constraints and generated columns, need no `USAGE` on the schemas they name from a role that inserts or updates rows; that role still needs `USAGE` or `UPDATE` on a sequence a default advances and `EXECUTE` on the functions they call.
 
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server needs `USAGE` on its foreign-data wrapper in the database the session is connected to, which only superusers hold until one grants it with `GRANT USAGE ON FOREIGN DATA WRAPPER`. Such a grant lets the role create `postgres_fdw` and `clickhouse_fdw` servers that connect wherever their options point, with a password of their own and no secrets or server files; the [rules for servers owned by roles without `SUPERUSER`](../sql/statements/create_server/index.md#servers-owned-by-roles-without-superuser) list what such a server may set.
+
+`SET` on a parameter lets a role change a parameter that only superusers may change, for its session, and `ALTER SYSTEM` lets it change the parameter's server-wide value with `SET GLOBAL`. A grant names a parameter that exists, such as `GRANT SET ON PARAMETER session_replication_role TO etl`; `pg_parameter_acl` lists the parameters that have grants and `has_parameter_privilege` checks them. `DROP OWNED` revokes them, and a role that holds one cannot be dropped.
 
 `CONNECT` on a database is checked when a session connects to it, when `USE`, `SET schema` or `SET search_path` names it, and again whenever a statement reads, creates, changes or drops anything in it, however the statement names the object: by a qualified name, through the search path, or through a function such as `seq_scan`. Revoking `CONNECT` therefore also stops access from sessions connected to other databases, including sessions whose search path already names it, and a name in a database without `CONNECT` reports `permission denied for database` whether or not the object exists. `pg_database_size`, `VACUUM` and `REINDEX` need `CONNECT` on the database they work on.
 
@@ -149,6 +152,8 @@ Reading server files and URLs requires a superuser or a member of `pg_read_serve
 - The `stopwords_path` and `model_location` options of a [text search dictionary](../sql/statements/create_text_search_dictionary/index.md) and the `passfile`, `service`, `sslcert`, `sslkey`, `sslrootcert`, `sslcrl` and `sslcrldir` options of a subscription's connection string read server files.
 
 The `save_location` of `enable_profiling` sets the `profiling_output` parameter, which only superusers may change.
+
+A function reads with the [secrets](../configuration/secrets_manager.md#who-uses-secrets) of the Secrets Manager only for a superuser.
 
 ## Superuser-only operations
 

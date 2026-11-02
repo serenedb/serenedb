@@ -273,6 +273,7 @@ void RegisterSereneDBStorage(
   extension->attach = AttachSereneDB;
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);
+  extension->creates_database = true;
   duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
 }
 

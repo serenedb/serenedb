@@ -104,15 +104,14 @@ statement ok
 SET sdb_faults = 'flt_a';
 
 
-# The unprivileged session's own value is at the default, so this RESET is a
-# no-op that never reaches the registry.
 connection c_lowly user=flt_lowly password=flt_pw
-statement ok
+statement error
 RESET sdb_faults;
+----
+db error: ERROR: permission denied to set parameter "sdb_faults"<slt:ignore>
 
 
-# Proof it stayed a no-op: the SET reports the whole global registry, and
-# 'flt_a' is still in it.
+# The SET reports the whole global registry, and 'flt_a' is still in it.
 connection default
 statement ok
 SET sdb_faults = 'flt_b';

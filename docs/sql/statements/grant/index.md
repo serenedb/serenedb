@@ -72,6 +72,7 @@ Granting to a role that does not exist is an error:
 | `TYPE` | `USAGE` |
 | `FOREIGN SERVER` | `USAGE` |
 | `FOREIGN DATA WRAPPER` | `USAGE` |
+| `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 ## Notes
 

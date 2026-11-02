@@ -28,7 +28,6 @@
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 
-#include "auth/function_privileges.h"
 #include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_binary_copy.h"
@@ -102,7 +101,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   catalog::RegisterClusterStorage(config, std::move(layout));
   connector::RegisterConfigVariables(config);
   connector::RegisterIResearchReplacementScan(config);
-  auth::RegisterFunctionPrivileges(config);
   config.SetOptionByName(
     "temp_directory",
     duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});

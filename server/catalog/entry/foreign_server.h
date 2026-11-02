@@ -24,6 +24,7 @@
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enums/on_create_conflict.hpp>
 #include <duckdb/parser/parsed_data/create_foreign_server_info.hpp>
+#include <duckdb/storage/storage_extension.hpp>
 #include <string>
 
 namespace sdb::catalog {
@@ -55,7 +56,8 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  void CheckRestrictedOwner() const;
+  void CheckRestrictedOwner(
+    duckdb::optional_ptr<const duckdb::StorageExtension> storage) const;
 
   std::string _server_type;
   std::string _version;

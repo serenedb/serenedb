@@ -40,6 +40,7 @@
 #include <duckdb/storage/object_cache.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -61,6 +62,7 @@
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
+#include "search/compaction/merge_registry.h"
 
 namespace sdb {
 namespace {
@@ -110,8 +112,9 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
   return static_cast<int64_t>(ms);
 }
 
-duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
-                               std::string_view name) {
+duckdb::Value GetGlobalSetting(std::string_view name) {
+  const auto& config =
+    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance());
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const auto index =
     config.TryGetSettingIndex(duckdb::Identifier{name}, option);
@@ -975,6 +978,22 @@ constexpr std::pair<std::string_view, VariableDescription>
         "1024. Server-global.",
         [] {
           return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize);
+        },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "sdb_compact_history_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Number of recent merges, across all search tables and indexes, that "
+        "sdb_compact_history keeps; the oldest merge is dropped first. 0 keeps "
+        "none. Default 256. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(
+            search::MergeRegistry::kDefaultHistorySize);
         },
         nullptr,
         nullptr,

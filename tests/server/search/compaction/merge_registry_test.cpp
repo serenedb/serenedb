@@ -18,11 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <duckdb/main/connection.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,6 +47,12 @@ std::vector<MergeRecord> HistoryOf(uint64_t relation_id) {
 
 bool IsRunning(uint64_t relation_id) {
   return !MergeRegistry::Instance().Active(relation_id).empty();
+}
+
+void Exec(std::string_view sql) {
+  const auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  const auto result = connection->Query(sql);
+  ASSERT_FALSE(result->HasError()) << sql << ": " << result->GetError();
 }
 
 irs::CompactionResult Result(irs::CompactionError error, size_t size) {
@@ -246,17 +257,31 @@ TEST(MergeRegistry, FinishOfUnknownMergeIsIgnored) {
 
 TEST(MergeRegistry, HistoryIsBounded) {
   constexpr uint64_t kRelation = 0x5eed'0004;
+  constexpr size_t kSize = 3;
+  absl::Cleanup reset = [] { Exec("RESET GLOBAL sdb_compact_history_size"); };
+  Exec(absl::StrCat("SET GLOBAL sdb_compact_history_size = ", kSize));
   auto& registry = MergeRegistry::Instance();
-  const auto total = MergeRegistry::kHistoryCapacity + 5;
+  const auto total = kSize + 5;
   std::vector<uint64_t> ids;
   for (size_t i = 0; i < total; ++i) {
     ids.emplace_back(registry.Queue(kRelation, MergeOrigin::Vacuum, {}));
     registry.Finish(ids.back(), MergeOutcome::Busy, {}, {});
   }
-  const auto history = HistoryOf(kRelation);
-  ASSERT_EQ(MergeRegistry::kHistoryCapacity, history.size());
-  EXPECT_EQ(ids[total - MergeRegistry::kHistoryCapacity], history.front().id);
+  auto history = HistoryOf(kRelation);
+  ASSERT_EQ(kSize, history.size());
+  EXPECT_EQ(ids[total - kSize], history.front().id);
   EXPECT_EQ(ids.back(), history.back().id);
+
+  Exec("SET GLOBAL sdb_compact_history_size = 1");
+  history = HistoryOf(kRelation);
+  ASSERT_EQ(1, history.size());
+  EXPECT_EQ(ids.back(), history.front().id);
+
+  Exec("SET GLOBAL sdb_compact_history_size = 0");
+  EXPECT_TRUE(HistoryOf(kRelation).empty());
+  registry.Finish(registry.Queue(kRelation, MergeOrigin::Vacuum, {}),
+                  MergeOutcome::Busy, {}, {});
+  EXPECT_TRUE(HistoryOf(kRelation).empty());
 }
 
 TEST(MergeRegistry, RunningMergesAreOrderedById) {

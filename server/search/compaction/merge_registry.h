@@ -72,7 +72,7 @@ struct MergeRecord {
 
 class MergeRegistry {
  public:
-  static constexpr size_t kHistoryCapacity = 256;
+  static constexpr size_t kDefaultHistorySize = 256;
 
   static MergeRegistry& Instance();
 
@@ -84,9 +84,11 @@ class MergeRegistry {
               std::string error);
 
   std::vector<MergeRecord> Active(uint64_t relation_id) const;
-  std::vector<MergeRecord> History(uint64_t relation_id) const;
+  std::vector<MergeRecord> History(uint64_t relation_id);
 
  private:
+  void TrimHistory(size_t size) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
   mutable absl::Mutex _mutex;
   uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
   irs::containers::NodeHashMap<uint64_t, MergeRecord> _active

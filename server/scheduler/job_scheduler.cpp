@@ -145,10 +145,7 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
 }
 
 size_t HistorySize() {
-  return GetGlobalSetting(duckdb::DBConfig::GetConfig(
-                            irs::DuckDBEngine::Instance().instance()),
-                          "sdb_job_history_size")
-    .GetValue<uint64_t>();
+  return GetGlobalSetting("sdb_job_history_size").GetValue<uint64_t>();
 }
 
 void ForAllJobs(

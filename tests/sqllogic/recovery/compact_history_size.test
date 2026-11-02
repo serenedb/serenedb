@@ -1,0 +1,164 @@
+statement ok
+CREATE TABLE chs (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+
+query
+SHOW sdb_compact_history_size;
+----
+sdb_compact_history_size
+256
+
+
+statement ok
+SET GLOBAL sdb_compact_history_size = 2;
+
+
+connection other
+query
+SHOW sdb_compact_history_size;
+----
+sdb_compact_history_size
+2
+
+
+statement ok
+INSERT INTO chs VALUES (1, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+INSERT INTO chs VALUES (2, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+statement ok
+INSERT INTO chs VALUES (3, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+statement ok
+INSERT INTO chs VALUES (4, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+query
+SELECT origin, input_docs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'chs')
+ORDER BY id;
+----
+origin	input_docs
+vacuum	3
+vacuum	4
+
+
+statement ok
+SET GLOBAL sdb_compact_history_size = 1;
+
+
+query
+SELECT origin, input_docs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'chs')
+ORDER BY id;
+----
+origin	input_docs
+vacuum	4
+
+
+statement ok
+SET sdb_compact_history_size = 0;
+
+
+statement ok
+INSERT INTO chs VALUES (5, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+connection other
+query
+SELECT count(*) FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'chs');
+----
+count
+0
+
+
+statement ok
+RESET GLOBAL sdb_compact_history_size;
+
+
+statement ok
+INSERT INTO chs VALUES (6, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+statement ok
+INSERT INTO chs VALUES (7, 'fox');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) chs;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) chs;
+
+
+connection other
+query
+SHOW sdb_compact_history_size;
+----
+sdb_compact_history_size
+256
+
+
+connection other
+query
+SELECT origin, input_docs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'chs')
+ORDER BY id;
+----
+origin	input_docs
+vacuum	6
+vacuum	7
+
+
+statement ok
+DROP TABLE chs;

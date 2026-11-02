@@ -319,6 +319,7 @@ What the server records about itself.
 | `profiling_output` | The file to which profile output is written. Empty writes it to the standard error of the `serened` process; the client receives nothing. | `VARCHAR` | `SESSION` |  |
 | `profiling_renderer_settings` | A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored. | `MAP(VARCHAR, VARCHAR)` | `SESSION` | `{}` |
 | `progress_bar_time` | How long (in milliseconds) a query runs before its progress bar is printed. | `BIGINT` | `SESSION` | `2000` |
+| `sdb_compact_history_size` | Number of recent merges, across all search tables and indexes, that [`sdb_compact_history`](../sql/indexes/inverted/maintenance.md#sdb-compact) keeps; the oldest merge is dropped first. 0 keeps none. Default 256. Server-global. | `UBIGINT` | `GLOBAL` | `256` |
 | `sdb_job_history_size` | Number of recent job runs, across all jobs, that `sdb_job_runs()` returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global. | `UBIGINT` | `GLOBAL` | `1024` |
 | `tracked_metrics` | A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*']). | `VARCHAR[]` | `SESSION` | `[*]` |
 

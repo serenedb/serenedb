@@ -28,6 +28,7 @@
 #include <iterator>
 #include <utility>
 
+#include "query/config.h"
 #include "search/compaction/merge_planner.h"
 #include "server/utils/metrics.h"
 
@@ -35,6 +36,10 @@ namespace sdb::search {
 namespace {
 
 int64_t NowMicros() noexcept { return absl::ToUnixMicros(absl::Now()); }
+
+size_t HistorySize() {
+  return GetGlobalSetting("sdb_compact_history_size").GetValue<uint64_t>();
+}
 
 struct Inputs {
   irs::MergeStats stats;
@@ -118,6 +123,7 @@ void MergeRegistry::Drop(uint64_t id) {
 
 void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
                            irs::MergeStats stats, std::string error) {
+  const auto size = HistorySize();
   absl::MutexLock lock{&_mutex};
   auto it = _active.find(id);
   if (it == _active.end()) {
@@ -138,10 +144,8 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
     record.stats = std::move(stats);
   }
   record.error = std::move(error);
-  if (_history.size() == kHistoryCapacity) {
-    _history.pop_front();
-  }
   _history.emplace_back(std::move(record));
+  TrimHistory(size);
 }
 
 std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
@@ -160,14 +164,22 @@ std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
   return records;
 }
 
-std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) const {
+std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) {
+  const auto size = HistorySize();
   std::vector<MergeRecord> records;
   absl::MutexLock lock{&_mutex};
+  TrimHistory(size);
   absl::c_copy_if(_history, std::back_inserter(records),
                   [relation_id](const MergeRecord& record) {
                     return record.relation_id == relation_id;
                   });
   return records;
+}
+
+void MergeRegistry::TrimHistory(size_t size) {
+  while (_history.size() > size) {
+    _history.pop_front();
+  }
 }
 
 }  // namespace sdb::search

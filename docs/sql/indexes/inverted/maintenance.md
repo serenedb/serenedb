@@ -163,7 +163,7 @@ The estimates cost a little encoding work the first time a segment is looked at.
 Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
 
 - `sdb_merges` lists the merges that run or wait in the background queue: `merge_id`, `relation_id`, `origin`, `state` (`queued` or `running`), `queued`, `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write, estimated from the live share of its inputs. A queued merge keeps its `merge_id` when it runs, and it becomes the `id` of the merge's `sdb_compact_history` row; a merge dropped from the queue, for example by a `VACUUM` on its table, leaves no history.
-- `sdb_compact_history` keeps the last 256 finished merges, one row each, with the columns of a `sdb_compact` row plus `id`, `relation_id`, `origin`, `started`, `finished`, `output_live_docs`, the documents of the new segment still live when it was published, and `rowid_min` / `rowid_max`, the range of row ids it holds (`NULL` for a search table).
+- `sdb_compact_history` keeps the last [`sdb_compact_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling) finished merges of all search tables and indexes together, 256 by default, one row each, with the columns of a `sdb_compact` row plus `id`, `relation_id`, `origin`, `started`, `finished`, `output_live_docs`, the documents of the new segment still live when it was published, and `rowid_min` / `rowid_max`, the range of row ids it holds (`NULL` for a search table).
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_010" />
 

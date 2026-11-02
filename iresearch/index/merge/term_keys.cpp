@@ -20,7 +20,6 @@
 
 #include "iresearch/index/merge/term_keys.hpp"
 
-#include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -67,7 +66,7 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
 
   void MoveTo(uint64_t row) {
     const auto want = row + 1;
-    if (want < _next || want - _next > TermKeys::kAnchorStep) {
+    if (want < _next || want - _next > TermKeys::kAnchorStep || _next == 0) {
       const auto anchor = _keys.Anchor(row);
       if (anchor.row != TermKeys::kNoAnchor &&
           (want < _next || anchor.row >= _next)) {
@@ -102,18 +101,23 @@ duckdb::unique_ptr<duckdb::PresortedMergeReader> TermKeys::CreateReader()
 
 TermKeys::TermAnchor TermKeys::Anchor(uint64_t row) const {
   absl::MutexLock lock{&_mutex};
-  if (_anchors.empty()) {
+  auto it = _anchors.upper_bound(row);
+  if (it == _anchors.begin()) {
     return {};
   }
-  const auto k = std::min<uint64_t>(row / kAnchorStep, _anchors.size() - 1);
-  return {.row = k * kAnchorStep, .term = _anchors[k]};
+  --it;
+  return {.row = it->first, .term = it->second};
 }
 
 void TermKeys::Record(uint64_t row, bytes_view term) const {
   absl::MutexLock lock{&_mutex};
-  if (row / kAnchorStep == _anchors.size()) {
-    _anchors.emplace_back(term);
-  }
+  _anchors.try_emplace(row, term);
+}
+
+void TermKeys::AddAnchor(uint64_t row) const {
+  auto it = _reader.iterator();
+  SeekBefore(*it, row + 1);
+  Record(row, it->value());
 }
 
 void TermKeys::SeekBefore(SeekTermIterator& it, uint64_t row) const {

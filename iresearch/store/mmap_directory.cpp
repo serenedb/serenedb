@@ -155,6 +155,14 @@ class MMapIndexInput final : public BytesViewInput {
     file_utils::Evict(static_cast<int>(_handle->fd()), offset, count);
   }
 
+  void Unmap(uint64_t offset, uint64_t count) const noexcept final {
+    if (!_handle || offset >= _handle->size()) {
+      return;
+    }
+    file_utils::Evict(static_cast<const byte_type*>(_handle->addr()) + offset,
+                      std::min<uint64_t>(count, _handle->size() - offset));
+  }
+
   bool Warm(uint64_t offset, uint64_t count) const noexcept final {
     if (!_handle || count == 0 || offset >= _handle->size()) {
       return false;

@@ -375,6 +375,7 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
       std::string bytes(d.byte_size, '\0');
       ctx.Read(d.file_offset,
                reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), d.byte_size);
+      ctx.Release(d.file_offset, d.byte_size);
       loaded.push_back(
         std::make_shared<const codecs::TrainedDictionary>(std::move(bytes)));
     }

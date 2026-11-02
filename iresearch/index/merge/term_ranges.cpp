@@ -125,7 +125,7 @@ class RangeWriter {
                  " continues at row ", row, " instead of ", input.next);
       return;
     }
-    input.it = _sources[i].terms->iterator();
+    input.it = _sources[i].terms->ReadOnceIterator();
     input.remap = _sources[i].remap;
     _keys[i]->SeekBefore(*input.it, row);
     input.next = row;
@@ -239,6 +239,14 @@ void TermRangeMerge::Partition(size_t parts, const Target& target,
                                size_t threads) {
   _target = target;
   _merge.Partition(parts, true, scheduler, threads);
+  for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
+    for (size_t i = 0; i != _keys.size(); ++i) {
+      if (const auto row = _merge.PartitionBegin(p, i);
+          row != 0 && row < _keys[i]->Count()) {
+        _keys[i]->AddAnchor(row - 1);
+      }
+    }
+  }
   _parts.clear();
   for (size_t p = 0; p != _merge.PartitionCount(); ++p) {
     _parts.emplace_back(std::make_unique<Part>());

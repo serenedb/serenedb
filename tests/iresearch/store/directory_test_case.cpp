@@ -4478,6 +4478,33 @@ TEST_P(DirectoryTestCase, evict_keeps_contents) {
   EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
 }
 
+TEST_P(DirectoryTestCase, unmap_keeps_contents_and_page_cache) {
+  std::vector<irs::byte_type> data(1024 * 1024 + 321);
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<irs::byte_type>(i * 31 % 251);
+  }
+  {
+    auto out = _dir->create("unmap");
+    ASSERT_FALSE(!out);
+    out->WriteData(data.data(), data.size());
+  }
+
+  auto in = _dir->open("unmap", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const auto* stable = in->ReadStable(0, data.size());
+  std::vector<irs::byte_type> before(data.size());
+  in->ReadData(0, before.data(), before.size());
+  ASSERT_EQ(0, std::memcmp(before.data(), data.data(), data.size()));
+  in->Unmap(1000, data.size() - 2000);
+  if (stable) {
+    EXPECT_TRUE(irs::file_utils::IsResident(stable, data.size()));
+    EXPECT_EQ(0, std::memcmp(stable, data.data(), data.size()));
+  }
+  std::vector<irs::byte_type> after(data.size());
+  in->ReadData(0, after.data(), after.size());
+  EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(directory_test, DirectoryTestCase,

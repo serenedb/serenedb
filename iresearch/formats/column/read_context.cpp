@@ -20,8 +20,10 @@
 
 #include "iresearch/formats/column/read_context.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
+#include <algorithm>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
@@ -33,6 +35,8 @@
 
 namespace irs {
 namespace {
+
+constexpr uint64_t kBlockAlignment = 8;
 
 class ColMapping final : public duckdb::MemoryMappedFile {
  public:
@@ -69,14 +73,33 @@ ReadContext::ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in)
 ReadContext::~ReadContext() {
   SDB_ASSERT(_live_handles == 0,
              "block handles must not outlive their ReadContext");
+  ReleaseRanges();
 }
 
 void ReadContext::Reset(const ColReader& reader) {
   SDB_ASSERT(_db == &reader.Database(),
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
+  ReleaseRanges();
   _in = reader.ReopenIn();
   ResetMapping();
+}
+
+void ReadContext::ReleaseRanges() noexcept {
+  if (_unmap == Unmap::Never || _ranges.empty()) {
+    return;
+  }
+  absl::c_sort(_ranges);
+  auto [begin, end] = _ranges.front();
+  end += begin;
+  for (const auto [offset, size] : _ranges) {
+    if (offset >= end + kBlockAlignment) {
+      Release(begin, end - begin);
+      begin = offset;
+    }
+    end = std::max(end, offset + size);
+  }
+  Release(begin, end - begin);
 }
 
 void ReadContext::ResetMapping() {
@@ -144,16 +167,27 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 }
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
-  return _mapping && offset % 8 == 0 &&
+  return _mapping && offset % kBlockAlignment == 0 &&
          offset +
              duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
                size) <=
            _mapping->Size();
 }
 
+void ReadContext::Release(uint64_t offset, uint64_t size) const noexcept {
+  if (_unmap != Unmap::Never) {
+    SDB_ASSERT(_in);
+    _in->Unmap(offset, size);
+  }
+}
+
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
   SDB_ASSERT(_live_handles != 0);
   --_live_handles;
+  if (const auto i = static_cast<size_t>(id);
+      _unmap == Unmap::EachBlock && i < _ranges.size()) {
+    Release(_ranges[i].first, _ranges[i].second);
+  }
   duckdb::BlockManager::UnregisterBlock(id);
 }
 

@@ -281,6 +281,32 @@ TEST_F(TermKeysTest, ReadersShareTheirAnchors) {
   EXPECT_EQ(ids[768], irs::ViewCast<char>(anchor.term));
 }
 
+TEST_F(TermKeysTest, AddedAnchorsSeekToTheirRow) {
+  std::vector<std::string> ids;
+  for (size_t n = 0; n != 3000; ++n) {
+    ids.emplace_back(Key("id", n));
+  }
+  AddSegment(ids);
+  const auto inputs = Snapshot();
+  ASSERT_EQ(1, inputs.size());
+  const irs::TermKeys keys{*inputs[0]->field(kIdField)};
+  const auto walker = keys.CreateReader();
+  EXPECT_EQ(Slice(ids, 0, 2048), Read(*walker, 0, 2048));
+  EXPECT_EQ(Slice(ids, 2048, 952), Read(*walker, 2048, 952));
+  keys.AddAnchor(1999);
+  const auto anchor = keys.Anchor(2000);
+  ASSERT_EQ(1999, anchor.row);
+  EXPECT_EQ(ids[1999], irs::ViewCast<char>(anchor.term));
+  EXPECT_EQ(1792, keys.Anchor(1998).row);
+  auto it = inputs[0]->field(kIdField)->iterator();
+  keys.SeekBefore(*it, 2000);
+  EXPECT_EQ(ids[1999], irs::ViewCast<char>(it->value()));
+  ASSERT_TRUE(it->next());
+  EXPECT_EQ(ids[2000], irs::ViewCast<char>(it->value()));
+  const auto jumper = keys.CreateReader();
+  EXPECT_EQ(Slice(ids, 2000, 5), Read(*jumper, 2000, 5));
+}
+
 TEST_F(TermKeysTest, AnchorsComeFromReads) {
   AddSegment(std::vector<std::string>{Key("id", 0), Key("id", 1)});
   const auto inputs = Snapshot();

@@ -20,12 +20,18 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <duckdb/common/fault_points.hpp>
+#include <filesystem>
+#include <fstream>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -36,6 +42,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iterator>
 #include <numeric>
@@ -457,6 +464,243 @@ std::vector<std::string> DictionariesByBlock(const irs::SubReader& segment,
     return {};
   }
   return DictionariesByBlock(*cs, *col);
+}
+
+class ScratchDir {
+ public:
+  explicit ScratchDir(std::string_view name)
+    : _path{std::filesystem::path{::testing::TempDir()} /
+            absl::StrCat("sdb_", name, "_", ::getpid())} {
+    std::filesystem::remove_all(_path);
+    std::filesystem::create_directories(_path);
+  }
+
+  ~ScratchDir() {
+    std::error_code ignored;
+    std::filesystem::remove_all(_path, ignored);
+  }
+
+  ScratchDir(const ScratchDir&) = delete;
+  ScratchDir& operator=(const ScratchDir&) = delete;
+
+  std::filesystem::path Sub(std::string_view name) const {
+    auto path = _path / name;
+    std::filesystem::create_directories(path);
+    return path;
+  }
+
+ private:
+  std::filesystem::path _path;
+};
+
+uint64_t PageSize() { return static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)); }
+
+std::vector<bool> MappedPages(const std::filesystem::path& file) {
+  const auto page = PageSize();
+  const auto target = std::filesystem::canonical(file).string();
+  std::vector<bool> mapped((std::filesystem::file_size(file) + page - 1) /
+                           page);
+  const int pagemap = ::open("/proc/self/pagemap", O_RDONLY);
+  std::ifstream maps{"/proc/self/maps"};
+  for (std::string line; std::getline(maps, line);) {
+    const std::vector<std::string_view> fields =
+      absl::StrSplit(line, ' ', absl::SkipEmpty());
+    if (fields.size() < 6 || fields[5] != target) {
+      continue;
+    }
+    const std::vector<std::string_view> range = absl::StrSplit(fields[0], '-');
+    uint64_t begin = 0;
+    uint64_t end = 0;
+    uint64_t offset = 0;
+    if (range.size() != 2 || !absl::SimpleHexAtoi(range[0], &begin) ||
+        !absl::SimpleHexAtoi(range[1], &end) ||
+        !absl::SimpleHexAtoi(fields[2], &offset)) {
+      continue;
+    }
+    for (auto at = begin; at < end; at += page) {
+      const auto index = (offset + at - begin) / page;
+      uint64_t entry = 0;
+      if (index < mapped.size() &&
+          ::pread(pagemap, &entry, sizeof(entry),
+                  static_cast<off_t>(at / page * sizeof(entry))) ==
+            sizeof(entry) &&
+          (entry >> 63) != 0) {
+        mapped[index] = true;
+      }
+    }
+  }
+  ::close(pagemap);
+  return mapped;
+}
+
+uint64_t MappedBytes(const std::filesystem::path& file) {
+  return static_cast<uint64_t>(absl::c_count(MappedPages(file), true)) *
+         PageSize();
+}
+
+uint64_t MappedInsideBlocks(const std::filesystem::path& file,
+                            const irs::ColReader& reader) {
+  const auto page = PageSize();
+  const auto mapped = MappedPages(file);
+  uint64_t count = 0;
+  const auto visit = [&](this const auto& self,
+                         const irs::ColumnReader& column) -> void {
+    for (const auto& block : column.DataBlocks()) {
+      const auto end = block.file_offset + block.byte_size;
+      for (auto p = (block.file_offset + page - 1) / page;
+           (p + 1) * page <= end; ++p) {
+        count += mapped[p] ? 1 : 0;
+      }
+    }
+    column.VisitSubColumns(
+      [&](const irs::ColumnReader::SubColumn& sub) { self(sub.column); });
+  };
+  for (const auto& column : reader.Columns()) {
+    visit(*column);
+  }
+  return count;
+}
+
+std::filesystem::path SegmentFile(const std::filesystem::path& dir,
+                                  const irs::SubReader& segment,
+                                  std::string_view extension) {
+  return dir / absl::StrCat(segment.Meta().name, ".", extension);
+}
+
+uint64_t LeftPages(size_t fields, size_t parts) {
+  constexpr uint64_t kPerField = 4;
+  return (fields * kPerField + parts) * PageSize();
+}
+
+constexpr irs::field_id kPairField = kMixedField + 1;
+
+class MergePlanMappingTest : public ::testing::Test {
+ protected:
+  static constexpr size_t kDocs = 20000;
+  static constexpr size_t kFields = 3;
+  static constexpr std::string_view kIndexFiles[] = {"idx", "doc", "pos",
+                                                     "pay"};
+
+  void SetUp() final {
+    auto options = irs::tests::DefaultWriterOptions();
+    options.column_options = PlainColumns;
+    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    Generator gen{17};
+    for (size_t s = 0; s != 3; ++s) {
+      AddSegment(gen);
+    }
+    std::vector<std::string> removed;
+    for (size_t row = 0; row < _next; row += 97) {
+      removed.push_back(absl::StrCat("doc-", row));
+    }
+    RemoveTerms(*_writer, kIdField, removed);
+    _reader = _writer->GetSnapshot();
+    _inputs = Segments(_reader);
+    ASSERT_EQ(3, _inputs.size());
+    _expected = ExpectedMerge(_inputs);
+    for (const auto* input : _inputs) {
+      ASSERT_LT(0, MappedInsideBlocks(SegmentFile(_path, *input, "col"),
+                                      *input->GetColReader()));
+      for (const auto extension : kIndexFiles) {
+        const auto file = SegmentFile(_path, *input, extension);
+        ASSERT_LT(LeftPages(kFields, 0), MappedBytes(file)) << file;
+      }
+    }
+  }
+
+  void ExpectIndexFilesLeft(size_t parts) {
+    for (const auto* input : _inputs) {
+      for (const auto extension : kIndexFiles) {
+        const auto file = SegmentFile(_path, *input, extension);
+        EXPECT_GE(LeftPages(kFields, extension == "idx" ? parts : 0),
+                  MappedBytes(file))
+          << file;
+      }
+    }
+  }
+
+  std::span<const irs::MergeUnit> Merge(size_t threads) {
+    for (const auto* input : _inputs) {
+      _doc_map.emplace_back(input, irs::IResourceManager::gNoop);
+    }
+    _plan = std::make_unique<irs::MergePlan>(
+      _out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
+      &_options, irs::MergeProgress{}, nullptr);
+    EXPECT_TRUE(_plan->Prepare(threads));
+    EXPECT_TRUE(RunPlan(*_plan, threads));
+    return _plan->Units();
+  }
+
+  void ExpectMerged() {
+    const auto merged = irs::SegmentReaderImpl::Open(
+      _out, _meta, irs::tests::DefaultReaderOptions());
+    ASSERT_NE(nullptr, merged);
+    EXPECT_EQ("", FirstDifference(_expected, Dump(*merged)));
+  }
+
+  void AddSegment(Generator& gen) {
+    const auto list = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+    auto batch = _writer->GetBatch();
+    for (size_t i = 0; i != kDocs; ++i, ++_next) {
+      auto doc = batch.Insert();
+      tests::StringField id{"id", absl::StrCat("doc-", _next)};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+      tests::TextField<std::string> text{"text", gen.Text(12)};
+      text.id = kTextField;
+      tests::InsertField(doc, text);
+      tests::StringField pair{"pair", absl::StrCat("pair-", _next / 3)};
+      pair.id = kPairField;
+      tests::InsertField(doc, pair);
+      WriteValue(doc, kBigintColumn, duckdb::LogicalType::BIGINT,
+                 gen.Value(duckdb::LogicalType::BIGINT));
+      WriteValue(doc, kTextColumn, duckdb::LogicalType::VARCHAR,
+                 duckdb::Value{LogLine(_next)});
+      WriteValue(doc, kListColumn, list, gen.Value(list));
+    }
+    batch.Commit();
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+
+  ScratchDir _scratch{"merge_plan_mapping"};
+  std::filesystem::path _path = _scratch.Sub("index");
+  irs::MMapDirectory _dir{_path};
+  irs::IndexWriter::ptr _writer;
+  size_t _next = 0;
+  irs::DirectoryReader _reader;
+  std::vector<const irs::SubReader*> _inputs;
+  SegmentDump _expected;
+  irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
+  irs::FunctionFieldOptions _options{
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kInputRowGroup, {}};
+  irs::SegmentMeta _meta;
+  irs::MemoryDirectory _out;
+  std::unique_ptr<irs::MergePlan> _plan;
+};
+
+TEST_F(MergePlanMappingTest, MergeLeavesNoInputMappedBehindIt) {
+  const auto units = Merge(1);
+  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kTextColumn).empty());
+  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::TermRange, kIdField).empty());
+  for (const auto* input : _inputs) {
+    EXPECT_EQ(0, MappedInsideBlocks(SegmentFile(_path, *input, "col"),
+                                    *input->GetColReader()));
+  }
+  ExpectIndexFilesLeft(0);
+  ExpectMerged();
+}
+
+TEST_F(MergePlanMappingTest, TermRangePartsLeaveOnlyTheirBoundariesMapped) {
+  const auto units = Merge(4);
+  const auto id_parts =
+    UnitsOf(units, MergeUnitKind::TermRange, kIdField).size();
+  const auto pair_parts =
+    UnitsOf(units, MergeUnitKind::TermRange, kPairField).size();
+  EXPECT_LT(1, id_parts);
+  EXPECT_LT(1, pair_parts);
+  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::TermRange, kTextField).empty());
+  ExpectIndexFilesLeft(id_parts + pair_parts);
+  ExpectMerged();
 }
 
 class ColumnSplitTest : public ::testing::Test {
@@ -991,6 +1235,47 @@ TEST_F(ColumnCopyTest, MergeWrittenInputsCopyTheirBlocks) {
   EXPECT_FALSE(merged->GetColReader()->Column(kText)->HasDictionaries());
 }
 
+TEST_F(ColumnCopyTest, CopiesLeaveNoInputMappedBehindThem) {
+  ScratchDir scratch{"column_copy_mapping"};
+  const auto path_a = scratch.Sub("a");
+  const auto path_b = scratch.Sub("b");
+  irs::MMapDirectory dir_a{path_a};
+  irs::MMapDirectory dir_b{path_b};
+  const auto written = [&](irs::Directory& dir) {
+    for (size_t s = 0; s != 5; ++s) {
+      AddSegment(6000, FillRow);
+    }
+    return MergeSegments(dir, Fresh(5), kRowGroup);
+  };
+  const auto a = written(dir_a);
+  const auto b = written(dir_b);
+  ASSERT_NE(nullptr, a);
+  ASSERT_NE(nullptr, b);
+  const std::vector<const irs::SubReader*> inputs{a.get(), b.get()};
+  const std::filesystem::path paths[] = {path_a, path_b};
+  const auto expected = ExpectedMerge(inputs);
+  for (size_t i = 0; i != inputs.size(); ++i) {
+    EXPECT_LT(0, MappedInsideBlocks(SegmentFile(paths[i], *inputs[i], "col"),
+                                    *inputs[i]->GetColReader()));
+    EXPECT_LT(LeftPages(1, 0),
+              MappedBytes(SegmentFile(paths[i], *inputs[i], "idx")));
+  }
+  irs::MemoryDirectory out;
+  std::span<const irs::MergeUnit> units;
+  const auto merged = MergeSegments(out, inputs, kRowGroup, 1, &units);
+  ASSERT_NE(nullptr, merged);
+  for (const auto id : {kNumber, kReal, kText, kFlag, kConstant}) {
+    EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, id).size()) << id;
+  }
+  for (size_t i = 0; i != inputs.size(); ++i) {
+    EXPECT_EQ(0, MappedInsideBlocks(SegmentFile(paths[i], *inputs[i], "col"),
+                                    *inputs[i]->GetColReader()));
+    EXPECT_GE(LeftPages(1, 0),
+              MappedBytes(SegmentFile(paths[i], *inputs[i], "idx")));
+  }
+  EXPECT_EQ("", FirstDifference(expected, Dump(*merged)));
+}
+
 TEST_F(ColumnCopyTest, CopiedColumnsKeepTheirNulls) {
   irs::MemoryDirectory dir_a;
   irs::MemoryDirectory dir_b;
@@ -1439,8 +1724,9 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
                         irs::WriteTier::Merge};
   writer.PlanParts(kText, 1);
   constexpr uint16_t kRemapped[] = {2};
+  irs::ReadContext ctx{*cs};
   const auto copy = [&] {
-    writer.CopyColumnPart(kText, 0, *cs, *cs->Column(kText), true, kRemapped,
+    writer.CopyColumnPart(kText, 0, ctx, *cs->Column(kText), true, kRemapped,
                           [] { return true; });
   };
 #ifdef SDB_DEV

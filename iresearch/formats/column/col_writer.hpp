@@ -97,7 +97,7 @@ class ColWriter final {
 
   void CloseColumnPart(field_id id, uint32_t part);
 
-  bool CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
+  bool CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
                       const ColumnReader& column, bool validity,
                       std::span<const uint16_t> dictionaries,
                       absl::FunctionRef<bool()> progress);

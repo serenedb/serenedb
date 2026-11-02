@@ -955,6 +955,7 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
 
+  uint64_t InlineOffset() const noexcept { return _inline_offset; }
   uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
   const byte_type* InlineRegion() const noexcept { return _inline_region; }
 
@@ -1078,6 +1079,7 @@ class BlockIterator : util::Noncopyable {
   uint32_t SubCount() const noexcept { return _sub_count; }
   uint64_t Start() const noexcept { return _start; }
   uint64_t LoadStart() const noexcept { return _cur_start; }
+  bool Leaf() const noexcept { return _leaf; }
   bool Done() const noexcept { return _cur_ent == _ent_count; }
   const byte_type* SuffixStart() const noexcept { return _suffix_start; }
   const byte_type* SuffixEnd() const noexcept { return _suffix_end; }
@@ -1606,6 +1608,99 @@ void BlockIterator::Reset() {
   _header.AssertBlockBoundaries();
 }
 
+class UnmapBehind {
+ public:
+  void Advance(const IndexInput& in, uint64_t at) noexcept {
+    if (at < _from) {
+      _from = at;
+      _at = at;
+      return;
+    }
+    _at = at;
+    const auto page = at / file_utils::kPage * file_utils::kPage;
+    if (page >= _from + kChunk) {
+      in.Unmap(_from, page - _from);
+      _from = page;
+    }
+  }
+
+  void Finish(const IndexInput& in) const noexcept {
+    if (_from < _at) {
+      in.Unmap(_from, _at - _from);
+    }
+  }
+
+ private:
+  static constexpr uint64_t kChunk = file_utils::kPrefetchChunk;
+
+  uint64_t _from = std::numeric_limits<uint64_t>::max();
+  uint64_t _at = 0;
+};
+
+class ReadOnceTrail : util::Noncopyable {
+ public:
+  ReadOnceTrail(const TermReaderBase& field, const IndexInput& terms,
+                PostingsHandles postings) noexcept
+    : _field{&field}, _terms{&terms}, _postings{postings} {
+    SDB_ASSERT(_postings.doc);
+    const auto features = field.meta().index_features;
+    if (!IsSubsetOf(IndexFeatures::Pos, features)) {
+      _postings.pos = nullptr;
+    }
+    if (IndexFeatures::None ==
+        (features & (IndexFeatures::Offs | IndexFeatures::Vec))) {
+      _postings.pay = nullptr;
+    }
+  }
+
+  ~ReadOnceTrail() noexcept {
+    _blocks.Finish(*_terms);
+    _inline.Finish(*_terms);
+    _doc.Finish(*_postings.doc);
+    if (_postings.pos) {
+      _pos.Finish(*_postings.pos);
+    }
+    if (_postings.pay) {
+      _pay.Finish(*_postings.pay);
+    }
+  }
+
+  void Block(uint64_t start) noexcept {
+    if (_consumed) {
+      _blocks.Advance(*_terms, start);
+    }
+  }
+
+  void Term(const PostingMeta& meta) noexcept {
+    _consumed = true;
+    if (meta.inline_size != 0) {
+      _inline.Advance(*_terms, _field->InlineOffset() +
+                                 static_cast<uint64_t>(meta.inline_data -
+                                                       _field->InlineRegion()));
+    }
+    if (DocExtent(meta) != 0) {
+      _doc.Advance(*_postings.doc, meta.doc_start);
+    }
+    if (_postings.pos) {
+      _pos.Advance(*_postings.pos, meta.pos_start);
+    }
+    if (_postings.pay) {
+      _pay.Advance(*_postings.pay, meta.pay_start);
+    }
+  }
+
+ private:
+  const TermReaderBase* _field;
+  const IndexInput* _terms;
+  PostingsHandles _postings;
+  UnmapBehind _blocks;
+  UnmapBehind _inline;
+  UnmapBehind _doc;
+  UnmapBehind _pos;
+  UnmapBehind _pay;
+  bool _consumed = false;
+};
+
 template<typename FST>
 class TermIteratorBase {
  public:
@@ -1640,6 +1735,9 @@ class TermIteratorBase {
     const auto& field_meta = _field->meta();
     if (_cur_block) {
       _cur_block->LoadData(*_field, _posting_meta, *_postings);
+      if (_trail) {
+        _trail->Term(_posting_meta);
+      }
     }
     return _postings->Postings(field_meta.index_features, features,
                                _posting_meta, _field->HasScoreBounds(),
@@ -1716,14 +1814,18 @@ class TermIteratorBase {
 
   void LoadBlock(BlockIterator& block) {
     auto& in = TermsInput();
-    if (block.Dirty()) {
-      if (!_hinted) {
-        _hint.Arm(block.LoadStart(), in.Length());
-        _hinted = true;
-      }
-      _hint.Advance(in, block.LoadStart());
+    if (!block.Dirty()) {
+      return;
     }
+    if (!_hinted) {
+      _hint.Arm(block.LoadStart(), in.Length());
+      _hinted = true;
+    }
+    _hint.Advance(in, block.LoadStart());
     block.Load(in);
+    if (_trail && block.Leaf()) {
+      _trail->Block(block.LoadStart());
+    }
   }
 
   void PopToParent() {
@@ -1760,6 +1862,7 @@ class TermIteratorBase {
   std::vector<BlockIterator> _block_stack;
   BlockIterator* _cur_block{};
   TreeWalkHint _hint;
+  std::unique_ptr<ReadOnceTrail> _trail;
   bool _hinted = false;
 };
 
@@ -1950,6 +2053,11 @@ class TermIteratorImpl : public SeekTermIterator, public TermIteratorBase<FST> {
   TermPostings::ptr ReusePostings(IndexFeatures features,
                                   TermPostings::ptr reuse) const final {
     return Base::Postings(features, std::move(reuse));
+  }
+
+  void ReadOnce() {
+    this->_trail = std::make_unique<ReadOnceTrail>(
+      *this->_field, *this->_terms_in_source, this->_postings->Handles());
   }
 };
 
@@ -2833,6 +2941,13 @@ class FieldReader::Impl {
     SeekTermIterator::ptr iterator() const final {
       return memory::make_managed<TermIteratorImpl<FST>>(
         *this, _owner->_pr, *_owner->_terms_in, *_fst);
+    }
+
+    SeekTermIterator::ptr ReadOnceIterator() const final {
+      auto it = memory::make_managed<TermIteratorImpl<FST>>(
+        *this, _owner->_pr, *_owner->_terms_in, *_fst);
+      it->ReadOnce();
+      return it;
     }
 
     PostingMeta Lookup(bytes_view term) const final {

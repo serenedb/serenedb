@@ -42,6 +42,12 @@ namespace irs {
 
 class ColReader;
 
+enum class Unmap : uint8_t {
+  Never,
+  EachBlock,
+  AtEnd,
+};
+
 class ReadContext final : public BlockManager,
                           public duckdb::OverflowStringReader,
                           public duckdb::ColumnStreamReader {
@@ -68,6 +74,9 @@ class ReadContext final : public BlockManager,
   void SetReusableDictionaries(bool reusable) noexcept {
     _reusable_dictionaries = reusable;
   }
+  void SetUnmap(Unmap unmap) noexcept { _unmap = unmap; }
+
+  void Release(uint64_t offset, uint64_t size) const noexcept;
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;
@@ -115,6 +124,7 @@ class ReadContext final : public BlockManager,
 
  private:
   void ResetMapping();
+  void ReleaseRanges() noexcept;
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
 
   IndexInput::ptr _in;
@@ -124,6 +134,7 @@ class ReadContext final : public BlockManager,
   bool _random_access = false;
   bool _read_ahead = true;
   bool _reusable_dictionaries = false;
+  Unmap _unmap = Unmap::Never;
   std::atomic<size_t> _live_handles{0};
 };
 

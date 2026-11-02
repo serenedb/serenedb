@@ -216,9 +216,10 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
         view.substr(head.size()),
       };
       copy.file_offset = sink.AppendAligned(parts);
-      continue;
+    } else {
+      copy.file_offset = sink.AppendAligned({&view, 1});
     }
-    copy.file_offset = sink.AppendAligned({&view, 1});
+    ctx.Release(block.file_offset, block.byte_size);
   }
   return true;
 }
@@ -387,8 +388,7 @@ void ColWriter::CloseColumnPart(field_id id, uint32_t part) {
   Close(PartOf(id, part));
 }
 
-bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
-                               const ColReader& reader,
+bool ColWriter::CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
                                const ColumnReader& column, bool validity,
                                std::span<const uint16_t> dictionaries,
                                absl::FunctionRef<bool()> progress) {
@@ -397,7 +397,6 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
   auto& meta = slot.meta;
   meta.id = column.Id();
   meta.type = column.Type();
-  ReadContext ctx{reader};
   if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, *_file, meta.data,
                   progress)) {
     return false;

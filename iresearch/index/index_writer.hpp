@@ -149,7 +149,7 @@ struct IndexWriterOptions : public SegmentOptions {
 struct CommitInfo {
   ProgressReportCallback progress;
   bool reopen_reader = false;
-  bool payload_changed = false;
+  bool force = false;
 };
 
 struct CommitOnFlush {

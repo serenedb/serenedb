@@ -181,13 +181,13 @@ class InvertedIndexStorage final
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
-                               RefreshResult& code);
+                               RefreshResult& code, bool force = false);
 
   ResultWithTime CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   [[nodiscard]] absl::Status Refresh(
-    const irs::ProgressReportCallback& progress = nullptr);
+    const irs::ProgressReportCallback& progress = nullptr, bool force = false);
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();

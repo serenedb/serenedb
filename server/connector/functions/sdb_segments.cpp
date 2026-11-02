@@ -96,12 +96,12 @@ duckdb::unique_ptr<duckdb::FunctionData> SegmentsBind(
     return_types.emplace_back(duckdb::LogicalType::VARCHAR);
     return data;
   }
-  for (const auto* name : {"segment", "docs", "live_docs", "deleted_docs",
-                           "bytes", "rowid_min", "rowid_max"}) {
+  for (const auto* name :
+       {"segment", "docs", "live_docs", "deleted_docs", "bytes"}) {
     names.emplace_back(name);
   }
   return_types.emplace_back(duckdb::LogicalType::VARCHAR);
-  return_types.insert(return_types.end(), 6, duckdb::LogicalType::BIGINT);
+  return_types.insert(return_types.end(), 4, duckdb::LogicalType::BIGINT);
   return data;
 }
 
@@ -183,13 +183,6 @@ void EmitSegments(SegmentsState& state, duckdb::DataChunk& output) {
     output.data[2].Append(Bigint(row.live_docs));
     output.data[3].Append(Bigint(row.docs - row.live_docs));
     output.data[4].Append(Bigint(row.bytes));
-    if (row.rowids.Empty()) {
-      output.data[5].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
-      output.data[6].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
-    } else {
-      output.data[5].Append(duckdb::Value::BIGINT(row.rowids.first));
-      output.data[6].Append(duckdb::Value::BIGINT(row.rowids.last));
-    }
   }
 }
 

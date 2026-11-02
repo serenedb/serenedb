@@ -229,7 +229,7 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
                           const irs::PipelineMergeExecutor& executor,
                           search::MergeResult& merged) const {
   merged = {};
-  search::MergeInputs inputs;
+  irs::MergeStats inputs;
   const auto planner = [&](const irs::IndexReader& index,
                            const irs::CompactingSegments&,
                            irs::MergeGroups& groups) {
@@ -254,7 +254,7 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
     merged.outcome.error =
       busy ? irs::CompactionError::Busy : irs::CompactionError::Ok;
   }
-  if (inputs.stats.inputs.empty()) {
+  if (inputs.inputs.empty()) {
     return;
   }
   auto& merges = search::GetSearchEngine().Merges();

@@ -29,20 +29,17 @@
 #include <cstddef>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/formats/column/col_copy_check.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "connector/column_id.h"
 #include "query/config.h"
 
 namespace sdb::search {
@@ -235,36 +232,11 @@ std::string Segments(uint64_t count) {
 PlannedMerge DescribeMerge(std::string reason,
                            std::span<const irs::SubReader* const> segments) {
   PlannedMerge merge{.reason = std::move(reason)};
-  irs::containers::FlatHashMap<irs::field_id, uint64_t> column_bytes;
-  irs::containers::FlatHashSet<irs::field_id> fields;
-  irs::containers::FlatHashSet<irs::field_id> ann;
   for (const auto* segment : segments) {
-    auto& input = merge.inputs.emplace_back(DescribeSegment(*segment));
+    const auto& input = merge.inputs.emplace_back(DescribeSegment(*segment));
     merge.docs += input.docs;
     merge.live_docs += input.live_docs;
     merge.bytes += input.bytes;
-    for (const auto id : segment->field_ids()) {
-      fields.insert(id);
-    }
-    const auto* col_reader = segment->GetColReader();
-    SDB_ASSERT(col_reader);
-    for (const auto& column : col_reader->Columns()) {
-      column_bytes[column->Id()] += irs::StoredBytes(*column);
-      if (segment->Ann(column->Id())) {
-        ann.insert(column->Id());
-      }
-    }
-  }
-  merge.columns = column_bytes.size();
-  merge.fields = fields.size();
-  merge.ann_columns = ann.size();
-  for (const auto& [id, bytes] : column_bytes) {
-    merge.column_bytes += bytes;
-    if (bytes > merge.largest_column_bytes ||
-        (bytes == merge.largest_column_bytes && id < merge.largest_column)) {
-      merge.largest_column = id;
-      merge.largest_column_bytes = bytes;
-    }
   }
   return merge;
 }
@@ -272,56 +244,21 @@ PlannedMerge DescribeMerge(std::string reason,
 void PlanBackground(const irs::IndexReader& reader,
                     const MergeRoundRequest& request, MergeRoundPlan& plan) {
   SDB_ASSERT(request.settings);
-  const auto& settings = *request.settings;
-  if (settings.compaction_interval_msec == 0) {
-    plan.notes.emplace_back(
-      "background compaction is disabled (compaction_interval = 0)");
-  }
-  irs::SegmentNames picked;
   const irs::SegmentNames none;
-  constexpr std::string_view kReason = "adjacent policy";
   for (const auto& candidates :
-       PickMerges(settings, request.inputs_max, reader,
+       PickMerges(*request.settings, request.inputs_max, reader,
                   irs::CompactingSegments{none}, {}, request.merges)) {
     if (candidates.size() == 1 &&
         !irs::HasRemovals(candidates.front()->Meta())) {
       break;
     }
-    for (const auto* candidate : candidates) {
-      picked.emplace(candidate->Meta().name);
-    }
-    plan.merges.emplace_back(DescribeMerge(std::string{kReason}, candidates));
-  }
-  for (const auto& segment : reader) {
-    const auto& meta = segment.Meta();
-    if (picked.contains(meta.name)) {
-      continue;
-    }
-    plan.skipped.emplace_back(SkippedSegment{
-      .name = meta.name,
-      .reason = meta.byte_size >= settings.compaction_max_segments_bytes
-                  ? "at or above the merge size cap"
-                  : absl::StrCat("not selected by the ", kReason),
-    });
+    plan.merges.emplace_back(DescribeMerge("adjacent policy", candidates));
   }
 }
 
 void PlaceAlone(const irs::SubReader& segment,
                 const irs::ReencodeEstimate* rewrite, MergeRoundPlan& plan) {
-  if (!rewrite) {
-    plan.skipped.emplace_back(SkippedSegment{
-      .name = segment.Meta().name,
-      .reason = "alone in its group without deletes",
-    });
-    return;
-  }
-  if (!irs::ReencodePays(*rewrite)) {
-    plan.skipped.emplace_back(SkippedSegment{
-      .name = segment.Meta().name,
-      .reason = absl::StrCat(
-        "alone in its group without deletes, re-encoding would save ",
-        SavedPercent(*rewrite), "%"),
-    });
+  if (!rewrite || !irs::ReencodePays(*rewrite)) {
     return;
   }
   const irs::SubReader* inputs[] = {&segment};
@@ -361,14 +298,6 @@ void PlaceInSteps(std::span<const irs::SubReader* const> group,
     plan.merges.emplace_back(
       DescribeMerge(step, group.subspan(begin, end - begin)));
     begin = end;
-  }
-  for (size_t i = 0; i < count; ++i) {
-    if (i < first || i >= first + inputs) {
-      plan.skipped.emplace_back(SkippedSegment{
-        .name = group[i]->Meta().name,
-        .reason = "later step",
-      });
-    }
   }
   plan.partial = true;
 }
@@ -431,7 +360,6 @@ void PlanCompact(const irs::IndexReader& reader,
                  const MergeRoundRequest& request, MergeRoundPlan& plan) {
   const auto target = std::max<uint32_t>(1, request.target_segments);
   if (reader.size() <= target) {
-    plan.notes.emplace_back(absl::StrCat("already at most ", Segments(target)));
     return;
   }
   PlaceInGroups(reader, target, absl::StrCat("compact to ", Segments(target)),
@@ -463,8 +391,6 @@ void PlanSegments(const irs::IndexReader& reader,
   }
   SDB_ASSERT(!candidates.empty());
   if (candidates.size() == 1 && !irs::HasRemovals(candidates.front()->Meta())) {
-    plan.notes.emplace_back(
-      "a single segment without deletes has nothing to merge");
     return;
   }
   if (candidates.size() > request.inputs_max) {
@@ -525,23 +451,12 @@ std::vector<ColumnCopyCheck> CheckColumns(
 }
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment) {
-  PlannedSegment result{
+  return {
     .name = segment.Meta().name,
     .docs = segment.docs_count(),
     .live_docs = segment.live_docs_count(),
     .bytes = segment.Meta().byte_size,
   };
-  if (const auto* column = segment.Column(connector::kGeneratedPKId);
-      column && column->Type().id() == duckdb::LogicalTypeId::BIGINT) {
-    const auto& stats = column->MergedStatistics();
-    if (duckdb::NumericStats::HasMinMax(stats)) {
-      result.rowids = {
-        .first = duckdb::NumericStats::GetMin<int64_t>(stats),
-        .last = duckdb::NumericStats::GetMax<int64_t>(stats),
-      };
-    }
-  }
-  return result;
 }
 
 uint64_t PlannedMerge::EstimatedOutputBytes() const noexcept {
@@ -572,11 +487,6 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
     case MergeMode::Optimize:
       PlanOptimize(reader, request, plan);
       break;
-  }
-  if (plan.partial) {
-    plan.notes.emplace_back(absl::StrCat(
-      "a merge in key order takes at most ", Segments(request.inputs_max),
-      ", so a larger group is merged in steps"));
   }
   return plan;
 }

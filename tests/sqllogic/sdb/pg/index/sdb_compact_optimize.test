@@ -93,17 +93,11 @@ QUERY PLAN
 │ Merge 1 Inputs: _1, _2, _3, _4          │
 │ Merge 1 Docs: 16384 (16384 live)        │
 │ Merge 1 Bytes: <slt:ignore>│
-│ Merge 1 Columns:                        │
-│ 2, <slt:ignore>│
-│ Merge 1 Postings: 1 field               │
 │ Merge 2:                                │
 │ 4 segments -> 1, optimize to 2 segments │
 │ Merge 2 Inputs: _5, _6, _7, _8          │
 │ Merge 2 Docs: 16384 (16384 live)        │
 │ Merge 2 Bytes: <slt:ignore>│
-│ Merge 2 Columns:                        │
-│ 2, <slt:ignore>│
-│ Merge 2 Postings: 1 field               │
 │ ~2 rows                                 │
 ╰─────────────────────────────────────────╯
 
@@ -119,11 +113,11 @@ merge	outcome	input_docs	output_docs
 
 
 query
-SELECT docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
+SELECT docs FROM sdb_segments('opt') ORDER BY docs
 ----
-docs	rowid_min	rowid_max
-16384	NULL	NULL
-16384	NULL	NULL
+docs
+16384
+16384
 
 
 query
@@ -180,11 +174,11 @@ merge	outcome	input_docs	input_live_docs	output_docs
 
 
 query
-SELECT docs, live_docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
+SELECT docs, live_docs FROM sdb_segments('opt') ORDER BY docs
 ----
-docs	live_docs	rowid_min	rowid_max
-16284	16284	NULL	NULL
-16384	16384	NULL	NULL
+docs	live_docs
+16284	16284
+16384	16384
 
 
 query
@@ -251,11 +245,10 @@ merge	outcome	input_docs	output_docs
 
 
 query
-SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
-FROM sdb_segments('opt_small')
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('opt_small')
 ----
-segments	first	last
-1	NULL	NULL
+segments	docs
+1	3000
 
 
 statement ok
@@ -367,11 +360,11 @@ VACUUM (OPTIMIZE_TABLE) optv
 
 
 query
-SELECT docs, rowid_min, rowid_max FROM sdb_segments('optv') ORDER BY rowid_min
+SELECT docs FROM sdb_segments('optv') ORDER BY docs
 ----
-docs	rowid_min	rowid_max
-8192	NULL	NULL
-8192	NULL	NULL
+docs
+8192
+8192
 
 
 query

@@ -53,7 +53,7 @@ SET sdb_faults = 'pause_search_compact_before_publish';
 connection compactor
 query async
 SELECT merge, outcome, len(inputs) AS inputs, input_docs, output_docs,
-       output IS NOT NULL AS has_output, (steps).prepare_ms > 0 AS prepared,
+       output IS NOT NULL AS has_output, prepare_ms > 0 AS prepared,
        error
 FROM sdb_compact('shrunk', mode := 'compact', target_segments := 2)
 ORDER BY merge;
@@ -97,7 +97,7 @@ wait
 connection default
 query
 SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
-       (steps).prepare_ms > 0 AS prepared
+       prepare_ms > 0 AS prepared
 FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'shrunk')
 ORDER BY id;

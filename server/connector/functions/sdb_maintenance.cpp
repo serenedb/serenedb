@@ -49,6 +49,7 @@
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -153,24 +154,20 @@ uint32_t ReadTargetSegments(const duckdb::TableFunctionBindInput& input) {
     std::min<int64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
-duckdb::LogicalType StepsType() {
-  duckdb::child_list_t<duckdb::LogicalType> fields;
-  for (const auto name : search::kMergeStepColumns) {
-    fields.emplace_back(duckdb::Identifier{name}, duckdb::LogicalType::DOUBLE);
-  }
-  return duckdb::LogicalType::STRUCT(std::move(fields));
-}
-
 std::vector<std::string> ResultNames() {
-  return {
-    "merge",           "outcome",     "inputs", "input_docs",
-    "input_live_docs", "input_bytes", "output", "output_docs",
-    "output_bytes",    "total_ms",    "steps",  "error",
+  std::vector<std::string> names{
+    "merge",       "outcome", "inputs",      "input_docs",   "input_live_docs",
+    "input_bytes", "output",  "output_docs", "output_bytes", "total_ms",
   };
+  for (const auto name : search::kMergeStepColumns) {
+    names.emplace_back(name);
+  }
+  names.emplace_back("error");
+  return names;
 }
 
 duckdb::vector<duckdb::LogicalType> ResultTypes() {
-  return {
+  duckdb::vector<duckdb::LogicalType> types{
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::VARCHAR,
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
@@ -181,9 +178,10 @@ duckdb::vector<duckdb::LogicalType> ResultTypes() {
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::DOUBLE,
-    StepsType(),
-    duckdb::LogicalType::VARCHAR,
   };
+  types.insert(types.end(), irs::kMergeStepCount, duckdb::LogicalType::DOUBLE);
+  types.emplace_back(duckdb::LogicalType::VARCHAR);
+  return types;
 }
 
 std::string Bytes(uint64_t bytes) {
@@ -196,63 +194,29 @@ std::string Duration(uint64_t nanos) {
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
 
-template<typename Range, typename Format>
-std::string JoinLimited(const Range& items, Format format) {
-  std::vector<std::string> parts;
-  size_t count = 0;
-  for (const auto& item : items) {
-    if (count++ < kListedNames) {
-      parts.emplace_back(format(item));
-    }
+std::string InputNames(std::span<const search::PlannedSegment> inputs) {
+  auto names =
+    absl::StrJoin(inputs.first(std::min(inputs.size(), kListedNames)), ", ",
+                  [](std::string* out, const search::PlannedSegment& input) {
+                    out->append(input.name);
+                  });
+  if (inputs.size() > kListedNames) {
+    absl::StrAppend(&names, ", +", inputs.size() - kListedNames, " more");
   }
-  if (count > kListedNames) {
-    parts.emplace_back(absl::StrCat("+", count - kListedNames, " more"));
-  }
-  return absl::StrJoin(parts, ", ");
-}
-
-std::string RowIdRange(const search::PlannedMerge& merge) {
-  search::RowIdRange rowids;
-  for (const auto& input : merge.inputs) {
-    if (input.rowids.Empty()) {
-      return {};
-    }
-    rowids = search::Union(rowids, input.rowids);
-  }
-  if (rowids.Empty()) {
-    return {};
-  }
-  return absl::StrCat(", rowid ", rowids.first, "..", rowids.last);
-}
-
-std::string Plural(uint64_t count, std::string_view noun) {
-  return absl::StrCat(count, " ", noun, count == 1 ? "" : "s");
+  return names;
 }
 
 void DescribeMerge(size_t number, const search::PlannedMerge& merge,
-                   const MergeTarget& target,
                    duckdb::InsertionOrderPreservingMap<std::string>& params) {
   const auto key = absl::StrCat("Merge ", number);
-  params[key] = absl::StrCat(Plural(merge.inputs.size(), "segment"), " -> 1, ",
-                             merge.reason);
-  params[absl::StrCat(key, " Inputs")] =
-    JoinLimited(merge.inputs,
-                [](const search::PlannedSegment& input) { return input.name; });
-  params[absl::StrCat(key, " Docs")] = absl::StrCat(
-    merge.docs, " (", merge.live_docs, " live)", RowIdRange(merge));
+  const auto inputs = merge.inputs.size();
+  params[key] = absl::StrCat(inputs, inputs == 1 ? " segment" : " segments",
+                             " -> 1, ", merge.reason);
+  params[absl::StrCat(key, " Inputs")] = InputNames(merge.inputs);
+  params[absl::StrCat(key, " Docs")] =
+    absl::StrCat(merge.docs, " (", merge.live_docs, " live)");
   params[absl::StrCat(key, " Bytes")] = absl::StrCat(
     Bytes(merge.bytes), " -> est ", Bytes(merge.EstimatedOutputBytes()));
-  auto columns = absl::StrCat(merge.columns, ", ", Bytes(merge.column_bytes));
-  if (merge.columns != 0) {
-    absl::StrAppend(&columns, ", largest ",
-                    target.ColumnName(merge.largest_column), " ",
-                    Bytes(merge.largest_column_bytes));
-  }
-  params[absl::StrCat(key, " Columns")] = std::move(columns);
-  params[absl::StrCat(key, " Postings")] = Plural(merge.fields, "field");
-  if (merge.ann_columns != 0) {
-    params[absl::StrCat(key, " ANN")] = Plural(merge.ann_columns, "column");
-  }
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
@@ -264,16 +228,7 @@ duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
   for (size_t i = 0; i < plan.merges.size(); ++i) {
-    DescribeMerge(i + 1, plan.merges[i], job.target, params);
-  }
-  if (!plan.skipped.empty()) {
-    params["Not Merged"] =
-      JoinLimited(plan.skipped, [](const search::SkippedSegment& skipped) {
-        return absl::StrCat(skipped.name, " (", skipped.reason, ")");
-      });
-  }
-  if (!plan.notes.empty()) {
-    params["Notes"] = absl::StrJoin(plan.notes, "; ");
+    DescribeMerge(i + 1, plan.merges[i], params);
   }
   return params;
 }
@@ -296,15 +251,6 @@ std::string_view StepLabel(irs::MergeStep step) {
       return "Commit";
   }
   SDB_UNREACHABLE();
-}
-
-duckdb::Value StepsValue(const duckdb::LogicalType& type,
-                         const irs::MergeProfile& profile) {
-  duckdb::vector<duckdb::Value> fields;
-  for (const auto step : search::StepMillis(profile)) {
-    fields.emplace_back(duckdb::Value::DOUBLE(step));
-  }
-  return duckdb::Value::STRUCT(type, std::move(fields));
 }
 
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
@@ -332,7 +278,9 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_bytes)));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
-  append(StepsValue(chunk.data[column].GetType(), stats.profile));
+  for (const auto step : magic_enum::enum_values<irs::MergeStep>()) {
+    append(duckdb::Value::DOUBLE(Millis(stats.profile.Nanos(step))));
+  }
   append(error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                        : duckdb::Value{std::string{error}});
 }

@@ -33,7 +33,6 @@
 #include <string>
 #include <vector>
 
-#include "search/compaction/rowid_range.h"
 #include "search/maintenance.h"
 
 namespace sdb::search {
@@ -50,7 +49,6 @@ struct PlannedSegment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  RowIdRange rowids;
 };
 
 struct PlannedMerge {
@@ -59,27 +57,14 @@ struct PlannedMerge {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  uint64_t columns = 0;
-  uint64_t column_bytes = 0;
-  irs::field_id largest_column = irs::field_limits::invalid();
-  uint64_t largest_column_bytes = 0;
-  uint64_t fields = 0;
-  uint64_t ann_columns = 0;
 
   uint64_t EstimatedOutputBytes() const noexcept;
-};
-
-struct SkippedSegment {
-  std::string name;
-  std::string reason;
 };
 
 struct MergeRoundPlan {
   MergeMode mode = MergeMode::Background;
   uint64_t segments = 0;
   std::vector<PlannedMerge> merges;
-  std::vector<SkippedSegment> skipped;
-  std::vector<std::string> notes;
   bool partial = false;
 };
 

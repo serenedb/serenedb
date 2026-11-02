@@ -117,7 +117,7 @@ class MergeScheduler {
   void ReleaseThread() noexcept;
 
   uint64_t StartForeground(uint64_t relation_id, MergeOrigin origin,
-                           MergeInputs inputs);
+                           irs::MergeStats inputs);
   void FinishForeground(uint64_t id, MergeOutcome outcome,
                         irs::MergeStats stats, std::string error);
 

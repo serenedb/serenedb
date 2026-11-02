@@ -181,7 +181,7 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
     return;
   }
   Queue entries;
-  std::vector<MergeInputs> inputs;
+  std::vector<irs::MergeStats> inputs;
   entries.reserve(jobs.size());
   inputs.reserve(jobs.size());
   for (auto& job : jobs) {
@@ -192,8 +192,7 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
     SDB_IF_FAILURE("compaction_lane_big") {
       entry->estimate.lane = MergeLane::Big;
     }
-    entry->inputs =
-      inputs.emplace_back(DescribeInputs(candidates)).stats.inputs;
+    entry->inputs = inputs.emplace_back(DescribeInputs(candidates)).inputs;
     entry->job = std::move(job);
   }
   std::vector<Entry*> started;
@@ -300,7 +299,7 @@ void MergeScheduler::ReleaseThread() noexcept {
 
 uint64_t MergeScheduler::StartForeground(uint64_t relation_id,
                                          MergeOrigin origin,
-                                         MergeInputs inputs) {
+                                         irs::MergeStats inputs) {
   absl::MutexLock lock{&_mutex};
   const auto id = _registry.Queue(relation_id, origin, std::move(inputs));
   _registry.Dispatch(id);

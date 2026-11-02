@@ -112,7 +112,7 @@ Each result row describes one merge:
 | `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
 | `output`, `output_docs`, `output_bytes` | The new segment |
 | `total_ms` | Wall-clock time of the merge |
-| `steps` | Time of each merge step in milliseconds, read as `(steps).columns_ms`: `prepare_ms` (planning the merge, and putting the rows of a relation with a sort key in key order), `norms_ms`, `columns_ms`, `columns_commit_ms` (finishing the stored columns), `ann_ms` (vector indexes), `postings_ms` and `commit_ms` (writing the new segment). `NULL` when the merge did not run, as for `nothing` |
+| `prepare_ms`, `norms_ms`, `columns_ms`, `columns_commit_ms`, `ann_ms`, `postings_ms`, `commit_ms` | Time of each merge step in milliseconds: `prepare_ms` plans the merge and puts the rows of a relation with a sort key in key order, `norms_ms` merges the norms, `columns_ms` the stored columns, `columns_commit_ms` finishes the stored columns, `ann_ms` builds the vector indexes, `postings_ms` merges the postings and `commit_ms` writes the new segment. `0` when the merge did not run, as for `nothing` |
 | `error` | Why a merge failed |
 
 `EXPLAIN` prints the plan in an `SDB_COMPACT` box, with one group of lines per merge and the number of merges planned as the estimated rows (`~N rows`):
@@ -123,19 +123,14 @@ Each result row describes one merge:
 | `Segments`, `Merges` | Segments of the relation and merges planned |
 | `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
-| `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
+| `Merge N Docs` | Documents and live documents of the inputs |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
-| `Merge N Columns` | Columns stored in the inputs, internal ones included: how many, their size and the largest one |
-| `Merge N Postings` | Indexed fields whose postings the merge combines |
-| `Merge N ANN` | Vector columns whose ANN index the merge builds |
-| `Not Merged` | Segments left out, with the reason: `not selected by the adjacent policy`, `at or above the merge size cap`, `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) or `later step` |
-| `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, the only listed segment has no deletes, or a merge in key order takes at most 1024 segments |
 
-On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it merges them in the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes, one result row each: the first step merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and the next step merges what is left. In `segments` mode, the segment a step writes takes the place of its inputs in the list. `EXPLAIN` shows the first step and lists the segments it leaves for later as `later step`.
+On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it merges them in the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes, one result row each: the first step merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and the next step merges what is left. In `segments` mode, the segment a step writes takes the place of its inputs in the list. `EXPLAIN` shows the first step.
 
 `EXPLAIN ANALYZE` runs the merges and shows the same lines in a `TABLE_SCAN` box, as for any table function, followed by `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step, summed over the merges, and `Actual Total`.
 
-`CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. A step time adds up the threads that ran the step, so with several threads the times in `steps` and the `Actual <step>` lines of `EXPLAIN ANALYZE` add up to more than the merges took.
+`CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. A step time adds up the threads that ran the step, so with several threads the step times (`prepare_ms` to `commit_ms`) and the `Actual <step>` lines of `EXPLAIN ANALYZE` add up to more than the merges took.
 
 A merge copies a column's encoded blocks unchanged when re-encoding them would not save much (the `verdict` of `sdb_segments` below), and re-encodes them otherwise, so one merged column can mix copied and re-encoded rows. Copying costs little more than reading the blocks, so merges of segments that earlier merges already encoded well take a fraction of the time.
 
@@ -143,7 +138,7 @@ Background compaction runs on its own *merge threads*, a quarter of the server's
 
 `sdb_compact`'s merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain. Like `VACUUM (COMPACT_*)`, a call that merges anything pauses the relation's background merges until it ends: those in progress stop and show as `cancelled`. `EXPLAIN` runs nothing and pauses nothing.
 
-`sdb_segments(relation)` lists the segments of a search table or an inverted index in the order their rows were written: `segment`, `docs`, `live_docs`, `deleted_docs`, `bytes`, and `rowid_min` / `rowid_max`, the range of row ids a segment of an inverted index on a DuckDB table holds (`NULL` for a search table, whose rows have no stored row id).
+`sdb_segments(relation)` lists the segments of a search table or an inverted index in the order their rows were written: `segment`, `docs`, `live_docs`, `deleted_docs` and `bytes`.
 
 `sdb_segments(relation, columns := true)` lists the stored columns of every segment instead, internal ones included (`rowid` is the row id an inverted index on a DuckDB table stores), one row each:
 
@@ -163,7 +158,7 @@ The estimates cost a little encoding work the first time a segment is looked at.
 Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
 
 - `sdb_merges` lists the merges that run or wait in the background queue: `merge_id`, `relation_id`, `origin`, `state` (`queued` or `running`), `queued`, `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write, estimated from the live share of its inputs. A queued merge keeps its `merge_id` when it runs, and it becomes the `id` of the merge's `sdb_compact_history` row; a merge dropped from the queue, for example by a `VACUUM` on its table, leaves no history.
-- `sdb_compact_history` keeps the last [`sdb_compact_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling) finished merges of all search tables and indexes together, 256 by default, one row each, with the columns of a `sdb_compact` row plus `id`, `relation_id`, `origin`, `started`, `finished`, `output_live_docs`, the documents of the new segment still live when it was published, and `rowid_min` / `rowid_max`, the range of row ids it holds (`NULL` for a search table).
+- `sdb_compact_history` keeps the last [`sdb_compact_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling) finished merges of all search tables and indexes together, 256 by default, one row each, with `id`, `relation_id`, `origin`, `started`, `finished` and the columns of a `sdb_compact` row other than `merge`.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_010" />
 

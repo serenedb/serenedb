@@ -44,16 +44,16 @@ VACUUM (REFRESH_TABLE) seg_order
 
 
 query
-SELECT segment, docs, rowid_min, rowid_max
+SELECT segment, docs
 FROM sdb_segments('seg_order')
 ORDER BY segment
 ----
-segment	docs	rowid_min	rowid_max
-_1	4	NULL	NULL
-_2	1	NULL	NULL
-_3	1	NULL	NULL
-_4	4	NULL	NULL
-_5	2	NULL	NULL
+segment	docs
+_1	4
+_2	1
+_3	1
+_4	4
+_5	2
 
 
 query

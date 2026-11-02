@@ -45,7 +45,6 @@ struct Segment {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  RowIdRange rowids;
 };
 
 uint32_t DocsOf(uint64_t docs) noexcept {
@@ -234,7 +233,6 @@ void SimulatedJob::Finish() {
     }
     event.docs += segment.live_docs;
     event.input_bytes += segment.bytes;
-    event.rowids = Union(event.rowids, segment.rowids);
     return true;
   });
   event.live_docs = event.docs;
@@ -245,7 +243,6 @@ void SimulatedJob::Finish() {
                               .docs = event.docs,
                               .live_docs = event.live_docs,
                               .bytes = event.bytes,
-                              .rowids = event.rowids,
                             });
   _simulation.Record(_relation, std::move(event));
   _simulation.Finished();
@@ -297,21 +294,8 @@ void Simulation::Record(const Relation& relation, SimulatedEvent event) {
   event.at = Since(_now);
   event.relation_id = relation.id;
   event.segments = relation.segments.size();
-  long double covered = 0;
-  RowIdRange span;
   for (const auto& segment : relation.segments) {
     event.segment_bytes += segment.bytes;
-    if (segment.rowids.Empty()) {
-      continue;
-    }
-    covered += static_cast<long double>(segment.rowids.last) -
-               static_cast<long double>(segment.rowids.first) + 1;
-    span = Union(span, segment.rowids);
-  }
-  if (!span.Empty()) {
-    event.overlap =
-      static_cast<double>(covered / (static_cast<long double>(span.last) -
-                                     static_cast<long double>(span.first) + 1));
   }
   _events.emplace_back(std::move(event));
 }
@@ -324,7 +308,6 @@ void Simulation::Flush(const SimulatedFlush& flush) {
     .docs = flush.docs,
     .live_docs = flush.live_docs,
     .bytes = flush.bytes,
-    .rowids = flush.rowids,
   });
   Record(relation, SimulatedEvent{
                      .type = SimulatedEventType::Flush,
@@ -332,7 +315,6 @@ void Simulation::Flush(const SimulatedFlush& flush) {
                      .docs = segment.docs,
                      .live_docs = segment.live_docs,
                      .bytes = segment.bytes,
-                     .rowids = segment.rowids,
                    });
   relation.handle->NudgeCompaction();
 }

@@ -59,16 +59,15 @@ bool Produced(MergeOutcome outcome) noexcept {
   return outcome == MergeOutcome::Merged || outcome == MergeOutcome::Deferred;
 }
 
-MergeInputs DescribeInputs(irs::CompactionView candidates) {
-  MergeInputs inputs;
-  inputs.stats.inputs.reserve(candidates.size());
+irs::MergeStats DescribeInputs(irs::CompactionView candidates) {
+  irs::MergeStats inputs;
+  inputs.inputs.reserve(candidates.size());
   for (const auto* candidate : candidates) {
     auto segment = DescribeSegment(*candidate);
-    inputs.stats.inputs.emplace_back(std::move(segment.name));
-    inputs.stats.input_docs += segment.docs;
-    inputs.stats.input_live_docs += segment.live_docs;
-    inputs.stats.input_bytes += segment.bytes;
-    inputs.rowids = Union(inputs.rowids, segment.rowids);
+    inputs.inputs.emplace_back(std::move(segment.name));
+    inputs.input_docs += segment.docs;
+    inputs.input_live_docs += segment.live_docs;
+    inputs.input_bytes += segment.bytes;
   }
   return inputs;
 }
@@ -82,18 +81,8 @@ uint64_t MergeRecord::EstimatedBytes() const noexcept {
     irs::LiveBytes(stats.input_bytes, stats.input_live_docs, stats.input_docs));
 }
 
-MergeStepMillis StepMillis(const irs::MergeProfile& profile) noexcept {
-  MergeStepMillis millis{};
-  for (size_t step = 0; step < millis.size(); ++step) {
-    millis[step] =
-      static_cast<double>(profile.Nanos(static_cast<irs::MergeStep>(step))) /
-      1e6;
-  }
-  return millis;
-}
-
 uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
-                              MergeInputs inputs) {
+                              irs::MergeStats inputs) {
   const auto id = _next_id++;
   _active.emplace(
     id, MergeRecord{
@@ -101,8 +90,7 @@ uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
           .relation_id = relation_id,
           .origin = origin,
           .queued_us = origin == MergeOrigin::Background ? NowMicros() : 0,
-          .stats = std::move(inputs.stats),
-          .rowids = inputs.rowids,
+          .stats = std::move(inputs),
         });
   return id;
 }

@@ -22,7 +22,6 @@
 
 #include <absl/container/btree_map.h>
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -33,8 +32,6 @@
 #include <string_view>
 #include <vector>
 
-#include "search/compaction/rowid_range.h"
-
 namespace sdb::search {
 
 inline constexpr std::string_view kMergeStepColumns[] = {
@@ -42,10 +39,6 @@ inline constexpr std::string_view kMergeStepColumns[] = {
   "ann_ms",     "postings_ms", "commit_ms",
 };
 static_assert(std::size(kMergeStepColumns) == irs::kMergeStepCount);
-
-using MergeStepMillis = std::array<double, irs::kMergeStepCount>;
-
-MergeStepMillis StepMillis(const irs::MergeProfile& profile) noexcept;
 
 enum class MergeOrigin : uint8_t {
   Background = 0,
@@ -67,12 +60,7 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
 bool Produced(MergeOutcome outcome) noexcept;
 
-struct MergeInputs {
-  irs::MergeStats stats;
-  RowIdRange rowids;
-};
-
-MergeInputs DescribeInputs(irs::CompactionView candidates);
+irs::MergeStats DescribeInputs(irs::CompactionView candidates);
 
 size_t CompactHistorySize();
 
@@ -85,7 +73,6 @@ struct MergeRecord {
   int64_t started_us = 0;
   int64_t finished_us = 0;
   irs::MergeStats stats;
-  RowIdRange rowids;
   std::string error;
 
   bool Queued() const noexcept { return started_us == 0; }
@@ -96,7 +83,8 @@ class MergeRegistry {
  public:
   static constexpr size_t kDefaultHistorySize = 256;
 
-  uint64_t Queue(uint64_t relation_id, MergeOrigin origin, MergeInputs inputs);
+  uint64_t Queue(uint64_t relation_id, MergeOrigin origin,
+                 irs::MergeStats inputs);
   void Dispatch(uint64_t id);
   void Drop(uint64_t id);
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,

@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdint>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <iresearch/index/merge/merge_profile.hpp>
 #include <iresearch/utils/enum_name.hpp>
-#include <optional>
 #include <string_view>
 
 #include "pg/catalog/engine/system_table.h"
@@ -47,12 +47,15 @@ constexpr SystemSqlColumn kSdbCompactHistoryColumns[] = {
   {"input_bytes", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"output", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"output_docs", kInt8, 0, false, false, 0, 0, SystemKey::None},
-  {"output_live_docs", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"output_bytes", kInt8, 0, false, false, 0, 0, SystemKey::None},
-  {"rowid_min", kInt8, 0, false, false, 0, 0, SystemKey::None},
-  {"rowid_max", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"total_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
-  {"steps", search::kMergeStepColumns, kFloat8},
+  {"prepare_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"norms_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"columns_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"columns_commit_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"ann_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"postings_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"commit_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
   {"error", kText, 0, false, false, kCCollation, 0, SystemKey::None},
 };
 
@@ -69,6 +72,12 @@ constexpr SystemIndex kStoreIndexes[] = {
 
 using search::MergeRecord;
 
+double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
+
+template<irs::MergeStep Step>
+constexpr auto kStepMillis =
+  [](const MergeRecord& r) { return Millis(r.stats.profile.Nanos(Step)); };
+
 constexpr std::tuple kMergeColumns{
   Col<"id">(&MergeRecord::id),
   Col<"relation_id">(&MergeRecord::relation_id),
@@ -79,21 +88,16 @@ constexpr std::tuple kMergeColumns{
   Col<"output">(
     [](const auto& r) { return NonEmpty(std::string_view{r.stats.output}); }),
   Col<"output_docs">([](const auto& r) { return r.stats.output_docs; }),
-  Col<"output_live_docs">([](const auto& r) { return r.stats.output_docs; }),
   Col<"output_bytes">([](const auto& r) { return r.stats.output_bytes; }),
-  Col<"rowid_min">([](const auto& r) {
-    return r.rowids.Empty() ? std::nullopt
-                            : std::optional<int64_t>{r.rowids.first};
-  }),
-  Col<"rowid_max">([](const auto& r) {
-    return r.rowids.Empty() ? std::nullopt
-                            : std::optional<int64_t>{r.rowids.last};
-  }),
-  Col<"total_ms">([](const auto& r) {
-    return static_cast<double>(r.stats.profile.TotalNanos()) / 1e6;
-  }),
-  Col<"steps">(
-    [](const auto& r) { return search::StepMillis(r.stats.profile); }),
+  Col<"total_ms">(
+    [](const auto& r) { return Millis(r.stats.profile.TotalNanos()); }),
+  Col<"prepare_ms">(kStepMillis<irs::MergeStep::Prepare>),
+  Col<"norms_ms">(kStepMillis<irs::MergeStep::Norms>),
+  Col<"columns_ms">(kStepMillis<irs::MergeStep::Columns>),
+  Col<"columns_commit_ms">(kStepMillis<irs::MergeStep::ColumnsCommit>),
+  Col<"ann_ms">(kStepMillis<irs::MergeStep::Ann>),
+  Col<"postings_ms">(kStepMillis<irs::MergeStep::Postings>),
+  Col<"commit_ms">(kStepMillis<irs::MergeStep::Commit>),
   Col<"error">(
     [](const auto& r) { return NonEmpty(std::string_view{r.error}); })};
 

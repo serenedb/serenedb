@@ -83,9 +83,6 @@ QUERY PLAN
 │ Merge 1 Docs: 8192 (8192 live)        │
 │ Merge 1 Bytes:                        │
 │ <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                      │
-│ 5, <slt:ignore>│
-│ Merge 1 Postings: 1 field             │
 │ ~1 row                                │
 ╰───────────────────────────────────────╯
 
@@ -117,15 +114,13 @@ query
 EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ──────────────────────────────────────────────────────╮
-│ Table: public.reenc                                                │
-│ Mode: optimize                                                     │
-│ Segments: 1                                                        │
-│ Merges: 0                                                          │
-│ Not Merged:                                                        │
-│ _2 (alone in its group without deletes, re-encoding would save <slt:ignore>│
-│ ~0 rows                                                            │
-╰────────────────────────────────────────────────────────────────────╯
+╭─ SDB_COMPACT ───────╮
+│ Table: public.reenc │
+│ Mode: optimize      │
+│ Segments: 1         │
+│ Merges: 0           │
+│ ~0 rows             │
+╰─────────────────────╯
 
 
 query
@@ -160,9 +155,6 @@ QUERY PLAN
 │ Merge 1 Inputs: _2                              │
 │ Merge 1 Docs: 8192 (8192 live)                  │
 │ Merge 1 Bytes: <slt:ignore>│
-│ Merge 1 Columns:                                │
-│ 5, <slt:ignore>│
-│ Merge 1 Postings: 1 field                       │
 │ ~1 row                                          │
 ╰─────────────────────────────────────────────────╯
 

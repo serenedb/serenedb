@@ -41,12 +41,11 @@ VACUUM (REFRESH_TABLE) sdbc
 
 query
 SELECT count(*) AS segments, sum(docs) AS docs, sum(live_docs) AS live,
-       sum(deleted_docs) AS deleted, bool_and(bytes > 0) AS sized,
-       bool_and(rowid_min <= rowid_max) AS rowids
+       sum(deleted_docs) AS deleted, bool_and(bytes > 0) AS sized
 FROM sdb_segments('sdbc')
 ----
-segments	docs	live	deleted	sized	rowids
-4	400	400	0	t	t
+segments	docs	live	deleted	sized
+4	400	400	0	t
 
 
 query
@@ -61,21 +60,13 @@ QUERY PLAN
 │ Merge 1:                               │
 │ 2 segments -> 1, compact to 2 segments │
 │ Merge 1 Inputs: _1, _2                 │
-│ Merge 1 Docs:                          │
-│ 200 (200 live), rowid 1..200           │
+│ Merge 1 Docs: 200 (200 live)           │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                       │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field              │
 │ Merge 2:                               │
 │ 2 segments -> 1, compact to 2 segments │
 │ Merge 2 Inputs: _3, _4                 │
-│ Merge 2 Docs:                          │
-│ 200 (200 live), rowid 201..400         │
+│ Merge 2 Docs: 200 (200 live)           │
 │ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 2 Columns:                       │
-│ 3, <slt:ignore>│
-│ Merge 2 Postings: 1 field              │
 │ ~2 rows                                │
 ╰────────────────────────────────────────╯
 
@@ -90,12 +81,10 @@ segments
 query
 SELECT merge, outcome, len(inputs) AS inputs, input_docs, input_live_docs,
        output_docs, output IS NOT NULL AS has_output, total_ms >= 0 AS timed,
-       (steps).prepare_ms >= 0 AND (steps).norms_ms >= 0
-         AND (steps).columns_ms >= 0 AND (steps).columns_commit_ms >= 0
-         AND (steps).ann_ms >= 0 AND (steps).postings_ms >= 0
-         AND (steps).commit_ms >= 0 AS steps_timed,
-       (steps).prepare_ms <= total_ms
-         AND (steps).commit_ms <= total_ms AS within_total,
+       prepare_ms >= 0 AND norms_ms >= 0 AND columns_ms >= 0
+         AND columns_commit_ms >= 0 AND ann_ms >= 0 AND postings_ms >= 0
+         AND commit_ms >= 0 AS steps_timed,
+       prepare_ms <= total_ms AND commit_ms <= total_ms AS within_total,
        error
 FROM sdb_compact('sdbc', mode := 'compact', target_segments := 2)
 ORDER BY merge
@@ -121,21 +110,19 @@ hits
 
 query
 SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
-       output_live_docs, finished >= started AS ordered, rowid_min, rowid_max,
-       (steps).prepare_ms >= 0 AND (steps).norms_ms >= 0
-         AND (steps).columns_ms >= 0 AND (steps).columns_commit_ms >= 0
-         AND (steps).ann_ms >= 0 AND (steps).postings_ms >= 0
-         AND (steps).commit_ms >= 0 AS steps_timed,
-       (steps).prepare_ms <= total_ms
-         AND (steps).commit_ms <= total_ms AS within_total,
+       finished >= started AS ordered,
+       prepare_ms >= 0 AND norms_ms >= 0 AND columns_ms >= 0
+         AND columns_commit_ms >= 0 AND ann_ms >= 0 AND postings_ms >= 0
+         AND commit_ms >= 0 AS steps_timed,
+       prepare_ms <= total_ms AND commit_ms <= total_ms AS within_total,
        error
 FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
 ORDER BY id
 ----
-origin	outcome	inputs	input_docs	output_docs	output_live_docs	ordered	rowid_min	rowid_max	steps_timed	within_total	error
-sql	merged	2	200	200	200	t	1	200	t	t	NULL
-sql	merged	2	200	200	200	t	201	400	t	t	NULL
+origin	outcome	inputs	input_docs	output_docs	ordered	steps_timed	within_total	error
+sql	merged	2	200	200	t	t	t	NULL
+sql	merged	2	200	200	t	t	t	NULL
 
 
 query
@@ -148,14 +135,13 @@ query
 EXPLAIN CALL sdb_compact('sdbc', mode := 'compact', target_segments := 2)
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ─────────────────────╮
-│ Table: public.sdbc                │
-│ Mode: compact                     │
-│ Segments: 2                       │
-│ Merges: 0                         │
-│ Notes: already at most 2 segments │
-│ ~0 rows                           │
-╰───────────────────────────────────╯
+╭─ SDB_COMPACT ──────╮
+│ Table: public.sdbc │
+│ Mode: compact      │
+│ Segments: 2        │
+│ Merges: 0          │
+│ ~0 rows            │
+╰────────────────────╯
 
 
 query
@@ -178,15 +164,13 @@ query
 EXPLAIN CALL sdb_compact('sdbc', mode := 'segments', segments := ['_7'])
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ─────────────────────────────────────────╮
-│ Table: public.sdbc                                    │
-│ Mode: segments                                        │
-│ Segments: 1                                           │
-│ Merges: 0                                             │
-│ Notes:                                                │
-│ a single segment without deletes has nothing to merge │
-│ ~0 rows                                               │
-╰───────────────────────────────────────────────────────╯
+╭─ SDB_COMPACT ──────╮
+│ Table: public.sdbc │
+│ Mode: segments     │
+│ Segments: 1        │
+│ Merges: 0          │
+│ ~0 rows            │
+╰────────────────────╯
 
 
 query
@@ -257,12 +241,8 @@ QUERY PLAN
 │ Merge 1:                              │
 │ 2 segments -> 1, compact to 1 segment │
 │ Merge 1 Inputs: _9, _10               │
-│ Merge 1 Docs:                         │
-│ 450 (450 live), rowid 51..500         │
+│ Merge 1 Docs: 450 (450 live)          │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                      │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field             │
 │ Actual Outcome: merged 1              │
 │ Actual Written: <slt:ignore>│
 │ Actual Prepare: 0.0 ms                │
@@ -504,15 +484,8 @@ QUERY PLAN
 │ Merge 1:                                │
 │ 2 segments -> 1, compact to 2 segments  │
 │ Merge 1 Inputs: _2, _3                  │
-│ Merge 1 Docs:                           │
-│ 200 (200 live), rowid 101..300          │
+│ Merge 1 Docs: 200 (200 live)            │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                        │
-│ 4, <slt:ignore>│
-│ Merge 1 Postings: 1 field               │
-│ Merge 1 ANN: 1 column                   │
-│ Not Merged:                             │
-│ _1 (alone in its group without deletes) │
 │ ~1 row                                  │
 ╰─────────────────────────────────────────╯
 
@@ -562,27 +535,23 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ────────────────────────────────────────────────╮
-│ Table: public.sdbc_plan                                     │
-│ Mode: background                                            │
-│ Segments: 1                                                 │
-│ Merges: 0                                                   │
-│ Not Merged:                                                 │
-│ _5 (not selected by the adjacent policy)                    │
-│ Notes:                                                      │
-│ background compaction is disabled (compaction_interval = 0) │
-│ Actual Outcome: nothing ran                                 │
-│ Actual Written: 0 bytes                                     │
-│ Actual Prepare: 0.0 ms                                      │
-│ Actual Norms: 0.0 ms                                        │
-│ Actual Columns: 0.0 ms                                      │
-│ Actual Columns Commit: 0.0 ms                               │
-│ Actual ANN: 0.0 ms                                          │
-│ Actual Postings: 0.0 ms                                     │
-│ Actual Commit: 0.0 ms                                       │
-│ Actual Total: 0.0 ms                                        │
-│ 0 rows                                                  0µs │
-╰─────────────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ──────────────────╮
+│ Table: public.sdbc_plan       │
+│ Mode: background              │
+│ Segments: 1                   │
+│ Merges: 0                     │
+│ Actual Outcome: nothing ran   │
+│ Actual Written: 0 bytes       │
+│ Actual Prepare: 0.0 ms        │
+│ Actual Norms: 0.0 ms          │
+│ Actual Columns: 0.0 ms        │
+│ Actual Columns Commit: 0.0 ms │
+│ Actual ANN: 0.0 ms            │
+│ Actual Postings: 0.0 ms       │
+│ Actual Commit: 0.0 ms         │
+│ Actual Total: 0.0 ms          │
+│ 0 rows                    0µs │
+╰───────────────────────────────╯
 
 
 statement ok
@@ -686,11 +655,8 @@ QUERY PLAN
 │ 9 segments -> 1, compact to 1 segment   │
 │ Merge 1 Inputs:                         │
 │ _1, _2, _3, _4, _5, _6, _7, _8, +1 more │
-│ Merge 1 Docs: 9 (9 live), rowid 1..9    │
+│ Merge 1 Docs: 9 (9 live)                │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                        │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field               │
 │ ~1 row                                  │
 ╰─────────────────────────────────────────╯
 
@@ -747,30 +713,24 @@ query
 EXPLAIN CALL sdb_compact('sdbc_live', mode := 'compact', target_segments := 2)
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ────────────────────────────╮
-│ Table: public.sdbc_live                  │
-│ Mode: compact                            │
-│ Segments: 3                              │
-│ Merges: 2                                │
-│ Merge 1:                                 │
-│ 1 segment -> 1, compact to 2 segments    │
-│ Merge 1 Inputs: _1                       │
-│ Merge 1 Docs: 30 (25 live), rowid 1..30  │
-│ Merge 1 Bytes:                           │
+╭─ SDB_COMPACT ───────────────────────────╮
+│ Table: public.sdbc_live                 │
+│ Mode: compact                           │
+│ Segments: 3                             │
+│ Merges: 2                               │
+│ Merge 1:                                │
+│ 1 segment -> 1, compact to 2 segments   │
+│ Merge 1 Inputs: _1                      │
+│ Merge 1 Docs: 30 (25 live)              │
+│ Merge 1 Bytes:                          │
 │ <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                         │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field                │
-│ Merge 2:                                 │
-│ 2 segments -> 1, compact to 2 segments   │
-│ Merge 2 Inputs: _2, _3                   │
-│ Merge 2 Docs: 60 (50 live), rowid 31..90 │
+│ Merge 2:                                │
+│ 2 segments -> 1, compact to 2 segments  │
+│ Merge 2 Inputs: _2, _3                  │
+│ Merge 2 Docs: 60 (50 live)              │
 │ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 2 Columns:                         │
-│ 3, <slt:ignore>│
-│ Merge 2 Postings: 1 field                │
-│ ~2 rows                                  │
-╰──────────────────────────────────────────╯
+│ ~2 rows                                 │
+╰─────────────────────────────────────────╯
 
 
 query
@@ -878,24 +838,18 @@ query
 EXPLAIN CALL sdb_compact('sdbc_runs', mode := 'compact', target_segments := 2)
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ───────────────────────────╮
-│ Table: public.sdbc_runs                 │
-│ Mode: compact                           │
-│ Segments: 4                             │
-│ Merges: 1                               │
-│ Merge 1:                                │
-│ 3 segments -> 1, compact to 2 segments  │
-│ Merge 1 Inputs: _3, _4, _6              │
-│ Merge 1 Docs:                           │
-│ 300 (300 live), rowid 201..500          │
+╭─ SDB_COMPACT ──────────────────────────╮
+│ Table: public.sdbc_runs                │
+│ Mode: compact                          │
+│ Segments: 4                            │
+│ Merges: 1                              │
+│ Merge 1:                               │
+│ 3 segments -> 1, compact to 2 segments │
+│ Merge 1 Inputs: _3, _4, _6             │
+│ Merge 1 Docs: 300 (300 live)           │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                        │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field               │
-│ Not Merged:                             │
-│ _5 (alone in its group without deletes) │
-│ ~1 row                                  │
-╰─────────────────────────────────────────╯
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
 
 
 statement ok
@@ -915,13 +869,12 @@ merged	{_3,_4,_5}	400
 
 
 query
-SELECT segment, docs, rowid_min, rowid_max FROM sdb_segments('sdbc_runs')
-ORDER BY rowid_min
+SELECT segment, docs FROM sdb_segments('sdbc_runs') ORDER BY segment
 ----
-segment	docs	rowid_min	rowid_max
-_8	400	1	400
-_6	100	401	500
-_7	2000	501	2500
+segment	docs
+_6	100
+_7	2000
+_8	400
 
 
 statement ok
@@ -945,15 +898,13 @@ query
 EXPLAIN CALL sdb_compact('sdbc_on')
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ────────────────────────────╮
-│ Table: public.sdbc_on                    │
-│ Mode: background                         │
-│ Segments: 1                              │
-│ Merges: 0                                │
-│ Not Merged:                              │
-│ _1 (not selected by the adjacent policy) │
-│ ~0 rows                                  │
-╰──────────────────────────────────────────╯
+╭─ SDB_COMPACT ─────────╮
+│ Table: public.sdbc_on │
+│ Mode: background      │
+│ Segments: 1           │
+│ Merges: 0             │
+│ ~0 rows               │
+╰───────────────────────╯
 
 
 statement ok
@@ -978,15 +929,13 @@ query
 EXPLAIN CALL sdb_compact('sdbc_cap')
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ───────────────────────╮
-│ Table: public.sdbc_cap              │
-│ Mode: background                    │
-│ Segments: 1                         │
-│ Merges: 0                           │
-│ Not Merged:                         │
-│ _1 (at or above the merge size cap) │
-│ ~0 rows                             │
-╰─────────────────────────────────────╯
+╭─ SDB_COMPACT ──────────╮
+│ Table: public.sdbc_cap │
+│ Mode: background       │
+│ Segments: 1            │
+│ Merges: 0              │
+│ ~0 rows                │
+╰────────────────────────╯
 
 
 statement ok
@@ -1208,12 +1157,8 @@ QUERY PLAN
 │ Merge 1:                                  │
 │ 2 segments -> 1, compact to 1 segment     │
 │ Merge 1 Inputs: _1, _2                    │
-│ Merge 1 Docs:                             │
-│ 10000 (10000 live), rowid 1..10000        │
+│ Merge 1 Docs: 10000 (10000 live)          │
 │ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ Merge 1 Columns:                          │
-│ 3, <slt:ignore>│
-│ Merge 1 Postings: 1 field                 │
 │ Actual Outcome: merged 1                  │
 │ Actual Written: <slt:ignore>│
 │ Actual Prepare: 0.0 ms                    │

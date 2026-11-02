@@ -31,7 +31,6 @@
 #include <vector>
 
 #include "search/compaction/merge_scheduler.h"
-#include "search/compaction/rowid_range.h"
 
 namespace sdb::search {
 
@@ -60,7 +59,6 @@ struct SimulatedFlush {
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
-  RowIdRange rowids;
 };
 
 using MergePicker = std::function<irs::MergeGroups(
@@ -88,7 +86,6 @@ struct SimulatedEvent {
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
   uint64_t input_bytes = 0;
-  RowIdRange rowids;
   absl::Duration queued;
   absl::Duration started;
   size_t threads = 0;
@@ -96,7 +93,6 @@ struct SimulatedEvent {
   MergeLane lane = MergeLane::Small;
   size_t segments = 0;
   uint64_t segment_bytes = 0;
-  double overlap = 0;
   size_t merges_queued = 0;
   size_t merges_running = 0;
 };

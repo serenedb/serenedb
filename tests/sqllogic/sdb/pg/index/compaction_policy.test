@@ -23,17 +23,13 @@ query
 EXPLAIN CALL sdb_compact('cpt', mode := 'background')
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ──────────────────────────────────────────────────────────────────────╮
-│ Table: public.cpt                                                                  │
-│ Mode: background                                                                   │
-│ Segments: 2                                                                        │
-│ Merges: 0                                                                          │
-│ Not Merged:                                                                        │
-│ _1 (not selected by the adjacent policy), _2 (not selected by the adjacent policy) │
-│ Notes:                                                                             │
-│ background compaction is disabled (compaction_interval = 0)                        │
-│ ~0 rows                                                                            │
-╰────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SDB_COMPACT ─────╮
+│ Table: public.cpt │
+│ Mode: background  │
+│ Segments: 2       │
+│ Merges: 0         │
+│ ~0 rows           │
+╰───────────────────╯
 
 
 query
@@ -94,24 +90,19 @@ query
 EXPLAIN CALL sdb_compact('cpt', mode := 'background')
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ───────────────────────────────────────────────╮
-│ Table: public.cpt                                           │
-│ Mode: background                                            │
-│ Segments: 8                                                 │
-│ Merges: 1                                                   │
-│ Merge 1:                                                    │
-│ 8 segments -> 1, adjacent policy                            │
-│ Merge 1 Inputs:                                             │
-│ _1, _2, _3, _4, _5, _6, _7, _8                              │
-│ Merge 1 Docs: 800 (800 live)                                │
+╭─ SDB_COMPACT ─────────────────────────╮
+│ Table: public.cpt                     │
+│ Mode: background                      │
+│ Segments: 8                           │
+│ Merges: 1                             │
+│ Merge 1:                              │
+│ 8 segments -> 1, adjacent policy      │
+│ Merge 1 Inputs:                       │
+│ _1, _2, _3, _4, _5, _6, _7, _8        │
+│ Merge 1 Docs: 800 (800 live)          │
 │ Merge 1 Bytes: <slt:ignore>│
-│ Merge 1 Columns:                                            │
-│ 2, <slt:ignore>│
-│ Merge 1 Postings: 1 field                                   │
-│ Notes:                                                      │
-│ background compaction is disabled (compaction_interval = 0) │
-│ ~1 row                                                      │
-╰─────────────────────────────────────────────────────────────╯
+│ ~1 row                                │
+╰───────────────────────────────────────╯
 
 
 query
@@ -123,11 +114,10 @@ merged	800	800
 
 
 query
-SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
-FROM sdb_segments('cpt')
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('cpt')
 ----
-segments	first	last
-1	NULL	NULL
+segments	docs
+1	800
 
 
 statement ok

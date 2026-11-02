@@ -85,6 +85,9 @@ while IFS= read -r f; do
 		suite_hit[interop]=1
 		continue
 		;;
+	third_party/duckdb_versions/*)
+		continue
+		;;
 	tests/duckdb/config/*.json)
 		suite="${f#tests/duckdb/config/}"
 		suite="${suite%.json}"

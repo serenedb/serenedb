@@ -27,6 +27,7 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/expression_type.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -53,7 +54,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/lookup.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
@@ -200,7 +200,8 @@ bool FunctionExists(duckdb::ClientContext& ctx,
                     const duckdb::Identifier& name) {
   const auto exists = [&](duckdb::CatalogType type) -> bool {
     const duckdb::EntryLookupInfo lookup{type, duckdb::QualifiedName{name}};
-    return auth::Lookup(ctx, lookup, duckdb::OnEntryNotFound::RETURN_NULL);
+    return duckdb::CatalogEntryRetriever{ctx}.GetEntry(
+      lookup, duckdb::OnEntryNotFound::RETURN_NULL);
   };
   return exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) ||
          exists(duckdb::CatalogType::MACRO_ENTRY) ||
@@ -504,8 +505,7 @@ class SpecCompiler {
   }
 
   bool DictionaryExists(std::string_view name) {
-    return static_cast<bool>(auth::Lookup(
-      _context,
+    return static_cast<bool>(duckdb::CatalogEntryRetriever{_context}.GetEntry(
       duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                               duckdb::QualifiedName{duckdb::Identifier{name}}},
       duckdb::OnEntryNotFound::RETURN_NULL));
@@ -540,8 +540,7 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("invalid text search dictionary reference \"", spelled, "\""));
     }
-    const auto tokenizer = auth::Lookup(
-      _context,
+    const auto tokenizer = duckdb::CatalogEntryRetriever{_context}.GetEntry(
       duckdb::EntryLookupInfo{
         duckdb::CatalogType::TOKENIZER_ENTRY,
         duckdb::QualifiedName{
@@ -766,7 +765,6 @@ class SpecCompiler {
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,
                      const duckdb::ParsedExpression& value) {
     auto binder = duckdb::Binder::CreateBinder(_context);
-    binder->SetPrincipal(_context.principal);
     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> select_list;
     std::string error;
     try {

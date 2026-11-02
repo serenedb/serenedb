@@ -53,8 +53,7 @@ namespace sdb::catalog {
 namespace {
 
 bool IsSuperuser(ConnectionContext& conn_ctx) {
-  return auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-    ->is_superuser;
+  return conn_ctx.GetClientContext().CurrentRole().is_superuser;
 }
 
 bool ParseBool(std::string_view option, const duckdb::Value& value) {
@@ -290,8 +289,8 @@ void ApplySetOptions(ConnectionContext& conn_ctx,
 void CheckConnInfo(ConnectionContext& conn_ctx,
                    const duckdb::CreateSubscriptionInfo& info) {
   if (replication::NamesServerFiles(info.conninfo) &&
-      !auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-         ->Has(duckdb::RoleCapability::ReadServerFiles)) {
+      !conn_ctx.GetClientContext().CurrentRole().Has(
+        duckdb::RoleCapability::ReadServerFiles)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to use server files in the connection string"),
@@ -325,7 +324,7 @@ replication::PublisherResult CallPublisher(
     conninfo.user = auth::RolesOf(&context)->NameOf(owner);
   }
   const bool require_password =
-    info.password_required && !auth::ClosureFor(&context, owner)->is_superuser;
+    info.password_required && !context.AccessOf(owner).is_superuser;
   return replication::CallPublisher(
     conninfo, info.GetQualifiedName().Name().GetIdentifierName(),
     require_password, std::move(body));

@@ -156,8 +156,6 @@ RoleGraphPtr RolesOf(duckdb::ClientContext* context);
 
 RoleAccessRef ClosureFor(duckdb::ClientContext* context, duckdb::idx_t role);
 
-RoleAccessRef SessionClosure(duckdb::ClientContext& context);
-
 RoleMemberships MembershipsOf(const RoleGraph& graph, duckdb::idx_t role);
 
 RoleGraphPtr BuildRoleGraph(catalog::ClusterCatalog& cluster,

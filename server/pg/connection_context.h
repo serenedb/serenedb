@@ -109,7 +109,7 @@ class ConnectionContext final : public query::Transaction {
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  duckdb::idx_t GetRoleId() const { return GetClientContext().principal_role; }
+  duckdb::idx_t GetRoleId() const { return GetClientContext().current_role_id; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
   duckdb::idx_t GetSessionRoleId() const {
     return GetClientContext().session_role;
@@ -123,7 +123,7 @@ class ConnectionContext final : public query::Transaction {
   // restore the login role. Whether SHOW role reports 'none' vs a name is
   // carried by the `role` GUC's own value, not tracked here.
   void SetEffectiveRole(duckdb::idx_t role) {
-    GetClientContext().SetPrincipalRole(role);
+    GetClientContext().SetCurrentRole(role);
     GetClientContext().session_user = EffectiveUserName();
   }
   void SetSessionRole(duckdb::idx_t role) {

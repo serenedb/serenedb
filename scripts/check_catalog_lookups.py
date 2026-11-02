@@ -61,7 +61,7 @@ ROUTE = {
     FUNCTIONS: "resolve a name the function takes through its input's binder",
     EXTENSIONS: "resolve a name the function takes through its input's binder",
     ICEBERG: "resolve a name the function takes through its input's binder",
-    SERVER: "resolve a name the client wrote through a binder's entry_retriever, or auth::Lookup outside a binder",
+    SERVER: "resolve a name the client wrote through a binder's entry_retriever, or a CatalogEntryRetriever on the context outside a binder",
 }
 
 

@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -38,7 +39,6 @@
 #include <iresearch/utils/string.hpp>
 #include <variant>
 
-#include "auth/lookup.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/common.h"
@@ -53,8 +53,7 @@ namespace {
 
 catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
                                           std::string_view dict_name) {
-  auto dict = auth::Lookup(
-    context,
+  auto dict = duckdb::CatalogEntryRetriever{context}.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
                             duckdb::QualifiedName::Parse(dict_name)},
     duckdb::OnEntryNotFound::RETURN_NULL);

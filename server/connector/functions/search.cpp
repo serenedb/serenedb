@@ -48,7 +48,6 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
-#include "auth/lookup.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/functions/minhash.h"
@@ -309,11 +308,10 @@ bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
-  auto dict =
-    auth::Lookup(context,
-                 duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                                         duckdb::QualifiedName::Parse(name)},
-                 duckdb::OnEntryNotFound::RETURN_NULL);
+  auto dict = duckdb::CatalogEntryRetriever{context}.GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                            duckdb::QualifiedName::Parse(name)},
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};
   }
@@ -324,11 +322,12 @@ duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   duckdb::BindScalarFunctionInput& input, std::string_view name) {
   const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::TOKENIZER_ENTRY,
                                        duckdb::QualifiedName::Parse(name)};
-  auto entry = input.HasBinder()
-                 ? input.GetBinder().EntryRetriever().GetEntry(
-                     lookup, duckdb::OnEntryNotFound::RETURN_NULL)
-                 : auth::Lookup(input.GetClientContext(), lookup,
-                                duckdb::OnEntryNotFound::RETURN_NULL);
+  auto entry =
+    input.HasBinder()
+      ? input.GetBinder().EntryRetriever().GetEntry(
+          lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+      : duckdb::CatalogEntryRetriever{input.GetClientContext()}.GetEntry(
+          lookup, duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry) {
     return nullptr;
   }

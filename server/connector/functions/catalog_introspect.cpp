@@ -41,7 +41,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
@@ -56,8 +55,7 @@ namespace {
 // The dump spans every database and includes definitions a role could never
 // SELECT (role rows carry password verifiers), so it is superuser-only.
 void RequireSuperuser(duckdb::ClientContext& context, std::string_view what) {
-  auto& conn = GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+  if (!context.CurrentRole().is_superuser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("must be superuser to use ", what));
   }

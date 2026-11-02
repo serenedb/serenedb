@@ -52,8 +52,8 @@ const duckdb::RoleAccess* Enforced(duckdb::CatalogTransaction transaction) {
   if (!transaction.HasContext()) {
     return nullptr;
   }
-  const auto principal = transaction.GetContext().principal;
-  return principal && !principal->is_superuser ? principal.get() : nullptr;
+  const auto& role = transaction.GetContext().CurrentRole();
+  return role.is_superuser ? nullptr : &role;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindRole(
@@ -64,7 +64,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindRole(
 }
 
 bool IsAdminOf(duckdb::ClientContext& context, duckdb::idx_t role) {
-  return MembershipsOf(*RolesOf(&context), context.principal_role)
+  return MembershipsOf(*RolesOf(&context), context.current_role_id)
     .IsAdminOf(role);
 }
 
@@ -195,7 +195,8 @@ void CheckCreateRole(duckdb::CatalogTransaction transaction,
 
 void CheckAlterRole(duckdb::CatalogTransaction transaction,
                     duckdb::AlterRoleInfo& info) {
-  if (!transaction.HasContext() || !transaction.GetContext().principal) {
+  if (!transaction.HasContext() ||
+      transaction.GetContext().CurrentRole().IsSystem()) {
     return;
   }
   auto role =
@@ -251,7 +252,8 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
 
 void CheckAlterDatabaseSettings(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterDatabaseSettingsInfo& info) {
-  if (!transaction.HasContext() || !transaction.GetContext().principal) {
+  if (!transaction.HasContext() ||
+      transaction.GetContext().CurrentRole().IsSystem()) {
     return;
   }
   auto& context = transaction.GetContext();
@@ -290,7 +292,8 @@ void CheckAlterDatabaseSettings(duckdb::CatalogTransaction transaction,
 
 void CheckDropRole(duckdb::CatalogTransaction transaction,
                    const duckdb::DropInfo& info) {
-  if (!transaction.HasContext() || !transaction.GetContext().principal) {
+  if (!transaction.HasContext() ||
+      transaction.GetContext().CurrentRole().IsSystem()) {
     return;
   }
   const auto* caller = Enforced(transaction);

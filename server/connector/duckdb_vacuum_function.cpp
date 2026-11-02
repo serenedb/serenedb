@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -41,8 +42,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/lookup.h"
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
@@ -225,7 +224,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
-  context.CheckDatabaseReference(context.principal, *found);
+  context.CheckDatabaseReference(context.CurrentRole(), *found);
   return *found;
 }
 
@@ -346,9 +345,8 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 
 bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
                  std::string_view name, std::string_view verb) {
-  if (auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-        ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-              duckdb::AclMode::Maintain)) {
+  if (conn_ctx.GetClientContext().CurrentRole().Can(
+        duckdb::CatalogType::TABLE_ENTRY, perm, duckdb::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -381,8 +379,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
-      auto entry = auth::Lookup(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::INDEX_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -417,8 +414,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                          index->name.GetIdentifierName());
     } break;
     case Scope::Table: {
-      auto entry = auth::Lookup(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -544,8 +540,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Table:
     case Scope::Column: {
-      auto entry = auth::Lookup(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -654,8 +649,7 @@ void VacuumExecute(duckdb::ClientContext& context,
         kSereneDBClientStateKey)) {
     duckdb::idx_t relid = pg::kInvalidOid;
     if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
-      auto table = auth::Lookup(
-        context,
+      auto table = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},

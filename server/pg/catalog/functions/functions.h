@@ -85,6 +85,8 @@ struct CallerRole final : duckdb::FunctionData {
 duckdb::unique_ptr<duckdb::FunctionData> BindCallerRole(
   duckdb::BindScalarFunctionInput& input);
 
+duckdb::RoleAccess CallerAccess(duckdb::ExpressionState& state);
+
 inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
   duckdb::FunctionData*) {

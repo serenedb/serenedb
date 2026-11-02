@@ -171,13 +171,6 @@ RoleAccessRef ClosureFor(duckdb::ClientContext* context, duckdb::idx_t role) {
   return {std::move(graph), missing};
 }
 
-RoleAccessRef SessionClosure(duckdb::ClientContext& context) {
-  if (context.principal_role == duckdb::DConstants::INVALID_INDEX) {
-    return {};
-  }
-  return ClosureFor(&context, context.principal_role);
-}
-
 RoleMemberships MembershipsOf(const RoleGraph& graph, duckdb::idx_t role) {
   RoleMemberships out;
   if (role == pg::kInvalidOid) {

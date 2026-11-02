@@ -66,8 +66,7 @@ std::string StoredPassword(std::string_view password) {
 
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
   auto* session = connector::GetSereneDBContextPtr(context);
-  if (!session ||
-      auth::ClosureFor(&context, session->GetRoleId())->is_superuser) {
+  if (!session || context.CurrentRole().is_superuser) {
     return pg::kRootUser;
   }
   return session->GetRoleId();

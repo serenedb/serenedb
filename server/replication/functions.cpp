@@ -41,7 +41,6 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
@@ -59,8 +58,7 @@ constexpr const char* kSessionKey = "sdb_replication_origin_session";
 constexpr size_t kMaxOriginName = 512;
 
 void RequireSuperuser(duckdb::ClientContext& context, std::string_view name) {
-  auto& conn = connector::GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+  if (!context.CurrentRole().is_superuser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for function ", name));
   }

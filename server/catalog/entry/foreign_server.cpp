@@ -45,7 +45,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 
@@ -112,7 +111,7 @@ std::string ConnectionString(const ServerOptions& options) {
 }
 
 bool OwnedBySuperuser(duckdb::ClientContext& context, duckdb::idx_t owner) {
-  return owner == 0 || auth::ClosureFor(&context, owner)->is_superuser;
+  return owner == 0 || context.AccessOf(owner).is_superuser;
 }
 
 }  // namespace

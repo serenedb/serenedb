@@ -93,7 +93,7 @@ ConnectionContext::ConnectionContext(
   duckdb_ctx.session_user = user;
   duckdb_ctx.session_role = role_id;
   duckdb_ctx.client_data->default_database = duckdb::Identifier{dbname};
-  duckdb_ctx.SetPrincipalRole(role_id);
+  duckdb_ctx.SetCurrentRole(role_id);
 }
 
 namespace {

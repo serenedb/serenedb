@@ -47,7 +47,6 @@
 #include <system_error>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -143,8 +142,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("role \"", owner, "\" does not exist"));
       }
-      if (connection && !auth::ClosureFor(&context, connection->GetRoleId())
-                           ->CanSet(role->oid)) {
+      if (!context.CurrentRole().CanSet(role->oid)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                         ERR_MSG("must be able to SET ROLE \"",
                                 role->name.GetIdentifierName(), "\""));

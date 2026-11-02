@@ -24,7 +24,7 @@ query
 SELECT tableowner FROM pg_tables WHERE tablename = 'nation';
 ----
 tableowner
-unknown (OID=0)
+postgres
 
 
 connection c_ved user=eue_vedernikoff password=eue_pw

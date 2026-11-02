@@ -27,6 +27,7 @@
 #include <fast_float/fast_float.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -74,8 +75,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/lookup.h"
-#include "auth/role_closure.h"
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
@@ -256,8 +255,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (OptionsParser::HasOption(Info.name)) {
       if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
                     &Info == &tokenizer_options::kModelLocation) {
-        if (const auto closure = auth::SessionClosure(_context);
-            closure && !closure->Has(duckdb::RoleCapability::ReadServerFiles)) {
+        if (!_context.CurrentRole().Has(
+              duckdb::RoleCapability::ReadServerFiles)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
             ERR_MSG("permission denied to use option \"", Info.name, "\""),
@@ -745,11 +744,10 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   void BuildDictionary(irs::analysis::TokenizerConfig& out) {
     std::string from = Value<tokenizer_options::kFrom>();
-    auto tokenizer =
-      auth::Lookup(_context,
-                   duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                                           duckdb::QualifiedName::Parse(from)},
-                   duckdb::OnEntryNotFound::RETURN_NULL);
+    auto tokenizer = duckdb::CatalogEntryRetriever{_context}.GetEntry(
+      duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                              duckdb::QualifiedName::Parse(from)},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

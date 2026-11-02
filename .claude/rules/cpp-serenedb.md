@@ -63,7 +63,7 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 ## Server code
 
 - SQL the server issues itself is built with DuckDB's C++ API, not as text. Client SQL is the parser's job: never match or rewrite it as text; patch the parser or transformer.
-- A name the client wrote resolves through a binder's `entry_retriever` (`input.binder` in a bind), or `auth::Lookup` outside a binder: both check schema USAGE and CONNECT on another database for the session's role. `check-catalog-lookups` counts the direct `Catalog::GetEntry`/`GetSchema` calls in `server/`; a new one is routed, or listed there when it is internal.
+- A name the client wrote resolves through a binder's `entry_retriever` (`input.binder` in a bind), or a `duckdb::CatalogEntryRetriever` on the context outside a binder: both check schema USAGE and CONNECT on another database for the acting role, which the context holds. `check-catalog-lookups` counts the direct `Catalog::GetEntry`/`GetSchema` calls in `server/`; a new one is routed, or listed there when it is internal.
 - Internal work uses the `ClientContext` already in play, passed as the first parameter; never a new `duckdb::Connection`.
 - A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`, named `sdb_<name>` when SereneDB-only.
 - Production headers carry no test-only accessors.

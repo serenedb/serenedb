@@ -407,7 +407,7 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
   if (!_target.run_as_owner && table_owner != role &&
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
-    if (!auth::ClosureFor(&context, role)->CanSet(table_owner)) {
+    if (!context.AccessOf(role).CanSet(table_owner)) {
       const auto roles = auth::RolesOf(&context);
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),

@@ -29,6 +29,7 @@
 #include <compare>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -43,7 +44,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/lookup.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "otel/mapper.h"
@@ -65,8 +65,7 @@ void BindTarget(duckdb::ClientContext& context, std::string_view schema_name,
                 std::string_view table_name, TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::Identifier>& names) {
-  auto table = auth::Lookup(
-    context,
+  auto table = duckdb::CatalogEntryRetriever{context}.GetEntry(
     duckdb::EntryLookupInfo{
       duckdb::CatalogType::TABLE_ENTRY,
       duckdb::QualifiedName{

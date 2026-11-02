@@ -69,7 +69,7 @@ Session MakeSession(duckdb::ClientContext* context) {
                        *session.transaction, duckdb::Identifier{name},
                        duckdb::OnEntryNotFound::RETURN_NULL)
                    : nullptr;
-    if (entry && !duckdb::CanUseSchema(context->principal, *entry)) {
+    if (entry && !duckdb::CanUseSchema(context->CurrentRole(), *entry)) {
       return;
     }
     session.search_path.emplace_back(

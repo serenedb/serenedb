@@ -134,9 +134,9 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (_closure && !_closure->Has(duckdb::RoleCapability::ReadAllStats)) {
+    if (!_role.Has(duckdb::RoleCapability::ReadAllStats)) {
       const auto* role = _roles->FindByName(s.user);
-      if (!role || !_closure->MemberOf(*role)) {
+      if (!role || !_role.MemberOf(*role)) {
         Emit<kHidden>(s);
         return;
       }
@@ -152,11 +152,10 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   }
 
  private:
-  auth::RoleAccessRef _closure = auth::SessionClosure(Context());
-  auth::RoleGraphPtr _roles =
-    _closure && !_closure->Has(duckdb::RoleCapability::ReadAllStats)
-      ? auth::RolesOf(&Context())
-      : auth::RoleGraphPtr{};
+  const duckdb::RoleAccess& _role = Context().CurrentRole();
+  auth::RoleGraphPtr _roles = !_role.Has(duckdb::RoleCapability::ReadAllStats)
+                                ? auth::RolesOf(&Context())
+                                : auth::RoleGraphPtr{};
 };
 
 }  // namespace

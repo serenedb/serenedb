@@ -2,7 +2,6 @@ target_sources(
     sereneserver
     PRIVATE
         function_privileges.cpp
-        lookup.cpp
         role_closure.cpp
         role_rules.cpp
         visibility.cpp

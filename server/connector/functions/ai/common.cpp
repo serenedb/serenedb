@@ -49,7 +49,6 @@
 #include <tuple>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "query/config.h"
 
 namespace sdb::connector::ai {
@@ -232,8 +231,7 @@ Endpoint ResolveEndpoint(duckdb::ClientContext& context,
                     ERR_HINT("Pass secret_name := '<name>' or SET ",
                              api.default_secret, " = '<name>'."));
   }
-  if (const auto closure = auth::SessionClosure(context);
-      closure && !closure->is_superuser) {
+  if (!context.CurrentRole().is_superuser) {
     const auto shared = GetGlobalSetting(duckdb::DBConfig::GetConfig(context),
                                          api.default_secret);
     if (shared.IsNull() || shared.ToString() != name) {

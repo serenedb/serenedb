@@ -158,16 +158,14 @@ bool EntryVisible(duckdb::ClientContext& context,
 }  // namespace
 
 bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
-  const auto caller = context.principal;
-  return !caller || caller->is_superuser ||
-         EntryVisible(context, *caller, entry);
+  const auto& caller = context.CurrentRole();
+  return caller.is_superuser || EntryVisible(context, caller, entry);
 }
 
 bool CanSeeDatabase(duckdb::ClientContext& context,
                     duckdb::AttachedDatabase& database) {
-  const auto caller = context.principal;
-  return !caller || caller->is_superuser ||
-         DatabaseVisible(context, *caller, database);
+  const auto& caller = context.CurrentRole();
+  return caller.is_superuser || DatabaseVisible(context, caller, database);
 }
 
 void CheckEntryReference(duckdb::ClientContext& context,

@@ -481,11 +481,12 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
               "\" does not exist"));
   }
   auto& relation = *host;
-  if (const auto principal = input.binder ? input.binder->principal : nullptr;
-      principal && relation.type == duckdb::CatalogType::VIEW_ENTRY &&
+  const auto& role =
+    input.binder ? input.binder->CheckAs() : context.CurrentRole();
+  if (relation.type == duckdb::CatalogType::VIEW_ENTRY &&
       !duckdb::IsUnowned(relation) &&
-      !principal->Can(duckdb::CatalogType::TABLE_ENTRY, relation.permissions,
-                      duckdb::AclMode::Select)) {
+      !role.Can(duckdb::CatalogType::TABLE_ENTRY, relation.permissions,
+                duckdb::AclMode::Select)) {
     duckdb::ThrowPermissionDenied(relation);
   }
   const auto* search_table =

@@ -291,8 +291,7 @@ void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
 // allow_system_table_mods, debug_discard_caches, wal_consistency_checking.
 void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                       std::string_view detail) {
-  if (const auto principal = ctx.principal;
-      !principal || principal->is_superuser) {
+  if (ctx.CurrentRole().is_superuser) {
     return;
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -344,9 +343,9 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
 }
 
 void RefreshSuperuser(ConnectionContext& conn) {
-  const auto principal = conn.GetClientContext().principal;
-  conn.SetSetting("is_superuser",
-                  principal && principal->is_superuser ? "on" : "off", false);
+  conn.SetSetting(
+    "is_superuser",
+    conn.GetClientContext().CurrentRole().is_superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
@@ -365,7 +364,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
   }
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
-  if (!auth::ClosureFor(&ctx, conn.GetSessionRoleId())->CanSet(role.oid)) {
+  if (!ctx.AccessOf(conn.GetSessionRoleId()).CanSet(role.oid)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
@@ -379,7 +378,7 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
   const auto login = conn.GetLoginRoleId();
-  if (role.oid != login && !auth::ClosureFor(&ctx, login)->is_superuser) {
+  if (role.oid != login && !ctx.AccessOf(login).is_superuser) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
@@ -1749,9 +1748,7 @@ std::string_view SettingContext(std::string_view name) {
 }
 
 bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name) {
-  const auto principal = ctx.principal;
-  return !principal ||
-         principal->Has(duckdb::RoleCapability::ReadAllSettings) ||
+  return ctx.CurrentRole().Has(duckdb::RoleCapability::ReadAllSettings) ||
          !IsSuperuserReadSetting(ctx, name);
 }
 

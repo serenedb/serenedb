@@ -38,6 +38,7 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/enums/statement_type.hpp>
 #include <duckdb/common/types/timestamp.hpp>
@@ -68,8 +69,6 @@
 #include <map>
 #include <string_view>
 
-#include "auth/lookup.h"
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
@@ -103,18 +102,17 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, std::string_view index) {
-  auto entry =
-    auth::Lookup(context,
-                 duckdb::EntryLookupInfo{
-                   duckdb::CatalogType::TABLE_ENTRY,
-                   duckdb::QualifiedName{
-                     duckdb::DatabaseManager::GetDefaultDatabase(context),
-                     duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}}},
-                 duckdb::OnEntryNotFound::RETURN_NULL);
+  auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{
+        duckdb::DatabaseManager::GetDefaultDatabase(context),
+        duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}}},
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
-  context.CheckEntryReference(context.principal, *entry);
+  context.CheckEntryReference(context.CurrentRole(), *entry);
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -399,7 +397,6 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   const auto owner = GetSereneDBContext(context).GetRoleId();
   auto binder = duckdb::Binder::CreateBinder(context);
-  binder->SetPrincipal(context.principal);
   if (!EsSchema(context)) {
     binder->RequireDatabasePrivilege(db_catalog.GetName(),
                                      duckdb::AclMode::Create);
@@ -475,7 +472,6 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
   auto binder = duckdb::Binder::CreateBinder(context);
-  binder->SetPrincipal(context.principal);
   auto table = binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -1436,11 +1432,10 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
-  const auto closure = auth::SessionClosure(context);
+  const auto& role = context.CurrentRole();
   const auto may_maintain = [&](const duckdb::TableCatalogEntry& table) {
-    return !closure ||
-           closure->Can(duckdb::CatalogType::TABLE_ENTRY, table.permissions,
-                        duckdb::AclMode::Maintain);
+    return role.Can(duckdb::CatalogType::TABLE_ENTRY, table.permissions,
+                    duckdb::AclMode::Maintain);
   };
   auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
     VisitInvertedIndexes(context, table, [&](duckdb::DuckIndexEntry& index) {

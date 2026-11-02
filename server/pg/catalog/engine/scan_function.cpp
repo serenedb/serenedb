@@ -34,7 +34,6 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/system_table.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/engine/registry.h"
@@ -203,13 +202,10 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::LogicalType>& types,
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
-  if (table.SuperuserOnly()) {
-    if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->is_superuser) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied for function ", table.Sql().name));
-    }
+  if (table.SuperuserOnly() && !context.CurrentRole().is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied for function ", table.Sql().name));
   }
   for (const auto& column : table.Columns().Logical()) {
     types.emplace_back(column.Type());

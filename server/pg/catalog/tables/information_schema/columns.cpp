@@ -27,7 +27,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
@@ -260,8 +259,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!visible && (_closure->HeldModes(column.Acl()) &
-                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+      if (!visible && (_role.HeldModes(column.Acl()) & kAnyColumnPrivilege) ==
+                        duckdb::AclMode::NoRights) {
         continue;
       }
       Emit<kTableColumn>(
@@ -291,7 +290,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      if (!visible && (_closure->HeldModes(view.ColumnAcl(i)) &
+      if (!visible && (_role.HeldModes(view.ColumnAcl(i)) &
                        kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
         continue;
       }
@@ -309,14 +308,14 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
  private:
   bool Visible(const duckdb::CatalogEntry& relation) const {
     const auto& permissions = PrivilegePermissions(relation);
-    return !_closure || permissions.owner == kInvalidOid ||
-           _closure->CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
-                            kAnyColumnPrivilege);
+    return permissions.owner == kInvalidOid ||
+           _role.CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
+                        kAnyColumnPrivilege);
   }
 
   std::string_view _database = Database().GetName().GetIdentifierName();
   ArrayTypeNames _arrays{*this};
-  auth::RoleAccessRef _closure = auth::SessionClosure(Context());
+  const duckdb::RoleAccess& _role = Context().CurrentRole();
 };
 
 }  // namespace

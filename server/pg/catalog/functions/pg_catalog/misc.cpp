@@ -521,7 +521,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   auto& conn_ctx = GetSereneDBContext(context);
   auto* registry = conn_ctx.GetCancelRegistry();
   const auto roles = auth::RolesOf(&context);
-  const auto caller = auth::ClosureFor(&context, conn_ctx.GetRoleId());
+  const auto& caller = context.CurrentRole();
   const auto pids = args.data[0].Values<int32_t>();
   auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -546,15 +546,15 @@ void SignalBackendFunction(duckdb::DataChunk& args,
     const auto role = match.token->role.load(std::memory_order_relaxed);
     const auto access = roles->Access(role);
     if (role == kInvalidOid || (access && access->is_superuser)) {
-      if (!caller->is_superuser) {
+      if (!caller.is_superuser) {
         ThrowSignalDenied<kTerminate>(
           kTerminate ? "Only roles with the SUPERUSER attribute may terminate "
                        "processes of roles with the SUPERUSER attribute."
                      : "Only roles with the SUPERUSER attribute may cancel "
                        "queries of roles with the SUPERUSER attribute.");
       }
-    } else if (!caller->MemberOf(role) &&
-               !caller->Has(duckdb::RoleCapability::SignalBackend)) {
+    } else if (!caller.MemberOf(role) &&
+               !caller.Has(duckdb::RoleCapability::SignalBackend)) {
       ThrowSignalDenied<kTerminate>(
         kTerminate
           ? "Only roles with privileges of the role whose process is being "

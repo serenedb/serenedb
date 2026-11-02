@@ -210,12 +210,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
       databases.insert(database->oid);
     }
   }
-  const auto principal = context.principal;
+  const bool superuser = context.CurrentRole().is_superuser;
   for (auto& run : scheduler->GetHistory()) {
     if (!databases.contains(run.database_oid)) {
       continue;
     }
-    if (principal && !principal->is_superuser) {
+    if (!superuser) {
       auto job = duckdb::Catalog::GetEntry(
         context,
         duckdb::EntryLookupInfo{

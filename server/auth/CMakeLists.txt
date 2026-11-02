@@ -1,1 +1,1 @@
-target_sources(sereneserver PRIVATE role_closure.cpp visibility.cpp)
+target_sources(sereneserver PRIVATE role_closure.cpp)

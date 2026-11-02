@@ -53,7 +53,6 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
-#include "auth/visibility.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_storage_extension.h"
@@ -127,10 +126,6 @@ SereneDBClientState& SereneDBClientState::Register(
       sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL,
                     std::move(old_value), new_value);
     };
-
-  client_ctx.entry_visibility = auth::CanSee;
-  client_ctx.database_visibility = auth::CanSeeDatabase;
-  client_ctx.entry_reference_handler = auth::CheckEntryReference;
 
   client_ctx.isolation_level_validator =
     [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {

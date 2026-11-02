@@ -53,6 +53,7 @@ template<typename T>
 class FrameDecoder {
   using U = numeric::Bits<sizeof(T)>;
   static constexpr uint32_t kBurst = 32 / sizeof(T);
+  static constexpr uint32_t kLongBurst = 128 / sizeof(T);
   static constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 
  public:
@@ -314,18 +315,30 @@ class FrameDecoder {
       std::memcpy(out, _view + (row - _begin) * sizeof(T), count * sizeof(T));
       return;
     }
-    auto pos = static_cast<uint32_t>(row - _begin);
+    const auto pos = static_cast<uint32_t>(row - _begin);
+    if (_long_runs) {
+      CopyRuns<kLongBurst>(pos, count, out);
+    } else {
+      CopyRuns<kBurst>(pos, count, out);
+    }
+  }
+
+  template<uint32_t kSize>
+  void CopyRuns(uint32_t pos, uint64_t count, T* out) noexcept {
     const auto end = pos + static_cast<uint32_t>(count);
     auto r = RunOf(pos);
-    const uint64_t burst_limit = count >= kBurst ? count - kBurst + 1 : 0;
+    const uint64_t burst_limit = count >= kSize ? count - kSize + 1 : 0;
     uint64_t done = 0;
     while (pos < end) {
       const auto stop = std::min(_run_ends[r], end);
       const auto v = std::bit_cast<T>(_run_values[r]);
       const auto n = stop - pos;
-      if (n <= kBurst && done < burst_limit) {
-        for (uint32_t i = 0; i < kBurst; ++i) {
+      if (done < burst_limit) {
+        for (uint32_t i = 0; i < kSize; ++i) {
           out[done + i] = v;
+        }
+        if (n > kSize) {
+          std::fill_n(out + done + kSize, n - kSize, v);
         }
       } else {
         std::fill_n(out + done, n, v);
@@ -796,6 +809,7 @@ class FrameDecoder {
       end = static_cast<uint32_t>(total);
     }
     SDB_ENSURE(total == rows, "numeric codec: corrupted runs");
+    _long_runs = total >= uint64_t{kBurst} * _run_ends.size();
     _hint = 0;
   }
 
@@ -842,6 +856,7 @@ class FrameDecoder {
   ScratchVector<U> _run_values;
   ScratchVector<uint32_t> _run_ends;
   uint32_t _hint = 0;
+  bool _long_runs = false;
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
   ScratchVector<uint32_t> _codes;

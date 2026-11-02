@@ -1,30 +1,8 @@
 control substitution on
 
-# The external file cache takes its settings while the server runs: a cache
-# shrunk below what an index uses keeps working on fewer blocks, blocks of
-# in-memory files evicted from it spill to the spill file and read back the
-# same, and RESET restores the defaults.
-
-statement ok
-SET GLOBAL external_file_cache_spill_path = '${__TEST_DIR__}/cache.spill';
-
-
-statement ok
-SET GLOBAL external_file_cache_spill_size = '256MiB';
-
-
-statement ok
-SET GLOBAL external_file_cache_size = '2MiB';
-
-
-query
-SELECT current_setting('external_file_cache_size') AS size,
-       current_setting('external_file_cache_spill_size') AS spill_size,
-       current_setting('external_file_cache_spill_path') = '${__TEST_DIR__}/cache.spill' AS spill_path;
-----
-size	spill_size	spill_path
-2.0 MiB	256.0 MiB	t
-
+# The external file cache keeps its blocks within memory_limit: blocks of
+# in-memory index files evicted by a lower limit spill to temporary files and
+# read back the same, and RESET restores the limit.
 
 statement ok
 SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
@@ -46,6 +24,10 @@ CREATE TEXT SEARCH DICTIONARY spill_words AS split_text(case := 'lower');
 
 statement ok
 CREATE INDEX spilled_body ON spilled USING inverted(body spill_words);
+
+
+statement ok
+SET GLOBAL memory_limit = '16MiB';
 
 
 query
@@ -83,17 +65,7 @@ RESET sdb_faults;
 
 
 statement ok
-RESET GLOBAL external_file_cache_size;
-
-
-statement ok
-RESET GLOBAL external_file_cache_spill_size;
-
-
-statement error
-RESET GLOBAL external_file_cache_spill_path;
-----
-db error: ERROR: Cannot move the block cache spill file while it holds blocks of in-memory files
+RESET GLOBAL memory_limit;
 
 
 query
@@ -105,15 +77,3 @@ n
 
 statement ok
 DROP TABLE spilled;
-
-
-statement ok retry 40 backoff 250ms
-RESET GLOBAL external_file_cache_spill_path;
-
-
-query
-SELECT current_setting('external_file_cache_spill_size') AS spill_size,
-       current_setting('external_file_cache_spill_path') AS spill_path;
-----
-spill_size	spill_path
-0 bytes	(empty)

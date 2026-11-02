@@ -40,22 +40,23 @@ A query over uncached data asks the store for what it needs in a few rounds rath
 
 <SqlLogicTest id="configuration/index_storage/example_cache_settings" />
 
-- `external_file_cache_size` is the memory the cache may use, a quarter of `memory_limit` by default. The cache gives memory back when queries need it.
-- `external_file_cache_spill_path` and `external_file_cache_spill_size` keep evicted blocks in a file on local disk, so reading them again costs a disk read instead of a request. Spilling is off by default.
+- The cache shares `memory_limit` with queries: it uses memory that queries leave free, and blocks it holds are evicted when queries need the memory.
+- A block of a file on an object store keeps a copy in the temporary directory (`temp_directory`) once it is evicted, so reading it again costs a disk read instead of a request. The copy is written once and stays while the file version is cached. `external_file_cache_spill_size` is the disk space the copies may take, half of `max_temp_directory_size` by default; past it, evicted blocks are dropped and fetched again, and `0` drops them all. Blocks of index files on local disk are dropped, and blocks of in-memory indexes are always kept.
+- `enable_external_file_cache = false` drops the cached blocks of files on object stores and reads them without caching.
 
 The `sdb_metrics` system table reports how the cache and the uploads do, in rows with a `NULL` `relation_id`:
 
 | Metric | Meaning |
 | :--- | :--- |
-| `block_cache_capacity_bytes` | Memory the cache may use, in bytes |
+| `block_cache_capacity_bytes` | Memory the cache may use, in bytes: `memory_limit`, which it shares with queries |
 | `block_cache_used_bytes` | Memory the cache uses, in bytes |
 | `block_cache_hits` | Block reads served from the cache since startup |
 | `block_cache_misses` | Block reads that went to the store since startup |
 | `block_cache_fetches` | Requests that read blocks from the store since startup |
 | `block_cache_fetched_bytes` | Bytes read from the store into the cache since startup |
 | `block_cache_evictions` | Blocks evicted from memory since startup |
-| `block_cache_spilled_blocks` | Evicted blocks kept in the spill file since startup |
-| `block_cache_spill_reads` | Blocks read back from the spill file since startup |
+| `block_cache_spilled_blocks` | Evicted blocks written to the temporary directory since startup |
+| `block_cache_spill_reads` | Blocks read back from the temporary directory since startup |
 | `index_uploads_pending` | Index files being written to the object store whose upload has not completed |
 | `index_upload_pending_bytes` | Bytes written to those files so far |
 

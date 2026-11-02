@@ -24,6 +24,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <iresearch/store/file_output.hpp>
@@ -115,10 +116,10 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   auto& db = *scan.Context().db;
   const auto cache = db.TryGetBlockCache();
   const auto stats =
-    cache ? cache->GetStatistics()
-          : duckdb::BlockCacheStatistics{
-              .capacity = duckdb::BlockCache::ConfiguredCapacity(db)};
-  add("block_cache_capacity_bytes", stats.capacity,
+    cache ? cache->GetStatistics() : duckdb::BlockCacheStatistics{};
+  add("block_cache_capacity_bytes",
+      cache ? stats.capacity
+            : duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
       "memory the cache of remote and in-memory index files may use, in "
       "bytes");
   add("block_cache_used_bytes", stats.used,

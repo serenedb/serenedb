@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -38,9 +39,11 @@ irs::byte_type ExpectedByte(uint64_t offset) {
 class IndexInputTest : public TestBase {};
 
 TEST_F(IndexInputTest, pins_outlive_evictions) {
-  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
-                           4 * kBlock};
-  cache.SetSpill((test_dir() / "spill").string(), 0);
+  duckdb::DBConfig config;
+  config.options.maximum_memory = (kBlocks + 4) * kBlock;
+  config.options.temporary_directory = (test_dir() / "spill").string();
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::BlockCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/stable");
   for (uint64_t block = 0; block != kBlocks; ++block) {
     auto pin = cache.CreateBlock(*file, block);
@@ -49,6 +52,11 @@ TEST_F(IndexInputTest, pins_outlive_evictions) {
     }
   }
   cache.SetUnbackedSize(*file, kBlocks * kBlock);
+  auto filler = cache.CreateUnbackedFile("memory://block_input_test/filler");
+  for (uint64_t block = 0; block != kBlocks; ++block) {
+    cache.CreateBlock(*filler, block);
+  }
+  cache.SetUnbackedSize(*filler, kBlocks * kBlock);
 
   const irs::InputFile blocks{cache, file};
   irs::IndexInput in{blocks};
@@ -77,9 +85,7 @@ TEST_F(IndexInputTest, pins_outlive_evictions) {
 }
 
 TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
-  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
-                           4 * kBlock};
-  cache.SetSpill((test_dir() / "spill").string(), 0);
+  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/aligned");
   for (uint64_t block = 0; block != 2; ++block) {
     auto pin = cache.CreateBlock(*file, block);
@@ -104,9 +110,7 @@ TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
 }
 
 TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
-  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance(),
-                           4 * kBlock};
-  cache.SetSpill((test_dir() / "spill").string(), 0);
+  duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/peek");
   for (uint64_t block = 0; block != 3; ++block) {
     auto pin = cache.CreateBlock(*file, block);

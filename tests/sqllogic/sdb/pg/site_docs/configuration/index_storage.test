@@ -24,10 +24,12 @@ CREATE TABLE __docs_noop_index_storage_001 (i INTEGER);
 query
 SELECT name
 FROM duckdb_settings()
-WHERE name LIKE 'external_file_cache%'
+WHERE name IN ('enable_external_file_cache', 'external_file_cache_spill_size', 'memory_limit', 'max_temp_directory_size', 'temp_directory')
 ORDER BY name;
 ----
 name
-external_file_cache_size
-external_file_cache_spill_path
+enable_external_file_cache
 external_file_cache_spill_size
+max_temp_directory_size
+memory_limit
+temp_directory

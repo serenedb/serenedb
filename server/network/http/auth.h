@@ -110,6 +110,9 @@ class HttpAuthenticator {
                                     std::string_view database) const;
 
  private:
+  std::optional<AuthResult> AuthenticateScheme(std::string_view value,
+                                               const pg::LoginPeer& peer,
+                                               std::string_view database) const;
   AuthResult Basic(std::string_view payload, const pg::LoginPeer& peer,
                    std::string_view database) const;
   AuthResult Password(std::string_view user, std::string_view password,

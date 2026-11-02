@@ -80,18 +80,8 @@ AuthResult HttpAuthenticator::Authenticate(
   if (!Enabled()) {
     return LocalOnly(peer);
   }
-  std::string_view header = authorization_header;
-  if (header.empty()) {
-    return {.status = HttpStatus::Unauthorized};
-  }
-  if (TakeScheme(header, "Basic")) {
-    return Basic(header, peer, database);
-  }
-  if (TakeScheme(header, "ApiKey")) {
-    return ApiKey(header);
-  }
-  if (TakeScheme(header, "Bearer")) {
-    return Bearer(header);
+  if (auto result = AuthenticateScheme(authorization_header, peer, database)) {
+    return *std::move(result);
   }
   return {.status = HttpStatus::Unauthorized};
 }
@@ -102,7 +92,20 @@ AuthResult HttpAuthenticator::AuthenticateCredential(
   if (!Enabled()) {
     return LocalOnly(peer);
   }
-  std::string_view value = credential;
+  if (auto result = AuthenticateScheme(credential, peer, database)) {
+    return *std::move(result);
+  }
+  if (const auto colon = credential.find(':');
+      colon != std::string_view::npos) {
+    return Password(credential.substr(0, colon), credential.substr(colon + 1),
+                    peer, database);
+  }
+  return Bearer(credential);
+}
+
+std::optional<AuthResult> HttpAuthenticator::AuthenticateScheme(
+  std::string_view value, const pg::LoginPeer& peer,
+  std::string_view database) const {
   if (TakeScheme(value, "Basic")) {
     return Basic(value, peer, database);
   }
@@ -112,12 +115,7 @@ AuthResult HttpAuthenticator::AuthenticateCredential(
   if (TakeScheme(value, "Bearer")) {
     return Bearer(value);
   }
-  if (const auto colon = credential.find(':');
-      colon != std::string_view::npos) {
-    return Password(credential.substr(0, colon), credential.substr(colon + 1),
-                    peer, database);
-  }
-  return Bearer(credential);
+  return std::nullopt;
 }
 
 AuthResult HttpAuthenticator::Basic(std::string_view payload,

@@ -134,8 +134,8 @@ struct BlobScan {
       for (const auto& m : s.frames) {
         largest = std::max(largest, m.raw_len);
       }
-      window =
-        duckdb::make_unsafe_uniq_array<char>(dictionary.size() + largest);
+      window = duckdb::make_unsafe_uniq_array_uninitialized<char>(
+        dictionary.size() + largest);
       std::memcpy(window.get(), dictionary.data(), dictionary.size());
     }
     return window.get() + dictionary.size();
@@ -189,7 +189,7 @@ struct BlobFetch {
   void Open(uint32_t lo, const FrameMeta& f, bool batched) {
     if (capacity < f.raw_len) {
       capacity = std::max<size_t>(f.raw_len, 1);
-      raw = duckdb::make_unsafe_uniq_array<char>(capacity);
+      raw = duckdb::make_unsafe_uniq_array_uninitialized<char>(capacity);
     }
     frame = lo;
     first_entry = f.first_entry;
@@ -279,8 +279,8 @@ struct BlobFetch {
         const size_t need = bytes.size() + f.raw_len;
         if (dictionary_capacity < need) {
           dictionary_capacity = need;
-          dictionary =
-            duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
+          dictionary = duckdb::make_unsafe_uniq_array_uninitialized<char>(
+            dictionary_capacity);
         }
         std::memcpy(dictionary.get(), bytes.data(), bytes.size());
         dictionary_size = static_cast<uint32_t>(bytes.size());
@@ -297,7 +297,8 @@ struct BlobFetch {
       const size_t need = static_cast<size_t>(f0.raw_len) + f.raw_len;
       if (dictionary_capacity < need) {
         dictionary_capacity = std::max<size_t>(need, 1);
-        dictionary = duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
+        dictionary = duckdb::make_unsafe_uniq_array_uninitialized<char>(
+          dictionary_capacity);
       }
       d.SetDictionary({});
       SDB_ENSURE(d.Decompress(reinterpret_cast<const char*>(base + h.off_data) +
@@ -310,7 +311,8 @@ struct BlobFetch {
     }
     if (with_dictionary && dictionary_capacity < dictionary_size + f.raw_len) {
       dictionary_capacity = dictionary_size + f.raw_len;
-      auto grown = duckdb::make_unsafe_uniq_array<char>(dictionary_capacity);
+      auto grown =
+        duckdb::make_unsafe_uniq_array_uninitialized<char>(dictionary_capacity);
       std::memcpy(grown.get(), dictionary.get(), dictionary_size);
       dictionary = std::move(grown);
     }

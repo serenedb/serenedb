@@ -38,48 +38,47 @@
 namespace sdb::connector {
 namespace {
 
-void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
-  using term_dict::Kind;
-  switch (term_dict::Classify(type)) {
-    case Kind::Null:
+void AppendTypeSuffix(std::string& name, const duckdb::LogicalType& type) {
+  using enum duckdb::LogicalTypeId;
+  if (pg::IsInetOrCidr(type)) {
+    name += pg::IsCidr(type) ? "(cidr)" : "(inet)";
+    return;
+  }
+  switch (type.id()) {
+    case SQLNULL:
       name += "(null)";
       break;
-    case Kind::Bool:
+    case BOOLEAN:
       name += "(bool)";
       break;
-    case Kind::String:
+    case VARCHAR:
+    case BLOB:
+    case GEOMETRY:
       name += "(string)";
       break;
-    case Kind::NumericI32:
-    case Kind::NumericI64:
-    case Kind::NumericF32:
-    case Kind::NumericF64:
-      name += "(numeric)";
-      break;
-    case Kind::Inet:
-      name += pg::IsCidr(type) ? "(cidr)" : "(inet)";
-      break;
-    case Kind::Unsupported:
+    default:
+      if (term_dict::IsNumeric(type.id())) {
+        name += "(numeric)";
+      }
       break;
   }
 }
 
 std::string_view DictSuffix(irs::DictRef dict) {
-  const bool json_leaves = dict.layout == irs::DictLayout::Json;
-  switch (term_dict::MemberOf(dict)) {
-    case term_dict::Member::SqlNull:
+  const bool json_leaves = irs::IsJson(dict.layout);
+  switch (dict.member) {
+    case irs::DictMember::Nulls:
       return "(null)";
-    case term_dict::Member::JsonNull:
+    case irs::DictMember::JsonNulls:
       return "(json null)";
-    case term_dict::Member::NullElement:
+    case irs::DictMember::NullElements:
       return "(null element)";
-    case term_dict::Member::False:
-    case term_dict::Member::True:
+    case irs::DictMember::False:
+    case irs::DictMember::True:
       return json_leaves ? "(bool)" : "";
-    case term_dict::Member::Numeric:
+    case irs::DictMember::Numbers:
       return json_leaves ? "(numeric)" : "";
-    case term_dict::Member::String:
-    case term_dict::Member::None:
+    case irs::DictMember::Strings:
       return {};
   }
   return {};
@@ -107,9 +106,9 @@ auto MakeFieldNameResolver(const ScanBindData& bind_data) {
         const auto expr_type_id = config.ExpressionType(col_id).id();
         const bool is_expr = expr_type_id != duckdb::LogicalTypeId::INVALID;
         if (is_expr) {
-          AppendKindSuffix(base, duckdb::LogicalType{expr_type_id});
+          AppendTypeSuffix(base, duckdb::LogicalType{expr_type_id});
         } else if (found_type) {
-          AppendKindSuffix(base, column_type);
+          AppendTypeSuffix(base, column_type);
         } else if (entry.HasTextDictionary()) {
           base += "(string)";
         }
@@ -121,13 +120,13 @@ auto MakeFieldNameResolver(const ScanBindData& bind_data) {
       }
     }
     if (found_type) {
-      AppendKindSuffix(base, column_type);
+      AppendTypeSuffix(base, column_type);
     }
     return base;
   };
 }
 
-term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
+duckdb::LogicalType ElementType(const duckdb::LogicalType& type) {
   const auto* leaf = &type;
   for (;;) {
     switch (leaf->id()) {
@@ -138,53 +137,52 @@ term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
         leaf = &duckdb::ArrayType::GetChildType(*leaf);
         continue;
       default:
-        return term_dict::Classify(*leaf);
+        return *leaf;
     }
   }
 }
 
-auto MakeFieldKindResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id, irs::DictRef dict) -> term_dict::Kind {
-    using term_dict::Kind;
+auto MakeFieldTypeResolver(const ScanBindData& bind_data) {
+  return [&bind_data](ColumnId col_id,
+                      irs::DictRef dict) -> duckdb::LogicalType {
     const auto& config = *bind_data.relation.inverted_config;
     const auto lookup = config.LookupField(col_id);
     if (lookup.entry_field_id == term_dict::kPKFieldId) {
-      return Kind::NumericI64;
+      return duckdb::LogicalType::BIGINT;
     }
-    switch (term_dict::MemberOf(dict)) {
-      case term_dict::Member::SqlNull:
-      case term_dict::Member::JsonNull:
-      case term_dict::Member::NullElement:
-        return Kind::Null;
-      case term_dict::Member::False:
-      case term_dict::Member::True:
-        return Kind::Bool;
-      case term_dict::Member::Numeric:
-        if (dict.layout == irs::DictLayout::Json) {
-          return Kind::NumericF64;
+    switch (dict.member) {
+      case irs::DictMember::Nulls:
+      case irs::DictMember::JsonNulls:
+      case irs::DictMember::NullElements:
+        return duckdb::LogicalType::SQLNULL;
+      case irs::DictMember::False:
+      case irs::DictMember::True:
+        return duckdb::LogicalType::BOOLEAN;
+      case irs::DictMember::Numbers:
+        if (irs::IsJson(dict.layout)) {
+          return duckdb::LogicalType::DOUBLE;
         }
         break;
-      case term_dict::Member::String:
-      case term_dict::Member::None:
+      case irs::DictMember::Strings:
         break;
     }
     if (lookup.entry && col_id == lookup.entry_field_id) {
       if (const auto expr_type = config.ExpressionType(col_id);
           expr_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return ClassifyTerms(expr_type);
+        return ElementType(expr_type);
       }
       const auto column_type =
         bind_data.ColumnTypeById(config.ColumnOf(col_id));
       if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-        return ClassifyTerms(column_type);
+        return ElementType(column_type);
       }
-      return Kind::String;
+      return duckdb::LogicalType::VARCHAR;
     }
     const auto column_type = bind_data.ColumnTypeById(config.ColumnOf(col_id));
     if (column_type.id() != duckdb::LogicalTypeId::INVALID) {
-      return ClassifyTerms(column_type);
+      return ElementType(column_type);
     }
-    return Kind::Unsupported;
+    return duckdb::LogicalType{};
   };
 }
 
@@ -371,9 +369,9 @@ void AppendProjections(
 
 duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
                                     const irs::FieldNameResolver& name_of,
-                                    const irs::FieldKindResolver& kind_of) {
+                                    const irs::FieldTypeResolver& type_of) {
   const auto node_of = [&](const DeferredCheck& check) {
-    auto node = irs::ToExplainNode(*check.source, name_of, kind_of);
+    auto node = irs::ToExplainNode(*check.source, name_of, type_of);
     node.attributes["Verify"] = "table filter";
     return node;
   };
@@ -395,17 +393,17 @@ void ScanBindData::AppendSummary(
   const auto& vector = score.vector;
   std::unique_ptr<irs::Scorer> query_scorer;
   const auto name_of = MakeFieldNameResolver(bind);
-  const auto kind_of = MakeFieldKindResolver(bind);
+  const auto type_of = MakeFieldTypeResolver(bind);
   const bool vector_is_range =
     vector && vector->radius != std::numeric_limits<float>::max();
   if (vector_is_range) {
     const auto display =
       MakeVectorFilter(*vector, search.filter, vector->radius);
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *display, name_of, kind_of)));
+                                 *display, name_of, type_of)));
   } else if (search.filter) {
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
-                                 *search.filter, name_of, kind_of)));
+                                 *search.filter, name_of, type_of)));
   }
   const auto rows_text = [](std::span<const RowFilter> rows) {
     return absl::StrJoin(rows | std::views::transform([](const RowFilter& row) {
@@ -423,7 +421,7 @@ void ScanBindData::AppendSummary(
   }
   if (!search.deferred.empty()) {
     out.insert("Table Filter", duckdb::ExplainValue(TableFilterNode(
-                                 search.deferred, name_of, kind_of)));
+                                 search.deferred, name_of, type_of)));
   }
   for (const auto& req : ts_dict.requests) {
     if (!req.having_filter) {
@@ -434,7 +432,7 @@ void ScanBindData::AppendSummary(
         ? std::string{"Index Filter"}
         : absl::StrCat("Index Filter(", DisplayColumnName(req.display_id), ")");
     out.insert(std::move(key), duckdb::ExplainValue(irs::ToExplainNode(
-                                 *req.having_filter, name_of, kind_of)));
+                                 *req.having_filter, name_of, type_of)));
   }
   if (vector && !vector_is_range) {
     const auto col_id = vector->field_id;

@@ -155,7 +155,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
     }
-  } else if (IsNumericTypeId(col_type)) {
+  } else if (term_dict::IsNumeric(col_type)) {
     if (!IsRangeNumericValueType(val_type)) {
       type_mismatch();
     }
@@ -208,7 +208,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
   }
 
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  SetField(range, column_info, term_dict::NumbersOf(LayoutOf(column_info)));
+  SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
   range.SetBoost(ctx.boost);
   SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
@@ -260,7 +260,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
     }
-  } else if (IsNumericTypeId(col_type)) {
+  } else if (term_dict::IsNumeric(col_type)) {
     if (!IsRangeNumericValueType(val_type)) {
       type_mismatch();
     }
@@ -321,7 +321,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
   } else {
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    SetField(range, column_info, term_dict::NumbersOf(LayoutOf(column_info)));
+    SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();

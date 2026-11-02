@@ -124,6 +124,7 @@ class FieldWriter final {
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
   IndexOutput* _out = nullptr;
+  uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
   uint64_t _inline_start = 0;
@@ -138,6 +139,7 @@ class FieldWriter final {
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
   bool _encode = true;
+  bool _group_inline = false;
   const bool _compaction;
 };
 

@@ -85,7 +85,7 @@ class Format10TestCase : public tests::FormatTestCase {
         writer.Write(it, posting_meta);
 
         // write attributes to out
-        writer.Encode(*out, posting_meta);
+        tests::WriteRecord(writer, *out, posting_meta);
       }
 
       auto stats = writer.EndField();
@@ -118,7 +118,7 @@ class Format10TestCase : public tests::FormatTestCase {
       // read term attributes
       {
         irs::PostingMeta read_meta;
-        begin += reader.decode(begin, field.index_features, read_meta);
+        begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
         // check PostingMeta
         {
@@ -284,7 +284,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer.Encode(*out, meta0);
+      tests::WriteRecord(writer, *out, meta0);
     }
 
     // write postings for term0
@@ -300,7 +300,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer.Encode(*out, meta1);
+      tests::WriteRecord(writer, *out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -339,7 +339,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     {
       irs::PostingMeta read_meta;
 
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta for term0
       {
@@ -363,7 +363,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     // check PostingMeta for term1
     {
       irs::PostingMeta read_meta;
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
@@ -429,7 +429,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta0);
 
       // write attributes to out
-      writer.Encode(*out, meta0);
+      tests::WriteRecord(writer, *out, meta0);
       inline0.assign(meta0.Inline());
       meta0.inline_data = inline0.data();
     }
@@ -439,7 +439,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta1);
 
       // write attributes to out
-      writer.Encode(*out, meta1);
+      tests::WriteRecord(writer, *out, meta1);
       inline1.assign(meta1.Inline());
       meta1.inline_data = inline1.data();
     }
@@ -475,7 +475,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term0 attributes
     {
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -498,7 +498,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term1 attributes
     {
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -760,10 +760,10 @@ TEST_P(Format10TestCase, ires336) {
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  const auto* dicts = fr->dicts(field_meta.id);
-  ASSERT_NE(nullptr, dicts);
-  const auto* field = dicts->At(irs::StringLayout::kStrings);
-  ASSERT_NE(nullptr, field);
+  const auto fields = fr->fields(field_meta.id);
+  ASSERT_EQ(1, fields.size());
+  const auto* field = fields.front();
+  ASSERT_EQ(irs::StringLayout::kStrings, field->meta().dict);
   auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));
 
@@ -945,7 +945,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         {
           TestPostings it(docs, field.index_features);
           writer.Write(it, posting_meta);
-          writer.Encode(*out, posting_meta);
+          tests::WriteRecord(writer, *out, posting_meta);
         }
 
         writer.EndField();
@@ -972,7 +972,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         const auto* begin = records.data.get();
 
         irs::PostingMeta read_meta;
-        begin += reader.decode(begin, field.index_features, read_meta);
+        begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
         const auto handles = reader.Handles();
 

@@ -997,14 +997,8 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
     cursor.ReadaheadUntil(0, false);
     return;
   }
-  const auto& in = field.Owner().Input();
-  const uint64_t offset = field.BlockOffset(begin);
-  const uint64_t range = field.BlockOffset(end) - offset;
-  const uint64_t size = std::min(range, kMaxWalkPrefetch);
+  const uint64_t range = field.BlockOffset(end) - field.BlockOffset(begin);
   cursor.ReadaheadUntil(range <= kMaxWalkPrefetch ? 0 : end, false);
-  if (in.Warm(offset, size) == size) {
-    return;
-  }
   plan.Arm(end);
   cursor.WatchCold(plan);
 }

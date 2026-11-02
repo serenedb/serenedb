@@ -771,9 +771,8 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
       ASSERT_NE(expected_fields.end(), expected_field);
       ASSERT_EQ(expected_field->second.id, *actual_id_it);
 
-      const auto* actual_dicts = actual_segment.dicts(*actual_id_it);
-      ASSERT_NE(nullptr, actual_dicts);
-      const auto* actual_terms = actual_dicts->At(expected_field->second.dict);
+      const auto* actual_terms =
+        actual_segment.field(*actual_id_it, expected_field->second.dict);
       ASSERT_NE(nullptr, actual_terms);
       ASSERT_EQ(expected_field->second.id, actual_terms->meta().id);
       ASSERT_EQ(expected_field->second.index_features,

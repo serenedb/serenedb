@@ -530,8 +530,8 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
   AssertField(*oracle, mem, {"green", "red"}, expected);
 
   auto nulls = inv.Docs(9, DictLayout::String);
-  nulls.PushNulls(StringLayout::kNulls, fmt, 6, d);
-  const auto null_docs = nulls.Of(StringLayout::kNulls);
+  nulls.PushNulls(fmt, 6, d);
+  const auto null_docs = nulls.Of(DictMember::Nulls);
   EXPECT_EQ((std::vector<doc_id_t>{d + 2, d + 5}),
             std::vector<doc_id_t>(null_docs.begin(), null_docs.end()));
 }
@@ -1531,7 +1531,7 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
                      doc_id_t first_doc) {
   return !analysis::HasInvalidRows(fmt, n) ||
          doc.WithMemberDocs(id, DictLayout::String, [&](MemberDocs& docs) {
-           docs.PushNulls(StringLayout::kNulls, fmt, n, first_doc);
+           docs.PushNulls(fmt, n, first_doc);
          });
 }
 
@@ -2386,25 +2386,24 @@ TEST(MemberDocsTest, PushesFollowValidityAndDropRepeats) {
   vec.ToUnifiedFormat(5, fmt);
 
   const doc_id_t d = 10;
-  docs_of.PushBools(JsonLayout::kFalse, JsonLayout::kTrue, fmt, 5, d);
-  docs_of.PushNulls(JsonLayout::kNulls, fmt, 5, d);
-  docs_of.Push(JsonLayout::kJsonNulls, d + 7);
-  docs_of.Push(JsonLayout::kJsonNulls, d + 7);
-  docs_of.PushAll(JsonLayout::kNulls, 2, d + 8);
+  docs_of.PushBools(fmt, 5, d);
+  docs_of.PushNulls(fmt, 5, d);
+  docs_of.Push(DictMember::JsonNulls, d + 7);
+  docs_of.Push(DictMember::JsonNulls, d + 7);
+  docs_of.PushAll(DictMember::Nulls, 2, d + 8);
 
-  const auto docs = [&](DictRef dict) {
-    const auto span = inv.Docs(1, DictLayout::Json).Of(dict);
+  const auto docs = [&](DictMember member) {
+    const auto span = inv.Docs(1, DictLayout::Json).Of(member);
     return std::vector<doc_id_t>(span.begin(), span.end());
   };
-  EXPECT_EQ((std::vector<doc_id_t>{d + 2}), docs(JsonLayout::kFalse));
-  EXPECT_EQ((std::vector<doc_id_t>{d, d + 3}), docs(JsonLayout::kTrue));
+  EXPECT_EQ((std::vector<doc_id_t>{d + 2}), docs(DictMember::False));
+  EXPECT_EQ((std::vector<doc_id_t>{d, d + 3}), docs(DictMember::True));
   EXPECT_EQ((std::vector<doc_id_t>{d + 1, d + 4, d + 8, d + 9}),
-            docs(JsonLayout::kNulls));
-  EXPECT_EQ((std::vector<doc_id_t>{d + 7}), docs(JsonLayout::kJsonNulls));
-  EXPECT_TRUE(docs(JsonLayout::kStrings).empty());
+            docs(DictMember::Nulls));
+  EXPECT_EQ((std::vector<doc_id_t>{d + 7}), docs(DictMember::JsonNulls));
   EXPECT_LT(0, inv.MemoryActive());
   inv.Reset();
-  EXPECT_TRUE(docs(JsonLayout::kNulls).empty());
+  EXPECT_TRUE(docs(DictMember::Nulls).empty());
 }
 
 TEST(MemberDocsTest, FieldsHoldTheirLayoutsMembers) {
@@ -2413,17 +2412,20 @@ TEST(MemberDocsTest, FieldsHoldTheirLayoutsMembers) {
   for (size_t layout = 0; layout != kDictLayouts; ++layout) {
     const auto dict_layout = static_cast<DictLayout>(layout);
     auto docs = inv.Docs(layout + 1, dict_layout);
-    const auto members = LayoutMembers(dict_layout).size();
-    for (size_t member = 0; member != members; ++member) {
-      docs.Push({.layout = dict_layout, .member = static_cast<uint8_t>(member)},
-                doc_limits::min() + static_cast<doc_id_t>(member));
+    const auto value = [](DictMember member) {
+      return doc_limits::min() + static_cast<doc_id_t>(member);
+    };
+    for (const auto member : LayoutMembers(dict_layout)) {
+      if (!IsTermMember(member)) {
+        docs.Push(member, value(member));
+      }
     }
-    for (size_t member = 0; member != members; ++member) {
-      const auto span =
-        inv.Docs(layout + 1, dict_layout)
-          .Of({.layout = dict_layout, .member = static_cast<uint8_t>(member)});
-      ASSERT_EQ((std::vector<doc_id_t>{doc_limits::min() +
-                                       static_cast<doc_id_t>(member)}),
+    for (const auto member : LayoutMembers(dict_layout)) {
+      if (IsTermMember(member)) {
+        continue;
+      }
+      const auto span = inv.Docs(layout + 1, dict_layout).Of(member);
+      ASSERT_EQ((std::vector<doc_id_t>{value(member)}),
                 std::vector<doc_id_t>(span.begin(), span.end()));
     }
   }

@@ -184,17 +184,18 @@ bool TryEncodeTerm(irs::DictLayout layout, duckdb::LogicalTypeId type_id,
                    const duckdb::Value& value, irs::TermClause& out) {
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
       type_id == duckdb::LogicalTypeId::BLOB) {
-    out.dict = term_dict::StringsOf(layout);
+    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
     out.term.assign(AsRawBytes(value));
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.dict = term_dict::BoolsOf(layout, BoolConstant(value));
+    out.dict = {.layout = layout,
+                .member = irs::BoolMember(BoolConstant(value))};
     out.term.clear();
     return true;
   }
-  if (IsNumericTypeId(type_id)) {
-    out.dict = term_dict::NumbersOf(layout);
+  if (term_dict::IsNumeric(type_id)) {
+    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
     WithNumericValue(type_id, value, [&](auto v) {
       irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
       out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
@@ -215,12 +216,12 @@ absl::Status SetupTermClause(irs::TermClause& clause,
 
   auto type_id = column_info.logical_type.id();
 
-  if (!IsFilterableType(type_id)) {
+  if (!term_dict::IsIndexable(type_id)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  if (!TryEncodeTerm(LayoutOf(column_info), type_id, value, clause)) {
+  if (!TryEncodeTerm(column_info.layout, type_id, value, clause)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
@@ -392,54 +393,26 @@ const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
   return *cur;
 }
 
-irs::DictLayout LayoutOf(const SearchColumnInfo& info) {
-  if (info.shape == ColumnShape::Json) {
-    return irs::DictLayout::Json;
-  }
-  const auto& type = info.logical_type;
-  if (type.id() == duckdb::LogicalTypeId::LIST) {
-    return term_dict::ListLayout(
-      term_dict::Classify(duckdb::ListType::GetChildType(type)));
-  }
-  if (type.id() == duckdb::LogicalTypeId::ARRAY) {
-    return term_dict::ListLayout(
-      term_dict::Classify(duckdb::ArrayType::GetChildType(type)));
-  }
-  const auto kind = term_dict::Classify(type);
-  return info.shape == ColumnShape::Array ? term_dict::ListLayout(kind)
-                                          : term_dict::ScalarLayout(kind);
-}
-
 NullMarker NullMarkerOf(const SearchColumnInfo& info) {
   return {
     .field = info.field_id,
-    .layout = LayoutOf(info),
-    .json_null =
-      info.shape == ColumnShape::Json && !info.logical_type.IsJSONType(),
+    .layout = info.layout,
+    .json_null = irs::IsJson(info.layout) && !info.logical_type.IsJSONType(),
   };
 }
 
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker) {
-  const auto add = [&](irs::DictRef dict) {
-    AddTerm(parent, marker.field, dict, irs::kSlotTerm, irs::kNoBoost,
-            &irs::ForceConstScore());
+  const auto add = [&](irs::DictMember member) {
+    AddTerm(parent, marker.field, {.layout = marker.layout, .member = member},
+            irs::kSlotTerm, irs::kNoBoost, &irs::ForceConstScore());
   };
-  add(term_dict::NullsOf(marker.layout));
-  if (const auto elements = term_dict::NullElementsOf(marker.layout);
-      irs::Contains(elements)) {
-    add(elements);
+  add(irs::DictMember::Nulls);
+  if (irs::IsList(marker.layout)) {
+    add(irs::DictMember::NullElements);
   }
   if (marker.json_null) {
-    add(irs::JsonLayout::kJsonNulls);
+    add(irs::DictMember::JsonNulls);
   }
-}
-
-irs::containers::FlatHashSet<irs::DictRef> NullRowMarkers() {
-  irs::containers::FlatHashSet<irs::DictRef> markers;
-  for (size_t layout = 0; layout != irs::kDictLayouts; ++layout) {
-    markers.insert(term_dict::NullsOf(static_cast<irs::DictLayout>(layout)));
-  }
-  return markers;
 }
 
 void AddBools(BoolTarget parent, const SearchColumnInfo& info,
@@ -449,17 +422,16 @@ void AddBools(BoolTarget parent, const SearchColumnInfo& info,
     AddFilter<irs::Empty>(parent);
     return;
   }
-  const auto layout = LayoutOf(info);
   if (accept_false != accept_true) {
-    AddTerm(parent, info.field_id, term_dict::BoolsOf(layout, accept_true),
+    AddTerm(parent, info.field_id, RefOf(info, irs::BoolMember(accept_true)),
             irs::kSlotTerm, boost, scorer);
     return;
   }
   auto& node = AddFilter<irs::BooleanFilter>(parent);
   const BoolTarget either{&node, irs::Occur::Should};
-  AddTerm(either, info.field_id, term_dict::BoolsOf(layout, false),
+  AddTerm(either, info.field_id, RefOf(info, irs::DictMember::False),
           irs::kSlotTerm, irs::kNoBoost, scorer);
-  AddTerm(either, info.field_id, term_dict::BoolsOf(layout, true),
+  AddTerm(either, info.field_id, RefOf(info, irs::DictMember::True),
           irs::kSlotTerm, irs::kNoBoost, scorer);
   SetMinMatch(node, 1);
   node.SetBoost(boost);
@@ -498,10 +470,7 @@ void CollectNullableMarkers(const FilterContext& ctx,
                             std::vector<NullMarker>& markers) {
   if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
     if (info->nullable) {
-      const auto marker = NullMarkerOf(*info);
-      if (!absl::c_linear_search(markers, marker)) {
-        markers.push_back(marker);
-      }
+      markers.push_back(NullMarkerOf(*info));
     }
     return;
   }
@@ -509,6 +478,11 @@ void CollectNullableMarkers(const FilterContext& ctx,
     expr, [&](const duckdb::Expression& child) {
       CollectNullableMarkers(ctx, child, markers);
     });
+}
+
+void UniqueMarkers(std::vector<NullMarker>& markers) {
+  absl::c_sort(markers);
+  markers.erase(std::ranges::unique(markers).begin(), markers.end());
 }
 
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
@@ -695,6 +669,7 @@ absl::Status FromNullAwareMinMatchGroup(BoolTarget parent,
     }
     std::vector<NullMarker> markers;
     CollectNullableMarkers(ctx, *branch, markers);
+    UniqueMarkers(markers);
     for (const auto& marker : markers) {
       AddNullMarkers(alternative, marker);
     }
@@ -740,6 +715,7 @@ absl::Status MakeGroup(BoolTarget parent, const FilterContext& ctx,
       }
       CollectNullableMarkers(ctx, *child, markers);
     }
+    UniqueMarkers(markers);
     const bool has_nullable_group =
       null_aware_groups &&
       absl::c_any_of(conj.GetChildren(), [&](const auto& child) {
@@ -831,13 +807,13 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
   }
   const auto field = column_info->field_id;
   const auto marker = NullMarkerOf(*column_info);
-  const auto sql_null = term_dict::NullsOf(marker.layout);
-  if (!marker.json_null) {
+  const auto sql_null = RefOf(*column_info, irs::DictMember::Nulls);
+  if (!marker.json_null || irs::IsList(marker.layout)) {
     AddTerm(ctx.negated ? Negate(filter) : filter, field, sql_null,
             irs::kSlotTerm, ctx.boost, &irs::ForceConstScore());
     return absl::OkStatus();
   }
-  constexpr auto json_null = irs::JsonLayout::kJsonNulls;
+  const auto json_null = RefOf(*column_info, irs::DictMember::JsonNulls);
   if (ctx.negated) {
     const auto target = Negate(filter);
     AddTerm(target, field, sql_null, irs::kSlotTerm, irs::kNoBoost,
@@ -1022,8 +998,8 @@ bool RangeTooWide(const SearchColumnInfo& info, double value, ComparisonOp op) {
 
 absl::Status DeclineWideRange() {
   return absl::UnimplementedError(
-    "wide numeric range on a stored column: the column filter is "
-    "cheaper than the term union");
+    "wide numeric range on a stored column: the vector search checks it on "
+    "the rows it reaches");
 }
 
 template<bool GenericVersion>
@@ -1104,7 +1080,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     SDB_UNREACHABLE();
   };
 
-  if (!IsFilterableType(type_id)) {
+  if (!term_dict::IsIndexable(type_id)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
@@ -1130,7 +1106,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
       default:
         SDB_UNREACHABLE();
     }
-  } else if (IsNumericTypeId(type_id)) {
+  } else if (term_dict::IsNumeric(type_id)) {
     if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
       bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
       if (!wide) {
@@ -1275,13 +1251,13 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
 
   auto type_id = column_info->logical_type.id();
-  if (!IsFilterableType(type_id)) {
+  if (!term_dict::IsIndexable(type_id)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
   const auto target = MaybeNegated(filter, ctx, *column_info);
-  const auto layout = LayoutOf(*column_info);
+  const auto layout = column_info->layout;
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     std::array<bool, 2> seen{};
     for (const auto* value : values) {
@@ -1290,9 +1266,10 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
     auto& node = AddFilter<irs::BooleanFilter>(target);
     for (const bool value : {false, true}) {
       if (seen[value]) {
-        node.Add(irs::TermClause{.field = column_info->field_id,
-                                 .dict = term_dict::BoolsOf(layout, value)},
-                 irs::Occur::Should);
+        node.Add(
+          irs::TermClause{.field = column_info->field_id,
+                          .dict = RefOf(*column_info, irs::BoolMember(value))},
+          irs::Occur::Should);
       }
     }
     SetMinMatch(node, 1);
@@ -2398,13 +2375,11 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   return &cur->Cast<duckdb::BoundConstantExpression>().GetValue();
 }
 
-void UnwrapElementType(SearchColumnInfo& info) {
-  if (info.logical_type.id() == duckdb::LogicalTypeId::LIST) {
-    info.logical_type = duckdb::ListType::GetChildType(info.logical_type);
-    info.shape = ColumnShape::Array;
-  } else if (info.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
-    info.logical_type = duckdb::ArrayType::GetChildType(info.logical_type);
-    info.shape = ColumnShape::Array;
+void UnwrapElementType(duckdb::LogicalType& type) {
+  if (type.id() == duckdb::LogicalTypeId::LIST) {
+    type = duckdb::ListType::GetChildType(type);
+  } else if (type.id() == duckdb::LogicalTypeId::ARRAY) {
+    type = duckdb::ArrayType::GetChildType(type);
   }
 }
 
@@ -2421,7 +2396,7 @@ const SearchColumnInfo* FindColumnRefInfo(
   if (!info) {
     return nullptr;
   }
-  UnwrapElementType(*info);
+  UnwrapElementType(info->logical_type);
   return &ctx.column_cache.emplace(ref.Binding(), std::move(info.value()))
             .first->second;
 }
@@ -2432,10 +2407,6 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
-}
-
-bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  return term_dict::IsNumeric(term_dict::Classify(id));
 }
 
 struct UnwrappedField {
@@ -2481,17 +2452,20 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
     return nullptr;
   }
 
-  UnwrapElementType(*info);
+  UnwrapElementType(info->logical_type);
 
   if (matched_unwrapped && unwrapped.override_type) {
-    const auto& cast_type = *unwrapped.override_type;
+    auto cast_type = *unwrapped.override_type;
+    if (info->layout == irs::DictLayout::JsonList) {
+      UnwrapElementType(cast_type);
+    }
     if (pg::IsInetOrCidr(cast_type) || pg::IsInetOrCidr(info->logical_type)) {
       if (cast_type != info->logical_type) {
         return nullptr;
       }
     } else if (cast_type.id() != info->logical_type.id()) {
-      if (IsNumericTypeId(cast_type.id())) {
-        if (info->shape != ColumnShape::Json) {
+      if (term_dict::IsNumeric(cast_type.id())) {
+        if (!irs::IsJson(info->layout)) {
           return nullptr;
         }
         info->logical_type = duckdb::LogicalType::DOUBLE;
@@ -2501,7 +2475,7 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
     }
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type))) {
+  if (!term_dict::IsIndexable(info->logical_type)) {
     return nullptr;
   }
   const ExprCacheKey key{.field = info->field_id,
@@ -2509,12 +2483,8 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   return &ctx.expr_cache.try_emplace(key, std::move(*info)).first->second;
 }
 
-bool IsFilterableType(duckdb::LogicalTypeId type_id) {
-  return term_dict::IsSupported(term_dict::Classify(type_id));
-}
-
 void ValidateFilterType(duckdb::LogicalTypeId type_id) {
-  if (!IsFilterableType(type_id)) {
+  if (!term_dict::IsIndexable(type_id)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unsupported type id ", static_cast<int>(type_id), " for filter"),
@@ -2523,8 +2493,7 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
 }
 
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
-  return term_dict::IsNumeric(term_dict::Classify(id)) ||
-         id == duckdb::LogicalTypeId::DECIMAL;
+  return term_dict::IsNumeric(id) || id == duckdb::LogicalTypeId::DECIMAL;
 }
 
 duckdb::Value CastConstant(const duckdb::Value& value,

@@ -78,10 +78,11 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
-  virtual void LookupBatch(size_t count, TermAt term, FoundTerm found) const;
+  virtual void LookupBatch(size_t count, TermAt term,
+                           FoundTerm found) const = 0;
 
   virtual void VisitRange(bytes_view from, bytes_view to,
-                          RangeVisitor visit) const;
+                          RangeVisitor visit) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;

@@ -168,14 +168,16 @@ size_t Residency(const void* addr, size_t size,
 uint32_t ResidencyEpoch() noexcept;
 void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
-void PollResidency() noexcept;
+bool PollResidency(uint64_t bytes) noexcept;
 
 template<typename Input>
 void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
-  const uint64_t warm = in.Warm(offset, size);
+  uint64_t warm = in.Warm(offset, size);
   SDB_ASSERT(warm <= size);
+  if (warm != 0 && PollResidency(warm)) {
+    warm = 0;
+  }
   if (warm == size) {
-    PollResidency();
     return;
   }
   offset += warm;
@@ -184,6 +186,20 @@ void Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
     in.Prefetch(offset, size);
   }
   in.MarkWarm(offset, size);
+}
+
+template<typename Input>
+bool Evicted(const Input& in, uint64_t offset, uint64_t size,
+             uint32_t& epoch) noexcept {
+  if (in.Warm(offset, size) == size && !PollResidency(size)) {
+    return false;
+  }
+  const auto current = ResidencyEpoch();
+  if (current == epoch) {
+    return false;
+  }
+  epoch = current;
+  return true;
 }
 
 class ResidencyMap {

@@ -56,7 +56,8 @@ namespace {
 
 using duckdb::ExplainNode;
 using irs::utils::downCast;
-using sdb::connector::term_dict::Kind;
+using duckdb::LogicalType;
+using duckdb::LogicalTypeId;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
   return IsConstScoreSingleton(scorer) ? nullptr : scorer;
@@ -114,55 +115,68 @@ std::string DecodeNumericTerm(bytes_view term) {
   return TermToString(term);
 }
 
-std::string TermValue(bytes_view term, Kind kind) {
-  if (kind == Kind::Bool) {
+bool IsString(const LogicalType& type) {
+  switch (type.id()) {
+    case LogicalTypeId::VARCHAR:
+    case LogicalTypeId::BLOB:
+    case LogicalTypeId::GEOMETRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::string TermValue(bytes_view term, const LogicalType& type) {
+  if (type.id() == LogicalTypeId::BOOLEAN) {
     return !term.empty() && term[0] ? "true" : "false";
   }
-  if (sdb::connector::term_dict::IsNumeric(kind)) {
+  if (sdb::connector::term_dict::IsNumeric(type.id())) {
     return DecodeNumericTerm(term);
   }
-  if (kind == Kind::Inet) {
+  if (sdb::pg::IsInetOrCidr(type)) {
     return sdb::connector::inet_terms::Describe(term);
   }
   return TermToString(term);
 }
 
-std::string PrefixValue(bytes_view prefix, Kind kind) {
-  return kind == Kind::Inet ? TermValue(prefix, kind) : TermToString(prefix);
+std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
+  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
+                                     : TermToString(prefix);
 }
 
-std::string TermValue(const bstring& term, Kind kind) {
-  return TermValue(bytes_view{term}, kind);
+std::string TermValue(const bstring& term, const LogicalType& type) {
+  return TermValue(bytes_view{term}, type);
 }
 
-std::string DictTermValue(DictRef dict, bytes_view term, Kind kind) {
-  switch (sdb::connector::term_dict::MemberOf(dict)) {
-    case sdb::connector::term_dict::Member::False:
+std::string DictTermValue(DictRef dict, bytes_view term,
+                          const LogicalType& type) {
+  switch (dict.member) {
+    case DictMember::False:
       return "false";
-    case sdb::connector::term_dict::Member::True:
+    case DictMember::True:
       return "true";
     default:
-      return TermValue(term, kind);
+      return TermValue(term, type);
   }
 }
 
-std::string ClauseValue(const TermClause& clause, Kind kind) {
-  return DictTermValue(clause.dict, clause.term, kind);
+std::string ClauseValue(const TermClause& clause, const LogicalType& type) {
+  return DictTermValue(clause.dict, clause.term, type);
 }
 
 template<typename T>
-std::string RangeValue(const SearchRange<T>& range, Kind kind) {
+std::string RangeValue(const SearchRange<T>& range, const LogicalType& type) {
   std::string s;
   if (!range.min.empty()) {
     absl::StrAppend(&s, range.min_type == BoundType::Inclusive ? ">=" : ">",
-                    TermValue(range.min, kind));
+                    TermValue(range.min, type));
   }
   if (!range.max.empty()) {
     if (!s.empty()) {
       absl::StrAppend(&s, ", ");
     }
     absl::StrAppend(&s, range.max_type == BoundType::Inclusive ? "<=" : "<",
-                    TermValue(range.max, kind));
+                    TermValue(range.max, type));
   }
   return s;
 }
@@ -284,13 +298,13 @@ std::string_view VectorMetricName(VectorMetric metric) {
 
 struct FilterPrinter {
   const FieldNameResolver& name_of;
-  const FieldKindResolver& kind_of;
+  const FieldTypeResolver& type_of;
 
   std::string FieldName(field_id fid, DictRef dict) const {
     return name_of(sdb::connector::ColumnId{fid}, dict);
   }
-  Kind FieldKind(field_id fid, DictRef dict) const {
-    return kind_of(sdb::connector::ColumnId{fid}, dict);
+  LogicalType FieldType(field_id fid, DictRef dict) const {
+    return type_of(sdb::connector::ColumnId{fid}, dict);
   }
 
   std::string PhraseParts(const ByPhraseOptions& options) const {
@@ -364,15 +378,16 @@ struct FilterPrinter {
       const auto field = run.front().field;
       const auto dict = run.front().dict;
       leaves.attributes["Field"] = FieldName(field, dict);
-      const auto kind = FieldKind(field, dict);
-      SDB_ASSERT(kind != Kind::Null || run.size() == 1);
-      if (kind != Kind::Null || run.front().boost != kNoBoost ||
+      const auto type = FieldType(field, dict);
+      const bool null = type.id() == LogicalTypeId::SQLNULL;
+      SDB_ASSERT(!null || run.size() == 1);
+      if (!null || run.front().boost != kNoBoost ||
           Explicit(run.front().scorer)) {
-        const std::string_view quote = kind == Kind::String ? "'" : "";
+        const std::string_view quote = IsString(type) ? "'" : "";
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
             const auto start = o->size();
-            absl::StrAppend(o, quote, ClauseValue(clause, kind), quote);
+            absl::StrAppend(o, quote, ClauseValue(clause, type), quote);
             const auto pad = [&] { return o->size() == start ? "" : " "; };
             if (clause.boost != kNoBoost) {
               absl::StrAppend(o, pad(), "(", clause.boost, ")");
@@ -449,7 +464,7 @@ struct FilterPrinter {
       ExplainNode node{"Term"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Value"] = DictTermValue(
-        f.dict(), f.options().term, FieldKind(f.field_id(), f.dict()));
+        f.dict(), f.options().term, FieldType(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByRange>::id()) {
@@ -457,7 +472,7 @@ struct FilterPrinter {
       ExplainNode node{"Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
-        RangeValue(f.options().range, FieldKind(f.field_id(), f.dict()));
+        RangeValue(f.options().range, FieldType(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByGranularRange>::id()) {
@@ -465,7 +480,7 @@ struct FilterPrinter {
       ExplainNode node{"Granular Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
-        RangeValue(f.options().range, FieldKind(f.field_id(), f.dict()));
+        RangeValue(f.options().range, FieldType(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByNGramSimilarity>::id()) {
@@ -497,21 +512,21 @@ struct FilterPrinter {
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Prefix"] =
-        PrefixValue(f.options().term, FieldKind(f.field_id(), f.dict()));
+        PrefixValue(f.options().term, FieldType(f.field_id(), f.dict()));
       return node;
     }
     if (type == Type<ByPrefixes>::id()) {
       const auto& f = downCast<const ByPrefixes>(filter);
       ExplainNode node{"Starts With Any"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      const auto kind = FieldKind(f.field_id(), f.dict());
+      const auto field_type = FieldType(f.field_id(), f.dict());
       const auto prefixes = f.options().Prefixes();
       node.attributes["Prefixes"] =
         prefixes.empty()
           ? std::string{"0"}
           : absl::StrCat(prefixes.size(), ", ",
-                         PrefixValue(prefixes.front(), kind), " .. ",
-                         PrefixValue(prefixes.back(), kind));
+                         PrefixValue(prefixes.front(), field_type), " .. ",
+                         PrefixValue(prefixes.back(), field_type));
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {
@@ -638,27 +653,24 @@ struct FilterPrinter {
 };
 
 std::string IdentityField(sdb::connector::ColumnId id, DictRef dict) {
-  const auto member = sdb::connector::term_dict::MemberOf(dict);
-  if (member == sdb::connector::term_dict::Member::String) {
+  if (dict.member == DictMember::Strings) {
     return absl::StrCat(id);
   }
-  return absl::StrCat(id, "(", magic_enum::enum_name(member), ")");
+  return absl::StrCat(id, "(", magic_enum::enum_name(dict.member), ")");
 }
 
-Kind UnknownKind(sdb::connector::ColumnId, DictRef) {
-  return Kind::Unsupported;
-}
+LogicalType UnknownType(sdb::connector::ColumnId, DictRef) { return {}; }
 
 }  // namespace
 
 duckdb::ExplainNode ToExplainNode(const Filter& f) {
-  return ToExplainNode(f, IdentityField, UnknownKind);
+  return ToExplainNode(f, IdentityField, UnknownType);
 }
 
 duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldNameResolver& name_of,
-                                  const FieldKindResolver& kind_of) {
-  return FilterPrinter{.name_of = name_of, .kind_of = kind_of}.Build(f);
+                                  const FieldTypeResolver& type_of) {
+  return FilterPrinter{.name_of = name_of, .type_of = type_of}.Build(f);
 }
 
 }  // namespace irs

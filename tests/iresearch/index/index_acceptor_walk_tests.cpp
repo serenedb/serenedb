@@ -47,10 +47,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
  protected:
   static const irs::TermReader* StringsOf(const irs::SubReader& segment,
                                           irs::field_id id) {
-    const auto* dicts = segment.dicts(id);
-    return dicts && dicts->Layout() == irs::DictLayout::String
-             ? dicts->At(irs::StringLayout::kStrings)
-             : nullptr;
+    return segment.field(id, irs::StringLayout::kStrings);
   }
 
   template<typename Acceptor>

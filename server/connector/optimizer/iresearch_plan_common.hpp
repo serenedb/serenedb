@@ -102,13 +102,11 @@ bool TryClaimIResearchConjunct(
 inline connector::SearchColumnInfo MakeSearchColumnInfo(
   irs::field_id field, const catalog::InvertedIndexField* info,
   duckdb::LogicalType type, catalog::ColumnTokenizer tokenizer) {
-  const bool json_leaves =
-    info && type.IsJSONType() && info->HasJsonLeafFields();
+  const bool json_leaves = info && info->HasJsonLeafFields();
   return {
     .field_id = field,
     .nullable = info != nullptr,
-    .shape = json_leaves ? connector::ColumnShape::Json
-                         : connector::ColumnShape::Scalar,
+    .layout = connector::term_dict::LayoutOf(type, json_leaves),
     .logical_type = std::move(type),
     .tokenizer = std::move(tokenizer),
   };

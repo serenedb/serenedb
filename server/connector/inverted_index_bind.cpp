@@ -821,13 +821,13 @@ void ValidateTermDictKey(std::string_view label,
                           : duckdb::ArrayType::GetChildType(type))
                          .id();
     if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsSupported(term_dict::Classify(child))) {
+        !term_dict::IsIndexable(child)) {
       unsupported();
     }
     return;
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(kind))) {
+  if (!term_dict::IsIndexable(kind)) {
     unsupported();
   }
   if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
@@ -965,7 +965,7 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
     const auto& child_type = col_id == duckdb::LogicalTypeId::LIST
                                ? duckdb::ListType::GetChildType(col_type)
                                : duckdb::ArrayType::GetChildType(col_type);
-    if (is_string_leaf(child_type.id()) && !child_type.IsJSONType()) {
+    if (is_string_leaf(child_type.id())) {
       return;
     }
   }

@@ -465,7 +465,8 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
       const auto* nulls =
         known
           ? nullptr
-          : _seg->field(_field->field_id, term_dict::NullsOf(_field->layout));
+          : _seg->field(_field->field_id, {.layout = _field->layout,
+                                           .member = irs::DictMember::Nulls});
       if (nulls) {
         slot->Nulls().fetch_add(NullDocs(*nulls, count_all),
                                 std::memory_order_relaxed);
@@ -586,7 +587,8 @@ bool TsDictLocalState::NextField() {
     _counts = nullptr;
     _reader = nullptr;
     if (const auto* reader =
-          _seg->field(field.field_id, term_dict::StringsOf(field.layout));
+          _seg->field(field.field_id, {.layout = field.layout,
+                                       .member = irs::DictMember::Strings});
         reader && reader->size() != 0) {
       _reader = reader;
       if (emitting || counting) {
@@ -695,7 +697,8 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
                                               const FieldState& field,
                                               duckdb::idx_t row) {
   const auto* reader =
-    _seg->field(field.field_id, term_dict::NullsOf(field.layout));
+    _seg->field(field.field_id,
+                {.layout = field.layout, .member = irs::DictMember::Nulls});
   if (!reader) {
     return 0;
   }
@@ -753,7 +756,8 @@ void BuildTsDictCounts(ScanGlobalState& g) {
     per_field.resize(reqs.size());
     for (size_t i = 0; i != reqs.size(); ++i) {
       const auto* terms = reader[seg].field(
-        reqs[i].field_id, term_dict::StringsOf(reqs[i].layout));
+        reqs[i].field_id,
+        {.layout = reqs[i].layout, .member = irs::DictMember::Strings});
       per_field[i].Reset(!terms ? 0 : static_cast<uint32_t>(terms->size()));
     }
   }

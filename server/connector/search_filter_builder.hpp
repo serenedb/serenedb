@@ -26,7 +26,6 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <iresearch/index/multi_term_dict.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -57,12 +56,6 @@ using FieldSetGetter =
 // `catalog::NextId()` / `NextNIds()` (single global tick allocator), so a
 // single uint64 fits both. Disambiguate via catalog lookup when the kind
 // matters; the writer/printer paths don't need to.
-enum class ColumnShape : uint8_t {
-  Scalar = 0,
-  Array = 1,
-  Json = 2,
-};
-
 struct SearchColumnInfo {
   irs::field_id field_id = irs::field_limits::invalid();
   // Set iff NULL rows can exist here: producers clear it when a table
@@ -71,7 +64,7 @@ struct SearchColumnInfo {
   // logic holds; IS NULL claims match them; cleared keeps negations plain
   // acceptor shapes and declines IS NULL claims.
   bool nullable = false;
-  ColumnShape shape = ColumnShape::Scalar;
+  irs::DictLayout layout = irs::DictLayout::String;
   irs::field_id text = irs::field_limits::invalid();
   duckdb::LogicalType logical_type;
   catalog::ColumnTokenizer tokenizer;
@@ -185,15 +178,19 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
   return ref;
 }
 
-irs::DictLayout LayoutOf(const SearchColumnInfo& info);
+inline irs::DictRef RefOf(const SearchColumnInfo& info,
+                          irs::DictMember member) {
+  return {.layout = info.layout, .member = member};
+}
 
 inline irs::DictRef TextOf(const SearchColumnInfo& info) {
-  return term_dict::StringsOf(LayoutOf(info));
+  return RefOf(info, irs::DictMember::Strings);
 }
 
 inline irs::DictRef ValuesOf(const SearchColumnInfo& info,
                              duckdb::LogicalTypeId type_id) {
-  return term_dict::ValuesOf(LayoutOf(info), term_dict::Classify(type_id));
+  return RefOf(info, term_dict::IsNumeric(type_id) ? irs::DictMember::Numbers
+                                                   : irs::DictMember::Strings);
 }
 
 template<typename Filter>
@@ -246,14 +243,12 @@ struct NullMarker {
   irs::DictLayout layout = irs::DictLayout::String;
   bool json_null = false;
 
-  bool operator==(const NullMarker&) const = default;
+  auto operator<=>(const NullMarker&) const = default;
 };
 
 NullMarker NullMarkerOf(const SearchColumnInfo& info);
 
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker);
-
-irs::containers::FlatHashSet<irs::DictRef> NullRowMarkers();
 
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single
 // field. Every term required is the `Must` bucket and no threshold at all;

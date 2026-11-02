@@ -314,17 +314,11 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                "column, or an array of such"));
   }
 
-  const auto layout = [&] {
-    if (col_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-      return irs::DictLayout::StringList;
-    }
-    return col_type.IsJSONType() && info->HasJsonLeafFields()
-             ? irs::DictLayout::Json
-             : irs::DictLayout::String;
-  }();
   const auto [kind, agg_name] = *fn_info;
   return MakeTsDictAggregate(root, context, found, index->TermField(col_id),
-                             layout, col_id, kind, agg_name,
+                             connector::term_dict::LayoutOf(
+                               col_type, info->HasJsonLeafFields()),
+                             col_id, kind, agg_name,
                              col_ref->Binding().table_index, agg.GetAlias());
 }
 
@@ -1690,8 +1684,8 @@ bool IsAcceptorOn(const irs::Filter& filter, irs::field_id field) {
   return (
     (type == irs::Type<Fs>::id() &&
      irs::utils::downCast<Fs>(filter).field_id() == field &&
-     connector::term_dict::MemberOf(irs::utils::downCast<Fs>(filter).dict()) ==
-       connector::term_dict::Member::String) ||
+     irs::utils::downCast<Fs>(filter).dict().member ==
+       irs::DictMember::Strings) ||
     ...);
 }
 
@@ -1718,8 +1712,7 @@ bool IsAcceptorTreeOn(irs::Filter& filter, irs::field_id field) {
     for (const auto occur : irs::kAllOccur) {
       for (const auto& clause : node.Terms(occur)) {
         ok = ok && clause.field == field &&
-             connector::term_dict::MemberOf(clause.dict) ==
-               connector::term_dict::Member::String;
+             clause.dict.member == irs::DictMember::Strings;
         ++clauses;
       }
     }
@@ -1768,8 +1761,7 @@ irs::Filter::ptr ClaimOptimizedConjunct(
   connector::EnsureIncludeSides(*one);
   irs::Optimize(one, {.scored = false,
                       .fuse_seekable_acceptors = true,
-                      .analyzed_fields = analyzed_fields,
-                      .null_markers = connector::NullRowMarkers()});
+                      .analyzed_fields = analyzed_fields});
   return one;
 }
 
@@ -1953,8 +1945,7 @@ class TsDictFilterClaim {
     irs::Optimize(f, {.scored = false,
                       .fuse_seekable_acceptors = true,
                       .fuse_acceptor_intersections = fuse_intersections,
-                      .analyzed_fields = _getters.analyzed_fields,
-                      .null_markers = connector::NullRowMarkers()});
+                      .analyzed_fields = _getters.analyzed_fields});
   }
 
   // Comparisons over the enumerated column are the explicit ts_dict term

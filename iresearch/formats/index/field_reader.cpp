@@ -47,6 +47,16 @@ namespace {
 constexpr size_t kBatchTerms = 64;
 constexpr size_t kBatchKeyBytes = 4096;
 
+template<typename Ranges>
+void DropBefore(Ranges& ranges, uint64_t at) {
+  const auto rest = absl::c_find_if(
+    ranges, [&](const FileRange& range) { return range.second > at; });
+  ranges.erase(ranges.begin(), rest);
+  if (!ranges.empty()) {
+    ranges.front().first = std::max(ranges.front().first, at);
+  }
+}
+
 std::vector<uint32_t> DecodePrefixes(bytes_view encoded, field_id id) {
   std::vector<uint32_t> prefixes;
   prefixes.reserve(
@@ -311,6 +321,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     _docs{head.doc_count},
     _has_score_bounds{head.has_score_bounds} {
   _meta.norm = head.norm;
+  _meta.dict = {.layout = head.layout, .member = head.member};
   SDB_ENSURE(head.total_freq <= std::numeric_limits<uint32_t>::max(),
              "term dictionary: total frequency ", head.total_freq,
              " exceeds uint32_t::max");
@@ -335,9 +346,8 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       corrupted();
     }
     std::memcpy(record.bytes.data(), head.record.data(), size);
-    uint64_t inline_end = 0;
-    if (PostingsReader::DecodeDetached(record.bytes.data(), head.features,
-                                       _single, inline_end) != size ||
+    if (PostingsReader::decode(record.bytes.data(), head.features, _single) !=
+          size ||
         head.record_inline.size() != _single.inline_size) {
       corrupted();
     }
@@ -637,10 +647,13 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     last = block;
     last_term = value;
   }
-  if (visited > 1 || !inlines.empty()) {
-    const auto budget = HintRanges(_owner->Input(), blocks);
-    HintRanges(_owner->Input(), inlines, budget);
+  const auto& in = _owner->Input();
+  const bool hinted = visited > 1 || !inlines.empty();
+  if (hinted) {
+    const auto budget = HintRanges(in, blocks);
+    HintRanges(in, inlines, budget);
   }
+  auto epoch = file_utils::ResidencyEpoch();
 
   BlockBuffer buffer;
   BlockView view{};
@@ -648,6 +661,17 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   for (const auto& probe : probes) {
     if (probe.block != parsed) {
       parsed = probe.block;
+      const uint64_t offset = BlockOffset(parsed);
+      if (hinted && file_utils::Evicted(in, offset,
+                                        BlockOffset(parsed + 1) - offset,
+                                        epoch)) {
+        DropBefore(blocks, offset);
+        if (!inlines.empty()) {
+          DropBefore(inlines, InlineSpan(parsed).from);
+        }
+        const auto budget = HintRanges(in, blocks);
+        HintRanges(in, inlines, budget);
+      }
       view = Parse(Block(parsed, buffer), Fsst());
     }
     const auto entry =
@@ -844,6 +868,7 @@ void FieldReader::prepare(const ReaderState& state) {
     Account(_single_inline.capacity());
   }
   _by_id.reserve(heads.size());
+  _dicts.reserve(heads.size());
   bstring prefix;
   uint32_t ordinal = 0;
   for (const auto& head : heads) {
@@ -851,10 +876,12 @@ void FieldReader::prepare(const ReaderState& state) {
     if (head.term_count > 1) {
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
     }
-    const auto& field =
-      _fields.emplace_back(*this, head, prefix, *_in, _separators);
-    _by_id.try_emplace(head.id, head.layout)
-      .first->second.Add(head.member, field);
+    _dicts.push_back(
+      &_fields.emplace_back(*this, head, prefix, *_in, _separators));
+    ++_by_id
+        .try_emplace(head.id, FieldDicts{.first = static_cast<uint32_t>(
+                                           _dicts.size() - 1)})
+        .first->second.count;
     if (_ids.empty() || _ids.back() != head.id) {
       _ids.push_back(head.id);
     }
@@ -873,9 +900,12 @@ const byte_type* FieldReader::KeepInline(bytes_view bytes) {
   return _single_inline.data() + at;
 }
 
-const MultiTermDict* FieldReader::dicts(field_id id) const {
+std::span<const TermReader* const> FieldReader::fields(field_id id) const {
   const auto it = _by_id.find(id);
-  return it == _by_id.end() ? nullptr : &it->second;
+  if (it == _by_id.end()) {
+    return {};
+  }
+  return std::span{_dicts}.subspan(it->second.first, it->second.count);
 }
 
 }  // namespace irs::term_dict

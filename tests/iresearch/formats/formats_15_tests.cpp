@@ -122,6 +122,8 @@ class MockPostingsField final : public irs::TermReader {
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
+  void LookupBatch(size_t, TermAt, FoundTerm) const final {}
+  void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }
@@ -362,7 +364,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     const uint64_t expected_has_score_bounds =
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
-    writer.Encode(*out, posting_meta);
+    tests::WriteRecord(writer, *out, posting_meta);
     writer.End();
   }
 
@@ -382,7 +384,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   const auto* begin = records.data.get();
 
   irs::PostingMeta read_meta;
-  begin += reader->decode(begin, features, read_meta);
+  begin += tests::ReadRecord(begin, features, read_meta);
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);

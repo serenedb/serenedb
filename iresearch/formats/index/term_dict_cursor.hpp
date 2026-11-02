@@ -465,8 +465,11 @@ inline void DecodeRecords(const byte_type*& record, uint32_t count,
                           IndexFeatures features, PostingMeta& meta,
                           uint64_t& inline_end) noexcept {
   for (; count != 0; --count) {
-    record +=
-      PostingsReader::DecodeDetached(record, features, meta, inline_end);
+    record += PostingsReader::decode(record, features, meta);
+    if (meta.inline_size != 0) {
+      inline_end = (inline_end == 0 ? vread<uint64_t>(record) : inline_end) +
+                   meta.inline_size;
+    }
   }
 }
 
@@ -716,6 +719,7 @@ class Cursor {
         .issued = 0,
         .size = _eager ? kLastWindow : kFirstWindow,
       };
+      _epoch = file_utils::ResidencyEpoch();
       if (_eager) {
         ReadAhead(block);
       }
@@ -724,8 +728,8 @@ class Cursor {
     _entry = kNoEntry;
     _record = kNoEntry;
     _restart = 0;
-    if (_cold) {
-      CheckCold(block);
+    if (!_field->Small()) {
+      Watch(block);
     }
     _view = Parse(_field->Block(block, _buffer), _field->Fsst());
     _stop =
@@ -1058,15 +1062,19 @@ class Cursor {
     }
   }
 
-  void CheckCold(uint32_t block) {
+  void Watch(uint32_t block) {
     const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
-    if (in.Warm(offset, size) == size) {
-      return;
+    if (file_utils::Evicted(in, offset, size, _epoch)) {
+      _blocks_ahead.ahead = uint64_t{block} + 1;
+      _blocks_ahead.issued = 0;
+      ReadAhead(block);
     }
-    _cold->Reached(block);
-    in.MarkWarm(offset, size);
+    if (_cold && in.Warm(offset, size) != size) {
+      _cold->Reached(block);
+      in.MarkWarm(offset, size);
+    }
   }
 
   void ReadAhead(uint32_t block) noexcept {
@@ -1133,6 +1141,7 @@ class Cursor {
     .size = file_utils::kPrefetchChunk,
   };
   uint32_t _end;
+  uint32_t _epoch = 0;
   ColdBlocks* _cold = nullptr;
   InlineState _inline_state = InlineState::Off;
   bool _eager = false;

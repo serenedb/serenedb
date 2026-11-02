@@ -28,6 +28,8 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/basic_term_reader.hpp>
 #include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/reader.hpp>
+#include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -54,6 +56,21 @@ inline Records ReadRecords(irs::IndexInput& in) {
   in.ReadData(data.get(), size);
   const auto* end = data.get() + size;
   return {std::move(data), end};
+}
+
+inline void WriteRecord(irs::PostingsWriter& writer, irs::IndexOutput& out,
+                        const irs::PostingMeta& meta) {
+  writer.Encode(out, meta);
+  if (meta.inline_size != 0) {
+    out.WriteData(meta.inline_data, meta.inline_size);
+  }
+}
+
+inline size_t ReadRecord(const irs::byte_type* in, irs::IndexFeatures features,
+                         irs::PostingMeta& meta) {
+  const auto size = irs::PostingsReader::decode(in, features, meta);
+  meta.inline_data = in + size;
+  return size + meta.inline_size;
 }
 
 class SeekPostings : public irs::lead::Node {

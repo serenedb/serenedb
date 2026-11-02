@@ -721,7 +721,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
     absl::c_sort(pks);
     return pks;
   };
-  EXPECT_EQ(irs::DictLayout::StringList, segment.dicts(col_id)->Layout());
+  EXPECT_EQ(irs::DictLayout::StringList,
+            segment.fields(col_id).front()->meta().dict.layout);
   EXPECT_EQ((std::vector<int64_t>{1}),
             pks_of(irs::StringListLayout::kStrings, "a"));
   EXPECT_EQ((std::vector<int64_t>{3}),
@@ -730,6 +731,99 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
             pks_of(irs::StringListLayout::kNulls, {}));
   EXPECT_EQ((std::vector<int64_t>{3, 4}),
             pks_of(irs::StringListLayout::kNullElements, {}));
+}
+
+TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
+  auto trx = _data_writer->GetBatch();
+
+  const connector::ColumnId col_id{1};
+  catalog::InvertedIndexField list_entry;
+  list_entry.text_dictionary = 1;
+  EntryInfoProvider entry_provider =
+    [&](irs::field_id id) -> const catalog::InvertedIndexField* {
+    return id == col_id ? &list_entry : nullptr;
+  };
+  DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider,
+                                    std::vector<connector::ColumnId>{col_id},
+                                    std::move(entry_provider)};
+  const auto rk = KeyTerms({"pk1", "pk2", "pk3", "pk4"});
+  auto pk_vec =
+    MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
+  sink.Init(4, PkChunk{.key_terms = rk, .column = &pk_vec});
+
+  const auto json = duckdb::LogicalType::JSON();
+  const auto type = duckdb::LogicalType::LIST(json);
+  const auto element = [&](std::string_view value) {
+    return duckdb::Value{std::string{value}}.DefaultCastAs(json);
+  };
+  duckdb::Vector vec{type, 4};
+  vec.SetValue(0, duckdb::Value::LIST(json, {element(R"("a")"), element("1"),
+                                             element("true")}));
+  vec.SetValue(1, duckdb::Value{type});
+  vec.SetValue(2, duckdb::Value::LIST(json, {element(R"("b")"), element("null"),
+                                             duckdb::Value{json}}));
+  vec.SetValue(3, duckdb::Value::LIST(json, {element("false"), element("2.5"),
+                                             element(R"("a")")}));
+  sink.SwitchColumn(ColumnDescriptor{col_id, type}, vec, 4);
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->RefreshCommit();
+
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
+  ASSERT_EQ(1, reader.size());
+  auto& segment = reader[0];
+  const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
+  ASSERT_NE(nullptr, pk_column);
+  irs::ReadContext pk_ctx{*segment.GetColReader()};
+  const auto pks_of = [&](irs::DictRef member, irs::bytes_view term) {
+    std::vector<int64_t> pks;
+    const auto* dict = segment.field(col_id, member);
+    if (!dict) {
+      return pks;
+    }
+    auto it = dict->iterator();
+    if (term.empty() ? !it->next() : !it->seek(term)) {
+      return pks;
+    }
+    auto docs = Docs(it->postings(irs::IndexFeatures::None));
+    for (auto doc = docs->Next(); !irs::doc_limits::eof(doc);
+         doc = docs->Next()) {
+      auto pk_state = pk_column->InitScan(pk_ctx);
+      duckdb::Vector out(duckdb::LogicalType::BIGINT, 1);
+      const std::array<uint64_t, 1> rows{doc - irs::doc_limits::min()};
+      irs::column_internal::GatherRows(*pk_column, pk_state, rows, out, 0);
+      pks.push_back(duckdb::FlatVector::GetData<int64_t>(out)[0]);
+    }
+    absl::c_sort(pks);
+    return pks;
+  };
+  const auto text = [](std::string_view value) {
+    return irs::ViewCast<irs::byte_type>(value);
+  };
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  const auto number = [&](double value) {
+    return irs::numeric_utils::EncodeNumericTerm(buf, value);
+  };
+  EXPECT_EQ(irs::DictLayout::JsonList,
+            segment.fields(col_id).front()->meta().dict.layout);
+  EXPECT_EQ((std::vector<int64_t>{1, 4}),
+            pks_of(irs::JsonListLayout::kStrings, text("a")));
+  EXPECT_EQ((std::vector<int64_t>{3}),
+            pks_of(irs::JsonListLayout::kStrings, text("b")));
+  EXPECT_EQ((std::vector<int64_t>{1}),
+            pks_of(irs::JsonListLayout::kNumbers, number(1)));
+  EXPECT_EQ((std::vector<int64_t>{4}),
+            pks_of(irs::JsonListLayout::kNumbers, number(2.5)));
+  EXPECT_EQ((std::vector<int64_t>{1}),
+            pks_of(irs::JsonListLayout::kTrue, {}));
+  EXPECT_EQ((std::vector<int64_t>{4}),
+            pks_of(irs::JsonListLayout::kFalse, {}));
+  EXPECT_EQ((std::vector<int64_t>{3}),
+            pks_of(irs::JsonListLayout::kJsonNulls, {}));
+  EXPECT_EQ((std::vector<int64_t>{2}),
+            pks_of(irs::JsonListLayout::kNulls, {}));
+  EXPECT_EQ((std::vector<int64_t>{3}),
+            pks_of(irs::JsonListLayout::kNullElements, {}));
 }
 
 // Corner case: string with leading null byte is preserved verbatim in the

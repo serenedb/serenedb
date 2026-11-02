@@ -740,9 +740,10 @@ TEST_P(FormatTestCase, fields_read_write) {
     ASSERT_EQ(1, reader->size());
 
     // check terms
-    ASSERT_EQ(nullptr, reader->dicts(999));
-    auto term_reader = reader->dicts(field.id)->At(irs::StringLayout::kStrings);
-    ASSERT_NE(nullptr, term_reader);
+    ASSERT_TRUE(reader->fields(999).empty());
+    ASSERT_EQ(1, reader->fields(field.id).size());
+    auto term_reader = reader->fields(field.id).front();
+    ASSERT_EQ(irs::StringLayout::kStrings, term_reader->meta().dict);
     ASSERT_EQ(field.id, term_reader->meta().id);
     ASSERT_EQ(field.index_features, term_reader->meta().index_features);
 

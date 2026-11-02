@@ -58,8 +58,17 @@ constexpr duckdb::field_id_t kFieldId = 0;
 constexpr duckdb::field_id_t kFieldLayout = 1;
 constexpr duckdb::field_id_t kFieldFirstDict = 2;
 
-constexpr duckdb::field_id_t DictProperty(size_t member) noexcept {
-  return static_cast<duckdb::field_id_t>(kFieldFirstDict + member);
+constexpr duckdb::field_id_t DictProperty(DictMember member) noexcept {
+  return static_cast<duckdb::field_id_t>(kFieldFirstDict +
+                                         static_cast<size_t>(member));
+}
+
+constexpr std::string_view kMemberTags[kDictMembers]{
+  "string", "numeric", "false", "true", "sql_null", "json_null", "null_element",
+};
+
+constexpr const char* MemberTag(DictMember member) noexcept {
+  return kMemberTags[static_cast<size_t>(member)].data();
 }
 
 constexpr duckdb::field_id_t kDictFeatures = 0;
@@ -164,11 +173,11 @@ void WriteField(duckdb::BinarySerializer& out,
   out.WritePropertyWithDefault<uint8_t>(
     kFieldLayout, "layout", static_cast<uint8_t>(layout),
     static_cast<uint8_t>(DictLayout::String));
-  const auto tags = LayoutMembers(layout);
   for (const auto& head : dicts) {
-    SDB_ASSERT(head.layout == layout && head.member < tags.size());
+    SDB_ASSERT(head.layout == layout &&
+               Contains({.layout = layout, .member = head.member}));
     out.WriteObject(
-      DictProperty(head.member), tags[head.member].data(),
+      DictProperty(head.member), MemberTag(head.member),
       [&](duckdb::BinarySerializer& object) { WriteDict(object, head); });
   }
 }
@@ -251,15 +260,14 @@ void ReadField(duckdb::BinaryDeserializer& in, std::vector<FieldHead>& fields) {
   if (layout >= kDictLayouts) {
     Unsupported("dictionary layout", layout);
   }
-  const auto tags = LayoutMembers(static_cast<DictLayout>(layout));
   const auto first = fields.size();
-  for (size_t member = 0; member != tags.size(); ++member) {
-    in.ReadOptionalObject(DictProperty(member), tags[member].data(),
+  for (const auto member : LayoutMembers(static_cast<DictLayout>(layout))) {
+    in.ReadOptionalObject(DictProperty(member), MemberTag(member),
                           [&](duckdb::BinaryDeserializer& object) {
                             auto& head = fields.emplace_back();
                             head.id = id;
                             head.layout = static_cast<DictLayout>(layout);
-                            head.member = static_cast<uint8_t>(member);
+                            head.member = member;
                             ReadDict(object, head);
                           });
   }

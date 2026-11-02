@@ -90,10 +90,7 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   const irs::SubReader* found_segment = nullptr;
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
-      const auto* dicts = segment.dicts(field_id);
-      const auto* f = dicts && dicts->Layout() == irs::DictLayout::String
-                        ? dicts->At(irs::StringLayout::kStrings)
-                        : nullptr;
+      const auto* f = segment.field(field_id, irs::StringLayout::kStrings);
       if (f && f->size() > 64) {
         field = f;
         found_segment = &segment;

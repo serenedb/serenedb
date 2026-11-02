@@ -113,9 +113,9 @@ class SubReaderMock final : public irs::SubReader {
   }
 
   // Returns corresponding term_reader by the specified field id.
-  const irs::MultiTermDict* dicts(irs::field_id) const final {
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     EXPECT_FALSE(true);
-    return nullptr;
+    return {};
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final {

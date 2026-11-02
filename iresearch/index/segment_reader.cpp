@@ -53,8 +53,8 @@ const ColReader* SegmentReader::GetColReader() const {
   return _impl ? _impl->GetColReader() : nullptr;
 }
 
-const MultiTermDict* SegmentReader::dicts(field_id id) const {
-  return _impl->dicts(id);
+std::span<const TermReader* const> SegmentReader::fields(field_id id) const {
+  return _impl->fields(id);
 }
 
 lead::Node::ptr SegmentReader::docs_iterator() const {

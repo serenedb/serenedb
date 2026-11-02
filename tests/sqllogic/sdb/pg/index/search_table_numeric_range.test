@@ -56,6 +56,74 @@ count
 301
 
 query
+SELECT count(*) FROM snr WHERE num BETWEEN 100 AND 1899;
+----
+count
+1800
+
+query
+EXPLAIN SELECT count(*) FROM snr WHERE num BETWEEN 100 AND 1899;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: snr               │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Granular Range ─────╮ │
+│ │ Field: num           │ │
+│ │ Range: >=100, <=1899 │ │
+│ ╰──────────────────────╯ │
+│ Output: row-count only   │
+│ ~400 rows                │
+╰──────────────────────────╯
+
+query
+SELECT sum(pk) FROM snr WHERE num <= 1500 AND tag = 'odd';
+----
+sum
+562500
+
+query
+EXPLAIN SELECT sum(pk) FROM snr WHERE num <= 1500 AND tag = 'odd';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────────────╮
+│ Aggregates: sum_no_overflow(#0)         │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: snr                              │
+│ Lookup: search                          │
+│ Index Filter:                           │
+│ ╭─ And ─────────╮                       │
+│ ╰───────┬───────╯                       │
+│         ├────────────────────╮          │
+│ ╭─ Terms ───────╮  ╭─ Granular Range ─╮ │
+│ │ Field: tag    │  │ Field: num       │ │
+│ │ Values: 'odd' │  │ Range: <=1500    │ │
+│ ╰───────────────╯  ╰──────────────────╯ │
+│ Projections: pk                         │
+│ ~400 rows                               │
+╰─────────────────────────────────────────╯
+
+statement ok
+PREPARE snr_wide(INTEGER, INTEGER) AS
+  SELECT count(*) FROM snr WHERE num BETWEEN $1 AND $2;
+
+query
+EXECUTE snr_wide(100, 1899);
+----
+count
+1800
+
+statement ok
+DEALLOCATE snr_wide;
+
+query
 EXPLAIN SELECT pk FROM snr WHERE num <= 1500
   ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
 ----

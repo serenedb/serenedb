@@ -70,16 +70,7 @@ class PostingsReader final {
   void prepare(const ReaderState& state, IndexFeatures features);
 
   static size_t decode(const byte_type* in, IndexFeatures field_features,
-                       PostingMeta& state) {
-    uint64_t inline_end = 0;
-    return DecodeRecord<false>(in, field_features, state, inline_end);
-  }
-
-  static size_t DecodeDetached(const byte_type* in,
-                               IndexFeatures field_features, PostingMeta& state,
-                               uint64_t& inline_end) {
-    return DecodeRecord<true>(in, field_features, state, inline_end);
-  }
+                       PostingMeta& state);
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
@@ -91,12 +82,6 @@ class PostingsReader final {
   }
 
  private:
-  template<bool Detached>
-  IRS_FORCE_INLINE static size_t DecodeRecord(const byte_type* in,
-                                              IndexFeatures field_features,
-                                              PostingMeta& state,
-                                              uint64_t& inline_end);
-
   template<typename FieldTraits, typename Factory>
   static auto IteratorImpl(IndexFeatures enabled, Factory&& factory);
 
@@ -131,11 +116,8 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-template<bool Detached>
-IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(const byte_type* in,
-                                                     IndexFeatures features,
-                                                     PostingMeta& posting_meta,
-                                                     uint64_t& inline_end) {
+inline IRS_FORCE_INLINE size_t PostingsReader::decode(
+  const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
@@ -161,12 +143,6 @@ IRS_FORCE_INLINE size_t PostingsReader::DecodeRecord(const byte_type* in,
     const auto size = *p++;
     SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
     posting_meta.inline_size = size;
-    if constexpr (Detached) {
-      inline_end = (inline_end == 0 ? vread<uint64_t>(p) : inline_end) + size;
-    } else {
-      posting_meta.inline_data = p;
-      p += size;
-    }
   } else {
     posting_meta.inline_size = 0;
     if (!single) {

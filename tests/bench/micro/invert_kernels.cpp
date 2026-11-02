@@ -1691,11 +1691,11 @@ void BM_UvfBool(benchmark::State& state) {
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
-      docs.PushBools(BoolLayout::kFalse, BoolLayout::kTrue, fmt, kChunk, doc);
+      docs.PushBools(fmt, kChunk, doc);
       doc += kChunk;
     }
-    benchmark::DoNotOptimize(docs.Of(BoolLayout::kFalse).size() +
-                             docs.Of(BoolLayout::kTrue).size());
+    benchmark::DoNotOptimize(docs.Of(DictMember::False).size() +
+                             docs.Of(DictMember::True).size());
   }
   SetUvfCounters(state, nchunks);
 }
@@ -1710,10 +1710,10 @@ void BM_UvfNull(benchmark::State& state) {
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
-      docs.PushNulls(StringLayout::kNulls, fmt, kChunk, doc);
+      docs.PushNulls(fmt, kChunk, doc);
       doc += kChunk;
     }
-    benchmark::DoNotOptimize(docs.Of(StringLayout::kNulls).size());
+    benchmark::DoNotOptimize(docs.Of(DictMember::Nulls).size());
   }
   SetUvfCounters(state, chunks.size());
 }

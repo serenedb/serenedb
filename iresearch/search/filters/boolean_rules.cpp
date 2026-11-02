@@ -515,24 +515,28 @@ LeafField RequiringLeafFieldOf(const Filter& node) {
     node);
 }
 
-void AddAnchor(field_id field, DictRef dict, const OptimizeContext& ctx,
+bool IsNullMarker(DictRef dict) noexcept {
+  return dict.member == DictMember::Nulls;
+}
+
+void AddAnchor(field_id field, DictRef dict,
                irs::containers::FlatHashSet<field_id>& out) {
-  if (field_limits::valid(field) && !ctx.IsNullMarker(dict)) {
+  if (field_limits::valid(field) && !IsNullMarker(dict)) {
     out.insert(field);
   }
 }
 
-void CollectAnchors(const Filter& node, const OptimizeContext& ctx,
+void CollectAnchors(const Filter& node,
                     irs::containers::FlatHashSet<field_id>& out);
 
-void CollectBucketAnchors(const BooleanFilter& node, const OptimizeContext& ctx,
+void CollectBucketAnchors(const BooleanFilter& node,
                           irs::containers::FlatHashSet<field_id>& out) {
   const auto& must = node.Bucket(Occur::Must);
   for (const auto& term : must.terms) {
-    AddAnchor(term.field, term.dict, ctx, out);
+    AddAnchor(term.field, term.dict, out);
   }
   for (const auto& child : must.filters) {
-    CollectAnchors(*child, ctx, out);
+    CollectAnchors(*child, out);
   }
 
   const auto& should = node.Bucket(Occur::Should);
@@ -557,28 +561,27 @@ void CollectBucketAnchors(const BooleanFilter& node, const OptimizeContext& ctx,
       common, [&](const field_id field) { return !branch.contains(field); });
   };
   for (const auto& term : should.terms) {
-    fold([&](auto& b) { AddAnchor(term.field, term.dict, ctx, b); });
+    fold([&](auto& b) { AddAnchor(term.field, term.dict, b); });
   }
   for (const auto& child : should.filters) {
-    fold([&](auto& b) { CollectAnchors(*child, ctx, b); });
+    fold([&](auto& b) { CollectAnchors(*child, b); });
   }
   out.insert(common.begin(), common.end());
 }
 
-void CollectAnchors(const Filter& node, const OptimizeContext& ctx,
+void CollectAnchors(const Filter& node,
                     irs::containers::FlatHashSet<field_id>& out) {
   if (node.type() == Type<BooleanFilter>::id()) {
-    CollectBucketAnchors(irs::utils::downCast<BooleanFilter>(node), ctx, out);
+    CollectBucketAnchors(irs::utils::downCast<BooleanFilter>(node), out);
     return;
   }
   const auto leaf = RequiringLeafFieldOf(node);
-  AddAnchor(leaf.field, leaf.dict, ctx, out);
+  AddAnchor(leaf.field, leaf.dict, out);
 }
 
 }  // namespace
 
-bool BooleanNullMarkerRule::Apply(Filter::ptr& slot,
-                                  const OptimizeContext& ctx) {
+bool BooleanNullMarkerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
   auto& excluded = node.Bucket(Occur::MustNot);
   if (excluded.empty()) {
@@ -587,12 +590,12 @@ bool BooleanNullMarkerRule::Apply(Filter::ptr& slot,
   irs::containers::FlatHashSet<field_id> anchors;
   bool ready = false;
   const auto vacuous = [&](field_id field, DictRef dict) {
-    if (!ctx.IsNullMarker(dict) || !field_limits::valid(field)) {
+    if (!IsNullMarker(dict) || !field_limits::valid(field)) {
       return false;
     }
     if (!ready) {
       ready = true;
-      CollectBucketAnchors(node, ctx, anchors);
+      CollectBucketAnchors(node, anchors);
     }
     return anchors.contains(field);
   };

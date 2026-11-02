@@ -288,8 +288,9 @@ bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) ||
          (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
           irs::field_limits::valid(column_info.text) &&
+          column_info.layout != irs::DictLayout::JsonList &&
           (column_info.logical_type.IsJSONType() ||
-           column_info.shape != ColumnShape::Json));
+           column_info.layout != irs::DictLayout::Json));
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,

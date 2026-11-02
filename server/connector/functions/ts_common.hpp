@@ -189,14 +189,10 @@ inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-// True when `type_id` is a filterable column type; speculative claim sites
-// decline on false.
-bool IsFilterableType(duckdb::LogicalTypeId type_id);
-// Same check for ts_* callers, where an unfilterable column type is a user
-// error: throws THROW_SQL_ERROR("Unsupported type id ... for filter").
+// For ts_* callers, where an unfilterable column type is a user error:
+// throws THROW_SQL_ERROR("Unsupported type id ... for filter").
 void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
-bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 duckdb::Value CastConstant(const duckdb::Value& value,
                            duckdb::LogicalTypeId type_id);
@@ -222,23 +218,39 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
     WithNumericValue(type_id, CastConstant(value, type_id), std::forward<F>(f));
     return;
   }
-  switch (term_dict::Classify(type_id)) {
-    case term_dict::Kind::NumericI32:
+  using enum duckdb::LogicalTypeId;
+  switch (type_id) {
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case UTINYINT:
+    case USMALLINT:
+    case DATE:
       f(value.GetValue<int32_t>());
       break;
-    case term_dict::Kind::NumericI64:
-      if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
-        f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
-      } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
+    case TIME_TZ:
+      f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      break;
+    case BIGINT:
+    case UINTEGER:
+    case TIME:
+    case TIME_NS:
+    case TIMESTAMP:
+    case TIMESTAMP_TZ:
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP_NS:
+    case TIMESTAMP_TZ_NS:
+      if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
         f(value.GetValueUnsafe<int64_t>());
       } else {
         f(value.GetValue<int64_t>());
       }
       break;
-    case term_dict::Kind::NumericF32:
+    case FLOAT:
       f(value.GetValue<float>());
       break;
-    case term_dict::Kind::NumericF64:
+    case DOUBLE:
       f(value.GetValue<double>());
       break;
     default:

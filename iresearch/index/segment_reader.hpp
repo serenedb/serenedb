@@ -60,7 +60,7 @@ class SegmentReader final : public SubReader {
 
   const DocumentMask* docs_mask() const final;
 
-  const MultiTermDict* dicts(field_id id) const final;
+  std::span<const TermReader* const> fields(field_id id) const final;
   std::span<const field_id> field_ids() const final;
 
   NormReader::ptr norms(field_id field) const final;

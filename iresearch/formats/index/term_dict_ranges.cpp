@@ -37,6 +37,7 @@ namespace {
 constexpr uint32_t kLeafFanout = 64;
 constexpr uint32_t kFanout = 16;
 constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
+constexpr uint64_t kTopPieces = 16;
 constexpr byte_type kZeros[kSlack]{};
 
 uint32_t Load32(const byte_type* p, uint32_t i) noexcept {
@@ -108,9 +109,11 @@ class RangeWalk {
       const bool from_side = _from.empty() || _from_rest <= start;
       const bool to_side = _to.empty() || (!last && next <= _to_rest);
       if (from_side && to_side) {
+        const auto* record = range.records + Load32(range.offsets, i);
         PostingMeta meta;
-        PostingsReader::decode(range.records + Load32(range.offsets, i),
-                               _field.meta().index_features, meta);
+        meta.inline_data =
+          record +
+          PostingsReader::decode(record, _field.meta().index_features, meta);
         _visit(Key(_lower, start), meta);
       } else if (level == 0) {
         const auto lower = from_side ? Key(_lower, start) : _from;
@@ -157,21 +160,26 @@ class RangeWalk {
 
 }  // namespace
 
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
+  _pw = &pw;
+  _heavy = std::max(kHeavyDocs, docs / kTopPieces);
+}
+
 DocTee RangeWriter::Tee() noexcept {
   if (!Active()) {
     return {};
   }
-  return {.docs = &_levels[0].group.docs, .limit = 2 * kHeavyDocs};
+  return {.docs = &_levels[0].group.docs, .limit = 2 * _heavy};
 }
 
 void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
   auto& group = _levels[0].group;
-  if (meta.docs_count >= kHeavyDocs) {
+  if (meta.docs_count >= _heavy) {
     group.docs.resize(group.docs_count);
   }
   SDB_ASSERT(group.docs.size() ==
              group.docs_count +
-               (meta.docs_count >= kHeavyDocs ? 0 : meta.docs_count));
+               (meta.docs_count >= _heavy ? 0 : meta.docs_count));
   Push(0, {
             .key = term,
             .meta = meta,
@@ -191,7 +199,7 @@ void RangeWriter::Keep(Piece& piece, const PostingMeta& meta) noexcept {
 
 void RangeWriter::Push(size_t level, const Child& child) {
   auto& range = _levels[level];
-  if (child.docs_count >= kHeavyDocs) {
+  if (child.docs_count >= _heavy) {
     SDB_ASSERT(child.meta.inline_size == 0);
     Close(level);
     Release(level);
@@ -216,7 +224,7 @@ void RangeWriter::Push(size_t level, const Child& child) {
   }
   group.docs_count += child.docs_count;
   const uint32_t fanout = level == 0 ? kLeafFanout : kFanout;
-  if (++range.children == fanout || group.docs_count >= kHeavyDocs) {
+  if (++range.children == fanout || group.docs_count >= _heavy) {
     Close(level);
   }
 }
@@ -258,6 +266,7 @@ void RangeWriter::Release(size_t level) {
   _record.Clear();
   _pw->EncodeAbsolute(_record, piece.meta);
   range.records.append(_record.View());
+  range.records.append(piece.meta.Inline());
   range.ends.push_back(static_cast<uint32_t>(range.records.size()));
   range.starts.append(piece.key);
   if (level != 0) {
@@ -339,6 +348,12 @@ void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
                                 RangeVisitor visit) const {
   if (_terms == 0 || (!from.empty() && from > max()) ||
       (!to.empty() && to <= min())) {
+    return;
+  }
+  if (to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from)) {
+    if (const auto meta = Lookup(from); meta.docs_count != 0) {
+      visit(from, meta);
+    }
     return;
   }
   if (from <= min()) {

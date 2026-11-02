@@ -39,7 +39,6 @@
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/multi_term_dict.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/resource_manager.hpp"
@@ -319,7 +318,7 @@ class FieldReader final {
   uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
-  const MultiTermDict* dicts(field_id id) const;
+  std::span<const TermReader* const> fields(field_id id) const;
   std::span<const field_id> field_ids() const noexcept { return _ids; }
   size_t size() const noexcept { return _fields.size(); }
 
@@ -367,11 +366,17 @@ class FieldReader final {
     byte_type* data;
   };
 
+  struct FieldDicts {
+    uint32_t first = 0;
+    uint32_t count = 0;
+  };
+
   void Bind(const TermsMeta& terms);
   void FillCopies();
 
   std::deque<TermReaderImpl> _fields;
-  containers::FlatHashMap<field_id, MultiTermDict> _by_id;
+  std::vector<const TermReader*> _dicts;
+  containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
   IndexInput::ptr _in;

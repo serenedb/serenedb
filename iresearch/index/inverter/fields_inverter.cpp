@@ -44,14 +44,15 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   for (const auto& item : _fields_map) {
     const auto& entry = item.second;
     bool used = false;
-    for (auto n = LayoutMembers(entry.layout).size(); n != 0; --n) {
-      const auto& slot = _slots[entry.first + n - 1];
-      if (HasTerms(slot.field)) {
-        keyed_dicts += slot.field->Dictionary().Size() != 1;
-        index_features |= slot.field->Meta().index_features;
+    for (const auto member : LayoutMembers(entry.layout)) {
+      if (!IsTermMember(member)) {
+        used = used || !_docs[entry.docs + DocIndex(member)].empty();
+      } else if (const auto* field = _terms[entry.terms + TermIndex(member)].field;
+                 HasTerms(field)) {
+        keyed_dicts += field->Dictionary().Size() != 1;
+        index_features |= field->Meta().index_features;
         used = true;
       }
-      used = used || !slot.docs.empty();
     }
     if (used) {
       sorted.push_back(&item);
@@ -91,22 +92,25 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
     const bool has_extra =
       ei < sorted_extra.size() && sorted_extra[ei]->id() == id;
     SDB_ASSERT(!has_extra || entry.layout == DictLayout::String);
-    const auto members = LayoutMembers(entry.layout).size();
-    for (size_t member = 0; member != members; ++member) {
-      const DictRef dict{.layout = entry.layout,
-                         .member = static_cast<uint8_t>(member)};
-      const auto& slot = _slots[entry.first + member];
+    for (const auto member : LayoutMembers(entry.layout)) {
+      const DictRef dict{.layout = entry.layout, .member = member};
+      if (!IsTermMember(member)) {
+        if (const auto& docs = _docs[entry.docs + DocIndex(member)];
+            !docs.empty()) {
+          slot_terms.Reset(id, {docs.data(), docs.size()});
+          fw.write(dict, slot_terms);
+        }
+        continue;
+      }
+      const auto* field = _terms[entry.terms + TermIndex(member)].field;
       if (has_extra && dict == StringLayout::kStrings) {
-        SDB_ASSERT(!HasTerms(slot.field) && slot.docs.empty());
+        SDB_ASSERT(!HasTerms(field));
         fw.write(dict, *sorted_extra[ei++]);
-      } else if (HasTerms(slot.field)) {
-        scattered.Reset(*slot.field);
+      } else if (HasTerms(field)) {
+        scattered.Reset(*field);
         SDB_ASSERT(scattered.TermCount() != 0);
         terms.Reset(scattered);
         fw.write(dict, terms);
-      } else if (!slot.docs.empty()) {
-        slot_terms.Reset(id, {slot.docs.data(), slot.docs.size()});
-        fw.write(dict, slot_terms);
       }
     }
   }

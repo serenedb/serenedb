@@ -761,6 +761,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
       return SearchColumnInfo{
         .field_id = static_cast<irs::field_id>(columns[phys].id),
         .nullable = columns[phys].nullable,
+        .layout = sdb::connector::term_dict::LayoutOf(columns[phys].type,
+                                                      /*json_leaves=*/false),
         .logical_type = columns[phys].type,
         .tokenizer = analyzer_provider(columns[phys].id)};
     };

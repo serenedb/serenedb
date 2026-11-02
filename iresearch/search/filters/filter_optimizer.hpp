@@ -41,14 +41,9 @@ struct OptimizeContext {
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
   const Scorer* scorer = nullptr;
   Deferral* deferral = nullptr;
-  irs::containers::FlatHashSet<DictRef> null_markers;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
     return analyzed_fields.contains(field);
-  }
-
-  bool IsNullMarker(DictRef dict) const noexcept {
-    return null_markers.contains(dict);
   }
 };
 

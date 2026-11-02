@@ -344,6 +344,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
+  _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();
   _pw.Prepare(state);
@@ -360,13 +361,14 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   const auto props = reader.properties();
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
+  _group_inline = false;
   _width = props.key_width <= kMaxStride ? props.key_width : 0;
   if (_width == 0) {
     SampleFsst(reader);
   }
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
-    _ranges.Begin(_pw);
+    _ranges.Begin(_pw, _docs);
   }
 
   const uint64_t first_inline = _inline.size();
@@ -465,9 +467,14 @@ bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
   const bool record_start = block.ends.size() % kRecordInterval == 0;
   if (record_start) {
     _pw.BeginBlock();
+    _group_inline = false;
   }
   _record.Clear();
-  _pw.EncodeDetached(_record, meta, _inline.size());
+  _pw.Encode(_record, meta);
+  if (meta.inline_size != 0 && !_group_inline) {
+    _record.WriteV64(_inline.size());
+    _group_inline = true;
+  }
   const auto record = _record.View();
   const uint64_t records = block.records.size() + record.size();
   const auto at = block.keys.size();
@@ -636,7 +643,7 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   head.min = ViewCast<char>(bytes_view{_min});
   if (_terms == 1) {
     _record.Clear();
-    _pw.EncodeDetached(_record, _single, 0);
+    _pw.Encode(_record, _single);
     head.record = ViewCast<char>(_record.View());
     head.record_inline = ViewCast<char>(_single.Inline());
     return;

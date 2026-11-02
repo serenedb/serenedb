@@ -65,9 +65,7 @@ struct Field {
 };
 
 bool IsNumbers(irs::DictRef dict) {
-  return dict == irs::NumericLayout::kNumbers ||
-         dict == irs::NumericListLayout::kNumbers ||
-         dict == irs::JsonLayout::kNumbers;
+  return dict.member == irs::DictMember::Numbers;
 }
 
 class OracleTerms final : public irs::TermIterator {
@@ -113,6 +111,7 @@ struct ReadState {
   uint32_t warm_epoch = 0;
   uint64_t warm_end = std::numeric_limits<uint64_t>::max();
   uint64_t length = std::numeric_limits<uint64_t>::max();
+  uint64_t evict_at = std::numeric_limits<uint64_t>::max();
 };
 
 void MaybeFail(const ReadState& state) {
@@ -162,6 +161,10 @@ class CountingInput final : public irs::IndexInput {
     _state->offsets.push_back(offset);
     _state->hinted.push_back(_state->prefetched.size());
     _impl->ReadData(offset, b, count);
+    if (offset >= _state->evict_at) {
+      _state->evict_at = std::numeric_limits<uint64_t>::max();
+      irs::file_utils::InvalidateResidency();
+    }
   }
   int16_t ReadI16() final { return _impl->ReadI16(); }
   int32_t ReadI32() final { return _impl->ReadI32(); }
@@ -242,6 +245,7 @@ class CountingDirectory final : public tests::DirectoryMock {
     _state->warm_epoch = irs::file_utils::ResidencyEpoch();
   }
   void SetWarmEnd(uint64_t end) noexcept { _state->warm_end = end; }
+  void EvictAt(uint64_t offset) noexcept { _state->evict_at = offset; }
   void SetLength(uint64_t length) noexcept { _state->length = length; }
 
  private:
@@ -513,6 +517,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
         }
       }
     }
+    _docs = docs;
     irs::FlushState state{
       .dir = &dir(),
       .name = kSegment,
@@ -554,8 +559,16 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
 
   const irs::TermReader* Get(
     irs::field_id id, irs::DictRef dict = irs::StringLayout::kStrings) const {
-    const auto* dicts = _reader->dicts(id);
-    return dicts ? dicts->At(dict) : nullptr;
+    for (const auto* reader : _reader->fields(id)) {
+      if (reader->meta().dict == dict) {
+        return reader;
+      }
+    }
+    return nullptr;
+  }
+
+  irs::DictLayout LayoutOf(irs::field_id id) const {
+    return _reader->fields(id).front()->meta().dict.layout;
   }
 
   const irs::TermReader* Get(const Field& field) const {
@@ -671,14 +684,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     std::vector<irs::bytes_view> terms{probes.begin(), probes.end()};
     absl::c_sort(terms);
     const auto metas = BatchLookup(reader, terms);
-    std::vector<irs::PostingMeta> fallback(terms.size());
-    reader.irs::TermReader::LookupBatch(
-      terms.size(), [&](size_t i) { return terms[i]; },
-      [&](size_t i, const irs::PostingMeta& meta) { fallback[i] = meta; });
     for (size_t i = 0; i != terms.size(); ++i) {
       SCOPED_TRACE(testing::Message("batch probe ") << i);
       AssertSameMeta(reader.Lookup(terms[i]), metas[i]);
-      AssertSameMeta(fallback[i], metas[i]);
     }
     auto shared = reader.iterator();
     for (const auto& probe : probes) {
@@ -788,6 +796,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
   void AssertLevels(const irs::TermReader& reader,
                     const std::vector<Entry>& entries) const {
     constexpr size_t kHeavyDocs = size_t{1} << 14;
+    constexpr size_t kTopPieces = 16;
+    const size_t heavy = std::max<size_t>(kHeavyDocs, _docs / kTopPieces);
     const auto& impl =
       static_cast<const irs::term_dict::TermReaderImpl&>(reader);
     const auto levels = impl.RangeLevels();
@@ -829,7 +839,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
         ASSERT_LT(first, end);
         ASSERT_EQ(below_keys[first], keys[i]);
         for (size_t j = first; j != end; ++j) {
-          if (below[j].size() >= kHeavyDocs) {
+          if (below[j].size() >= heavy) {
             ASSERT_EQ(1, end - first);
           }
           docs[i].insert(docs[i].end(), below[j].begin(), below[j].end());
@@ -837,10 +847,12 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
         absl::c_sort(docs[i]);
         docs[i].erase(std::unique(docs[i].begin(), docs[i].end()),
                       docs[i].end());
+        const auto* record =
+          level.records + absl::little_endian::Load32(level.offsets + 4 * i);
         irs::PostingMeta meta;
-        irs::PostingsReader::decode(
-          level.records + absl::little_endian::Load32(level.offsets + 4 * i),
-          reader.meta().index_features, meta);
+        meta.inline_data =
+          record + irs::PostingsReader::decode(
+                     record, reader.meta().index_features, meta);
         ASSERT_EQ(docs[i], DocsOf(reader, meta));
       }
       below_keys = std::move(keys);
@@ -966,8 +978,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
         .RangeLevels()
         .size();
     };
-    ASSERT_EQ(3, height(1));
-    ASSERT_EQ(0, height(4));
+    ASSERT_EQ(4, height(1));
+    ASSERT_EQ(1, height(4));
   }
 
   void AssertOrdinal(std::span<const Field> fields, size_t ordinal,
@@ -1021,6 +1033,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
   irs::SegmentMeta _meta;
   std::unique_ptr<irs::IdxReader> _idx;
   std::unique_ptr<irs::term_dict::FieldReader> _reader;
+  irs::doc_id_t _docs = 0;
 };
 
 TEST_P(TermDictTest, edge_keys) {
@@ -1128,7 +1141,8 @@ TEST_P(TermDictTest, one_term_dictionaries_live_in_the_footer) {
   Open(counting);
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ")
-                 << field.id << " member " << int{field.dict.member});
+                 << field.id << " member "
+                 << static_cast<int>(field.dict.member));
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
     const auto& impl =
@@ -1886,13 +1900,14 @@ TEST_P(TermDictTest, json_layout_holds_six_dictionaries) {
   ASSERT_EQ((std::vector<irs::field_id>{1, 2}),
             std::vector<irs::field_id>(_reader->field_ids().begin(),
                                        _reader->field_ids().end()));
-  ASSERT_EQ(irs::DictLayout::Json, _reader->dicts(1)->Layout());
-  ASSERT_EQ(6, _reader->dicts(1)->All().size());
-  ASSERT_EQ(irs::DictLayout::String, _reader->dicts(2)->Layout());
+  ASSERT_EQ(irs::DictLayout::Json, LayoutOf(1));
+  ASSERT_EQ(6, _reader->fields(1).size());
+  ASSERT_EQ(irs::DictLayout::String, LayoutOf(2));
   irs::byte_type ordinal = 0;
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ")
-                 << field.id << " member " << int{field.dict.member});
+                 << field.id << " member "
+                 << static_cast<int>(field.dict.member));
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
     ASSERT_EQ(field.id, reader->meta().id);
@@ -1946,23 +1961,48 @@ TEST_P(TermDictTest, layouts_resolve_members) {
      .entries = MakeEntries(Words(100, 6)),
      .dict = irs::JsonLayout::kStrings},
     {.id = 3, .entries = MakeEntries(Words(100, 7))},
+    {.id = 4,
+     .entries = MakeEntries({slot_term}),
+     .dict = irs::JsonListLayout::kNulls},
+    {.id = 4,
+     .entries = MakeEntries({slot_term}),
+     .dict = irs::JsonListLayout::kNullElements},
+    {.id = 4,
+     .entries = MakeEntries({slot_term}),
+     .dict = irs::JsonListLayout::kJsonNulls},
+    {.id = 4,
+     .entries = MakeEntries({slot_term}),
+     .dict = irs::JsonListLayout::kFalse},
+    {.id = 4,
+     .entries = MakeEntries({slot_term}),
+     .dict = irs::JsonListLayout::kTrue},
+    {.id = 4,
+     .entries = NumericEntries({{int64_t{9}, irs::doc_id_t{2}}}),
+     .dict = irs::JsonListLayout::kNumbers},
+    {.id = 4,
+     .entries = MakeEntries(Words(100, 8)),
+     .dict = irs::JsonListLayout::kStrings},
   };
   Write(fields);
-  ASSERT_EQ(irs::DictLayout::StringList, _reader->dicts(1)->Layout());
-  ASSERT_EQ(irs::DictLayout::Json, _reader->dicts(2)->Layout());
-  ASSERT_EQ(irs::DictLayout::String, _reader->dicts(3)->Layout());
+  ASSERT_EQ(irs::DictLayout::StringList, LayoutOf(1));
+  ASSERT_EQ(irs::DictLayout::Json, LayoutOf(2));
+  ASSERT_EQ(irs::DictLayout::String, LayoutOf(3));
+  ASSERT_EQ(irs::DictLayout::JsonList, LayoutOf(4));
+  ASSERT_EQ(irs::kDictMembers, _reader->fields(4).size());
   for (const auto& field : fields) {
     SCOPED_TRACE(testing::Message("field ")
-                 << field.id << " member " << int{field.dict.member});
+                 << field.id << " member "
+                 << static_cast<int>(field.dict.member));
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
-    ASSERT_EQ(reader, _reader->dicts(field.id)->All()[field.dict.member]);
+    ASSERT_EQ(field.dict, reader->meta().dict);
   }
   ASSERT_EQ(nullptr, Get(3, irs::StringLayout::kNulls));
-  ASSERT_EQ(nullptr, Get(3, irs::DictRef{.layout = irs::DictLayout::String,
-                                         .member = irs::kMaxLayoutMembers}));
-  ASSERT_EQ(nullptr, _reader->dicts(4));
+  ASSERT_EQ(nullptr, Get(3, irs::StringLayout::Of(irs::DictMember::True)));
+  ASSERT_TRUE(_reader->fields(5).empty());
   AssertField(*Get(1, irs::StringListLayout::kNullElements), fields[1].entries);
+  AssertField(*Get(4, irs::JsonListLayout::kNumbers), fields[15].entries);
+  AssertField(*Get(4, irs::JsonListLayout::kStrings), fields[16].entries);
 }
 
 TEST_P(TermDictTest, ordinal_width_follows_the_bound) {
@@ -2848,6 +2888,74 @@ TEST_P(TermDictTest, evicted_warm_pages_are_prefetched_again) {
   ASSERT_EQ(fresh, partial);
 }
 
+TEST_P(TermDictTest, warm_reads_prefetch_once_eviction_is_noticed) {
+  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(2);
+  ASSERT_NE(nullptr, reader);
+  const auto& entries = fields[0].entries;
+  auto& prefetched = counting.Prefetched();
+  auto& offsets = counting.Offsets();
+  auto& hinted = counting.Hinted();
+  const irs::RegexpAcceptor all{
+    irs::ViewCast<irs::byte_type>(std::string_view{".*"})};
+  const auto walk = [&] {
+    auto it = reader->iterator(all);
+    while (it->next()) {
+    }
+  };
+  const auto scan = [&] {
+    auto it = reader->iterator();
+    ASSERT_EQ(irs::SeekResult::Found,
+              it->seek_ge(entries[entries.size() / 2].key));
+    for (size_t i = 0; i != 30000; ++i) {
+      ASSERT_TRUE(it->next());
+    }
+  };
+  std::vector<irs::bytes_view> terms;
+  for (size_t i = 0; i < entries.size(); i += 101) {
+    terms.emplace_back(entries[i].key);
+  }
+  const auto batch = [&] {
+    ASSERT_EQ(terms.size(), BatchLookup(*reader, terms).size());
+  };
+  const auto check = [&](std::string_view name, const auto& run) {
+    SCOPED_TRACE(name);
+    irs::file_utils::InvalidateResidency();
+    offsets.clear();
+    run();
+    ASSERT_GT(offsets.size(), 8);
+    const uint64_t evicted = offsets[offsets.size() / 4];
+
+    irs::file_utils::SyncResidency();
+    counting.MarkWarm();
+    prefetched.clear();
+    offsets.clear();
+    hinted.clear();
+    counting.EvictAt(evicted);
+    run();
+    const auto noticed = static_cast<size_t>(
+      absl::c_find_if(offsets, [&](uint64_t at) { return at >= evicted; }) -
+      offsets.begin());
+    ASSERT_LT(noticed + 2, offsets.size());
+    ASSERT_EQ(0, hinted[noticed]);
+    for (size_t i = noticed + 2; i != offsets.size(); ++i) {
+      const auto at = offsets[i];
+      ASSERT_TRUE(absl::c_any_of(std::span{prefetched}.first(hinted[i]),
+                                 [&](const auto& range) {
+                                   return range.first <= at &&
+                                          at < range.second;
+                                 }))
+        << at;
+    }
+  };
+  check("walk", walk);
+  check("scan", scan);
+  check("batch", batch);
+}
+
 TEST_P(TermDictTest, scans_read_ahead_to_their_bound) {
   const Field fields[]{{.id = 2, .entries = MakeEntries(Words(400000, 5))}};
   Write(fields);
@@ -3394,6 +3502,65 @@ TEST_P(TermDictTest, range_levels_oracle) { RangeLevelsOracle(false); }
 
 TEST_P(TermDictTest, range_levels_oracle_compaction) {
   RangeLevelsOracle(true);
+}
+
+TEST_P(TermDictTest, range_top_level_is_capped_by_segment_docs) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 400000; ++doc) {
+    values.emplace_back(int64_t{doc} * 7, doc);
+  }
+  const Field fields[]{{.id = 1,
+                        .entries = NumericEntries(std::move(values)),
+                        .dict = irs::NumericLayout::kNumbers}};
+  Write(fields);
+  const auto* reader = Get(fields[0]);
+  ASSERT_NE(nullptr, reader);
+  const auto levels =
+    static_cast<const irs::term_dict::TermReaderImpl&>(*reader).RangeLevels();
+  ASSERT_EQ(4, levels.size());
+  ASSERT_LE(levels.back().count, 16);
+  AssertLevels(*reader, fields[0].entries);
+  AssertVisits(*reader, fields[0].entries, 1000);
+}
+
+TEST_P(TermDictTest, point_range_visits_only_its_term) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 50000; ++doc) {
+    values.emplace_back(int64_t{doc % 5000} * 3, doc);
+  }
+  const Field fields[]{{.id = 1,
+                        .entries = NumericEntries(std::move(values)),
+                        .dict = irs::NumericLayout::kNumbers}};
+  Write(fields);
+  const auto* reader = Get(fields[0]);
+  ASSERT_NE(nullptr, reader);
+  const auto& entries = fields[0].entries;
+  const auto point = [&](irs::bytes_view key) {
+    irs::bstring to{key};
+    to.push_back(0);
+    std::vector<irs::bstring> keys;
+    std::vector<irs::doc_id_t> docs;
+    reader->VisitRange(
+      key, to, [&](irs::bytes_view visited, const irs::PostingMeta& meta) {
+        keys.emplace_back(visited);
+        docs = DocsOf(*reader, meta);
+      });
+    return std::pair{std::move(keys), std::move(docs)};
+  };
+  for (const size_t i :
+       {size_t{0}, size_t{1}, entries.size() / 2, entries.size() - 1}) {
+    SCOPED_TRACE(testing::Message("entry ") << i);
+    const auto& key = entries[i].key;
+    irs::bstring to{key};
+    to.push_back(0);
+    const auto [keys, docs] = point(key);
+    ASSERT_EQ(std::vector<irs::bstring>{key}, keys);
+    ASSERT_EQ(DocsIn(entries, key, to), docs);
+  }
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  const auto [keys, docs] =
+    point(irs::numeric_utils::EncodeNumericTerm(buf, int64_t{4}));
+  ASSERT_TRUE(keys.empty());
 }
 
 TEST_P(TermDictTest, mapped_range_visits_do_not_allocate) {

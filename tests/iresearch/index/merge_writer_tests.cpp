@@ -766,8 +766,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   auto docs_count = [](const irs::SubReader& segment, irs::field_id field,
                        irs::DictRef dict = irs::StringLayout::kStrings) {
-    const auto* dicts = segment.dicts(field);
-    const auto* reader = dicts ? dicts->At(dict) : nullptr;
+    const auto* reader = segment.field(field, dict);
     return reader ? reader->docs_count() : 0;
   };
 
@@ -2146,17 +2145,17 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
         const auto d = doc.DocId();
         ASSERT_TRUE(doc.WithMemberDocs(
           kField, irs::DictLayout::Json, [&](irs::MemberDocs& docs) {
-            docs.Push(irs::JsonLayout::kNulls, d);
+            docs.Push(irs::DictMember::Nulls, d);
             if (segment == 0) {
-              docs.Push(irs::JsonLayout::kJsonNulls, d + 1);
+              docs.Push(irs::DictMember::JsonNulls, d + 1);
             } else {
-              docs.Push(irs::JsonLayout::kFalse, d + 2);
+              docs.Push(irs::DictMember::False, d + 2);
             }
-            docs.Push(irs::JsonLayout::kTrue, d + 3);
+            docs.Push(irs::DictMember::True, d + 3);
           }));
         ASSERT_TRUE(doc.WithMemberDocs(
           kList, irs::DictLayout::StringList, [&](irs::MemberDocs& docs) {
-            docs.Push(irs::StringListLayout::kNullElements, d);
+            docs.Push(irs::DictMember::NullElements, d);
           }));
         ASSERT_TRUE(doc.WithField(
           kField, irs::JsonLayout::kNumbers, irs::IndexFeatures::Ranges,
@@ -2213,8 +2212,7 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
 
   const auto docs_of = [&](irs::field_id id, irs::DictRef dict) {
     std::vector<irs::doc_id_t> docs;
-    const auto* dicts = segment->dicts(id);
-    const auto* terms = dicts ? dicts->At(dict) : nullptr;
+    const auto* terms = segment->field(id, dict);
     EXPECT_NE(nullptr, terms);
     if (!terms) {
       return docs;
@@ -2231,9 +2229,12 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
     return docs;
   };
   using Docs = std::vector<irs::doc_id_t>;
-  EXPECT_EQ(irs::DictLayout::Json, segment->dicts(kField)->Layout());
-  EXPECT_EQ(irs::DictLayout::String, segment->dicts(kOther)->Layout());
-  EXPECT_EQ(irs::DictLayout::StringList, segment->dicts(kList)->Layout());
+  const auto layout_of = [&](irs::field_id id) {
+    return segment->fields(id).front()->meta().dict.layout;
+  };
+  EXPECT_EQ(irs::DictLayout::Json, layout_of(kField));
+  EXPECT_EQ(irs::DictLayout::String, layout_of(kOther));
+  EXPECT_EQ(irs::DictLayout::StringList, layout_of(kList));
   EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::JsonLayout::kNulls));
   EXPECT_EQ((Docs{2}), docs_of(kField, irs::JsonLayout::kJsonNulls));
   EXPECT_EQ((Docs{6}), docs_of(kField, irs::JsonLayout::kFalse));
@@ -2244,14 +2245,109 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
   EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
             docs_of(kOther, irs::StringLayout::kStrings));
   EXPECT_EQ((Docs{1, 5}), docs_of(kList, irs::StringListLayout::kNullElements));
-  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::StringLayout::kNulls));
-  EXPECT_EQ(nullptr, segment->dicts(kList)->At(irs::StringListLayout::kNulls));
-  EXPECT_EQ(nullptr,
-            segment->dicts(kList)->At(irs::StringListLayout::kStrings));
-  EXPECT_EQ(irs::IndexFeatures::Ranges, segment->dicts(kField)
-                                          ->At(irs::JsonLayout::kNumbers)
-                                          ->meta()
-                                          .index_features);
+  EXPECT_EQ(nullptr, segment->field(kOther, irs::StringLayout::kNulls));
+  EXPECT_EQ(nullptr, segment->field(kList, irs::StringListLayout::kNulls));
+  EXPECT_EQ(nullptr, segment->field(kList, irs::StringListLayout::kStrings));
+  EXPECT_EQ(
+    irs::IndexFeatures::Ranges,
+    segment->field(kField, irs::JsonLayout::kNumbers)->meta().index_features);
+}
+
+TEST_P(MergeWriterTestCase, merges_every_member_of_a_json_list) {
+  constexpr irs::field_id kField = 1;
+  constexpr uint32_t kDocs = 3;
+
+  irs::MemoryDirectory data_dir;
+  {
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 2; ++segment) {
+      auto trx = writer->GetBatch();
+      {
+        auto doc = trx.Insert(false, kDocs);
+        ASSERT_TRUE(doc);
+        const auto d = doc.DocId();
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kField, irs::DictLayout::JsonList, [&](irs::MemberDocs& docs) {
+            if (segment == 0) {
+              docs.Push(irs::DictMember::Nulls, d);
+              docs.Push(irs::DictMember::False, d + 1);
+              docs.Push(irs::DictMember::JsonNulls, d + 2);
+            } else {
+              docs.Push(irs::DictMember::NullElements, d);
+              docs.Push(irs::DictMember::True, d + 1);
+              docs.Push(irs::DictMember::JsonNulls, d + 1);
+            }
+          }));
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::JsonListLayout::kNumbers, irs::IndexFeatures::Ranges,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertNumerics<int64_t>(
+              [&](auto&& emit) { emit(static_cast<int64_t>(segment), d + 1); });
+          }));
+        const auto value = absl::StrCat("s", segment);
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::JsonListLayout::kStrings, irs::IndexFeatures::None,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertKeywords([&](auto&& emit) {
+              emit(duckdb::string_t{value.data(),
+                                    static_cast<uint32_t>(value.size())},
+                   d + 2);
+            });
+          }));
+      }
+      ASSERT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+  }
+
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::MemoryDirectory dir;
+  irs::SegmentMeta index_segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto segment = irs::SegmentReaderImpl::Open(
+    dir, index_segment,
+    irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
+  ASSERT_EQ(2 * kDocs, segment->docs_count());
+
+  const auto dicts = segment->fields(kField);
+  ASSERT_EQ(irs::kDictMembers, dicts.size());
+  for (const auto* dict : dicts) {
+    EXPECT_EQ(irs::DictLayout::JsonList, dict->meta().dict.layout);
+  }
+  const auto docs_of = [&](irs::DictRef dict) {
+    std::vector<irs::doc_id_t> docs;
+    const auto* terms = segment->field(kField, dict);
+    EXPECT_NE(nullptr, terms);
+    if (!terms) {
+      return docs;
+    }
+    auto it = terms->iterator();
+    while (it->next()) {
+      auto postings = ::tests::Docs(it->postings(irs::IndexFeatures::None));
+      for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+           doc = postings->Next()) {
+        docs.push_back(doc);
+      }
+    }
+    absl::c_sort(docs);
+    return docs;
+  };
+  using Docs = std::vector<irs::doc_id_t>;
+  EXPECT_EQ((Docs{1}), docs_of(irs::JsonListLayout::kNulls));
+  EXPECT_EQ((Docs{4}), docs_of(irs::JsonListLayout::kNullElements));
+  EXPECT_EQ((Docs{3, 5}), docs_of(irs::JsonListLayout::kJsonNulls));
+  EXPECT_EQ((Docs{2}), docs_of(irs::JsonListLayout::kFalse));
+  EXPECT_EQ((Docs{5}), docs_of(irs::JsonListLayout::kTrue));
+  EXPECT_EQ((Docs{2, 5}), docs_of(irs::JsonListLayout::kNumbers));
+  EXPECT_EQ((Docs{3, 6}), docs_of(irs::JsonListLayout::kStrings));
 }
 
 TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
@@ -2269,9 +2365,7 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
         ASSERT_TRUE(doc);
         ASSERT_TRUE(
           doc.WithMemberDocs(kField, layout, [&](irs::MemberDocs& docs) {
-            docs.Push(layout == irs::DictLayout::Bool ? irs::BoolLayout::kTrue
-                                                      : irs::JsonLayout::kTrue,
-                      doc.DocId());
+            docs.Push(irs::DictMember::True, doc.DocId());
           }));
       }
       ASSERT_TRUE(trx.Commit());

@@ -99,7 +99,7 @@ class ScatteredField : util::Noncopyable {
   bool AllInline() const noexcept { return _all_inline; }
 
   uint32_t KeyWidth() const noexcept {
-    return _min_size == _max_size ? _max_size : 0;
+    return _width == kNoWidth ? 0 : _width;
   }
   uint64_t TermBytes() const noexcept { return _term_bytes; }
 
@@ -126,14 +126,14 @@ class ScatteredField : util::Noncopyable {
     return _s->term_starts.empty() ? rank : _s->term_starts[rank];
   }
 
+  static constexpr uint32_t kNoWidth = std::numeric_limits<uint32_t>::max();
+
   void ResetSizes() noexcept {
-    _min_size = std::numeric_limits<uint32_t>::max();
-    _max_size = 0;
+    _width = kNoWidth;
     _term_bytes = 0;
   }
   void NoteSize(uint32_t size) noexcept {
-    _min_size = std::min(_min_size, size);
-    _max_size = std::max(_max_size, size);
+    _width = _width == kNoWidth || _width == size ? size : 0;
     _term_bytes += size;
   }
 
@@ -160,8 +160,7 @@ class ScatteredField : util::Noncopyable {
   ScatterScratch* _s;
   const FieldInverter* _field = nullptr;
   uint64_t _term_bytes = 0;
-  uint32_t _min_size = 0;
-  uint32_t _max_size = 0;
+  uint32_t _width = kNoWidth;
   bool _all_inline = false;
   bool _identity = false;
 };

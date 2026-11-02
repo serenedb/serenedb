@@ -25,7 +25,6 @@ target_sources(
         posting/block_codec.cpp
         segment_meta_reader.cpp
         segment_meta_writer.cpp
-        term_reader.cpp
 )
 
 if(IRESEARCH_BENCH)

@@ -192,17 +192,9 @@ class PostingsWriter final {
     // absolute address of the first
     // entry in the block
     _last_state.clear();
-    _inline_end = 0;
   }
 
-  void Encode(BufferedOutput& out, const PostingMeta& meta) {
-    EncodeRecord<false>(out, meta, 0);
-  }
-
-  void EncodeDetached(BufferedOutput& out, const PostingMeta& meta,
-                      uint64_t inline_at) {
-    EncodeRecord<true>(out, meta, inline_at);
-  }
+  void Encode(BufferedOutput& out, const PostingMeta& meta);
 
   void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
     const auto last = _last_state;
@@ -246,9 +238,6 @@ class PostingsWriter final {
     bool _has_vec{};
   };
 
-  template<bool Detached>
-  void EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
-                    uint64_t inline_at);
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -296,7 +285,6 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   bstring _tail;
-  uint64_t _inline_end = 0;
   PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -394,9 +382,8 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-template<bool Detached>
-void PostingsWriter::EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
-                                  uint64_t inline_at) {
+inline void PostingsWriter::Encode(BufferedOutput& out,
+                                   const PostingMeta& meta) {
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
@@ -423,15 +410,6 @@ void PostingsWriter::EncodeRecord(BufferedOutput& out, const PostingMeta& meta,
   const auto doc_start = _last_state.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
-    if constexpr (Detached) {
-      SDB_ASSERT(_inline_end == 0 || _inline_end == inline_at);
-      if (_inline_end == 0) {
-        out.WriteV64(inline_at);
-      }
-      _inline_end = inline_at + meta.inline_size;
-    } else {
-      out.WriteData(meta.inline_data, meta.inline_size);
-    }
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
@@ -628,7 +606,6 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   PrepareWriters(meta);
   _docs.clear();
   _last_state.clear();
-  _inline_end = 0;
 
   // It's needed because offsets block should be aligned with positions block.
   // But it's possible that fields have different features set.

@@ -76,20 +76,13 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     live_docs_count += segment.live_docs_count;
 
     for (const auto id : reader.field_ids()) {
-      const auto* dicts = reader.dicts(id);
-      if (!dicts) {
-        continue;
-      }
-      const auto all = dicts->All();
-      for (size_t member = 0; member != all.size(); ++member) {
-        const auto* field = all[member];
-        if (!field || field->size() == 0) {
+      for (const auto* field : reader.fields(id)) {
+        if (field->size() == 0) {
           continue;
         }
-        const DictRef dict{.layout = dicts->Layout(),
-                           .member = static_cast<uint8_t>(member)};
         const auto [it, emplaced] = term_ranges.try_emplace(
-          std::pair{id, dict}, FieldTermRange{field->min(), field->max()});
+          std::pair{id, field->meta().dict},
+          FieldTermRange{field->min(), field->max()});
         if (!emplaced) {
           it->second.min = std::min(it->second.min, field->min());
           it->second.max = std::max(it->second.max, field->max());

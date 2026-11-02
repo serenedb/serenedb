@@ -82,8 +82,8 @@ class SegmentReaderImpl final : public SubReader {
 
   lead::Node::ptr docs_iterator() const final;
 
-  const MultiTermDict* dicts(field_id id) const final {
-    return _field_reader->dicts(id);
+  std::span<const TermReader* const> fields(field_id id) const final {
+    return _field_reader->fields(id);
   }
 
   std::span<const field_id> field_ids() const final {

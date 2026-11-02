@@ -73,14 +73,14 @@ struct MergedMember {
 
 struct MergedField {
   std::optional<DictLayout> layout;
-  std::array<MergedMember, kMaxLayoutMembers> members;
+  std::array<MergedMember, kDictMembers> members;
 };
 
 using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
 
 struct DictKey {
   field_id id;
-  size_t position;
+  DictMember member;
 
   auto operator<=>(const DictKey&) const = default;
 };
@@ -376,8 +376,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   }
 
   DictRef Dict() const noexcept {
-    return {.layout = _layout,
-            .member = static_cast<uint8_t>(_current.position)};
+    return {.layout = _layout, .member = _current.member};
   }
 
   field_id id() const noexcept final { return Meta().id; }
@@ -398,10 +397,9 @@ class CompoundFieldIterator final : public BasicTermReader {
   struct FieldIteratorImpl {
     std::span<const field_id> ids;
     size_t pos;
-    size_t position;
+    size_t at;
     const SubReader* reader;
     const DocRemap* remap;
-    DictLayout layout = DictLayout::String;
   };
 
   struct TermIteratorImpl {
@@ -412,7 +410,7 @@ class CompoundFieldIterator final : public BasicTermReader {
   const TermReader* Current(FieldIteratorImpl& it) const;
 
   FieldProperties _props;
-  DictKey _current{.id = field_limits::invalid(), .position = 0};
+  DictKey _current{.id = field_limits::invalid(), .member = {}};
   DictLayout _layout = DictLayout::String;
   FieldMeta _synthesized_meta;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
@@ -430,22 +428,14 @@ void CompoundFieldIterator::Add(const SubReader& reader,
 }
 
 const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
-  for (; it.pos < it.ids.size(); ++it.pos, it.position = 0) {
+  for (; it.pos < it.ids.size(); ++it.pos, it.at = 0) {
     const auto id = it.ids[it.pos];
     if (_field_options &&
         _field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
-    const auto* dicts = it.reader->dicts(id);
-    if (!dicts) {
-      continue;
-    }
-    it.layout = dicts->Layout();
-    const auto all = dicts->All();
-    for (; it.position != all.size(); ++it.position) {
-      if (const auto* terms = all[it.position]) {
-        return terms;
-      }
+    if (const auto fields = it.reader->fields(id); it.at < fields.size()) {
+      return fields[it.at];
     }
   }
   return nullptr;
@@ -454,7 +444,7 @@ const TermReader* CompoundFieldIterator::Current(FieldIteratorImpl& it) const {
 bool CompoundFieldIterator::Next() {
   _progress();
 
-  const DictKey none{.id = field_limits::invalid(), .position = 0};
+  const DictKey none{.id = field_limits::invalid(), .member = {}};
   if (Aborted()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
@@ -463,7 +453,7 @@ bool CompoundFieldIterator::Next() {
   }
 
   for (auto& entry : _field_iterator_mask) {
-    ++_field_iterators[entry.itr_id].position;
+    ++_field_iterators[entry.itr_id].at;
   }
 
   _field_iterator_mask.clear();
@@ -475,17 +465,18 @@ bool CompoundFieldIterator::Next() {
     if (!field_terms) {
       continue;
     }
+    const auto dict = field_terms->meta().dict;
     const DictKey key{.id = field_itr.ids[field_itr.pos],
-                      .position = field_itr.position};
+                      .member = dict.member};
     const bool first = !field_limits::valid(_current.id) || key < _current;
     if (!first && key != _current) {
       continue;
     }
     if (first) {
       _field_iterator_mask.clear();
-      _layout = field_itr.layout;
+      _layout = dict.layout;
     }
-    SDB_ASSERT(field_itr.layout == _layout);
+    SDB_ASSERT(dict.layout == _layout);
     const auto features = field_terms->meta().index_features;
     _synthesized_meta.index_features =
       _field_iterator_mask.empty()
@@ -543,26 +534,23 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
     if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
-    const auto* dicts = reader.dicts(id);
-    if (!dicts) {
+    const auto fields = reader.fields(id);
+    if (fields.empty()) {
       continue;
     }
     auto& field = field_meta_map[id];
+    const auto layout = fields.front()->meta().dict.layout;
     if (!field.layout) {
-      field.layout = dicts->Layout();
-    } else if (*field.layout != dicts->Layout()) {
+      field.layout = layout;
+    } else if (*field.layout != layout) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                       ERR_MSG("merge: field ", id,
                               " has different dictionary layouts in its "
                               "segments"));
     }
-    const auto all = dicts->All();
-    for (size_t member = 0; member != all.size(); ++member) {
-      const auto* term_reader = all[member];
-      if (!term_reader) {
-        continue;
-      }
-      auto& merged = field.members[member];
+    for (const auto* term_reader : fields) {
+      auto& merged =
+        field.members[static_cast<size_t>(term_reader->meta().dict.member)];
       const auto features = term_reader->meta().index_features;
       index_features |= features;
       merged.features = merged.present ? merged.features & features : features;
@@ -665,8 +653,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   for (const auto& src : sources) {
     const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
-      const auto* dicts = src.reader->dicts(id);
-      if (const auto* source_terms = dicts ? dicts->At(dict) : nullptr;
+      if (const auto* source_terms = src.reader->field(id, dict);
           source_terms && field_limits::valid(source_terms->meta().norm)) {
         reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
@@ -733,7 +720,7 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
     }
     const DictRef dict{
       .layout = *field.layout,
-      .member = static_cast<uint8_t>(normed - field.members.begin())};
+      .member = static_cast<DictMember>(normed - field.members.begin())};
     const auto new_norm_id =
       MergeNormColumnFromSources(col_writer, id, dict, sources, field_options);
     if (field_limits::valid(new_norm_id)) {
@@ -777,7 +764,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   const auto extra_key = [](const BasicTermReader* reader) {
     return DictKey{
       .id = reader->id(),
-      .position = StringLayout::kStrings.member,
+      .member = StringLayout::kStrings.member,
     };
   };
   const auto write_extra = [&](const BasicTermReader& reader) {
@@ -788,7 +775,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 
   while (field_itr.Next()) {
     const auto dict = field_itr.Dict();
-    const DictKey key{.id = field_itr.Meta().id, .position = dict.member};
+    const DictKey key{.id = field_itr.Meta().id, .member = dict.member};
     while (ei < en && extra_key(sorted_extra[ei]) < key) {
       write_extra(*sorted_extra[ei]);
       ++ei;

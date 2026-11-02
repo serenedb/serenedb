@@ -216,7 +216,7 @@ void Open(Data& data) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
-  data.field = data.fields->dicts(1)->At(irs::StringLayout::kStrings);
+  data.field = data.fields->fields(1).front();
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
   std::vector<bytes_view> separators;

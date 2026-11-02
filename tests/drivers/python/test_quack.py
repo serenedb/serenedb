@@ -541,10 +541,10 @@ def test_server_settings_need_superuser(servers) -> None:
                         "quack_prepare_inline_rows = 1",
                         "quack_default_client_id = 'abcd'"):
             with pytest.raises(psycopg.errors.InsufficientPrivilege,
-                               match="must be superuser"):
+                               match="permission denied to set parameter"):
                 alice.execute(f"SET {setting}")
         with pytest.raises(psycopg.errors.InsufficientPrivilege,
-                           match="must be superuser"):
+                           match="permission denied to set parameter"):
             alice.execute("RESET quack_max_sessions")
         alice.execute("SET quack_default_statement_timeout = 5000")
     assert conn_b.execute(

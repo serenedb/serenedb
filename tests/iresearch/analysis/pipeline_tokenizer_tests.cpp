@@ -498,8 +498,8 @@ TEST(pipeline_token_stream_test, filter_after_stacked_ngrams_keeps_positions) {
   std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
   pipeline_options.emplace_back(MakeDelimiter(" "));
   pipeline_options.emplace_back(MakeNGram(2, 3, /*preserve_original=*/false));
-  pipeline_options.emplace_back(
-    irs::analysis::FilterTokensTokenizer::Make({.min_length = 3}));
+  pipeline_options.emplace_back(irs::analysis::FilterTokensTokenizer::Make(
+    {.min_length = 3}, tests::Cache()));
   irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
   const AnalyzerTokens expected{
     {"sea", 0, 3, 0},  {"ear", 1, 4, 1},  {"arc", 2, 5, 2},  {"rch", 3, 6, 3},

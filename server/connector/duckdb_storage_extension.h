@@ -25,19 +25,16 @@
 #include <string_view>
 #include <vector>
 
+#include "search/store.h"
+
 namespace sdb::catalog {
 
 struct DataDirectory;
 
 }  // namespace sdb::catalog
-namespace sdb::search {
-
-class InvertedIndexStorage;
-
-}  // namespace sdb::search
 namespace sdb::connector {
 
-std::vector<std::shared_ptr<search::InvertedIndexStorage>> InvertedStorages(
+std::vector<std::shared_ptr<search::Store>> InvertedStorages(
   duckdb::AttachedDatabase& db);
 
 // Register the storage extension with a DuckDB config (before DB creation).

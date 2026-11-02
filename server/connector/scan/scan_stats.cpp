@@ -89,7 +89,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
   explicit ScanPartition(const ScanBindData& bind,
-                         search::InvertedIndexSnapshotPtr snapshot)
+                         search::StoreSnapshotPtr snapshot)
     : _bind{bind}, _snapshot{std::move(snapshot)} {}
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetColumnStatistics(
@@ -107,7 +107,7 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
 
  private:
   const ScanBindData& _bind;
-  search::InvertedIndexSnapshotPtr _snapshot;
+  search::StoreSnapshotPtr _snapshot;
 };
 
 }  // namespace

@@ -35,8 +35,7 @@
 namespace sdb {
 namespace search {
 
-class InvertedIndexStorage;
-class SearchTable;
+class Store;
 
 class SearchEngine;
 
@@ -61,10 +60,8 @@ class SearchEngine final {
   void stop();
 
   // Launch the per-target refresh + compaction loops, registering their Futures
-  // so stop() can join them. Templated on the storage type
-  // (InvertedIndexStorage or SearchTable); instantiated for both in the .cpp.
-  template<typename Storage>
-  void StartTasks(const std::shared_ptr<Storage>& storage);
+  // so stop() can join them.
+  void StartTasks(const std::shared_ptr<Store>& store);
 
   // Loops poll this so they bail out of long-running cycles promptly.
   bool IsStopping() const noexcept {

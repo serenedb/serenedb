@@ -63,7 +63,7 @@
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 namespace {
@@ -208,7 +208,7 @@ void RequireSearchTableIndexOption(std::string_view name) {
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
-  std::shared_ptr<search::SearchTable> inherited_storage,
+  std::shared_ptr<search::Store> inherited_storage,
   duckdb::shared_ptr<duckdb::CatalogSet> inherited_triggers)
   : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
                               std::move(inherited_triggers)},
@@ -220,7 +220,7 @@ SearchTableEntry::SearchTableEntry(
   }
   _options = ResolveOptions(base.options);
   if (!_storage) {
-    _storage = search::SearchTable::Create(
+    _storage = std::make_shared<search::Store>(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
       _options, GetColumns());

@@ -157,6 +157,14 @@ statement ok
 RESET sdb_faults;
 
 
+statement ok
+INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bpm_s;
+
+
 connection index_compactor
 statement async ok
 VACUUM (COMPACT_INDEX) bpm_idx;
@@ -233,4 +241,4 @@ query
 SELECT count(*) AS n, sum(id) AS ids FROM bpm_s;
 ----
 n	ids
-200	20100
+300	45150

@@ -47,8 +47,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_storage_extension.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "storage_engine/search_engine.h"
 #include "utils/file_utils.h"
 
@@ -91,9 +90,8 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
                         GenerationOf(table.Storage()->GetDirectoryReader())});
     },
     [&](catalog::InvertedIndexEntry& index) {
-      stores.push_back(
-        {database, index.oid,
-         GenerationOf(index.Storage()->GetInvertedIndexSnapshot()->reader)});
+      stores.push_back({database, index.oid,
+                        GenerationOf(index.Storage()->GetDirectoryReader())});
     });
 }
 

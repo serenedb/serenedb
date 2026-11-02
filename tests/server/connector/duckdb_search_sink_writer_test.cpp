@@ -47,16 +47,6 @@
 
 namespace {
 
-std::vector<duckdb::string_t> KeyTerms(
-  std::initializer_list<std::string_view> keys) {
-  std::vector<duckdb::string_t> out;
-  out.reserve(keys.size());
-  for (const auto k : keys) {
-    out.emplace_back(k.data(), static_cast<uint32_t>(k.size()));
-  }
-  return out;
-}
-
 using namespace sdb;
 using namespace connector;
 
@@ -213,20 +203,6 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   irs::IndexWriter::ptr _data_writer;
 };
 
-// The inline string_t key builders must stay byte-identical to the string
-// encoders: a mismatch silently breaks delete-by-PK against indexed terms.
-TEST(PrimaryKeyTermTest, KeyTermMatchesStringEncoders) {
-  for (const int64_t v :
-       {std::numeric_limits<int64_t>::min(), int64_t{-1}, int64_t{0},
-        int64_t{1}, std::numeric_limits<int64_t>::max(), int64_t{-123456789},
-        int64_t{987654321012345678}}) {
-    std::string key;
-    connector::primary_key::AppendSigned(key, v);
-    const auto term = primary_key::SignedKeyTerm(v);
-    ASSERT_EQ(key, std::string_view(term.GetData(), term.GetSize())) << v;
-  }
-}
-
 TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
   auto dict = std::make_shared<catalog::Tokenizer>(
     search::Features{},
@@ -274,9 +250,6 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     connector::ColumnId{4}, connector::ColumnId{5}};
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id};
 
-  const std::vector<std::string_view> pk{
-    {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
-
   // Indexed term values per row (per column).
   const std::vector<std::string_view> string_values{
     std::string_view{"rrr", 3}, std::string_view{"", 0},
@@ -287,10 +260,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   const std::vector<int64_t> bigint_values{9, 10, 11, 12};
 
   // First batch: rows 0 and 1
-  const auto rk1 = KeyTerms({pk[0], pk[1]});
   auto pk_vec1 =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2});
-  sink.Init(2, PkChunk{.key_terms = rk1, .column = &pk_vec1});
+  sink.Init(2, &pk_vec1);
   {
     auto vec = MakeNumericVector<int32_t>(duckdb::LogicalType::INTEGER,
                                           {int_values[0], int_values[1]});
@@ -323,10 +295,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   sink.Finish();
 
   // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
-  const auto rk2 = KeyTerms({pk[2], pk[3]});
   auto pk_vec2 =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {3, 4});
-  sink.Init(2, PkChunk{.key_terms = rk2, .column = &pk_vec2});
+  sink.Init(2, &pk_vec2);
   {
     auto vec = MakeNumericVector<int32_t>(duckdb::LogicalType::INTEGER,
                                           {int_values[2], int_values[3]});
@@ -476,8 +447,6 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
 
   const std::vector<connector::ColumnId> col_id{connector::ColumnId{1},
                                                 connector::ColumnId{2}};
-  const std::vector<std::string_view> pk{
-    {"pk1", 3}, {"pk2", 3}, {"pk3", 3}, {"pk4", 3}};
 
   const std::vector<std::string_view> string_data{std::string_view{"foo", 3},
                                                   std::string_view{"bar", 3}};
@@ -506,10 +475,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
 
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, col_id,
                                     std::move(entry_provider)};
-  const auto rk = KeyTerms({pk[0], pk[1], pk[2], pk[3]});
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
-  sink.Init(4, PkChunk{.key_terms = rk, .column = &pk_vec});
+  sink.Init(4, &pk_vec);
 
   {
     // Row pattern: foo, NULL, bar, NULL.
@@ -677,10 +645,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   const connector::ColumnId col_id{1};
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {col_id}};
 
-  const std::vector<std::string_view> pk{{"pk1", 3}};
-  const auto rk = KeyTerms({pk[0]});
   auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1});
-  sink.Init(1, PkChunk{.key_terms = rk, .column = &pk_vec});
+  sink.Init(1, &pk_vec);
 
   // Literal 4-byte term: \x0 'f' 'o' 'o'.
   auto vec = MakeVarcharVector({std::string_view{"\x0foo", 4}});

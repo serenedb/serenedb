@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -43,13 +44,13 @@ class FilterTokensTokenizer final
     size_t max_length{0};
     std::string predicate;
   };
-  static ptr Make(Options opts);
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
   static constexpr std::string_view type_name() noexcept {
     return "filter_tokens";
   }
 
-  explicit FilterTokensTokenizer(Options opts);
+  FilterTokensTokenizer(Options opts, duckdb::SharedObjectCache& cache);
   ~FilterTokensTokenizer() override;
 
   TokenTraits Traits() const noexcept final {

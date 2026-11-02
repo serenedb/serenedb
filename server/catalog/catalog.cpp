@@ -94,8 +94,7 @@
 #include "pg/connection_context.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 
@@ -171,7 +170,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   if (const auto& store = entry->SearchStore()) {
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
-    entry->AdoptStorage(search::InvertedIndexStorage::Create(
+    entry->AdoptStorage(std::make_shared<search::Store>(
       _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
@@ -779,9 +778,9 @@ void ForEachSearchStorage(
   }
 }
 
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+std::vector<std::shared_ptr<search::Store>> SearchTableStorages(
   SereneDBCatalog& catalog) {
-  std::vector<std::shared_ptr<search::SearchTable>> tables;
+  std::vector<std::shared_ptr<search::Store>> tables;
   ForEachSearchStorage(
     catalog,
     [&](SearchTableEntry& table) { tables.push_back(table.Storage()); },

@@ -1626,6 +1626,14 @@ bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
 }
 
+const duckdb::case_insensitive_set_view_t kNonTransactionalSettings = {
+  "sdb_faults",
+};
+
+bool IsNonTransactionalSetting(std::string_view name) {
+  return kNonTransactionalSettings.contains(name);
+}
+
 const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
   "max_expression_depth",
 };

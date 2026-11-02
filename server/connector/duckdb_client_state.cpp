@@ -134,7 +134,7 @@ SereneDBClientState& SereneDBClientState::Register(
       sdb_ctx.MarkSettingsChanged();
       // Outside an explicit transaction there's nothing to roll back --
       // the map stays empty.
-      if (!sdb_ctx.IsExplicitTransaction()) {
+      if (!sdb_ctx.IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
         return;
       }
       duckdb::Value old_value;
@@ -256,6 +256,7 @@ void SereneDBClientState::TransactionPreCommit(
           auto index = entry->GetWriteHandle<InvertedStoreIndex>();
           index->PrepareFeed(*_connection_ctx, context, rows);
         }
+        SDB_PARK_ONCE_ON_FAILURE("commit_feed_prepared");
       }
     }
   }

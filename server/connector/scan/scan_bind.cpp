@@ -58,8 +58,8 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
-#include "search/search_table_transaction.h"
+#include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {
@@ -116,12 +116,12 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
-search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
+search::Writes::PinnedSearchTable PinnedSearchTable(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::SearchTable>& store) {
+  const std::shared_ptr<search::Store>& store) {
   const auto make = [&] {
     auto config = store->ScanConfig();
-    return search::SearchTableTransaction::PinnedSearchTable{
+    return search::Writes::PinnedSearchTable{
       .reader =
         std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
       .config = std::move(config),
@@ -136,7 +136,7 @@ search::SearchTableTransaction::PinnedSearchTable PinnedSearchTable(
 
 irs::DirectoryReader PinnedSearchReader(
   duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::SearchTable>& store) {
+  const std::shared_ptr<search::Store>& store) {
   return irs::DirectoryReader{
     *PinnedSearchTable(context, database_oid, oid, store).reader};
 }
@@ -145,8 +145,8 @@ decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
   return [database_oid = table.catalog.GetOid(), oid = table.oid,
           store = table.Storage()](
-           duckdb::ClientContext& context) -> search::InvertedIndexSnapshotPtr {
-    return std::make_shared<search::InvertedIndexSnapshot>(
+           duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
+    return std::make_shared<search::StoreSnapshot>(
       PinnedSearchReader(context, database_oid, oid, store), nullptr);
   };
 }
@@ -492,12 +492,12 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   if (search_table) {
     AcquireSnapshot(*data, context, SearchTableSnapshot(*search_table));
   } else {
-    AcquireSnapshot(
-      *data, context,
-      [oid = entry.oid, storage = entry.Storage()](
-        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
-        return GetSereneDBContext(ctx).EnsureSearchSnapshot(oid, storage);
-      });
+    AcquireSnapshot(*data, context,
+                    [oid = entry.oid, storage = entry.Storage()](
+                      duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
+                      return GetSereneDBContext(ctx).EnsureSearchSnapshot(
+                        oid, storage);
+                    });
   }
   data->relation.inverted_config = entry.Config();
   data->relation.row_group_size =
@@ -533,7 +533,7 @@ duckdb::TableFunction BindSearchTableScan(
 
 bool LooksUpByPk(const ScanBindData& bind) {
   return bind.relation.kind == ScanEntryKind::InvertedIndex &&
-         bind.relation.ScannedIndex().pk.column == PkColumnKind::Has &&
+         bind.relation.ScannedIndex().pk == PkColumnKind::Has &&
          (!bind.view || bind.view->fast_path);
 }
 
@@ -548,8 +548,7 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
 }
 
 std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
-  if (bind.view &&
-      bind.relation.inverted_config->pk.column == PkColumnKind::Has) {
+  if (bind.view && bind.relation.inverted_config->pk == PkColumnKind::Has) {
     if (const auto& fp = bind.view->fast_path) {
       return fp->pk_spec;
     }
@@ -557,9 +556,9 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-DeferredBuild BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan,
-  const search::InvertedIndexSnapshot& snapshot) {
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan,
+                                  const search::StoreSnapshot& snapshot) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
   const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {

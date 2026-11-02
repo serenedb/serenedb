@@ -214,7 +214,7 @@ void ForEachSearchStorage(
   SereneDBCatalog& catalog, absl::FunctionRef<void(SearchTableEntry&)> table,
   std::optional<absl::FunctionRef<void(InvertedIndexEntry&)>> index);
 
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+std::vector<std::shared_ptr<search::Store>> SearchTableStorages(
   SereneDBCatalog& catalog);
 duckdb::optional_ptr<duckdb::DuckCatalog> DefaultDuckCatalog(
   duckdb::ClientContext& context);

@@ -254,13 +254,13 @@ TEST_F(IndexAdoptTest, LaterTransactionReusingTheContextLeavesOurSegmentAlone) {
     const auto flushed = trx.FlushAndFsync();
     ASSERT_EQ(1, flushed.size());
     our_meta = flushed.front().filename;
-    ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+    ASSERT_TRUE(trx.Commit());
   }
   // Non-exclusive, so it pops the context we just released.
   {
     auto later = _writer->GetBatch();
     ASSERT_TRUE(InsertDoc(later, "theirs"));
-    ASSERT_TRUE(later.Commit(/*last_tick=*/2));
+    ASSERT_TRUE(later.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -285,7 +285,7 @@ TEST_F(IndexAdoptTest, LaterTransactionAbortKeepsOurFlushedSegment) {
     const auto flushed = trx.FlushAndFsync();
     ASSERT_EQ(1, flushed.size());
     our_meta = flushed.front().filename;
-    ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+    ASSERT_TRUE(trx.Commit());
   }
   {
     auto later = _writer->GetBatch();
@@ -354,8 +354,12 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   Restart(/*cleanup_on_open=*/false);
   ASSERT_EQ(0, _writer->GetSnapshot().live_docs_count());
 
-  for (const auto& meta_file : adopt) {
-    _writer->AdoptSegment(meta_file, /*tick=*/7);
+  {
+    auto trx = _writer->GetBatch();
+    for (const auto& meta_file : adopt) {
+      trx.Adopt(meta_file);
+    }
+    ASSERT_TRUE(trx.Commit());
   }
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -375,7 +379,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -396,7 +400,11 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   ASSERT_TRUE(_writer->Compact(kFullMerge));
-  _writer->AdoptSegment(adopt.front(), 20);
+  {
+    auto trx = _writer->GetBatch();
+    trx.Adopt(adopt.front());
+    ASSERT_TRUE(trx.Commit());
+  }
 
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -435,19 +443,23 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesAnEarlierTruncate) {
   }
 
   Restart(/*cleanup_on_open=*/false);
-  for (const auto& meta_file : adopt) {
-    _writer->AdoptSegment(meta_file, /*tick=*/10);
-  }
   {
     auto trx = _writer->GetBatch();
     trx.RemoveAll();
-    ASSERT_TRUE(trx.Commit(/*last_tick=*/5));
+    ASSERT_TRUE(trx.Commit());
+  }
+  {
+    auto trx = _writer->GetBatch();
+    for (const auto& meta_file : adopt) {
+      trx.Adopt(meta_file);
+    }
+    ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
-TEST_F(IndexAdoptTest, AdoptTickDecidesWhatATruncateDrops) {
+TEST_F(IndexAdoptTest, AdoptOrderDecidesWhatATruncateDrops) {
   std::vector<std::string> before;
   std::vector<std::string> after;
   {
@@ -468,12 +480,20 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesWhatATruncateDrops) {
   ASSERT_NE(survivor_meta, before.front());
 
   Restart(/*cleanup_on_open=*/false);
-  _writer->AdoptSegment(before.front(), /*tick=*/19);
-  _writer->AdoptSegment(after.front(), /*tick=*/21);
+  {
+    auto trx = _writer->GetBatch();
+    trx.Adopt(before.front());
+    ASSERT_TRUE(trx.Commit());
+  }
   {
     auto trx = _writer->GetBatch();
     trx.RemoveAll();
-    ASSERT_TRUE(trx.Commit(/*last_tick=*/20));
+    ASSERT_TRUE(trx.Commit());
+  }
+  {
+    auto trx = _writer->GetBatch();
+    trx.Adopt(after.front());
+    ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -484,7 +504,7 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesWhatATruncateDrops) {
     << survivor_meta << " vs " << reader.begin()->Meta().name;
 }
 
-TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
+TEST_F(IndexAdoptTest, AdoptInsideATransactionFollowsItsTruncate) {
   std::vector<std::string> adopt;
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -496,22 +516,11 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
 
   Restart(/*cleanup_on_open=*/false);
 
-  // One replay transaction, ops in manifest order, exactly as recovery does.
-  constexpr uint64_t kMaxTick = 30;
   auto trx = _writer->GetBatch();
-  uint64_t queries_before_segment = 0;
-  trx.RemoveAll();  // record 1
-  queries_before_segment = trx.GetQueries();
-  // record 2: the segment is only stashed here; its tick needs the final query
-  // count, so the adopt happens after the sweep.
-  trx.Remove(std::make_shared<const irs::DocRemoval>());  // record 3
-
-  const uint64_t queries = trx.GetQueries();
-  ASSERT_EQ(2, queries);
-  ASSERT_EQ(1, queries_before_segment);
-  const uint64_t first_tick = kMaxTick - queries;
-  _writer->AdoptSegment(adopt.front(), first_tick + queries_before_segment);
-  ASSERT_TRUE(trx.Commit(kMaxTick));
+  trx.RemoveAll();
+  trx.Adopt(adopt.front());
+  trx.Remove(std::make_shared<const irs::DocRemoval>());
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
@@ -529,7 +538,7 @@ TEST_F(IndexAdoptTest, EarlyFlushedMetaIsWrittenOnce) {
   ASSERT_FALSE(meta_file.empty());
   EXPECT_EQ(1, _dir->Creates(meta_file)) << "FlushAndFsync wrote it";
 
-  ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  ASSERT_TRUE(trx.Commit());
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -549,13 +558,13 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
   const auto flushed = trx.FlushAndFsync();
   ASSERT_EQ(1, flushed.size());
   const std::string early_meta = flushed.front().filename;
-  ASSERT_TRUE(trx.Commit(/*last_tick=*/1));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   {
     auto remover = _writer->GetBatch();
     remover.Remove(ByName("doomed"));
-    ASSERT_TRUE(remover.Commit(/*last_tick=*/2));
+    ASSERT_TRUE(remover.Commit());
   }
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -578,13 +587,12 @@ TEST_F(IndexAdoptTest, MetaIsRewrittenWhenARemovalMasksTheSegment) {
 TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
   constexpr size_t kDocs = 12000;
   constexpr size_t kRounds = 4;
-  uint64_t tick = 1;
   {
     auto trx = _writer->GetBatch();
     for (size_t i = 0; i != kDocs; ++i) {
       ASSERT_TRUE(InsertDoc(trx, absl::StrCat("d", i)));
     }
-    ASSERT_TRUE(trx.Commit(tick));
+    ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -593,9 +601,8 @@ TEST_F(IndexAdoptTest, RemovalFromALargeMaskSyncsOnlyTheNewMeta) {
       auto remover = _writer->GetBatch();
       for (size_t i = round; i < kDocs; i += 2 * kRounds) {
         remover.Remove(ByName(absl::StrCat("d", i)));
-        ++tick;
       }
-      ASSERT_TRUE(remover.Commit(++tick));
+      ASSERT_TRUE(remover.Commit());
     }
     _dir->TakeSynced();
     ASSERT_TRUE(_writer->RefreshCommit());
@@ -634,7 +641,8 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   ASSERT_FALSE(data_files.empty());
 
   Restart(/*cleanup_on_open=*/false);
-  _writer->AdoptSegment(adopt.front(), /*tick=*/7);
+  auto trx = _writer->GetBatch();
+  trx.Adopt(adopt.front());
 
   // Before the commit that publishes it.
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
@@ -644,6 +652,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
     EXPECT_TRUE(Exists(file)) << file << " was reclaimed before publish";
   }
 
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
@@ -660,8 +669,10 @@ TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
 
   Restart(/*cleanup_on_open=*/false);
   ASSERT_NE(nullptr, _dir->create(adopt.front()));
-  ASSERT_SQL_ERROR(_writer->AdoptSegment(adopt.front(), /*tick=*/1),
-                   ERRCODE_INDEX_CORRUPTED);
+  {
+    auto rejected = _writer->GetBatch();
+    ASSERT_SQL_ERROR(rejected.Adopt(adopt.front()), ERRCODE_INDEX_CORRUPTED);
+  }
 
   _writer->RefreshCommit();
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
@@ -861,7 +872,7 @@ TEST_F(IndexAdoptTest, DocRemovalMasksOnlyItsSegment) {
   for (const auto* value : {"old_a", "old_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -869,7 +880,7 @@ TEST_F(IndexAdoptTest, DocRemovalMasksOnlyItsSegment) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -882,7 +893,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentReachesItsReplacement) {
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "doomed"));
   ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(1, sources.size());
@@ -898,7 +909,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentReachesItsReplacement) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions(snapshot, {{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
 
   Replace(*_writer, snapshot, sources, replacement,
           {{TakesAll(snapshot, sources.front())}});
@@ -908,7 +919,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentReachesItsReplacement) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("kept"));
-  ASSERT_TRUE(survivor.Commit(30));
+  ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -918,7 +929,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentMissesAReplacementOfNoRows) {
 
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(1, sources.size());
@@ -933,7 +944,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAReplacedSegmentMissesAReplacementOfNoRows) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
 
   Replace(*_writer, snapshot, sources, replacement);
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -947,14 +958,14 @@ TEST_F(IndexAdoptTest, DocRemovalMasksOnlyTheListedDocs) {
   for (const auto* value : {"a", "b", "c", "d"}) {
     ASSERT_TRUE(InsertDoc(trx, value));
   }
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto names = CommittedNames(*_writer);
   ASSERT_EQ(1, names.size());
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{names.front(), {4, 2}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -972,13 +983,13 @@ TEST_F(IndexAdoptTest, DocRemovalOfMaskedDocsChangesNothing) {
   for (const auto* value : {"a", "b", "c"}) {
     ASSERT_TRUE(InsertDoc(trx, value));
   }
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto names = CommittedNames(*_writer);
-  for (const uint64_t tick : {20, 30}) {
+  for (size_t round = 0; round != 2; ++round) {
     auto del = _writer->GetBatch();
     del.Remove(Positions({{names.front(), {2}}}));
-    ASSERT_TRUE(del.Commit(tick));
+    ASSERT_TRUE(del.Commit());
     _writer->RefreshCommit();
   }
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
@@ -989,7 +1000,7 @@ TEST_F(IndexAdoptTest, DocRemovalOnAPendingCompactionIsRemapped) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1002,7 +1013,7 @@ TEST_F(IndexAdoptTest, DocRemovalOnAPendingCompactionIsRemapped) {
   auto del = _writer->GetBatch();
   del.Remove(Positions(_writer->GetSnapshot(),
                        {{sources.front(), {1}}, {sources.back(), {2}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -1015,7 +1026,7 @@ TEST_F(IndexAdoptTest, DocRemovalInFlightDuringACompactionIsRemapped) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "1")));
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "2")));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1027,7 +1038,7 @@ TEST_F(IndexAdoptTest, DocRemovalInFlightDuringACompactionIsRemapped) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   ASSERT_TRUE(_writer->Compact(kFullMerge));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   ASSERT_EQ(1, _writer->GetSnapshot().size());
@@ -1035,7 +1046,7 @@ TEST_F(IndexAdoptTest, DocRemovalInFlightDuringACompactionIsRemapped) {
   auto survivors = _writer->GetBatch();
   survivors.Remove(ByName("a1"));
   survivors.Remove(ByName("b2"));
-  ASSERT_TRUE(survivors.Commit(30));
+  ASSERT_TRUE(survivors.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1044,7 +1055,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAMergedAwaySegmentIsRemapped) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1058,7 +1069,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAMergedAwaySegmentIsRemapped) {
   auto del = _writer->GetBatch();
   del.Remove(
     Positions(snapshot, {{sources.front(), {1}}, {sources.back(), {1}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   _writer->RefreshCommit();
 
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
@@ -1069,7 +1080,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "1")));
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "2")));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1082,7 +1093,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "c1"));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto between = _writer->GetSnapshot();
@@ -1102,7 +1113,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
   auto del = _writer->GetBatch();
   del.Remove(
     Positions(snapshot, {{sources.front(), {2}}, {sources.back(), {1}}}));
-  ASSERT_TRUE(del.Commit(30));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(3, _writer->GetSnapshot().live_docs_count());
 
@@ -1110,7 +1121,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
   survivors.Remove(ByName("a1"));
   survivors.Remove(ByName("b2"));
   survivors.Remove(ByName("c1"));
-  ASSERT_TRUE(survivors.Commit(40));
+  ASSERT_TRUE(survivors.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1120,7 +1131,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "1")));
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "2")));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1129,7 +1140,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
   {
     auto trx = _writer->GetBatch();
     trx.Remove(ByName("a2"));
-    ASSERT_TRUE(trx.Commit(15));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   ASSERT_TRUE(_writer->Compact(FullMerge()));
@@ -1137,7 +1148,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, "c1"));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   ASSERT_TRUE(_writer->Compact(FullMerge()));
@@ -1147,7 +1158,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions(snapshot, {{sources.front(), {2}}}));
-  ASSERT_TRUE(del.Commit(30));
+  ASSERT_TRUE(del.Commit());
   EXPECT_FALSE(_writer->RefreshCommit());
   EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
 }
@@ -1156,7 +1167,7 @@ TEST_F(IndexAdoptTest, DocMapsLastAsLongAsASnapshotOfTheirSource) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1170,7 +1181,7 @@ TEST_F(IndexAdoptTest, DocMapsLastAsLongAsASnapshotOfTheirSource) {
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   for (const auto* value : {"f1", "f2", "f3"}) {
@@ -1186,7 +1197,7 @@ TEST_F(IndexAdoptTest, DocMapsLastAsLongAsASnapshotOfTheirSource) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({{sources.front(), {1}}}));
-  ASSERT_TRUE(del.Commit(30));
+  ASSERT_TRUE(del.Commit());
   _writer->RefreshCommit();
   EXPECT_EQ(6, _writer->GetSnapshot().live_docs_count());
 }
@@ -1195,7 +1206,7 @@ TEST_F(IndexAdoptTest, CompactionDuringABegunCommitFindsNoRemovals) {
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   commit("a");
@@ -1210,7 +1221,7 @@ TEST_F(IndexAdoptTest, CompactionDuringABegunCommitFindsNoRemovals) {
 
   auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(pending, "d"));
-  ASSERT_TRUE(pending.Commit(20));
+  ASSERT_TRUE(pending.Commit());
   ASSERT_TRUE(_writer->RefreshBegin());
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   _writer->RefreshCommit();
@@ -1229,7 +1240,7 @@ TEST_F(IndexAdoptTest,
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   commit("a");
@@ -1242,12 +1253,12 @@ TEST_F(IndexAdoptTest,
 
   auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(pending, "d"));
-  ASSERT_TRUE(pending.Commit(20));
+  ASSERT_TRUE(pending.Commit());
   ASSERT_TRUE(_writer->RefreshBegin());
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   auto stale = _writer->GetBatch();
   stale.Remove(Positions(before, {{sources.front(), {1}}}));
-  ASSERT_TRUE(stale.Commit(30));
+  ASSERT_TRUE(stale.Commit());
   _writer->RefreshCommit();
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(3, _writer->GetSnapshot().live_docs_count());
@@ -1256,7 +1267,7 @@ TEST_F(IndexAdoptTest,
   survivors.Remove(ByName("b"));
   survivors.Remove(ByName("c"));
   survivors.Remove(ByName("d"));
-  ASSERT_TRUE(survivors.Commit(40));
+  ASSERT_TRUE(survivors.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1265,7 +1276,7 @@ TEST_F(IndexAdoptTest, DocMapsLastWhileARemovalNamesTheirSource) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1277,7 +1288,7 @@ TEST_F(IndexAdoptTest, DocMapsLastWhileARemovalNamesTheirSource) {
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   commit("c");
@@ -1287,7 +1298,7 @@ TEST_F(IndexAdoptTest, DocMapsLastWhileARemovalNamesTheirSource) {
 
   auto del = _writer->GetBatch();
   del.Remove(std::move(removal));
-  ASSERT_TRUE(del.Commit(30));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(3, _writer->GetSnapshot().live_docs_count());
   commit("e");
@@ -1298,7 +1309,7 @@ TEST_F(IndexAdoptTest, DocMapsLastWhileARemovalNamesTheirSource) {
   survivors.Remove(ByName("c"));
   survivors.Remove(ByName("d"));
   survivors.Remove(ByName("e"));
-  ASSERT_TRUE(survivors.Commit(40));
+  ASSERT_TRUE(survivors.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1307,7 +1318,7 @@ TEST_F(IndexAdoptTest, AnAbortedCommitDropsTheDocMapsOfItsMerge) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1365,13 +1376,13 @@ TEST_F(IndexAdoptTest, DocRemovalReachesItsSegmentOnceCommitted) {
 TEST_F(IndexAdoptTest, EmptyDocRemovalKeepsTheSegment) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "a"));
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto before = _writer->GetSnapshot()[0].Meta().version;
 
   auto del = _writer->GetBatch();
   del.Remove(Positions({}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   _writer->RefreshCommit();
   const auto snapshot = _writer->GetSnapshot();
   ASSERT_EQ(1, snapshot.size());
@@ -1384,7 +1395,7 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "1")));
     ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "2")));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1392,7 +1403,7 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("a1"));
-    ASSERT_TRUE(del.Commit(20));
+    ASSERT_TRUE(del.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -1403,7 +1414,7 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   auto del = _writer->GetBatch();
   del.Remove(Positions(_writer->GetSnapshot(),
                        {{sources.front(), {1, 2, 99}}, {sources.back(), {2}}}));
-  ASSERT_TRUE(del.Commit(30));
+  ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   const auto snapshot = _writer->GetSnapshot();
@@ -1411,7 +1422,7 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
   EXPECT_EQ(1, snapshot.live_docs_count());
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit(40));
+  ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1423,7 +1434,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   for (const auto* value : {"old_a", "old_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1469,7 +1480,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsAppliedSinceTheSnapshot) {
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "doomed"));
   ASSERT_TRUE(InsertDoc(seed, "kept"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(1, sources.size());
@@ -1487,7 +1498,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsAppliedSinceTheSnapshot) {
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("doomed"));
-    ASSERT_TRUE(del.Commit(20));
+    ASSERT_TRUE(del.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   ASSERT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -1513,7 +1524,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsIntoTheirWindowsOnly) {
 
   auto bystander = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(bystander, "twin"));
-  ASSERT_TRUE(bystander.Commit(10));
+  ASSERT_TRUE(bystander.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto bystanders = CommittedNames(*_writer);
   ASSERT_EQ(1, bystanders.size());
@@ -1522,7 +1533,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsIntoTheirWindowsOnly) {
   for (const auto* value : {"a1", "a2", "a3", "a4"}) {
     ASSERT_TRUE(InsertDoc(seed, value));
   }
-  ASSERT_TRUE(seed.Commit(20));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   std::vector<std::string> sources;
   for (auto& name : CommittedNames(*_writer)) {
@@ -1549,12 +1560,12 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsIntoTheirWindowsOnly) {
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("a3"));
-    ASSERT_TRUE(del.Commit(30));
+    ASSERT_TRUE(del.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   auto pending = _writer->GetBatch();
   pending.Remove(Positions(snapshot, {{sources.front(), {1}}}));
-  ASSERT_TRUE(pending.Commit(40));
+  ASSERT_TRUE(pending.Commit());
 
   Replace(*_writer, snapshot, sources, replacements,
           {{Takes(snapshot, sources.front(), 0, 2)},
@@ -1569,7 +1580,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsCarriesRemovalsIntoTheirWindowsOnly) {
   for (const auto* value : {"twin", "a2", "a4"}) {
     survivors.Remove(ByName(value));
   }
-  ASSERT_TRUE(survivors.Commit(50));
+  ASSERT_TRUE(survivors.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1579,7 +1590,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsRefusesABegunCommit) {
 
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "source"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(1, sources.size());
@@ -1592,7 +1603,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsRefusesABegunCommit) {
 
   auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(pending, "pending"));
-  ASSERT_TRUE(pending.Commit(20));
+  ASSERT_TRUE(pending.Commit());
   ASSERT_TRUE(_writer->RefreshBegin());
 
   ASSERT_SQL_ERROR(Replace(*_writer, snapshot, sources, replacement),
@@ -1615,7 +1626,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
   for (const auto* value : {"kept", "gone"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1630,7 +1641,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("gone"));
-    ASSERT_TRUE(del.Commit(20));
+    ASSERT_TRUE(del.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   ASSERT_EQ(1, CommittedNames(*_writer).size()) << "one source is gone";
@@ -1651,13 +1662,13 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsMasksTheRowsOfASourceThatVanished) {
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "a1"));
   ASSERT_TRUE(InsertDoc(seed, "a2"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto first = CommittedNames(*_writer);
   ASSERT_EQ(1, first.size());
   auto other = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(other, "b1"));
-  ASSERT_TRUE(other.Commit(20));
+  ASSERT_TRUE(other.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   std::vector<std::string> sources = first;
   for (auto& name : CommittedNames(*_writer)) {
@@ -1679,7 +1690,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsMasksTheRowsOfASourceThatVanished) {
     auto del = _writer->GetBatch();
     del.Remove(ByName("a1"));
     del.Remove(ByName("a2"));
-    ASSERT_TRUE(del.Commit(30));
+    ASSERT_TRUE(del.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   ASSERT_EQ(1, CommittedNames(*_writer).size()) << "the first source is gone";
@@ -1693,7 +1704,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsMasksTheRowsOfASourceThatVanished) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit(40));
+  ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1705,7 +1716,7 @@ TEST_F(IndexAdoptTest,
   for (const auto* value : {"a1", "b1"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1720,7 +1731,7 @@ TEST_F(IndexAdoptTest,
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("a1"));
-    ASSERT_TRUE(del.Commit(20));
+    ASSERT_TRUE(del.Commit());
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   ASSERT_EQ(1, CommittedNames(*_writer).size()) << "the first source is gone";
@@ -1734,7 +1745,7 @@ TEST_F(IndexAdoptTest,
     << "the vanished source gave the replacement no rows to mask";
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("b1"));
-  ASSERT_TRUE(survivor.Commit(30));
+  ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1742,7 +1753,7 @@ TEST_F(IndexAdoptTest,
 TEST_F(IndexAdoptTest, ReplaceSegmentsOfNothingChangesNothing) {
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "kept"));
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto before = CommittedNames(*_writer);
 
@@ -1758,7 +1769,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsWithoutSourcesAddsTheReplacement) {
 
   auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(trx, "kept"));
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   auto build = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -1779,7 +1790,7 @@ TEST_F(IndexAdoptTest, ARemovalAndAReplacementLandInOneCommit) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1795,7 +1806,7 @@ TEST_F(IndexAdoptTest, ARemovalAndAReplacementLandInOneCommit) {
 
   auto del = _writer->GetBatch();
   del.Remove(Positions(snapshot, {{sources.back(), {1}}}));
-  ASSERT_TRUE(del.Commit(20));
+  ASSERT_TRUE(del.Commit());
   Replace(*_writer, snapshot, {sources.back()}, replacement,
           {{TakesAll(snapshot, sources.back())}});
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -1806,7 +1817,7 @@ TEST_F(IndexAdoptTest, ARemovalAndAReplacementLandInOneCommit) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
   auto survivor = _writer->GetBatch();
   survivor.Remove(ByName("a"));
-  ASSERT_TRUE(survivor.Commit(30));
+  ASSERT_TRUE(survivor.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
 }
@@ -1815,7 +1826,7 @@ TEST_F(IndexAdoptTest, AReaderReopenedWithoutChangesKeepsTheDocMaps) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   const auto sources = CommittedNames(*_writer);
@@ -1830,7 +1841,7 @@ TEST_F(IndexAdoptTest, AReaderReopenedWithoutChangesKeepsTheDocMaps) {
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   commit("c");
@@ -1890,7 +1901,7 @@ TEST_F(IndexAdoptTest, ADifferentFieldConfigCutsANewSegment) {
   ASSERT_TRUE(InsertDoc(trx, "under_first"));
   trx.SetFieldOptions(second);
   ASSERT_TRUE(InsertDoc(trx, "under_second"));
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(2, CommittedNames(*_writer).size())
@@ -1912,7 +1923,7 @@ TEST_F(IndexAdoptTest, TheSameFieldConfigKeepsOneSegment) {
   ASSERT_TRUE(InsertDoc(trx, "one"));
   trx.SetFieldOptions(options);
   ASSERT_TRUE(InsertDoc(trx, "two"));
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, CommittedNames(*_writer).size());
@@ -1982,7 +1993,7 @@ TEST_F(IndexAdoptTest, SegmentIdSeparatesConfigsAcrossAStraddlingWrite) {
     ASSERT_TRUE(tests::InsertFields(doc, &name, &name + 1));
     ASSERT_TRUE(tests::InsertFields(doc, &extra, &extra + 1));
   }
-  ASSERT_TRUE(trx.Commit(10));
+  ASSERT_TRUE(trx.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
   auto reader = _writer->GetSnapshot();
@@ -2020,7 +2031,7 @@ TEST_F(IndexAdoptTest, MergingStaleSegmentsProducesAFreshId) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -2050,7 +2061,7 @@ TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
   for (const auto* value : {"stale_a", "stale_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -2063,7 +2074,7 @@ TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
   for (const auto* value : {"fresh_a", "fresh_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   ASSERT_EQ(4, _writer->GetSnapshot().size());
@@ -2131,7 +2142,7 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
   for (const auto* value : {"stale_a", "stale_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -2142,7 +2153,7 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
   for (const auto* value : {"fresh_a", "fresh_b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(20));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -2181,14 +2192,14 @@ TEST_F(IndexAdoptTest,
   for (const auto* value : {"merged_a", "merged_b", "untouched"}) {
     auto trx = _writer->GetBatch(true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   {
     auto trx = _writer->GetBatch(true);
     ASSERT_TRUE(InsertDoc(trx, "doomed"));
     ASSERT_TRUE(InsertDoc(trx, "kept"));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   ASSERT_EQ(4, _writer->GetSnapshot().size());
@@ -2196,7 +2207,7 @@ TEST_F(IndexAdoptTest,
   {
     auto trx = _writer->GetBatch(true);
     ASSERT_TRUE(InsertDoc(trx, "in_flight"));
-    ASSERT_TRUE(trx.Commit(15));
+    ASSERT_TRUE(trx.Commit());
   }
   ASSERT_TRUE(_writer->RefreshBegin());
   ASSERT_EQ(irs::CompactionError::Pending,
@@ -2206,7 +2217,7 @@ TEST_F(IndexAdoptTest,
   {
     auto del = _writer->GetBatch();
     del.Remove(ByName("doomed"));
-    ASSERT_TRUE(del.Commit(20));
+    ASSERT_TRUE(del.Commit());
   }
 
   _dir->TakeSynced();
@@ -2243,13 +2254,13 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
         ones.push_back(std::move(name));
       }
     }
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   {
     auto trx = _writer->GetBatch(true);
     ASSERT_TRUE(InsertDoc(trx, "other"));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
   ASSERT_EQ(2, _writer->GetSnapshot().size());
@@ -2263,7 +2274,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
       removed = true;
       auto del = _writer->GetBatch();
       del.Remove(ByNames(evens));
-      EXPECT_TRUE(del.Commit(20));
+      EXPECT_TRUE(del.Commit());
       EXPECT_TRUE(_writer->RefreshCommit());
     }
     return true;
@@ -2275,7 +2286,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
   {
     auto del = _writer->GetBatch();
     del.Remove(ByNames(ones));
-    ASSERT_TRUE(del.Commit(30));
+    ASSERT_TRUE(del.Commit());
   }
 
   _dir->TakeSynced();
@@ -2309,7 +2320,7 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   for (const auto* value : {"a", "b"}) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     ASSERT_TRUE(InsertDoc(trx, value));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
@@ -2356,7 +2367,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
 
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "old"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
 
@@ -2385,7 +2396,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
 
   auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(seed, "old"));
-  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(seed.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto sources = CommittedNames(*_writer);
 
@@ -2422,7 +2433,7 @@ TEST_F(IndexAdoptTest, ACommitJoinsTheFlushItsPooledSegmentIsPinnedTo) {
   {
     auto seed = _writer->GetBatch();
     ASSERT_TRUE(InsertDoc(seed, "seed"));
-    ASSERT_TRUE(seed.Commit(1));
+    ASSERT_TRUE(seed.Commit());
   }
   auto pooled = _writer->GetBatch();
   ASSERT_TRUE(InsertDoc(pooled, "commit"));
@@ -2441,9 +2452,9 @@ TEST_F(IndexAdoptTest, ACommitJoinsTheFlushItsPooledSegmentIsPinnedTo) {
   }
 
   irs::IndexWriter::Transaction* commit[] = {&pooled, &exclusive};
-  irs::IndexWriter::Transaction::RegisterFlush(commit);
-  ASSERT_TRUE(pooled.Commit(2));
-  ASSERT_TRUE(exclusive.Commit(2));
+  irs::IndexWriter::Transaction::Stage(commit);
+  ASSERT_TRUE(pooled.Commit());
+  ASSERT_TRUE(exclusive.Commit());
   std::move(release).Invoke();
 
   const auto counts = LiveDocsByName(_writer->GetSnapshot());
@@ -2457,7 +2468,7 @@ TEST_F(IndexAdoptTest, TransactionsListedBeforeThePooledOneJoinItsFlush) {
   {
     auto seed = _writer->GetBatch();
     ASSERT_TRUE(InsertDoc(seed, "seed"));
-    ASSERT_TRUE(seed.Commit(1));
+    ASSERT_TRUE(seed.Commit());
   }
   auto exclusive = _writer->GetBatch(/*exclusive_segment=*/true);
   ASSERT_TRUE(InsertDoc(exclusive, "commit"));
@@ -2477,9 +2488,9 @@ TEST_F(IndexAdoptTest, TransactionsListedBeforeThePooledOneJoinItsFlush) {
   }
 
   irs::IndexWriter::Transaction* commit[] = {&exclusive, &idle, &pooled};
-  irs::IndexWriter::Transaction::RegisterFlush(commit);
-  ASSERT_TRUE(exclusive.Commit(2));
-  ASSERT_TRUE(pooled.Commit(2));
+  irs::IndexWriter::Transaction::Stage(commit);
+  ASSERT_TRUE(exclusive.Commit());
+  ASSERT_TRUE(pooled.Commit());
   std::move(release).Invoke();
 
   const auto counts = LiveDocsByName(_writer->GetSnapshot());
@@ -2517,10 +2528,9 @@ TEST_F(IndexAdoptTest, RefreshesRacingCommitsNeverSplitOne) {
         }
         EXPECT_TRUE(InsertDoc(exclusive, name));
         irs::IndexWriter::Transaction* commit[] = {&pooled, &exclusive};
-        irs::IndexWriter::Transaction::RegisterFlush(commit);
-        const auto tick = _writer->NextTick(1);
-        EXPECT_TRUE(pooled.Commit(tick));
-        EXPECT_TRUE(exclusive.Commit(tick));
+        irs::IndexWriter::Transaction::Stage(commit);
+        EXPECT_TRUE(pooled.Commit());
+        EXPECT_TRUE(exclusive.Commit());
       }
     });
   }

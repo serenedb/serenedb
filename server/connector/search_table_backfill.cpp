@@ -58,7 +58,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::connector {
 namespace {
@@ -378,7 +378,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // bound nothing. A straddler that committed after the drain shows up on a
   // later pass as a sub-floor segment; loop until none do.
   for (;;) {
-    auto [reader, snapshot] = shard.GetSnapshotWithPosition();
+    auto [reader, snapshot] = shard.SnapshotWithPosition();
     if (shard.TruncatedAfter(snapshot)) {
       shard.Publish();
       break;

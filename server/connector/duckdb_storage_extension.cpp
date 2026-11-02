@@ -61,8 +61,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/sql_utils.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
@@ -180,7 +179,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
                                 duckdb::CheckpointOptions) final {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    std::vector<std::weak_ptr<search::Store>> saves;
     for (auto& storage : InvertedStorages(db)) {
       storage->PrepareCheckpoint(iteration);
       saves.push_back(storage);
@@ -196,7 +195,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
   void OnCheckpointEnd(duckdb::AttachedDatabase& db,
                        duckdb::CheckpointOptions) final {
     SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint_before_index_finish");
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    std::vector<std::weak_ptr<search::Store>> saves;
     {
       duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
       if (const auto it = _saves.find(db.oid); it != _saves.end()) {
@@ -211,7 +210,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
     }
     for (auto& table : catalog::SearchTableStorages(
            db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
-      table->FinishCheckpoint();
+      table->FinishCheckpointIfIdle();
     }
   }
 
@@ -230,16 +229,15 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
 
  private:
   duckdb::mutex _saves_mutex;
-  absl::flat_hash_map<duckdb::idx_t,
-                      std::vector<std::weak_ptr<search::InvertedIndexStorage>>>
+  absl::flat_hash_map<duckdb::idx_t, std::vector<std::weak_ptr<search::Store>>>
     _saves;
 };
 
 }  // namespace
 
-std::vector<std::shared_ptr<search::InvertedIndexStorage>> InvertedStorages(
+std::vector<std::shared_ptr<search::Store>> InvertedStorages(
   duckdb::AttachedDatabase& db) {
-  std::vector<std::shared_ptr<search::InvertedIndexStorage>> storages;
+  std::vector<std::shared_ptr<search::Store>> storages;
   if (!InvertedStoreIndex::AnyBound()) {
     return storages;
   }

@@ -773,6 +773,33 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
   EXPECT_EQ(CachedFrames(dir, *col), admitted);
 }
 
+TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
+  constexpr uint64_t kRows = 50000;
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const auto& shape : Shapes()) {
+      SCOPED_TRACE(std::string{shape.name} + " " +
+                   std::to_string(static_cast<int>(tier)));
+      irs::MemoryDirectory dir{};
+      Write(dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, 8192,
+            shape.gen);
+      irs::ColReader r{dir, std::string{kSeg}, Db(),
+                       irs::IOAdvice::SEQUENTIAL};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (int pass = 0; pass < 3; ++pass) {
+        irs::ColumnReader::PointReader cursor{r, *col};
+        duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
+        for (uint64_t g = kRows; g != 0;) {
+          g = g > 31 ? g - 31 : 0;
+          duckdb::FlatVector::ValidityMutable(out).Reset();
+          EXPECT_EQ(cursor.FetchRow(g, out, 0), shape.gen(g).has_value()) << g;
+          ExpectRow(out, 0, g, shape.gen, duckdb::LogicalType::BIGINT);
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, ScansCacheDecodedFrames) {
   constexpr uint64_t kRows = 60000;
   const Gen clustered = [](uint64_t g) {

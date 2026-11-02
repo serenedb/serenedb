@@ -144,8 +144,7 @@ class FrameDecoder {
       Prefetch(next);
       return ReadAlone(row);
     }
-    if (T value{};
-        AloneInFrame(row, previous, next) && ReadPrefix(row, value)) {
+    if (T value{}; ReadSource(row, value)) {
       return value;
     }
     return Get(row);
@@ -227,17 +226,7 @@ class FrameDecoder {
     return Scaled(static_cast<U>(v + static_cast<U>(_h.base)));
   }
 
-  bool AloneInFrame(uint64_t row, uint64_t previous, uint64_t next) noexcept {
-    const auto f = FrameOf(row);
-    if (f == _prefix_frame) {
-      return false;
-    }
-    _prefix_frame = f;
-    return (previous >= _h.row_count || FrameOf(previous) != f) &&
-           (next >= _h.row_count || FrameOf(next) != f);
-  }
-
-  bool ReadPrefix(uint64_t row, T& out) {
+  bool ReadSource(uint64_t row, T& out) {
     if (_h.Shuffled() || (_h.transform == NumericTransform::Raw &&
                           _h.leaf == NumericLeaf::None)) {
       return false;
@@ -245,34 +234,58 @@ class FrameDecoder {
     const auto f = FrameOf(row);
     const auto m = Meta(f);
     const auto at = static_cast<uint32_t>(row - m.frame.first_entry);
-    const uint8_t* src = Data(m);
-    if (m.frame.comp_len != m.frame.raw_len) {
-      src = _cache ? Lookup(FrameKey(f), m.frame.raw_len, _held) : nullptr;
-      if (!src) {
-        if (!_lz4 || Admitted()) {
-          return false;
-        }
-        if (_raw.size() < m.frame.raw_len) {
-          _raw.resize(m.frame.raw_len);
-        }
-        SDB_ENSURE(_lz4->DecompressPrefix(
-                     reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
-                     reinterpret_cast<char*>(_raw.data()),
-                     (size_t{at} + 1) * _h.stored, m.frame.raw_len) != 0,
-                   "numeric codec: corrupted frame");
-        src = _raw.data();
-      }
+    const size_t need = (size_t{at} + 1) * _h.stored;
+    if (f != _source_frame || need > _source_len) {
+      OpenSource(f, m, need);
     }
-    out = Item(src, at, m);
+    if (_h.transform != NumericTransform::Delta) {
+      out = Item(_source, at);
+      return true;
+    }
+    if (at + 1 < _summed) {
+      _summed = 0;
+    }
+    if (_summed == 0) {
+      _sum = static_cast<U>(m.base);
+    }
+    _sum = numeric::WidenPrefixSum<false>(
+      _source + size_t{_summed} * _h.stored, size_t{at} + 1 - _summed,
+      _h.stored, _sum, static_cast<U>(_h.base), static_cast<U*>(nullptr));
+    _summed = at + 1;
+    out = Scaled(_sum);
     return true;
   }
 
-  T Item(const uint8_t* src, uint32_t at, const NumericFrameMeta& m) {
-    if (_h.transform == NumericTransform::Delta) {
-      return Scaled(numeric::WidenPrefixSum<false>(
-        src, size_t{at} + 1, _h.stored, static_cast<U>(m.base),
-        static_cast<U>(_h.base), static_cast<U*>(nullptr)));
+  void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need) {
+    const bool prefix = _lz4 && f != _source_frame;
+    _summed = 0;
+    _source_len = m.frame.raw_len;
+    _source_held.reset();
+    if (m.frame.comp_len == m.frame.raw_len) {
+      _source = Data(m);
+    } else if (const auto* cached =
+                 _cache ? Lookup(FrameKey(f), m.frame.raw_len, _source_held)
+                        : nullptr) {
+      _source = cached;
+    } else if (prefix && !Admitted()) {
+      if (_raw.size() < m.frame.raw_len) {
+        _raw.resize(m.frame.raw_len);
+      }
+      SDB_ENSURE(_lz4->DecompressPrefix(
+                   reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
+                   reinterpret_cast<char*>(_raw.data()), need,
+                   m.frame.raw_len) != 0,
+                 "numeric codec: corrupted frame");
+      _source = _raw.data();
+      _source_len = need;
+    } else {
+      _scan = false;
+      _source = Inflate(m, nullptr, _source_held);
     }
+    _source_frame = f;
+  }
+
+  T Item(const uint8_t* src, uint32_t at) const {
     const auto* item = src + size_t{at} * _h.stored;
     if (_h.transform == NumericTransform::Dict) {
       uint32_t code = 0;
@@ -491,11 +504,18 @@ class FrameDecoder {
     if (m.frame.comp_len == m.frame.raw_len) {
       return Data(m);
     }
-    ScratchVector<uint8_t> admitted;
     if (_cache) {
       if (const auto* cached = Lookup(FrameKey(frame), m.frame.raw_len, held)) {
         return cached;
       }
+    }
+    return Inflate(m, dst, held);
+  }
+
+  const uint8_t* Inflate(const NumericFrameMeta& m, uint8_t* dst,
+                         duckdb::shared_ptr<DecodedFrame>& held) {
+    ScratchVector<uint8_t> admitted;
+    if (_cache) {
       const auto room = _scan ? _cache->GetMaxMemory() / kScanCacheDivisor
                               : _cache->GetMaxMemory();
       if (Admitted() && _cache->GetCurrentMemory() + m.frame.raw_len <= room) {
@@ -508,6 +528,7 @@ class FrameDecoder {
         _raw.resize(m.frame.raw_len);
       }
       dst = _raw.data();
+      _source_frame = kNoFrame;
     }
     const auto* in = reinterpret_cast<const char*>(Data(m));
     auto* out = reinterpret_cast<char*>(dst);
@@ -790,7 +811,12 @@ class FrameDecoder {
   duckdb::shared_ptr<DecodedFrame> _view_held;
   int8_t _admit = -1;
   uint32_t _per_frame = 0;
-  uint32_t _prefix_frame = kNoFrame;
+  uint32_t _source_frame = kNoFrame;
+  size_t _source_len = 0;
+  const uint8_t* _source = nullptr;
+  duckdb::shared_ptr<DecodedFrame> _source_held;
+  uint32_t _summed = 0;
+  U _sum = 0;
   U _scale = 0;
   uint64_t _begin = 0;
   uint64_t _end = 0;

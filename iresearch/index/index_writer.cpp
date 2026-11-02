@@ -261,12 +261,9 @@ void RemoveKeys(std::span<const int64_t> keys, field_id key_column,
       column->Scan(state, scanned, take);
       const auto values = scanned.Values<int64_t>();
       for (duckdb::idx_t i = 0; i != take; ++i) {
-        const auto value = values[i];
-        if (!value.IsValid()) {
-          continue;
-        }
-        const auto key = absl::c_lower_bound(matching, value.GetValue());
-        if (key != matching.end() && *key == value.GetValue()) {
+        const auto value = values[i].GetValue();
+        const auto key = absl::c_lower_bound(matching, value);
+        if (key != matching.end() && *key == value) {
           remove(*key, static_cast<doc_id_t>(doc_limits::min() + cursor + i));
         }
       }

@@ -21,20 +21,29 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cstring>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -145,6 +154,8 @@ struct BlobFetch {
     frame = kNoFrame;
     dictionary_ready = false;
     decoded_total = 0;
+    segment_key.clear();
+    admit = -1;
   }
 
   uint64_t Walked() const noexcept { return 0; }
@@ -197,12 +208,33 @@ struct BlobFetch {
     dense = !batched && hits > 1;
     hits = 0;
     decoded = 0;
+    held.reset();
   }
 
   void Inflate(duckdb::ColumnSegment& segment, const Header& h,
                duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
                size_t want, bool batched) {
-    const size_t target = !batched && (hits > 1 || dense) ? f.raw_len : want;
+    const auto& slot = CacheSlotOf(segment);
+    auto* cache =
+      slot.touched ? &segment.GetDatabase().GetObjectCache() : nullptr;
+    if (cache && decoded == 0) {
+      if (segment_key.empty()) {
+        segment_key = DictionaryCacheKey(slot.file_id, slot.file_offset);
+      }
+      FrameCacheKey(segment_key, lo, key);
+      if (auto hit = cache->Get<DecodedFrame>(key);
+          hit && hit->Bytes().size() == f.raw_len) {
+        held = std::move(hit);
+        frame_data = reinterpret_cast<const char*>(held->Bytes().data());
+        decoded = f.raw_len;
+        return;
+      }
+    }
+    const bool admitted =
+      cache && Admitted(slot) &&
+      cache->GetCurrentMemory() + f.raw_len <= cache->GetMaxMemory();
+    const size_t target =
+      admitted || (!batched && (hits > 1 || dense)) ? f.raw_len : want;
     const bool with_dictionary =
       h.flags == FrameDictionary::FirstFrame && lo != 0;
     const TrainedDictionary* trained = nullptr;
@@ -210,6 +242,19 @@ struct BlobFetch {
       trained = TrainedOf(segment, h);
     }
     Decode(f, h, base, target, with_dictionary, trained);
+    if (admitted) {
+      ScratchVector<uint8_t> bytes(f.raw_len);
+      std::memcpy(bytes.data(), frame_data, f.raw_len);
+      held = duckdb::make_shared_ptr<DecodedFrame>(std::move(bytes));
+      cache->Put(key, held);
+    }
+  }
+
+  bool Admitted(const ReadContext::CacheSlot& slot) noexcept {
+    if (admit < 0) {
+      admit = slot.touched->exchange(true, std::memory_order_relaxed);
+    }
+    return admit == 1;
   }
 
   void Decode(const FrameMeta& f, const Header& h,
@@ -274,14 +319,15 @@ struct BlobFetch {
     } else {
       d.SetDictionary(prefix);
     }
-    frame_data =
+    auto* dst =
       with_dictionary ? dictionary.get() + dictionary_size : raw.get();
+    frame_data = dst;
     const auto* src =
       reinterpret_cast<const char*>(base + h.off_data) + f.comp_off;
     const size_t got =
       want == f.raw_len
-        ? (d.Decompress(src, f.comp_len, frame_data, f.raw_len) ? f.raw_len : 0)
-        : d.DecompressPrefix(src, f.comp_len, frame_data, want, f.raw_len);
+        ? (d.Decompress(src, f.comp_len, dst, f.raw_len) ? f.raw_len : 0)
+        : d.DecompressPrefix(src, f.comp_len, dst, want, f.raw_len);
     SDB_ENSURE(got >= want, "col codec: corrupted frame");
     decoded = std::min<size_t>(got, f.raw_len);
     decoded_total += decoded;
@@ -300,9 +346,13 @@ struct BlobFetch {
   uint32_t dictionary_size = 0;
   duckdb::unsafe_unique_array<char> dictionary;
   uint64_t trained_loaded = 0;
-  char* frame_data = nullptr;
+  const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
   std::optional<typename Codec::Decompressor> decoder;
+  std::string segment_key;
+  std::string key;
+  duckdb::shared_ptr<DecodedFrame> held;
+  int8_t admit = -1;
 };
 
 template<typename Codec>

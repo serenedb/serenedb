@@ -724,7 +724,8 @@ std::unique_ptr<irs::BooleanFilter> Parse(
     auto& branch_ref = *branch;
     root->Add(std::move(branch), irs::Occur::Should);
 
-    irs::ParserContext parser_ctx{branch_ref, field, *tokenizer};
+    irs::ParserContext parser_ctx{branch_ref, field,
+                                  irs::StringLayout::kStrings, *tokenizer};
     parser_ctx.fields = &provider;
     try {
       if (!irs::ParseQuery(parser_ctx, query)) {

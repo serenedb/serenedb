@@ -306,7 +306,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
                                bytes_view prefix, IndexInput& in,
                                const Separators& separators)
   : _owner{&owner},
-    _meta{head.id, head.kind, head.features},
+    _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
     _has_score_bounds{head.has_score_bounds} {
@@ -345,9 +345,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       _single.inline_data = owner.KeepInline(
         ViewCast<byte_type>(std::string_view{head.record_inline}));
     }
-    if (!IsKeyed(head.kind)) {
-      _docs = _single.docs_count;
-    }
+    _docs = _single.docs_count;
   } else {
     _max_key.assign(prefix);
     _max_key.append(ViewCast<byte_type>(std::string_view{head.max}));
@@ -850,13 +848,13 @@ void FieldReader::prepare(const ReaderState& state) {
   uint32_t ordinal = 0;
   for (const auto& head : heads) {
     prefix.clear();
-    if (IsKeyed(head.kind)) {
+    if (head.term_count > 1) {
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
     }
     const auto& field =
       _fields.emplace_back(*this, head, prefix, *_in, _separators);
     _by_id.try_emplace(head.id, head.layout)
-      .first->second.Add(head.kind, field);
+      .first->second.Add(head.member, field);
     if (_ids.empty() || _ids.back() != head.id) {
       _ids.push_back(head.id);
     }

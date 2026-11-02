@@ -123,15 +123,16 @@ TEST(directory_reader_test, term_ranges_span_segments) {
 
   const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
   ASSERT_EQ(2, reader.size());
-  const auto* both = reader.GetTermRange(kBoth);
+  const auto* both = reader.GetTermRange(kBoth, irs::StringLayout::kStrings);
   ASSERT_TRUE(both);
   EXPECT_EQ(irs::ViewCast<char>(both->min), "a");
   EXPECT_EQ(irs::ViewCast<char>(both->max), "m");
-  const auto* first = reader.GetTermRange(kFirst);
+  const auto* first = reader.GetTermRange(kFirst, irs::StringLayout::kStrings);
   ASSERT_TRUE(first);
   EXPECT_EQ(irs::ViewCast<char>(first->min), "x");
   EXPECT_EQ(irs::ViewCast<char>(first->max), "x");
-  EXPECT_FALSE(reader.GetTermRange(kAbsent));
+  EXPECT_FALSE(reader.GetTermRange(kAbsent, irs::StringLayout::kStrings));
+  EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
 }
 
 TEST(directory_reader_test, open) {
@@ -692,7 +693,7 @@ TEST(segment_reader_test, open) {
       // check field
       {
         constexpr irs::field_id id = kSeq;  // "seq"
-        constexpr auto kNumeric = irs::ValueKind::Numeric;
+        constexpr auto kNumeric = irs::NumericLayout::kNumbers;
         auto field = rdr->field(id, kNumeric);
         ASSERT_NE(nullptr, field);
         ASSERT_EQ(id, field->meta().id);

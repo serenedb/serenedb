@@ -64,7 +64,7 @@ inline void MergeBoost(score_t& boost, score_t other,
 
 struct TermClause {
   field_id field = field_limits::invalid();
-  ValueKind dict = ValueKind::String;
+  DictRef dict;
   const Scorer* scorer = nullptr;
   bstring term;
   score_t boost = kNoBoost;

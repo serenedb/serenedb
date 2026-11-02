@@ -208,7 +208,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
   }
 
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  SetField(range, column_info, irs::ValueKind::Numeric);
+  SetField(range, column_info, term_dict::NumbersOf(LayoutOf(column_info)));
   range.SetBoost(ctx.boost);
   SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
@@ -321,7 +321,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
   } else {
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    SetField(range, column_info, irs::ValueKind::Numeric);
+    SetField(range, column_info, term_dict::NumbersOf(LayoutOf(column_info)));
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();

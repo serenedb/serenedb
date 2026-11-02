@@ -340,7 +340,7 @@ void WriteBlock(IndexWriter::Transaction& trx,
     return;
   }
   const auto first_doc = doc.DocId();
-  if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
+  if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
                      [&](FieldInverter& fld) {
                        return fld.InvertKeywordBlock(key_fmt, n, first_doc);
                      })) {
@@ -349,12 +349,12 @@ void WriteBlock(IndexWriter::Transaction& trx,
   }
   for (const auto& field : plan) {
     StoreSink* sink_for_field = (&field == plan.data()) ? store : nullptr;
-    const bool ok = doc.WithTokens(field.id, field.features, sink_for_field,
-                                   [&](FieldInverter& fld, TokenSink& sink) {
-                                     fld.Configure(traits);
-                                     tokenizer.Fill(text_fmt, n, first_doc,
-                                                    sink, {fld.Layout()});
-                                   });
+    const bool ok = doc.WithTokens(
+      field.id, StringLayout::kStrings, field.features, sink_for_field,
+      [&](FieldInverter& fld, TokenSink& sink) {
+        fld.Configure(traits);
+        tokenizer.Fill(text_fmt, n, first_doc, sink, {fld.Layout()});
+      });
     if (!ok) {
       error = std::string{"inversion rejected a block for field "} + field.name;
       return;
@@ -384,7 +384,7 @@ void WriteMultiValueDocs(IndexWriter::Transaction& trx,
       return;
     }
     const auto id = doc.DocId();
-    if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
+    if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
                        [&](FieldInverter& fld) {
                          return fld.InvertKeywordBlock(key_fmt, 1, id);
                        })) {
@@ -394,7 +394,7 @@ void WriteMultiValueDocs(IndexWriter::Transaction& trx,
     for (const auto& field : plan) {
       StoreSink* sink_for_field = (&field == plan.data()) ? store : nullptr;
       const bool ok = doc.WithTokens(
-        field.id, field.features, sink_for_field,
+        field.id, StringLayout::kStrings, field.features, sink_for_field,
         [&](FieldInverter& fld, TokenSink& sink) {
           fld.Configure(traits);
           for (const auto& value : docs[d]) {
@@ -656,7 +656,7 @@ bool FillDocument(const IndexWriter::Document& doc,
   duckdb::UnifiedVectorFormat text_fmt;
   text_vec.ToUnifiedFormat(1, text_fmt);
 
-  if (!doc.WithField(kKey, ValueKind::String, IndexFeatures::Freq,
+  if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
                      [&](FieldInverter& fld) {
                        return fld.InvertKeywordBlock(key_fmt, 1, id);
                      })) {
@@ -665,7 +665,7 @@ bool FillDocument(const IndexWriter::Document& doc,
   }
   for (const auto& field : plan) {
     const bool ok =
-      doc.WithTokens(field.id, field.features, nullptr,
+      doc.WithTokens(field.id, StringLayout::kStrings, field.features, nullptr,
                      [&](FieldInverter& fld, TokenSink& sink) {
                        fld.Configure(traits);
                        tokenizer.Fill(text_fmt, 1, id, sink, {fld.Layout()});

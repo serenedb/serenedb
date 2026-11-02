@@ -244,7 +244,7 @@ auto MakeFieldPresence(irs::field_id field) {
 auto MakeByNumericTerm(irs::field_id field, int32_t value) {
   auto filter = std::make_unique<irs::ByTerm>();
   *filter->mutable_field_id() = field;
-  *filter->mutable_dict() = irs::ValueKind::Numeric;
+  *filter->mutable_dict() = irs::NumericLayout::kNumbers;
 
   irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
   filter->mutable_options()->term =

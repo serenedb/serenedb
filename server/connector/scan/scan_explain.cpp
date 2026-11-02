@@ -64,39 +64,29 @@ void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
   }
 }
 
-bool HasJsonLeaves(const ScanBindData& bind_data, ColumnId col_id,
-                   const catalog::InvertedIndexField& entry) {
-  if (!entry.HasJsonLeafFields()) {
-    return false;
-  }
-  const auto expr_type =
-    bind_data.relation.inverted_config->ExpressionType(col_id);
-  return expr_type.id() != duckdb::LogicalTypeId::INVALID
-           ? expr_type.IsJSONType()
-           : bind_data.ColumnTypeById(col_id).IsJSONType();
-}
-
-std::string_view DictSuffix(irs::ValueKind dict, bool json_leaves) {
-  switch (dict) {
-    case irs::ValueKind::SqlNull:
+std::string_view DictSuffix(irs::DictRef dict) {
+  const bool json_leaves = dict.layout == irs::DictLayout::Json;
+  switch (term_dict::MemberOf(dict)) {
+    case term_dict::Member::SqlNull:
       return "(null)";
-    case irs::ValueKind::JsonNull:
+    case term_dict::Member::JsonNull:
       return "(json null)";
-    case irs::ValueKind::NullElement:
+    case term_dict::Member::NullElement:
       return "(null element)";
-    case irs::ValueKind::False:
-    case irs::ValueKind::True:
+    case term_dict::Member::False:
+    case term_dict::Member::True:
       return json_leaves ? "(bool)" : "";
-    case irs::ValueKind::Numeric:
+    case term_dict::Member::Numeric:
       return json_leaves ? "(numeric)" : "";
-    case irs::ValueKind::String:
+    case term_dict::Member::String:
+    case term_dict::Member::None:
       return {};
   }
   return {};
 }
 
 auto MakeFieldNameResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id, irs::ValueKind dict) -> std::string {
+  return [&bind_data](ColumnId col_id, irs::DictRef dict) -> std::string {
     const auto& config = *bind_data.relation.inverted_config;
     auto base = bind_data.DisplayColumnName(col_id);
     const auto column_type = bind_data.ColumnTypeById(col_id);
@@ -111,9 +101,7 @@ auto MakeFieldNameResolver(const ScanBindData& bind_data) {
     if (lookup.entry) {
       const auto& entry = *lookup.entry;
       if (col_id == lookup.entry_field_id) {
-        if (const auto suffix =
-              DictSuffix(dict, HasJsonLeaves(bind_data, col_id, entry));
-            !suffix.empty()) {
+        if (const auto suffix = DictSuffix(dict); !suffix.empty()) {
           return absl::StrCat(base, suffix);
         }
         const auto expr_type_id = config.ExpressionType(col_id).id();
@@ -156,27 +144,28 @@ term_dict::Kind ClassifyTerms(const duckdb::LogicalType& type) {
 }
 
 auto MakeFieldKindResolver(const ScanBindData& bind_data) {
-  return [&bind_data](ColumnId col_id, irs::ValueKind dict) -> term_dict::Kind {
+  return [&bind_data](ColumnId col_id, irs::DictRef dict) -> term_dict::Kind {
     using term_dict::Kind;
     const auto& config = *bind_data.relation.inverted_config;
     const auto lookup = config.LookupField(col_id);
     if (lookup.entry_field_id == term_dict::kPKFieldId) {
       return Kind::NumericI64;
     }
-    switch (dict) {
-      case irs::ValueKind::SqlNull:
-      case irs::ValueKind::JsonNull:
-      case irs::ValueKind::NullElement:
+    switch (term_dict::MemberOf(dict)) {
+      case term_dict::Member::SqlNull:
+      case term_dict::Member::JsonNull:
+      case term_dict::Member::NullElement:
         return Kind::Null;
-      case irs::ValueKind::False:
-      case irs::ValueKind::True:
+      case term_dict::Member::False:
+      case term_dict::Member::True:
         return Kind::Bool;
-      case irs::ValueKind::Numeric:
-        if (lookup.entry && HasJsonLeaves(bind_data, col_id, *lookup.entry)) {
+      case term_dict::Member::Numeric:
+        if (dict.layout == irs::DictLayout::Json) {
           return Kind::NumericF64;
         }
         break;
-      case irs::ValueKind::String:
+      case term_dict::Member::String:
+      case term_dict::Member::None:
         break;
     }
     if (lookup.entry && col_id == lookup.entry_field_id) {
@@ -455,7 +444,7 @@ void ScanBindData::AppendSummary(
     }
     out.insert("Score",
                absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
-                            name_of(col_id, irs::ValueKind::String), ", ",
+                            name_of(col_id, irs::StringLayout::kStrings), ", ",
                             ctype.ToString(), ")"));
     if (vector->exact || !score.HasTopK()) {
       out.insert("Exact", "brute force over the stored vectors");

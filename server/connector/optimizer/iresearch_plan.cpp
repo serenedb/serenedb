@@ -1579,8 +1579,9 @@ bool ClaimSearchConjuncts(
     if (!rest->Empty()) {
       irs::Filter::ptr filter = std::move(rest);
       connector::EnsureIncludeSides(*filter);
-      irs::Optimize(filter,
-                    {.scored = false, .analyzed_fields = analyzed_fields});
+      irs::Optimize(filter, {.scored = false,
+                             .analyzed_fields = analyzed_fields,
+                             .null_markers = connector::NullRowMarkers()});
       scan.search.index_only = std::move(filter);
     }
     scan.search.duals = std::move(duals);
@@ -1593,7 +1594,8 @@ bool ClaimSearchConjuncts(
     scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
   irs::OptimizeContext optimize{.scored = static_cast<bool>(scan.score.text),
                                 .analyzed_fields = std::move(analyzed_fields),
-                                .scorer = scorer.get()};
+                                .scorer = scorer.get(),
+                                .null_markers = connector::NullRowMarkers()};
   const auto snapshot = scan.Snapshot(context);
   irs::Deferral deferral{.reader = snapshot->reader};
   if (scan.DefersChecks()) {
@@ -1712,8 +1714,9 @@ std::shared_ptr<const irs::Filter> BuildIndexLeaf(
   }
   irs::Filter::ptr root = std::move(node);
   connector::EnsureIncludeSides(*root);
-  irs::Optimize(root,
-                {.scored = false, .analyzed_fields = getters.analyzed_fields});
+  irs::Optimize(root, {.scored = false,
+                       .analyzed_fields = getters.analyzed_fields,
+                       .null_markers = connector::NullRowMarkers()});
   return root;
 }
 

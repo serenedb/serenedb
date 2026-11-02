@@ -249,6 +249,7 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
     auto* shingle = ShingleOf(*info);
     out = {
       .id = info->field_id,
+      .dict = TextOf(*info),
       .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get()};
     _held.push_back(std::move(*info));
     return true;
@@ -278,7 +279,7 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
   auto& root = AddMaybeNegated<irs::BooleanFilter>(parent, ctx, column_info);
   root.SetBoost(ctx.boost);
-  irs::ParserContext parser_ctx{root, column_info.field_id,
+  irs::ParserContext parser_ctx{root, column_info.field_id, TextOf(column_info),
                                 PhraseAnalyzer(ctx, column_info)};
   std::optional<IndexFields> provider;
   if (column_info.index_fields) {

@@ -272,8 +272,8 @@ using TokenGroups = std::vector<std::vector<irs::bstring>>;
 
 void AppendTokenGroups(std::span<const duckdb::string_t> terms,
                        std::span<const uint32_t> pos, TokenGroups& groups);
-void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
-                    size_t min_match, irs::score_t boost,
+void AddTokenGroups(BoolTarget parent, irs::field_id field, irs::DictRef dict,
+                    TokenGroups& groups, size_t min_match, irs::score_t boost,
                     const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,

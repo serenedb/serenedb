@@ -64,11 +64,16 @@ namespace {
 
 using DocIdMapT = ManagedVector<doc_id_t>;
 
+struct MergedMember {
+  IndexFeatures features = IndexFeatures::None;
+  bytes_view single;
+  bool present = false;
+  bool keyed = false;
+};
+
 struct MergedField {
-  IndexFeatures string_features = IndexFeatures::None;
   std::optional<DictLayout> layout;
-  bool has_string = false;
-  uint8_t keyed = 0;
+  std::array<MergedMember, kMaxLayoutMembers> members;
 };
 
 using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
@@ -370,8 +375,10 @@ class CompoundFieldIterator final : public BasicTermReader {
     return *_current_meta;
   }
 
-  DictLayout Layout() const noexcept { return _layout; }
-  size_t Position() const noexcept { return _current.position; }
+  DictRef Dict() const noexcept {
+    return {.layout = _layout,
+            .member = static_cast<uint8_t>(_current.position)};
+  }
 
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return _props; }
@@ -493,7 +500,6 @@ bool CompoundFieldIterator::Next() {
     return false;
   }
   _synthesized_meta.id = _current.id;
-  _synthesized_meta.kind = LayoutKinds(_layout)[_current.position];
   _current_meta = &_synthesized_meta;
   return true;
 }
@@ -550,24 +556,21 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                               " has different dictionary layouts in its "
                               "segments"));
     }
-    const auto kinds = LayoutKinds(dicts->Layout());
     const auto all = dicts->All();
-    for (size_t position = 0; position != all.size(); ++position) {
-      const auto* term_reader = all[position];
+    for (size_t member = 0; member != all.size(); ++member) {
+      const auto* term_reader = all[member];
       if (!term_reader) {
         continue;
       }
-      const auto kind = kinds[position];
+      auto& merged = field.members[member];
       const auto features = term_reader->meta().index_features;
       index_features |= features;
-      if (!IsKeyed(kind)) {
-        continue;
-      }
-      field.keyed |= static_cast<uint8_t>(1U << KeyedIndex(kind));
-      if (kind == ValueKind::String) {
-        field.string_features =
-          field.has_string ? field.string_features & features : features;
-        field.has_string = true;
+      merged.features = merged.present ? merged.features & features : features;
+      merged.keyed = merged.keyed || term_reader->size() != 1 ||
+                     (merged.present && merged.single != term_reader->min());
+      if (!merged.present) {
+        merged.single = term_reader->min();
+        merged.present = true;
       }
     }
   }
@@ -577,7 +580,8 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
   uint64_t count = 0;
   for (const auto& [id, field] : field_meta_map) {
-    count += static_cast<uint64_t>(std::popcount(field.keyed));
+    count += static_cast<uint64_t>(absl::c_count_if(
+      field.members, [](const MergedMember& member) { return member.keyed; }));
   }
   return count;
 }
@@ -653,6 +657,7 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
 }
 
 field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
+                                    DictRef dict,
                                     std::span<const MergeSource> sources,
                                     const IndexFieldOptions* field_options) {
   std::vector<NormPiece> pieces;
@@ -661,8 +666,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
     const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
       const auto* dicts = src.reader->dicts(id);
-      if (const auto* source_terms =
-            dicts ? dicts->At(ValueKind::String) : nullptr;
+      if (const auto* source_terms = dicts ? dicts->At(dict) : nullptr;
           source_terms && field_limits::valid(source_terms->meta().norm)) {
         reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
@@ -719,12 +723,19 @@ MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            const IndexFieldOptions* field_options) {
   MergedNormIdMap out;
   for (const auto& [id, field] : field_meta_map) {
-    if (!field.has_string ||
-        !IsSubsetOf(IndexFeatures::Norm, field.string_features)) {
+    const auto normed =
+      absl::c_find_if(field.members, [](const MergedMember& member) {
+        return member.present &&
+               IsSubsetOf(IndexFeatures::Norm, member.features);
+      });
+    if (normed == field.members.end()) {
       continue;
     }
+    const DictRef dict{
+      .layout = *field.layout,
+      .member = static_cast<uint8_t>(normed - field.members.begin())};
     const auto new_norm_id =
-      MergeNormColumnFromSources(col_writer, id, sources, field_options);
+      MergeNormColumnFromSources(col_writer, id, dict, sources, field_options);
     if (field_limits::valid(new_norm_id)) {
       out.emplace(id, new_norm_id);
     }
@@ -766,25 +777,25 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
   const auto extra_key = [](const BasicTermReader* reader) {
     return DictKey{
       .id = reader->id(),
-      .position = PositionOf(DictLayout::String, ValueKind::String),
+      .position = StringLayout::kStrings.member,
     };
   };
   const auto write_extra = [&](const BasicTermReader& reader) {
-    field_writer->write(DictLayout::String, ValueKind::String, reader);
+    field_writer->write(StringLayout::kStrings, reader);
   };
   size_t ei = 0;
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const DictKey key{.id = field_itr.Meta().id,
-                      .position = field_itr.Position()};
+    const auto dict = field_itr.Dict();
+    const DictKey key{.id = field_itr.Meta().id, .position = dict.member};
     while (ei < en && extra_key(sorted_extra[ei]) < key) {
       write_extra(*sorted_extra[ei]);
       ++ei;
     }
 
     if (ei < en && extra_key(sorted_extra[ei]) == key) {
-      SDB_ASSERT(field_itr.Layout() == DictLayout::String);
+      SDB_ASSERT(dict.layout == DictLayout::String);
       write_extra(*sorted_extra[ei]);
       ++ei;
       continue;
@@ -794,8 +805,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     props.index_features = field_itr.Meta().index_features;
     props.key_width = field_itr.KeyWidth();
 
-    if (field_itr.Meta().kind == ValueKind::String &&
-        IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
+    if (IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
       const auto it = merged_norm_ids.find(key.id);
       if (it != merged_norm_ids.end()) {
         props.norm = it->second;
@@ -803,7 +813,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     }
 
     field_itr.SetProperties(props);
-    field_writer->write(field_itr.Layout(), field_itr.Meta().kind, field_itr);
+    field_writer->write(dict, field_itr);
   }
 
   while (ei < en) {

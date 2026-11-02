@@ -155,7 +155,8 @@ class LuceneParserTest : public ::testing::Test {
     irs::analysis::TextTokenizer::Options{})};
   AnyField any_field{*tokenizer};
 
-  irs::ParserContext ctx{root, kFieldId, *tokenizer};
+  irs::ParserContext ctx{root, kFieldId, irs::StringLayout::kStrings,
+                         *tokenizer};
 
   LuceneParserTest() { ctx.fields = &any_field; }
 
@@ -2325,7 +2326,8 @@ ParseOutcome ParseOnce(std::string_view query) {
   irs::BooleanFilter root;
   auto tokenizer =
     irs::analysis::TextTokenizer::Make(irs::analysis::TextTokenizer::Options{});
-  irs::ParserContext ctx{root, kFieldId, *tokenizer};
+  irs::ParserContext ctx{root, kFieldId, irs::StringLayout::kStrings,
+                         *tokenizer};
   try {
     return irs::ParseQuery(ctx, query) ? ParseOutcome::Accepted
                                        : ParseOutcome::Rejected;

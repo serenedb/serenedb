@@ -31,18 +31,6 @@ bool HasTerms(const FieldInverter* field) noexcept {
   return field && (field->Log().Size() != 0 || !field->InlineDocs().empty());
 }
 
-[[maybe_unused]] bool PostingsFit(const PostingSlots& slots,
-                                  DictLayout layout) noexcept {
-  for (size_t i = 0; i != kValueKinds; ++i) {
-    const auto kind = static_cast<ValueKind>(i);
-    if (!IsKeyed(kind) && PositionOf(layout, kind) == kNoPosition &&
-        !slots.Docs(kind).empty()) {
-      return false;
-    }
-  }
-  return true;
-}
-
 }  // namespace
 
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
@@ -55,13 +43,15 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   sorted.reserve(_fields_map.size());
   for (const auto& item : _fields_map) {
     const auto& entry = item.second;
-    bool used = entry.slots && !entry.slots->Empty();
-    for (const auto& keyed : entry.keyed) {
-      if (HasTerms(keyed.field)) {
-        ++keyed_dicts;
-        index_features |= keyed.field->Meta().index_features;
+    bool used = false;
+    for (auto n = LayoutMembers(entry.layout).size(); n != 0; --n) {
+      const auto& slot = _slots[entry.first + n - 1];
+      if (HasTerms(slot.field)) {
+        keyed_dicts += slot.field->Dictionary().Size() != 1;
+        index_features |= slot.field->Meta().index_features;
         used = true;
       }
+      used = used || !slot.docs.empty();
     }
     if (used) {
       sorted.push_back(&item);
@@ -90,51 +80,38 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   ColumnarTermReader terms;
   SlotTermReader slot_terms;
 
-  const auto write_keyed = [&](DictLayout layout, ValueKind kind,
-                               const FieldInverter* field) {
-    if (!HasTerms(field)) {
-      return;
-    }
-    scattered.Reset(*field);
-    SDB_ASSERT(scattered.TermCount() != 0);
-    terms.Reset(scattered);
-    fw.write(layout, kind, terms);
-  };
-
   fw.prepare(state, keyed_dicts);
   size_t ei = 0;
   for (const auto* item : sorted) {
     const auto id = item->first;
     const auto& entry = item->second;
     for (; ei < sorted_extra.size() && sorted_extra[ei]->id() < id; ++ei) {
-      fw.write(DictLayout::String, ValueKind::String, *sorted_extra[ei]);
+      fw.write(StringLayout::kStrings, *sorted_extra[ei]);
     }
-    SDB_ASSERT(!entry.slots || PostingsFit(*entry.slots, entry.layout));
     const bool has_extra =
       ei < sorted_extra.size() && sorted_extra[ei]->id() == id;
     SDB_ASSERT(!has_extra || entry.layout == DictLayout::String);
-    for (const auto kind : LayoutKinds(entry.layout)) {
-      if (!IsKeyed(kind)) {
-        if (!entry.slots) {
-          continue;
-        }
-        if (const auto docs = entry.slots->Docs(kind); !docs.empty()) {
-          slot_terms.Reset(id, docs);
-          fw.write(entry.layout, kind, slot_terms);
-        }
-        continue;
-      }
-      const auto* field = entry.keyed[KeyedIndex(kind)].field;
-      if (kind == ValueKind::String && has_extra) {
-        SDB_ASSERT(!HasTerms(field));
-        fw.write(entry.layout, kind, *sorted_extra[ei++]);
-      } else {
-        write_keyed(entry.layout, kind, field);
+    const auto members = LayoutMembers(entry.layout).size();
+    for (size_t member = 0; member != members; ++member) {
+      const DictRef dict{.layout = entry.layout,
+                         .member = static_cast<uint8_t>(member)};
+      const auto& slot = _slots[entry.first + member];
+      if (has_extra && dict == StringLayout::kStrings) {
+        SDB_ASSERT(!HasTerms(slot.field) && slot.docs.empty());
+        fw.write(dict, *sorted_extra[ei++]);
+      } else if (HasTerms(slot.field)) {
+        scattered.Reset(*slot.field);
+        SDB_ASSERT(scattered.TermCount() != 0);
+        terms.Reset(scattered);
+        fw.write(dict, terms);
+      } else if (!slot.docs.empty()) {
+        slot_terms.Reset(id, {slot.docs.data(), slot.docs.size()});
+        fw.write(dict, slot_terms);
       }
     }
   }
   for (; ei < sorted_extra.size(); ++ei) {
-    fw.write(DictLayout::String, ValueKind::String, *sorted_extra[ei]);
+    fw.write(StringLayout::kStrings, *sorted_extra[ei]);
   }
   fw.end();
 }

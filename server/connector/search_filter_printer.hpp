@@ -31,9 +31,9 @@
 namespace irs {
 
 using FieldNameResolver =
-  std::function<std::string(sdb::connector::ColumnId, ValueKind)>;
+  std::function<std::string(sdb::connector::ColumnId, DictRef)>;
 using FieldKindResolver = std::function<sdb::connector::term_dict::Kind(
-  sdb::connector::ColumnId, ValueKind)>;
+  sdb::connector::ColumnId, DictRef)>;
 
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)

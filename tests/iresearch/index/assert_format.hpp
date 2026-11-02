@@ -97,8 +97,7 @@ struct Field : public irs::FieldMeta {
   };
 
   Field(irs::field_id id, irs::IndexFeatures index_features);
-  Field(irs::field_id id, irs::ValueKind slot,
-        irs::IndexFeatures index_features);
+  Field(irs::field_id id, irs::DictRef dict, irs::IndexFeatures index_features);
   Field(Field&& rhs) = default;
   Field& operator=(Field&& rhs) = default;
 
@@ -117,6 +116,7 @@ struct Field : public irs::FieldMeta {
   std::set<Term> terms;
   std::unordered_set<irs::doc_id_t> docs;
   FieldStats stats;
+  irs::DictRef dict;
 };
 
 class ColumnValues {

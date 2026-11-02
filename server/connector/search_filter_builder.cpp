@@ -180,21 +180,21 @@ bool BoolConstant(const duckdb::Value& value) {
   return value.GetValue<bool>();
 }
 
-bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
-                   irs::TermClause& out) {
+bool TryEncodeTerm(irs::DictLayout layout, duckdb::LogicalTypeId type_id,
+                   const duckdb::Value& value, irs::TermClause& out) {
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
       type_id == duckdb::LogicalTypeId::BLOB) {
-    out.dict = irs::ValueKind::String;
+    out.dict = term_dict::StringsOf(layout);
     out.term.assign(AsRawBytes(value));
     return true;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.dict = irs::BoolKind(BoolConstant(value));
+    out.dict = term_dict::BoolsOf(layout, BoolConstant(value));
     out.term.clear();
     return true;
   }
   if (IsNumericTypeId(type_id)) {
-    out.dict = irs::ValueKind::Numeric;
+    out.dict = term_dict::NumbersOf(layout);
     WithNumericValue(type_id, value, [&](auto v) {
       irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
       out.term.assign(irs::numeric_utils::EncodeNumericTerm(buf, v));
@@ -220,7 +220,7 @@ absl::Status SetupTermClause(irs::TermClause& clause,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  if (!TryEncodeTerm(type_id, value, clause)) {
+  if (!TryEncodeTerm(LayoutOf(column_info), type_id, value, clause)) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
@@ -392,27 +392,54 @@ const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr) {
   return *cur;
 }
 
+irs::DictLayout LayoutOf(const SearchColumnInfo& info) {
+  if (info.shape == ColumnShape::Json) {
+    return irs::DictLayout::Json;
+  }
+  const auto& type = info.logical_type;
+  if (type.id() == duckdb::LogicalTypeId::LIST) {
+    return term_dict::ListLayout(
+      term_dict::Classify(duckdb::ListType::GetChildType(type)));
+  }
+  if (type.id() == duckdb::LogicalTypeId::ARRAY) {
+    return term_dict::ListLayout(
+      term_dict::Classify(duckdb::ArrayType::GetChildType(type)));
+  }
+  const auto kind = term_dict::Classify(type);
+  return info.shape == ColumnShape::Array ? term_dict::ListLayout(kind)
+                                          : term_dict::ScalarLayout(kind);
+}
+
 NullMarker NullMarkerOf(const SearchColumnInfo& info) {
   return {
     .field = info.field_id,
-    .shape = info.shape,
+    .layout = LayoutOf(info),
     .json_null =
       info.shape == ColumnShape::Json && !info.logical_type.IsJSONType(),
   };
 }
 
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker) {
-  const auto add = [&](irs::ValueKind kind) {
-    AddTerm(parent, marker.field, kind, irs::kSlotTerm, irs::kNoBoost,
+  const auto add = [&](irs::DictRef dict) {
+    AddTerm(parent, marker.field, dict, irs::kSlotTerm, irs::kNoBoost,
             &irs::ForceConstScore());
   };
-  add(irs::ValueKind::SqlNull);
-  if (marker.shape == ColumnShape::Array) {
-    add(irs::ValueKind::NullElement);
+  add(term_dict::NullsOf(marker.layout));
+  if (const auto elements = term_dict::NullElementsOf(marker.layout);
+      irs::Contains(elements)) {
+    add(elements);
   }
   if (marker.json_null) {
-    add(irs::ValueKind::JsonNull);
+    add(irs::JsonLayout::kJsonNulls);
   }
+}
+
+irs::containers::FlatHashSet<irs::DictRef> NullRowMarkers() {
+  irs::containers::FlatHashSet<irs::DictRef> markers;
+  for (size_t layout = 0; layout != irs::kDictLayouts; ++layout) {
+    markers.insert(term_dict::NullsOf(static_cast<irs::DictLayout>(layout)));
+  }
+  return markers;
 }
 
 void AddBools(BoolTarget parent, const SearchColumnInfo& info,
@@ -422,24 +449,24 @@ void AddBools(BoolTarget parent, const SearchColumnInfo& info,
     AddFilter<irs::Empty>(parent);
     return;
   }
+  const auto layout = LayoutOf(info);
   if (accept_false != accept_true) {
-    AddTerm(parent, info.field_id, irs::BoolKind(accept_true), irs::kSlotTerm,
-            boost, scorer);
+    AddTerm(parent, info.field_id, term_dict::BoolsOf(layout, accept_true),
+            irs::kSlotTerm, boost, scorer);
     return;
   }
   auto& node = AddFilter<irs::BooleanFilter>(parent);
   const BoolTarget either{&node, irs::Occur::Should};
-  AddTerm(either, info.field_id, irs::ValueKind::False, irs::kSlotTerm,
-          irs::kNoBoost, scorer);
-  AddTerm(either, info.field_id, irs::ValueKind::True, irs::kSlotTerm,
-          irs::kNoBoost, scorer);
+  AddTerm(either, info.field_id, term_dict::BoolsOf(layout, false),
+          irs::kSlotTerm, irs::kNoBoost, scorer);
+  AddTerm(either, info.field_id, term_dict::BoolsOf(layout, true),
+          irs::kSlotTerm, irs::kNoBoost, scorer);
   SetMinMatch(node, 1);
   node.SetBoost(boost);
 }
 
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                               irs::ValueKind dict,
-                               std::span<irs::bstring> terms,
+                               irs::DictRef dict, std::span<irs::bstring> terms,
                                size_t min_match) {
   auto& node = AddFilter<irs::BooleanFilter>(parent);
   absl::c_sort(terms);
@@ -803,13 +830,14 @@ absl::Status FromIsNull(BoolTarget filter, const FilterContext& ctx,
       "IS NULL over a column that has no NULL rows in the index");
   }
   const auto field = column_info->field_id;
-  constexpr auto sql_null = irs::ValueKind::SqlNull;
-  if (!NullMarkerOf(*column_info).json_null) {
+  const auto marker = NullMarkerOf(*column_info);
+  const auto sql_null = term_dict::NullsOf(marker.layout);
+  if (!marker.json_null) {
     AddTerm(ctx.negated ? Negate(filter) : filter, field, sql_null,
             irs::kSlotTerm, ctx.boost, &irs::ForceConstScore());
     return absl::OkStatus();
   }
-  constexpr auto json_null = irs::ValueKind::JsonNull;
+  constexpr auto json_null = irs::JsonLayout::kJsonNulls;
   if (ctx.negated) {
     const auto target = Negate(filter);
     AddTerm(target, field, sql_null, irs::kSlotTerm, irs::kNoBoost,
@@ -1050,7 +1078,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   auto type_id = column_info->logical_type.id();
 
   auto setup_base_filter = [&](auto& range_filter) -> decltype(auto) {
-    SetField(range_filter, *column_info, ValueKindOf(type_id));
+    SetField(range_filter, *column_info, ValuesOf(*column_info, type_id));
     range_filter.SetBoost(ctx.boost);
     SetLeafScorer(range_filter, *column_info);
     switch (op) {
@@ -1253,6 +1281,7 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
 
   const auto target = MaybeNegated(filter, ctx, *column_info);
+  const auto layout = LayoutOf(*column_info);
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     std::array<bool, 2> seen{};
     for (const auto* value : values) {
@@ -1262,7 +1291,7 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
     for (const bool value : {false, true}) {
       if (seen[value]) {
         node.Add(irs::TermClause{.field = column_info->field_id,
-                                 .dict = irs::BoolKind(value)},
+                                 .dict = term_dict::BoolsOf(layout, value)},
                  irs::Occur::Should);
       }
     }
@@ -1275,14 +1304,15 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   terms.reserve(values.size());
   irs::TermClause clause;
   for (const auto* value : values) {
-    if (!TryEncodeTerm(type_id, *value, clause)) {
+    if (!TryEncodeTerm(layout, type_id, *value, clause)) {
       return absl::UnimplementedError(absl::StrCat(
         "Unsupported type for IN filter: ", static_cast<int>(type_id)));
     }
     terms.push_back(std::move(clause.term));
   }
-  auto& node = AddTermSet(target, column_info->field_id, ValueKindOf(type_id),
-                          terms, /*min_match=*/1);
+  auto& node = AddTermSet(target, column_info->field_id,
+                          ValuesOf(*column_info, type_id), terms,
+                          /*min_match=*/1);
   node.SetBoost(ctx.boost);
   node.SetScorer(LeafScorer(*column_info));
   return absl::OkStatus();

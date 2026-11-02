@@ -494,7 +494,7 @@ namespace {
 
 struct LeafField {
   field_id field = field_limits::invalid();
-  ValueKind dict = ValueKind::String;
+  DictRef dict;
 };
 
 template<typename... Ts>
@@ -515,24 +515,24 @@ LeafField RequiringLeafFieldOf(const Filter& node) {
     node);
 }
 
-void AddAnchor(field_id field, ValueKind dict,
+void AddAnchor(field_id field, DictRef dict, const OptimizeContext& ctx,
                irs::containers::FlatHashSet<field_id>& out) {
-  if (field_limits::valid(field) && dict != ValueKind::SqlNull) {
+  if (field_limits::valid(field) && !ctx.IsNullMarker(dict)) {
     out.insert(field);
   }
 }
 
-void CollectAnchors(const Filter& node,
+void CollectAnchors(const Filter& node, const OptimizeContext& ctx,
                     irs::containers::FlatHashSet<field_id>& out);
 
-void CollectBucketAnchors(const BooleanFilter& node,
+void CollectBucketAnchors(const BooleanFilter& node, const OptimizeContext& ctx,
                           irs::containers::FlatHashSet<field_id>& out) {
   const auto& must = node.Bucket(Occur::Must);
   for (const auto& term : must.terms) {
-    AddAnchor(term.field, term.dict, out);
+    AddAnchor(term.field, term.dict, ctx, out);
   }
   for (const auto& child : must.filters) {
-    CollectAnchors(*child, out);
+    CollectAnchors(*child, ctx, out);
   }
 
   const auto& should = node.Bucket(Occur::Should);
@@ -557,27 +557,28 @@ void CollectBucketAnchors(const BooleanFilter& node,
       common, [&](const field_id field) { return !branch.contains(field); });
   };
   for (const auto& term : should.terms) {
-    fold([&](auto& b) { AddAnchor(term.field, term.dict, b); });
+    fold([&](auto& b) { AddAnchor(term.field, term.dict, ctx, b); });
   }
   for (const auto& child : should.filters) {
-    fold([&](auto& b) { CollectAnchors(*child, b); });
+    fold([&](auto& b) { CollectAnchors(*child, ctx, b); });
   }
   out.insert(common.begin(), common.end());
 }
 
-void CollectAnchors(const Filter& node,
+void CollectAnchors(const Filter& node, const OptimizeContext& ctx,
                     irs::containers::FlatHashSet<field_id>& out) {
   if (node.type() == Type<BooleanFilter>::id()) {
-    CollectBucketAnchors(irs::utils::downCast<BooleanFilter>(node), out);
+    CollectBucketAnchors(irs::utils::downCast<BooleanFilter>(node), ctx, out);
     return;
   }
   const auto leaf = RequiringLeafFieldOf(node);
-  AddAnchor(leaf.field, leaf.dict, out);
+  AddAnchor(leaf.field, leaf.dict, ctx, out);
 }
 
 }  // namespace
 
-bool BooleanNullMarkerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+bool BooleanNullMarkerRule::Apply(Filter::ptr& slot,
+                                  const OptimizeContext& ctx) {
   auto& node = irs::utils::downCast<BooleanFilter>(*slot);
   auto& excluded = node.Bucket(Occur::MustNot);
   if (excluded.empty()) {
@@ -585,13 +586,13 @@ bool BooleanNullMarkerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   }
   irs::containers::FlatHashSet<field_id> anchors;
   bool ready = false;
-  const auto vacuous = [&](field_id field, ValueKind dict) {
-    if (dict != ValueKind::SqlNull || !field_limits::valid(field)) {
+  const auto vacuous = [&](field_id field, DictRef dict) {
+    if (!ctx.IsNullMarker(dict) || !field_limits::valid(field)) {
       return false;
     }
     if (!ready) {
       ready = true;
-      CollectBucketAnchors(node, anchors);
+      CollectBucketAnchors(node, ctx, anchors);
     }
     return anchors.contains(field);
   };
@@ -718,7 +719,7 @@ struct OrAcceptorFusionRule {
  private:
   struct AcceptorInfo {
     field_id field;
-    ValueKind dict;
+    DictRef dict;
     score_t boost;
   };
 
@@ -732,7 +733,7 @@ struct AndAcceptorFusionRule {
  private:
   struct Operand {
     field_id field;
-    ValueKind dict;
+    DictRef dict;
     bstring pattern;
     TermBounds bounds;
     TermAcceptorSource::ptr exact;
@@ -779,9 +780,6 @@ size_t DriverRank(const Filter& filter) noexcept {
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
   const Filter& child) {
   const auto info = [](const auto& filter) -> std::optional<AcceptorInfo> {
-    if (filter.dict() != ValueKind::String) {
-      return std::nullopt;
-    }
     return AcceptorInfo{filter.field_id(), filter.dict(), filter.GetBoost()};
   };
   const auto type = child.type();
@@ -862,7 +860,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   const auto filters = node.Filters(Occur::Should);
 
   field_id field;
-  ValueKind dict;
+  DictRef dict;
   score_t boost;
   const Scorer* scorer;
   if (!terms.empty()) {
@@ -882,7 +880,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   size_t seekable = terms.size();
   for (const auto& term : terms) {
     if (term.field != field || term.dict != dict ||
-        term.dict != ValueKind::String || (scores && term.scorer != scorer)) {
+        (scores && term.scorer != scorer)) {
       return false;
     }
     if (scores && term.boost != boost) {
@@ -932,9 +930,6 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
 
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const TermClause& term) {
-  if (term.dict != ValueKind::String) {
-    return std::nullopt;
-  }
   return Operand{term.field, term.dict, term.term,
                  TermBounds{term.term, AfterKey(term.term)}, nullptr};
 }
@@ -942,9 +937,6 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
 std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
   const Filter& child) {
   const auto leaf = RequiringLeafFieldOf(child);
-  if (leaf.dict != ValueKind::String) {
-    return std::nullopt;
-  }
   const auto type = child.type();
   if (type == Type<ByTerm>::id()) {
     const auto& filter = irs::utils::downCast<ByTerm>(child);

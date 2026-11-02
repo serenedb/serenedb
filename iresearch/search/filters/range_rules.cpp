@@ -255,14 +255,14 @@ field_id FieldOf(const Filter& child) noexcept {
   return field_limits::invalid();
 }
 
-ValueKind DictOf(const Filter& child) noexcept {
+DictRef DictOf(const Filter& child) noexcept {
   if (AsPrefix(child) != nullptr) {
     return irs::utils::downCast<ByPrefix>(child).dict();
   }
   if (AsRange(child) != nullptr) {
     return irs::utils::downCast<ByRange>(child).dict();
   }
-  return ValueKind::String;
+  return {};
 }
 
 bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
@@ -346,7 +346,7 @@ class PrefixIndex {
     bool has_wider{false};
     bool has_narrower{false};
   };
-  using Key = std::tuple<field_id, ValueKind, bytes_view>;
+  using Key = std::tuple<field_id, DictRef, bytes_view>;
 
   absl::flat_hash_map<Key, Entry> _map;
 };

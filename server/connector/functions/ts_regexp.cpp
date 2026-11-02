@@ -111,7 +111,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto regexp = irs::CreateByRegexp(
-    column_info.field_id,
+    column_info.field_id, TextOf(column_info),
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
     ctx.boost);
   if (!ctx.negated) {

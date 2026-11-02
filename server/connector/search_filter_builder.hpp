@@ -185,16 +185,32 @@ Filter& AddFilter(BoolTarget parent, Args&&... args) {
   return ref;
 }
 
+irs::DictLayout LayoutOf(const SearchColumnInfo& info);
+
+inline irs::DictRef TextOf(const SearchColumnInfo& info) {
+  return term_dict::StringsOf(LayoutOf(info));
+}
+
+inline irs::DictRef ValuesOf(const SearchColumnInfo& info,
+                             duckdb::LogicalTypeId type_id) {
+  return term_dict::ValuesOf(LayoutOf(info), term_dict::Classify(type_id));
+}
+
 template<typename Filter>
 Filter& SetField(Filter& filter, const SearchColumnInfo& info,
-                 irs::ValueKind kind = irs::ValueKind::String) {
+                 irs::DictRef dict) {
   *filter.mutable_field_id() = info.field_id;
-  *filter.mutable_dict() = kind;
+  *filter.mutable_dict() = dict;
   return filter;
 }
 
+template<typename Filter>
+Filter& SetField(Filter& filter, const SearchColumnInfo& info) {
+  return SetField(filter, info, TextOf(info));
+}
+
 // A term clause, which the node stores rather than the `ByTerm` it came as.
-inline void AddTerm(BoolTarget parent, irs::field_id field, irs::ValueKind dict,
+inline void AddTerm(BoolTarget parent, irs::field_id field, irs::DictRef dict,
                     irs::bytes_view term, irs::score_t boost = irs::kNoBoost,
                     const irs::Scorer* scorer = nullptr) {
   parent.Add(irs::TermClause{
@@ -204,12 +220,6 @@ inline void AddTerm(BoolTarget parent, irs::field_id field, irs::ValueKind dict,
     .term = irs::bstring{term},
     .boost = boost,
   });
-}
-
-inline void AddTerm(BoolTarget parent, irs::field_id field,
-                    irs::bytes_view term, irs::score_t boost = irs::kNoBoost,
-                    const irs::Scorer* scorer = nullptr) {
-  AddTerm(parent, field, irs::ValueKind::String, term, boost, scorer);
 }
 
 // How many of the `Should` bucket a document needs. Set once the bucket is
@@ -233,7 +243,7 @@ inline BoolTarget AddGroup(BoolTarget parent, irs::Occur occur) {
 
 struct NullMarker {
   irs::field_id field = irs::field_limits::invalid();
-  ColumnShape shape = ColumnShape::Scalar;
+  irs::DictLayout layout = irs::DictLayout::String;
   bool json_null = false;
 
   bool operator==(const NullMarker&) const = default;
@@ -243,18 +253,14 @@ NullMarker NullMarkerOf(const SearchColumnInfo& info);
 
 void AddNullMarkers(BoolTarget parent, const NullMarker& marker);
 
+irs::containers::FlatHashSet<irs::DictRef> NullRowMarkers();
+
 // `ByTerms{field, terms, mm=k}`: one node holding the terms of a single
 // field. Every term required is the `Must` bucket and no threshold at all;
 // anything less is `Should` counted to `k`.
 irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                               irs::ValueKind dict,
-                               std::span<irs::bstring> terms, size_t min_match);
-
-inline irs::BooleanFilter& AddTermSet(BoolTarget parent, irs::field_id field,
-                                      std::span<irs::bstring> terms,
-                                      size_t min_match) {
-  return AddTermSet(parent, field, irs::ValueKind::String, terms, min_match);
-}
+                               irs::DictRef dict, std::span<irs::bstring> terms,
+                               size_t min_match);
 
 // What a negated clause is added to. Under a conjunction the node's own
 // `MustNot` bucket is the negation, and nothing has to be allocated for it;
@@ -321,12 +327,6 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
-
-inline irs::ValueKind ValueKindOf(duckdb::LogicalTypeId type_id) {
-  return term_dict::IsNumeric(term_dict::Classify(type_id))
-           ? irs::ValueKind::Numeric
-           : irs::ValueKind::String;
-}
 
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.

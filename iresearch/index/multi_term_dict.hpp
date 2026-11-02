@@ -35,23 +35,23 @@ class MultiTermDict {
 
   DictLayout Layout() const noexcept { return _layout; }
 
-  const TermReader* At(ValueKind kind) const noexcept {
-    const auto position = PositionOf(_layout, kind);
-    return position == kNoPosition ? nullptr : _dicts[position];
+  const TermReader* At(DictRef dict) const noexcept {
+    SDB_ASSERT(dict.layout == _layout);
+    return dict.layout == _layout && Contains(dict) ? _dicts[dict.member]
+                                                    : nullptr;
   }
 
   std::span<const TermReader* const> All() const noexcept {
-    return {_dicts.data(), LayoutKinds(_layout).size()};
+    return {_dicts.data(), LayoutMembers(_layout).size()};
   }
 
-  void Add(ValueKind kind, const TermReader& dict) noexcept {
-    const auto position = PositionOf(_layout, kind);
-    SDB_ASSERT(position != kNoPosition && !_dicts[position]);
-    _dicts[position] = &dict;
+  void Add(uint8_t member, const TermReader& dict) noexcept {
+    SDB_ASSERT(member < LayoutMembers(_layout).size() && !_dicts[member]);
+    _dicts[member] = &dict;
   }
 
  private:
-  std::array<const TermReader*, kMaxLayoutKinds> _dicts{};
+  std::array<const TermReader*, kMaxLayoutMembers> _dicts{};
   DictLayout _layout;
 };
 

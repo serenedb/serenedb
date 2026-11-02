@@ -234,7 +234,7 @@ struct Ifield {
   }
   // Field identity; the on-disk storage key.
   virtual irs::field_id Id() const = 0;
-  virtual irs::ValueKind Slot() const { return irs::ValueKind::String; }
+  virtual irs::DictRef Dict() const { return irs::StringLayout::kStrings; }
   virtual std::string_view Name() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
@@ -275,14 +275,16 @@ class LongField : public FieldBase {
  public:
   typedef int64_t value_t;
 
-  LongField() = default;
+  LongField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   int64_t _value{};
@@ -301,7 +303,7 @@ class IntField : public FieldBase {
     irs::IndexFeatures extra_features = irs::IndexFeatures::None)
     : _value{value} {
     this->Name(std::string{name});
-    this->index_features |= extra_features;
+    this->index_features |= irs::IndexFeatures::Ranges | extra_features;
   }
   IntField(IntField&& other) = default;
 
@@ -310,7 +312,9 @@ class IntField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   int32_t _value{};
@@ -324,14 +328,16 @@ class DoubleField : public FieldBase {
  public:
   typedef double_t value_t;
 
-  DoubleField() = default;
+  DoubleField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   double_t _value{};
@@ -345,14 +351,16 @@ class FloatField : public FieldBase {
  public:
   typedef float_t value_t;
 
-  FloatField() = default;
+  FloatField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
-  irs::ValueKind Slot() const noexcept final { return irs::ValueKind::Numeric; }
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   float_t _value{};

@@ -72,13 +72,13 @@ bool InsertFieldImpl(irs::doc_id_t doc, FieldT&& field,
 
 template<typename FieldT>
 bool InsertFieldTokens(const irs::IndexWriter::Document& doc, FieldT&& field) {
-  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
-                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
-                          fld.Configure(field.GetTokens().Traits());
-                          field.GetTokens().Fill(
-                            tests::ToStringT(field.Value()), doc.DocId(), w,
-                            {fld.Layout()});
-                        });
+  return doc.WithTokens(
+    field.Id(), irs::StringLayout::kStrings, field.GetIndexFeatures(), nullptr,
+    [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+      fld.Configure(field.GetTokens().Traits());
+      field.GetTokens().Fill(tests::ToStringT(field.Value()), doc.DocId(), w,
+                             {fld.Layout()});
+    });
 }
 
 template<typename FieldT>
@@ -94,7 +94,7 @@ template<typename FieldT>
 bool InsertField(irs::SegmentWriter& writer, irs::doc_id_t doc,
                  FieldT&& field) {
   return writer.WithField(
-    field.Id(), irs::ValueKind::String, field.GetIndexFeatures(),
+    field.Id(), irs::StringLayout::kStrings, field.GetIndexFeatures(),
     [&](irs::FieldInverter& fld) {
       fld.Configure(field.GetTokens().Traits());
       return InsertFieldImpl(doc, field,

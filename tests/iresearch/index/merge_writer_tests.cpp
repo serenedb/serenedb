@@ -60,7 +60,7 @@ inline constexpr irs::field_id kDocDoubleId = tests::FieldIdFor("doc_double");
 inline constexpr irs::field_id kDocFloatId = tests::FieldIdFor("doc_float");
 inline constexpr irs::field_id kDocIntId = tests::FieldIdFor("doc_int");
 inline constexpr irs::field_id kDocLongId = tests::FieldIdFor("doc_long");
-inline constexpr auto kNumeric = irs::ValueKind::Numeric;
+inline constexpr auto kNumeric = irs::NumericLayout::kNumbers;
 inline constexpr irs::field_id kDocStringId = tests::FieldIdFor("doc_string");
 inline constexpr irs::field_id kDocTextId = tests::FieldIdFor("doc_text");
 inline constexpr irs::field_id kFooId = tests::FieldIdFor("foo");
@@ -765,9 +765,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
   }
 
   auto docs_count = [](const irs::SubReader& segment, irs::field_id field,
-                       irs::ValueKind slot = irs::ValueKind::String) {
+                       irs::DictRef dict = irs::StringLayout::kStrings) {
     const auto* dicts = segment.dicts(field);
-    const auto* reader = dicts ? dicts->At(slot) : nullptr;
+    const auto* reader = dicts ? dicts->At(dict) : nullptr;
     return reader ? reader->docs_count() : 0;
   };
 
@@ -849,7 +849,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocDoubleId, irs::ValueKind::Numeric));
+      ASSERT_EQ(2, docs_count(segment, kDocDoubleId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -871,7 +871,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocFloatId, irs::ValueKind::Numeric));
+      ASSERT_EQ(2, docs_count(segment, kDocFloatId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -893,7 +893,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocIntId, irs::ValueKind::Numeric));
+      ASSERT_EQ(2, docs_count(segment, kDocIntId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -915,7 +915,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       expected_terms[min_term].emplace(1);
       expected_terms[max_term].emplace(2);
 
-      ASSERT_EQ(2, docs_count(segment, kDocLongId, irs::ValueKind::Numeric));
+      ASSERT_EQ(2, docs_count(segment, kDocLongId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
@@ -1036,7 +1036,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocDoubleId, irs::ValueKind::Numeric));
+      ASSERT_EQ(1, docs_count(segment, kDocDoubleId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1057,7 +1057,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocFloatId, irs::ValueKind::Numeric));
+      ASSERT_EQ(1, docs_count(segment, kDocFloatId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1078,7 +1078,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocIntId, irs::ValueKind::Numeric));
+      ASSERT_EQ(1, docs_count(segment, kDocIntId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1099,7 +1099,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
       expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocLongId, irs::ValueKind::Numeric));
+      ASSERT_EQ(1, docs_count(segment, kDocLongId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
       ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
@@ -1252,7 +1252,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((double_t)(2.718281828 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId, irs::ValueKind::Numeric));
+    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1275,7 +1275,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((float_t)(3.1415926535 * 2))].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocFloatId, irs::ValueKind::Numeric));
+    ASSERT_EQ(3, docs_count(*segment, kDocFloatId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1298,7 +1298,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm(42 * 2)].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocIntId, irs::ValueKind::Numeric));
+    ASSERT_EQ(3, docs_count(*segment, kDocIntId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -1321,7 +1321,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     expected_terms[NumericTerm((int64_t)12345 * 2)].emplace(2);
     expected_terms[max_term].emplace(3);
 
-    ASSERT_EQ(3, docs_count(*segment, kDocLongId, irs::ValueKind::Numeric));
+    ASSERT_EQ(3, docs_count(*segment, kDocLongId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
     ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
@@ -2144,22 +2144,22 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
         auto doc = trx.Insert(false, kDocs);
         ASSERT_TRUE(doc);
         const auto d = doc.DocId();
-        doc.SetLayout(kField, irs::DictLayout::Json);
-        doc.SetLayout(kList, irs::DictLayout::StringList);
-        ASSERT_TRUE(doc.WithPostingSlots(kField, [&](irs::PostingSlots& slots) {
-          slots.Push(irs::ValueKind::SqlNull, d);
-          if (segment == 0) {
-            slots.Push(irs::ValueKind::JsonNull, d + 1);
-          } else {
-            slots.Push(irs::ValueKind::False, d + 2);
-          }
-          slots.Push(irs::ValueKind::True, d + 3);
-        }));
-        ASSERT_TRUE(doc.WithPostingSlots(kList, [&](irs::PostingSlots& slots) {
-          slots.Push(irs::ValueKind::NullElement, d);
-        }));
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kField, irs::DictLayout::Json, [&](irs::MemberDocs& docs) {
+            docs.Push(irs::JsonLayout::kNulls, d);
+            if (segment == 0) {
+              docs.Push(irs::JsonLayout::kJsonNulls, d + 1);
+            } else {
+              docs.Push(irs::JsonLayout::kFalse, d + 2);
+            }
+            docs.Push(irs::JsonLayout::kTrue, d + 3);
+          }));
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kList, irs::DictLayout::StringList, [&](irs::MemberDocs& docs) {
+            docs.Push(irs::StringListLayout::kNullElements, d);
+          }));
         ASSERT_TRUE(doc.WithField(
-          kField, irs::ValueKind::Numeric, irs::IndexFeatures::None,
+          kField, irs::JsonLayout::kNumbers, irs::IndexFeatures::Ranges,
           [&](irs::FieldInverter& fld) {
             return fld.InvertNumerics<int64_t>([&](auto&& emit) {
               for (uint32_t i = 1; i != kDocs; ++i) {
@@ -2173,8 +2173,10 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
         }
         for (const auto id : {kField, kOther}) {
           ASSERT_TRUE(doc.WithField(
-            id, irs::ValueKind::String, irs::IndexFeatures::None,
-            [&](irs::FieldInverter& fld) {
+            id,
+            id == kField ? irs::JsonLayout::kStrings
+                         : irs::StringLayout::kStrings,
+            irs::IndexFeatures::None, [&](irs::FieldInverter& fld) {
               return fld.InvertKeywords([&](auto&& emit) {
                 for (uint32_t i = 0; i != kDocs; ++i) {
                   emit(duckdb::string_t{values[i].data(), static_cast<uint32_t>(
@@ -2209,15 +2211,14 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
     irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
   ASSERT_EQ(2 * kDocs - 1, segment->docs_count());
 
-  const auto docs_of = [&](irs::field_id id, irs::ValueKind slot) {
+  const auto docs_of = [&](irs::field_id id, irs::DictRef dict) {
     std::vector<irs::doc_id_t> docs;
     const auto* dicts = segment->dicts(id);
-    const auto* terms = dicts ? dicts->At(slot) : nullptr;
+    const auto* terms = dicts ? dicts->At(dict) : nullptr;
     EXPECT_NE(nullptr, terms);
     if (!terms) {
       return docs;
     }
-    EXPECT_EQ(slot, terms->meta().kind);
     auto it = terms->iterator();
     while (it->next()) {
       auto postings = ::tests::Docs(it->postings(irs::IndexFeatures::None));
@@ -2233,20 +2234,24 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
   EXPECT_EQ(irs::DictLayout::Json, segment->dicts(kField)->Layout());
   EXPECT_EQ(irs::DictLayout::String, segment->dicts(kOther)->Layout());
   EXPECT_EQ(irs::DictLayout::StringList, segment->dicts(kList)->Layout());
-  EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::ValueKind::SqlNull));
-  EXPECT_EQ((Docs{2}), docs_of(kField, irs::ValueKind::JsonNull));
-  EXPECT_EQ((Docs{6}), docs_of(kField, irs::ValueKind::False));
-  EXPECT_EQ((Docs{4, 7}), docs_of(kField, irs::ValueKind::True));
-  EXPECT_EQ((Docs{2, 3, 4, 6, 7}), docs_of(kField, irs::ValueKind::Numeric));
+  EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::JsonLayout::kNulls));
+  EXPECT_EQ((Docs{2}), docs_of(kField, irs::JsonLayout::kJsonNulls));
+  EXPECT_EQ((Docs{6}), docs_of(kField, irs::JsonLayout::kFalse));
+  EXPECT_EQ((Docs{4, 7}), docs_of(kField, irs::JsonLayout::kTrue));
+  EXPECT_EQ((Docs{2, 3, 4, 6, 7}), docs_of(kField, irs::JsonLayout::kNumbers));
   EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
-            docs_of(kField, irs::ValueKind::String));
+            docs_of(kField, irs::JsonLayout::kStrings));
   EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
-            docs_of(kOther, irs::ValueKind::String));
-  EXPECT_EQ((Docs{1, 5}), docs_of(kList, irs::ValueKind::NullElement));
-  EXPECT_EQ(nullptr, segment->dicts(kField)->At(irs::ValueKind::NullElement));
-  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::ValueKind::SqlNull));
-  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::ValueKind::Numeric));
-  EXPECT_EQ(nullptr, segment->dicts(kList)->At(irs::ValueKind::SqlNull));
+            docs_of(kOther, irs::StringLayout::kStrings));
+  EXPECT_EQ((Docs{1, 5}), docs_of(kList, irs::StringListLayout::kNullElements));
+  EXPECT_EQ(nullptr, segment->dicts(kOther)->At(irs::StringLayout::kNulls));
+  EXPECT_EQ(nullptr, segment->dicts(kList)->At(irs::StringListLayout::kNulls));
+  EXPECT_EQ(nullptr,
+            segment->dicts(kList)->At(irs::StringListLayout::kStrings));
+  EXPECT_EQ(irs::IndexFeatures::Ranges, segment->dicts(kField)
+                                          ->At(irs::JsonLayout::kNumbers)
+                                          ->meta()
+                                          .index_features);
 }
 
 TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
@@ -2260,10 +2265,12 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
       {
         auto doc = trx.Insert(false, 1);
         ASSERT_TRUE(doc);
-        doc.SetLayout(kField, layout);
-        ASSERT_TRUE(doc.WithPostingSlots(kField, [&](irs::PostingSlots& slots) {
-          slots.Push(irs::ValueKind::True, doc.DocId());
-        }));
+        ASSERT_TRUE(
+          doc.WithMemberDocs(kField, layout, [&](irs::MemberDocs& docs) {
+            docs.Push(layout == irs::DictLayout::Bool ? irs::BoolLayout::kTrue
+                                                      : irs::JsonLayout::kTrue,
+                      doc.DocId());
+          }));
       }
       ASSERT_TRUE(trx.Commit());
       writer->RefreshCommit();

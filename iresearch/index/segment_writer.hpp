@@ -62,14 +62,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // protocol (feature mismatch or inversion failure poisons the writer).
   // WithField runs `func(slot)` against the resolved slot; WithTokens
   // serves streamed fills against the pooled TokenSink.
-  void SetLayout(field_id id, DictLayout layout) {
-    _fields.SetLayout(id, layout);
-  }
-
   template<typename Func>
-  bool WithField(field_id id, ValueKind kind, IndexFeatures index_features,
+  bool WithField(field_id id, DictRef dict, IndexFeatures index_features,
                  Func&& func) {
-    auto* slot = Field(id, kind, index_features);
+    auto* slot = Field(id, dict, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }
@@ -77,11 +73,12 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
 
   template<typename Func>
-  bool WithPostingSlots(field_id id, Func&& func) {
+  bool WithMemberDocs(field_id id, DictLayout layout, Func&& func) {
     if (!_valid) [[unlikely]] {
       return false;
     }
-    func(_fields.Slots(id));
+    auto docs = _fields.Docs(id, layout);
+    func(docs);
     return true;
   }
 
@@ -92,15 +89,16 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // (Configure with the producer's traits) belongs at the top of `func`,
   // before the first emit. Per-value stored blobs, if any, go to `store`.
   template<typename Func>
-  bool WithTokens(field_id id, IndexFeatures index_features, StoreSink* store,
-                  Func&& func) {
-    return WithTarget<TokensTarget>(id, index_features, store,
+  bool WithTokens(field_id id, DictRef dict, IndexFeatures index_features,
+                  StoreSink* store, Func&& func) {
+    return WithTarget<TokensTarget>(id, dict, index_features, store,
                                     std::forward<Func>(func));
   }
 
   template<typename Func>
-  bool WithEntryTokens(field_id id, IndexFeatures index_features, Func&& func) {
-    return WithTarget<EntriesTarget>(id, index_features, nullptr,
+  bool WithEntryTokens(field_id id, DictRef dict, IndexFeatures index_features,
+                       Func&& func) {
+    return WithTarget<EntriesTarget>(id, dict, index_features, nullptr,
                                      std::forward<Func>(func));
   }
 
@@ -177,9 +175,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Per-column slot acquisition: resolves (creating on first sight) and
   // validates the requested features once; a feature mismatch poisons the
   // writer and returns null.
-  FieldInverter* Field(field_id id, ValueKind kind,
+  FieldInverter* Field(field_id id, DictRef dict,
                        IndexFeatures index_features) {
-    auto* slot = _fields.Emplace(id, kind, index_features);
+    auto* slot = _fields.Emplace(id, dict, index_features);
     if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
       _valid = false;
       _error = "the field was created with other index features";
@@ -204,9 +202,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
 
   template<typename Target, typename Func>
-  bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
-                  Func&& func) {
-    auto* slot = Field(id, ValueKind::String, index_features);
+  bool WithTarget(field_id id, DictRef dict, IndexFeatures index_features,
+                  StoreSink* store, Func&& func) {
+    auto* slot = Field(id, dict, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }

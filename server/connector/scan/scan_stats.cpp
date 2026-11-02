@@ -54,8 +54,9 @@ const irs::FieldTermRange* KeywordTermRange(const ScanBindData& bind,
   }
   const auto& index = bind.relation.ScannedIndex();
   const auto field_id = index.TermField(bind.columns.ids[column_index]);
-  return index.IsKeywordField(field_id) ? reader.GetTermRange(field_id)
-                                        : nullptr;
+  return index.IsKeywordField(field_id)
+           ? reader.GetTermRange(field_id, irs::StringLayout::kStrings)
+           : nullptr;
 }
 
 duckdb::string_t AsStringT(irs::bytes_view bytes) {

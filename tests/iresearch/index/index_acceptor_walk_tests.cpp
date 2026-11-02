@@ -45,6 +45,14 @@ using namespace std::literals;
 
 class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
  protected:
+  static const irs::TermReader* StringsOf(const irs::SubReader& segment,
+                                          irs::field_id id) {
+    const auto* dicts = segment.dicts(id);
+    return dicts && dicts->Layout() == irs::DictLayout::String
+             ? dicts->At(irs::StringLayout::kStrings)
+             : nullptr;
+  }
+
   template<typename Acceptor>
   static std::vector<std::pair<irs::bstring, irs::byte_type>> BruteForce(
     const Acceptor& acceptor, const irs::TermReader& field) {
@@ -111,7 +119,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                   bool expect_payload) {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
-        const auto* field = segment.field(field_id);
+        const auto* field = StringsOf(segment, field_id);
         if (!field) {
           continue;
         }
@@ -133,7 +141,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
     ASSERT_NE(nullptr, predicate);
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
-        const auto* field = segment.field(field_id);
+        const auto* field = StringsOf(segment, field_id);
         if (!field) {
           continue;
         }
@@ -269,7 +277,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
 
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
-        const auto* field = segment.field(field_id);
+        const auto* field = StringsOf(segment, field_id);
         if (!field) {
           continue;
         }
@@ -358,7 +366,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                     Covers&& covers, Oracle&& oracle) {
     for (auto& segment : reader) {
       for (auto field_id : segment.field_ids()) {
-        const auto* field = segment.field(field_id);
+        const auto* field = StringsOf(segment, field_id);
         if (!field) {
           continue;
         }
@@ -440,7 +448,7 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   size_t checked = 0;
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
-      const auto* field = segment.field(field_id);
+      const auto* field = StringsOf(segment, field_id);
       if (!field) {
         continue;
       }
@@ -554,7 +562,7 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
       AssertWalk(*reader.GetImpl(), bounded, false);
       for (auto& segment : *reader.GetImpl()) {
         for (auto field_id : segment.field_ids()) {
-          const auto* field = segment.field(field_id);
+          const auto* field = StringsOf(segment, field_id);
           if (!field) {
             continue;
           }
@@ -666,7 +674,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
 
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
-      const auto* field = segment.field(field_id);
+      const auto* field = StringsOf(segment, field_id);
       if (!field) {
         continue;
       }
@@ -692,7 +700,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_is_the_intersection) {
         irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                irs::PatternKind::Wildcard),
         irs::TermBounds{},
-        irs::CreateByWildcard(field_id,
+        irs::CreateByWildcard(field_id, irs::StringLayout::kStrings,
                               irs::ViewCast<irs::byte_type>(kResidual)));
       ASSERT_TRUE(source->ok());
 
@@ -729,7 +737,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
 
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
-      const auto* field = segment.field(field_id);
+      const auto* field = StringsOf(segment, field_id);
       if (!field) {
         continue;
       }
@@ -754,7 +762,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
       {
         auto source = irs::MakeConjunctionSource(
           nullptr, bounds,
-          irs::CreateByWildcard(field_id,
+          irs::CreateByWildcard(field_id, irs::StringLayout::kStrings,
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);
@@ -767,7 +775,7 @@ TEST_P(AcceptorWalkIndexTestCase, conjunction_source_honours_its_bounds) {
           irs::MakePatternSource(irs::ViewCast<irs::byte_type>(kDriver),
                                  irs::PatternKind::Wildcard),
           bounds,
-          irs::CreateByWildcard(field_id,
+          irs::CreateByWildcard(field_id, irs::StringLayout::kStrings,
                                 irs::ViewCast<irs::byte_type>(kResidual)));
         ASSERT_TRUE(source->ok());
         auto walk = source->Iterator(*field);
@@ -905,7 +913,7 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
     size_t total = 0;
     for (auto& segment : *reader.GetImpl()) {
       for (auto field_id : segment.field_ids()) {
-        const auto* field = segment.field(field_id);
+        const auto* field = StringsOf(segment, field_id);
         if (!field) {
           continue;
         }

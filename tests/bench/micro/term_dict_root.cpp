@@ -200,8 +200,7 @@ void Write(Data& data) {
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
-  writer.write(irs::DictLayout::String, irs::ValueKind::String,
-               KeysReader{data.keys});
+  writer.write(irs::StringLayout::kStrings, KeysReader{data.keys});
   writer.end();
   idx.Commit();
 }
@@ -217,7 +216,7 @@ void Open(Data& data) {
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
-  data.field = data.fields->dicts(1)->At(irs::ValueKind::String);
+  data.field = data.fields->dicts(1)->At(irs::StringLayout::kStrings);
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
   std::vector<bytes_view> separators;

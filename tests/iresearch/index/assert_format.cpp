@@ -106,9 +106,9 @@ bool Term::operator<(const Term& rhs) const {
 Field::Field(irs::field_id id, irs::IndexFeatures index_features)
   : FieldMeta(id, index_features), stats{} {}
 
-Field::Field(irs::field_id id, irs::ValueKind slot,
+Field::Field(irs::field_id id, irs::DictRef dict,
              irs::IndexFeatures index_features)
-  : FieldMeta(id, slot, index_features), stats{} {}
+  : FieldMeta(id, index_features), stats{}, dict{dict} {}
 
 Term& Field::insert(irs::bytes_view t) {
   auto res = terms.emplace(t);
@@ -211,7 +211,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   const auto requested_features = f.GetIndexFeatures();
   const auto features = requested_features & (~irs::IndexFeatures::Offs);
 
-  const auto res = _fields.emplace(f.Id(), Field{f.Id(), f.Slot(), features});
+  const auto res = _fields.emplace(f.Id(), Field{f.Id(), f.Dict(), features});
 
   Field& field = res.first->second;
 
@@ -773,7 +773,7 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
       const auto* actual_dicts = actual_segment.dicts(*actual_id_it);
       ASSERT_NE(nullptr, actual_dicts);
-      const auto* actual_terms = actual_dicts->At(expected_field->second.kind);
+      const auto* actual_terms = actual_dicts->At(expected_field->second.dict);
       ASSERT_NE(nullptr, actual_terms);
       ASSERT_EQ(expected_field->second.id, actual_terms->meta().id);
       ASSERT_EQ(expected_field->second.index_features,

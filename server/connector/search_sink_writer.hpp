@@ -158,9 +158,11 @@ class SearchSinkInsertBaseImpl {
     // Binds (does not consume) the analyzer: the sink's tokenizer cache owns
     // the pool lease for its own lifetime.
     void PrepareForStringValue(irs::field_id field_id,
-                               catalog::ColumnTokenizer& column_analyzer);
+                               catalog::ColumnTokenizer& column_analyzer,
+                               irs::DictRef dict);
 
-    void PrepareForBlockValue(irs::field_id field_id, irs::ValueKind kind);
+    void PrepareForBlockValue(irs::field_id field_id, irs::DictRef dict);
+    void PrepareForNumericValue(irs::field_id field_id, irs::DictRef dict);
 
     irs::analysis::Tokenizer* string_analyzer = nullptr;
     irs::field_id id{irs::field_limits::invalid()};
@@ -168,7 +170,7 @@ class SearchSinkInsertBaseImpl {
     // stores nothing.
     irs::field_id store_column{irs::field_limits::invalid()};
     irs::IndexFeatures index_features;
-    irs::ValueKind kind = irs::ValueKind::String;
+    irs::DictRef dict;
     bool keyword = false;
   };
 
@@ -176,7 +178,7 @@ class SearchSinkInsertBaseImpl {
   void InvertField(const Field& field, Func&& func);
 
   template<typename Func>
-  void InvertSlots(irs::field_id id, Func&& func);
+  void InvertDocs(irs::field_id id, Func&& func);
 
   template<typename Func>
   void InvertTokens(const Field& field, irs::StoreSink* store, Func&& func);
@@ -240,7 +242,7 @@ class SearchSinkInsertBaseImpl {
   template<typename Insert>
   void WriteColumnBlock(irs::field_id null_id, duckdb::idx_t count,
                         Insert&& insert);
-  void FinishColumnBlocks(irs::field_id null_id, irs::ValueKind kind,
+  void FinishColumnBlocks(irs::field_id null_id, irs::DictRef dict,
                           std::vector<irs::doc_id_t>& docs);
 
   struct JsonExpressionFields {
@@ -263,6 +265,7 @@ class SearchSinkInsertBaseImpl {
   Field _pk_field;
   Field _field;
   irs::field_id _null_id = irs::field_limits::invalid();
+  irs::DictLayout _layout = irs::DictLayout::String;
   irs::IndexWriter::Transaction* _trx;
   std::optional<irs::IndexWriter::Document> _document;
 

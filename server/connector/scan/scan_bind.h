@@ -142,6 +142,7 @@ struct TsDictRequest {
   duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
   TsDictTermUses term_uses = TsDictTermUses::None;
+  irs::DictLayout layout = irs::DictLayout::String;
   bool nulls = false;
 };
 

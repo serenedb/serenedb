@@ -22,7 +22,9 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <iresearch/index/field_meta.hpp>
 #include <iresearch/types.hpp>
+#include <limits>
 
 #include "connector/column_id.h"
 #include "pg/types/logical.h"
@@ -105,6 +107,140 @@ constexpr bool IsNumeric(Kind kind) noexcept {
 
 constexpr bool IsSupported(Kind kind) noexcept {
   return kind != Kind::Unsupported;
+}
+
+inline constexpr uint8_t kNoMember = std::numeric_limits<uint8_t>::max();
+
+constexpr irs::DictLayout ScalarLayout(Kind kind) noexcept {
+  if (kind == Kind::Bool) {
+    return irs::DictLayout::Bool;
+  }
+  return IsNumeric(kind) ? irs::DictLayout::Numeric : irs::DictLayout::String;
+}
+
+constexpr irs::DictLayout ListLayout(Kind element) noexcept {
+  if (element == Kind::Bool) {
+    return irs::DictLayout::BoolList;
+  }
+  return IsNumeric(element) ? irs::DictLayout::NumericList
+                            : irs::DictLayout::StringList;
+}
+
+constexpr irs::DictRef NoMember(irs::DictLayout layout) noexcept {
+  return {.layout = layout, .member = kNoMember};
+}
+
+constexpr irs::DictRef NullsOf(irs::DictLayout layout) noexcept {
+  switch (layout) {
+    case irs::DictLayout::Bool:
+      return irs::BoolLayout::kNulls;
+    case irs::DictLayout::Numeric:
+      return irs::NumericLayout::kNulls;
+    case irs::DictLayout::String:
+      return irs::StringLayout::kNulls;
+    case irs::DictLayout::BoolList:
+      return irs::BoolListLayout::kNulls;
+    case irs::DictLayout::NumericList:
+      return irs::NumericListLayout::kNulls;
+    case irs::DictLayout::StringList:
+      return irs::StringListLayout::kNulls;
+    case irs::DictLayout::Json:
+      return irs::JsonLayout::kNulls;
+  }
+  return NoMember(layout);
+}
+
+constexpr irs::DictRef NullElementsOf(irs::DictLayout layout) noexcept {
+  switch (layout) {
+    case irs::DictLayout::BoolList:
+      return irs::BoolListLayout::kNullElements;
+    case irs::DictLayout::NumericList:
+      return irs::NumericListLayout::kNullElements;
+    case irs::DictLayout::StringList:
+      return irs::StringListLayout::kNullElements;
+    default:
+      return NoMember(layout);
+  }
+}
+
+constexpr irs::DictRef StringsOf(irs::DictLayout layout) noexcept {
+  switch (layout) {
+    case irs::DictLayout::String:
+      return irs::StringLayout::kStrings;
+    case irs::DictLayout::StringList:
+      return irs::StringListLayout::kStrings;
+    case irs::DictLayout::Json:
+      return irs::JsonLayout::kStrings;
+    default:
+      return NoMember(layout);
+  }
+}
+
+constexpr irs::DictRef NumbersOf(irs::DictLayout layout) noexcept {
+  switch (layout) {
+    case irs::DictLayout::Numeric:
+      return irs::NumericLayout::kNumbers;
+    case irs::DictLayout::NumericList:
+      return irs::NumericListLayout::kNumbers;
+    case irs::DictLayout::Json:
+      return irs::JsonLayout::kNumbers;
+    default:
+      return NoMember(layout);
+  }
+}
+
+constexpr irs::DictRef BoolsOf(irs::DictLayout layout, bool value) noexcept {
+  switch (layout) {
+    case irs::DictLayout::Bool:
+      return value ? irs::BoolLayout::kTrue : irs::BoolLayout::kFalse;
+    case irs::DictLayout::BoolList:
+      return value ? irs::BoolListLayout::kTrue : irs::BoolListLayout::kFalse;
+    case irs::DictLayout::Json:
+      return value ? irs::JsonLayout::kTrue : irs::JsonLayout::kFalse;
+    default:
+      return NoMember(layout);
+  }
+}
+
+constexpr irs::DictRef ValuesOf(irs::DictLayout layout, Kind kind) noexcept {
+  return IsNumeric(kind) ? NumbersOf(layout) : StringsOf(layout);
+}
+
+enum class Member : uint8_t {
+  None = 0,
+  String,
+  False,
+  True,
+  Numeric,
+  SqlNull,
+  JsonNull,
+  NullElement,
+};
+
+constexpr Member MemberOf(irs::DictRef dict) noexcept {
+  const auto layout = dict.layout;
+  if (!irs::Contains(dict)) {
+    return Member::None;
+  }
+  if (dict == StringsOf(layout)) {
+    return Member::String;
+  }
+  if (dict == NumbersOf(layout)) {
+    return Member::Numeric;
+  }
+  if (dict == BoolsOf(layout, false)) {
+    return Member::False;
+  }
+  if (dict == BoolsOf(layout, true)) {
+    return Member::True;
+  }
+  if (dict == NullsOf(layout)) {
+    return Member::SqlNull;
+  }
+  if (dict == NullElementsOf(layout)) {
+    return Member::NullElement;
+  }
+  return dict == irs::JsonLayout::kJsonNulls ? Member::JsonNull : Member::None;
 }
 
 }  // namespace sdb::connector::term_dict

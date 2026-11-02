@@ -746,7 +746,7 @@ TEST_P(Format10TestCase, ires336) {
     irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state, 1);
-    fw.write(irs::DictLayout::String, irs::ValueKind::String, term_reader);
+    fw.write(irs::StringLayout::kStrings, term_reader);
     fw.end();
     idx.Commit();
   }
@@ -762,7 +762,7 @@ TEST_P(Format10TestCase, ires336) {
 
   const auto* dicts = fr->dicts(field_meta.id);
   ASSERT_NE(nullptr, dicts);
-  const auto* field = dicts->At(irs::ValueKind::String);
+  const auto* field = dicts->At(irs::StringLayout::kStrings);
   ASSERT_NE(nullptr, field);
   auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));

@@ -229,18 +229,14 @@ class IndexWriter : private util::Noncopyable {
 
     std::string_view Error() const noexcept { return _writer.Error(); }
 
-    void SetLayout(field_id id, DictLayout layout) const {
-      _writer.SetLayout(id, layout);
-    }
-
     template<typename... Args>
     bool WithField(Args&&... args) const {
       return _writer.WithField(std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    bool WithPostingSlots(Args&&... args) const {
-      return _writer.WithPostingSlots(std::forward<Args>(args)...);
+    bool WithMemberDocs(Args&&... args) const {
+      return _writer.WithMemberDocs(std::forward<Args>(args)...);
     }
 
     template<typename... Args>

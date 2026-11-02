@@ -93,7 +93,8 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : snapshot->reader) {
-        if (const auto* field = segment.field(req.field_id)) {
+        if (const auto* field =
+              segment.field(req.field_id, term_dict::StringsOf(req.layout))) {
           terms += field->size();
         }
       }
@@ -717,7 +718,8 @@ DeferredBuild BuildDeferredFilter(
   const auto scorer =
     scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
   irs::OptimizeContext ctx{.scored = static_cast<bool>(scan.score.text),
-                           .scorer = scorer.get()};
+                           .scorer = scorer.get(),
+                           .null_markers = NullRowMarkers()};
   ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
                              claim.analyzed_fields.end());
   irs::Deferral deferral{.reader = snapshot.reader};
@@ -736,8 +738,9 @@ DeferredBuild BuildDeferredFilter(
     SDB_ENSURE(rest_status.ok(), rest_status.message());
     irs::Filter::ptr rest_filter = std::move(rest);
     EnsureIncludeSides(*rest_filter);
-    irs::Optimize(rest_filter,
-                  {.scored = false, .analyzed_fields = ctx.analyzed_fields});
+    irs::Optimize(rest_filter, {.scored = false,
+                                .analyzed_fields = ctx.analyzed_fields,
+                                .null_markers = ctx.null_markers});
     out.index_only = std::move(rest_filter);
   }
   return out;

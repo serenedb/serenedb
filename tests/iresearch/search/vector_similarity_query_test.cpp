@@ -125,7 +125,7 @@ irs::DirectoryReader BuildIndex(
       auto doc = trx.Insert();
       const auto d = doc.DocId();
       EXPECT_TRUE(doc.WithField(
-        kName, irs::ValueKind::String, irs::IndexFeatures::Freq,
+        kName, irs::StringLayout::kStrings, irs::IndexFeatures::Freq,
         [&](irs::FieldInverter& fld) {
           return fld.InvertKeywords([&](auto&& emit) { emit(name_value, d); });
         }));

@@ -135,11 +135,11 @@ std::string TermValue(const bstring& term, Kind kind) {
   return TermValue(bytes_view{term}, kind);
 }
 
-std::string DictTermValue(ValueKind dict, bytes_view term, Kind kind) {
-  switch (dict) {
-    case ValueKind::False:
+std::string DictTermValue(DictRef dict, bytes_view term, Kind kind) {
+  switch (sdb::connector::term_dict::MemberOf(dict)) {
+    case sdb::connector::term_dict::Member::False:
       return "false";
-    case ValueKind::True:
+    case sdb::connector::term_dict::Member::True:
       return "true";
     default:
       return TermValue(term, kind);
@@ -286,10 +286,10 @@ struct FilterPrinter {
   const FieldNameResolver& name_of;
   const FieldKindResolver& kind_of;
 
-  std::string FieldName(field_id fid, ValueKind dict) const {
+  std::string FieldName(field_id fid, DictRef dict) const {
     return name_of(sdb::connector::ColumnId{fid}, dict);
   }
-  Kind FieldKind(field_id fid, ValueKind dict) const {
+  Kind FieldKind(field_id fid, DictRef dict) const {
     return kind_of(sdb::connector::ColumnId{fid}, dict);
   }
 
@@ -637,14 +637,15 @@ struct FilterPrinter {
   }
 };
 
-std::string IdentityField(sdb::connector::ColumnId id, ValueKind dict) {
-  if (dict == ValueKind::String) {
+std::string IdentityField(sdb::connector::ColumnId id, DictRef dict) {
+  const auto member = sdb::connector::term_dict::MemberOf(dict);
+  if (member == sdb::connector::term_dict::Member::String) {
     return absl::StrCat(id);
   }
-  return absl::StrCat(id, "(", magic_enum::enum_name(dict), ")");
+  return absl::StrCat(id, "(", magic_enum::enum_name(member), ")");
 }
 
-Kind UnknownKind(sdb::connector::ColumnId, ValueKind) {
+Kind UnknownKind(sdb::connector::ColumnId, DictRef) {
   return Kind::Unsupported;
 }
 

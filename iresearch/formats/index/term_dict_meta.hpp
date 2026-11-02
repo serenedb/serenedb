@@ -35,7 +35,7 @@ namespace irs::term_dict {
 struct FieldHead {
   field_id id = field_limits::invalid();
   DictLayout layout = DictLayout::String;
-  ValueKind kind = ValueKind::String;
+  uint8_t member = 0;
   IndexFeatures features = IndexFeatures::None;
   uint64_t term_count = 0;
   uint64_t doc_count = 0;

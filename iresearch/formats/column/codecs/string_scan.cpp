@@ -35,6 +35,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -138,6 +139,35 @@ const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
     return nullptr;
   }
   return &value;
+}
+
+uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
+                      std::span<const EntryAt> order) {
+  const auto* frames = base + h.off_frames;
+  const auto meta = [&](uint32_t f) {
+    return duckdb::Load<FrameMeta>(frames + f * kFrameMetaSize);
+  };
+  uint64_t bytes = 0;
+  uint32_t counted = h.frame_count;
+  for (const auto& [entry, at] : order) {
+    if (h.frame_count == 0 ||
+        (counted != h.frame_count && meta(counted).first_entry <= entry)) {
+      continue;
+    }
+    uint32_t lo = 0;
+    uint32_t hi = counted;
+    while (hi - lo > 1) {
+      const auto mid = lo + (hi - lo) / 2;
+      if (meta(mid).first_entry <= entry) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    bytes += meta(lo).raw_len;
+    counted = lo;
+  }
+  return bytes;
 }
 
 void EmitDecoded(const DecodedDictionary& decoded,

@@ -125,9 +125,11 @@ inline std::string_view View(const duckdb::string_t& s) noexcept {
 
 struct EntryAt {
   uint32_t entry;
-  uint32_t bucket;
   duckdb::idx_t at;
 };
+
+uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
+                      std::span<const EntryAt> order);
 
 void EmitDecoded(const DecodedDictionary& decoded,
                  std::span<const EntryAt> order, duckdb::Vector& result);

@@ -224,13 +224,6 @@ struct EntryFrames {
 
 template<typename Leaf>
 struct FetchFrames {
-  struct Bucket {
-    uint32_t frame;
-    uint32_t largest;
-    uint32_t size;
-    uint32_t next;
-  };
-
   bool Switch(duckdb::ColumnSegment& segment, data_ptr_t base, Shape shape) {
     const auto id = segment.GetBlockHandle()->BlockId();
     if (block == id) {
@@ -243,21 +236,14 @@ struct FetchFrames {
     lengths = PackedReader{base + header.off_lengths, header.length_width};
     leaf.Reset(header, base);
     decoded.reset();
-    slots.clear();
-    buckets.clear();
     return true;
   }
 
-  bool Whole() const noexcept {
-    return leaf.Walked() >= header.entry_count ||
-           leaf.DecodedBytes() >= header.raw_bytes;
-  }
-
-  bool Dense(uint64_t touched) const noexcept {
-    return 2 * (leaf.DecodedBytes() + touched) >= header.raw_bytes;
-  }
-
-  uint32_t FrameOf(const_data_ptr_t table, uint32_t entry) const noexcept {
+  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment& segment, data_ptr_t base,
+                             uint32_t entry, duckdb::Vector& result, idx_t at,
+                             bool batched) {
+    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
+    const auto* table = base + header.off_frames;
     uint32_t lo = 0;
     uint32_t hi = header.frame_count;
     while (hi - lo > 1) {
@@ -269,95 +255,16 @@ struct FetchFrames {
         hi = mid;
       }
     }
-    return lo;
-  }
-
-  IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment& segment, data_ptr_t base,
-                             uint32_t entry, duckdb::Vector& result, idx_t at) {
-    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
-    const auto* table = base + header.off_frames;
-    const auto lo = FrameOf(table, entry);
     const auto f = duckdb::Load<FrameMeta>(table + lo * kFrameMetaSize);
     SDB_ENSURE(f.first_entry <= entry, "col codec: corrupted frame table");
-    leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at);
-  }
-
-  uint64_t Plan(const_data_ptr_t base) {
-    for (const auto& bucket : buckets) {
-      slots[bucket.frame] = kNoFrame;
-    }
-    buckets.clear();
-    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
-    if (slots.empty()) {
-      slots.assign(header.frame_count, kNoFrame);
-    }
-    const auto* table = base + header.off_frames;
-    uint64_t touched = 0;
-    bool grouped = true;
-    uint32_t first = 0;
-    uint32_t end = 0;
-    uint32_t slot = 0;
-    for (auto& row : order) {
-      if (row.entry < first || row.entry >= end) {
-        const auto f = FrameOf(table, row.entry);
-        const auto meta = duckdb::Load<FrameMeta>(table + f * kFrameMetaSize);
-        first = meta.first_entry;
-        end = f + 1 < header.frame_count
-                ? duckdb::Load<FrameMeta>(table + (f + 1) * kFrameMetaSize)
-                    .first_entry
-                : header.entry_count;
-        SDB_ENSURE(first <= row.entry && row.entry < end,
-                   "col codec: corrupted frame table");
-        slot = slots[f];
-        if (slot == kNoFrame) {
-          slot = static_cast<uint32_t>(buckets.size());
-          buckets.emplace_back(f, row.entry, 0, 0);
-          slots[f] = slot;
-          touched += meta.raw_len;
-        } else {
-          grouped = false;
-        }
-      }
-      auto& bucket = buckets[slot];
-      bucket.largest = std::max(bucket.largest, row.entry);
-      ++bucket.size;
-      row.bucket = slot;
-    }
-    if (!grouped) {
-      uint32_t next = 0;
-      for (auto& bucket : buckets) {
-        bucket.next = next;
-        next += bucket.size;
-      }
-      sorted.resize(order.size());
-      for (const auto& row : order) {
-        sorted[buckets[row.bucket].next++] = row;
-      }
-      order.swap(sorted);
-    }
-    return touched;
-  }
-
-  void EmitBuckets(duckdb::ColumnSegment& segment, data_ptr_t base,
-                   duckdb::Vector& result) {
-    const auto* table = base + header.off_frames;
-    std::span<const EntryAt> rows{order};
-    for (const auto& bucket : buckets) {
-      leaf.EmitFrame(
-        segment, header, base, lengths, bucket.frame,
-        duckdb::Load<FrameMeta>(table + bucket.frame * kFrameMetaSize),
-        bucket.largest, rows.first(bucket.size), result);
-      rows = rows.subspan(bucket.size);
-    }
+    leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
+              batched);
   }
 
   duckdb::block_id_t block = INVALID_BLOCK;
   Header header;
   PackedReader lengths{nullptr, 0};
   ScratchVector<EntryAt> order;
-  ScratchVector<EntryAt> sorted;
-  ScratchVector<uint32_t> slots;
-  std::vector<Bucket> buckets;
   duckdb::shared_ptr<DecodedDictionary> decoded;
   typename Leaf::Fetch leaf;
 };
@@ -437,7 +344,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
       return;
     }
-    if (!frames.decoded && frames.Whole()) {
+    if (!frames.decoded && fetch.Whole()) {
       frames.decoded = DecodeWhole<Scan>(segment);
     }
     if (frames.decoded) {
@@ -445,31 +352,36 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       EmitDecoded(*frames.decoded, std::span<const EntryAt>{&one, 1}, result);
       return;
     }
-    frames.Emit(segment, base, *entry, result, at);
-    if (frames.Whole()) {
+    frames.Emit(segment, base, *entry, result, at, false);
+    if (fetch.Whole()) {
       frames.decoded = DecodeWhole<Scan>(segment);
     }
     return;
   }
   fetch.Read(base, rows, count, result, result_sel, result_offset);
   auto& order = frames.order;
-  if (!frames.decoded && frames.Whole()) {
+  if (!frames.decoded && fetch.Whole()) {
     frames.decoded = DecodeWhole<Scan>(segment);
   }
   if (frames.decoded) {
     EmitDecoded(*frames.decoded, order, result);
     return;
   }
-  if (order.empty()) {
-    return;
-  }
-  const auto touched = frames.Plan(base);
-  if (order.size() > 1 && fetch.Dense(touched)) {
+  const bool batched = order.size() > 1;
+  if (batched && fetch.PlanBatch(base)) {
     frames.decoded = DecodeWhole<Scan>(segment);
     EmitDecoded(*frames.decoded, order, result);
     return;
   }
-  frames.EmitBuckets(segment, base, result);
+  for (size_t i = 0; i < order.size(); ++i) {
+    frames.Emit(segment, base, order[i].entry, result, order[i].at, batched);
+    if (fetch.Whole()) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+      EmitDecoded(*frames.decoded,
+                  std::span<const EntryAt>{order}.subspan(i + 1), result);
+      return;
+    }
+  }
 }
 
 template<typename Scan>

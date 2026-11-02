@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
@@ -58,8 +60,13 @@ struct PlainFetch final : duckdb::SegmentScanState {
     return static_cast<uint32_t>(row);
   }
 
-  bool Dense(uint64_t touched) const noexcept {
-    return !Sorted(Leaf::kCodec) && frames.Dense(touched);
+  bool PlanBatch(const_data_ptr_t) {
+    absl::c_reverse(frames.order);
+    return false;
+  }
+
+  bool Whole() const noexcept {
+    return frames.leaf.Walked() >= frames.header.entry_count;
   }
 
   FetchFrames<Leaf> frames;

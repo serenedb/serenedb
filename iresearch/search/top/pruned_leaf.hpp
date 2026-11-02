@@ -483,15 +483,12 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   IRS_FORCE_INLINE void Members(const doc_id_t* docs, uint32_t n,
                                 Visit&& visit) {
     ForEachLeafOf(docs, n, [&](uint32_t i) IRS_FORCE_INLINE {
-      const auto last = _max_in_leaf;
-      do {
-        const auto doc = docs[i];
-        _doc = _leaf.Find(std::begin(_docs), _base, doc);
-        const bool hit = _doc == doc;
-        DecodeLazyFreqs(hit);
-        visit(i, hit, _freqs.data[_leaf.Index()]);
-      } while (++i != n && docs[i] <= last);
-      return i;
+      const auto doc = docs[i];
+      _doc = _leaf.Find(std::begin(_docs), _base, doc);
+      const bool hit = _doc == doc;
+      DecodeLazyFreqs(hit);
+      visit(i, hit, _freqs.data[_leaf.Index()]);
+      return i + 1;
     });
   }
 

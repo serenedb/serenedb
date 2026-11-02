@@ -53,6 +53,7 @@
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
+#include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
@@ -389,10 +390,30 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_ROLE) {
-    auth::CheckAlterRole(transaction, info.Cast<duckdb::AlterRoleInfo>());
+  if (info.type != duckdb::AlterType::ALTER_ROLE) {
+    ApplyAlter(transaction, info);
+    return;
   }
+  auto& alter = info.Cast<duckdb::AlterRoleInfo>();
+  auth::CheckAlterRole(transaction, alter);
+  if (!HasOption(alter.set_options | alter.clear_options,
+                 RoleOption::Superuser) ||
+      !transaction.HasContext() ||
+      info.bind_mode != duckdb::AlterBindMode::BIND_ON_ALTER) {
+    ApplyAlter(transaction, info);
+    return;
+  }
+  auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
+  const auto& name = info.GetQualifiedName().Name();
+  const auto previous = roles.GetEntry(transaction, name);
+  const bool was_superuser =
+    previous && previous->Cast<RoleCatalogEntry>().IsSuperuser();
   ApplyAlter(transaction, info);
+  const auto& role =
+    roles.GetEntry(transaction, name)->Cast<RoleCatalogEntry>();
+  if (role.IsSuperuser() != was_superuser) {
+    FollowOwnerStatus(transaction.GetContext(), role.oid, role.IsSuperuser());
+  }
 }
 
 void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,

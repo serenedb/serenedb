@@ -730,10 +730,19 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   }
   DeclareModified(transaction, *this);
   const auto& name = info.GetQualifiedName().Name();
-  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
+  auto& servers = GetCatalogSet(type);
+  const auto previous = servers.GetEntry(transaction, name);
+  const auto previous_owner = previous ? previous->permissions.owner : 0;
+  if (!servers.AlterEntry(transaction, name, info)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
+  }
+  if (transaction.HasContext() &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+    servers.GetEntry(transaction, name)
+      ->Cast<ForeignServerCatalogEntry>()
+      .FollowOwner(transaction.GetContext(), previous_owner);
   }
 }
 

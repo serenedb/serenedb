@@ -35,6 +35,8 @@ By default, `ATTACH` opens a database for reading and writing. Pass `READ_ONLY` 
 
 Use `IF NOT EXISTS` to attach only when the alias is not already in use, or `OR REPLACE` to detach and replace an existing alias. An explicit alias can be given with `AS`; otherwise it is inferred from the database name.
 
+Inside a transaction, the new database is attached at once; rolling the transaction back detaches it again and, for `OR REPLACE`, attaches the database it replaced, which is closed only once the transaction commits.
+
 ## `DETACH`
 
 The `DETACH` statement closes a previously attached database and releases any locks held on it. A database created with [`CREATE DATABASE`](../create_database/index.md) is not detached this way: `DETACH` refuses it, and `DROP DATABASE` removes it.

@@ -29,12 +29,13 @@
 
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_set.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -42,9 +43,11 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/boot.h"
+#include "catalog/catalog.h"
 
 namespace sdb::catalog {
 namespace {
@@ -114,11 +117,7 @@ bool OwnedBySuperuser(duckdb::ClientContext& context, duckdb::idx_t owner) {
 
 }  // namespace
 
-void ForeignServerCatalogEntry::CheckOwner(duckdb::ClientContext& context,
-                                           duckdb::idx_t owner) const {
-  if (OwnedBySuperuser(context, owner)) {
-    return;
-  }
+void ForeignServerCatalogEntry::CheckRestrictedOwner() const {
   const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
   std::span<const std::string_view> allowed;
   if (type == "postgres") {
@@ -153,11 +152,21 @@ void ForeignServerCatalogEntry::CheckOwner(duckdb::ClientContext& context,
 }
 
 void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
-  CheckOwner(context, permissions.owner);
-  const bool restricted = !OwnedBySuperuser(context, permissions.owner);
+  Attach(context, OwnedBySuperuser(context, permissions.owner),
+         duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
+}
+
+void ForeignServerCatalogEntry::Attach(
+  duckdb::ClientContext& context, bool superuser_owner,
+  duckdb::OnCreateConflict on_conflict) const {
+  const bool restricted = !superuser_owner;
+  if (restricted) {
+    CheckRestrictedOwner();
+  }
   const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
   duckdb::AttachInfo info;
   info.name = name;
+  info.on_conflict = on_conflict;
   auto access_mode = duckdb::AccessMode::READ_WRITE;
   if (type == "clickhouse") {
     info.path = ConnectionString(_options);
@@ -189,6 +198,41 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
     };
   catalog::Attach(context, info, type, access_mode,
                   duckdb::AttachVisibility::SHOWN);
+}
+
+void ForeignServerCatalogEntry::FollowOwner(
+  duckdb::ClientContext& context, duckdb::idx_t previous_owner) const {
+  if (permissions.owner == previous_owner) {
+    return;
+  }
+  const bool superuser = OwnedBySuperuser(context, permissions.owner);
+  if (superuser != OwnedBySuperuser(context, previous_owner)) {
+    Attach(context, superuser, duckdb::OnCreateConflict::REPLACE_ON_CONFLICT);
+  }
+}
+
+void FollowOwnerStatus(duckdb::ClientContext& context, duckdb::idx_t owner,
+                       bool superuser) {
+  std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
+  for (const auto& db : duckdb::DatabaseManager::Get(context).GetDatabases()) {
+    auto& catalog = db->GetCatalog();
+    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType ||
+        db->IsReadOnly()) {
+      continue;
+    }
+    catalog.Cast<duckdb::DuckCatalog>()
+      .GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+      .Scan(catalog.GetCatalogTransaction(context),
+            [&](duckdb::CatalogEntry& entry) {
+              if (entry.permissions.owner == owner) {
+                servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
+              }
+            });
+  }
+  for (const auto& server : servers) {
+    server.get().Attach(context, superuser,
+                        duckdb::OnCreateConflict::REPLACE_ON_CONFLICT);
+  }
 }
 
 void ForeignServerCatalogEntry::OnDrop() {
@@ -228,18 +272,6 @@ duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
-}
-
-duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::AlterEntry(
-  duckdb::ClientContext& context, duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
-      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
-    if (const auto& alter = info.Cast<duckdb::AlterPermissionsInfo>();
-        !alter.new_owner.empty()) {
-      CheckOwner(context, alter.new_owner_id);
-    }
-  }
-  return duckdb::InCatalogEntry::AlterEntry(context, info);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::Copy(

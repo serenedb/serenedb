@@ -22,6 +22,7 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/enums/on_create_conflict.hpp>
 #include <duckdb/parser/parsed_data/create_foreign_server_info.hpp>
 #include <string>
 
@@ -42,22 +43,27 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   std::string_view FdwName() const noexcept { return _fdw_name; }
 
   void Attach(duckdb::ClientContext& context) const;
+  void Attach(duckdb::ClientContext& context, bool superuser_owner,
+              duckdb::OnCreateConflict on_conflict) const;
+  void FollowOwner(duckdb::ClientContext& context,
+                   duckdb::idx_t previous_owner) const;
   void OnDrop() final;
 
-  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
-    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  void CheckOwner(duckdb::ClientContext& context, duckdb::idx_t owner) const;
+  void CheckRestrictedOwner() const;
 
   std::string _server_type;
   std::string _version;
   std::string _fdw_name;
   ServerOptions _options;
 };
+
+void FollowOwnerStatus(duckdb::ClientContext& context, duckdb::idx_t owner,
+                       bool superuser);
 
 }  // namespace sdb::catalog

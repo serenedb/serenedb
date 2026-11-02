@@ -17,6 +17,10 @@ DROP ROLE IF EXISTS efw_carol;
 
 
 statement ok
+DROP ROLE IF EXISTS efw_dave;
+
+
+statement ok
 CREATE ROLE efw_alice LOGIN PASSWORD 'efw_pw';
 
 
@@ -186,7 +190,39 @@ db error: ERROR: must be owner of foreign server efw_srv
 
 
 statement ok
+CREATE ROLE efw_dave SUPERUSER;
+
+
+statement ok
+ALTER SERVER efw_srv OWNER TO efw_dave;
+
+
+statement error
+ALTER ROLE efw_dave NOSUPERUSER;
+----
+db error: ERROR: permission denied for foreign-data wrapper duckdb_fdw
+DETAIL: Only roles with the SUPERUSER attribute may own a duckdb_fdw server.
+
+
+query
+SELECT s.srvowner::regrole::text AS owner, r.rolsuper
+FROM pg_foreign_server s JOIN pg_roles r ON r.oid = s.srvowner
+WHERE s.srvname = 'efw_srv';
+----
+owner	rolsuper
+efw_dave	t
+
+
+statement ok
 DROP SERVER efw_srv;
+
+
+statement ok
+ALTER ROLE efw_dave NOSUPERUSER;
+
+
+statement ok
+DROP ROLE efw_dave;
 
 
 statement ok

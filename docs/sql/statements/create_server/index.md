@@ -291,7 +291,7 @@ A server whose owner is not a superuser connects only with what its own options 
 - Its options are only connection settings: `host`, `hostname`, `port`, `database`, `dbname`, `user`, `username` and `password`; for `clickhouse_fdw` also `passwd`, `db`, `secure`, `ssl` and `compression`; for `postgres_fdw` also `hostaddr`, `connect_timeout`, `client_encoding`, `options`, `application_name`, the `keepalives` settings, `tcp_user_timeout`, `sslmode`, `sslnegotiation`, `sslcompression`, `sslsni`, the protocol version bounds, `target_session_attrs`, `load_balance_hosts`, `channel_binding`, `schema`, `isolation_level` and `use_text_protocol`. Any other option, such as `secret` or one naming a file on the server, fails with `permission denied to use option`.
 - No [secret](../../../configuration/secrets_manager.md), the unnamed default ones included, fills in its options.
 
-These rules are checked when the server is created, when `ALTER SERVER ... OWNER TO` hands it to such a role, and each time SereneDB starts.
+These rules are checked when the server is created, when `ALTER SERVER ... OWNER TO` or `REASSIGN OWNED` hands it to such a role, when its owner loses `SUPERUSER`, and each time SereneDB starts. When the owner of a server changes between a superuser and another role, or the owner gains or loses `SUPERUSER`, the statement reconnects the server under the rules for its new owner and fails if the server cannot connect under them; rolling the transaction back restores the previous connection.
 
 `ALTER SERVER ... OWNER TO` hands a server to another role:
 

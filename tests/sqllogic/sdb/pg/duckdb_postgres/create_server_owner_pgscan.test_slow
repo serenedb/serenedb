@@ -48,6 +48,58 @@ DROP SERVER csop_srv;
 
 
 statement ok
+DROP SERVER IF EXISTS csop_pw;
+
+
+statement ok
+DROP ROLE IF EXISTS csop_root;
+
+
+statement ok
+CREATE ROLE csop_root SUPERUSER;
+
+
+statement ok
+CREATE SERVER csop_pw FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}', password 'csop');
+
+
+statement error
+ALTER SERVER csop_pw OWNER TO csop_alice;
+----
+db error: ERROR: <slt:ignore>authentication method requirement "password,md5,scram-sha-256" failed: server did not complete authentication<slt:ignore>
+
+
+statement ok
+ALTER SERVER csop_pw OWNER TO csop_root;
+
+
+statement error
+ALTER ROLE csop_root NOSUPERUSER;
+----
+db error: ERROR: <slt:ignore>authentication method requirement "password,md5,scram-sha-256" failed: server did not complete authentication<slt:ignore>
+
+
+query
+SELECT s.srvowner::regrole::text AS owner, r.rolsuper, d.database_name IS NOT NULL AS attached
+FROM pg_foreign_server s
+JOIN pg_roles r ON r.oid = s.srvowner
+LEFT JOIN duckdb_databases() d ON d.database_name = s.srvname
+WHERE s.srvname = 'csop_pw';
+----
+owner	rolsuper	attached
+csop_root	t	t
+
+
+statement ok
+DROP SERVER csop_pw;
+
+
+statement ok
+DROP ROLE csop_root;
+
+
+statement ok
 REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM csop_alice;
 
 

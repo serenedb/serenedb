@@ -501,8 +501,8 @@ class IndexWriter : private util::Noncopyable {
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
                 const MergeProgress& progress, const AnnBuildEnv* env,
-                const PipelineMergeExecutor& executor)
-    -> yaclib::Future<CompactionResult>;
+                const PipelineMergeExecutor& executor, CompactionResult& result)
+    -> yaclib::Future<>;
 
   void AdoptSegment(std::string_view meta_file, uint64_t tick,
                     const SourcePosition& position = {});

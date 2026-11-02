@@ -94,8 +94,10 @@ irs::CompactionResult RunReservedMerge(irs::IndexWriter& writer,
                                        irs::IndexWriter::MergeTicket ticket) {
   const irs::PipelineMergeExecutor executor{
     irs::DuckDBEngine::Instance().instance(), nullptr, 1};
-  return irs::GetReady(
-    writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor));
+  irs::CompactionResult result;
+  irs::GetReady(
+    writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor, result));
+  return result;
 }
 
 inline void CaptureNameLikeFields(irs::IndexWriter::Document& d,

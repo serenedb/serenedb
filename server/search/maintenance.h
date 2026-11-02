@@ -59,7 +59,6 @@ struct ResultWithTime {
 };
 
 struct MergeResult {
-  uint64_t time_ms = 0;
   irs::CompactionResult outcome;
   std::string error;
 };

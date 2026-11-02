@@ -214,14 +214,15 @@ class StorageMergeJob final : public MergeJob {
     auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
                                                    opts.field_options,
                                                    &AnnBuildEnv(), executor);
+    const auto took_ms = merged.outcome.stats.profile.TotalNanos() / 1'000'000;
     if (!merged.error.empty()) {
-      SDB_WARN(SEARCH, "error after running for ", merged.time_ms,
+      SDB_WARN(SEARCH, "error after running for ", took_ms,
                "ms while compacting Search index '", _storage->GetId(),
                "': ", merged.error);
       co_return merged;
     }
     SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
-              "' took ", merged.time_ms, "ms");
+              "' took ", took_ms, "ms");
     if (Produced(OutcomeOf(merged.outcome))) {
       _storage->BumpStalePressure();
     }
@@ -415,12 +416,9 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
 }
 
 template<typename Storage>
-yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
+yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   auto& s = BackgroundScheduler::instance();
   auto& merges = GetSearchEngine().Merges();
-  const std::weak_ptr<Storage> weak = storage;
-  const auto relation = storage->MergeRelation();
-  storage.reset();
   auto backoff = Clock::duration::zero();
   auto last_interval = Clock::duration::zero();
   bool triggered = false;
@@ -442,10 +440,10 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
       }
 
       if (interval == Clock::duration::zero()) {
-        idx.reset();
         if (changed) {
-          merges.CancelQueued(*relation);
+          merges.CancelQueued(*idx->MergeRelation());
         }
+        idx.reset();
         triggered = false;
         co_await s.Delay(kDisabledPoll);
         if (ShouldStop()) {
@@ -480,15 +478,18 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
               duckdb::ErrorData{ex}.RawMessage());
   }
   co_await yaclib::On(s.executor());
-  merges.CancelQueued(*relation);
-  merges.StopRunning(*relation);
+  if (const auto idx = weak.lock()) {
+    const auto& relation = *idx->MergeRelation();
+    merges.CancelQueued(relation);
+    merges.StopRunning(relation);
+  }
   co_return {};
 }
 
 template yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> CompactionCoordinator(
-  std::shared_ptr<InvertedIndexStorage>);
+  std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
-template yaclib::Future<> CompactionCoordinator(std::shared_ptr<SearchTable>);
+template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
 
 }  // namespace sdb::search

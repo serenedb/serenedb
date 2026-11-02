@@ -25,6 +25,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
@@ -50,14 +51,16 @@ void MaintainedStore::SetWriterOptions(irs::IndexWriterOptions& options) const {
   options.sort = _sort;
 }
 
-yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
-  std::chrono::steady_clock::time_point begin,
-  yaclib::Future<irs::CompactionResult> merge) {
+yaclib::Future<MergeResult> MaintainedStore::RunMergeAsync(
+  irs::IndexWriter::MergeTicket ticket, const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  const irs::PipelineMergeExecutor& executor) {
   bool empty_compaction = false;
   bool failed = false;
   MergeResult result;
   try {
-    result.outcome = co_await std::move(merge);
+    co_await _writer->RunMerge(std::move(ticket), field_options, progress, env,
+                               executor, result.outcome);
     if (!result.outcome) {
       SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
                 " produced nothing: cancelled, or every document was removed");
@@ -70,10 +73,9 @@ yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
     result.outcome.error = irs::CompactionError::Fail;
     result.error = duckdb::ErrorData{e}.RawMessage();
   }
-  result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - begin)
-                     .count();
-  _maintenance.RecordCompaction(failed, empty_compaction, result.time_ms);
+  _maintenance.RecordCompaction(
+    failed, empty_compaction,
+    result.outcome.stats.profile.TotalNanos() / 1'000'000);
   co_return result;
 }
 

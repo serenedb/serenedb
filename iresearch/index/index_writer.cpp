@@ -24,10 +24,12 @@
 #include "index_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -1462,17 +1464,26 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                            const IndexFieldOptions* field_options,
                            const MergeProgress& progress,
                            const AnnBuildEnv* env,
-                           const PipelineMergeExecutor& executor)
-  -> yaclib::Future<CompactionResult> {
+                           const PipelineMergeExecutor& executor,
+                           CompactionResult& result) -> yaclib::Future<> {
   auto& state = ticket.Get(ConstructToken{}, *this);
   auto& candidates = state.candidates;
   {
     absl::MutexLock lock{&_compacting.lock};
     if (!state.registered) {
-      co_return CompactionResult{0, CompactionError::Cancelled};
+      result = {.error = CompactionError::Cancelled};
+      co_return {};
     }
     state.running = true;
   }
+  result = {.size = candidates.size()};
+  const auto started = std::chrono::steady_clock::now();
+  absl::Cleanup timed = [&result, started]() noexcept {
+    result.stats.profile.SetWallNanos(static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started)
+        .count()));
+  };
   const auto run_id = reinterpret_cast<uintptr_t>(&state);
 
   SDB_TRACE(IRESEARCH, "Starting compaction id='", run_id, "':\n",
@@ -1480,7 +1491,6 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   // do lock-free merge
 
-  CompactionResult result{candidates.size(), CompactionError::Fail};
   result.stats.inputs.reserve(candidates.size());
   for (const auto* candidate : candidates) {
     result.stats.inputs.emplace_back(candidate->Meta().name);
@@ -1517,7 +1527,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     if (stopped.load(std::memory_order_relaxed)) {
       result.error = CompactionError::Cancelled;
     }
-    co_return result;
+    co_return {};
   }
   result.stats.output = compaction_segment.meta.name;
   result.stats.output_docs = compaction_segment.meta.docs_count;
@@ -1551,7 +1561,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                 "' for segment '", compaction_segment.meta.name,
                 "': a candidate left the committed state");
       result.error = CompactionError::Busy;
-      co_return result;
+      co_return {};
     }
   }
 
@@ -1591,7 +1601,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
             ", live_docs_count=", pending_segment.segment.meta.live_docs_count,
             ", size=", pending_segment.segment.meta.byte_size);
   result.error = pending ? CompactionError::Pending : CompactionError::Ok;
-  co_return result;
+  co_return {};
 }
 
 void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,

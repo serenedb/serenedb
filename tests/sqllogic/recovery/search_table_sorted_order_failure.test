@@ -17,10 +17,10 @@ statement ok
 SET sdb_faults = 'irs::KeyOrder::Finish';
 
 query
-SELECT outcome FROM sdb_compact('sof', mode := 'compact');
+SELECT outcome, total_ms > 0 AS timed FROM sdb_compact('sof', mode := 'compact');
 ----
-outcome
-failed
+outcome	timed
+failed	t
 
 statement ok
 SET sdb_faults = '-irs::KeyOrder::Finish';
@@ -87,12 +87,13 @@ segments	docs
 1172	2400000
 
 query
-SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact_history
+SELECT outcome, cardinality(inputs) AS inputs, total_ms > 0 AS timed
+FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sof_steps')
 ORDER BY id;
 ----
-outcome	inputs
-failed	149
+outcome	inputs	timed
+failed	149	t
 
 statement ok
 VACUUM (COMPACT_TABLE) sof_steps;

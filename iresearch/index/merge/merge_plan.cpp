@@ -26,7 +26,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <duckdb/common/fault_points.hpp>
 #include <iterator>
 #include <limits>
@@ -517,7 +516,6 @@ bool MergePlan::WriteIndex(MergeStepClock& clock) {
 }
 
 bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
-  _started = std::chrono::steady_clock::now();
   _threads = threads;
   _scheduler = scheduler;
   MergeStepClock clock{_profile};
@@ -617,13 +615,6 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
   PlanUnits();
   clock.Lap(MergeStep::Prepare);
   return true;
-}
-
-void MergePlan::RecordWall() noexcept {
-  _profile.SetWallNanos(
-    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now() - _started)
-                            .count()));
 }
 
 bool MergePlan::RunUnit(size_t unit) {

@@ -24,6 +24,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
@@ -142,9 +144,16 @@ class MergeTicketTest : public ::testing::Test {
 
   irs::CompactionResult Run(irs::IndexWriter::MergeTicket ticket,
                             const irs::MergeProgress& progress = {}) {
+    irs::CompactionResult result;
+    Run(std::move(ticket), result, progress);
+    return result;
+  }
+
+  void Run(irs::IndexWriter::MergeTicket ticket, irs::CompactionResult& result,
+           const irs::MergeProgress& progress = {}) {
     const auto executor = MakeExecutor();
-    return irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
-                                           nullptr, executor));
+    irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
+                                    nullptr, executor, result));
   }
 
   static std::vector<std::string> NamesOf(
@@ -488,6 +497,53 @@ TEST_F(MergeTicketTest, AThrowingUnitFailsTheMergeAndReleasesItsTicket) {
   EXPECT_TRUE(ReservedNames().empty());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
   EXPECT_EQ(1, Reserve({{0, 1}}).size());
+}
+
+TEST_F(MergeTicketTest, AThrowingMergeReportsHowLongItRan) {
+  if (!duckdb::FaultPoints::Arm("irs::MergeUnit")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  AddSegments(2);
+  auto reservation = Reserve({{0, 1}});
+  ASSERT_EQ(1, reservation.size());
+  irs::CompactionResult result;
+  EXPECT_ANY_THROW(Run(std::move(reservation[0]), result));
+  EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::MergeUnit"));
+  EXPECT_EQ(CompactionError::Fail, result.error);
+  EXPECT_EQ(2, result.size);
+  EXPECT_EQ(2, result.stats.inputs.size());
+  const auto& profile = result.stats.profile;
+  uint64_t steps = 0;
+  for (size_t step = 0; step != irs::kMergeStepCount; ++step) {
+    steps += profile.Nanos(static_cast<irs::MergeStep>(step));
+  }
+  EXPECT_GT(profile.Nanos(irs::MergeStep::Prepare), 0);
+  EXPECT_GT(profile.TotalNanos(), steps);
+}
+
+TEST_F(MergeTicketTest, AMergesTotalTimeCoversItsPublication) {
+  AddSegments(2);
+  auto reservation = Reserve({{0, 1}});
+  ASSERT_EQ(1, reservation.size());
+  if (!duckdb::FaultPoints::Arm("pause_merge_before_publish")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  irs::CompactionResult result;
+  std::thread merger{[&] { Run(std::move(reservation[0]), result); }};
+  absl::Cleanup release = [&] {
+    duckdb::FaultPoints::Arm("pause_merge_before_publish:release");
+    merger.join();
+    duckdb::FaultPoints::Clear();
+  };
+  while (!duckdb::FaultPoints::Disarm("pause_merge_before_publish:parked")) {
+    std::this_thread::yield();
+  }
+  constexpr std::chrono::milliseconds kParked{50};
+  std::this_thread::sleep_for(kParked);
+  std::move(release).Invoke();
+  EXPECT_EQ(CompactionError::Ok, result.error);
+  EXPECT_GE(result.stats.profile.TotalNanos(),
+            static_cast<uint64_t>(std::chrono::nanoseconds{kParked}.count()));
 }
 
 TEST_F(MergeTicketTest, ARevokedTicketStaysReleasedAcrossRevocations) {

@@ -23,7 +23,6 @@
 #include <absl/status/status.h>
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iresearch/formats/ann_build_env.hpp>
@@ -165,11 +164,7 @@ class MaintainedStore {
   yaclib::Future<MergeResult> RunMergeAsync(
     irs::IndexWriter::MergeTicket ticket, const irs::MergeProgress& progress,
     const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    const irs::PipelineMergeExecutor& executor) {
-    const auto begin = std::chrono::steady_clock::now();
-    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
-                                               progress, env, executor));
-  }
+    const irs::PipelineMergeExecutor& executor);
 
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
 
@@ -220,10 +215,6 @@ class MaintainedStore {
   }
 
   void SetWriterOptions(irs::IndexWriterOptions& options) const;
-
-  yaclib::Future<MergeResult> AwaitMerge(
-    std::chrono::steady_clock::time_point begin,
-    yaclib::Future<irs::CompactionResult> merge);
 
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;

@@ -111,7 +111,7 @@ Each result row describes one merge:
 | `outcome` | `merged`; `deferred` (merged, visible after the next commit); `nothing`; `busy` (a segment was being merged by another task); `failed`; `cancelled` (stopped before it finished, for example by a `TRUNCATE` or a `CREATE INDEX` on the table; its segments stay as they were) |
 | `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
 | `output`, `output_docs`, `output_bytes` | The new segment |
-| `total_ms` | Wall-clock time of the merge |
+| `total_ms` | Wall-clock time of the whole merge; a `failed` or `cancelled` merge reports how long it ran until it stopped |
 | `prepare_ms`, `norms_ms`, `columns_ms`, `columns_commit_ms`, `ann_ms`, `postings_ms`, `commit_ms` | Time of each merge step in milliseconds: `prepare_ms` plans the merge and puts the rows of a relation with a sort key in key order, `norms_ms` merges the norms, `columns_ms` the stored columns, `columns_commit_ms` finishes the stored columns, `ann_ms` builds the vector indexes, `postings_ms` merges the postings and `commit_ms` writes the new segment. `0` when the merge did not run, as for `nothing` |
 | `error` | Why a merge failed |
 
@@ -128,7 +128,7 @@ Each result row describes one merge:
 
 On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it merges them in the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes, one result row each: the first step merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and the next step merges what is left. In `segments` mode, the segment a step writes takes the place of its inputs in the list. `EXPLAIN` shows the first step.
 
-`EXPLAIN ANALYZE` runs the merges and shows the same lines in a `TABLE_SCAN` box, as for any table function, followed by `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step, summed over the merges, and `Actual Total`.
+`EXPLAIN ANALYZE` runs the merges and shows the same lines in a `TABLE_SCAN` box, as for any table function, followed by `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step, summed over the merges, and `Actual Total`, the sum of the merges' `total_ms`.
 
 `CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. A step time adds up the threads that ran the step, so with several threads the step times (`prepare_ms` to `commit_ms`) and the `Actual <step>` lines of `EXPLAIN ANALYZE` add up to more than the merges took.
 

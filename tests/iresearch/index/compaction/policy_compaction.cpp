@@ -193,8 +193,10 @@ irs::CompactionResult Compact(irs::IndexWriter& writer,
               busy ? irs::CompactionError::Busy : irs::CompactionError::Ok};
   }
   SDB_ASSERT(tickets.size() == 1);
-  return irs::GetReady(writer.RunMerge(std::move(tickets.front()),
-                                       field_options, progress, env, executor));
+  irs::CompactionResult result;
+  irs::GetReady(writer.RunMerge(std::move(tickets.front()), field_options,
+                                progress, env, executor, result));
+  return result;
 }
 
 }  // namespace tests

@@ -142,7 +142,6 @@ void MergeSchedule::Stop() {
 }
 
 bool MergeSchedule::Result() {
-  _plan.RecordWall();
   std::exception_ptr error;
   bool ok = false;
   {

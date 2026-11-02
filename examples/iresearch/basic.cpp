@@ -439,8 +439,9 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   const irs::PipelineMergeExecutor executor{
     Db(), &duckdb::TaskScheduler::GetScheduler(Db()), 1};
   for (auto& ticket : tickets) {
-    irs::GetReady(
-      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor));
+    irs::CompactionResult result;
+    irs::GetReady(writer.RunMerge(std::move(ticket), nullptr, {}, nullptr,
+                                  executor, result));
   }
   writer.RefreshCommit();
 

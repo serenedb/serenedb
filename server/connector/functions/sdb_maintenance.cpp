@@ -91,6 +91,7 @@ struct CompactState final : duckdb::GlobalTableFunctionState {
   size_t merges = 0;
   std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
   uint64_t written = 0;
+  uint64_t total_nanos = 0;
   irs::MergeProfile profile;
 };
 
@@ -289,6 +290,7 @@ void Tally(CompactState& state, const search::MergeResult& merge) {
   const auto& stats = merge.outcome.stats;
   ++state.outcomes[static_cast<size_t>(search::OutcomeOf(merge.outcome))];
   state.written += stats.output_bytes;
+  state.total_nanos += stats.profile.TotalNanos();
   for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
     const auto id = static_cast<irs::MergeStep>(step);
     state.profile.Add(id, stats.profile.Nanos(id));
@@ -422,7 +424,7 @@ void CompactMetrics(duckdb::TableFunctionGetMetricsInput& input) {
     metrics.AddExtraInfo(absl::StrCat("Actual ", StepLabel(id)),
                          shown(state.profile.Nanos(id)));
   }
-  metrics.AddExtraInfo("Actual Total", shown(state.profile.TotalNanos()));
+  metrics.AddExtraInfo("Actual Total", shown(state.total_nanos));
 }
 
 duckdb::TableFunction CompactFunction() {

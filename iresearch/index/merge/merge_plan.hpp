@@ -23,7 +23,6 @@
 #include <absl/container/flat_hash_map.h>
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -106,8 +105,6 @@ class MergePlan {
 
   const MergeProfile& Profile() const noexcept { return _profile; }
 
-  void RecordWall() noexcept;
-
  private:
   static constexpr size_t kEncode = std::numeric_limits<size_t>::max();
 
@@ -171,8 +168,6 @@ class MergePlan {
   HnswBases* _hnsw_bases;
   size_t _threads = 1;
   duckdb::TaskScheduler* _scheduler = nullptr;
-  std::chrono::steady_clock::time_point _started =
-    std::chrono::steady_clock::now();
   MergeProfile _profile;
   IndexFeatures _index_features{IndexFeatures::None};
   absl::flat_hash_map<field_id, IndexFeatures> _field_meta_map;

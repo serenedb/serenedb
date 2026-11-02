@@ -20,6 +20,8 @@
 
 #include "iresearch/index/merge/pipeline_merge_executor.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/fault_points.hpp>
@@ -181,11 +183,13 @@ bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
                  *options.db,  options.field_options,
                  progress,     env,
                  options.sort, options.hnsw_bases};
+  absl::Cleanup report = [&plan, profile]() noexcept {
+    if (profile) {
+      *profile = plan.Profile();
+    }
+  };
   merged = plan.Prepare(executor.Threads(), executor.Scheduler()) &&
            executor.Run(plan);
-  if (profile) {
-    *profile = plan.Profile();
-  }
   return merged;
 }
 

@@ -1578,8 +1578,8 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
     return std::nullopt;
   }
   const auto graph = auth::RolesOf(session.context);
-  if (const auto* role = graph->FindByName(*name)) {
-    return *role;
+  if (const auto role = graph->FindByName(*name); role.IsValid()) {
+    return role.GetIndex();
   }
   return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

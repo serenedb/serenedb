@@ -93,7 +93,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
 
-  auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
@@ -106,7 +105,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
-  auth::RoleCache _roles;
   CatalogSnapshots _snapshots{*this};
 };
 

@@ -958,8 +958,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    return auth::MembershipsOf(*auth::RolesOf(nullptr), user_oid)
-      .IsMember(group_oid);
+    return auth::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(group_oid);
   };
 
   hba::ClientInfo client;

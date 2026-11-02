@@ -49,7 +49,6 @@
 #include <string_view>
 
 #include "auth/role_closure.h"
-#include "auth/role_rules.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
@@ -138,7 +137,7 @@ void ClusterCatalog::OpenCatalogLog(
   _compactable = compactable;
   _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
                     std::memory_order_relaxed);
-  auth::PublishRoles(*this);
+  PublishSecurity();
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -155,7 +154,7 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
-void ClusterCatalog::EndCatalogLogCommit() { auth::PublishRoles(*this); }
+void ClusterCatalog::EndCatalogLogCommit() { PublishSecurity(); }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
   if (!_compactable) {
@@ -333,7 +332,6 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
-  auth::CheckCreateRole(transaction, info);
   DeclareModified(transaction, *this);
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
   const auto grant = [&](const duckdb::Identifier& member,
@@ -369,7 +367,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
 
 void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                               duckdb::DropInfo& info) {
-  auth::CheckDropRole(transaction, info);
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
@@ -423,7 +420,6 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
   if (info.type == duckdb::AlterType::ALTER_DATABASE_SETTINGS) {
     auto& alter = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
-    auth::CheckAlterDatabaseSettings(transaction, alter);
     if (transaction.HasContext()) {
       duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
                                              alter.set_config);
@@ -436,7 +432,6 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
     return;
   }
   auto& alter = info.Cast<duckdb::AlterRoleInfo>();
-  auth::CheckAlterRole(transaction, alter);
   if (transaction.HasContext()) {
     duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
                                            alter.set_config);

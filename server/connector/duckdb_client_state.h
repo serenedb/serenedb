@@ -26,7 +26,6 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "pg/progress_registry.h"
 
@@ -140,8 +139,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;
-  auth::RoleGraphPtr _roles;
-  duckdb::idx_t _roles_version = 0;
   bool _query_in_transaction = false;
 };
 

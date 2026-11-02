@@ -63,9 +63,13 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
-  if (!auth::ClosureFor(nullptr, role.oid)
-         ->Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
-               duckdb::AclMode::Connect)) {
+  const auto roles = auth::RolesOf(nullptr);
+  duckdb::RoleAccess missing;
+  missing.role = role.oid;
+  const auto access = roles->Access(role.oid);
+  if (!(access ? *access : missing)
+         .Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
+              duckdb::AclMode::Connect)) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
               ERR_MSG("permission denied for database \"", dbname, "\""),
@@ -98,7 +102,7 @@ ConnectionContext::ConnectionContext(
 
 namespace {
 
-std::string RoleName(const auth::RoleGraph& roles, duckdb::idx_t role,
+std::string RoleName(const duckdb::SecuritySnapshot& roles, duckdb::idx_t role,
                      std::string_view fallback) {
   auto name = roles.NameOf(role);
   return std::string{name.empty() ? fallback : name};

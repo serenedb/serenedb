@@ -1009,7 +1009,7 @@ class SystemScan {
   duckdb::DuckCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
-  auth::RoleGraphPtr _roles;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
   std::vector<SystemConstant> _constants;

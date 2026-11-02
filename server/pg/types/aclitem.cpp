@@ -38,7 +38,7 @@ struct AclitemInputState final : InputState {
   explicit AclitemInputState(duckdb::ClientContext* context)
     : roles{auth::RolesOf(context)} {}
 
-  auth::RoleGraphPtr roles;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitAclitemInput(

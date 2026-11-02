@@ -141,6 +141,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "CANT_CHANGE_RUNTIME_PARAM") {
     return ERRCODE_CANT_CHANGE_RUNTIME_PARAM;
   }
+  if (subtype == "RESERVED_NAME") {
+    return ERRCODE_RESERVED_NAME;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

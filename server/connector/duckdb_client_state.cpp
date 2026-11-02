@@ -53,7 +53,6 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "auth/visibility.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -303,23 +302,6 @@ void SereneDBClientState::TransactionRollback(
 }
 
 void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
-  if (context.transaction.HasActiveTransaction()) {
-    auto& meta = duckdb::MetaTransaction::Get(context);
-    if (meta.ModifiedDatabase()) {
-      if (auto attached = meta.GetReferencedDatabase(
-            duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName});
-          attached && !meta.GetTransaction(*attached).IsReadOnly()) {
-        auto& cluster = attached->GetCatalog().Cast<catalog::ClusterCatalog>();
-        if (const auto version = cluster.GetCatalogVersion(context).GetIndex();
-            !_roles || version != _roles_version) {
-          _roles_version = version;
-          _roles = auth::BuildRoleGraph(cluster,
-                                        cluster.GetCatalogTransaction(context));
-        }
-        context.InstallSecurity(_roles);
-      }
-    }
-  }
   _connection_ctx->OnStatementBegin();
   _query_in_transaction = true;
   progress_source->BeginQuery(context.GetCurrentQuery());

@@ -101,7 +101,7 @@ inline const Session& SessionOf(duckdb::ExpressionState& state) {
 
 void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const auth::RoleGraph& roles,
+  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text);
 
 template<typename Row>

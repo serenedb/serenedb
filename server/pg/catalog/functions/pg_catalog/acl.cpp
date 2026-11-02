@@ -155,7 +155,7 @@ struct ExplodedAcl {
   bool grantable;
 };
 
-void ExplodeAcl(const auth::RoleGraph& roles, std::string_view text,
+void ExplodeAcl(const duckdb::SecuritySnapshot& roles, std::string_view text,
                 std::vector<ExplodedAcl>& rows) {
   duckdb::AclItem item{};
   if (auto error = ParseAcl(text, roles, true, item)) {
@@ -377,16 +377,16 @@ AclMode RelationRights(const Relation& relation) {
            : ~AclMode::NoRights;
 }
 
-duckdb::idx_t RoleIdByName(const auth::RoleGraph& roles,
+duckdb::idx_t RoleIdByName(const duckdb::SecuritySnapshot& roles,
                            std::string_view name) {
-  if (const auto* role = roles.FindByName(name)) {
-    return *role;
+  if (const auto role = roles.FindByName(name); role.IsValid()) {
+    return role.GetIndex();
   }
   ThrowUndefinedObject("role", name);
 }
 
 struct ObjectScope : Session {
-  auth::RoleGraphPtr roles;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
 };
 
 template<typename F>
@@ -865,19 +865,19 @@ struct RolePrivileges {
   static constexpr bool kSuperuserFirst = false;
 
   struct Scope {
-    auth::RoleGraphPtr roles;
+    duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
     mutable duckdb::idx_t member = kInvalidOid;
-    mutable auth::RoleMemberships memberships;
+    mutable duckdb::RoleMemberships memberships;
   };
 
   static Scope Begin(duckdb::ClientContext& context) {
     return {.roles = auth::RolesOf(&context)};
   }
 
-  static const auth::RoleMemberships& MembershipsOf(const Scope& scope,
-                                                    duckdb::idx_t member) {
+  static const duckdb::RoleMemberships& MembershipsOf(const Scope& scope,
+                                                      duckdb::idx_t member) {
     if (scope.member != member) {
-      scope.memberships = auth::MembershipsOf(*scope.roles, member);
+      scope.memberships = scope.roles->MembershipsOf(member);
       scope.member = member;
     }
     return scope.memberships;
@@ -1136,7 +1136,7 @@ void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader) {
 
 void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const auth::RoleGraph& roles,
+  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text) {
   auto item = items.begin();
   for (auto& child : writer.WriteList(items.size())) {

@@ -223,7 +223,7 @@ std::string ProjectionDisplayName(const ScanBindData& bind,
     return "row_number";
   }
   if (col_id == kColumnIdentifierDocAddress) {
-    return "iresearch_pk";
+    return bind.relation.IsSearchTable() ? "rowid" : "iresearch_pk";
   }
   return absl::StrCat("column_", col_id);
 }

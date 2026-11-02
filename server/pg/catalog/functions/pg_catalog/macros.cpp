@@ -395,7 +395,7 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_partition_ancestors",
    "(relid) AS TABLE SELECT CAST(relid AS regclass) AS relid"},
   {"pg_catalog", "pg_indexam_progress_phasename", "(a, b) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_statistics_obj_is_visible", "(a) AS true"},
+  {"pg_catalog", "pg_statistics_obj_is_visible", "(a) AS CAST(NULL AS BOOLEAN)"},
 
   {"pg_catalog", "pg_options_to_table",
    R"((opts) AS TABLE
@@ -411,13 +411,8 @@ constexpr SystemMacro kMacros[] = {
   // SereneDB has no RLS (no CREATE POLICY, relrowsecurity always false), so
   // row security is never active -- PG also returns false for every reachable
   // input (no-policy table, system oid, non-owner). Matches PG.
-  {"pg_catalog", "row_security_active", "(a) AS false"},
-
-  // has_language_privilege: a language grants USAGE to PUBLIC by default
-  // (acldefault world_default = USAGE), so every role holds USAGE on SereneDB's
-  // built-in languages -- PG returns true too. (A nonexistent language oid would
-  // be NULL in PG, but SereneDB has no CREATE LANGUAGE so that is unreachable.)
-  {"pg_catalog", "has_language_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "row_security_active",
+   "(a) AS CASE WHEN CAST(a AS regclass) IS NOT NULL THEN false END"},
 
   // Real: name||'_'||oid, matching PG's nameconcatoid.
   {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
@@ -445,8 +440,6 @@ constexpr SystemMacro kMacros[] = {
       BEGIN ATOMIC
         SELECT NULL::bigint, NULL::pg_lsn, NULL::pg_lsn WHERE false;
       END;)"},
-  // Always UTF-8 -> max 4 bytes per character. Argument ignored.
-  {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
   {"pg_catalog", "make_interval",
    R"((years INTEGER := 0, months INTEGER := 0, weeks INTEGER := 0,

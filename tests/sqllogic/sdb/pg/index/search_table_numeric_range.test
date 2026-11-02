@@ -222,3 +222,134 @@ SELECT count(*) FROM snr WHERE tag = 'even' OR num > 1500;
 ----
 count
 1250
+
+statement ok
+CREATE TABLE snr_t (pk INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP, w DOUBLE,
+  emb FLOAT[2]) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_t_idx ON snr_t
+  USING inverted(pk, d, ts, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr_t SELECT i, DATE '2000-01-01' + i::INTEGER,
+  TIMESTAMP '2000-01-01' + i * INTERVAL 1 HOUR, i * 0.5,
+  [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr_t;
+
+query
+SELECT count(*) FROM snr_t WHERE d >= DATE '2005-01-01';
+----
+count
+173
+
+query
+SELECT count(*) FROM snr_t WHERE ts < TIMESTAMP '2000-01-02 00:00:00';
+----
+count
+24
+
+query
+SELECT pk FROM snr_t WHERE d >= DATE '2005-01-01'
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1827
+1828
+1829
+
+statement ok
+PREPARE snr_t_date AS SELECT pk FROM snr_t WHERE d >= $1
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+
+query
+EXECUTE snr_t_date(DATE '2005-01-01');
+----
+pk
+1827
+1828
+1829
+
+query
+EXECUTE snr_t_date(DATE '2005-06-01');
+----
+pk
+1978
+1979
+1980
+
+query
+SELECT pk FROM snr_t WHERE w = 750.0
+  ORDER BY emb <-> [100.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+
+statement ok
+CREATE TABLE snr_n (pk INTEGER PRIMARY KEY, num INTEGER, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_n_idx ON snr_n
+  USING inverted(pk, num, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr_n SELECT i, NULL, [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr_n;
+
+statement ok
+SET disabled_optimizers = 'statistics_propagation';
+
+query
+SELECT pk FROM snr_n WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+
+query
+EXPLAIN SELECT pk FROM snr_n WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_n                      │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: num <= 1500        │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr_n WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+
+query
+EXPLAIN SELECT pk FROM snr_n WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr_n                      │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ─╮              │
+│ │ Field: num       │              │
+│ │ Range: <=40      │              │
+│ ╰──────────────────╯              │
+│ Index or Column Filter: num <= 40 │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+statement ok
+RESET disabled_optimizers;

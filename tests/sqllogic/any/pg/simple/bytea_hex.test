@@ -409,3 +409,9 @@ SELECT ARRAY['\121\121'::bytea, '\121\121'::bytea];
 ----
 array
 {"\\\\x5151","\\\\x5151"}
+
+query
+SELECT length(''::bytea) AS e, length('abc'::bytea) AS t, length('\x0102'::bytea) AS h;
+----
+e	t	h
+0	3	2

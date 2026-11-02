@@ -77,11 +77,11 @@ static int64_t DateTime64TicksToMicros(int64_t ticks, int precision) {
 }
 
 static hugeint_t ClickHouseInt128ToHugeint(const clickhouse::Int128 &value) {
-	return hugeint_t(static_cast<int64_t>(absl::Int128High64(value)), absl::Int128Low64(value));
+	return hugeint_t(clickhouse::Bignum::Int128High64(value), clickhouse::Bignum::Int128Low64(value));
 }
 
 static uhugeint_t ClickHouseUInt128ToUhugeint(const clickhouse::UInt128 &value) {
-	return uhugeint_t(absl::Uint128High64(value), absl::Uint128Low64(value));
+	return uhugeint_t(clickhouse::Bignum::UInt128High64(value), clickhouse::Bignum::UInt128Low64(value));
 }
 
 static LogicalType ClickHouseToLogicalType(const clickhouse::Type &type) {
@@ -212,14 +212,14 @@ static void CopyConverted(const clickhouse::Column &col, Vector &out, idx_t src_
 
 template <class T>
 static void CopyDecimal(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count, idx_t dst_offset) {
-	CopyConverted<T, clickhouse::ColumnDecimal>(col, out, src_offset, count, dst_offset,
-	                                            [](const clickhouse::Int128 &unscaled) {
-		                                            if constexpr (std::is_same_v<T, hugeint_t>) {
-			                                            return ClickHouseInt128ToHugeint(unscaled);
-		                                            } else {
-			                                            return static_cast<T>(unscaled);
-		                                            }
-	                                            });
+	CopyConverted<T, clickhouse::ColumnDecimal>(
+	    col, out, src_offset, count, dst_offset, [](const clickhouse::Int128 &unscaled) {
+		    if constexpr (std::is_same_v<T, hugeint_t>) {
+			    return ClickHouseInt128ToHugeint(unscaled);
+		    } else {
+			    return static_cast<T>(clickhouse::Bignum::Int128Low64(unscaled));
+		    }
+	    });
 }
 
 // NameAt() does std::map::at on the ordinal -> throws (aborting the whole scan)
@@ -243,114 +243,81 @@ static void CopyEnum(const clickhouse::Column &col, Vector &out, idx_t src_offse
 }
 
 template <class T, class F>
-static void CopyLowCardinality(const clickhouse::ColumnLowCardinality &lc, bool nested_nullable, Vector &out,
-                               idx_t src_offset, idx_t count, idx_t dst_offset, F &&write) {
+static void CopyLowCardinality(const clickhouse::ColumnLowCardinality &lc, Vector &out, idx_t src_offset, idx_t count,
+                               idx_t dst_offset, F &&convert) {
 	auto data = FlatVector::GetDataMutable<T>(out);
 	for (idx_t row = 0; row < count; row++) {
 		const auto target = dst_offset + row;
 		auto item = lc.GetItem(src_offset + row);
-		if (nested_nullable && item.type == clickhouse::Type::Void) {
+		if (item.type == clickhouse::Type::Void) {
 			FlatVector::SetNull(out, target, true);
 			continue;
 		}
-		if (!write(item, data[target])) {
-			FlatVector::SetNull(out, target, true);
-		}
+		data[target] = convert(item);
 	}
 }
 
 template <class T>
-static void CopyLowCardinalityFixed(const clickhouse::ColumnLowCardinality &lc, bool nested_nullable, Vector &out,
-                                    idx_t src_offset, idx_t count, idx_t dst_offset) {
-	CopyLowCardinality<T>(lc, nested_nullable, out, src_offset, count, dst_offset,
-	                      [&](const clickhouse::ItemView &item, T &target) {
-		                      // Fixed-width payloads: clickhouse-cpp materializes the NULL placeholder of
-		                      // an LC(Nullable(T)) as a ZERO-BYTE view (get<T>'s size validator would
-		                      // throw on it); detect it structurally instead of catching, so a genuine
-		                      // decode error on a non-null row still surfaces.
-		                      if (nested_nullable && item.AsBinaryData().size() == 0) {
-			                      return false;
-		                      }
-		                      target = item.get<T>();
-		                      return true;
-	                      });
+static void CopyLowCardinalityFixed(const clickhouse::ColumnLowCardinality &lc, Vector &out, idx_t src_offset,
+                                    idx_t count, idx_t dst_offset) {
+	CopyLowCardinality<T>(lc, out, src_offset, count, dst_offset,
+	                      [](const clickhouse::ItemView &item) { return item.get<T>(); });
 }
 
 static void CopyLowCardinality(const clickhouse::Column &col, Vector &out, idx_t src_offset, idx_t count,
                                idx_t dst_offset) {
 	auto lc = col.As<clickhouse::ColumnLowCardinality>();
 	auto nested_type = lc->GetNestedType();
-	const bool nested_nullable = nested_type->GetCode() == clickhouse::Type::Nullable;
-	if (nested_nullable) {
+	if (nested_type->GetCode() == clickhouse::Type::Nullable) {
 		nested_type = nested_type->As<clickhouse::NullableType>()->GetNestedType();
 	}
 	switch (nested_type->GetCode()) {
 	case clickhouse::Type::String:
 	case clickhouse::Type::FixedString:
-		return CopyLowCardinality<string_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
-		                                    [&](const clickhouse::ItemView &item, string_t &target) {
+		return CopyLowCardinality<string_t>(*lc, out, src_offset, count, dst_offset,
+		                                    [&](const clickhouse::ItemView &item) {
 			                                    auto view = item.AsBinaryData();
-			                                    // The NULL placeholder of an LC(Nullable(String)) is a nullptr
-			                                    // view (an empty string keeps a valid pointer).
-			                                    if (nested_nullable && view.data() == nullptr) {
-				                                    return false;
-			                                    }
 			                                    VerifyStringUtf8(view.data(), view.size());
-			                                    target = StringVector::AddString(out, view.data(), view.size());
-			                                    return true;
+			                                    return StringVector::AddString(out, view.data(), view.size());
 		                                    });
 	case clickhouse::Type::UInt8:
-		return CopyLowCardinalityFixed<uint8_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<uint8_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::UInt16:
-		return CopyLowCardinalityFixed<uint16_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<uint16_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::UInt32:
-		return CopyLowCardinalityFixed<uint32_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<uint32_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::UInt64:
-		return CopyLowCardinalityFixed<uint64_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<uint64_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Int8:
-		return CopyLowCardinalityFixed<int8_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<int8_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Int16:
-		return CopyLowCardinalityFixed<int16_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<int16_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Int32:
-		return CopyLowCardinalityFixed<int32_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<int32_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Int64:
-		return CopyLowCardinalityFixed<int64_t>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<int64_t>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Float32:
-		return CopyLowCardinalityFixed<float>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<float>(*lc, out, src_offset, count, dst_offset);
 	case clickhouse::Type::Float64:
-		return CopyLowCardinalityFixed<double>(*lc, nested_nullable, out, src_offset, count, dst_offset);
+		return CopyLowCardinalityFixed<double>(*lc, out, src_offset, count, dst_offset);
+	case clickhouse::Type::Bool:
+		return CopyLowCardinality<bool>(*lc, out, src_offset, count, dst_offset,
+		                                [](const clickhouse::ItemView &item) { return item.get<uint8_t>() != 0; });
 	case clickhouse::Type::Date:
-		return CopyLowCardinality<date_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
-		                                  [&](const clickhouse::ItemView &item, date_t &target) {
-			                                  if (nested_nullable && item.AsBinaryData().size() == 0) {
-				                                  return false;
-			                                  }
-			                                  target = date_t(static_cast<int32_t>(item.get<uint16_t>()));
-			                                  return true;
-		                                  });
+		return CopyLowCardinality<date_t>(
+		    *lc, out, src_offset, count, dst_offset,
+		    [](const clickhouse::ItemView &item) { return date_t(static_cast<int32_t>(item.get<uint16_t>())); });
 	case clickhouse::Type::Date32:
-		return CopyLowCardinality<date_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
-		                                  [&](const clickhouse::ItemView &item, date_t &target) {
-			                                  if (nested_nullable && item.AsBinaryData().size() == 0) {
-				                                  return false;
-			                                  }
-			                                  target = date_t(item.get<int32_t>());
-			                                  return true;
-		                                  });
+		return CopyLowCardinality<date_t>(*lc, out, src_offset, count, dst_offset,
+		                                  [](const clickhouse::ItemView &item) { return date_t(item.get<int32_t>()); });
 	case clickhouse::Type::DateTime:
-		return CopyLowCardinality<timestamp_t>(*lc, nested_nullable, out, src_offset, count, dst_offset,
-		                                       [&](const clickhouse::ItemView &item, timestamp_t &target) {
-			                                       if (nested_nullable && item.AsBinaryData().size() == 0) {
-				                                       return false;
-			                                       }
-			                                       target = Timestamp::FromEpochMicroSeconds(
-			                                           static_cast<int64_t>(item.get<uint32_t>()) * 1000000);
-			                                       return true;
-		                                       });
+		return CopyLowCardinality<timestamp_t>(
+		    *lc, out, src_offset, count, dst_offset, [](const clickhouse::ItemView &item) {
+			    return Timestamp::FromEpochMicroSeconds(static_cast<int64_t>(item.get<uint32_t>()) * 1000000);
+		    });
 	default:
 		for (idx_t row = 0; row < count; row++) {
-			auto item = lc->GetItem(src_offset + row);
-			if (!nested_nullable || (item.type != clickhouse::Type::Void && item.AsBinaryData().size() != 0)) {
+			if (lc->GetItem(src_offset + row).type != clickhouse::Type::Void) {
 				throw NotImplementedException("Unsupported ClickHouse LowCardinality nested type: %s",
 				                              nested_type->GetName());
 			}
@@ -782,7 +749,7 @@ string LogicalTypeToClickHouseType(const LogicalType &type, bool nullable) {
 }
 
 static clickhouse::Int128 HugeintToCH(const hugeint_t &value) {
-	return absl::MakeInt128(value.upper, value.lower);
+	return clickhouse::Bignum::MakeInt128(value.upper, value.lower);
 }
 
 // NULL rows append T{} rather than data[row]: the Nullable wrapper records the
@@ -890,7 +857,7 @@ static void AppendScalarColumn(const clickhouse::ColumnRef &col, Vector &vec, id
 		auto typed = col->As<clickhouse::ColumnUInt128>();
 		auto data = FlatVector::GetData<uhugeint_t>(vec);
 		for (idx_t row = 0; row < count; row++) {
-			typed->Append(validity.RowIsValid(row) ? absl::MakeUint128(data[row].upper, data[row].lower)
+			typed->Append(validity.RowIsValid(row) ? clickhouse::Bignum::MakeUInt128(data[row].upper, data[row].lower)
 			                                       : clickhouse::UInt128(0));
 		}
 		return;

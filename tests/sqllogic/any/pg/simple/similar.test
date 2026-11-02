@@ -282,3 +282,44 @@ statement error
 SELECT similar_to_escape('a\"b\"c\"d')
 ----
 db error: ERROR: SQL regular expression may not contain more than two escape-double-quote separators
+
+
+query
+SELECT substring('foobar' similar '%#"o_b#"%' escape '#') AS part,
+  substring('foobar' similar '#"o_b#"%' escape '#') IS NULL AS no_match,
+  substring('foobar' similar 'f%' escape '#') AS whole,
+  substring('foobar' similar '%#"x?#"bar' escape '#') AS empty_part
+----
+part	no_match	whole	empty_part
+oob	t	foobar	(empty)
+
+
+statement ok
+CREATE TABLE similar_substring (id INT, s TEXT, p TEXT)
+
+
+statement ok
+INSERT INTO similar_substring VALUES (1, 'foobar', '%#"o_b#"%'), (2, 'xyz', '%#"o_b#"%'), (3, NULL, 'f%'), (4, 'foobar', 'f%')
+
+
+query
+SELECT id, substring(s similar '%#"o_b#"%' escape '#') AS constant_pattern, substring(s similar p escape '#') AS column_pattern
+FROM similar_substring ORDER BY id
+----
+id	constant_pattern	column_pattern
+1	oob	oob
+2	NULL	NULL
+3	NULL	NULL
+4	oob	foobar
+
+
+statement ok
+INSERT INTO similar_substring VALUES (5, 'abc', 'a(b')
+
+
+statement error (parentheses \(\) not balanced|missing \))
+SELECT id, substring(s similar p escape '#') AS column_pattern FROM similar_substring ORDER BY id
+
+
+statement ok
+DROP TABLE similar_substring

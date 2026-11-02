@@ -725,10 +725,10 @@ bool ComputeDocMappingsAndFieldMeta(
     SDB_ASSERT(reader_ctx.reader);
     auto& reader = *reader_ctx.reader;
     const auto docs_count = reader.docs_count();
+    reader_ctx.remap.base_id = base_id;
     if (reader.live_docs_count() == docs_count) {
       SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
                  std::numeric_limits<doc_id_t>::max());
-      reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);

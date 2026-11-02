@@ -47,9 +47,12 @@ class Test:
         self._lines += [f"onlyif {onlyif}"] if onlyif else []
         self._lines += [f"skipif {skipif}"] if skipif else []
 
-    def statement(self, sql, onlyif=None, skipif=None):
+    def connection(self, name):
+        self._lines.append(f"connection {name}")
+
+    def statement(self, sql, kind="statement ok", onlyif=None, skipif=None):
         self._condition(onlyif, skipif)
-        self._lines += ["statement ok", sql, ""]
+        self._lines += [kind, sql, ""]
 
     def dictionary(self, name, definition):
         self.statement(f"CREATE TEXT SEARCH DICTIONARY {name} AS {definition}")
@@ -81,6 +84,10 @@ class Test:
             rows = [[RECORDED] * len(columns)] * rows
         self._condition(onlyif, skipif)
         self._lines += ["query", sql, "----", *header,
+                        *("\t".join(map(str, row)) for row in rows), ""]
+
+    def expect(self, sql, columns, rows, kind="query"):
+        self._lines += [kind, sql, "----", "\t".join(columns),
                         *("\t".join(map(str, row)) for row in rows), ""]
 
     def error(self, sql, message, onlyif=None, skipif=None):

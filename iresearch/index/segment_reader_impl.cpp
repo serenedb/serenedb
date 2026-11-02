@@ -33,7 +33,9 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/reader_state.hpp"
+#include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/lead/impl.hpp"
@@ -84,6 +86,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   const IndexReaderOptions& options) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
+  ParseSegmentId(meta.name, reader->_id);
+  reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
   reader->_field_reader =
@@ -104,6 +108,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   SDB_ASSERT(meta == _info);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = _refs;
+  reader->_id = _id;
+  reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options);
@@ -114,6 +120,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   const Directory& dir, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
+  reader->_id = _id;
+  reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_data = _data;
   return reader;

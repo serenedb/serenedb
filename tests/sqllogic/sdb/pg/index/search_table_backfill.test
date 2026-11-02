@@ -398,3 +398,79 @@ DROP TABLE bf_onegroup;
 
 statement ok
 DROP TABLE bf_masked;
+
+# --- Split outputs ---
+# A group larger than one segment's memory budget is rewritten into several
+# segments, and each old segment's rows land in a window of them: deletes
+# after the build reach the rows through those windows.
+
+statement ok
+CREATE TABLE bf_split (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+        segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' x' || i FROM generate_series(0, 99999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_split;
+
+statement ok
+INSERT INTO bf_split SELECT i, 'w' || (i % 50) || ' y' || i FROM generate_series(100000, 199999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_split;
+
+statement ok
+DELETE FROM bf_split WHERE id % 7 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_split;
+
+statement ok
+SET search_backfill_group_bytes = 0;
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE INDEX bf_split_idx ON bf_split USING inverted (body bf_en);
+
+statement ok
+RESET threads;
+
+statement ok
+RESET search_backfill_group_bytes;
+
+query
+SELECT count(DISTINCT row_group_id) > 2 AS split FROM pragma_storage_info('bf_split') WHERE column_name = 'id';
+----
+split
+t
+
+query
+SELECT count(*) AS n FROM bf_split_idx WHERE body @@ ts_phrase('w7');
+----
+n
+3428
+
+statement ok
+DELETE FROM bf_split WHERE id % 11 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) bf_split;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM bf_split;
+----
+n	s
+155844	15584384408
+
+query
+SELECT count(*) AS n FROM bf_split_idx WHERE body @@ ts_phrase('w7');
+----
+n
+3117
+
+statement ok
+DROP TABLE bf_split;

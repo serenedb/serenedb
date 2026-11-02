@@ -99,3 +99,66 @@ SELECT regexp_extract('aé', '^(.+)$', 1) AS r, regexp_extract('é/€', '^([^/]
 ----
 r s
 aé €
+
+
+statement error
+SELECT regexp_extract('é', '(\C)', 1);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '(\C)'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT octet_length((regexp_match('é', '\C'))[1]);
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT regexp_match('é', '\C(\C)');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+statement error
+SELECT regexp_match('é', '\C$');
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT regexp_match('é', '\C()') AS m, octet_length((regexp_match('é', '\C()'))[1]) AS n;
+----
+m n
+{""} 0
+
+
+statement ok
+CREATE TABLE rab (id INT, s VARCHAR, p VARCHAR);
+
+statement ok
+INSERT INTO rab VALUES (1, 'é', '(\C)'), (2, 'ab', '(b)');
+
+statement error
+SELECT id, regexp_match(s, p) FROM rab ORDER BY id;
+----
+db error: ERROR: Regular expression result is not valid UTF-8 - \C matched part of a character
+
+
+query
+SELECT id, regexp_match(s, p) AS m FROM rab WHERE id = 2;
+----
+id m
+2 {b}
+
+
+query
+SELECT regexp_match('aé', '(\C\C\C)') AS m;
+----
+m
+{aé}

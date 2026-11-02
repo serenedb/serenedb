@@ -1,0 +1,30 @@
+statement ok
+CREATE TABLE prepare_merge (id INTEGER, v INTEGER);
+
+statement ok
+INSERT INTO prepare_merge VALUES (1, 10);
+
+statement ok
+PREPARE prepare_merge_q(int, int) AS
+  MERGE INTO prepare_merge t USING (SELECT $1 AS id, $2 AS v) s ON t.id = s.id
+  WHEN MATCHED THEN UPDATE SET v = s.v
+  WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.v);
+
+statement ok
+EXECUTE prepare_merge_q(1, 11);
+
+statement ok
+EXECUTE prepare_merge_q(2, 20);
+
+query
+SELECT id, v FROM prepare_merge ORDER BY id;
+----
+id	v
+1	11
+2	20
+
+statement ok
+DEALLOCATE prepare_merge_q;
+
+statement ok
+DROP TABLE prepare_merge;

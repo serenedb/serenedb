@@ -556,14 +556,10 @@ def run_oracle(workers, pause_event, dsn, run_tag, datadir, oid_registry, label,
                 "detail": f"{label}: workers still in flight after 120s: {stuck}",
                 "candidates": None, "observed": None}]
         models = [w.model for w in workers]
-        row_keys = set()
-        for m in models:
-            row_keys |= set(m.row_bearing_keys())
         try:
             with psycopg.connect(dsn) as conn:
                 conn.autocommit = True
                 snap = snapshot_mod.take(conn, run_tag, datadir=datadir,
-                                         row_keys=row_keys,
                                          scan_artifacts=scan_artifacts)
                 found = oracle.run_all(models, snap, conn, oid_registry)
             if while_drained is not None:

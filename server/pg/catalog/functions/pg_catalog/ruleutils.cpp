@@ -442,11 +442,8 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
     return std::nullopt;
   }
   const auto& trigger = *found;
-  const auto table =
+  const auto& table =
     SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
-  if (!table) {
-    return std::nullopt;
-  }
   auto definition = absl::StrCat(
     "CREATE TRIGGER ", QuoteIdentifier(trigger.name.GetIdentifierName()));
   switch (trigger.timing) {
@@ -479,7 +476,7 @@ Definition TriggerDefinition(const Session& session, int64_t oid, bool pretty) {
                       out->append(QuoteIdentifier(name.GetIdentifierName()));
                     }));
   }
-  absl::StrAppend(&definition, " ON ", RelationName(session, *table, !pretty));
+  absl::StrAppend(&definition, " ON ", RelationName(session, table, !pretty));
   if (!trigger.referencing_old_table.empty() ||
       !trigger.referencing_new_table.empty()) {
     absl::StrAppend(&definition, " REFERENCING");
@@ -605,8 +602,21 @@ Definition FunctionDefinition(const Session& session, int64_t oid) {
   if (const auto result = FunctionResult(session, macro)) {
     absl::StrAppend(&definition, " RETURNS ", *result, "\n");
   }
-  absl::StrAppend(&definition, " LANGUAGE sql\nAS ", tag, MacroBody(macro), tag,
-                  "\n");
+  std::string_view volatility;
+  switch (macro.stability) {
+    case duckdb::FunctionStability::CONSISTENT:
+      volatility = " IMMUTABLE";
+      break;
+    case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
+      volatility = " STABLE";
+      break;
+    case duckdb::FunctionStability::VOLATILE:
+      break;
+  }
+  const auto options = absl::StrCat(volatility, macro.strict ? " STRICT" : "");
+  absl::StrAppend(&definition, " LANGUAGE sql\n", options,
+                  options.empty() ? "" : "\n", "AS ", tag, MacroBody(macro),
+                  tag, "\n");
   return definition;
 }
 

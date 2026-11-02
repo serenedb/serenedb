@@ -1,0 +1,32 @@
+statement ok
+CREATE TEMP TABLE tud_t (a INTEGER, b INTEGER, CONSTRAINT tud_t_b_key UNIQUE (b));
+
+statement ok
+INSERT INTO tud_t VALUES (1, 10);
+
+statement ok
+ALTER TABLE tud_t DROP CONSTRAINT tud_t_b_key;
+
+statement ok
+INSERT INTO tud_t VALUES (2, 10);
+
+statement ok
+CREATE TEMP TABLE tud_u (id INT, body TEXT);
+
+statement ok
+INSERT INTO tud_u VALUES (1, 'a'), (2, 'b');
+
+statement ok
+CREATE UNIQUE INDEX tud_u_idx ON tud_u (id);
+
+statement ok
+DROP INDEX tud_u_idx;
+
+statement ok
+INSERT INTO tud_u VALUES (1, 'c');
+
+query
+SELECT (SELECT count(*) FROM tud_t) AS t, (SELECT count(*) FROM tud_u) AS u;
+----
+t	u
+2	3

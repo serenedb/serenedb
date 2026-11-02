@@ -1,0 +1,225 @@
+statement ok
+CREATE TABLE pq (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO pq SELECT i, i % 10, 'v' || i FROM generate_series(0, 4999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+statement ok
+INSERT INTO pq SELECT i, i % 10, 'v' || i FROM generate_series(5000, 9999) g(i);
+
+statement ok
+RESET threads;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+statement ok
+CREATE TABLE pq_dup (id BIGINT);
+
+statement ok
+INSERT INTO pq_dup SELECT i FROM generate_series(0, 9999, 100) g(i), generate_series(1, 3) r(j);
+
+statement count 100
+DELETE FROM pq USING pq_dup WHERE pq.id = pq_dup.id;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 100 = 0) AS gone FROM pq;
+----
+n	gone
+9900	0
+
+statement ok
+DELETE FROM pq WHERE id IN (SELECT id FROM pq WHERE grp = 4 AND id < 2000);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE grp = 4 AND id < 2000) AS gone FROM pq;
+----
+n	gone
+9700	0
+
+statement ok
+DELETE FROM pq WHERE rowid IN (SELECT rowid FROM pq WHERE id BETWEEN 7000 AND 7099);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id BETWEEN 7000 AND 7099) AS gone FROM pq;
+----
+n	gone
+9601	0
+
+statement ok
+CREATE TABLE pq2 (id BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pq2 SELECT i FROM generate_series(0, 2999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq2;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM pq WHERE id % 1000 = 999;
+
+statement ok
+DELETE FROM pq2 WHERE id % 3 = 0;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq2;
+
+query
+SELECT (SELECT count(*) FROM pq) AS a, (SELECT count(*) FROM pq WHERE id % 1000 = 999) AS a_left, (SELECT count(*) FROM pq2) AS b, (SELECT count(*) FROM pq2 WHERE id % 3 = 0) AS b_left;
+----
+a	a_left	b	b_left
+9591	0	2000	0
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM pq WHERE id = 3;
+
+statement ok
+DELETE FROM pq2 WHERE id = 4;
+
+statement ok
+ROLLBACK;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq2;
+
+query
+SELECT (SELECT count(*) FROM pq WHERE id = 3) AS a, (SELECT count(*) FROM pq2 WHERE id = 4) AS b;
+----
+a	b
+1	1
+
+statement ok
+PREPARE pq_del AS DELETE FROM pq WHERE id = $1;
+
+statement ok
+EXECUTE pq_del(1);
+
+statement ok
+EXECUTE pq_del(5001);
+
+statement ok
+EXECUTE pq_del(1);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id IN (1, 5001)) AS gone FROM pq;
+----
+n	gone
+9589	0
+
+statement ok
+DEALLOCATE pq_del;
+
+statement count 2966
+DELETE FROM pq WHERE id BETWEEN 4000 AND 6999;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id BETWEEN 4000 AND 6999) AS gone, count(*) = count(DISTINCT rowid) AS unique_positions FROM pq;
+----
+n	gone	unique_positions
+6623	0	t
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments FROM pq;
+----
+segments
+2
+
+query ?? rowsort
+UPDATE pq SET v = 'upd' WHERE id IN (3, 9003) RETURNING id, v;
+----
+id	v
+3	upd
+9003	upd
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 'upd') AS upd, count(DISTINCT id) AS ids FROM pq;
+----
+n	upd	ids
+6623	2	6623
+
+statement ok
+DELETE FROM pq2;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq2;
+
+query
+SELECT count(*) AS n FROM pq2;
+----
+n
+0
+
+statement ok
+INSERT INTO pq2 SELECT i FROM generate_series(5000, 5099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pq2;
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM pq2;
+----
+n	lo	hi
+100	5000	5099
+
+statement ok
+VACUUM (COMPACT_TABLE) pq;
+
+statement ok
+DELETE FROM pq WHERE v LIKE 'v9%' AND id % 2 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pq;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE v LIKE 'v9%' AND id % 2 = 1) AS gone, count(DISTINCT rowid >> 32) AS segments FROM pq;
+----
+n	gone	segments
+6070	0	1
+
+statement ok
+DROP TABLE pq;
+
+statement ok
+DROP TABLE pq2;
+
+statement ok
+DROP TABLE pq_dup;

@@ -53,3 +53,14 @@ a	b	ord
 1	4	1
 2	5	2
 3	6	3
+
+
+query
+SELECT x, y
+FROM UNNEST(ARRAY[1, 2], ARRAY['a', 'b', 'c']) AS t(x, y)
+ORDER BY y;
+----
+x	y
+1	a
+2	b
+NULL	c

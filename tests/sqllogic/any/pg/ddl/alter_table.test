@@ -165,3 +165,69 @@ e	YES
 
 statement ok
 DROP TABLE nullable;
+
+
+statement ok
+CREATE TABLE fkdrop_p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkdrop_q (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkdrop_c (a INT CONSTRAINT fkdrop_c_a_fkey REFERENCES fkdrop_p (id),
+  c INT CONSTRAINT fkdrop_c_c_fkey REFERENCES fkdrop_q (id));
+
+
+statement ok
+ALTER TABLE fkdrop_c DROP CONSTRAINT fkdrop_c_a_fkey;
+
+
+statement ok
+DROP TABLE fkdrop_p;
+
+
+statement error (depend on it|main key table)
+DROP TABLE fkdrop_q;
+
+
+statement ok
+DROP TABLE fkdrop_c;
+
+
+statement ok
+DROP TABLE fkdrop_q;
+
+
+statement ok
+CREATE TABLE fkdrop_twice_p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE fkdrop_twice_c (a INT CONSTRAINT fkdrop_twice_c_a_fkey REFERENCES fkdrop_twice_p (id),
+  b INT CONSTRAINT fkdrop_twice_c_b_fkey REFERENCES fkdrop_twice_p (id));
+
+
+statement ok
+ALTER TABLE fkdrop_twice_c DROP CONSTRAINT fkdrop_twice_c_a_fkey;
+
+
+statement error (depend on it|main key table)
+DROP TABLE fkdrop_twice_p;
+
+
+statement error (?i)violates foreign key constraint
+INSERT INTO fkdrop_twice_c VALUES (NULL, 7);
+
+
+statement ok
+INSERT INTO fkdrop_twice_c VALUES (7, NULL);
+
+
+statement ok
+DROP TABLE fkdrop_twice_c;
+
+
+statement ok
+DROP TABLE fkdrop_twice_p;

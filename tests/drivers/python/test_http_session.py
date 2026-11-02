@@ -100,6 +100,15 @@ def test_a_role_that_cannot_log_in_is_refused(role, http_conn):
     assert session_user(http_conn, SUPERUSER_AUTH) == (200, SUPERUSER_NAME)
 
 
+@pytest.mark.skipif(not TOKEN, reason="the server has no bearer token")
+def test_the_bearer_token_is_masked_in_settings():
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        setting = conn.execute(
+            "SELECT setting FROM sdb_settings WHERE name = 'auth_bearer_token'"
+        ).fetchone()[0]
+    assert setting == "***"
+
+
 def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
     wrong = "Basic " + base64.b64encode(b"drv_http_no_such_role:pw").decode()
     answers = []

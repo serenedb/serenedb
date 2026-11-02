@@ -409,7 +409,8 @@ class Extractor {
       }
     };
     for (const auto rune : runes) {
-      _poisoned = _poisoned || IsSurrogate(rune);
+      _poisoned = _poisoned || IsSurrogate(rune) ||
+                  static_cast<char32_t>(rune) == _boundary;
       if (fold && MayFold(rune)) {
         flush();
         pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
@@ -445,7 +446,8 @@ class Extractor {
     set.reserve(size);
     for (const auto& range : cc) {
       for (auto rune = range.lo; rune <= range.hi; ++rune) {
-        _poisoned = _poisoned || IsSurrogate(rune);
+        _poisoned = _poisoned || IsSurrogate(rune) ||
+                    static_cast<char32_t>(rune) == _boundary;
         set.emplace_back(1, static_cast<char32_t>(rune));
       }
     }
@@ -737,7 +739,7 @@ class LikeShape {
     }
     auto& bytes = _tokens.back().bytes;
     for (auto rune : runes) {
-      if (IsSurrogate(rune)) {
+      if (IsSurrogate(rune) || rune == _boundary) {
         return false;
       }
       char utf8[re2::UTFmax];

@@ -433,7 +433,7 @@ CREATE TABLE sven_att_search (txt text) WITH (storage = 'search');
 
 
 query
-SELECT count(*) AS n FROM pg_attribute WHERE attrelid = 'sven_att_search_pk_seq'::regclass;
+SELECT count(*) AS n FROM pg_class WHERE relname = 'sven_att_search_pk_seq';
 ----
 n
 0

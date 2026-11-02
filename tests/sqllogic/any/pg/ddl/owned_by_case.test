@@ -1,0 +1,54 @@
+statement ok
+CREATE TABLE obc_t (a SERIAL, b INT);
+
+
+statement ok
+CREATE SEQUENCE "OBC_T_A_SEQ" OWNED BY obc_t.b;
+
+
+query
+SELECT refobjsubid AS col, objid::regclass::text AS obj, deptype FROM pg_depend
+WHERE refobjid = 'obc_t'::regclass AND classid = 'pg_class'::regclass ORDER BY refobjsubid;
+----
+col	obj	deptype
+1	obc_t_a_seq	a
+2	"OBC_T_A_SEQ"	a
+
+
+statement ok
+DROP TABLE obc_t;
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname IN ('obc_t_a_seq', 'OBC_T_A_SEQ');
+----
+sequences
+0
+
+
+statement ok
+CREATE TABLE obc_v (a INT);
+
+
+statement ok
+CREATE TABLE "OBC_V" (a INT);
+
+
+statement ok
+CREATE VIEW obc_w AS SELECT a FROM "OBC_V";
+
+
+statement ok
+DROP TABLE obc_v;
+
+
+statement error (?i)depend on it
+DROP TABLE "OBC_V";
+
+
+statement ok
+DROP VIEW obc_w;
+
+
+statement ok
+DROP TABLE "OBC_V";

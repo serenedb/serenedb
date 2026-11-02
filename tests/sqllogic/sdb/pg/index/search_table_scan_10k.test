@@ -119,8 +119,8 @@ c
 11
 
 
-# rowid projection: on a search table without a user PRIMARY KEY the rowid is
-# the generated PK, materialized from `.col` (a PK'd table has no rowid).
+# rowid projection: on a search table the rowid is the row's position, unique
+# across segments.
 statement ok
 CREATE TABLE stk_np (x BIGINT, s TEXT) WITH (storage='search', compaction_interval=0);
 

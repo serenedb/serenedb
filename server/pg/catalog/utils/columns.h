@@ -156,7 +156,7 @@ std::vector<int16_t> ExpressionAttnums(
 
 std::string ExpressionText(const duckdb::ParsedExpression& expression);
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
+const duckdb::TableCatalogEntry& SiblingTable(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
   const duckdb::Identifier& name);
 
@@ -178,8 +178,6 @@ const duckdb::UniqueConstraint* ReferencedKey(
 
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
                                 const duckdb::Constraint& constraint);
-
-bool NumbersRows(const duckdb::CatalogEntry& sequence);
 
 std::vector<std::string> RelationAttributeNames(const Session& session,
                                                 const Relation& relation);

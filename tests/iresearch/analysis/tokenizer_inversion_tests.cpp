@@ -29,9 +29,9 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <map>
@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/doc_generator.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -674,11 +675,9 @@ bool FillDocument(const IndexWriter::Document& doc,
   return true;
 }
 
-Filter::ptr KeyFilter(std::string_view key) {
-  auto filter = std::make_unique<ByTerm>();
-  *filter->mutable_field_id() = kKey;
-  filter->mutable_options()->term = irs::ViewCast<byte_type>(key);
-  return filter;
+std::shared_ptr<const DocRemoval> ByKey(const DirectoryReader& snapshot,
+                                        std::string_view key) {
+  return ::tests::RemovalOf(snapshot, {kKey, {std::string{key}}});
 }
 
 double Seconds(Clock::time_point from) {
@@ -903,16 +902,17 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     ASSERT_TRUE(writer->RefreshCommit());
 
     {
+      const auto snapshot = writer->GetSnapshot();
       auto trx = writer->GetBatch();
       for (size_t i = 0; i < values.size(); ++i) {
         if (fate[i] == kRemoved) {
-          trx.Remove(KeyFilter(keys[i]));
+          trx.Remove(ByKey(snapshot, keys[i]));
           continue;
         }
         if (fate[i] != kReplaced) {
           continue;
         }
-        trx.Remove(KeyFilter(keys[i]));
+        trx.Remove(ByKey(snapshot, keys[i]));
         auto doc = trx.Insert();
         ASSERT_TRUE(doc);
         std::string error;

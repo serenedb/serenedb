@@ -92,7 +92,7 @@ enum class SystemKey : uint8_t {
 };
 
 struct SystemSqlColumn {
-  constexpr SystemSqlColumn(std::string_view name, int32_t type,
+  consteval SystemSqlColumn(std::string_view name, int32_t type,
                             int32_t element_type, bool composite, bool not_null,
                             int32_t collation, int16_t ndims, SystemKey key)
     : name{name},

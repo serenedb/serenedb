@@ -1,0 +1,277 @@
+statement ok
+CREATE TABLE mp (a BIGINT, b BIGINT)
+
+statement ok
+INSERT INTO mp SELECT g, g % 7 FROM generate_series(1, 1000) g
+
+statement ok
+CREATE MACRO mp_between(x, lo, hi) AS x > lo AND x < hi
+
+statement ok
+CREATE FUNCTION mp_fbetween(x bigint, lo bigint, hi bigint) RETURNS boolean LANGUAGE sql RETURN x > lo AND x < hi
+
+statement ok
+CREATE MACRO mp_eq(x, y) AS x = y AND x IS NOT NULL
+
+statement ok
+CREATE MACRO mp_sq(x) AS x * x + x
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_between(a + 1, 5, 10)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter: (a > 4) AND (a < 9) │
+│ ~200 rows                          │
+╰────────────────────────────────────╯
+
+query
+EXPLAIN SELECT a FROM mp WHERE a + 1 > 5 AND a + 1 < 10
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter: (a > 4) AND (a < 9) │
+│ ~200 rows                          │
+╰────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE mp_between(a + 1, 5, 10) ORDER BY a
+----
+a
+5
+6
+7
+8
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_fbetween(a + 1, 5, 10)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter: (a > 4) AND (a < 9) │
+│ ~200 rows                          │
+╰────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE mp_fbetween(a + 1, 5, 10) ORDER BY a
+----
+a
+5
+6
+7
+8
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_fbetween(a + (random() * 0)::bigint, 5, 10)
+----
+QUERY PLAN
+╭─ FILTER ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                             │
+│ invoke(lambda 0_macro_argument_0_0: ((0_macro_argument_0_0 > 5) AND (0_macro_argument_0_0 < 10)), (a + CAST((random() * 0) AS BIGINT))) │
+│ ~200 rows                                                                                                                               │
+╰────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────╮
+│ Table: mp                                                                                                                               │
+│ Type: Sequential Scan                                                                                                                   │
+│ Projections: a                                                                                                                          │
+│ ~1,000 rows                                                                                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE mp_fbetween(a + (random() * 0)::bigint, 5, 10) ORDER BY a
+----
+a
+6
+7
+8
+9
+
+query
+EXPLAIN SELECT a FROM mp WHERE NOT mp_between(a + 1, 5, 1000)
+----
+QUERY PLAN
+╭─ FILTER ───────────────────────────╮
+│ Expression: (a <= 4) OR (a >= 999) │
+│ ~200 rows                          │
+╰──────────────────┬─────────────────╯
+╭─ SEQ_SCAN ───────┴─────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter:                     │
+│ optional: ((a <= 4) OR (a >= 999)) │
+│ ~1,000 rows                        │
+╰────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE NOT mp_between(a + 1, 5, 1000) ORDER BY a
+----
+a
+1
+2
+3
+4
+999
+1000
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_between(a + 1, 5, 10) OR mp_between(a, 990, 1000)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ──────────────────────────────────────────╮
+│ Table: mp                                           │
+│ Type: Sequential Scan                               │
+│ Projections: a                                      │
+│ Column Filter:                                      │
+│ ((a > 4) AND (a < 9)) OR ((a > 990) AND (a < 1000)) │
+│ ~200 rows                                           │
+╰─────────────────────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE mp_between(a + 1, 5, 10) OR mp_between(a, 990, 1000) ORDER BY a
+----
+a
+5
+6
+7
+8
+991
+992
+993
+994
+995
+996
+997
+998
+999
+
+query
+EXPLAIN SELECT count(*) FROM mp p JOIN mp q ON mp_eq(p.a + 1, q.b)
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ HASH_JOIN ─┴────────────╮
+│ Join Type: INNER         │
+│ Conditions: (a + 1) = b  │
+│ ~1,000 rows              │
+╰─────────────┬────────────╯
+              ├───────────────────────────╮
+╭─ SEQ_SCAN ──┴────────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Table: mp                │  │ Table: mp             │
+│ Type: Sequential Scan    │  │ Type: Sequential Scan │
+│ Projections: a           │  │ Projections: b        │
+│ ~1,000 rows              │  │ ~1,000 rows           │
+╰──────────────────────────╯  ╰───────────────────────╯
+
+query
+SELECT count(*) AS c FROM mp p JOIN mp q ON mp_eq(p.a + 1, q.b)
+----
+c
+715
+
+query
+EXPLAIN SELECT count(*) FROM mp p LEFT JOIN mp q ON mp_eq(p.a + 1, q.b)
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ HASH_JOIN ─┴────────────╮
+│ Join Type: LEFT          │
+│ Conditions: (a + 1) = b, │
+│             true         │
+│ ~1,000 rows              │
+╰─────────────┬────────────╯
+              ├───────────────────────────╮
+╭─ SEQ_SCAN ──┴────────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Table: mp                │  │ Table: mp             │
+│ Type: Sequential Scan    │  │ Type: Sequential Scan │
+│ Projections: a           │  │ Projections: b        │
+│ ~1,000 rows              │  │ ~1,000 rows           │
+╰──────────────────────────╯  ╰───────────────────────╯
+
+query
+SELECT count(*) AS c FROM mp p LEFT JOIN mp q ON mp_eq(p.a + 1, q.b)
+----
+c
+1710
+
+query
+EXPLAIN SELECT count(*) FROM mp p LEFT JOIN mp q ON mp_fbetween(p.a, q.b, q.b + 10)
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star()  │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IE_JOIN ───┴─────────────╮
+│ Join Type: LEFT           │
+│ Conditions: a > b,        │
+│             a < (b + 10)  │
+│ ~10,000 rows              │
+╰─────────────┬─────────────╯
+              ├────────────────────────────╮
+╭─ SEQ_SCAN ──┴─────────────╮  ╭─ SEQ_SCAN ┴───────────╮
+│ Table: mp                 │  │ Table: mp             │
+│ Type: Sequential Scan     │  │ Type: Sequential Scan │
+│ Projections: a            │  │ Projections: b        │
+│ ~1,000 rows               │  │ ~1,000 rows           │
+╰───────────────────────────╯  ╰───────────────────────╯
+
+query
+SELECT count(*) AS c FROM mp p LEFT JOIN mp q ON mp_fbetween(p.a, q.b, q.b + 10)
+----
+c
+9985
+
+query
+EXPLAIN SELECT v FROM (SELECT mp_sq(b + 1) AS v FROM mp) s WHERE v < -100
+----
+QUERY PLAN
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_between(mp_sq(b + 1), 0, 100)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ────────────╮
+│ Table: mp             │
+│ Type: Sequential Scan │
+│ Projections: a        │
+│ ~1,000 rows           │
+╰───────────────────────╯
+
+query
+SELECT count(*) AS c FROM mp WHERE mp_between(mp_sq(b + 1), 0, 100)
+----
+c
+1000
+
+statement ok
+DROP MACRO mp_sq
+
+statement ok
+DROP MACRO mp_eq
+
+statement ok
+DROP FUNCTION mp_fbetween
+
+statement ok
+DROP MACRO mp_between
+
+statement ok
+DROP TABLE mp

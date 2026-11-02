@@ -1,0 +1,44 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS "PUBLIC";
+
+statement ok
+DROP ROLE IF EXISTS gqp_other_${__DATABASE__};
+
+statement ok
+CREATE ROLE "PUBLIC";
+
+statement ok
+CREATE ROLE gqp_other_${__DATABASE__};
+
+statement ok
+CREATE TABLE gqp_t (x INTEGER);
+
+statement ok
+GRANT SELECT ON gqp_t TO "PUBLIC";
+
+query
+SELECT has_table_privilege('PUBLIC', 'gqp_t', 'SELECT') AS role,
+  has_table_privilege('gqp_other_${__DATABASE__}', 'gqp_t', 'SELECT') AS other;
+----
+role	other
+t	f
+
+statement ok
+GRANT SELECT ON gqp_t TO PUBLIC;
+
+query
+SELECT has_table_privilege('gqp_other_${__DATABASE__}', 'gqp_t', 'SELECT') AS other;
+----
+other
+t
+
+statement ok
+DROP TABLE gqp_t;
+
+statement ok
+DROP ROLE "PUBLIC";
+
+statement ok
+DROP ROLE gqp_other_${__DATABASE__};

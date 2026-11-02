@@ -92,6 +92,7 @@ add_executable(
     index/buffered_column_test.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
+    index/doc_removal_tests.cpp
     index/field_meta_test.cpp
     index/index_acceptor_walk_tests.cpp
     index/index_adopt_tests.cpp

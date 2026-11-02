@@ -45,10 +45,11 @@ SELECT pg_input_is_valid('0/16B3748', 'pg_lsn') AS lsn_ok, pg_input_is_valid('xy
        pg_input_is_valid('10.0.0.0/8', 'cidr') AS cidr_ok, pg_input_is_valid('1.2.3.4/16', 'cidr') AS cidr_bad,
        pg_input_is_valid('\x0102', 'bytea') AS bytea_ok, pg_input_is_valid('\xzz', 'bytea') AS bytea_bad,
        pg_input_is_valid('pg_class', 'regclass') AS class_ok, pg_input_is_valid('sif_nosuch', 'regclass') AS class_bad,
-       pg_input_is_valid('int4', 'regtype') AS type_ok, pg_input_is_valid('sif_nosuch', 'regtype') AS type_bad;
+       pg_input_is_valid('int4', 'regtype') AS type_ok, pg_input_is_valid('sif_nosuch', 'regtype') AS type_bad,
+       pg_input_is_valid(' 12 ', 'oid') AS oid_ok, pg_input_is_valid('x', 'oid') AS oid_bad;
 ----
-lsn_ok	lsn_bad	cidr_ok	cidr_bad	bytea_ok	bytea_bad	class_ok	class_bad	type_ok	type_bad
-t	f	t	f	t	f	t	f	t	f
+lsn_ok	lsn_bad	cidr_ok	cidr_bad	bytea_ok	bytea_bad	class_ok	class_bad	type_ok	type_bad	oid_ok	oid_bad
+t	f	t	f	t	f	t	f	t	f	t	f
 
 
 query
@@ -87,6 +88,13 @@ NULL	NULL	NULL	NULL
 
 query
 SELECT message IS NOT NULL AS has_message, detail, hint, sql_error_code FROM pg_input_error_info('abc', 'integer');
+----
+has_message	detail	hint	sql_error_code
+t	NULL	NULL	22P02
+
+
+query
+SELECT message IS NOT NULL AS has_message, detail, hint, sql_error_code FROM pg_input_error_info('x', 'oid');
 ----
 has_message	detail	hint	sql_error_code
 t	NULL	NULL	22P02
@@ -1115,6 +1123,15 @@ SELECT pg_char_to_encoding('UTF-8') AS utf8, pg_char_to_encoding('unicode') AS u
 ----
 utf8	unicode	unknown
 6	6	-1
+
+
+query
+SELECT pg_char_to_encoding('Latin1') AS latin1, pg_encoding_to_char(8) AS name, pg_encoding_to_char(999) = '' AS unknown_name,
+       pg_encoding_max_length(0) AS ascii, pg_encoding_max_length(6) AS utf8, pg_encoding_max_length(8) AS single,
+       pg_encoding_max_length(999) IS NULL AS unknown_length;
+----
+latin1	name	unknown_name	ascii	utf8	single	unknown_length
+8	LATIN1	t	1	4	1	t
 
 
 query

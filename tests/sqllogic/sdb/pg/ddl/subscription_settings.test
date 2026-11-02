@@ -49,7 +49,6 @@ statement error
 SET wal_receiver_timeout = 'soon';
 ----
 db error: ERROR: invalid value for parameter "wal_receiver_timeout": "soon"
-HINT: Valid units for this parameter are "us", "ms", "s", "min", "h", and "d".
 
 
 skipif pg-wire-extended
@@ -89,7 +88,7 @@ statement error
 SET wal_receiver_timeout = '30s';
 ----
 db error: ERROR: permission denied to set parameter "wal_receiver_timeout"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide replication settings.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection plain user=subset_plain password=subset_pw
@@ -98,7 +97,7 @@ statement error
 SET max_sync_workers_per_subscription = 4;
 ----
 db error: ERROR: permission denied to set parameter "max_sync_workers_per_subscription"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide replication settings.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection default

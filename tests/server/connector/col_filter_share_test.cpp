@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -87,6 +89,31 @@ Expr Op(duckdb::ExpressionType type, Expr child) {
   children.push_back(std::move(child));
   return Op(type, std::move(children));
 }
+
+Expr In(Expr input, Expr first, Expr second) {
+  std::vector<Expr> children;
+  children.push_back(std::move(input));
+  children.push_back(std::move(first));
+  children.push_back(std::move(second));
+  return Op(COMPARE_IN, std::move(children));
+}
+
+Expr Between(Expr input, Expr lower, Expr upper) {
+  return duckdb::BoundBetweenExpression::Create(
+    std::move(input), std::move(lower), std::move(upper), true, true);
+}
+
+Expr Fn(Expr arg, duckdb::LogicalType type) {
+  const duckdb::ScalarFunction fn{
+    "f", duckdb::vector<duckdb::LogicalType>{arg->GetReturnType()},
+    std::move(type), nullptr};
+  duckdb::vector<Expr> args;
+  args.push_back(std::move(arg));
+  return duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    duckdb::BoundScalarFunction{fn}, std::move(args), nullptr);
+}
+
+Expr Null() { return Const(duckdb::Value{duckdb::LogicalType::INTEGER}); }
 
 double Share(const Expr& expr, const duckdb::BaseStatistics& stats) {
   return EstimateShare(*expr, stats);
@@ -166,6 +193,85 @@ TEST(col_filter_share_test, unknown_predicates_keep_every_row) {
                Op(OPERATOR_IS_NOT_NULL, Col(nullable))),
           nullable),
     kEps);
+  auto unbounded =
+    duckdb::NumericStats::CreateUnknown(duckdb::LogicalType::INTEGER);
+  EXPECT_NEAR(
+    1.0, Share(Cmp(COMPARE_LESSTHAN, Col(unbounded), Num(5)), unbounded), kEps);
+}
+
+TEST(col_filter_share_test, comparisons_need_a_column_and_a_number) {
+  const auto stats = Ints();
+  const auto text = duckdb::Value{"5"};
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_EQUAL, Col(stats), Col(stats)), stats),
+              kEps);
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_EQUAL, Col(stats), Null()), stats), kEps);
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_EQUAL, Null(), Col(stats)), stats), kEps);
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_EQUAL, Col(stats), Const(text)), stats),
+              kEps);
+  EXPECT_NEAR(1.0, Share(Between(Num(5), Num(1), Num(10)), stats), kEps);
+  EXPECT_NEAR(1.0, Share(Between(Col(stats), Col(stats), Num(10)), stats),
+              kEps);
+  EXPECT_NEAR(1.0, Share(Between(Col(stats), Num(1), Col(stats)), stats), kEps);
+  EXPECT_NEAR(1.0, Share(Fn(Col(stats), duckdb::LogicalType::BOOLEAN), stats),
+              kEps);
+  EXPECT_NEAR(
+    1.0,
+    Share(Op(OPERATOR_NOT, Cmp(COMPARE_EQUAL, Col(stats), Col(stats))), stats),
+    kEps);
+}
+
+TEST(col_filter_share_test, exclusions_and_sets_need_a_column_and_numbers) {
+  const auto stats = Ints();
+  const auto call = [&] {
+    return Fn(Col(stats), duckdb::LogicalType::INTEGER);
+  };
+  EXPECT_NEAR(0.99, Share(Cmp(COMPARE_NOTEQUAL, Num(5), Col(stats)), stats),
+              kEps);
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_NOTEQUAL, Col(stats), Col(stats)), stats),
+              kEps);
+  EXPECT_NEAR(1.0, Share(Cmp(COMPARE_NOTEQUAL, call(), Num(5)), stats), kEps);
+  EXPECT_NEAR(1.0, Share(In(Col(stats), Num(1), Col(stats)), stats), kEps);
+  EXPECT_NEAR(1.0, Share(In(call(), Num(1), Num(2)), stats), kEps);
+  const auto floats =
+    Numbers(duckdb::Value::DOUBLE(0.0), duckdb::Value::DOUBLE(1.0));
+  EXPECT_NEAR(1.0,
+              Share(In(Col(floats), Const(duckdb::Value::DOUBLE(0.25)),
+                       Const(duckdb::Value::DOUBLE(0.5))),
+                    floats),
+              kEps);
+  auto text = duckdb::StringStats::CreateEmpty(duckdb::LogicalType::VARCHAR);
+  text.SetHasNoNull();
+  EXPECT_NEAR(
+    1.0,
+    Share(Cmp(COMPARE_NOTEQUAL, Col(text), Const(duckdb::Value{"abc"})), text),
+    kEps);
+}
+
+TEST(col_filter_share_test, a_constant_float_column_matches_all_or_nothing) {
+  const auto stats =
+    Numbers(duckdb::Value::DOUBLE(1.0), duckdb::Value::DOUBLE(1.0));
+  EXPECT_NEAR(1.0,
+              Share(Cmp(COMPARE_GREATERTHANOREQUALTO, Col(stats),
+                        Const(duckdb::Value::DOUBLE(1.0))),
+                    stats),
+              kEps);
+  EXPECT_NEAR(
+    0.0,
+    Share(Cmp(COMPARE_LESSTHAN, Col(stats), Const(duckdb::Value::DOUBLE(0.5))),
+          stats),
+    kEps);
+}
+
+TEST(col_filter_share_test, null_checks_on_columns_with_nulls) {
+  auto mixed = Ints();
+  mixed.SetHasNull();
+  EXPECT_NEAR(1.0, Share(Op(OPERATOR_IS_NULL, Col(mixed)), mixed), kEps);
+  auto nulls = duckdb::NumericStats::CreateEmpty(duckdb::LogicalType::INTEGER);
+  nulls.SetHasNull();
+  EXPECT_NEAR(0.0,
+              Share(Op(OPERATOR_NOT, Op(OPERATOR_IS_NULL, Col(nulls))), nulls),
+              kEps);
+  EXPECT_NEAR(0.0, Share(Op(OPERATOR_IS_NOT_NULL, Col(nulls)), nulls), kEps);
 }
 
 }  // namespace

@@ -134,7 +134,9 @@ duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
                                               output == ByteaOutput::Escape));
 }
 
-void RegisterCasts(duckdb::CastFunctionSet& casts) {
+}  // namespace
+
+void RegisterBytea(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(
     duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
     duckdb::BoundCastInfo{TextToBytea, nullptr, InitInput}, 100);
@@ -142,9 +144,5 @@ void RegisterCasts(duckdb::CastFunctionSet& casts) {
                              duckdb::LogicalType::VARCHAR, BindByteaToText,
                              100);
 }
-
-}  // namespace
-
-void RegisterBytea(duckdb::CastFunctionSet& casts) { RegisterCasts(casts); }
 
 }  // namespace sdb::pg

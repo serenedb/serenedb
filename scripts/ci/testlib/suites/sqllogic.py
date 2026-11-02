@@ -342,6 +342,7 @@ def _sqllogic_run(ctx, args, rel, engine, part=None):
 
 def recovery_units(ctx, args, skips):
     base = sqllogic_dir(ctx)
+    generated_tests(ctx, "write")
     units = []
     for path in find_tests(base / "recovery", args.fast):
         rel = str(path.relative_to(base))

@@ -172,6 +172,34 @@ QUERY PLAN
 │ ~1 row                             │
 ╰────────────────────────────────────╯
 
+statement ok
+CREATE MACRO both_match(x, a, b) AS x @@ ts_regexp(a) AND x @@ ts_regexp(b);
+
+query
+SELECT id FROM docs WHERE both_match(twice(lower(s)), 'data.*', '.*engineer') ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM docs WHERE both_match(twice(lower(s)), 'data.*', '.*engineer');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────╮
+│ Index: docs                                                            │
+│ Lookup: search                                                         │
+│ Index Filter:                                                          │
+│ ╭─ And ──────────────────────────╮                                     │
+│ ╰────────────────┬───────────────╯                                     │
+│                  ├───────────────────────────────────╮                 │
+│ ╭─ Starts With ──┴───────────────╮  ╭─ Automaton ────┴───────────────╮ │
+│ │ Field: twice(lower(s))(string) │  │ Field: twice(lower(s))(string) │ │
+│ │ Prefix: data                   │  │ Pattern: .*engineer            │ │
+│ ╰────────────────────────────────╯  ╰────────────────────────────────╯ │
+│ Projections: id                                                        │
+│ ~1 row                                                                 │
+╰────────────────────────────────────────────────────────────────────────╯
+
 query
 SELECT id FROM docs WHERE joined(l) @@ ts_regexp('chef sous') ORDER BY id;
 ----
@@ -628,6 +656,34 @@ QUERY PLAN
 │ Projections: id                   │
 │ ~1 row                            │
 ╰───────────────────────────────────╯
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+query
+SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef') ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: docs                       │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Term ────────────────────────╮ │
+│ │ Field: dup0(lower(s))(string) │ │
+│ │ Value: chefchef               │ │
+│ ╰───────────────────────────────╯ │
+│ Projections: id                   │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+statement ok
+SET disabled_optimizers = '';
 
 statement error
 SELECT id FROM docs WHERE dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(dup0(lower(s))))))))))))))))))))))))) @@ ts_regexp('chef.*');

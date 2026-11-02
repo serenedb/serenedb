@@ -358,6 +358,8 @@ IRS_FORCE_INLINE inline WbState ConsumeWordSpaceRuns(
 
 }  // namespace detail
 
+static_assert(WbLookup(utf8_utils::kInvalidChar32) == kOther);
+
 template<typename Emit, typename Progress = classify::NoProgress>
 IRS_FORCE_INLINE void ScanUnicode(duckdb::string_t value, Emit&& emit,
                                   Progress progress = {}) {

@@ -193,3 +193,55 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY ranking_dict AS
     split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
     WITH (frequency, position);
+
+# DOCS_TEST: bm25_vs_tfidf_setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE pages (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    body VARCHAR
+);
+
+statement ok
+INSERT INTO pages VALUES
+(1, 'Trail running shoes', 'Lightweight trail running shoes'),
+(2, 'River loop guide', 'The river trail is a loop. The trail is rocky, so the trail gets slippery after rain. Most hikers finish the trail in three hours, and dogs are welcome on the trail.'),
+(3, 'Hiking shoes', 'Waterproof hiking shoes'),
+(4, 'Hiking socks', 'Merino wool hiking socks');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pages_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE INDEX pages_idx ON pages
+    USING inverted (id, body pages_dict);
+
+# DOCS_TEST: bm25_vs_tfidf
+
+statement ok
+VACUUM (REFRESH_TABLE) pages;
+
+# DOCS_TEST_BODY
+
+query
+SELECT 'BM25' AS scorer, id, title, BM25(pages_idx.tableoid) AS score
+FROM pages_idx
+WHERE body @@ 'trail shoes'
+UNION ALL
+SELECT 'TFIDF', id, title, TFIDF(pages_idx.tableoid)
+FROM pages_idx
+WHERE body @@ 'trail shoes'
+ORDER BY scorer, score DESC, id;
+----
+scorer	id	title	score
+BM25	1	Trail running shoes	0.84794676
+BM25	3	Hiking shoes	0.4468565
+BM25	2	River loop guide	0.43435338
+TFIDF	2	River loop guide	2.1932008
+TFIDF	1	Trail running shoes	1.9616585
+TFIDF	3	Hiking shoes	0.98082924

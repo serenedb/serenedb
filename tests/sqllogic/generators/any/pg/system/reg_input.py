@@ -139,11 +139,14 @@ CAUSES = {
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "keywords": "SereneDB looks up a type name PostgreSQL's grammar reserves as a keyword, "
                 "since some of its own types are named so, as union is",
+    "oids": "SereneDB's OIDs are 64-bit, so a number above 4294967295 is an OID",
 }
 
 DIFFERENCES = {
     "SELECT to_regprocedure('abs(none)')::text AS procedure": "keywords",
     "SELECT 'abs(none)'::regprocedure::text AS procedure": "keywords",
+    "SELECT to_regclass('4294967296')::text AS relation": "oids",
+    "SELECT '4294967296'::regclass::text AS relation": "oids",
     "SELECT '+'::regoper::text AS oper": "operators",
     "SELECT to_regoper('||/')::text AS oper": "operators",
     "SELECT '||/'::regoper::text AS oper": "operators",

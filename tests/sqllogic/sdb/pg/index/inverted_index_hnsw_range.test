@@ -383,3 +383,39 @@ SELECT count(*) FROM (
 ----
 count
 0
+
+
+query
+SELECT count(*) FROM hnsw_r_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < -1;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM hnsw_r_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] <= -0.5;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM hnsw_r_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] <= 0;
+----
+count
+1
+
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+
+query
+SELECT count(*) FROM hnsw_r_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < -1;
+----
+count
+0
+
+
+statement ok
+RESET sdb_ann_force_exact;

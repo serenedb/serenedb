@@ -28,7 +28,6 @@
 #include <iresearch/index/merge_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -75,11 +74,8 @@ inline constexpr irs::field_id kAnotherColumnId =
 
 using tests::FieldIdFor;
 
-irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = FieldIdFor(name);
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(std::string_view name, std::string_view value) {
+  return {FieldIdFor(name), {std::string{value}}};
 }
 
 }  // namespace

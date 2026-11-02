@@ -52,6 +52,8 @@ The second form grants role membership — `doc_staff` now inherits everything g
 
 <SqlLogicTest id="sql/statements/grant/index/example_011" />
 
+Only the unquoted keyword means every role: a quoted `"PUBLIC"` names a role called `PUBLIC`.
+
 Granting to a role that does not exist is an error:
 
 <SqlLogicTest id="sql/statements/grant/index/example_012" />

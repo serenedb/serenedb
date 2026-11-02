@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE mc (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO mc SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+statement ok
+INSERT INTO mc SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+connection racer
+statement ok
+BEGIN;
+
+connection racer
+statement ok
+DELETE FROM mc WHERE id % 7 = 3;
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) mc;
+
+connection compactor
+statement ok
+INSERT INTO mc SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
+
+connection compactor
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) mc;
+
+connection compactor
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('mc') WHERE column_name = 'id';
+----
+segments
+1
+
+connection racer
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection racer
+statement error connection closed
+COMMIT;
+
+connection after_chain
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM mc;
+----
+n	s
+27143	421417857
+
+connection after_chain
+statement ok
+VACUUM (REFRESH_TABLE) mc;
+
+connection after_chain
+query
+SELECT count(*) AS n FROM mc WHERE id % 7 = 3 AND id < 20000;
+----
+n
+0
+
+connection after_chain
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_chain
+statement error connection closed
+DELETE FROM mc WHERE id % 7 = 4;
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 4) AS left FROM mc;
+----
+n	left
+22857	0
+
+connection after_restart
+statement ok
+DROP TABLE mc;

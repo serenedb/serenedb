@@ -46,7 +46,7 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false re2=false pg=false everything=false
+iresearch=false other_tp=false re2=false croaring=false pg=false everything=false
 declare -A suite_hit=()
 
 while IFS= read -r f; do
@@ -65,6 +65,12 @@ while IFS= read -r f; do
 		third_party/jemalloc | third_party/jemalloc/* | third_party/jemalloc-cmake | third_party/jemalloc-cmake/* | \
 		third_party/tcmalloc | third_party/tcmalloc/* | third_party/CMakeLists.txt)
 		re2=true
+		;;
+	esac
+	case "$f" in
+	third_party/croaring | third_party/croaring/* | third_party/cmocka | third_party/cmocka/* | \
+		third_party/CMakeLists.txt)
+		croaring=true
 		;;
 	esac
 	case "$f" in
@@ -131,7 +137,7 @@ if [[ "$other_tp" == true ]]; then
 	iresearch=true
 fi
 if [[ "$everything" == true ]]; then
-	iresearch=true re2=true pg=true
+	iresearch=true re2=true croaring=true pg=true
 	for s in $ALL_SUITES; do suite_hit[$s]=1; done
 fi
 
@@ -149,5 +155,6 @@ emit() {
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
 emit re2 "$re2"
+emit croaring "$croaring"
 emit pg "$pg"
 emit everything "$everything"

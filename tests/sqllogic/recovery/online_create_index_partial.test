@@ -1,5 +1,5 @@
 # Online CREATE INDEX ... WHERE <predicate> vs concurrent DML. The partial
-# build runs async (commit-on-flush cuts + delete-log watermark) while DML
+# build runs async (segment cuts + delete log) while DML
 # crosses the predicate boundary. The published partial index must contain
 # exactly the rows matching the predicate, with mid-build inserts/updates/
 # deletes reflected -- including rows that migrate in and out of the predicate.

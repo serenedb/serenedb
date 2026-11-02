@@ -434,10 +434,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    asio_ns::error_code peer_ec;
-    const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-    _peer = {.address = peer_ec ? asio_ns::ip::address{}
-                                : pg::NormalizePeerAddress(peer_ep.address()),
+    const auto client = this->ClientAddress();
+    _peer = {.address = client ? *client : asio_ns::ip::address{},
              .is_ssl = _socket.IsTls()};
     cpu = SessionMain();
     _handed_off = true;

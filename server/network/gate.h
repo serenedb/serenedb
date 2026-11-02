@@ -37,8 +37,8 @@ namespace sdb::network {
 //
 // One word: kEmpty, kKicked, or the parked Awaiter* (the kicker needs it, so it
 // IS the state). All acq_rel, no fence: every Kick is a single exchange (a
-// successful RMW), so it reads-from the waiter's exchange and carries the
-// kicker's publication across -- no store/load pair for seq_cst to guard.
+// successful RMW), so it reads-from the waiter's compare-exchange and carries
+// the kicker's publication across -- no store/load pair for seq_cst to guard.
 class Gate {
   static constexpr uintptr_t kEmpty = 0;
   static constexpr uintptr_t kKicked = 1;
@@ -54,15 +54,16 @@ class Gate {
     template<typename Promise>
     bool await_suspend(std::coroutine_handle<Promise> handle) noexcept {
       _job = &handle.promise();
-      const auto prev = _gate._state.exchange(reinterpret_cast<uintptr_t>(this),
-                                              std::memory_order_acq_rel);
-      if (prev == kEmpty) {
-        return true;  // parked; a Kick will Submit us
+      const auto self = reinterpret_cast<uintptr_t>(this);
+      auto& state = _gate._state;
+      auto prev = state.load(std::memory_order_acquire);
+      while (true) {
+        const auto next = prev == kKicked ? kEmpty : self;
+        if (state.compare_exchange_weak(prev, next, std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+          return next == self;
+        }
       }
-      // prev == kKicked: a kick was pending. Take the slot back; if a racing
-      // Kick already replaced us with kKicked (it Submitted us) we stay parked.
-      return _gate._state.exchange(kEmpty, std::memory_order_acq_rel) ==
-             kKicked;
     }
 
     void await_resume() const noexcept {}

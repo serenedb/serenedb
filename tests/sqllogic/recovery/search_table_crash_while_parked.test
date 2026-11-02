@@ -141,7 +141,7 @@ id	body
 
 connection after_delete
 statement ok
-SET sdb_faults = 'pause_search_commit_before_delete_log';
+SET sdb_faults = 'pause_search_commit_before_build_truncate';
 
 connection truncator
 statement async error connection closed
@@ -149,7 +149,7 @@ TRUNCATE cpt;
 
 connection after_delete
 statement ok retry 40 backoff 250ms
-SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+SET sdb_faults = '-pause_search_commit_before_build_truncate:parked';
 
 connection after_delete
 query

@@ -23,34 +23,42 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/function/replacement_scan.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <duckdb/planner/binder.hpp>
 
 #include "connector/inverted_store_index.h"
 
 namespace sdb::connector {
 namespace {
 
-duckdb::unique_ptr<duckdb::ParsedExpression> NameArgument(
-  const duckdb::Identifier& value) {
-  return duckdb::ConstantExpression::String(value.GetIdentifierName());
-}
-
 duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   duckdb::ClientContext& context, duckdb::ReplacementScanInput& input,
   duckdb::optional_ptr<duckdb::ReplacementScanData> /*data*/) {
+  duckdb::CatalogEntryRetriever retriever{context};
   auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-    context, input.name, duckdb::OnEntryNotFound::RETURN_NULL);
+    context, duckdb::Binder::BindTableName(retriever, input.name),
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!index || !IsInvertedIndex(*index)) {
     return nullptr;
   }
+  duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> path;
+  path.emplace_back(duckdb::ConstantExpression::String(
+    index->ParentCatalog().GetName().GetIdentifierName()));
+  for (const auto& schema :
+       index->ParentSchemaPath(index->catalog.GetCatalogTransaction(context))) {
+    path.emplace_back(
+      duckdb::ConstantExpression::String(schema.GetIdentifierName()));
+  }
+  path.emplace_back(
+    duckdb::ConstantExpression::String(index->name.GetIdentifierName()));
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> arguments;
-  arguments.emplace_back(NameArgument(index->ParentCatalog().GetName()));
-  arguments.emplace_back(NameArgument(index->ParentSchema(context).name));
-  arguments.emplace_back(NameArgument(index->name));
+  arguments.emplace_back(duckdb::make_uniq<duckdb::FunctionExpression>(
+    "list_value", std::move(path)));
 
   auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
   ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(

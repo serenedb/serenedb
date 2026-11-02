@@ -9,3 +9,29 @@ FROM
   VALUES ('pudge'), ('deadinside'), ('clickclack')
 ) AS lol(name)
 WHERE name NOT IN (VALUES ('pudge', 993), ('clickclack', 228));
+
+
+skipif serenedb
+statement error syntax error at or near "\)"
+SELECT 1 IN ();
+
+
+onlyif serenedb
+query
+SELECT 1 IN () AS member, 1 NOT IN () AS outsider;
+----
+member	outsider
+f	t
+
+
+skipif serenedb
+statement error syntax error at or near "ROW"
+SELECT 1 IN ROW(1, 2);
+
+
+onlyif serenedb
+query
+SELECT 1 IN ROW(1, 2) AS member, 3 IN ROW(1, 2) AS outsider;
+----
+member	outsider
+t	f

@@ -52,9 +52,3 @@ target_include_directories(
     SYSTEM
     PUBLIC "${CMAKE_SOURCE_DIR}/third_party/duckdb_quack/src/include"
 )
-
-set_source_files_properties(
-    http/codecs/snappy.cpp
-    TARGET_DIRECTORY sereneserver
-    PROPERTIES COMPILE_OPTIONS -fno-rtti
-)

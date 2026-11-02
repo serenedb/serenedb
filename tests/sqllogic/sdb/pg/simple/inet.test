@@ -56,3 +56,27 @@ SELECT json_build_object('ip', '10.0.0.1'::INET, 'net', '10.0.0.0/8'::CIDR) AS o
 ----
 obj	cast
 {"ip":"10.0.0.1","net":"10.0.0.0/8"}	"::1"
+
+
+statement ok
+CREATE MACRO inet_host_or_default(a := '10.0.0.1/24'::inet) AS host(a);
+
+
+statement ok
+CREATE MACRO inet_default(a := '10.0.0.1/24'::inet) AS a;
+
+
+query
+SELECT inet_host_or_default() AS host, inet_host_or_default(a := '192.168.1.5/16'::inet) AS given,
+  inet_default() AS d, pg_typeof(inet_default()) AS t;
+----
+host	given	d	t
+10.0.0.1	192.168.1.5	10.0.0.1/24	inet
+
+
+statement ok
+DROP MACRO inet_host_or_default;
+
+
+statement ok
+DROP MACRO inet_default;

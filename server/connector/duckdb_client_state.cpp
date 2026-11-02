@@ -99,9 +99,6 @@ SereneDBClientState& SereneDBClientState::Register(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
       }
-      if (new_value) {
-        RequireSuperuserToSet(ctx, name);
-      }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
       if (scope == duckdb::SetScope::AUTOMATIC) {
@@ -120,10 +117,14 @@ SereneDBClientState& SereneDBClientState::Register(
           }
         }
       }
+      const bool global = scope == duckdb::SetScope::GLOBAL;
+      if (new_value || global) {
+        RequireSuperuserToSet(ctx, name, global);
+      }
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the
       // transaction -- only session/local changes are tracked.
-      if (scope == duckdb::SetScope::GLOBAL) {
+      if (global) {
         return;
       }
       auto& sdb_ctx = GetSereneDBContext(ctx);

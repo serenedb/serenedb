@@ -3,12 +3,9 @@ control substitution on
 # A TRUNCATE that lands mid-build, on the far side of the window where the
 # rebuilt group is read and flushed but not yet swapped in.
 #
-# ReplaceSegments tolerates a source segment that has gone missing because all
-# its rows were deleted, and adopts the replacement anyway -- on the grounds
-# that whatever removed those rows reaches the replacement too, "by tick if the
-# removal is still pending and through the host's own reissue if it was already
-# applied". The host's reissue is the delete log, and a TRUNCATE puts nothing
-# in it. This pins down whether the rows stay gone.
+# ReplaceSegments adopts the replacement of a source segment that has gone
+# missing because all its rows were deleted, and masks the rows the replacement
+# took from it. This pins down that the rows a TRUNCATE removed stay gone.
 
 statement ok
 RESET sdb_faults;

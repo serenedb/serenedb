@@ -1047,3 +1047,57 @@ DROP SEQUENCE seq_bottom;
 
 statement ok
 DROP SEQUENCE seq_top;
+
+
+statement ok
+CREATE SEQUENCE seq_fold;
+
+
+query
+SELECT nextval('SEQ_FOLD') AS n, currval('Seq_Fold') AS c, setval('SEQ_FOLD', 10) AS s, nextval('public.SEQ_FOLD') AS p;
+----
+n	c	s	p
+1	1	10	11
+
+
+statement error (relation "SEQ_FOLD" does not exist|Sequence with name SEQ_FOLD does not exist)
+SELECT nextval('"SEQ_FOLD"');
+
+
+statement ok
+DROP SEQUENCE seq_fold;
+
+
+query
+SELECT setval(NULL, 1) IS NULL AS literal, setval(NULLIF('a', 'a'), 1) IS NULL AS computed,
+       setval(CASE WHEN false THEN 'pg_class'::regclass END, 1, false) IS NULL AS typed;
+----
+literal	computed	typed
+t	t	t
+
+
+statement ok
+CREATE SEQUENCE seq_restart_view;
+
+
+statement ok
+CREATE VIEW seq_restart_v AS SELECT nextval('seq_restart_view') AS n;
+
+
+statement ok
+ALTER SEQUENCE seq_restart_view RESTART WITH 7;
+
+
+query
+SELECT n FROM seq_restart_v;
+----
+n
+7
+
+
+statement ok
+DROP VIEW seq_restart_v;
+
+
+statement ok
+DROP SEQUENCE seq_restart_view;

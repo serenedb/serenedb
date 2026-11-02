@@ -138,6 +138,16 @@ pk
 3
 2
 
+statement ok
+PREPARE hnsw_f_pk AS SELECT pk FROM hnsw_f_idx WHERE pk = $1
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE hnsw_f_pk(250);
+----
+pk
+250
+
 
 query
 SELECT pk FROM hnsw_f_idx

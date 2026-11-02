@@ -24,6 +24,7 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <re2/regexp.h>
 
 #include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
@@ -173,6 +174,13 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
     std::string_view{duckdb::StringValue::Get(value)});
 }
 
+bool BoolConstant(const duckdb::Value& value) {
+  if (value.type().id() != duckdb::LogicalTypeId::BOOLEAN) {
+    return CastConstant(value, duckdb::LogicalTypeId::BOOLEAN).GetValue<bool>();
+  }
+  return value.GetValue<bool>();
+}
+
 bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                    irs::bstring& out) {
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
@@ -182,7 +190,7 @@ bool TryEncodeTerm(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     out.assign(
-      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(value.GetValue<bool>())));
+      irs::ViewCast<irs::byte_type>(irs::BooleanTerm(BoolConstant(value))));
     return true;
   }
   if (IsNumericTypeId(type_id)) {
@@ -840,8 +848,14 @@ std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
   if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
     return std::nullopt;
   }
-  const auto min = duckdb::NumericStats::Min(*info.stats).GetValue<double>();
-  const auto max = duckdb::NumericStats::Max(*info.stats).GetValue<double>();
+  const auto number = [&](const duckdb::Value& value) {
+    double out = 0;
+    WithNumericValue(info.logical_type.id(), value,
+                     [&](auto v) { out = static_cast<double>(v); });
+    return out;
+  };
+  const auto min = number(duckdb::NumericStats::Min(*info.stats));
+  const auto max = number(duckdb::NumericStats::Max(*info.stats));
   if (!(max > min)) {
     return std::nullopt;
   }
@@ -1037,7 +1051,7 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
     auto& range_filter = AddFilter<irs::ByRange>(filter);
     setup_base_filter(range_filter)
       .assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTerm(const_val->GetValue<bool>())));
+        irs::BooleanTerm(BoolConstant(*const_val))));
   } else if (IsNumericTypeId(type_id)) {
     if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
       bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
@@ -1347,11 +1361,49 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
                 duckdb::Value(std::move(pattern)))));
 }
 
+bool AnchoredAtText(re2::Regexp* re, bool start) {
+  while (re->op() == re2::kRegexpCapture || re->op() == re2::kRegexpConcat) {
+    re =
+      re->sub()[start || re->op() == re2::kRegexpCapture ? 0 : re->nsub() - 1];
+  }
+  return re->op() == (start ? re2::kRegexpBeginText : re2::kRegexpEndText);
+}
+
+re2::Regexp* ParseRegexp(std::string_view pattern, re2::RegexpStatus& status) {
+  return re2::Regexp::Parse(pattern, re2::Regexp::LikePerl, &status);
+}
+
+std::string TSRegexpPattern(std::string_view literal) {
+  re2::RegexpStatus status;
+  auto* re = ParseRegexp(literal, status);
+  if (!re) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(status.Text()));
+  }
+  const bool at_start = AnchoredAtText(re, true);
+  const bool at_end = AnchoredAtText(re, false);
+  re->Decref();
+  if (at_start && at_end) {
+    return std::string{literal};
+  }
+  const std::string_view head = at_start ? "(?:" : "(?s:.*)(?:";
+  const std::string_view tail = at_end ? ")" : ")(?s:.*)";
+  auto pattern = absl::StrCat(head, literal, tail);
+  if (literal.contains("\\Q")) {
+    re = ParseRegexp(pattern, status);
+    if (!re) {
+      return absl::StrCat(head, literal, "\\E", tail);
+    }
+    re->Decref();
+  }
+  return pattern;
+}
+
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(literal))));
+                  duckdb::Value(TSRegexpPattern(literal)))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
@@ -1407,7 +1459,7 @@ absl::Status FromFunctionExpression(
     return FromInetNetworkOp(filter, ctx, *inet);
   }
 
-  char escape_char = '\\';
+  std::string_view escape = "\\";
   if (name == "like_escape") {
     SDB_ASSERT(args.size() == 3);
     const auto* escape_val = TryGetConstant(*args[2]);
@@ -1421,7 +1473,7 @@ absl::Status FromFunctionExpression(
       return absl::InvalidArgumentError(
         "LIKE ESCAPE must be a single character");
     }
-    escape_char = escape_str.front();
+    escape = escape_str;
     args = args.subspan(0, 2);
     name = "~~";
   }
@@ -1446,7 +1498,7 @@ absl::Status FromFunctionExpression(
       auto validator = &IsKeywordAnalyzer;
 
       if (builder == &BuildTSLike) {
-        pattern = LikeEscapePattern(pattern, escape_char);
+        pattern = LikeEscapePattern(pattern, escape);
         if (LikePatternEndsWithEscape(pattern)) {
           return absl::InvalidArgumentError(
             "LIKE pattern must not end with escape character");
@@ -2381,6 +2433,17 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id) {
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
   return term_dict::IsNumeric(term_dict::Classify(id)) ||
          id == duckdb::LogicalTypeId::DECIMAL;
+}
+
+duckdb::Value CastConstant(const duckdb::Value& value,
+                           duckdb::LogicalTypeId type_id) {
+  std::string error;
+  auto cast = value.DefaultTryCastAs(duckdb::LogicalType{type_id}, &error);
+  if (!cast) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG(error));
+  }
+  return std::move(*cast);
 }
 
 // Sees through the transit casts

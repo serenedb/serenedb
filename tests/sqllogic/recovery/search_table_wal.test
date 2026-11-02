@@ -293,7 +293,7 @@ DROP TABLE mix_t;
 
 
 ###############################################################################
-# 6. DELETE -> the removal survives recovery replay (explicit + generated PK).
+# 6. DELETE -> the removal survives recovery replay (with and without a PK).
 #    The baseline is published; the DELETE is fsynced into the WAL but crashes
 #    before the iresearch removal commits, so recovery must re-apply it.
 ###############################################################################
@@ -484,8 +484,8 @@ statement ok
 DROP TABLE upd_t;
 
 
-# 8b. Generated PK: the new row is minted a fresh generated PK; the old row is
-#     removed by its old rowid. Both halves must survive recovery.
+# 8b. No PK: the old row is removed by its rowid and the new row takes a
+#     position of its own. Both halves must survive recovery.
 connection upd_after
 statement ok
 CREATE TABLE upd_g (a INTEGER, b TEXT) WITH (storage = 'search');

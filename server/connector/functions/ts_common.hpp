@@ -179,6 +179,8 @@ void ValidateFilterType(duckdb::LogicalTypeId type_id);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
+duckdb::Value CastConstant(const duckdb::Value& value,
+                           duckdb::LogicalTypeId type_id);
 
 struct ArgError {
   std::string_view label;
@@ -197,6 +199,10 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
+  if (value.type().id() != type_id) {
+    WithNumericValue(type_id, CastConstant(value, type_id), std::forward<F>(f));
+    return;
+  }
   switch (term_dict::Classify(type_id)) {
     case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());

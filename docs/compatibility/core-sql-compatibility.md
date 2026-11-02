@@ -50,7 +50,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature               | Support State | Details                                                      |
 |-----------------------|---------------|--------------------------------------------------------------|
 | CREATE ROLE           | Yes           | See [Database Roles](../security/roles.md) |
-| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs; not databases or functions |
+| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs, foreign servers; not databases or functions |
 | ALTER ROLE            | Yes           | Attributes, passwords, `VALID UNTIL`, `RENAME TO` |
 | GRANT                 | Yes           | Privileges and role membership, incl. column grants; see [Privileges](../security/privileges.md) |
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |
@@ -80,7 +80,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | search_path                | Yes           |              |
 | Table Inheritance          | No            |                                                                |
 | Table Partitioning         | No            |                                                                |
-| Foreign Data Wrappers      | No            |                                                                |
+| Foreign Data Wrappers      | Partial       | Built-in wrappers for [`CREATE SERVER`](../sql/statements/create_server/index.md), with `GRANT USAGE ON FOREIGN DATA WRAPPER`; no `CREATE FOREIGN DATA WRAPPER`, user mappings or foreign tables |
 | Views                      | Yes           |      |
 | Databases                  | Yes           |  |
 | Scheduled Jobs             | Yes           | SereneDB extension, not PostgreSQL syntax: [`CREATE JOB`](../sql/statements/create_job/index.md) |
@@ -833,7 +833,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | acldefault                         | Yes           | Also `aclexplode` |
 | makeaclitem                        | Yes           |  |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
-| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `duckdb_fdw`, `iceberg_fdw`, `postgres_fdw` and `serenedb_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
 | has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
 | has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
 | pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |

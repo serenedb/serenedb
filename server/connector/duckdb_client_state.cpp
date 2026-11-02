@@ -32,9 +32,11 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/planner/operator/logical_alter.hpp>
 #include <duckdb/planner/operator/logical_attach.hpp>
 #include <duckdb/planner/operator/logical_create.hpp>
 #include <duckdb/planner/operator/logical_drop.hpp>
@@ -57,6 +59,7 @@
 #include "auth/visibility.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/foreign_server.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
@@ -391,6 +394,28 @@ void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
       RequireDatabaseNotBeingCreated(
         context, root->Cast<duckdb::LogicalAttach>().info->name);
       break;
+    case duckdb::LogicalOperatorType::LOGICAL_ALTER: {
+      const auto& info = *root->Cast<duckdb::LogicalAlter>().info;
+      if (info.type != duckdb::AlterType::ALTER_PERMISSIONS ||
+          info.GetCatalogType() != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+        break;
+      }
+      const auto& alter = info.Cast<duckdb::AlterPermissionsInfo>();
+      if (alter.new_owner.empty()) {
+        break;
+      }
+      auto& catalog =
+        duckdb::Catalog::GetCatalog(context, alter.GetQualifiedName().Catalog())
+          .Cast<duckdb::DuckCatalog>();
+      if (const auto server =
+            catalog.GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+              .GetEntry(catalog.GetCatalogTransaction(context),
+                        alter.GetQualifiedName().Name())) {
+        server->Cast<catalog::ForeignServerCatalogEntry>().CheckOwner(
+          context, alter.new_owner_id);
+      }
+      break;
+    }
     case duckdb::LogicalOperatorType::LOGICAL_DROP:
       if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
         _connection_ctx->PreventInTransactionBlock("DISCARD ALL");

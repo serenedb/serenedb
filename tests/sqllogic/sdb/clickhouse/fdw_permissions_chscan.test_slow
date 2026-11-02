@@ -20,6 +20,12 @@ statement ok
 DROP SERVER IF EXISTS fp_denied;
 
 statement ok
+DROP SERVER IF EXISTS fp_own;
+
+statement ok
+DROP SERVER IF EXISTS fp_own2;
+
+statement ok
 DROP ROLE IF EXISTS fp_owner;
 
 statement ok
@@ -143,6 +149,134 @@ SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'fp_srv';
 ----
 n
 0
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO fp_owner;
+
+connection c_owner user=fp_owner password=owner_pw
+statement error
+CREATE SERVER fp_own FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+----
+db error: ERROR: password is required<slt:ignore>
+
+
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+CREATE SERVER fp_own FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+connection c_owner user=fp_owner password=owner_pw
+query
+SELECT count(*) AS n FROM fp_own.chtest.vedernikoff;
+----
+n
+6
+
+connection default
+query
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fp_own';
+----
+rolname
+fp_owner
+
+connection c_other user=fp_other password=other_pw
+statement error
+SELECT count(*) FROM fp_own.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fp_own<slt:ignore>
+
+
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+GRANT USAGE ON FOREIGN SERVER fp_own TO fp_other;
+
+connection c_other user=fp_other password=other_pw
+query
+SELECT count(*) AS n FROM fp_own.chtest.vedernikoff;
+----
+n
+6
+
+connection default
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw FROM fp_owner;
+
+connection c_owner user=fp_owner password=owner_pw
+statement error
+CREATE SERVER fp_own2 FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+----
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw<slt:ignore>
+
+
+connection c_owner user=fp_owner password=owner_pw
+query
+SELECT count(*) AS n FROM fp_own.chtest.vedernikoff;
+----
+n
+6
+
+connection c_owner user=fp_owner password=owner_pw
+statement error
+ALTER SERVER fp_own OWNER TO fp_other;
+----
+db error: ERROR: must be able to SET ROLE "fp_other"<slt:ignore>
+
+
+connection default
+statement ok
+GRANT fp_other TO fp_owner;
+
+connection c_owner user=fp_owner password=owner_pw
+statement error
+ALTER SERVER fp_own OWNER TO fp_other;
+----
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw<slt:ignore>
+
+
+connection default
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO fp_other;
+
+connection c_owner user=fp_owner password=owner_pw
+statement ok
+ALTER SERVER fp_own OWNER TO fp_other;
+
+connection default
+query
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fp_own';
+----
+rolname
+fp_other
+
+connection c_owner user=fp_owner password=owner_pw
+query
+SELECT count(*) AS n FROM fp_own.chtest.vedernikoff;
+----
+n
+6
+
+connection default
+statement ok
+REVOKE fp_other FROM fp_owner;
+
+connection c_owner user=fp_owner password=owner_pw
+statement error
+DROP SERVER fp_own;
+----
+db error: ERROR: must be owner of foreign server fp_own<slt:ignore>
+
+
+connection c_other user=fp_other password=other_pw
+statement ok
+DROP SERVER fp_own;
+
+connection default
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw FROM fp_other;
 
 # Cleanup (superuser).
 statement ok

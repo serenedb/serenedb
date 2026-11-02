@@ -36,6 +36,7 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -713,9 +714,30 @@ struct ForeignDataWrapperPrivileges
   : ObjectPrivileges<ForeignDataWrapperPrivileges> {
   static constexpr std::string_view kName =
     "has_foreign_data_wrapper_privilege";
-  static constexpr CatalogType kType = CatalogType::FOREIGN_SERVER_ENTRY;
+  static constexpr CatalogType kType = CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
   static constexpr AclMode kModes = AclMode::Usage;
   static constexpr bool kSuperuserFirst = true;
+
+  struct Scope : ObjectScope {
+    std::array<duckdb::Permissions, kForeignDataWrappers.size()> wrappers;
+  };
+
+  static Scope Begin(duckdb::ClientContext& context) {
+    Scope scope{ObjectPrivileges::Begin(context)};
+    const auto database = FindDatabase(
+      context,
+      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName());
+    for (size_t i = 0; i < kForeignDataWrappers.size(); ++i) {
+      auto& wrapper = scope.wrappers[i];
+      wrapper.owner = kRootUser;
+      if (database) {
+        const auto acl = database->permissions.ForeignDataWrapperAcl(
+          kForeignDataWrappers[i].oid);
+        wrapper.acl.assign(acl.begin(), acl.end());
+      }
+    }
+    return scope;
+  }
 
   static uint64_t Resolve(const Session&, std::string_view name) {
     if (const auto* wrapper = FindSystemObject(kForeignDataWrappers, name)) {
@@ -724,11 +746,12 @@ struct ForeignDataWrapperPrivileges
     ThrowUndefinedObject("foreign-data wrapper", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
-    if (!FindSystemObject(kForeignDataWrappers, oid)) {
+  static std::optional<ObjectTarget> Find(const Scope& scope, uint64_t oid) {
+    const auto* wrapper = FindSystemObject(kForeignDataWrappers, oid);
+    if (!wrapper) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    return ObjectTarget{&scope.wrappers[wrapper - kForeignDataWrappers.data()]};
   }
 };
 

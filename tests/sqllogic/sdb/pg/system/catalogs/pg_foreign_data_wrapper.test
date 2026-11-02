@@ -13,8 +13,10 @@ ORDER BY fdwname;
 ----
 oid	fdwname	owner	fdwhandler	fdwvalidator	fdwacl	fdwoptions
 16884	clickhouse_fdw	postgres	0	0	NULL	NULL
+16887	duckdb_fdw	postgres	0	0	NULL	NULL
 16885	iceberg_fdw	postgres	0	0	NULL	NULL
 16886	postgres_fdw	postgres	0	0	NULL	NULL
+16888	serenedb_fdw	postgres	0	0	NULL	NULL
 
 
 query
@@ -57,8 +59,10 @@ SELECT fdwname, fdwacl::text[] AS fdwacl, fdwoptions FROM pg_foreign_data_wrappe
 ----
 fdwname	fdwacl	fdwoptions
 clickhouse_fdw	NULL	NULL
+duckdb_fdw	NULL	NULL
 iceberg_fdw	NULL	NULL
 postgres_fdw	NULL	NULL
+serenedb_fdw	NULL	NULL
 
 
 connection default

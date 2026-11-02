@@ -1,0 +1,256 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS efw_srv;
+
+
+statement ok
+DROP ROLE IF EXISTS efw_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS efw_bob;
+
+
+statement ok
+DROP ROLE IF EXISTS efw_carol;
+
+
+statement ok
+CREATE ROLE efw_alice LOGIN PASSWORD 'efw_pw';
+
+
+statement ok
+CREATE ROLE efw_bob LOGIN PASSWORD 'efw_pw';
+
+
+statement ok
+CREATE ROLE efw_carol LOGIN PASSWORD 'efw_pw';
+
+
+query
+SELECT fdwname, fdwacl FROM pg_foreign_data_wrapper ORDER BY fdwname;
+----
+fdwname	fdwacl
+clickhouse_fdw	NULL
+duckdb_fdw	NULL
+iceberg_fdw	NULL
+postgres_fdw	NULL
+serenedb_fdw	NULL
+
+
+connection c_alice user=efw_alice password=efw_pw
+statement error
+CREATE SERVER efw_pg FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', dbname 'efw');
+----
+db error: ERROR: permission denied for foreign-data wrapper postgres_fdw
+
+
+connection c_alice user=efw_alice password=efw_pw
+statement error
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO efw_bob;
+----
+db error: ERROR: permission denied for foreign-data wrapper postgres_fdw
+
+
+statement error
+GRANT USAGE ON FOREIGN DATA WRAPPER efw_nosuch_fdw TO efw_alice;
+----
+db error: ERROR: foreign-data wrapper "efw_nosuch_fdw" does not exist
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO efw_alice WITH GRANT OPTION;
+
+
+query
+SELECT fdwacl FROM pg_foreign_data_wrapper WHERE fdwname = 'postgres_fdw';
+----
+fdwacl
+{postgres=U/postgres,efw_alice=U*/postgres}
+
+
+query
+SELECT has_foreign_data_wrapper_privilege('efw_alice', 'postgres_fdw', 'USAGE') AS pg,
+       has_foreign_data_wrapper_privilege('efw_alice', 'postgres_fdw', 'USAGE WITH GRANT OPTION') AS pg_option,
+       has_foreign_data_wrapper_privilege('efw_alice', 'clickhouse_fdw', 'USAGE') AS ch,
+       has_foreign_data_wrapper_privilege('efw_bob', 'postgres_fdw', 'USAGE') AS bob;
+----
+pg	pg_option	ch	bob
+t	t	f	f
+
+
+connection c_alice user=efw_alice password=efw_pw
+query
+SELECT has_foreign_data_wrapper_privilege('postgres_fdw', 'USAGE') AS own;
+----
+own
+t
+
+
+connection c_alice user=efw_alice password=efw_pw
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO efw_bob;
+
+
+query
+SELECT fdwacl FROM pg_foreign_data_wrapper WHERE fdwname = 'postgres_fdw';
+----
+fdwacl
+{postgres=U/postgres,efw_alice=U*/postgres,efw_bob=U/efw_alice}
+
+
+query
+SELECT grantor, grantee, object_name, privilege_type, is_grantable
+FROM information_schema.usage_privileges
+WHERE object_type = 'FOREIGN DATA WRAPPER' AND grantee LIKE 'efw%'
+ORDER BY grantee;
+----
+grantor	grantee	object_name	privilege_type	is_grantable
+postgres	efw_alice	postgres_fdw	USAGE	YES
+efw_alice	efw_bob	postgres_fdw	USAGE	NO
+
+
+query
+SELECT d.classid::regclass::text AS classid, w.fdwname, d.deptype
+FROM pg_shdepend d JOIN pg_foreign_data_wrapper w ON w.oid = d.objid
+WHERE d.refobjid = (SELECT oid FROM pg_roles WHERE rolname = 'efw_bob');
+----
+classid	fdwname	deptype
+pg_foreign_data_wrapper	postgres_fdw	a
+
+
+statement error
+DROP ROLE efw_bob;
+----
+db error: ERROR: Cannot drop entry "efw_bob" because there are entries that depend on it.<slt:ignore>
+
+
+statement error
+REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM efw_alice;
+----
+db error: ERROR: dependent privileges exist
+
+
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM efw_alice CASCADE;
+
+
+statement ok
+GRANT ALL PRIVILEGES ON FOREIGN DATA WRAPPER clickhouse_fdw TO efw_carol;
+
+
+statement ok
+REVOKE ALL ON FOREIGN DATA WRAPPER clickhouse_fdw FROM efw_carol;
+
+
+query
+SELECT fdwname, fdwacl FROM pg_foreign_data_wrapper WHERE fdwacl IS NOT NULL ORDER BY fdwname;
+----
+fdwname	fdwacl
+clickhouse_fdw	{postgres=U/postgres}
+postgres_fdw	{postgres=U/postgres}
+
+
+statement ok
+CREATE SERVER efw_srv FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/efw_srv.db');
+
+
+query
+SELECT s.srvowner::regrole::text AS owner, w.fdwname
+FROM pg_foreign_server s JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+WHERE s.srvname = 'efw_srv';
+----
+owner	fdwname
+postgres	duckdb_fdw
+
+
+statement error
+ALTER SERVER efw_srv OWNER TO efw_alice;
+----
+db error: ERROR: permission denied for foreign-data wrapper duckdb_fdw
+DETAIL: Only roles with the SUPERUSER attribute may own a duckdb_fdw server.
+
+
+statement error
+ALTER SERVER efw_nosuch OWNER TO efw_carol;
+----
+db error: ERROR: server "efw_nosuch" does not exist
+
+
+connection c_carol user=efw_carol password=efw_pw
+statement error
+ALTER SERVER efw_srv OWNER TO efw_carol;
+----
+db error: ERROR: must be owner of foreign server efw_srv
+
+
+statement ok
+DROP SERVER efw_srv;
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER duckdb_fdw TO efw_bob;
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO efw_bob;
+
+
+connection c_bob user=efw_bob password=efw_pw
+statement error
+CREATE SERVER efw_bob_srv FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/efw_bob.db');
+----
+db error: ERROR: permission denied for foreign-data wrapper duckdb_fdw
+DETAIL: Only roles with the SUPERUSER attribute may own a duckdb_fdw server.
+
+
+connection c_bob user=efw_bob password=efw_pw
+statement error
+CREATE SERVER efw_bob_srv FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', dbname 'efw', user 'efw');
+----
+db error: ERROR: password is required
+DETAIL: A server owned by a role without the SUPERUSER attribute must set a password in its options.
+
+
+connection c_bob user=efw_bob password=efw_pw
+statement error
+CREATE SERVER efw_bob_srv FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', dbname 'efw', user 'efw', password 'efw', sslkey '${__TEST_DIR__}/efw.key');
+----
+db error: ERROR: permission denied to use option "sslkey"
+DETAIL: Only roles with the SUPERUSER attribute may own a server that sets it.
+
+
+connection c_bob user=efw_bob password=efw_pw
+statement error
+CREATE SERVER efw_bob_srv FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', dbname 'efw', user 'efw', password 'efw', secret 'efw_secret');
+----
+db error: ERROR: permission denied to use option "secret"
+DETAIL: Only roles with the SUPERUSER attribute may own a server that sets it.
+
+
+query
+SELECT count(*) AS servers FROM pg_foreign_server WHERE srvname = 'efw_bob_srv';
+----
+servers
+0
+
+
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER duckdb_fdw FROM efw_bob;
+
+
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM efw_bob;
+
+
+statement ok
+DROP ROLE efw_alice;
+
+
+statement ok
+DROP ROLE efw_bob;
+
+
+statement ok
+DROP ROLE efw_carol;

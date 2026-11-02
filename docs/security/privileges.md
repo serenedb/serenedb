@@ -34,12 +34,13 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 | `SCHEMA` | `CREATE`, `USAGE` |
 | `TYPE` | `USAGE` |
 | `FOREIGN SERVER` | `USAGE` |
+| `FOREIGN DATA WRAPPER` | `USAGE` |
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
 `USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema. The expressions a table stores, its column defaults, `CHECK` constraints and generated columns, need no `USAGE` on the schemas they name from a role that inserts or updates rows; that role still needs `USAGE` or `UPDATE` on a sequence a default advances and `EXECUTE` on the functions they call.
 
-`USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server needs `USAGE` on its foreign-data wrapper, which only superusers hold, so only a superuser creates servers; granting `USAGE` on a foreign-data wrapper is not supported.
+`USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server needs `USAGE` on its foreign-data wrapper in the database the session is connected to, which only superusers hold until one grants it with `GRANT USAGE ON FOREIGN DATA WRAPPER`. Such a grant lets the role create `postgres_fdw` and `clickhouse_fdw` servers that connect wherever their options point, with a password of their own and no secrets or server files; the [rules for servers owned by roles without `SUPERUSER`](../sql/statements/create_server/index.md#servers-owned-by-roles-without-superuser) list what such a server may set.
 
 `CONNECT` on a database is checked when a session connects to it, when `USE`, `SET schema` or `SET search_path` names it, and again whenever a statement reads, creates, changes or drops anything in it, however the statement names the object: by a qualified name, through the search path, or through a function such as `seq_scan`. Revoking `CONNECT` therefore also stops access from sessions connected to other databases, including sessions whose search path already names it, and a name in a database without `CONNECT` reports `permission denied for database` whether or not the object exists. `pg_database_size`, `VACUUM` and `REINDEX` need `CONNECT` on the database they work on.
 

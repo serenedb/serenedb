@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, or type) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
+The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, type, foreign server, or foreign-data wrapper) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
 
 ## Examples
 
@@ -68,6 +68,8 @@ Granting to a role that does not exist is an error:
 | `DATABASE` | `CREATE`, `CONNECT`, `TEMPORARY` |
 | `SCHEMA` | `CREATE`, `USAGE` |
 | `TYPE` | `USAGE` |
+| `FOREIGN SERVER` | `USAGE` |
+| `FOREIGN DATA WRAPPER` | `USAGE` |
 
 ## Notes
 

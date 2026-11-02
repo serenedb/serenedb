@@ -41,6 +41,7 @@ class ForeignServerCatalogEntry final : public duckdb::InCatalogEntry {
   const ServerOptions& Options() const noexcept { return _options; }
   std::string_view FdwName() const noexcept { return _fdw_name; }
 
+  void CheckOwner(duckdb::ClientContext& context, duckdb::idx_t owner) const;
   void Attach(duckdb::ClientContext& context) const;
   void OnDrop() final;
 

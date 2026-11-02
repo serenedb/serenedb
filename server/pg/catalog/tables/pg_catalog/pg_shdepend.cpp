@@ -94,6 +94,12 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
             Depend(entry->oid, kPgDefaultAclTable, oid, 0, role.oid, 'a');
           }
         });
+      for (const auto& wrapper : entry->permissions.foreign_data_wrappers) {
+        if (Names(wrapper.acl, role.oid)) {
+          Depend(entry->oid, kPgForeignDataWrapperTable, wrapper.oid, 0,
+                 role.oid, 'a');
+        }
+      }
     }
   }
 

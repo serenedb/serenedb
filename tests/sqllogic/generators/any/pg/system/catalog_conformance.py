@@ -1867,7 +1867,7 @@ pgonly("COMMENT ON CONSTRAINT identity_tab_qty_check ON pgonly.identity_tab IS '
        'syntax error at or near "CONSTRAINT"')
 pgonly("COMMENT ON FUNCTION pgonly.touch() IS 'Trigger function'", 'syntax error at or near "\\("')
 pgonly("CREATE FOREIGN DATA WRAPPER conf_fdw", 'syntax error at or near "FOREIGN"')
-pgonly("CREATE SERVER conf_srv FOREIGN DATA WRAPPER conf_fdw", "LOAD is not supported by SereneDB")
+pgonly("CREATE SERVER conf_srv FOREIGN DATA WRAPPER conf_fdw", 'foreign-data wrapper "conf_fdw" does not exist')
 
 for dump in (pg_class, pg_attribute, pg_attribute_types, pg_type, pg_constraint, pg_sequence, pg_description, pg_depend,
              pg_shdepend, pg_trigger, pg_proc, columns, column_types):

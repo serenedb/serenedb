@@ -1,0 +1,55 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS csop_srv;
+
+
+statement ok
+DROP ROLE IF EXISTS csop_alice;
+
+
+statement ok
+CREATE ROLE csop_alice LOGIN PASSWORD 'csop_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO csop_alice;
+
+
+connection c_alice user=csop_alice password=csop_pw
+statement error
+CREATE SERVER csop_srv FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}', password 'csop');
+----
+db error: ERROR: <slt:ignore>authentication method requirement "password,md5,scram-sha-256" failed: server did not complete authentication<slt:ignore>
+
+
+query
+SELECT count(*) AS servers FROM pg_foreign_server WHERE srvname = 'csop_srv';
+----
+servers
+0
+
+
+statement ok
+CREATE SERVER csop_srv FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+statement error
+ALTER SERVER csop_srv OWNER TO csop_alice;
+----
+db error: ERROR: password is required
+DETAIL: A server owned by a role without the SUPERUSER attribute must set a password in its options.
+
+
+statement ok
+DROP SERVER csop_srv;
+
+
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM csop_alice;
+
+
+statement ok
+DROP ROLE csop_alice;

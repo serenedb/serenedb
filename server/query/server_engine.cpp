@@ -61,6 +61,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/catalog/oids.h"
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -233,13 +234,18 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::InitSystemTables();
   pg::InitSystemFunctions(db, parser);
   pg::InitSystemViews(parser);
-  auto& builtin_relations = duckdb::DBConfig::GetConfig(db).builtin_relations;
+  auto& config = duckdb::DBConfig::GetConfig(db);
   pg::VisitSystemTables("pg_catalog", [&](const pg::SystemTable& table) {
-    builtin_relations.emplace(table.Sql().name);
+    config.builtin_relations.emplace(table.Sql().name);
   });
   pg::VisitSystemViews("pg_catalog", [&](const pg::StaticView& view) {
-    builtin_relations.emplace(view.name);
+    config.builtin_relations.emplace(view.name);
   });
+  for (const auto& wrapper : pg::kForeignDataWrappers) {
+    config.foreign_data_wrappers.emplace(
+      wrapper.name,
+      duckdb::ForeignDataWrapper{.oid = wrapper.oid, .owner = pg::kRootUser});
+  }
 }
 
 }  // namespace sdb::server::query

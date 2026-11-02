@@ -51,8 +51,8 @@ INSERT INTO prr_s.prr_t VALUES (1);
 query
 SELECT oid, rolname, rolsuper, rolcanlogin, rolinherit
 FROM pg_roles
-WHERE rolname IN ('pg_checkpoint', 'pg_create_subscription', 'pg_execute_server_program', 'pg_maintain',
-                  'pg_monitor', 'pg_read_all_data', 'pg_read_all_settings', 'pg_read_all_stats',
+WHERE rolname IN ('pg_checkpoint', 'pg_create_subscription', 'pg_database_owner', 'pg_execute_server_program',
+                  'pg_maintain', 'pg_monitor', 'pg_read_all_data', 'pg_read_all_settings', 'pg_read_all_stats',
                   'pg_read_server_files', 'pg_signal_autovacuum_worker', 'pg_signal_backend',
                   'pg_stat_scan_tables', 'pg_use_reserved_connections', 'pg_write_all_data',
                   'pg_write_server_files')
@@ -61,6 +61,7 @@ ORDER BY rolname;
 oid	rolname	rolsuper	rolcanlogin	rolinherit
 4544	pg_checkpoint	f	f	t
 6304	pg_create_subscription	f	f	t
+6171	pg_database_owner	f	f	t
 4571	pg_execute_server_program	f	f	t
 6337	pg_maintain	f	f	t
 3373	pg_monitor	f	f	t

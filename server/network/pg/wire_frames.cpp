@@ -144,6 +144,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "RESERVED_NAME") {
     return ERRCODE_RESERVED_NAME;
   }
+  if (subtype == "INVALID_GRANT_OPERATION") {
+    return ERRCODE_INVALID_GRANT_OPERATION;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

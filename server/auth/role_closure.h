@@ -44,6 +44,7 @@ struct PredefinedRole {
 };
 
 inline constexpr duckdb::idx_t kPgMonitorMemberOf[] = {3374, 3375, 3377};
+inline constexpr duckdb::idx_t kPgDatabaseOwner = 6171;
 
 // PostgreSQL's predefined roles, with its oids; pg_monitor comes after the
 // roles it is a member of.
@@ -55,6 +56,7 @@ inline constexpr PredefinedRole kPredefinedRoles[] = {
   {4200, "pg_signal_backend", duckdb::RoleCapability::SignalBackend, {}},
   {4544, "pg_checkpoint", duckdb::RoleCapability::Checkpoint, {}},
   {4550, "pg_use_reserved_connections", duckdb::RoleCapability::None, {}},
+  {kPgDatabaseOwner, "pg_database_owner", duckdb::RoleCapability::None, {}},
   {4569, "pg_read_server_files", duckdb::RoleCapability::ReadServerFiles, {}},
   {4570, "pg_write_server_files", duckdb::RoleCapability::WriteServerFiles, {}},
   {4571, "pg_execute_server_program", duckdb::RoleCapability::None, {}},

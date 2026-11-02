@@ -140,8 +140,9 @@ Every cluster has the predefined roles of PostgreSQL. A superuser, or a role wit
 | `pg_create_subscription` | `CREATE SUBSCRIPTION`, together with `CREATE` on the database. |
 | `pg_read_server_files` | Reading [server files and URLs](#server-files-and-urls). |
 | `pg_write_server_files` | Writing [server files and URLs](#server-files-and-urls). |
+| `pg_database_owner` | Its only member is the owner of the database the session is connected to: privileges granted to it apply to that owner, and no role can be granted it or be granted to it. |
 
-`pg_execute_server_program`, `pg_stat_scan_tables`, `pg_use_reserved_connections` and `pg_signal_autovacuum_worker` exist for compatibility and grant nothing; `pg_database_owner` is not provided. A predefined role cannot be dropped or altered, and no other role name may start with `pg_`.
+`pg_execute_server_program`, `pg_stat_scan_tables`, `pg_use_reserved_connections` and `pg_signal_autovacuum_worker` exist for compatibility and grant nothing. A predefined role cannot be dropped or altered, and no other role name may start with `pg_`.
 
 ## Server files and URLs
 

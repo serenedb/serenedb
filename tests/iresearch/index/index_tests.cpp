@@ -6055,57 +6055,21 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
     // validate structure
     tests::index_t expected;
     expected.emplace_back();
+    expected.back().insert(*doc1);
+    expected.back().insert(*doc2);
+    expected.emplace_back();
     expected.back().insert(*doc3);
     expected.emplace_back();
     expected.back().insert(*doc4);
-    expected.emplace_back();
-    expected.back().insert(*doc1);
-    expected.back().insert(*doc2);
     tests::AssertIndex(this->dir(), expected, kAllFeatures);
 
     auto reader =
       irs::DirectoryReader(this->dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(3, reader.size());
 
-    // assume 0 is 'segment 3'
+    // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc1
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // assume 1 is 'segment 4'
-    {
-      auto& segment = reader[1];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());  // total count of documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc1
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // assume 2 is merged segment
-    {
-      auto& segment = reader[2];
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -6121,6 +6085,42 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
+      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+    }
+
+    // assume 1 is 'segment 3'
+    {
+      auto& segment = reader[1];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(1, segment.docs_count());  // total count of documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc1
+      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+    }
+
+    // assume 2 is 'segment 4'
+    {
+      auto& segment = reader[2];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(1, segment.docs_count());  // total count of documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc1
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
     }
   }
@@ -6263,7 +6263,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
     }
 
-    // assume 1 is 'segment 4'
+    // assume 2 is 'segment 4'
     {
       auto& segment = reader[2];
       const auto* column = segment.Column(kNameColumnId);
@@ -7470,11 +7470,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // validate structure
     tests::index_t expected;
     expected.emplace_back();
-    expected.back().insert(*doc3);
-    expected.back().insert(*doc4);
-    expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
+    expected.emplace_back();
+    expected.back().insert(*doc3);
+    expected.back().insert(*doc4);
     tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
@@ -7482,30 +7482,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(4, reader.live_docs_count());
 
-    // assume 0 is the existing segment
+    // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc3
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc4
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // assume 1 is merged segment
-    {
-      auto& segment = reader[1];
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -7521,6 +7500,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
+      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+    }
+
+    // assume 1 is the existing segment
+    {
+      auto& segment = reader[1];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(2, segment.docs_count());  // total count of documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc3
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc4
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
     }
   }
@@ -7610,11 +7610,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // validate structure
     tests::index_t expected;
     expected.emplace_back();
-    expected.back().insert(*doc3);
-    expected.back().insert(*doc4);
-    expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
+    expected.emplace_back();
+    expected.back().insert(*doc3);
+    expected.back().insert(*doc4);
     expected.emplace_back();
     expected.back().insert(*doc5);
     expected.back().insert(*doc6);
@@ -7626,30 +7626,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(3, reader.size());
     ASSERT_EQ(6, reader.live_docs_count());
 
-    // assume 0 is the existing segment
+    // assume 0 is merged segment
     {
       auto& segment = reader[0];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(2, segment.docs_count());  // total count of documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc3
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc4
-      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-    }
-
-    // assume 1 is merged segment
-    {
-      auto& segment = reader[1];
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -7665,6 +7644,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
+      ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+    }
+
+    // assume 1 is the existing segment
+    {
+      auto& segment = reader[1];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(2, segment.docs_count());  // total count of documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc3
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc4
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
     }
 
@@ -8594,12 +8594,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
     expected.emplace_back();
-    expected.back().insert(*doc5);
-    expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
+    expected.emplace_back();
+    expected.back().insert(*doc5);
     tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
@@ -8608,28 +8608,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(3, reader.live_docs_count());
 
-    // assume 1 is the recently added segment
-    {
-      auto& segment = reader[0];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());       // total count of documents
-      ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc1
-    }
-
     // assume 0 is merged segment
     {
-      auto& segment = reader[1];
+      auto& segment = reader[0];
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       ASSERT_EQ(4, segment.docs_count());       // total count of documents
@@ -8674,6 +8655,25 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
                          values, docs_itr->Value()));  // 'name' value in doc4
         ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
       }
+    }
+
+    // assume 1 is the recently added segment
+    {
+      auto& segment = reader[1];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(1, segment.docs_count());       // total count of documents
+      ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc1
     }
   }
 
@@ -8765,12 +8765,12 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
     expected.emplace_back();
-    expected.back().insert(*doc5);
-    expected.emplace_back();
     expected.back().insert(*doc1);
     expected.back().insert(*doc2);
     expected.back().insert(*doc3);
     expected.back().insert(*doc4);
+    expected.emplace_back();
+    expected.back().insert(*doc5);
     tests::AssertIndex(dir(), expected, kAllFeatures);
 
     auto reader =
@@ -8779,28 +8779,9 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(3, reader.live_docs_count());
 
-    // assume 1 is the recently added segment
-    {
-      auto& segment = reader[0];
-      const auto* column = segment.Column(kNameColumnId);
-      ASSERT_NE(nullptr, column);
-      irs::tests::BlobPointReader values{segment, *column};
-      ASSERT_EQ(1, segment.docs_count());       // total count of documents
-      ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
-      auto terms = segment.field(kSameFieldId);
-      ASSERT_NE(nullptr, terms);
-      auto term_itr = terms->iterator();
-      ASSERT_TRUE(term_itr->next());
-
-      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-      ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
-                       values, docs_itr->Value()));  // 'name' value in doc5
-    }
-
     // assume 0 is merged segment
     {
-      auto& segment = reader[1];
+      auto& segment = reader[0];
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -8820,6 +8801,25 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
       ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
+    }
+
+    // assume 1 is the recently added segment
+    {
+      auto& segment = reader[1];
+      const auto* column = segment.Column(kNameColumnId);
+      ASSERT_NE(nullptr, column);
+      irs::tests::BlobPointReader values{segment, *column};
+      ASSERT_EQ(1, segment.docs_count());       // total count of documents
+      ASSERT_EQ(1, segment.live_docs_count());  // total count of live documents
+      auto terms = segment.field(kSameFieldId);
+      ASSERT_NE(nullptr, terms);
+      auto term_itr = terms->iterator();
+      ASSERT_TRUE(term_itr->next());
+
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
+      ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
+                       values, docs_itr->Value()));  // 'name' value in doc5
     }
   }
 }

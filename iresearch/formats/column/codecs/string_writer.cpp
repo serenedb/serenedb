@@ -65,6 +65,7 @@ constexpr uint64_t kPlainMinSaving = 4096;
 constexpr uint64_t kDedupMinRepeat = 2;
 constexpr uint64_t kLz4MaxRatio = 255;
 constexpr double kLevelTolerance = 0.02;
+constexpr uint64_t kTuneMinEntries = 2;
 constexpr size_t kMaxRungs = 8;
 constexpr double kWideFramesGain = 0.03;
 constexpr double kUntrainedGain = 0.02;
@@ -237,11 +238,12 @@ class SegmentWriter {
     }
     const auto shape =
       plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
+    const bool tune = retune && dedup->entries >= kTuneMinEntries;
     _measured = false;
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
     Candidate chosen{.bytes = std::numeric_limits<uint64_t>::max()};
     for (const auto& plan : PlanFor(_params)) {
-      const auto c = Tune(shape, plan, retune);
+      const auto c = Tune(shape, plan, tune);
       if (c.bytes < chosen.bytes) {
         chosen = c;
       }
@@ -265,12 +267,14 @@ class SegmentWriter {
     const StringChoice picked{shape, best->config.choice.leaf};
     const bool kept = _tuning.choice && *_tuning.choice == picked;
     _tuning.clock.Settle(kept && !drift);
-    _tuning.levels_tuned = true;
+    if (tune) {
+      _tuning.levels_tuned = true;
+    }
     _tuning.choice = picked;
-    _tuning.bytes_per_input =
-      cut->input == 0
-        ? 0
-        : static_cast<double>(chosen_bytes) / static_cast<double>(cut->input);
+    if (cut->input != 0) {
+      _tuning.bytes_per_input =
+        static_cast<double>(chosen_bytes) / static_cast<double>(cut->input);
+    }
     for (auto* seg : _live) {
       if (seg != best) {
         Release(seg);
@@ -502,7 +506,7 @@ class SegmentWriter {
   }
 
   bool Drifted(const Segment& seg, bool full) const noexcept {
-    if (seg.input == 0 || _tuning.bytes_per_input == 0 ||
+    if (seg.input == 0 ||
         (!full && seg.Size() * kDriftMinFraction < _params.segment_target)) {
       return false;
     }

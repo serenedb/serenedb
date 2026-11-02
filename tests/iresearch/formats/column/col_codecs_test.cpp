@@ -880,6 +880,21 @@ const Value kWordSoup = [](uint64_t g) -> std::optional<std::string> {
   return s;
 };
 
+const Value kVocabulary = [](uint64_t g) -> std::optional<std::string> {
+  std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+  std::string s;
+  for (int k = 0; k < 40; ++k) {
+    const auto w = rng() % 3000;
+    const auto word = w * w / 3000;
+    std::mt19937_64 letters{word + 1};
+    for (uint64_t c = 0; c < 3 + word % 8; ++c) {
+      s.push_back(static_cast<char>('a' + letters() % 26));
+    }
+    s.push_back(' ');
+  }
+  return s;
+};
+
 }  // namespace
 
 TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
@@ -1251,20 +1266,6 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
     }
     return out;
   };
-  const Value vocabulary = [](uint64_t g) -> std::optional<std::string> {
-    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
-    std::string s;
-    for (int k = 0; k < 40; ++k) {
-      const auto w = rng() % 3000;
-      const auto word = w * w / 3000;
-      std::mt19937_64 letters{word + 1};
-      for (uint64_t c = 0; c < 3 + word % 8; ++c) {
-        s.push_back(static_cast<char>('a' + letters() % 26));
-      }
-      s.push_back(' ');
-    }
-    return s;
-  };
   const auto top = [](const std::set<std::string>& found) {
     int level = 0;
     for (const auto& s : found) {
@@ -1272,9 +1273,63 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
     }
     return level;
   };
-  const auto text = levels(vocabulary, 8000);
+  const auto text = levels(kVocabulary, 8000);
   ASSERT_FALSE(text.empty());
   EXPECT_GT(top(text), 1) << ::testing::PrintToString(text);
+}
+
+TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
+  using Chunked = std::vector<std::unique_ptr<duckdb::Vector>>;
+  constexpr uint64_t kRowGroup = 1024;
+  const auto seal = [](const Chunked& chunks,
+                       irs::codecs::StringTuning& tuning) {
+    irs::codecs::StringAccumulator acc{true};
+    for (const auto& c : chunks) {
+      acc.Add(*c);
+    }
+    const auto outcome = irs::codecs::SealSegments(
+      acc, std::nullopt, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR,
+      tuning,
+      [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
+         std::span<const std::string_view>) {});
+    EXPECT_TRUE(outcome.sealed);
+  };
+  const auto levels = [](const irs::codecs::StringTuning& tuning) {
+    std::vector<int> out;
+    for (size_t leaf = 0; leaf < irs::codecs::kByteCodecCount; ++leaf) {
+      out.push_back(tuning.level[leaf]);
+      out.push_back(static_cast<int>(tuning.layout[leaf]));
+    }
+    return out;
+  };
+  const Value constant = [](uint64_t) -> std::optional<std::string> {
+    return "n/a";
+  };
+  const auto text = Chunks(kRowGroup, kVocabulary);
+  const auto nulls = Chunks(kRowGroup, kAllNull);
+  const auto constants = Chunks(kRowGroup, constant);
+
+  irs::codecs::StringTuning untuned;
+  seal(nulls, untuned);
+  irs::codecs::StringTuning tuned;
+  seal(text, tuned);
+  ASSERT_NE(levels(tuned), levels(untuned));
+
+  const std::pair<const char*, const Chunked*> heads[] = {
+    {"all null", &nulls},
+    {"constant", &constants},
+  };
+  for (const auto& [name, head] : heads) {
+    for (int groups = 1; groups <= 2; ++groups) {
+      SCOPED_TRACE(absl::StrCat(groups, " ", name, " row groups"));
+      irs::codecs::StringTuning tuning;
+      for (int g = 0; g < groups; ++g) {
+        seal(*head, tuning);
+      }
+      seal(text, tuning);
+      EXPECT_EQ(levels(tuning), levels(tuned));
+    }
+  }
 }
 
 const std::set<duckdb::CompressionType>& ColumnstoreLeaves() {

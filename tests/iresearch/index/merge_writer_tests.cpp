@@ -2257,10 +2257,12 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
 TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
   constexpr irs::field_id kField = 1;
   irs::MemoryDirectory data_dir;
-  {
-    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    for (const auto layout : {irs::DictLayout::Bool, irs::DictLayout::Json}) {
+  for (const auto layout : {irs::DictLayout::Bool, irs::DictLayout::Json}) {
+    auto writer = irs::IndexWriter::Make(
+      data_dir,
+      layout == irs::DictLayout::Bool ? irs::kOmCreate : irs::kOmAppend,
+      irs::tests::DefaultWriterOptions());
+    {
       auto trx = writer->GetBatch();
       {
         auto doc = trx.Insert(false, 1);

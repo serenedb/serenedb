@@ -947,25 +947,15 @@ class FieldsInverter : util::Noncopyable {
   size_t First(field_id id, DictLayout layout) {
     const auto [it, emplaced] = _fields_map.try_emplace(id);
     auto& entry = it->second;
-    if (emplaced || entry.layout != layout) {
-      SDB_ENSURE(emplaced || !Live(entry), "term dictionary: field ", id,
-                 " is written with two layouts");
+    if (emplaced) {
       entry = {.first = _slots.size(), .layout = layout};
       for (auto n = LayoutMembers(layout).size(); n != 0; --n) {
         _slots.emplace_back(_mem.rm);
       }
     }
+    SDB_ENSURE(entry.layout == layout, "term dictionary: field ", id,
+               " is written with two layouts");
     return entry.first;
-  }
-
-  bool Live(const Entry& entry) const noexcept {
-    for (auto n = LayoutMembers(entry.layout).size(); n != 0; --n) {
-      const auto& slot = _slots[entry.first + n - 1];
-      if (slot.field || !slot.docs.empty()) {
-        return true;
-      }
-    }
-    return false;
   }
 
   size_t FieldsMemory() const noexcept {

@@ -28,8 +28,8 @@
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_block_copy.hpp>
-#include <iresearch/formats/column/col_block_sink.hpp>
 #include <iresearch/formats/column/col_copy_check.hpp>
+#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
@@ -1436,9 +1436,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
   const auto* cs = corrupted->GetColReader();
   ASSERT_NE(cs, nullptr);
   irs::MemoryDirectory out_dir;
-  auto out = out_dir.create("copy");
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink sink{*out};
+  irs::ColFileWriter sink{out_dir.create("copy")};
   constexpr uint16_t kRemapped[] = {2};
   const auto copy = [&] {
     irs::ColumnMeta copied;

@@ -167,18 +167,17 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
     _tier{tier} {}
 
 ColWriter::~ColWriter() {
-  if (_out && !_committed) {
+  if (_file && !_committed) {
     Rollback();
   }
 }
 
 void ColWriter::EnsureOut() {
-  if (_out) {
+  if (_file) {
     return;
   }
-  _out = _dir->create(_filename);
-  _blocks = std::make_unique<ColBlockSink>(*_out);
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_blocks);
+  _file = std::make_unique<ColFileWriter>(_dir->create(_filename));
+  _write_ctx = std::make_unique<WriteContext>(*_db, *_file);
 }
 
 bool ColWriter::Empty() const noexcept {
@@ -336,7 +335,7 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                absl::FunctionRef<bool()> progress) {
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
-  return CopyColumnBlocks(reader, column, validity, dictionaries, *_blocks,
+  return CopyColumnBlocks(reader, column, validity, dictionaries, *_file,
                           slot.meta, progress);
 }
 
@@ -352,7 +351,7 @@ uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
   } while (!parts.claims.compare_exchange_weak(claims, (own << kOwnShift) | own,
                                                std::memory_order_relaxed));
   SDB_ASSERT(own <= kMaxColumnDictionaries);
-  parts.dictionaries[own - 1] = {.file_offset = _blocks->Append(bytes),
+  parts.dictionaries[own - 1] = {.file_offset = _file->Append(bytes),
                                  .byte_size = bytes.size()};
   return static_cast<uint16_t>(own);
 }
@@ -364,7 +363,7 @@ uint16_t ColWriter::AddLeafDictionary(field_id id,
     PartsOf(id)
       .leaf_dictionaries
       .try_emplace(std::vector<uint32_t>{path.begin(), path.end()},
-                   ColumnDictionaryMeta{.file_offset = _blocks->Append(bytes),
+                   ColumnDictionaryMeta{.file_offset = _file->Append(bytes),
                                         .byte_size = bytes.size()})
       .second;
   SDB_ASSERT(added);
@@ -388,7 +387,7 @@ bool ColWriter::AddCopiedDictionaries(
     claims, claims + dictionaries.size(), std::memory_order_relaxed));
   for (auto slot = SlotsOf(claims); const auto& dictionary : dictionaries) {
     const auto bytes = dictionary->Bytes();
-    parts.dictionaries[slot] = {.file_offset = _blocks->Append(bytes),
+    parts.dictionaries[slot] = {.file_offset = _file->Append(bytes),
                                 .byte_size = bytes.size()};
     indexes.emplace_back(static_cast<uint16_t>(++slot));
   }
@@ -421,9 +420,9 @@ ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> ColBlockSink& {
+    id, row_group_size, [this]() -> ColFileWriter& {
       EnsureOut();
-      return *_blocks;
+      return *_file;
     }));
   if (_stage_all) {
     writer.StageAll();
@@ -497,7 +496,10 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
-void ColWriter::Rollback() noexcept { _out.reset(); }
+void ColWriter::Rollback() noexcept {
+  _write_ctx.reset();
+  _file.reset();
+}
 
 constexpr auto kNoCancel = [] { return true; };
 
@@ -527,7 +529,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
       norms.push_back(writer.get());
     }
   }
-  if (Empty() && !_out && norms.empty()) {
+  if (Empty() && !_file && norms.empty()) {
     _committed = true;
     return true;
   }
@@ -559,8 +561,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   for (const auto& meta : assembled) {
     metas.emplace_back(&meta);
   }
-  _blocks->Flush();
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+  _file->Finish([&](duckdb::BinarySerializer& footer) {
     if (!metas.empty()) {
       footer.WriteList(
         kColFieldColumns, "columns", metas.size(),
@@ -581,7 +582,6 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
     }
     footer.WriteProperty<uint64_t>(kColFieldFileId, "file_id", NewColFileId());
   });
-  _out.reset();
   _committed = true;
   return true;
 }

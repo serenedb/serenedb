@@ -29,7 +29,7 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/formats/column/col_block_sink.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -97,7 +97,7 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
 }
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   ColBlockSink& blocks)
+                                   ColFileWriter& blocks)
   : _id{id}, _blocks{&blocks}, _row_group_size{row_group_size} {}
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,

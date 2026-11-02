@@ -13,7 +13,7 @@ target_sources(
         column/codecs/zstd.cpp
         column/codecs/zxc.cpp
         column/col_block_copy.cpp
-        column/col_block_sink.cpp
+        column/col_file_writer.cpp
         column/col_copy_check.cpp
         column/col_reader.cpp
         column/col_writer.cpp

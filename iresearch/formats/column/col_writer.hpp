@@ -35,7 +35,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "iresearch/formats/column/col_block_copy.hpp"
-#include "iresearch/formats/column/col_block_sink.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -173,8 +173,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  IndexOutput::ptr _out;
-  std::unique_ptr<ColBlockSink> _blocks;
+  std::unique_ptr<ColFileWriter> _file;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnEntry>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnEntry*> _by_id;

@@ -62,8 +62,8 @@ namespace {
 void CaptureBlock(duckdb::DatabaseInstance& db,
                   const duckdb::CompressionFunction& codec,
                   duckdb::BaseStatistics stats, uint64_t tuple_count,
-                  std::span<const std::string_view> parts, ColBlockSink& blocks,
-                  std::vector<ColumnBlockMeta>& sink) {
+                  std::span<const std::string_view> parts,
+                  ColFileWriter& blocks, std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
   }
@@ -98,7 +98,7 @@ void CaptureBlock(duckdb::DatabaseInstance& db,
 }
 
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
-                    const uint8_t* bytes, ColBlockSink& blocks,
+                    const uint8_t* bytes, ColFileWriter& blocks,
                     std::vector<ColumnBlockMeta>& sink) {
   const std::string_view part{reinterpret_cast<const char*>(bytes),
                               bytes ? segment_size : 0};

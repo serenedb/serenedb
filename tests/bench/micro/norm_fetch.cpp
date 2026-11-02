@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/col_block_sink.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
@@ -253,26 +253,25 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  irs::MemoryFile file{irs::IResourceManager::gNoop};
-  std::unique_ptr<irs::MemoryIndexInput> in;
+  irs::MemoryDirectory dir;
+  irs::IndexInput::ptr in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::MemoryIndexOutput out{file};
-    irs::ColBlockSink blocks{out};
-    irs::NormColumnWriter writer{1, kRgRows, blocks};
+    irs::ColFileWriter file{dir.create("norms")};
+    irs::NormColumnWriter writer{1, kRgRows, file};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
     writer.Finalize();
-    out.Flush();
+    file.Finish([](duckdb::BinarySerializer&) {});
     for (const auto& region : writer.Meta().regions) {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = std::make_unique<irs::MemoryIndexInput>(file);
+    in = dir.open("norms", irs::IOAdvice::RANDOM);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/col_block_sink.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
@@ -26,10 +26,8 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/fault_points.hpp>
-#include <iterator>
 #include <limits>
 
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -54,23 +52,23 @@ void WriteOut(IndexOutput& out, const auto& chunks) {
 
 }  // namespace
 
-ColBlockSink::ColBlockSink(IndexOutput& out)
-  : _out{&out}, _end{out.Position()} {}
+ColFileWriter::ColFileWriter(IndexOutput::ptr out)
+  : _out{std::move(out)}, _end{_out->Position()} {}
 
-uint64_t ColBlockSink::Position() {
+uint64_t ColFileWriter::Position() {
   absl::MutexLock lock{&_mutex};
   return _end;
 }
 
-uint64_t ColBlockSink::Append(std::string_view bytes) {
+uint64_t ColFileWriter::Append(std::string_view bytes) {
   return Write(1, {&bytes, 1});
 }
 
-uint64_t ColBlockSink::AppendAligned(std::span<const std::string_view> parts) {
+uint64_t ColFileWriter::AppendAligned(std::span<const std::string_view> parts) {
   return Write(8, parts);
 }
 
-uint64_t ColBlockSink::AppendString(std::string_view string) {
+uint64_t ColFileWriter::AppendString(std::string_view string) {
   SDB_ENSURE(string.size() <= std::numeric_limits<uint32_t>::max(),
              "string too long for overflow format");
   char length[sizeof(uint32_t)];
@@ -79,15 +77,23 @@ uint64_t ColBlockSink::AppendString(std::string_view string) {
   return Write(1, parts);
 }
 
-void ColBlockSink::Flush() {
+void ColFileWriter::Finish(format_utils::FooterWriter footer) {
+  Drain();
+  format_utils::WriteFooter(*_out, footer);
+  _out.reset();
+}
+
+void ColFileWriter::Drain() {
   std::vector<Chunk> rest;
   uint64_t end = 0;
   {
     absl::MutexLock lock{&_mutex};
-    _mutex.Await(absl::Condition(this, &ColBlockSink::Idle));
-    rest.assign(std::make_move_iterator(_chunks.begin()),
-                std::make_move_iterator(_chunks.end()));
-    _chunks.clear();
+    _mutex.Await(absl::Condition(this, &ColFileWriter::Idle));
+    rest.swap(_full);
+    if (_tail.size != 0) {
+      rest.emplace_back(std::move(_tail));
+      _tail = {};
+    }
     _queued = 0;
     _writing = true;
     end = _end;
@@ -100,8 +106,8 @@ void ColBlockSink::Flush() {
   SDB_ASSERT(_out->Position() == end);
 }
 
-uint64_t ColBlockSink::Write(uint64_t alignment,
-                             std::span<const std::string_view> parts) {
+uint64_t ColFileWriter::Write(uint64_t alignment,
+                              std::span<const std::string_view> parts) {
   for (const auto part : parts) {
     FaultIn(part);
   }
@@ -109,7 +115,7 @@ uint64_t ColBlockSink::Write(uint64_t alignment,
   std::vector<Chunk> batch;
   {
     absl::MutexLock lock{&_mutex};
-    _mutex.Await(absl::Condition(this, &ColBlockSink::HasRoom));
+    _mutex.Await(absl::Condition(this, &ColFileWriter::HasRoom));
     if (const auto misalign = _end % alignment; misalign != 0) {
       Stage({kZeros, alignment - misalign});
     }
@@ -118,7 +124,7 @@ uint64_t ColBlockSink::Write(uint64_t alignment,
       Stage(part);
     }
     if (!_writing) {
-      batch = TakeFull();
+      TakeFull(batch);
     }
   }
   while (!batch.empty()) {
@@ -126,48 +132,46 @@ uint64_t ColBlockSink::Write(uint64_t alignment,
       absl::MutexLock lock{&_mutex};
       _writing = false;
     };
-    SDB_PARK_ONCE_ON_FAILURE("irs::ColBlockSink::Write");
+    SDB_PARK_ONCE_ON_FAILURE("irs::ColFileWriter::Write");
     WriteOut(*_out, batch);
     std::move(release).Cancel();
-    size_t written = 0;
-    for (const auto& chunk : batch) {
-      written += chunk.size;
-    }
+    const auto written = batch.size() * kChunkSize;
+    batch.clear();
     absl::MutexLock lock{&_mutex};
     _queued -= written;
-    batch = TakeFull();
+    TakeFull(batch);
   }
   return offset;
 }
 
-void ColBlockSink::Stage(std::string_view bytes) {
+void ColFileWriter::Stage(std::string_view bytes) {
   _end += bytes.size();
   _queued += bytes.size();
   while (!bytes.empty()) {
-    if (_chunks.empty() || _chunks.back().size == kChunkSize) {
-      _chunks.emplace_back(
-        std::make_unique_for_overwrite<byte_type[]>(kChunkSize), 0);
+    if (!_tail.data) {
+      _tail.data = std::make_unique_for_overwrite<byte_type[]>(kChunkSize);
     }
-    auto& tail = _chunks.back();
-    const auto n = std::min(bytes.size(), kChunkSize - tail.size);
-    std::memcpy(tail.data.get() + tail.size, bytes.data(), n);
-    tail.size += n;
+    const auto n = std::min(bytes.size(), kChunkSize - _tail.size);
+    std::memcpy(_tail.data.get() + _tail.size, bytes.data(), n);
+    _tail.size += n;
     bytes.remove_prefix(n);
+    if (_tail.size == kChunkSize) {
+      _full.emplace_back(std::move(_tail));
+      _tail = {};
+    }
   }
 }
 
-std::vector<ColBlockSink::Chunk> ColBlockSink::TakeFull() {
-  std::vector<Chunk> full;
-  while (!_chunks.empty() && _chunks.front().size == kChunkSize) {
-    full.emplace_back(std::move(_chunks.front()));
-    _chunks.pop_front();
-  }
-  _writing = !full.empty();
-  return full;
+void ColFileWriter::TakeFull(std::vector<Chunk>& batch) {
+  SDB_ASSERT(batch.empty());
+  batch.swap(_full);
+  _writing = !batch.empty();
 }
 
-bool ColBlockSink::HasRoom() const { return _queued < kMaxQueued || !_writing; }
+bool ColFileWriter::HasRoom() const {
+  return _queued < kMaxQueued || !_writing;
+}
 
-bool ColBlockSink::Idle() const { return !_writing; }
+bool ColFileWriter::Idle() const { return !_writing; }
 
 }  // namespace irs

@@ -28,7 +28,7 @@
 
 namespace irs {
 
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, ColBlockSink& blocks)
+WriteContext::WriteContext(duckdb::DatabaseInstance& db, ColFileWriter& blocks)
   : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
     _blocks{&blocks} {}
 

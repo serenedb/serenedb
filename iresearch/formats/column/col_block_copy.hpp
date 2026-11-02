@@ -30,7 +30,7 @@
 
 namespace irs {
 
-class ColBlockSink;
+class ColFileWriter;
 class ColReader;
 
 inline constexpr size_t kMaxColumnDictionaries = 8;
@@ -39,7 +39,7 @@ bool BlocksRelocatable(const ColumnReader& column);
 
 bool CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
                       bool validity, std::span<const uint16_t> dictionaries,
-                      ColBlockSink& sink, ColumnMeta& meta,
+                      ColFileWriter& sink, ColumnMeta& meta,
                       absl::FunctionRef<bool()> progress);
 
 }  // namespace irs

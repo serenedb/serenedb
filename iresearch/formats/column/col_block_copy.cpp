@@ -33,7 +33,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/col_block_sink.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -59,7 +59,7 @@ bool PatchDictionary(std::string_view block,
 }
 
 bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
-                std::span<const uint16_t> dictionaries, ColBlockSink& sink,
+                std::span<const uint16_t> dictionaries, ColFileWriter& sink,
                 std::vector<ColumnBlockMeta>& out,
                 absl::FunctionRef<bool()> progress) {
   std::string bytes;
@@ -123,7 +123,7 @@ bool BlocksRelocatable(const ColumnReader& column) {
 
 bool CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
                       bool validity, std::span<const uint16_t> dictionaries,
-                      ColBlockSink& sink, ColumnMeta& meta,
+                      ColFileWriter& sink, ColumnMeta& meta,
                       absl::FunctionRef<bool()> progress) {
   meta.id = column.Id();
   meta.type = column.Type();

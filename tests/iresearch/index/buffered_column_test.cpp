@@ -31,7 +31,7 @@
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/formats/column/col_block_sink.hpp>
+#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
@@ -499,17 +499,16 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
 TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   constexpr uint32_t kRows = 4096;
   constexpr uint32_t kWideEvery = 512;
-  irs::MemoryFile written{irs::IResourceManager::gNoop};
+  irs::MemoryDirectory dir;
   irs::NormColumnMeta meta;
   {
-    irs::MemoryIndexOutput out{written};
-    irs::ColBlockSink blocks{out};
-    irs::NormColumnWriter writer{1, kRows, blocks};
+    irs::ColFileWriter file{dir.create("norms")};
+    irs::NormColumnWriter writer{1, kRows, file};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }
     writer.Finalize();
-    out.Flush();
+    file.Finish([](duckdb::BinarySerializer&) {});
     meta = writer.Meta();
   }
   ASSERT_EQ(meta.regions.size(), 1u);
@@ -517,10 +516,12 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   ASSERT_NE(region.exceptions, 0u);
   ASSERT_EQ(region.overflow, 0u);
 
-  std::vector<irs::byte_type> bytes(written.Length());
+  std::vector<irs::byte_type> bytes;
   {
-    irs::MemoryIndexInput in{written};
-    in.ReadData(0, bytes.data(), bytes.size());
+    auto in = dir.open("norms", irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    bytes.resize(in->Length());
+    in->ReadData(bytes.data(), bytes.size());
   }
   for (uint64_t b = 0; b != irs::NormBuckets(region); ++b) {
     absl::little_endian::Store32(bytes.data() + region.table_offset + b * 4,

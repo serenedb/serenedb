@@ -31,14 +31,13 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <filesystem>
-#include <iresearch/formats/column/col_block_sink.hpp>
+#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/internal/write_context.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iterator>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -52,17 +51,28 @@ namespace {
 
 constexpr std::string_view kFile = "blocks";
 
-class ColBlockSinkTest : public tests::DirectoryTestCaseBase<> {
- protected:
-  std::string ReadAll() const {
-    auto in = dir().open(kFile, irs::IOAdvice::SEQUENTIAL);
-    EXPECT_NE(in, nullptr);
-    std::string bytes(in->Length(), '\0');
-    in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
-                 bytes.size());
-    return bytes;
-  }
-};
+constexpr auto kNoFooter = [](duckdb::BinarySerializer&) {};
+
+std::string ReadAll(irs::Directory& dir) {
+  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
+  EXPECT_NE(in, nullptr);
+  std::string bytes(in->Length(), '\0');
+  in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
+               bytes.size());
+  return bytes;
+}
+
+irs::format_utils::Footer ReadFooter(irs::Directory& dir) {
+  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
+  EXPECT_NE(in, nullptr);
+  return irs::format_utils::ReadFooter(*in, kFile);
+}
+
+std::string ReadData(irs::Directory& dir) {
+  return ReadAll(dir).substr(0, ReadFooter(dir).data_len);
+}
+
+class ColFileWriterTest : public tests::DirectoryTestCaseBase<> {};
 
 uint32_t Crc(std::string_view bytes) {
   irs::Crc32c crc;
@@ -92,13 +102,13 @@ std::string Content(size_t thread, size_t block, size_t size) {
   return bytes;
 }
 
-std::vector<Written> AppendConcurrently(irs::ColBlockSink& blocks,
+std::vector<Written> AppendConcurrently(irs::ColFileWriter& file,
                                         size_t threads, size_t count) {
   std::vector<std::vector<Written>> written(threads);
   std::vector<std::thread> workers;
   workers.reserve(threads);
   for (size_t t = 0; t != threads; ++t) {
-    workers.emplace_back([&blocks, &written, t, count] {
+    workers.emplace_back([&file, &written, t, count] {
       for (size_t b = 0; b != count; ++b) {
         const auto size =
           kMixedSizes[(t * 3 + b) % std::size(kMixedSizes)] + b % 5;
@@ -107,13 +117,13 @@ std::vector<Written> AppendConcurrently(irs::ColBlockSink& blocks,
           const std::string_view whole{bytes};
           const std::string_view parts[] = {whole.substr(0, size / 2),
                                             whole.substr(size / 2)};
-          const auto offset = blocks.AppendAligned(parts);
+          const auto offset = file.AppendAligned(parts);
           written[t].emplace_back(offset, std::move(bytes), true);
         } else if (b % 3 == 1) {
-          const auto offset = blocks.Append(bytes);
+          const auto offset = file.Append(bytes);
           written[t].emplace_back(offset, std::move(bytes));
         } else {
-          const auto offset = blocks.AppendString(bytes);
+          const auto offset = file.AppendString(bytes);
           std::string framed(sizeof(uint32_t), '\0');
           absl::little_endian::Store32(framed.data(),
                                        static_cast<uint32_t>(size));
@@ -156,21 +166,18 @@ void ExpectLaidOut(std::string_view file, uint64_t begin, uint64_t end,
   ASSERT_EQ(end, at);
 }
 
-TEST_P(ColBlockSinkTest, AlignedAppendsStartAtMultiplesOfEight) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  EXPECT_EQ(0U, blocks.Append("abc"));
+TEST_P(ColFileWriterTest, AlignedAppendsStartAtMultiplesOfEight) {
+  irs::ColFileWriter file{dir().create(kFile)};
+  EXPECT_EQ(0U, file.Append("abc"));
   const std::string_view parts[] = {"xy", "z"};
-  EXPECT_EQ(8U, blocks.AppendAligned(parts));
-  EXPECT_EQ(11U, blocks.Position());
-  EXPECT_EQ(16U, blocks.AppendAligned(parts));
+  EXPECT_EQ(8U, file.AppendAligned(parts));
+  EXPECT_EQ(11U, file.Position());
+  EXPECT_EQ(16U, file.AppendAligned(parts));
   const std::string_view nothing[] = {""};
-  EXPECT_EQ(24U, blocks.AppendAligned(nothing));
-  EXPECT_EQ(24U, blocks.Append("q"));
-  EXPECT_EQ(32U, blocks.AppendAligned(parts));
-  blocks.Flush();
-  out.reset();
+  EXPECT_EQ(24U, file.AppendAligned(nothing));
+  EXPECT_EQ(24U, file.Append("q"));
+  EXPECT_EQ(32U, file.AppendAligned(parts));
+  file.Finish(kNoFooter);
   std::string expected = "abc";
   expected.append(5, '\0');
   expected += "xyz";
@@ -180,20 +187,17 @@ TEST_P(ColBlockSinkTest, AlignedAppendsStartAtMultiplesOfEight) {
   expected += "q";
   expected.append(7, '\0');
   expected += "xyz";
-  EXPECT_EQ(expected, ReadAll());
+  EXPECT_EQ(expected, ReadData(dir()));
 }
 
-TEST_P(ColBlockSinkTest, AppendStringWritesItsLengthFirst) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  EXPECT_EQ(0U, blocks.Append("ab"));
-  EXPECT_EQ(2U, blocks.AppendString("hello"));
-  EXPECT_EQ(11U, blocks.AppendString(""));
-  EXPECT_EQ(15U, blocks.Position());
-  blocks.Flush();
-  out.reset();
-  const auto bytes = ReadAll();
+TEST_P(ColFileWriterTest, AppendStringWritesItsLengthFirst) {
+  irs::ColFileWriter file{dir().create(kFile)};
+  EXPECT_EQ(0U, file.Append("ab"));
+  EXPECT_EQ(2U, file.AppendString("hello"));
+  EXPECT_EQ(11U, file.AppendString(""));
+  EXPECT_EQ(15U, file.Position());
+  file.Finish(kNoFooter);
+  const auto bytes = ReadData(dir());
   ASSERT_EQ(15U, bytes.size());
   uint32_t length = 0;
   std::memcpy(&length, bytes.data() + 2, sizeof(length));
@@ -203,42 +207,37 @@ TEST_P(ColBlockSinkTest, AppendStringWritesItsLengthFirst) {
   EXPECT_EQ(0U, length);
 }
 
-TEST_P(ColBlockSinkTest, OneProducersAppendsFollowEachOther) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  EXPECT_EQ(0U, blocks.Append("head"));
-  uint64_t at = blocks.Position();
+TEST_P(ColFileWriterTest, OneProducersAppendsFollowEachOther) {
+  irs::ColFileWriter file{dir().create(kFile)};
+  EXPECT_EQ(0U, file.Append("head"));
+  uint64_t at = file.Position();
   ASSERT_EQ(4U, at);
   std::string expected = "head";
   for (size_t i = 0; i != std::size(kGrowingSizes); ++i) {
     const auto bytes = Content(0, i, kGrowingSizes[i]);
-    ASSERT_EQ(at, blocks.Append(bytes));
+    ASSERT_EQ(at, file.Append(bytes));
     at += bytes.size();
-    ASSERT_EQ(at, blocks.Position());
+    ASSERT_EQ(at, file.Position());
     expected += bytes;
   }
-  blocks.Flush();
-  out.reset();
-  EXPECT_EQ(expected, ReadAll());
+  file.Finish(kNoFooter);
+  EXPECT_EQ(expected, ReadData(dir()));
 }
 
-TEST_P(ColBlockSinkTest, ConcurrentAppendsKeepEveryBlockWhole) {
+TEST_P(ColFileWriterTest, ConcurrentAppendsKeepEveryBlockWhole) {
   constexpr size_t kThreads = 8;
   constexpr size_t kBlocks = 500;
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
+  irs::ColFileWriter file{dir().create(kFile)};
   std::vector<std::vector<std::pair<uint64_t, std::string>>> written(kThreads);
   std::vector<std::thread> threads;
   threads.reserve(kThreads);
   for (size_t t = 0; t < kThreads; ++t) {
-    threads.emplace_back([&blocks, &written, t] {
+    threads.emplace_back([&file, &written, t] {
       for (size_t b = 0; b < kBlocks; ++b) {
         std::string head(1 + (t * 7 + b) % 13, static_cast<char>('a' + t));
         std::string tail(1 + b % 5, static_cast<char>('A' + b % 26));
         const std::string_view parts[] = {head, tail};
-        const auto offset = blocks.AppendAligned(parts);
+        const auto offset = file.AppendAligned(parts);
         written[t].emplace_back(offset, head + tail);
       }
     });
@@ -246,9 +245,8 @@ TEST_P(ColBlockSinkTest, ConcurrentAppendsKeepEveryBlockWhole) {
   for (auto& thread : threads) {
     thread.join();
   }
-  blocks.Flush();
-  out.reset();
-  const auto bytes = ReadAll();
+  file.Finish(kNoFooter);
+  const auto bytes = ReadData(dir());
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
   for (const auto& blocks_of_thread : written) {
     for (const auto& [offset, block] : blocks_of_thread) {
@@ -265,28 +263,23 @@ TEST_P(ColBlockSinkTest, ConcurrentAppendsKeepEveryBlockWhole) {
   }
 }
 
-TEST_P(ColBlockSinkTest, ConcurrentProducersWriteEveryByteAndItsChecksum) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  const auto written = AppendConcurrently(blocks, 4, 60);
-  const auto end = blocks.Position();
-  blocks.Flush();
-  const auto checksum = out->Checksum();
-  out.reset();
-  const auto bytes = ReadAll();
-  ASSERT_EQ(end, bytes.size());
+TEST_P(ColFileWriterTest, ConcurrentProducersWriteEveryByteAndItsChecksum) {
+  irs::ColFileWriter file{dir().create(kFile)};
+  const auto written = AppendConcurrently(file, 4, 60);
+  const auto end = file.Position();
+  file.Finish(kNoFooter);
+  const auto footer = ReadFooter(dir());
+  const auto bytes = ReadData(dir());
+  ASSERT_EQ(end, footer.data_len);
   ExpectLaidOut(bytes, 0, end, written);
-  EXPECT_EQ(Crc(bytes), checksum);
+  EXPECT_EQ(Crc(bytes), footer.data_expected_crc32c);
 }
 
-TEST_P(ColBlockSinkTest, WriteContextWritesThroughTheSink) {
+TEST_P(ColFileWriterTest, WriteContextWritesThroughTheFile) {
   duckdb::DuckDB db;
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  irs::WriteContext ctx{*db.instance, blocks};
-  blocks.Append("ab");
+  irs::ColFileWriter file{dir().create(kFile)};
+  irs::WriteContext ctx{*db.instance, file};
+  file.Append("ab");
   EXPECT_EQ(2U, ctx.Position());
   constexpr std::string_view kStream = "stream";
   ctx.Append(reinterpret_cast<duckdb::const_data_ptr_t>(kStream.data()),
@@ -298,9 +291,8 @@ TEST_P(ColBlockSinkTest, WriteContextWritesThroughTheSink) {
   ctx.WriteString(state, duckdb::string_t{"overflow"}, block, offset);
   EXPECT_EQ(8, block);
   EXPECT_EQ(0, offset);
-  blocks.Flush();
-  out.reset();
-  const auto bytes = ReadAll();
+  file.Finish(kNoFooter);
+  const auto bytes = ReadData(dir());
   ASSERT_EQ(20U, bytes.size());
   EXPECT_EQ("abstream", bytes.substr(0, 8));
   uint32_t length = 0;
@@ -309,84 +301,53 @@ TEST_P(ColBlockSinkTest, WriteContextWritesThroughTheSink) {
   EXPECT_EQ("overflow", bytes.substr(12, 8));
 }
 
-TEST_P(ColBlockSinkTest, TheRunningChecksumCoversEveryAppend) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  blocks.Append("dictionary");
+TEST_P(ColFileWriterTest, TheFooterChecksumCoversEveryAppend) {
+  irs::ColFileWriter file{dir().create(kFile)};
+  file.Append("dictionary");
   const std::string_view parts[] = {"block", "-part"};
-  blocks.AppendAligned(parts);
-  blocks.Append(Content(1, 2, 100000));
-  blocks.AppendString("overflow");
-  blocks.AppendAligned(parts);
-  blocks.Flush();
-  const auto checksum = out->Checksum();
-  out.reset();
-  EXPECT_EQ(Crc(ReadAll()), checksum);
+  file.AppendAligned(parts);
+  file.Append(Content(1, 2, 3 * irs::ColFileWriter::kChunkSize + 100000));
+  file.AppendString("overflow");
+  file.AppendAligned(parts);
+  file.Finish(kNoFooter);
+  EXPECT_EQ(Crc(ReadData(dir())), ReadFooter(dir()).data_expected_crc32c);
 }
 
-TEST_P(ColBlockSinkTest, BytesWrittenAroundTheBlocksKeepTheirPlace) {
+TEST_P(ColFileWriterTest, BytesWrittenBeforeTheBlocksKeepTheirPlace) {
   auto out = dir().create(kFile);
   ASSERT_NE(out, nullptr);
   const std::string header = "header";
   out->WriteData(reinterpret_cast<const irs::byte_type*>(header.data()),
                  header.size());
-  irs::ColBlockSink blocks{*out};
-  const auto written = AppendConcurrently(blocks, 3, 20);
-  const auto data_end = blocks.Position();
-  blocks.Flush();
-  const auto data_checksum = out->Checksum();
-  const std::string footer = "footer";
-  out->WriteData(reinterpret_cast<const irs::byte_type*>(footer.data()),
-                 footer.size());
-  const auto footer_checksum = out->Checksum();
-  out.reset();
-  const auto bytes = ReadAll();
-  ASSERT_EQ(data_end + footer.size(), bytes.size());
-  EXPECT_EQ(header, bytes.substr(0, header.size()));
-  EXPECT_EQ(footer, bytes.substr(data_end));
-  ExpectLaidOut(bytes, header.size(), data_end, written);
-  EXPECT_EQ(Crc(std::string_view{bytes}.substr(0, data_end)), data_checksum);
-  EXPECT_EQ(Crc(footer), footer_checksum);
-}
-
-TEST_P(ColBlockSinkTest, TheFooterChecksumMatchesTheData) {
-  auto out = dir().create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  const auto written = AppendConcurrently(blocks, 4, 30);
-  const auto data_end = blocks.Position();
-  blocks.Flush();
-  irs::format_utils::WriteFooter(*out);
-  out.reset();
-  auto in = dir().open(kFile, irs::IOAdvice::SEQUENTIAL);
-  ASSERT_NE(in, nullptr);
-  const auto footer = irs::format_utils::ReadFooter(*in, kFile);
-  const auto bytes = ReadAll();
+  irs::ColFileWriter file{std::move(out)};
+  const auto written = AppendConcurrently(file, 3, 20);
+  const auto data_end = file.Position();
+  file.Finish(kNoFooter);
+  const auto footer = ReadFooter(dir());
+  const auto bytes = ReadAll(dir());
   ASSERT_EQ(data_end, footer.data_len);
-  ExpectLaidOut(bytes, 0, footer.data_len, written);
-  EXPECT_EQ(Crc(std::string_view{bytes}.substr(0, footer.data_len)),
+  EXPECT_EQ(header, bytes.substr(0, header.size()));
+  ExpectLaidOut(bytes, header.size(), data_end, written);
+  EXPECT_EQ(Crc(std::string_view{bytes}.substr(0, data_end)),
             footer.data_expected_crc32c);
 }
 
-TEST(ColBlockSinkWriteErrorTest, AFailedWriteReachesItsWriterAndFreesTheRole) {
+TEST(ColFileWriterWriteErrorTest, AFailedWriteReachesItsWriterAndFreesTheRole) {
   if (!std::filesystem::exists("/dev/full")) {
     GTEST_SKIP() << "no /dev/full";
   }
   irs::FSDirectory dev{"/dev"};
-  auto out = dev.create("full");
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
-  const auto chunk = Content(0, 0, irs::ColBlockSink::kChunkSize);
-  ASSERT_SQL_ERROR(blocks.Append(chunk), ERRCODE_DISK_FULL);
-  ASSERT_SQL_ERROR(blocks.Append(chunk), ERRCODE_DISK_FULL);
-  EXPECT_EQ(2 * irs::ColBlockSink::kChunkSize, blocks.Position());
+  irs::ColFileWriter file{dev.create("full")};
+  const auto chunk = Content(0, 0, irs::ColFileWriter::kChunkSize);
+  ASSERT_SQL_ERROR(file.Append(chunk), ERRCODE_DISK_FULL);
+  ASSERT_SQL_ERROR(file.Append(chunk), ERRCODE_DISK_FULL);
+  EXPECT_EQ(2 * irs::ColFileWriter::kChunkSize, file.Position());
 }
 
-TEST(ColBlockSinkWriterTest,
+TEST(ColFileWriterWriterTest,
      AppendsGoOnWhileTheWriterIsHeldUntilTheQueueIsFull) {
-  constexpr std::string_view kPoint = "irs::ColBlockSink::Write";
-  if (!duckdb::FaultPoints::Arm("irs::ColBlockSink::Write")) {
+  constexpr std::string_view kPoint = "irs::ColFileWriter::Write";
+  if (!duckdb::FaultPoints::Arm("irs::ColFileWriter::Write")) {
     GTEST_SKIP() << "built without fault injection";
   }
   const auto parked = absl::StrCat(kPoint, ":parked");
@@ -394,18 +355,16 @@ TEST(ColBlockSinkWriterTest,
     duckdb::FaultPoints::Disarm(kPoint);
     duckdb::FaultPoints::Disarm(parked);
   };
-  constexpr auto kChunk = irs::ColBlockSink::kChunkSize;
-  constexpr auto kChunks = irs::ColBlockSink::kMaxQueued / kChunk + 1;
+  constexpr auto kChunk = irs::ColFileWriter::kChunkSize;
+  constexpr auto kChunks = irs::ColFileWriter::kMaxQueued / kChunk + 1;
   irs::MemoryDirectory dir;
-  auto out = dir.create(kFile);
-  ASSERT_NE(out, nullptr);
-  irs::ColBlockSink blocks{*out};
+  irs::ColFileWriter file{dir.create(kFile)};
   const auto first = Content(0, 0, kChunk);
-  std::thread writer{[&] { blocks.Append(first); }};
+  std::thread writer{[&] { file.Append(first); }};
   while (!duckdb::FaultPoints::Armed(parked)) {
     absl::SleepFor(absl::Milliseconds(1));
   }
-  EXPECT_EQ(kChunk, blocks.Append("small"));
+  EXPECT_EQ(kChunk, file.Append("small"));
   std::atomic_bool filled = false;
   std::string expected = first + "small";
   for (size_t i = 0; i != kChunks; ++i) {
@@ -413,7 +372,7 @@ TEST(ColBlockSinkWriterTest,
   }
   std::thread filler{[&] {
     for (size_t i = 0; i != kChunks; ++i) {
-      blocks.Append(Content(1, i, kChunk));
+      file.Append(Content(1, i, kChunk));
     }
     filled = true;
   }};
@@ -423,19 +382,13 @@ TEST(ColBlockSinkWriterTest,
   writer.join();
   filler.join();
   EXPECT_TRUE(filled.load());
-  blocks.Flush();
-  out.reset();
-  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
-  ASSERT_NE(in, nullptr);
-  std::string bytes(in->Length(), '\0');
-  in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
-               bytes.size());
-  EXPECT_TRUE(bytes == expected);
+  file.Finish(kNoFooter);
+  EXPECT_TRUE(ReadData(dir) == expected);
 }
 
 constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(ColBlockSink, ColBlockSinkTest,
+INSTANTIATE_TEST_SUITE_P(ColFileWriter, ColFileWriterTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          tests::DirectoryTestCaseBase<>::to_string);
 

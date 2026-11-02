@@ -1,0 +1,229 @@
+statement ok
+DROP SCHEMA IF EXISTS rspec_auth CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rspec_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS rspec_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS rspec_bob;
+
+
+statement ok
+CREATE ROLE rspec_alice LOGIN PASSWORD 'rspec_pw';
+
+
+statement ok
+CREATE ROLE rspec_bob;
+
+
+statement ok
+CREATE SCHEMA rspec_s;
+
+
+statement ok
+GRANT USAGE ON SCHEMA rspec_s TO rspec_alice, rspec_bob;
+
+
+statement ok
+CREATE TABLE rspec_s.bt (a int);
+
+
+statement ok
+ALTER TABLE rspec_s.bt OWNER TO rspec_bob;
+
+
+statement ok
+GRANT rspec_bob TO rspec_alice WITH INHERIT FALSE;
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+SET ROLE rspec_bob;
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+GRANT SELECT ON rspec_s.bt TO SESSION_USER GRANTED BY CURRENT_USER;
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+GRANT INSERT ON rspec_s.bt TO CURRENT_ROLE;
+
+
+query
+SELECT has_table_privilege('rspec_alice', 'rspec_s.bt', 'SELECT') AS alice_select,
+       has_table_privilege('rspec_alice', 'rspec_s.bt', 'INSERT') AS alice_insert,
+       has_table_privilege('rspec_bob', 'rspec_s.bt', 'INSERT') AS bob_insert;
+----
+alice_select	alice_insert	bob_insert
+t	f	t
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+REVOKE SELECT ON rspec_s.bt FROM SESSION_USER;
+
+
+query
+SELECT has_table_privilege('rspec_alice', 'rspec_s.bt', 'SELECT') AS alice_select;
+----
+alice_select
+f
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+RESET ROLE;
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+ALTER ROLE CURRENT_USER SET search_path = rspec_s;
+
+
+query
+SELECT unnest(s.setconfig) AS setting
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'rspec_alice';
+----
+setting
+search_path=rspec_s
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+ALTER USER CURRENT_ROLE RESET search_path;
+
+
+query
+SELECT count(*) AS settings
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'rspec_alice';
+----
+settings
+0
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA rspec_s GRANT SELECT ON TABLES TO rspec_bob;
+
+
+query
+SELECT r.rolname, d.defaclobjtype
+FROM pg_default_acl d JOIN pg_roles r ON r.oid = d.defaclrole
+WHERE d.defaclnamespace = 'rspec_s'::regnamespace;
+----
+rolname	defaclobjtype
+rspec_alice	r
+
+
+connection c_alice user=rspec_alice password=rspec_pw
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA rspec_s REVOKE SELECT ON TABLES FROM rspec_bob;
+
+
+statement ok
+CREATE SCHEMA rspec_auth AUTHORIZATION CURRENT_USER;
+
+
+query
+SELECT pg_get_userbyid(nspowner) = current_user AS owned_by_current_user
+FROM pg_namespace WHERE nspname = 'rspec_auth';
+----
+owned_by_current_user
+t
+
+
+statement ok
+CREATE SCHEMA AUTHORIZATION CURRENT_USER;
+
+
+query
+SELECT count(*) AS named_after_user
+FROM pg_namespace
+WHERE nspname = current_user AND pg_get_userbyid(nspowner) = current_user;
+----
+named_after_user
+1
+
+
+statement ok
+DROP SCHEMA postgres;
+
+
+statement ok
+GRANT rspec_bob TO SESSION_USER;
+
+
+query
+SELECT pg_has_role(session_user, 'rspec_bob', 'MEMBER') AS member,
+       count(*) FILTER (WHERE m.oid = (SELECT oid FROM pg_roles WHERE rolname = session_user)) AS session_user_edges
+FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = 'rspec_bob';
+----
+member	session_user_edges
+t	1
+
+
+statement ok
+REVOKE rspec_bob FROM SESSION_USER;
+
+
+statement ok
+REVOKE SET OPTION FOR rspec_bob FROM rspec_alice;
+
+
+query
+SELECT admin_option, inherit_option, set_option
+FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = 'rspec_bob' AND m.rolname = 'rspec_alice';
+----
+admin_option	inherit_option	set_option
+f	f	f
+
+
+statement ok
+GRANT rspec_bob TO rspec_alice WITH INHERIT TRUE, SET TRUE;
+
+
+statement ok
+REVOKE INHERIT OPTION FOR rspec_bob FROM rspec_alice;
+
+
+query
+SELECT admin_option, inherit_option, set_option
+FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = 'rspec_bob' AND m.rolname = 'rspec_alice';
+----
+admin_option	inherit_option	set_option
+f	f	t
+
+
+statement error
+GRANT SELECT ON rspec_s.bt TO "current_user";
+----
+db error: ERROR: role "current_user" does not exist
+
+
+statement ok
+DROP SCHEMA rspec_auth CASCADE;
+
+
+statement ok
+DROP SCHEMA rspec_s CASCADE;
+
+
+statement ok
+DROP ROLE rspec_alice;
+
+
+statement ok
+DROP ROLE rspec_bob;

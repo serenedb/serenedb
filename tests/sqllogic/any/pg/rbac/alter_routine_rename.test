@@ -1,0 +1,101 @@
+statement ok
+DROP SCHEMA IF EXISTS arr_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS arr_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS arr_other;
+
+
+statement ok
+CREATE ROLE arr_owner LOGIN PASSWORD 'arr_pw';
+
+
+statement ok
+CREATE ROLE arr_other LOGIN PASSWORD 'arr_pw';
+
+
+statement ok
+CREATE SCHEMA arr_s;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA arr_s TO arr_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA arr_s TO arr_other;
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement ok
+CREATE FUNCTION arr_s.arr_f(a int) RETURNS int LANGUAGE sql AS 'SELECT a + 1';
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement ok
+CREATE PROCEDURE arr_s.arr_p() LANGUAGE sql AS 'SELECT 1';
+
+
+connection c_other user=arr_other password=arr_pw
+statement error
+ALTER FUNCTION arr_s.arr_f(int) RENAME TO arr_g;
+----
+db error: ERROR: must be owner of function arr_f
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement ok
+ALTER FUNCTION arr_s.arr_f(int) RENAME TO arr_g;
+
+
+connection c_owner user=arr_owner password=arr_pw
+query
+SELECT arr_s.arr_g(1) AS r;
+----
+r
+2
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement ok
+ALTER PROCEDURE arr_s.arr_p() RENAME TO arr_q;
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement ok
+ALTER ROUTINE arr_s.arr_g RENAME TO arr_h;
+
+
+query
+SELECT proname FROM pg_proc WHERE pronamespace = 'arr_s'::regnamespace ORDER BY proname;
+----
+proname
+arr_h
+arr_q
+
+
+statement ok
+REVOKE CREATE ON SCHEMA arr_s FROM arr_owner;
+
+
+connection c_owner user=arr_owner password=arr_pw
+statement error
+ALTER FUNCTION arr_s.arr_h(int) RENAME TO arr_i;
+----
+db error: ERROR: permission denied for schema arr_s
+
+
+statement ok
+DROP SCHEMA arr_s CASCADE;
+
+
+statement ok
+DROP ROLE arr_owner;
+
+
+statement ok
+DROP ROLE arr_other;

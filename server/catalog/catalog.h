@@ -192,7 +192,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateSubscriptionInfo& info);
 
   void DropSubscription(duckdb::CatalogTransaction transaction,
-                        duckdb::DropInfo& info);
+                        duckdb::DropInfo& info) final;
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;

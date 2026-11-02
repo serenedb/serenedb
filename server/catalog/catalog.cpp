@@ -70,6 +70,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
@@ -710,6 +711,21 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
       (info.type == duckdb::AlterType::ALTER_TABLE ||
        info.type == duckdb::AlterType::ALTER_INDEX)) {
     RefuseUnsupportedAlter(transaction.GetContext(), info);
+  }
+  if (info.type == duckdb::AlterType::REASSIGN_OWNED ||
+      info.type == duckdb::AlterType::DROP_OWNED) {
+    const bool reassign = info.type == duckdb::AlterType::REASSIGN_OWNED;
+    const auto& roles = reassign
+                          ? info.Cast<duckdb::ReassignOwnedInfo>().role_ids
+                          : info.Cast<duckdb::DropOwnedInfo>().role_ids;
+    if (absl::c_linear_search(roles, pg::kRootUser)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+        ERR_MSG(reassign ? "cannot reassign ownership of objects owned by role "
+                         : "cannot drop objects owned by role ",
+                auth::RolesOf(&transaction.GetContext())->NameOf(pg::kRootUser),
+                " because they are required by the database system"));
+    }
   }
   if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
       type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {

@@ -1,0 +1,161 @@
+statement ok
+DROP SCHEMA IF EXISTS rdx_s CASCADE;
+
+
+statement ok
+DROP SERVER IF EXISTS rdx_duck;
+
+
+statement ok
+DROP JOB IF EXISTS rdx_job;
+
+
+statement ok
+DROP TABLE IF EXISTS rdx_log;
+
+
+statement ok
+DROP ROLE IF EXISTS rdx_alice, rdx_bob, rdx_carol, rdx_super, rdx_super2;
+
+
+statement ok
+CREATE ROLE rdx_alice;
+
+
+statement ok
+CREATE ROLE rdx_bob LOGIN PASSWORD 'rdx_pw';
+
+
+statement ok
+CREATE ROLE rdx_carol;
+
+
+statement ok
+CREATE ROLE rdx_super SUPERUSER;
+
+
+statement ok
+CREATE ROLE rdx_super2 SUPERUSER;
+
+
+statement ok
+CREATE SCHEMA rdx_s;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rdx_s.rdx_dict AS keyword() WITH (frequency);
+
+
+statement ok
+ALTER TEXT SEARCH DICTIONARY rdx_s.rdx_dict OWNER TO rdx_alice;
+
+
+statement ok
+CREATE TABLE rdx_log (v int);
+
+
+statement ok
+CREATE JOB rdx_job AFTER 1 HOUR AS INSERT INTO rdx_log VALUES (1);
+
+
+statement ok
+ALTER JOB rdx_job OWNER TO rdx_alice;
+
+
+control substitution on
+
+
+statement ok
+CREATE SERVER rdx_duck FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/rdx_duck.db');
+
+
+statement ok
+ALTER SERVER rdx_duck OWNER TO rdx_super;
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO rdx_carol;
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER rdx_duck TO rdx_carol;
+
+
+statement error
+REASSIGN OWNED BY rdx_super TO rdx_bob;
+----
+db error: ERROR: permission denied for foreign-data wrapper duckdb_fdw
+DETAIL: Only roles with the SUPERUSER attribute may own a duckdb_fdw server.
+
+
+statement ok
+REASSIGN OWNED BY rdx_super TO rdx_super2;
+
+
+connection c_bob user=rdx_bob password=rdx_pw
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'rdx_job';
+----
+jobs
+0
+
+
+statement ok
+REASSIGN OWNED BY rdx_alice TO rdx_bob;
+
+
+query
+SELECT (SELECT dictowner::regrole::text FROM pg_ts_dict WHERE dictname = 'rdx_dict') AS dict,
+       (SELECT srvowner::regrole::text FROM pg_foreign_server WHERE srvname = 'rdx_duck') AS server;
+----
+dict	server
+rdx_bob	rdx_super2
+
+
+connection c_bob user=rdx_bob password=rdx_pw
+query
+SELECT count(*) AS jobs FROM sdb_jobs() WHERE job_name = 'rdx_job';
+----
+jobs
+1
+
+
+statement ok
+DROP OWNED BY rdx_carol;
+
+
+query
+SELECT has_foreign_data_wrapper_privilege('rdx_carol', 'postgres_fdw', 'USAGE') AS wrapper,
+       has_server_privilege('rdx_carol', 'rdx_duck', 'USAGE') AS server;
+----
+wrapper	server
+f	f
+
+
+statement ok
+DROP OWNED BY rdx_bob;
+
+
+statement ok
+DROP OWNED BY rdx_super2;
+
+
+query
+SELECT (SELECT count(*) FROM pg_ts_dict WHERE dictname = 'rdx_dict') AS dicts,
+       (SELECT count(*) FROM pg_foreign_server WHERE srvname = 'rdx_duck') AS servers,
+       (SELECT count(*) FROM sdb_jobs() WHERE job_name = 'rdx_job') AS jobs;
+----
+dicts	servers	jobs
+0	0	0
+
+
+statement ok
+DROP SCHEMA rdx_s;
+
+
+statement ok
+DROP TABLE rdx_log;
+
+
+statement ok
+DROP ROLE rdx_alice, rdx_bob, rdx_carol, rdx_super, rdx_super2;

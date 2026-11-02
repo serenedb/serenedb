@@ -34,6 +34,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -227,6 +228,17 @@ duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::AlterEntry(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
+    if (const auto& alter = info.Cast<duckdb::AlterPermissionsInfo>();
+        !alter.new_owner.empty()) {
+      CheckOwner(context, alter.new_owner_id);
+    }
+  }
+  return duckdb::InCatalogEntry::AlterEntry(context, info);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::Copy(

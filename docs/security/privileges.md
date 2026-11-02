@@ -104,7 +104,7 @@ Ownership can be transferred with `ALTER ... OWNER TO`. The new owner immediatel
 
 <SqlLogicTest id="security/privileges/example_008" />
 
-`OWNER TO` works on tables, views, sequences, schemas, types, functions and procedures (`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER ROUTINE`), databases, text search dictionaries, subscriptions, jobs and foreign servers. A role that is not a superuser must own the object and be able to `SET ROLE` to the new owner. The new owner of an object in a schema needs `CREATE` on that schema, and changing the owner of a schema or a subscription needs `CREATE` on the database. Changing the owner of a database needs the `CREATEDB` attribute.
+`OWNER TO` works on tables, views, sequences, schemas, types, functions and procedures (`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER ROUTINE`), databases, text search dictionaries, subscriptions, jobs and foreign servers. A role that is not a superuser must own the object and be able to `SET ROLE` to the new owner. The new owner of an object in a schema needs `CREATE` on that schema, and changing the owner of a schema or a subscription needs `CREATE` on the database. Changing the owner of a database needs the `CREATEDB` attribute. [`REASSIGN OWNED BY`](roles.md#dropping-roles) transfers every object a role owns at once.
 
 ## What other roles can see
 

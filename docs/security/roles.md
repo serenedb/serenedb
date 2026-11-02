@@ -74,11 +74,14 @@ A role cannot be dropped while it still owns objects, or while a grant on them n
 
 <SqlLogicTest id="security/roles/example_007" />
 
-<DocCallout type="attention">
+Default privileges that name the role block the drop too. Two statements clear everything that holds a role back, in the database the session is connected to:
 
-Default privileges that name the role block the drop too. `DROP OWNED BY` and `REASSIGN OWNED BY` are not supported, so transfer ownership with `ALTER ... OWNER TO` and remove the grants with [`REVOKE`](../sql/statements/revoke/index.md), object by object.
+- `REASSIGN OWNED BY role [, ...] TO new_role` makes `new_role` the owner of every object the roles own in the current database, and of every database they own. Grants they hold and their default privileges stay.
+- `DROP OWNED BY role [, ...] [CASCADE | RESTRICT]` drops every object the roles own in the current database and revokes every privilege granted to them there and on databases, together with the grants they passed on, their default privileges and their foreign-data wrapper grants. Databases they own are kept. Without `CASCADE`, it fails when objects of other roles depend on the objects it would drop.
 
-</DocCallout>
+Both need the privileges of every role they name, and `REASSIGN OWNED` also those of the new owner. Neither accepts the `postgres` role. Run them in each database where the role owns objects or holds privileges, then drop it:
+
+<SqlLogicTest id="security/roles/example_010" />
 
 ## See also
 

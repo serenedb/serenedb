@@ -268,8 +268,9 @@ class FrameDecoder {
     if (m.frame.comp_len == m.frame.raw_len) {
       _source = Data(m);
     } else if (const auto* cached =
-                 _cache ? Lookup(FrameKey(f), m.frame.raw_len, _source_held)
-                        : nullptr) {
+                 _cache && Admitted()
+                   ? Lookup(FrameKey(f), m.frame.raw_len, _source_held)
+                   : nullptr) {
       _source = cached;
     } else if (prefix && !Admitted()) {
       if (_raw.size() < m.frame.raw_len) {
@@ -527,7 +528,7 @@ class FrameDecoder {
     if (m.frame.comp_len == m.frame.raw_len) {
       return Data(m);
     }
-    if (_cache) {
+    if (_cache && Admitted()) {
       if (const auto* cached = Lookup(FrameKey(frame), m.frame.raw_len, held)) {
         return cached;
       }
@@ -538,10 +539,10 @@ class FrameDecoder {
   const uint8_t* Inflate(const NumericFrameMeta& m, uint8_t* dst,
                          duckdb::shared_ptr<DecodedFrame>& held) {
     ScratchVector<uint8_t> admitted;
-    if (_cache) {
-      const auto room = _scan ? _cache->GetMaxMemory() / kScanCacheDivisor
-                              : _cache->GetMaxMemory();
-      if (Admitted() && _cache->GetCurrentMemory() + m.frame.raw_len <= room) {
+    if (_cache && Admitted()) {
+      const auto room = _scan ? _cache->GetMaxMemoryRacy() / kScanCacheDivisor
+                              : _cache->GetMaxMemoryRacy();
+      if (_cache->GetCurrentMemoryRacy() + m.frame.raw_len <= room) {
         admitted.resize(m.frame.raw_len);
         dst = admitted.data();
       }
@@ -760,8 +761,7 @@ class FrameDecoder {
 
   bool Admitted() noexcept {
     if (_admit < 0) {
-      _admit = _slot.touched &&
-               _slot.touched->exchange(true, std::memory_order_relaxed);
+      _admit = _slot.touched && SecondTouch(_slot);
     }
     return _admit == 1;
   }

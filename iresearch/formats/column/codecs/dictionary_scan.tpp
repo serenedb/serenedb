@@ -262,7 +262,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (full) {
       return;
     }
-    if (cache) {
+    if (cache && Touched(cache_slot)) {
       if (const auto cached = cache->Get<DecodedDictionary>(
             DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset))) {
         AdoptDictionary(*cached);
@@ -275,12 +275,11 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   void Admit() {
     full = true;
-    if (!cache ||
-        !cache_slot.touched->exchange(true, std::memory_order_relaxed)) {
+    if (!cache || !SecondTouch(cache_slot)) {
       return;
     }
     const auto bytes = entries.CacheBytes();
-    if (cache->GetCurrentMemory() + bytes <= cache->GetMaxMemory()) {
+    if (cache->GetCurrentMemoryRacy() + bytes <= cache->GetMaxMemoryRacy()) {
       cache->Put(
         DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
         duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));

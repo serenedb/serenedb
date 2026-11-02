@@ -68,7 +68,7 @@ uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   duckdb::ColumnSegment& segment) {
   const auto& slot = CacheSlotOf(segment);
-  if (!slot.touched) {
+  if (!slot.touched || !Touched(slot)) {
     return nullptr;
   }
   return segment.GetDatabase().GetObjectCache().Get<DecodedDictionary>(

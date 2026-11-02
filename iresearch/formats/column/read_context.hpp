@@ -130,4 +130,13 @@ class ReadContext final : public BlockManager,
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept;
 
+inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {
+  return slot.touched->load(std::memory_order_relaxed);
+}
+
+inline bool SecondTouch(const ReadContext::CacheSlot& slot) noexcept {
+  return Touched(slot) ||
+         slot.touched->exchange(true, std::memory_order_relaxed);
+}
+
 }  // namespace irs

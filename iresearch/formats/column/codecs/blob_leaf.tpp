@@ -224,7 +224,7 @@ struct BlobFetch {
     const auto& slot = CacheSlotOf(segment);
     auto* cache =
       slot.touched ? &segment.GetDatabase().GetObjectCache() : nullptr;
-    if (cache && decoded == 0) {
+    if (cache && decoded == 0 && Admitted(slot)) {
       if (segment_key.empty()) {
         segment_key = DictionaryCacheKey(slot.file_id, slot.file_offset);
       }
@@ -239,7 +239,7 @@ struct BlobFetch {
     }
     const bool admitted =
       cache && Admitted(slot) &&
-      cache->GetCurrentMemory() + f.raw_len <= cache->GetMaxMemory();
+      cache->GetCurrentMemoryRacy() + f.raw_len <= cache->GetMaxMemoryRacy();
     const size_t target =
       admitted || (!batched && (hits > 1 || dense)) ? f.raw_len : want;
     const bool with_dictionary =
@@ -259,7 +259,7 @@ struct BlobFetch {
 
   bool Admitted(const ReadContext::CacheSlot& slot) noexcept {
     if (admit < 0) {
-      admit = slot.touched->exchange(true, std::memory_order_relaxed);
+      admit = SecondTouch(slot);
     }
     return admit == 1;
   }

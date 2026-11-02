@@ -1728,12 +1728,13 @@ bool IsSuperuserReadSetting(duckdb::ClientContext& ctx, std::string_view name) {
 }
 
 void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
-                           duckdb::SetScope scope, bool is_set) {
+                           std::string_view setting, duckdb::SetScope scope,
+                           bool is_set) {
   if (scope == duckdb::SetScope::GLOBAL) {
     RequireSuperuser(ctx, name,
                      "Only roles with the SUPERUSER attribute may change the "
                      "server-wide value of a parameter.");
-  } else if (is_set && !kUserSettings.contains(name)) {
+  } else if (is_set && !kUserSettings.contains(setting)) {
     RequireSuperuser(
       ctx, name,
       "Only roles with the SUPERUSER attribute may change this parameter.");

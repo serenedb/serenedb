@@ -149,7 +149,7 @@ DETAIL: User does not have CONNECT privilege.
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
-SELECT * FROM seq_scan('edcp_other_${__DATABASE__}', 'public', 'edcp_missing');
+SELECT * FROM seq_scan(['edcp_other_${__DATABASE__}', 'public', 'edcp_missing']);
 ----
 db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
 DETAIL: User does not have CONNECT privilege.

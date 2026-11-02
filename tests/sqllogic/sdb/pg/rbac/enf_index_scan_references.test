@@ -70,7 +70,7 @@ GRANT SELECT ON eisr_hidden.eisr_docs TO eisr_vedernikoff;
 
 connection c_ved user=eisr_vedernikoff password=eisr_pw
 statement error
-SELECT a FROM seq_scan('eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i');
+SELECT a FROM seq_scan(['eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i']);
 ----
 db error: ERROR: permission denied for database "eisr_other_<slt:ignore>"
 DETAIL: User does not have CONNECT privilege.
@@ -78,7 +78,7 @@ DETAIL: User does not have CONNECT privilege.
 
 connection c_ved user=eisr_vedernikoff password=eisr_pw
 statement error
-SELECT a FROM seq_scan('${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i');
+SELECT a FROM seq_scan(['${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i']);
 ----
 db error: ERROR: permission denied for schema eisr_hidden
 
@@ -134,7 +134,7 @@ GRANT USAGE ON SCHEMA eisr_hidden TO eisr_vedernikoff;
 
 connection c_ved user=eisr_vedernikoff password=eisr_pw
 query
-SELECT a FROM seq_scan('${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i');
+SELECT a FROM seq_scan(['${__DATABASE__}', 'eisr_hidden', 'eisr_tucked_i']);
 ----
 a
 2
@@ -154,7 +154,7 @@ GRANT CONNECT ON DATABASE eisr_other_${__DATABASE__} TO eisr_vedernikoff;
 
 connection c_ved user=eisr_vedernikoff password=eisr_pw
 query
-SELECT a FROM seq_scan('eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i');
+SELECT a FROM seq_scan(['eisr_other_${__DATABASE__}', 'public', 'eisr_remote_i']);
 ----
 a
 1

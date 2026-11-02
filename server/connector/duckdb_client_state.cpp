@@ -120,7 +120,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                                                         ext)) {
         scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
       }
-      RequireSuperuserToSet(ctx, canonical, scope, new_value);
+      RequireSuperuserToSet(ctx, name, canonical, scope, new_value);
       const bool global = scope == duckdb::SetScope::GLOBAL;
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the

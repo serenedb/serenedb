@@ -22,7 +22,6 @@
 
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <memory>
 #include <optional>
 #include <string>
 
@@ -39,7 +38,7 @@ struct AclitemInputState final : InputState {
   explicit AclitemInputState(duckdb::ClientContext* context)
     : roles{auth::RolesOf(context)} {}
 
-  std::shared_ptr<const auth::RoleGraph> roles;
+  auth::RoleGraphPtr roles;
 };
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitAclitemInput(

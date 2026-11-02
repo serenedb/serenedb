@@ -21,7 +21,7 @@ statement error
 SET GLOBAL sdb_job_history_size = 1;
 ----
 db error: ERROR: permission denied to set parameter "sdb_job_history_size"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=rss_vedernikoff password=rss_pw
@@ -29,7 +29,7 @@ statement error
 SET GLOBAL fsync_mode = 'none';
 ----
 db error: ERROR: permission denied to set parameter "fsync_mode"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=rss_vedernikoff password=rss_pw
@@ -37,7 +37,7 @@ statement error
 RESET sdb_job_history_size;
 ----
 db error: ERROR: permission denied to set parameter "sdb_job_history_size"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 query
@@ -106,7 +106,7 @@ statement error
 SET lock_configuration = true;
 ----
 db error: ERROR: permission denied to set parameter "lock_configuration"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 statement ok

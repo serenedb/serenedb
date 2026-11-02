@@ -14,7 +14,7 @@ statement error
 SET GLOBAL threads = 2;
 ----
 db error: ERROR: permission denied to set parameter "threads"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -22,8 +22,8 @@ skipif pg-wire-extended
 statement error
 SET memory_limit = '1GB';
 ----
-db error: ERROR: permission denied to set parameter "max_memory"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+db error: ERROR: permission denied to set parameter "memory_limit"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -32,7 +32,7 @@ statement error
 SET lock_configuration = true;
 ----
 db error: ERROR: permission denied to set parameter "lock_configuration"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -41,7 +41,7 @@ statement error
 SELECT set_config('max_memory', '1GB', false);
 ----
 db error: ERROR: permission denied to set parameter "max_memory"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -68,7 +68,7 @@ statement error
 SET sdb_job_history_size = 10;
 ----
 db error: ERROR: permission denied to set parameter "sdb_job_history_size"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -77,7 +77,7 @@ statement error
 RESET GLOBAL threads;
 ----
 db error: ERROR: permission denied to set parameter "threads"
-DETAIL: Only roles with the SUPERUSER attribute may change server-wide parameters.
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -105,7 +105,7 @@ connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 ALTER ROLE esp_vedernikoff SET memory_limit = '1GB';
 ----
-db error: ERROR: permission denied to set parameter "max_memory"
+db error: ERROR: permission denied to set parameter "memory_limit"
 DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 

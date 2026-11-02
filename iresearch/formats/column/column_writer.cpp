@@ -169,19 +169,6 @@ bool VariantShreddingEnabled(int64_t minimum_size, uint64_t row_count) {
   return row_count >= static_cast<uint64_t>(minimum_size);
 }
 
-void EmitEmptyValidity(const duckdb::LogicalType& validity_type,
-                       uint64_t row_count, duckdb::DBConfig& cfg,
-                       std::vector<ColumnBlockMeta>& sink) {
-  ColumnBlockMeta m{duckdb::BaseStatistics::CreateEmpty(validity_type)};
-  m.tuple_count = row_count;
-  m.codec =
-    cfg
-      .TryGetCompressionFunction(duckdb::CompressionType::COMPRESSION_EMPTY,
-                                 validity_type.InternalType())
-      .get();
-  sink.push_back(std::move(m));
-}
-
 duckdb::CompressionType ForcedMethod(duckdb::DatabaseInstance& db,
                                      duckdb::CompressionType forced) {
   if (forced != duckdb::CompressionType::COMPRESSION_AUTO) {
@@ -199,6 +186,18 @@ bool Applies(duckdb::DatabaseInstance& db, duckdb::CompressionType method,
 }
 
 }  // namespace
+
+void EmitEmptyValidity(duckdb::DatabaseInstance& db, uint64_t rows,
+                       std::vector<ColumnBlockMeta>& sink) {
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  ColumnBlockMeta m{duckdb::BaseStatistics::CreateEmpty(type)};
+  m.tuple_count = rows;
+  m.codec = duckdb::DBConfig::GetConfig(db)
+              .TryGetCompressionFunction(
+                duckdb::CompressionType::COMPRESSION_EMPTY, type.InternalType())
+              .get();
+  sink.push_back(std::move(m));
+}
 
 duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
@@ -458,8 +457,7 @@ void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
     valid += duckdb::FlatVector::Validity(c.data).CountValid(c.count);
   }
   if (valid == row_count) {
-    EmitEmptyValidity(validity_type, row_count,
-                      duckdb::DBConfig::GetConfig(WriteCtx().Database()), sink);
+    EmitEmptyValidity(WriteCtx().Database(), row_count, sink);
     return;
   }
   duckdb::unique_ptr<duckdb::AnalyzeState> state;
@@ -693,9 +691,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
     return;
   }
   if (nulls_covered_by_data) {
-    EmitEmptyValidity(
-      duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY}, row_count,
-      duckdb::DBConfig::GetConfig(WriteCtx().Database()), meta.validity);
+    EmitEmptyValidity(WriteCtx().Database(), row_count, meta.validity);
     return;
   }
   SealValidity(chunks, row_count, meta.validity);

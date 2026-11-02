@@ -57,74 +57,32 @@ uint64_t BytesIn(const ColumnReader& column, uint64_t begin, uint64_t end) {
   return total;
 }
 
-uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept {
-  uint64_t bytes = 0;
-  for (const auto& block : blocks) {
-    bytes += block.byte_size;
-  }
-  return bytes;
+ReencodeKey KeyOf(const ColumnReader& column,
+                  const IndexFieldOptions& options) {
+  const auto column_options = options.GetColumnOptions(column.Id());
+  return {
+    .skip_validity = column_options.skip_validity,
+    .compression = column_options.compression,
+    .codec_params = options.CodecParams(column_options),
+    .row_group_size = options.row_group_size,
+  };
 }
-
-}  // namespace
-
-bool ReencodePays(const ReencodeEstimate& estimate) noexcept {
-  return estimate.codec_changed ||
-         absl::uint128{estimate.reencoded_bytes} * 100 <
-           absl::uint128{estimate.stored_bytes} *
-             (100 - kReencodeMinSavingsPercent);
-}
-
-uint64_t StoredBytes(const ColumnReader& column) {
-  uint64_t bytes = BlockBytes(column.DataBlocks());
-  if (const auto* validity = column.Validity()) {
-    bytes += StoredBytes(*validity);
-  }
-  if (const auto* child = column.Child()) {
-    bytes += StoredBytes(*child);
-  }
-  for (size_t i = 0; i != column.StructFieldCount(); ++i) {
-    bytes += StoredBytes(column.StructField(i));
-  }
-  return bytes;
-}
-
-bool ReencodeCache::Find(field_id column, const ReencodeKey& key,
-                         ReencodeEstimate& estimate) const {
-  absl::MutexLock lock{&_mutex};
-  const auto it = _entries.find(column);
-  if (it == _entries.end() || it->second.key != key) {
-    return false;
-  }
-  estimate = it->second.estimate;
-  return true;
-}
-
-void ReencodeCache::Store(field_id column, const ReencodeKey& key,
-                          const ReencodeEstimate& estimate) {
-  absl::MutexLock lock{&_mutex};
-  _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
-}
-
-namespace {
 
 ReencodeEstimate TrialReencode(
-  const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, size_t samples,
+  const ColReader& reader, const ColumnReader& column, const ReencodeKey& key,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  const auto column_options = options.GetColumnOptions(column.Id());
-  auto codec_params = options.CodecParams(column_options);
-  codec_params.tier = WriteTier::Merge;
+  SDB_ASSERT(!column.Type().IsNested() && column.RowCount() != 0);
   const uint64_t rows = column.RowCount();
-  const uint64_t group_rows = std::max<uint32_t>(1, options.row_group_size);
+  const uint64_t group_rows = std::max<uint32_t>(1, key.row_group_size);
   const uint64_t groups = (rows + group_rows - 1) / group_rows;
-  const uint64_t picks = std::min<uint64_t>(samples, groups);
+  const uint64_t picks = std::min<uint64_t>(kReencodeSampleRowGroups, groups);
 
   MemoryDirectory dir;
   ColWriter trial{dir, "copy_check", reader.Database(), WriteTier::Merge};
-  auto& writer = trial.OpenColumn(
-    column.Id(), column.Type(), column_options.skip_validity,
-    static_cast<uint32_t>(group_rows), column_options.compression,
-    /*hyperloglog=*/false, codec_params);
+  auto& writer =
+    trial.OpenColumn(column.Id(), column.Type(), key.skip_validity,
+                     static_cast<uint32_t>(group_rows), key.compression,
+                     /*hyperloglog=*/false, key.codec_params);
   if (dictionary) {
     writer.ShareLeafDictionary({}, std::move(dictionary), 1);
   }
@@ -158,7 +116,7 @@ ReencodeEstimate TrialReencode(
   };
   const auto stored = column.DataBlocks();
   estimate.codec_changed =
-    column_options.compression != duckdb::CompressionType::COMPRESSION_AUTO &&
+    key.compression != duckdb::CompressionType::COMPRESSION_AUTO &&
     absl::c_any_of(stored, encoded) &&
     absl::c_none_of(stored, [&](const ColumnBlockMeta& block) {
       return encoded(block) &&
@@ -171,38 +129,44 @@ ReencodeEstimate TrialReencode(
 
 }  // namespace
 
-std::optional<ReencodeEstimate> EstimateReencode(
-  const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, size_t samples) {
-  if (samples == 0 || column.Type().IsNested()) {
-    return std::nullopt;
+bool ReencodePays(const ReencodeEstimate& estimate) noexcept {
+  return estimate.codec_changed ||
+         absl::uint128{estimate.reencoded_bytes} * 100 <
+           absl::uint128{estimate.stored_bytes} *
+             (100 - kReencodeMinSavingsPercent);
+}
+
+bool ReencodeCache::Find(field_id column, const ReencodeKey& key,
+                         ReencodeEstimate& estimate) const {
+  absl::MutexLock lock{&_mutex};
+  const auto it = _entries.find(column);
+  if (it == _entries.end() || it->second.key != key) {
+    return false;
   }
-  SDB_ASSERT(column.RowCount() != 0);
-  const auto column_options = options.GetColumnOptions(column.Id());
-  auto codec_params = options.CodecParams(column_options);
-  codec_params.tier = WriteTier::Merge;
-  const ReencodeKey key{
-    .skip_validity = column_options.skip_validity,
-    .compression = column_options.compression,
-    .codec_params = codec_params,
-    .row_group_size = options.row_group_size,
-    .samples = samples,
-  };
-  auto& cache = reader.Reencodes();
-  if (ReencodeEstimate cached; cache.Find(column.Id(), key, cached)) {
-    return cached;
-  }
-  const auto estimate = TrialReencode(reader, column, options, samples, {});
-  cache.Store(column.Id(), key, estimate);
-  return estimate;
+  estimate = it->second.estimate;
+  return true;
+}
+
+void ReencodeCache::Store(field_id column, const ReencodeKey& key,
+                          const ReencodeEstimate& estimate) {
+  absl::MutexLock lock{&_mutex};
+  _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
+}
+
+ReencodeEstimate EstimateReencode(const ColReader& reader,
+                                  const ColumnReader& column,
+                                  const IndexFieldOptions& options) {
+  const auto key = KeyOf(column, options);
+  return reader.Reencodes().Estimate(column.Id(), key, [&] {
+    return TrialReencode(reader, column, key, nullptr);
+  });
 }
 
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  SDB_ASSERT(!column.Type().IsNested() && column.RowCount() != 0);
-  return TrialReencode(reader, column, options, kReencodeSampleRowGroups,
+  return TrialReencode(reader, column, KeyOf(column, options),
                        std::move(dictionary));
 }
 

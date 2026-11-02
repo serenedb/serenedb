@@ -29,18 +29,19 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/formats/column/col_copy_check.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "connector/functions/function_values.h"
 #include "connector/segment_rewrite/merge_target.h"
-#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 
 namespace sdb::connector {
@@ -123,30 +124,29 @@ void LoadColumns(duckdb::ClientContext& context, const MergeTarget& target,
   for (const auto& segment : snapshot) {
     segments.emplace_back(&segment);
   }
-  const search::CopyChecker checker{
-    target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
-  checker.Warm(segments);
-  for (const auto* segment : segments) {
-    const auto* reader = segment->GetColReader();
-    SDB_ASSERT(reader);
-    auto checks = search::CheckColumns(*segment, checker.Options());
-    absl::c_sort(checks, [](const auto& lhs, const auto& rhs) {
-      return lhs.column < rhs.column;
+  auto checks =
+    search::CheckColumns(duckdb::TaskScheduler::GetScheduler(context),
+                         target.FieldOptions(), segments);
+  absl::c_sort(checks, [](const auto& lhs, const auto& rhs) {
+    return std::tie(lhs.segment, lhs.column) <
+           std::tie(rhs.segment, rhs.column);
+  });
+  for (const auto& check : checks) {
+    const auto* segment = segments[check.segment];
+    const auto* column = segment->GetColReader()->Column(check.column);
+    SDB_ASSERT(column);
+    rows.emplace_back(ColumnRow{
+      .segment = segment->Meta().name,
+      .column = target.ColumnName(check.column),
+      .type = column->Type().ToString(),
+      .rows = column->RowCount(),
+      .bytes = check.estimate.stored_bytes,
+      .codecs = Codecs(*column),
+      .reencoded_bytes = check.checked
+                           ? std::optional{check.estimate.reencoded_bytes}
+                           : std::nullopt,
+      .reencode = irs::ReencodePays(check.estimate),
     });
-    for (const auto& check : checks) {
-      const auto* column = reader->Column(check.column);
-      SDB_ASSERT(column);
-      rows.emplace_back(ColumnRow{
-        .segment = segment->Meta().name,
-        .column = target.ColumnName(check.column),
-        .type = column->Type().ToString(),
-        .rows = check.rows,
-        .bytes = check.bytes,
-        .codecs = Codecs(*column),
-        .reencoded_bytes = check.reencoded_bytes,
-        .reencode = check.Reencode(),
-      });
-    }
   }
 }
 

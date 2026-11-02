@@ -25,8 +25,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <iresearch/formats/column/col_copy_check.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
@@ -34,16 +38,77 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "connector/column_id.h"
 #include "query/config.h"
-#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_policies.h"
 
 namespace sdb::search {
 namespace {
 
 constexpr uint64_t kOptimizeRowGroups = 4;
+
+struct EstimateWork {
+  const irs::ColReader* reader = nullptr;
+  const irs::ColumnReader* column = nullptr;
+  size_t check = 0;
+};
+
+class EstimateTask final : public duckdb::BaseExecutorTask {
+ public:
+  EstimateTask(duckdb::TaskExecutor& executor,
+               std::span<const EstimateWork> work,
+               std::span<irs::ReencodeEstimate> estimates,
+               std::atomic_size_t& next,
+               const irs::IndexFieldOptions& options) noexcept
+    : BaseExecutorTask{executor},
+      _work{work},
+      _estimates{estimates},
+      _next{&next},
+      _options{&options} {}
+
+  void ExecuteTask() final {
+    for (auto i = _next->fetch_add(1, std::memory_order_relaxed);
+         i < _work.size(); i = _next->fetch_add(1, std::memory_order_relaxed)) {
+      _estimates[i] =
+        irs::EstimateReencode(*_work[i].reader, *_work[i].column, *_options);
+    }
+  }
+
+ private:
+  std::span<const EstimateWork> _work;
+  std::span<irs::ReencodeEstimate> _estimates;
+  std::atomic_size_t* _next;
+  const irs::IndexFieldOptions* _options;
+};
+
+std::vector<irs::ReencodeEstimate> CheckRewrites(
+  const MergeRoundRequest& request,
+  std::span<const irs::SubReader* const> segments) {
+  SDB_ASSERT(request.scheduler && request.field_options);
+  std::vector<irs::ReencodeEstimate> rewrites(segments.size());
+  for (const auto& check :
+       CheckColumns(*request.scheduler, *request.field_options, segments)) {
+    const auto& column = check.estimate;
+    const bool saves = irs::ReencodePays({
+      .stored_bytes = column.stored_bytes,
+      .reencoded_bytes = column.reencoded_bytes,
+    });
+    auto& rewrite = rewrites[check.segment];
+    rewrite.stored_bytes += column.stored_bytes;
+    rewrite.reencoded_bytes +=
+      saves ? column.reencoded_bytes : column.stored_bytes;
+    rewrite.codec_changed |= column.codec_changed;
+  }
+  return rewrites;
+}
+
+uint64_t SavedPercent(const irs::ReencodeEstimate& rewrite) {
+  return static_cast<uint64_t>(
+    absl::uint128{rewrite.stored_bytes - rewrite.reencoded_bytes} * 100 /
+    std::max<uint64_t>(rewrite.stored_bytes, 1));
+}
 
 std::string Segments(uint64_t count) {
   return absl::StrCat(count, count == 1 ? " segment" : " segments");
@@ -66,11 +131,7 @@ PlannedMerge DescribeMerge(std::string reason,
     const auto* col_reader = segment->GetColReader();
     SDB_ASSERT(col_reader);
     for (const auto& column : col_reader->Columns()) {
-      uint64_t bytes = 0;
-      for (const auto& block : column->DataBlocks()) {
-        bytes += block.byte_size;
-      }
-      column_bytes[column->Id()] += bytes;
+      column_bytes[column->Id()] += irs::StoredBytes(*column);
       if (segment->Ann(column->Id())) {
         ann.insert(column->Id());
       }
@@ -127,30 +188,29 @@ void PlanBackground(const irs::IndexReader& reader,
   }
 }
 
-void PlaceAlone(const irs::SubReader& segment, const CopyChecker* checker,
-                MergeRoundPlan& plan) {
-  if (!checker) {
+void PlaceAlone(const irs::SubReader& segment,
+                const irs::ReencodeEstimate* rewrite, MergeRoundPlan& plan) {
+  if (!rewrite) {
     plan.skipped.emplace_back(SkippedSegment{
       .name = segment.Meta().name,
       .reason = "alone in its group without deletes",
     });
     return;
   }
-  const auto check = checker->Check(segment);
-  if (!check.Rewrite()) {
+  if (!irs::ReencodePays(*rewrite)) {
     plan.skipped.emplace_back(SkippedSegment{
       .name = segment.Meta().name,
       .reason = absl::StrCat(
         "alone in its group without deletes, re-encoding would save ",
-        check.SavedPercent(), "%"),
+        SavedPercent(*rewrite), "%"),
     });
     return;
   }
   const irs::SubReader* inputs[] = {&segment};
   auto& merge = plan.merges.emplace_back(DescribeMerge(
-    check.codec_changed
+    rewrite->codec_changed
       ? std::string{"a declared column codec changed"}
-      : absl::StrCat("re-encoding saves ", check.SavedPercent(), "%"),
+      : absl::StrCat("re-encoding saves ", SavedPercent(*rewrite), "%"),
     inputs));
   merge.lone = irs::LoneSegment::Rewrite;
 }
@@ -197,8 +257,8 @@ void PlaceInSteps(std::span<const irs::SubReader* const> group,
 }
 
 void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
-                   std::string_view reason, size_t inputs_max,
-                   const CopyChecker* checker, MergeRoundPlan& plan) {
+                   std::string_view reason, const MergeRoundRequest& request,
+                   MergeRoundPlan& plan) {
   const absl::uint128 total = reader.live_docs_count();
   std::vector<irs::Compaction> buckets(target);
   size_t group = 0;
@@ -221,25 +281,29 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
   const auto alone = [](const irs::Compaction& bucket) {
     return bucket.size() == 1 && !irs::HasRemovals(bucket.front()->Meta());
   };
-  if (checker) {
+  const bool check = request.mode == MergeMode::Optimize;
+  std::vector<irs::ReencodeEstimate> rewrites;
+  if (check) {
     std::vector<const irs::SubReader*> lone;
     for (const auto& bucket : buckets) {
       if (alone(bucket)) {
         lone.emplace_back(bucket.front());
       }
     }
-    checker->Warm(lone);
+    rewrites = CheckRewrites(request, lone);
   }
+  size_t next_lone = 0;
   for (const auto& bucket : buckets) {
     if (bucket.empty()) {
       continue;
     }
     if (alone(bucket)) {
-      PlaceAlone(*bucket.front(), checker, plan);
+      PlaceAlone(*bucket.front(), check ? &rewrites[next_lone++] : nullptr,
+                 plan);
       continue;
     }
-    if (bucket.size() > inputs_max) {
-      PlaceInSteps(bucket, inputs_max, reason, plan);
+    if (bucket.size() > request.inputs_max) {
+      PlaceInSteps(bucket, request.inputs_max, reason, plan);
       continue;
     }
     plan.merges.emplace_back(DescribeMerge(std::string{reason}, bucket));
@@ -254,7 +318,7 @@ void PlanCompact(const irs::IndexReader& reader,
     return;
   }
   PlaceInGroups(reader, target, absl::StrCat("compact to ", Segments(target)),
-                request.inputs_max, nullptr, plan);
+                request, plan);
 }
 
 void PlanOptimize(const irs::IndexReader& reader,
@@ -269,7 +333,7 @@ void PlanOptimize(const irs::IndexReader& reader,
   target = static_cast<uint32_t>(
     std::min<uint64_t>(target, std::max<size_t>(1, reader.size())));
   PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
-                request.inputs_max, request.copy_check, plan);
+                request, plan);
 }
 
 void PlanSegments(const irs::IndexReader& reader,
@@ -294,6 +358,54 @@ void PlanSegments(const irs::IndexReader& reader,
 }
 
 }  // namespace
+
+std::vector<ColumnCopyCheck> CheckColumns(
+  duckdb::TaskScheduler& scheduler, const irs::IndexFieldOptions& options,
+  std::span<const irs::SubReader* const> segments) {
+  std::vector<ColumnCopyCheck> checks;
+  std::vector<EstimateWork> work;
+  for (size_t segment = 0; segment != segments.size(); ++segment) {
+    const auto* reader = segments[segment]->GetColReader();
+    SDB_ASSERT(reader);
+    for (const auto& column : reader->Columns()) {
+      const auto bytes = irs::StoredBytes(*column);
+      const bool checked = !column->Type().IsNested();
+      if (checked) {
+        work.emplace_back(reader, column.get(), checks.size());
+      }
+      checks.emplace_back(segment, column->Id(),
+                          irs::ReencodeEstimate{
+                            .stored_bytes = bytes,
+                            .reencoded_bytes = bytes,
+                          },
+                          checked);
+    }
+  }
+  absl::c_stable_sort(work,
+                      [&](const EstimateWork& lhs, const EstimateWork& rhs) {
+                        return checks[lhs.check].estimate.stored_bytes >
+                               checks[rhs.check].estimate.stored_bytes;
+                      });
+  std::vector<irs::ReencodeEstimate> estimates(work.size());
+  std::atomic_size_t next{0};
+  duckdb::TaskExecutor executor{scheduler};
+  const auto tasks = std::min<size_t>(
+    work.size(), std::max<size_t>(1, scheduler.NumberOfThreads()));
+  for (size_t task = 0; task != tasks; ++task) {
+    executor.ScheduleTask(duckdb::make_uniq<EstimateTask>(
+      executor, work, estimates, next, options));
+  }
+  executor.WorkOnTasks();
+  for (size_t i = 0; i != work.size(); ++i) {
+    const auto& sampled = estimates[i];
+    auto& estimate = checks[work[i].check].estimate;
+    estimate.reencoded_bytes = static_cast<uint64_t>(
+      absl::uint128{estimate.stored_bytes} * sampled.reencoded_bytes /
+      std::max<uint64_t>(1, sampled.stored_bytes));
+    estimate.codec_changed = sampled.codec_changed;
+  }
+  return checks;
+}
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment) {
   PlannedSegment result{

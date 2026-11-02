@@ -27,10 +27,8 @@
 #include <cstddef>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
-#include <iresearch/formats/column/col_block_copy.hpp>
-#include <iresearch/formats/column/col_copy_check.hpp>
-#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
@@ -1436,12 +1434,14 @@ TEST_F(ColumnCopyTest, CopiedBlocksNamingAMissingDictionaryAreRejected) {
   const auto* cs = corrupted->GetColReader();
   ASSERT_NE(cs, nullptr);
   irs::MemoryDirectory out_dir;
-  irs::ColFileWriter sink{out_dir.create("copy")};
+  irs::ColWriter writer{out_dir, "copy",
+                        irs::DuckDBEngine::Instance().instance(),
+                        irs::WriteTier::Merge};
+  writer.PlanParts(kText, 1);
   constexpr uint16_t kRemapped[] = {2};
   const auto copy = [&] {
-    irs::ColumnMeta copied;
-    irs::CopyColumnBlocks(*cs, *cs->Column(kText), true, kRemapped, sink,
-                          copied, [] { return true; });
+    writer.CopyColumnPart(kText, 0, *cs, *cs->Column(kText), true, kRemapped,
+                          [] { return true; });
   };
 #ifdef SDB_DEV
   GTEST_FLAG_SET(death_test_style, "threadsafe");

@@ -25,17 +25,24 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstring>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <iterator>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -154,6 +161,66 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
                   SerializeNormRegion(obj, meta.regions[i]);
                 });
               });
+}
+
+bool PatchDictionary(std::string_view block,
+                     std::span<const uint16_t> dictionaries,
+                     std::array<char, sizeof(codecs::Header)>& head) {
+  const auto header = codecs::Header::Parse(
+    reinterpret_cast<duckdb::const_data_ptr_t>(block.data()), block.size());
+  if (header.flags != codecs::FrameDictionary::Trained) {
+    return false;
+  }
+  SDB_ENSURE(header.dictionary <= dictionaries.size(),
+             "col codec: missing trained dictionary ", header.dictionary);
+  const uint16_t dictionary = dictionaries[header.dictionary - 1];
+  std::memcpy(head.data(), block.data(), head.size());
+  std::memcpy(head.data() + offsetof(codecs::Header, dictionary), &dictionary,
+              sizeof(dictionary));
+  return true;
+}
+
+bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
+                std::span<const uint16_t> dictionaries, ColFileWriter& sink,
+                std::vector<ColumnBlockMeta>& out,
+                absl::FunctionRef<bool()> progress) {
+  std::string bytes;
+  for (const auto& block : blocks) {
+    if (!progress()) {
+      return false;
+    }
+    auto& copy = out.emplace_back(ColumnBlockMeta{block.statistics.Copy()});
+    copy.tuple_count = block.tuple_count;
+    copy.byte_size = block.byte_size;
+    copy.codec = block.codec;
+    if (block.byte_size == 0) {
+      continue;
+    }
+    std::string_view view;
+    if (const auto* stable =
+          ctx.TryReadStable(block.file_offset, block.byte_size)) {
+      view = {reinterpret_cast<const char*>(stable), block.byte_size};
+    } else {
+      bytes.resize(block.byte_size);
+      ctx.Read(block.file_offset,
+               reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
+               block.byte_size);
+      view = bytes;
+    }
+    std::array<char, sizeof(codecs::Header)> head{};
+    if (!dictionaries.empty() &&
+        duckdb::IsSereneDBCompressionType(block.codec->type) &&
+        PatchDictionary(view, dictionaries, head)) {
+      const std::array<std::string_view, 2> parts{
+        std::string_view{head.data(), head.size()},
+        view.substr(head.size()),
+      };
+      copy.file_offset = sink.AppendAligned(parts);
+      continue;
+    }
+    copy.file_offset = sink.AppendAligned({&view, 1});
+  }
+  return true;
 }
 
 }  // namespace
@@ -335,8 +402,25 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                absl::FunctionRef<bool()> progress) {
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
-  return CopyColumnBlocks(reader, column, validity, dictionaries, *_file,
-                          slot.meta, progress);
+  auto& meta = slot.meta;
+  meta.id = column.Id();
+  meta.type = column.Type();
+  ReadContext ctx{reader};
+  if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, *_file, meta.data,
+                  progress)) {
+    return false;
+  }
+  if (!validity) {
+    return true;
+  }
+  if (const auto* stored = column.Validity()) {
+    return CopyBlocks(ctx, stored->DataBlocks(), {}, *_file, meta.validity,
+                      progress);
+  }
+  for (const auto& block : meta.data) {
+    EmitEmptyValidity(*_db, block.tuple_count, meta.validity);
+  }
+  return true;
 }
 
 uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {

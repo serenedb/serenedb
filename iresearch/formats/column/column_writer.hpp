@@ -46,6 +46,9 @@ bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
                             duckdb::CompressionType forced,
                             const ColCodecParams& params);
 
+void EmitEmptyValidity(duckdb::DatabaseInstance& db, uint64_t rows,
+                       std::vector<ColumnBlockMeta>& sink);
+
 class ColumnWriter final {
  public:
   ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,

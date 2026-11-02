@@ -312,6 +312,25 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
   return meta;
 }
 
+uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept {
+  uint64_t bytes = 0;
+  for (const auto& block : blocks) {
+    bytes += block.byte_size;
+  }
+  return bytes;
+}
+
+uint64_t StoredBytes(const ColumnReader& column) {
+  uint64_t bytes = BlockBytes(column.DataBlocks());
+  if (const auto* validity = column.Validity()) {
+    bytes += StoredBytes(*validity);
+  }
+  for (const auto& child : column.Children()) {
+    bytes += StoredBytes(*child);
+  }
+  return bytes;
+}
+
 ColumnReader::ScanState::ScanState() = default;
 ColumnReader::ScanState::ScanState(ScanState&&) = default;
 ColumnReader::ScanState& ColumnReader::ScanState::operator=(ScanState&&) =

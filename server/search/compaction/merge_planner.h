@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/formats/column/col_copy_check.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
@@ -33,8 +37,6 @@
 #include "search/maintenance.h"
 
 namespace sdb::search {
-
-class CopyChecker;
 
 enum class MergeMode : uint8_t {
   Background = 0,
@@ -91,8 +93,20 @@ struct MergeRoundRequest {
   uint32_t row_group_size = 0;
   size_t inputs_max = std::numeric_limits<size_t>::max();
   std::span<const std::string> segments;
-  const CopyChecker* copy_check = nullptr;
+  const irs::IndexFieldOptions* field_options = nullptr;
+  duckdb::TaskScheduler* scheduler = nullptr;
 };
+
+struct ColumnCopyCheck {
+  size_t segment = 0;
+  irs::field_id column = irs::field_limits::invalid();
+  irs::ReencodeEstimate estimate;
+  bool checked = false;
+};
+
+std::vector<ColumnCopyCheck> CheckColumns(
+  duckdb::TaskScheduler& scheduler, const irs::IndexFieldOptions& options,
+  std::span<const irs::SubReader* const> segments);
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment);
 

@@ -30,7 +30,6 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
@@ -85,7 +84,8 @@ class MergeTarget {
 
   search::MergeRoundPlan Plan(const irs::IndexReader& snapshot,
                               const MergeRequest& request,
-                              const search::CopyChecker& checker) const;
+                              const irs::IndexFieldOptions& field_options,
+                              duckdb::TaskScheduler& scheduler) const;
   void Compact(const search::PlannedMerge& planned,
                const irs::MergeProgress& progress,
                const irs::IndexFieldOptions* field_options,
@@ -125,7 +125,7 @@ class ManualCompaction {
 
   const MergeTarget& _target;
   search::CompactionOptions _options;
-  search::CopyChecker _checker;
+  duckdb::TaskScheduler* _scheduler;
   MergeRequest _request;
   search::MergeRoundPlan _plan;
   size_t _next = 0;

@@ -27,6 +27,7 @@
 #include <array>
 #include <bit>
 #include <cstddef>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
@@ -38,6 +39,7 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/function/compression_function.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -48,7 +50,6 @@
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
-#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
@@ -346,6 +347,24 @@ uint32_t OrderedStep(size_t inputs) {
     std::clamp<uint64_t>(kOrderedRowsInFlight / std::max<size_t>(inputs, 1),
                          kOrderedStepMin, STANDARD_VECTOR_SIZE);
   return static_cast<uint32_t>(std::bit_floor(rows));
+}
+
+bool BlocksRelocatable(const ColumnReader& column) {
+  if (column.Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return true;
+  }
+  return absl::c_all_of(column.DataBlocks(), [](const ColumnBlockMeta& block) {
+    switch (const auto type = block.codec->type) {
+      case duckdb::CompressionType::COMPRESSION_CONSTANT:
+      case duckdb::CompressionType::COMPRESSION_EMPTY:
+      case duckdb::CompressionType::COMPRESSION_DICTIONARY:
+      case duckdb::CompressionType::COMPRESSION_FSST:
+      case duckdb::CompressionType::COMPRESSION_DICT_FSST:
+        return true;
+      default:
+        return duckdb::IsSereneDBCompressionType(type);
+    }
+  });
 }
 
 }  // namespace
@@ -1054,7 +1073,7 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
     dictionary
       ? EstimateReencode(*source.col_reader, col, *shared.field_options,
                          dictionary)
-      : *EstimateReencode(*source.col_reader, col, *shared.field_options);
+      : EstimateReencode(*source.col_reader, col, *shared.field_options);
   if (ReencodePays(estimate)) {
     return MergeRange(column, part, begin, end, output, progress);
   }

@@ -250,6 +250,9 @@ class ColumnReader {
     SDB_ASSERT(i < _children.size());
     return *_children[i];
   }
+  std::span<const std::unique_ptr<ColumnReader>> Children() const noexcept {
+    return _children;
+  }
 
   // Zonemap for row group `rg`, used by pushed table-filter pruning.
   const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
@@ -466,5 +469,9 @@ class ColumnReader {
   duckdb::ScanVectorType GetVectorScanType(ScanState& s, duckdb::idx_t count,
                                            duckdb::Vector& result) const;
 };
+
+uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept;
+
+uint64_t StoredBytes(const ColumnReader& column);
 
 }  // namespace irs

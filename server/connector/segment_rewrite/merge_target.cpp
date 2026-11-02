@@ -204,7 +204,8 @@ std::string MergeTarget::ColumnName(irs::field_id id) const {
 
 search::MergeRoundPlan MergeTarget::Plan(
   const irs::IndexReader& snapshot, const MergeRequest& request,
-  const search::CopyChecker& checker) const {
+  const irs::IndexFieldOptions& field_options,
+  duckdb::TaskScheduler& scheduler) const {
   return search::PlanMergeRound(
     snapshot,
     search::MergeRoundRequest{
@@ -218,7 +219,8 @@ search::MergeRoundPlan MergeTarget::Plan(
       .row_group_size = _options->row_group_size,
       .inputs_max = _store->MergeInputsMax(),
       .segments = request.segments,
-      .copy_check = &checker,
+      .field_options = &field_options,
+      .scheduler = &scheduler,
     });
 }
 
@@ -300,7 +302,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
                                    duckdb::TaskScheduler& scheduler)
   : _target{target},
     _options{target.PinOptions()},
-    _checker{*_options.field_options, scheduler},
+    _scheduler{&scheduler},
     _request{std::move(request)} {
   _target.Publish();
   Plan();
@@ -311,7 +313,8 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
 }
 
 void ManualCompaction::Plan() {
-  _plan = _target.Plan(_target.Snapshot(), _request, _checker);
+  _plan = _target.Plan(_target.Snapshot(), _request, *_options.field_options,
+                       *_scheduler);
   _next = 0;
 }
 

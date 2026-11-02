@@ -25,6 +25,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
@@ -34,7 +35,6 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
-#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -53,6 +53,8 @@ namespace irs {
 class AnnWriter;
 class IdxWriter;
 struct AnnBuildEnv;
+
+inline constexpr size_t kMaxColumnDictionaries = 8;
 
 class ColWriter final {
  public:

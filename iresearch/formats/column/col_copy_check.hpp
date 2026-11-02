@@ -26,7 +26,6 @@
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <memory>
-#include <optional>
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -50,9 +49,6 @@ struct ReencodeEstimate {
   uint64_t stored_bytes = 0;
   uint64_t reencoded_bytes = 0;
   bool codec_changed = false;
-
-  friend bool operator==(const ReencodeEstimate&,
-                         const ReencodeEstimate&) = default;
 };
 
 bool ReencodePays(const ReencodeEstimate& estimate) noexcept;
@@ -63,17 +59,22 @@ struct ReencodeKey {
     duckdb::CompressionType::COMPRESSION_AUTO;
   ColCodecParams codec_params;
   uint32_t row_group_size = 0;
-  size_t samples = 0;
 
   friend bool operator==(const ReencodeKey&, const ReencodeKey&) = default;
 };
 
 class ReencodeCache {
  public:
-  bool Find(field_id column, const ReencodeKey& key,
-            ReencodeEstimate& estimate) const;
-  void Store(field_id column, const ReencodeKey& key,
-             const ReencodeEstimate& estimate);
+  template<typename Trial>
+  ReencodeEstimate Estimate(field_id column, const ReencodeKey& key,
+                            Trial&& trial) {
+    if (ReencodeEstimate cached; Find(column, key, cached)) {
+      return cached;
+    }
+    const ReencodeEstimate estimate = trial();
+    Store(column, key, estimate);
+    return estimate;
+  }
 
  private:
   struct Entry {
@@ -81,15 +82,18 @@ class ReencodeCache {
     ReencodeEstimate estimate;
   };
 
+  bool Find(field_id column, const ReencodeKey& key,
+            ReencodeEstimate& estimate) const;
+  void Store(field_id column, const ReencodeKey& key,
+             const ReencodeEstimate& estimate);
+
   mutable absl::Mutex _mutex;
   irs::containers::FlatHashMap<field_id, Entry> _entries;
 };
 
-uint64_t StoredBytes(const ColumnReader& column);
-
-std::optional<ReencodeEstimate> EstimateReencode(
-  const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, size_t samples = kReencodeSampleRowGroups);
+ReencodeEstimate EstimateReencode(const ColReader& reader,
+                                  const ColumnReader& column,
+                                  const IndexFieldOptions& options);
 
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,

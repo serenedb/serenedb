@@ -44,7 +44,6 @@
 #include "connector/functions/function_values.h"
 #include "connector/segment_rewrite/logical_segment_rewrite.h"
 #include "connector/segment_rewrite/merge_target.h"
-#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 
 namespace sdb::connector {
@@ -152,9 +151,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     .exact_target = target_segments != 0,
     .segments = segments,
   };
-  const search::CopyChecker checker{
-    target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
-  auto plan = target.Plan(snapshot, request, checker);
+  auto plan = target.Plan(snapshot, request, target.FieldOptions(),
+                          duckdb::TaskScheduler::GetScheduler(context));
   auto job = std::make_shared<SegmentRewriteJob>(
     SegmentRewriteJob{.target = std::move(target),
                       .request = std::move(request),

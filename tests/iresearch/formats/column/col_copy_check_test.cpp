@@ -160,9 +160,8 @@ class ColCopyCheckTest : public ::testing::Test {
   }
 
   std::optional<irs::ReencodeEstimate> Estimate(
-    irs::field_id id, const irs::IndexFieldOptions& options,
-    size_t samples = irs::kReencodeSampleRowGroups) const {
-    return irs::EstimateReencode(*_reader, Column(id), options, samples);
+    irs::field_id id, const irs::IndexFieldOptions& options) const {
+    return irs::EstimateReencode(*_reader, Column(id), options);
   }
 
   irs::MemoryDirectory _dir;
@@ -256,40 +255,42 @@ TEST_F(ColCopyCheckTest, SampledRowsNeedNotLineUpWithStoredBlocks) {
   EXPECT_LT(estimate->stored_bytes, irs::StoredBytes(Column(kText)));
 }
 
-TEST_F(ColCopyCheckTest, NestedColumnsAndNoSamplesAreNotChecked) {
+TEST_F(ColCopyCheckTest, StoredBytesOfAListCountItsElementsAndItsEnds) {
   Write({.list = true});
-  const auto options = AutoOptions();
-  EXPECT_FALSE(Estimate(kList, options));
-  EXPECT_GT(irs::StoredBytes(Column(kList)), 0U);
-  EXPECT_FALSE(Estimate(kText, options, /*samples=*/0));
+  const auto& list = Column(kList);
+  const auto children = list.Children();
+  ASSERT_EQ(2, children.size());
+  const auto& elements = *children[0];
+  const auto& ends = *children[1];
+  ASSERT_EQ(duckdb::LogicalTypeId::UBIGINT, ends.Type().id());
+  EXPECT_GT(irs::StoredBytes(ends), 0U);
+  const auto* validity = list.Validity();
+  EXPECT_EQ(irs::BlockBytes(list.DataBlocks()) +
+              (validity ? irs::StoredBytes(*validity) : 0) +
+              irs::StoredBytes(elements) + irs::StoredBytes(ends),
+            irs::StoredBytes(list));
 }
 
-TEST_F(ColCopyCheckTest, EstimatesAreCachedPerOptions) {
+TEST_F(ColCopyCheckTest, CachedEstimatesFollowChangedOptions) {
   Write({});
-  const auto options = AutoOptions();
-  const auto first = Estimate(kNumber, options);
+  const auto automatic = AutoOptions();
+  const auto first = Estimate(kText, automatic);
   ASSERT_TRUE(first);
-  irs::ReencodeKey key{
-    .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Merge},
-    .row_group_size = kRowGroup,
-    .samples = irs::kReencodeSampleRowGroups,
-  };
-  irs::ReencodeEstimate cached;
-  EXPECT_TRUE(_reader->Reencodes().Find(kNumber, key, cached));
-  EXPECT_EQ(*first, cached);
-  EXPECT_FALSE(_reader->Reencodes().Find(kText, key, cached));
+  EXPECT_FALSE(first->codec_changed);
 
-  const irs::ReencodeEstimate planted{.stored_bytes = 1, .reencoded_bytes = 2};
-  _reader->Reencodes().Store(kNumber, key, planted);
-  EXPECT_EQ(planted, Estimate(kNumber, options));
+  const auto declared = Estimate(kText, UncompressedText());
+  ASSERT_TRUE(declared);
+  EXPECT_TRUE(declared->codec_changed);
 
-  key.samples = 1;
-  EXPECT_FALSE(_reader->Reencodes().Find(kNumber, key, cached));
-  const auto single = Estimate(kNumber, options, /*samples=*/1);
-  ASSERT_TRUE(single);
-  EXPECT_NE(planted, *single);
-  EXPECT_TRUE(_reader->Reencodes().Find(kNumber, key, cached));
-  EXPECT_EQ(*single, cached);
+  const auto regrouped = Estimate(kText, AutoOptions(3 * kRowGroup / 2));
+  ASSERT_TRUE(regrouped);
+  EXPECT_NE(first->stored_bytes, regrouped->stored_bytes);
+
+  const auto again = Estimate(kText, automatic);
+  ASSERT_TRUE(again);
+  EXPECT_FALSE(again->codec_changed);
+  EXPECT_EQ(first->stored_bytes, again->stored_bytes);
+  EXPECT_EQ(first->reencoded_bytes, again->reencoded_bytes);
 }
 
 }  // namespace

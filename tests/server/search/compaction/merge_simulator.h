@@ -23,6 +23,7 @@
 #include <absl/time/time.h>
 
 #include <cstdint>
+#include <functional>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <span>
@@ -62,8 +63,12 @@ struct SimulatedFlush {
   RowIdRange rowids;
 };
 
+using MergePicker = std::function<irs::MergeGroups(
+  const irs::IndexReader& index, const irs::CompactingSegments& taken,
+  size_t wanted)>;
+
 struct MergeSimulation {
-  irs::CompactionPolicy policy;
+  MergePicker pick;
   size_t threads = 1;
   double bytes_per_second = double{uint64_t{16} << 20};
 };

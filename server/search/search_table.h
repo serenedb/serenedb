@@ -109,14 +109,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
-  void MarkDropped() noexcept {
-    if (_writer) {
-      _dropped.store(true, std::memory_order_release);
-    }
-  }
-  bool Retired() const noexcept {
-    return _dropped.load(std::memory_order_acquire) || _directory->Detached();
-  }
   std::filesystem::path Path() const {
     return _directory->StoragePath(GetTableId());
   }
@@ -179,23 +171,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   void StartTasks();
 
   // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
-  // inserts, RunMergeAsync merges reserved segments, CleanupUnsafe reclaims
-  // unreferenced files.
+  // inserts, CleanupUnsafe reclaims unreferenced files.
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
-  std::vector<irs::MergeTicket> ReserveMerges(auto&& planner, bool& busy) {
-    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
-                                  busy);
-  }
-  yaclib::Future<MergeResult> RunMergeAsync(
-    irs::MergeTicket ticket, const irs::MergeProgress& progress,
-    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    const irs::PipelineMergeExecutor& executor) {
-    const auto begin = std::chrono::steady_clock::now();
-    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
-                                               progress, env, executor));
-  }
   ResultWithTime CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
@@ -313,7 +292,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   duckdb::idx_t _db_id;
   duckdb::idx_t _table_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _is_new;
   bool _in_memory;
   bool _read_only;
@@ -321,12 +299,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   irs::containers::FlatHashSet<irs::field_id> _table_columns;
-  std::atomic<bool> _dropped{false};
   mutable absl::Mutex _layout_mutex;
   catalog::CompressionByColumn _compression ABSL_GUARDED_BY(_layout_mutex);
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
-  std::unique_ptr<irs::Directory> _dir;
-  std::shared_ptr<irs::IndexWriter> _writer;
   irs::DirectoryReader _reader;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;

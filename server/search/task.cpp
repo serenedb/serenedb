@@ -49,7 +49,6 @@
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_planner.h"
-#include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -86,6 +85,46 @@ Clock::duration ToDuration(size_t msec) noexcept {
 
 bool ShouldStop() noexcept {
   return lifecycle::IsStopping() || GetSearchEngine().IsStopping();
+}
+
+// Per-storage source of the merge's field options, pinned for the merge's
+// lifetime -- the only part of the background loops that differs by storage
+// type (see the PinCompactionOptions overloads below).
+struct CompactionOptions {
+  bool alive = false;
+  // Pins the options for the whole merge.
+  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
+  const irs::IndexFieldOptions* field_options = nullptr;
+};
+
+CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
+  // Cloned for this merge: the merge encodes against what it took for its
+  // whole length, and an ALTER writes a new configuration rather than mutating
+  // this one, while a DROP destroys the bound index but not this clone.
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
+    if (attached->oid != idx.GetDatabaseId()) {
+      continue;
+    }
+    const auto entry =
+      attached->GetCatalog()
+        .Cast<catalog::SereneDBCatalog>()
+        .FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
+    if (!entry) {
+      break;
+    }
+    std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
+    const auto* raw = options.get();
+    return {
+      .alive = true, .keepalive = std::move(options), .field_options = raw};
+  }
+  return {};
+}
+
+CompactionOptions PinCompactionOptions(SearchTable& table) {
+  auto options = table.CompactionConfig();
+  const auto* raw = options.get();
+  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
 template<typename Storage>
@@ -131,7 +170,7 @@ template<typename Storage>
 class StorageMergeJob final : public MergeJob {
  public:
   StorageMergeJob(std::shared_ptr<Storage> storage,
-                  irs::MergeTicket ticket) noexcept
+                  irs::IndexWriter::MergeTicket ticket) noexcept
     : _storage{std::move(storage)}, _ticket{std::move(ticket)} {}
 
   irs::CompactionView Candidates() const noexcept final {
@@ -175,10 +214,10 @@ class StorageMergeJob final : public MergeJob {
     auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
                                                    opts.field_options,
                                                    &AnnBuildEnv(), executor);
-    if (!merged.res.ok()) {
+    if (!merged.error.empty()) {
       SDB_WARN(SEARCH, "error after running for ", merged.time_ms,
                "ms while compacting Search index '", _storage->GetId(),
-               "': ", merged.res.message());
+               "': ", merged.error);
       co_return merged;
     }
     SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
@@ -191,7 +230,7 @@ class StorageMergeJob final : public MergeJob {
 
  private:
   std::shared_ptr<Storage> _storage;
-  irs::MergeTicket _ticket;
+  irs::IndexWriter::MergeTicket _ticket;
 };
 
 template<typename Storage>
@@ -205,12 +244,11 @@ bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   if (wanted == 0) {
     return !blocked.empty();
   }
-  const auto policy =
-    MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
   const auto planner = [&](const irs::IndexReader& index,
                            const irs::CompactingSegments& reserved,
                            irs::MergeGroups& groups) {
-    groups = PickMerges(policy, index, reserved, blocked, wanted);
+    groups = PickMerges(idx->GetTasksSettings(), idx->MergeInputsMax(), index,
+                        reserved, blocked, wanted);
   };
   bool busy = false;
   auto tickets = idx->ReserveMerges(planner, busy);

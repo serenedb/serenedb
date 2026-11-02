@@ -78,25 +78,25 @@ MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept {
   return estimate;
 }
 
-MergeScheduler::MergeScheduler(yaclib::IExecutor& executor, Options options)
-  : _executor{executor}, _options{std::move(options)} {}
+MergeScheduler::MergeScheduler(yaclib::IExecutor& executor, size_t threads)
+  : _executor{executor}, _max_threads{threads} {}
 
 MergeScheduler::~MergeScheduler() { Stop(); }
 
 size_t MergeScheduler::BigThreads() const noexcept {
-  return _options.threads > 1 ? _options.threads - 1 : 1;
+  return _max_threads > 1 ? _max_threads - 1 : 1;
 }
 
 size_t MergeScheduler::RelationCap() const noexcept {
-  return std::max<size_t>(1, _options.threads / 2);
+  return std::max<size_t>(1, _max_threads / 2);
 }
 
 size_t MergeScheduler::GrantBigThreads(size_t wanted) {
-  if (_big >= BigThreads() || _threads >= _options.threads) {
+  if (_big >= BigThreads() || _threads >= _max_threads) {
     return 0;
   }
   const auto granted =
-    std::min({wanted, BigThreads() - _big, _options.threads - _threads});
+    std::min({wanted, BigThreads() - _big, _max_threads - _threads});
   _big += granted;
   _threads += granted;
   return granted;
@@ -131,9 +131,6 @@ void MergeScheduler::StopIf(Pred pred) {
 }
 
 void MergeScheduler::UpdateGauges() const {
-  if (!_options.gauges) {
-    return;
-  }
   metrics::Set(metrics::Gauge::CompactionPending,
                static_cast<int64_t>(_queue.size()));
   metrics::Set(metrics::Gauge::CompactionThreads,
@@ -148,9 +145,9 @@ bool MergeScheduler::NoneRunningFor(const Relation* relation) {
 
 bool MergeScheduler::Admits(const Entry& entry) const {
   if (entry.estimate.lane == MergeLane::Small) {
-    return _threads < _options.threads || _small == 0;
+    return _threads < _max_threads || _small == 0;
   }
-  return _big < BigThreads() && _threads < _options.threads &&
+  return _big < BigThreads() && _threads < _max_threads &&
          entry.relation->running_big < RelationCap();
 }
 
@@ -377,7 +374,7 @@ void MergeScheduler::Dispatch(std::vector<Entry*>& started, Queue& stale) {
   }
   for (auto* entry : started) {
     if (entry->estimate.lane == MergeLane::Big) {
-      entry->helpers = GrantBigThreads(_options.threads / 2);
+      entry->helpers = GrantBigThreads(_max_threads / 2);
     }
   }
 }

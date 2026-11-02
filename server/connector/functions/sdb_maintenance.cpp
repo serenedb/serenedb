@@ -56,7 +56,6 @@
 
 #include "connector/functions/function_values.h"
 #include "connector/merge_target.h"
-#include "connector/query_deadline.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_registry.h"
 
@@ -311,7 +310,7 @@ duckdb::Value StepsValue(const duckdb::LogicalType& type,
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
                const search::MergeResult& merge) {
   const auto& stats = merge.outcome.stats;
-  const auto error = merge.res.message();
+  const auto& error = merge.error;
   duckdb::vector<duckdb::Value> inputs;
   inputs.reserve(stats.inputs.size());
   for (const auto& input : stats.inputs) {

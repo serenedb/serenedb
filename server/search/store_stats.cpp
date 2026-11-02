@@ -20,8 +20,6 @@
 
 #include "search/store_stats.h"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/common/error_data.hpp>
 #include <exception>
 #include <iresearch/index/directory_reader.hpp>
@@ -56,6 +54,7 @@ yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
   std::chrono::steady_clock::time_point begin,
   yaclib::Future<irs::CompactionResult> merge) {
   bool empty_compaction = false;
+  bool failed = false;
   MergeResult result;
   try {
     result.outcome = co_await std::move(merge);
@@ -67,15 +66,14 @@ yaclib::Future<MergeResult> MaintainedStore::AwaitMerge(
       empty_compaction = result.outcome.size == 0;
     }
   } catch (const std::exception& e) {
+    failed = true;
     result.outcome.error = irs::CompactionError::Fail;
     result.error = duckdb::ErrorData{e}.RawMessage();
-    result.res = absl::InternalError(absl::StrCat(
-      "merge of relation ", _merge_relation->id, " failed: ", result.error));
   }
   result.time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                      std::chrono::steady_clock::now() - begin)
                      .count();
-  _maintenance.RecordCompaction(result.res, empty_compaction, result.time_ms);
+  _maintenance.RecordCompaction(failed, empty_compaction, result.time_ms);
   co_return result;
 }
 

@@ -100,7 +100,7 @@ class MergeTicketTest : public ::testing::Test {
     return names;
   }
 
-  std::vector<irs::MergeTicket> Reserve(
+  std::vector<irs::IndexWriter::MergeTicket> Reserve(
     const Positions& positions, std::vector<std::string>* seen = nullptr,
     bool* called = nullptr, bool* busy = nullptr) {
     bool blocked = false;
@@ -139,14 +139,15 @@ class MergeTicketTest : public ::testing::Test {
     return seen;
   }
 
-  irs::CompactionResult Run(irs::MergeTicket ticket,
+  irs::CompactionResult Run(irs::IndexWriter::MergeTicket ticket,
                             const irs::MergeProgress& progress = {}) {
     const auto executor = MakeExecutor();
     return irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
                                            nullptr, executor));
   }
 
-  static std::vector<std::string> NamesOf(const irs::MergeTicket& ticket) {
+  static std::vector<std::string> NamesOf(
+    const irs::IndexWriter::MergeTicket& ticket) {
     std::vector<std::string> names;
     for (const auto* candidate : ticket.Candidates()) {
       names.emplace_back(candidate->Meta().name);
@@ -189,7 +190,7 @@ TEST_F(MergeTicketTest, MovedTicketsKeepOneReservation) {
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.size());
   const auto first = Names({{0, 1}});
-  irs::MergeTicket moved{std::move(reservation[0])};
+  irs::IndexWriter::MergeTicket moved{std::move(reservation[0])};
   EXPECT_TRUE(reservation[0].Candidates().empty());
   EXPECT_EQ(first, NamesOf(moved));
 

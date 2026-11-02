@@ -50,17 +50,15 @@ enum class RefreshResult {
   Done,
 };
 
-// Outcome of a best-effort background tick (refresh / compaction /
-// cleanup): the *Impl worker throws, the *Unsafe wrapper converts it to a
-// Status and the caller logs + counts it. A failure is never propagated
-// past the caller.
+// Outcome of a best-effort background tick (refresh / cleanup): the *Impl
+// worker throws, the *Unsafe wrapper converts it to a Status and the caller
+// logs + counts it. A failure is never propagated past the caller.
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
 };
 
 struct MergeResult {
-  absl::Status res;
   uint64_t time_ms = 0;
   irs::CompactionResult outcome;
   std::string error;

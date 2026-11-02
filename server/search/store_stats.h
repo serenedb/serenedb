@@ -26,14 +26,18 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
+#include <iresearch/store/directory.hpp>
 #include <limits>
 #include <memory>
 #include <utility>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "catalog/database_directory.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 
@@ -97,9 +101,9 @@ class MaintenanceCounters {
       _commit_time_ms.Record(time_ms);
     }
   }
-  void RecordCompaction(const absl::Status& result, bool empty_compaction,
+  void RecordCompaction(bool failed, bool empty_compaction,
                         uint64_t time_ms) noexcept {
-    if (!result.ok()) {
+    if (failed) {
       _failed_consolidations.fetch_add(1, std::memory_order_relaxed);
     } else if (!empty_compaction) {
       _consolidation_time_ms.Record(time_ms);
@@ -133,9 +137,38 @@ class MaintenanceCounters {
 
 class MaintainedStore {
  public:
-  explicit MaintainedStore(uint64_t relation_id, irs::SortSpec sort)
-    : _sort{std::move(sort)},
+  explicit MaintainedStore(
+    uint64_t relation_id, irs::SortSpec sort,
+    std::shared_ptr<catalog::DatabaseDirectory> directory)
+    : _directory{std::move(directory)},
+      _sort{std::move(sort)},
       _merge_relation{std::make_shared<MergeScheduler::Relation>(relation_id)} {
+  }
+
+  // A drop commits while readers may still hold this storage; the destructor
+  // removes the directory once the last of them lets go. Never set on
+  // shutdown or detach, where the directory must survive.
+  void MarkDropped() noexcept {
+    if (_writer) {
+      _dropped.store(true, std::memory_order_release);
+    }
+  }
+  bool Retired() const noexcept {
+    return _dropped.load(std::memory_order_acquire) || _directory->Detached();
+  }
+
+  std::vector<irs::IndexWriter::MergeTicket> ReserveMerges(auto&& planner,
+                                                           bool& busy) {
+    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
+                                  busy);
+  }
+  yaclib::Future<MergeResult> RunMergeAsync(
+    irs::IndexWriter::MergeTicket ticket, const irs::MergeProgress& progress,
+    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+    const irs::PipelineMergeExecutor& executor) {
+    const auto begin = std::chrono::steady_clock::now();
+    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
+                                               progress, env, executor));
   }
 
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
@@ -194,6 +227,10 @@ class MaintainedStore {
 
   TasksSettings _tasks_settings;
   MaintenanceCounters _maintenance;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  std::unique_ptr<irs::Directory> _dir;
+  std::shared_ptr<irs::IndexWriter> _writer;
+  std::atomic<bool> _dropped{false};
 
  private:
   const irs::SortSpec _sort;

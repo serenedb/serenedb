@@ -34,20 +34,138 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <limits>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "connector/column_id.h"
 #include "query/config.h"
-#include "search/compaction/merge_policies.h"
 
 namespace sdb::search {
 namespace {
 
 constexpr uint64_t kOptimizeRowGroups = 4;
+constexpr long double kBase = 6;
+constexpr long double kMinBase = 2;
+constexpr long double kRelaxFrom = 10;
+constexpr long double kRelaxTo = 50;
+constexpr long double kMaxDeletedShare = 0.25;
+
+struct RunOptions {
+  size_t max_segments = 0;
+  uint64_t max_bytes = 0;
+  uint64_t segment_cost = 0;
+};
+
+struct RunCandidate {
+  const irs::SubReader* segment = nullptr;
+  long double bytes = 0;
+  uint64_t live_docs = 0;
+  long double deleted_share = 0;
+  bool taken = false;
+};
+
+struct Window {
+  size_t begin = 0;
+  size_t end = 0;
+  long double score = std::numeric_limits<long double>::max();
+};
+
+RunCandidate DescribeCandidate(const irs::SubReader& segment, bool taken) {
+  const auto& meta = segment.Meta();
+  const auto live = static_cast<long double>(meta.live_docs_count) /
+                    static_cast<long double>(meta.docs_count);
+  return {
+    .segment = &segment,
+    .bytes = irs::LiveBytes(meta),
+    .live_docs = meta.live_docs_count,
+    .deleted_share = 1 - live,
+    .taken = taken,
+  };
+}
+
+long double BaseFor(const RunOptions& options, size_t run) noexcept {
+  const auto relax = std::clamp(
+    (static_cast<long double>(run) - kRelaxFrom) / (kRelaxTo - kRelaxFrom),
+    0.0L, 1.0L);
+  return std::min(kBase - (kBase - kMinBase) * relax,
+                  static_cast<long double>(options.max_segments));
+}
+
+void ConsiderRun(std::span<const RunCandidate> segments, size_t begin,
+                 size_t end, const RunOptions& options, Window& best) {
+  const auto base = BaseFor(options, end - begin);
+  const auto cost = static_cast<long double>(options.segment_cost);
+  for (auto first = begin; first != end; ++first) {
+    long double bytes = 0;
+    long double floored = 0;
+    long double largest = 0;
+    uint64_t docs = 0;
+    const auto last = std::min(end, first + options.max_segments);
+    for (auto next = first; next != last; ++next) {
+      const auto& segment = segments[next];
+      bytes += segment.bytes;
+      floored += std::max(segment.bytes, cost);
+      largest = std::max(largest, std::max(segment.bytes, cost));
+      docs += segment.live_docs;
+      if (bytes > static_cast<long double>(options.max_bytes) ||
+          docs > irs::kMergeDocsMax) {
+        break;
+      }
+      const auto count = next - first + 1;
+      const auto total = bytes + cost * static_cast<long double>(count);
+      if (count < 2 || floored < base * largest) {
+        continue;
+      }
+      const auto score = total / (static_cast<long double>(count) - 1.9L);
+      if (score <= best.score) {
+        best = Window{.begin = first, .end = next + 1, .score = score};
+      }
+    }
+  }
+}
+
+irs::Compaction PickRun(std::span<RunCandidate> segments,
+                        const RunOptions& options) {
+  Window best;
+  for (size_t begin = 0; begin != segments.size();) {
+    if (segments[begin].taken) {
+      ++begin;
+      continue;
+    }
+    auto end = begin;
+    while (end != segments.size() && !segments[end].taken) {
+      ++end;
+    }
+    ConsiderRun(segments, begin, end, options, best);
+    begin = end;
+  }
+  irs::Compaction candidates;
+  if (best.begin != best.end) {
+    for (auto i = best.begin; i != best.end; ++i) {
+      segments[i].taken = true;
+      candidates.emplace_back(segments[i].segment);
+    }
+    return candidates;
+  }
+  RunCandidate* purge = nullptr;
+  auto share = kMaxDeletedShare;
+  for (auto& segment : segments) {
+    if (!segment.taken && segment.deleted_share > share) {
+      purge = &segment;
+      share = segment.deleted_share;
+    }
+  }
+  if (purge) {
+    purge->taken = true;
+    candidates.emplace_back(purge->segment);
+  }
+  return candidates;
+}
 
 struct EstimateWork {
   const irs::ColReader* reader = nullptr;
@@ -163,7 +281,7 @@ void PlanBackground(const irs::IndexReader& reader,
   const irs::SegmentNames none;
   constexpr std::string_view kReason = "adjacent policy";
   for (const auto& candidates :
-       PickMerges(MakeMergePolicy(settings, request.inputs_max), reader,
+       PickMerges(settings, request.inputs_max, reader,
                   irs::CompactingSegments{none}, {}, request.merges)) {
     if (candidates.size() == 1 &&
         !irs::HasRemovals(candidates.front()->Meta())) {
@@ -478,22 +596,33 @@ std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
   return unknown;
 }
 
-irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
+irs::MergeGroups PickMerges(const TasksSettings& settings, size_t inputs_max,
                             const irs::IndexReader& index,
                             const irs::CompactingSegments& unavailable,
                             std::span<const std::string> blocked,
                             size_t wanted) {
+  const RunOptions options{
+    .max_segments =
+      std::min<size_t>(settings.compaction_max_segments, inputs_max),
+    .max_bytes = settings.compaction_max_segments_bytes,
+    .segment_cost = settings.compaction_floor_segment_bytes,
+  };
+  std::vector<RunCandidate> segments;
+  segments.reserve(index.size());
+  for (const auto& segment : index) {
+    const auto& meta = segment.Meta();
+    if (meta.live_docs_count == 0) {
+      continue;
+    }
+    segments.emplace_back(
+      DescribeCandidate(segment, unavailable.contains(meta.name) ||
+                                   absl::c_linear_search(blocked, meta.name)));
+  }
   irs::MergeGroups groups;
-  irs::SegmentNames picked{blocked.begin(), blocked.end()};
-  const auto taken = unavailable.With(picked);
   for (size_t merge = 0; merge != wanted; ++merge) {
-    irs::Compaction candidates;
-    policy(candidates, index, taken);
+    auto candidates = PickRun(segments, options);
     if (candidates.empty()) {
       break;
-    }
-    for (const auto* candidate : candidates) {
-      picked.emplace(candidate->Meta().name);
     }
     groups.emplace_back(std::move(candidates));
   }

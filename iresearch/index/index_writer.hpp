@@ -34,6 +34,7 @@
 #include <deque>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -50,7 +51,6 @@
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/index/compaction/merge_ticket.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
@@ -90,21 +90,19 @@ ENABLE_BITMASK_ENUM(OpenMode);
 
 using SegmentNames = absl::flat_hash_set<std::string_view>;
 
+using Compaction = std::vector<const SubReader*>;
+using CompactionView = std::span<const SubReader* const>;
+
 class CompactingSegments {
  public:
-  explicit CompactingSegments(const SegmentNames& reserved, uint64_t floor = 0,
-                              const SegmentNames* picked = nullptr) noexcept
-    : _reserved{&reserved}, _picked{picked}, _floor{floor} {}
+  explicit CompactingSegments(const SegmentNames& reserved,
+                              uint64_t floor = 0) noexcept
+    : _reserved{&reserved}, _floor{floor} {}
 
   bool contains(std::string_view name) const noexcept;
 
-  CompactingSegments With(const SegmentNames& picked) const noexcept {
-    return CompactingSegments{*_reserved, _floor, &picked};
-  }
-
  private:
   const SegmentNames* _reserved;
-  const SegmentNames* _picked;
   uint64_t _floor;
 };
 
@@ -469,6 +467,35 @@ class IndexWriter : private util::Noncopyable {
                     const PipelineMergeExecutor& executor)
     -> yaclib::Future<CompactionResult>;
 
+  class MergeTicket {
+   public:
+    struct State {
+      std::weak_ptr<const DirectoryReaderImpl> snapshot;
+      std::vector<SegmentReader> inputs;
+      Compaction candidates;
+      std::atomic_bool revoked{false};
+      bool registered = true;
+      bool running = false;
+    };
+
+    explicit MergeTicket(ConstructToken, IndexWriter& writer,
+                         std::unique_ptr<State> state) noexcept;
+
+    CompactionView Candidates() const noexcept;
+    bool Revoked() const noexcept;
+
+    State& Get(ConstructToken, const IndexWriter& writer) const noexcept;
+
+   private:
+    struct Release {
+      void operator()(State* state) const noexcept;
+
+      IndexWriter* writer = nullptr;
+    };
+
+    std::unique_ptr<State, Release> _state;
+  };
+
   std::vector<MergeTicket> ReserveMerges(auto&& planner, bool& busy) {
     absl::MutexLock lock{&_compacting.lock};
     if (_compacting.floor_requests != 0) {
@@ -575,8 +602,6 @@ class IndexWriter : private util::Noncopyable {
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
-  friend class MergeTicket;
-
   std::vector<MergeTicket> ReserveLocked(
     std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
     bool& busy);

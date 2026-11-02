@@ -47,7 +47,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/merge_target.h"
-#include "connector/query_deadline.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "search/compaction/merge_planner.h"
@@ -277,9 +276,9 @@ void CompactTarget(Action action, const MergeTarget& target,
   while (compaction.Next(tick, search::MergeOrigin::Vacuum, executor, merge)) {
     context.InterruptCheck();
     if (search::OutcomeOf(merge.outcome) == search::MergeOutcome::Failed) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("failed to ", verb, " '", target.Name(),
-                              "': ", merge.res.message()));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("failed to ", verb, " '", target.Name(), "': ", merge.error));
     }
   }
 }

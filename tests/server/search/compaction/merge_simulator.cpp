@@ -35,7 +35,6 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/exe/inline.hpp>
 
-#include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_scheduler.h"
 
 namespace sdb::search {
@@ -264,11 +263,8 @@ void SimulatedJob::Cancel() {
 }
 
 Simulation::Simulation(const MergeSimulation& options) : _options{options} {
-  _scheduler = std::make_unique<MergeScheduler>(yaclib::MakeInline(),
-                                                MergeScheduler::Options{
-                                                  .threads = options.threads,
-                                                  .gauges = false,
-                                                });
+  _scheduler =
+    std::make_unique<MergeScheduler>(yaclib::MakeInline(), options.threads);
 }
 
 Simulation::~Simulation() {
@@ -351,11 +347,14 @@ void Simulation::FinishNext() {
 void Simulation::Plan(Relation& relation) {
   const auto wanted = _scheduler->Wanted(*relation.handle);
   const auto blocked = _scheduler->StartRound(*relation.handle);
+  if (wanted == 0) {
+    return;
+  }
   const SimulatedIndex index{relation.segments};
-  const irs::SegmentNames reserved{relation.reserved.begin(),
-                                   relation.reserved.end()};
-  const auto groups = PickMerges(
-    _options.policy, index, irs::CompactingSegments{reserved}, blocked, wanted);
+  irs::SegmentNames taken{relation.reserved.begin(), relation.reserved.end()};
+  taken.insert(blocked.begin(), blocked.end());
+  const auto groups =
+    _options.pick(index, irs::CompactingSegments{taken}, wanted);
   std::vector<std::unique_ptr<MergeJob>> jobs;
   jobs.reserve(groups.size());
   for (const auto& group : groups) {

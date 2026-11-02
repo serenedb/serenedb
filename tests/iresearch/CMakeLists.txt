@@ -95,7 +95,6 @@ add_executable(
     formats/sparse_bitmap_test.cpp
     index/assert_format.cpp
     index/buffered_column_test.cpp
-    index/compaction/adjacent_run_policy_tests.cpp
     index/compaction/merge_ticket_tests.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp

@@ -62,10 +62,9 @@ InvertedIndexStorage::InvertedIndexStorage(
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer,
   const irs::SortSpec& sort, bool is_new)
-  : MaintainedStore{index_id, sort},
+  : MaintainedStore{index_id, sort, std::move(directory)},
     _index_id{index_id},
     _db_id{db_id},
-    _directory{std::move(directory)},
     _in_memory{in_memory},
     _read_only{read_only},
     _is_new{is_new},

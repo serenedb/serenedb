@@ -187,12 +187,8 @@ irs::DirectoryReader MergeTarget::Snapshot() const {
   return _index->GetInvertedIndexSnapshot()->reader;
 }
 
-search::CompactionOptions MergeTarget::PinOptions() const {
-  if (_table) {
-    return search::PinCompactionOptions(*_table);
-  }
-  return {
-    .alive = true, .keepalive = _options, .field_options = _options.get()};
+std::shared_ptr<const irs::IndexFieldOptions> MergeTarget::PinOptions() const {
+  return _table ? _table->CompactionConfig() : _options;
 }
 
 std::string MergeTarget::ColumnName(irs::field_id id) const {
@@ -253,8 +249,7 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
     }
   };
   bool busy = false;
-  auto tickets = _table ? _table->ReserveMerges(planner, busy)
-                        : _index->ReserveMerges(planner, busy);
+  auto tickets = _store->ReserveMerges(planner, busy);
   if (tickets.empty()) {
     merged.outcome.error =
       busy ? irs::CompactionError::Busy : irs::CompactionError::Ok;
@@ -272,30 +267,22 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
   if (tickets.empty()) {
     return;
   }
-  auto& ticket = tickets.front();
   merged.outcome.error = irs::CompactionError::Fail;
-  merged = _table
-             ? irs::GetBlocking(_table->RunMergeAsync(
-                 std::move(ticket), progress, field_options, env, executor))
-             : irs::GetBlocking(_index->RunMergeAsync(
-                 std::move(ticket), progress, field_options, env, executor));
+  merged = irs::GetBlocking(_store->RunMergeAsync(
+    std::move(tickets.front()), progress, field_options, env, executor));
 }
 
 void MergeTarget::Publish() const {
-  if (!_table) {
-    search::ThrowIfRefreshFailed(_index->Refresh(), _name);
-  } else {
-    search::RefreshResult code = search::RefreshResult::Undefined;
-    if (const auto status = _table->RefreshUnsafe(true, nullptr, code).res;
-        !status.ok()) {
+  if (_table) {
+    if (const auto status = _table->VacuumRefresh(); !status.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("failed to refresh search table '", _name,
                               "': ", status.message()));
     }
+    return;
   }
-  const auto cleaned =
-    _table ? _table->CleanupUnsafe() : _index->CleanupUnsafe();
-  if (!cleaned.res.ok()) {
+  search::ThrowIfRefreshFailed(_index->Refresh(), _name);
+  if (const auto cleaned = _index->CleanupUnsafe(); !cleaned.res.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("failed to clean up '", _name, "': ", cleaned.res.message()));
@@ -318,8 +305,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
 }
 
 void ManualCompaction::Plan() {
-  _plan = _target.Plan(_target.Snapshot(), _request, *_options.field_options,
-                       *_scheduler);
+  _plan = _target.Plan(_target.Snapshot(), _request, *_options, *_scheduler);
   _next = 0;
 }
 
@@ -334,8 +320,8 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
     Plan();
   }
   const auto& planned = _plan.merges[_next++];
-  _target.Compact(planned, progress, _options.field_options, _slot.AnnEnv(),
-                  origin, executor, merge);
+  _target.Compact(planned, progress, _options.get(), _slot.AnnEnv(), origin,
+                  executor, merge);
   auto& stats = merge.outcome.stats;
   if (search::Produced(search::OutcomeOf(merge.outcome))) {
     SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");

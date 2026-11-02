@@ -2,8 +2,6 @@ target_sources(
     iresearch
     PRIVATE
         column_extract.cpp
-        compaction/adjacent_run_policy.cpp
-        compaction/merge_ticket.cpp
         directory_reader.cpp
         directory_reader_impl.cpp
         doc_removal.cpp

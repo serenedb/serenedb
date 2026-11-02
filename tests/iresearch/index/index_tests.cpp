@@ -78,7 +78,8 @@ size_t CountCompacting(const irs::IndexReader& reader,
   return count;
 }
 
-std::vector<irs::MergeTicket> ReserveCountMerge(irs::IndexWriter& writer) {
+std::vector<irs::IndexWriter::MergeTicket> ReserveCountMerge(
+  irs::IndexWriter& writer) {
   bool busy = false;
   return writer.ReserveMerges(
     [](const irs::IndexReader& reader,
@@ -90,7 +91,7 @@ std::vector<irs::MergeTicket> ReserveCountMerge(irs::IndexWriter& writer) {
 }
 
 irs::CompactionResult RunReservedMerge(irs::IndexWriter& writer,
-                                       irs::MergeTicket ticket) {
+                                       irs::IndexWriter::MergeTicket ticket) {
   const irs::PipelineMergeExecutor executor{
     irs::DuckDBEngine::Instance().instance(), nullptr, 1};
   return irs::GetReady(

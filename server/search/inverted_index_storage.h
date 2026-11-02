@@ -100,17 +100,6 @@ class InvertedIndexStorage final
                        const irs::SortSpec& sort, bool is_new);
   ~InvertedIndexStorage();
 
-  // A drop commits while readers may still hold this storage; the destructor
-  // removes the directory once the last of them lets go. Never set on
-  // shutdown or detach, where the directory must survive.
-  void MarkDropped() noexcept {
-    if (_writer) {
-      _dropped.store(true, std::memory_order_release);
-    }
-  }
-  bool Retired() const noexcept {
-    return _dropped.load(std::memory_order_acquire) || _directory->Detached();
-  }
   std::filesystem::path Path() const {
     return _directory->StoragePath(_index_id);
   }
@@ -163,20 +152,6 @@ class InvertedIndexStorage final
   void CommitRemoval(std::shared_ptr<const irs::DocRemoval> removal);
   void CommitRemoval(std::vector<irs::TermRemoval> removals);
   void CommitRemoveAll();
-
-  std::vector<irs::MergeTicket> ReserveMerges(auto&& planner, bool& busy) {
-    return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
-                                  busy);
-  }
-
-  yaclib::Future<MergeResult> RunMergeAsync(
-    irs::MergeTicket ticket, const irs::MergeProgress& progress,
-    const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    const irs::PipelineMergeExecutor& executor) {
-    const auto begin = std::chrono::steady_clock::now();
-    return AwaitMerge(begin, _writer->RunMerge(std::move(ticket), field_options,
-                                               progress, env, executor));
-  }
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
@@ -263,23 +238,19 @@ class InvertedIndexStorage final
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
-  std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _in_memory;
   bool _read_only;
   bool _is_new;
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max;
   bool _absent = false;
-  std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   IndexDurability _durability;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
   std::shared_ptr<const FileManifest> _file_manifest;
-  std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
-  std::shared_ptr<irs::IndexWriter> _writer;
   absl::Mutex _reindex_mutex;
   absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;

@@ -26,7 +26,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <iresearch/index/compaction/merge_ticket.hpp>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
@@ -67,11 +67,6 @@ class MergeJob {
 
 class MergeScheduler {
  public:
-  struct Options {
-    size_t threads = 1;
-    bool gauges = true;
-  };
-
   struct Relation {
     void NudgeCompaction() noexcept {
       compaction_gen.fetch_add(1, std::memory_order_release);
@@ -99,7 +94,7 @@ class MergeScheduler {
 
   using Lease = std::unique_ptr<Relation, Resume>;
 
-  MergeScheduler(yaclib::IExecutor& executor, Options options);
+  MergeScheduler(yaclib::IExecutor& executor, size_t threads);
   ~MergeScheduler();
 
   MergeScheduler(const MergeScheduler&) = delete;
@@ -154,7 +149,7 @@ class MergeScheduler {
   void Finish(Entry& entry, MergeResult result) noexcept;
 
   yaclib::IExecutor& _executor;
-  const Options _options;
+  const size_t _max_threads;
   mutable absl::Mutex _mutex;
   MergeRegistry _registry ABSL_GUARDED_BY(_mutex);
   bool _stopping ABSL_GUARDED_BY(_mutex) = false;

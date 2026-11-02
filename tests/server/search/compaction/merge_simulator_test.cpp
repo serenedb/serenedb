@@ -20,17 +20,20 @@
 
 #include <gtest/gtest.h>
 
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "merge_simulator.h"
+#include "search/compaction/merge_planner.h"
 
 namespace {
 
 using sdb::search::MergeLane;
+using sdb::search::MergePicker;
 using sdb::search::MergeSimulation;
 using sdb::search::SimulatedEvent;
 using sdb::search::SimulatedEventType;
@@ -58,8 +61,10 @@ SimulatedFlush Ranged(double seconds, int64_t first, int64_t last) {
   return flush;
 }
 
-void PickUntaken(irs::Compaction& candidates, const irs::IndexReader& index,
-                 const irs::CompactingSegments& taken, size_t at_least) {
+irs::MergeGroups PickUntaken(const irs::IndexReader& index,
+                             const irs::CompactingSegments& taken,
+                             size_t at_least) {
+  irs::Compaction candidates;
   for (const auto& segment : index) {
     if (!taken.contains(segment.Meta().name)) {
       candidates.emplace_back(&segment);
@@ -68,18 +73,22 @@ void PickUntaken(irs::Compaction& candidates, const irs::IndexReader& index,
   if (candidates.size() < at_least) {
     candidates.clear();
   }
+  irs::MergeGroups groups;
+  if (!candidates.empty()) {
+    groups.emplace_back(std::move(candidates));
+  }
+  return groups;
 }
 
-irs::CompactionPolicy MergeAtLeast(size_t count) {
-  return [count](irs::Compaction& candidates, const irs::IndexReader& index,
-                 const irs::CompactingSegments& taken) {
-    PickUntaken(candidates, index, taken, count);
-  };
+MergePicker MergeAtLeast(size_t count) {
+  return
+    [count](const irs::IndexReader& index, const irs::CompactingSegments& taken,
+            size_t) { return PickUntaken(index, taken, count); };
 }
 
 MergeSimulation Options(size_t threads, size_t at_least = 2) {
   MergeSimulation options;
-  options.policy = MergeAtLeast(at_least);
+  options.pick = MergeAtLeast(at_least);
   options.threads = threads;
   options.bytes_per_second = double{kMiB};
   return options;
@@ -105,9 +114,16 @@ TEST(SimulatedSegment, ExposesOnlyItsMetadata) {
 
 TEST(MergeSimulator, TheAdjacentPolicyMergesInFlushOrder) {
   auto options = Options(1);
-  irs::AdjacentRunOptions adjacent;
-  adjacent.max_segments = 3;
-  options.policy = irs::MakeAdjacentRunPolicy(adjacent);
+  sdb::search::TasksSettings settings;
+  settings.compaction_max_segments = 3;
+  settings.compaction_max_segments_bytes = uint64_t{5} << 30;
+  settings.compaction_floor_segment_bytes = 2 * kMiB;
+  options.pick = [&settings](const irs::IndexReader& index,
+                             const irs::CompactingSegments& taken,
+                             size_t wanted) {
+    return sdb::search::PickMerges(settings, std::numeric_limits<size_t>::max(),
+                                   index, taken, {}, wanted);
+  };
   const auto events = SimulateMerges(
     {Ranged(0, 201, 300), Ranged(0, 1, 100), Ranged(0, 101, 200)}, options);
   ASSERT_EQ(4, events.size());
@@ -205,17 +221,25 @@ TEST(MergeSimulator, HelpersComeOnlyFromFreeThreads) {
 TEST(MergeSimulator, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
   auto options = Options(4);
   options.bytes_per_second = double{32 * kMiB};
-  options.policy = [](irs::Compaction& candidates,
-                      const irs::IndexReader& index,
-                      const irs::CompactingSegments& taken) {
+  options.pick = [](const irs::IndexReader& index,
+                    const irs::CompactingSegments& taken, size_t wanted) {
+    irs::MergeGroups groups;
     if (index.size() < 4) {
-      return;
+      return groups;
     }
     for (const auto& segment : index) {
-      if (candidates.size() != 2 && !taken.contains(segment.Meta().name)) {
-        candidates.emplace_back(&segment);
+      if (taken.contains(segment.Meta().name)) {
+        continue;
       }
+      if (groups.empty() || groups.back().size() == 2) {
+        if (groups.size() == wanted) {
+          break;
+        }
+        groups.emplace_back();
+      }
+      groups.back().emplace_back(&segment);
     }
+    return groups;
   };
   const auto events = SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB),
                                       Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)},
@@ -294,13 +318,12 @@ TEST(MergeSimulator, AMergeOfUnrangedSegmentsHasNoRange) {
 
 TEST(MergeSimulator, AFailingPolicyStopsTheReplay) {
   auto options = Options(1);
-  options.policy = [](irs::Compaction& candidates,
-                      const irs::IndexReader& index,
-                      const irs::CompactingSegments& taken) {
+  options.pick = [](const irs::IndexReader& index,
+                    const irs::CompactingSegments& taken, size_t) {
     if (index.size() > 2) {
       throw std::runtime_error{"policy failed"};
     }
-    PickUntaken(candidates, index, taken, 2);
+    return PickUntaken(index, taken, 2);
   };
   EXPECT_THROW(
     SimulateMerges({Flush(0, 2 * kMiB), Flush(0, 2 * kMiB), Flush(1, kMiB)},

@@ -117,7 +117,7 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
 std::vector<std::string> UnknownSegments(const irs::IndexReader& reader,
                                          std::span<const std::string> names);
 
-irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
+irs::MergeGroups PickMerges(const TasksSettings& settings, size_t inputs_max,
                             const irs::IndexReader& index,
                             const irs::CompactingSegments& unavailable,
                             std::span<const std::string> blocked,

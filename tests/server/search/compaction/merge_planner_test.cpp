@@ -20,11 +20,16 @@
 
 #include <gtest/gtest.h>
 
-#include <iresearch/index/compaction/adjacent_run_policy.hpp>
+#include <cstdint>
 #include <iresearch/index/composite_reader_impl.hpp>
+#include <limits>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "search/compaction/merge_planner.h"
+#include "search/maintenance.h"
 
 namespace {
 
@@ -82,22 +87,40 @@ class Index final : public irs::CompositeReaderImpl<std::vector<SegmentStub>> {
         std::move(init.readers), init.live, init.docs} {}
 };
 
+using Names = std::vector<std::string>;
+
 class AdjacentRunPolicyTest : public ::testing::Test {
  protected:
-  std::vector<std::string> Pick(const std::vector<Spec>& specs,
-                                const irs::SegmentNames& taken = {}) {
-    const auto policy = irs::MakeAdjacentRunPolicy(options);
-    const Index index{specs};
-    irs::Compaction candidates;
-    policy(candidates, index, irs::CompactingSegments{taken});
-    std::vector<std::string> names;
-    for (const auto* candidate : candidates) {
-      names.emplace_back(candidate->Meta().name);
-    }
-    return names;
+  AdjacentRunPolicyTest() {
+    settings.compaction_max_segments = 10;
+    settings.compaction_max_segments_bytes = uint64_t{5} << 30;
+    settings.compaction_floor_segment_bytes = 2 * kMiB;
   }
 
-  irs::AdjacentRunOptions options;
+  std::vector<Names> PickAll(const std::vector<Spec>& specs, size_t wanted,
+                             const irs::SegmentNames& taken = {},
+                             std::span<const std::string> blocked = {}) {
+    const Index index{specs};
+    std::vector<Names> picks;
+    for (const auto& group : sdb::search::PickMerges(
+           settings, inputs_max, index, irs::CompactingSegments{taken}, blocked,
+           wanted)) {
+      auto& names = picks.emplace_back();
+      for (const auto* candidate : group) {
+        names.emplace_back(candidate->Meta().name);
+      }
+    }
+    return picks;
+  }
+
+  Names Pick(const std::vector<Spec>& specs,
+             const irs::SegmentNames& taken = {}) {
+    auto picks = PickAll(specs, 1, taken);
+    return picks.empty() ? Names{} : std::move(picks.front());
+  }
+
+  sdb::search::TasksSettings settings;
+  size_t inputs_max = std::numeric_limits<size_t>::max();
 };
 
 std::vector<Spec> Equal(size_t count, uint64_t bytes) {
@@ -107,8 +130,6 @@ std::vector<Spec> Equal(size_t count, uint64_t bytes) {
   }
   return specs;
 }
-
-using Names = std::vector<std::string>;
 
 TEST_F(AdjacentRunPolicyTest, TheDefaultBaseIsSix) {
   EXPECT_EQ(Names{}, Pick(Equal(5, 10 * kMiB)));
@@ -123,13 +144,19 @@ TEST_F(AdjacentRunPolicyTest, PrefersFewerBytesPerRemovedSegment) {
 }
 
 TEST_F(AdjacentRunPolicyTest, TakesAtMostMaxSegments) {
-  options.max_segments = 6;
+  settings.compaction_max_segments = 6;
+  EXPECT_EQ((Names{"s3", "s4", "s5", "s6", "s7", "s8"}),
+            Pick(Equal(9, 10 * kMiB)));
+}
+
+TEST_F(AdjacentRunPolicyTest, TakesAtMostTheInputsAMergeTakes) {
+  inputs_max = 6;
   EXPECT_EQ((Names{"s3", "s4", "s5", "s6", "s7", "s8"}),
             Pick(Equal(9, 10 * kMiB)));
 }
 
 TEST_F(AdjacentRunPolicyTest, ANarrowMergeWidthLowersTheBase) {
-  options.max_segments = 2;
+  settings.compaction_max_segments = 2;
   EXPECT_EQ((Names{"s2", "s3"}), Pick(Equal(4, 10 * kMiB)));
   auto specs = Equal(2, 10 * kMiB);
   specs[0].bytes = 30 * kMiB;
@@ -155,17 +182,21 @@ TEST_F(AdjacentRunPolicyTest, NeverMergesAcrossAReservedSegment) {
   EXPECT_EQ(Names{}, Pick(specs, {"s2", "s8"}));
 }
 
-TEST_F(AdjacentRunPolicyTest, RespectsTheByteCap) {
-  options.max_bytes = 55 * kMiB;
-  EXPECT_EQ(Names{}, Pick(Equal(6, 10 * kMiB)));
-  options.max_bytes = 60 * kMiB;
-  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
-            Pick(Equal(6, 10 * kMiB)));
+TEST_F(AdjacentRunPolicyTest, NeverMergesAcrossABlockedSegment) {
+  const std::string blocked[] = {"s6"};
+  EXPECT_EQ((std::vector<Names>{
+              {"s7", "s8", "s9", "s10", "s11", "s12"},
+              {"s0", "s1", "s2", "s3", "s4", "s5"},
+            }),
+            PickAll(Equal(13, 10 * kMiB), 3, {}, blocked));
 }
 
-TEST_F(AdjacentRunPolicyTest, RespectsTheDocCap) {
-  options.max_docs = 599;
+TEST_F(AdjacentRunPolicyTest, RespectsTheByteCap) {
+  settings.compaction_max_segments_bytes = 55 * kMiB;
   EXPECT_EQ(Names{}, Pick(Equal(6, 10 * kMiB)));
+  settings.compaction_max_segments_bytes = 60 * kMiB;
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
+            Pick(Equal(6, 10 * kMiB)));
 }
 
 TEST_F(AdjacentRunPolicyTest, NeverPassesTheMergeDocLimit) {
@@ -185,13 +216,13 @@ TEST_F(AdjacentRunPolicyTest, LongRunsRelaxTheBalanceRule) {
     }
     return specs;
   };
-  options.max_segments = 4;
+  settings.compaction_max_segments = 4;
   EXPECT_EQ(Names{}, Pick(alternating(39)));
   EXPECT_EQ((Names{"s36", "s37", "s38", "s39"}), Pick(alternating(40)));
 }
 
 TEST_F(AdjacentRunPolicyTest, TiesGoToTheNewestSegments) {
-  options.max_segments = 5;
+  settings.compaction_max_segments = 5;
   EXPECT_EQ((Names{"s5", "s6", "s7", "s8", "s9"}), Pick(Equal(10, 10 * kMiB)));
 }
 
@@ -233,6 +264,28 @@ TEST_F(AdjacentRunPolicyTest, SkipsSegmentsWithoutLiveDocs) {
   auto specs = Equal(7, 10 * kMiB);
   specs[2].live_docs = 0;
   EXPECT_EQ((Names{"s0", "s1", "s3", "s4", "s5", "s6"}), Pick(specs));
+}
+
+TEST_F(AdjacentRunPolicyTest, ARoundPicksDisjointRunsUntilNoneIsLeft) {
+  const auto specs = Equal(20, 10 * kMiB);
+  EXPECT_TRUE(PickAll(specs, 0).empty());
+  EXPECT_EQ(
+    (std::vector<Names>{
+      {"s10", "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19"},
+      {"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"},
+    }),
+    PickAll(specs, 3));
+}
+
+TEST_F(AdjacentRunPolicyTest, ARoundPurgesAfterItsRuns) {
+  auto specs = Equal(7, 10 * kMiB);
+  specs[0].bytes = 1000 * kMiB;
+  specs[0].live_docs = 10;
+  EXPECT_EQ((std::vector<Names>{
+              {"s1", "s2", "s3", "s4", "s5", "s6"},
+              {"s0"},
+            }),
+            PickAll(specs, 3));
 }
 
 }  // namespace

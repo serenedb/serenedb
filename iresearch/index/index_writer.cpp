@@ -1335,11 +1335,37 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
 }
 
 bool CompactingSegments::contains(std::string_view name) const noexcept {
-  return _reserved->contains(name) || (_picked && _picked->contains(name)) ||
-         (_floor != 0 && BelowFloor(name, _floor));
+  return _reserved->contains(name) || (_floor != 0 && BelowFloor(name, _floor));
 }
 
-std::vector<MergeTicket> IndexWriter::ReserveLocked(
+IndexWriter::MergeTicket::MergeTicket(ConstructToken, IndexWriter& writer,
+                                      std::unique_ptr<State> state) noexcept
+  : _state{state.release(), Release{&writer}} {}
+
+void IndexWriter::MergeTicket::Release::operator()(
+  State* state) const noexcept {
+  writer->ReleaseTicket(*state);
+  std::default_delete<State>{}(state);
+}
+
+CompactionView IndexWriter::MergeTicket::Candidates() const noexcept {
+  if (!_state) {
+    return {};
+  }
+  return _state->candidates;
+}
+
+bool IndexWriter::MergeTicket::Revoked() const noexcept {
+  return _state && _state->revoked.load(std::memory_order_relaxed);
+}
+
+IndexWriter::MergeTicket::State& IndexWriter::MergeTicket::Get(
+  ConstructToken, const IndexWriter& writer) const noexcept {
+  SDB_ASSERT(_state.get_deleter().writer == &writer);
+  return *_state;
+}
+
+std::vector<IndexWriter::MergeTicket> IndexWriter::ReserveLocked(
   std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
   bool& busy) {
   if (const auto floor = _compacting.floor; floor != 0) {
@@ -1405,7 +1431,7 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
       _compacting.segments.emplace(candidate->Meta().name);
     }
     _compacting.tickets.emplace(state.get());
-    tickets.emplace_back(MergeTicket{*this, std::move(state)});
+    tickets.emplace_back(ConstructToken{}, *this, std::move(state));
   }
   return tickets;
 }
@@ -1466,8 +1492,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                            const AnnBuildEnv* env,
                            const PipelineMergeExecutor& executor)
   -> yaclib::Future<CompactionResult> {
-  SDB_ASSERT(ticket._state.get_deleter().writer == this);
-  auto& state = *ticket._state;
+  auto& state = ticket.Get(ConstructToken{}, *this);
   auto& candidates = state.candidates;
   {
     absl::MutexLock lock{&_compacting.lock};

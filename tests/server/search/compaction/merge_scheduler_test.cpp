@@ -154,9 +154,7 @@ class MergeSchedulerTest : public ::testing::Test {
   std::unique_ptr<MergeScheduler> Make(
     size_t threads, yaclib::IExecutor& executor = yaclib::MakeInline()) {
     _threads = threads;
-    MergeScheduler::Options options;
-    options.threads = threads;
-    return std::make_unique<MergeScheduler>(executor, std::move(options));
+    return std::make_unique<MergeScheduler>(executor, threads);
   }
 
   std::shared_ptr<MergeScheduler::Relation> Relation(uint64_t id) {
@@ -807,7 +805,7 @@ TEST_F(MergeSchedulerTest, ForegroundMergesAreRecordedBesideQueuedOnes) {
 
 TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {
   auto scheduler = Make(2);
-  MaintainedStore store{3, {}};
+  MaintainedStore store{3, {}, nullptr};
   const auto& relation = store.MergeRelation();
   EXPECT_EQ(3, relation->id);
   scheduler->TakeOver(relation);

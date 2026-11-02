@@ -104,8 +104,7 @@ void SearchEngine::start() {
   _merge_tasks->SetThreads(threads, 0);
   _merge_tasks->RelaunchThreads();
   _merges = std::make_unique<MergeScheduler>(
-    BackgroundScheduler::instance().executor(),
-    MergeScheduler::Options{.threads = threads});
+    BackgroundScheduler::instance().executor(), threads);
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }

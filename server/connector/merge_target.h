@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -33,7 +34,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "search/compaction/merge_planner.h"
-#include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -43,6 +43,10 @@
 #include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
+
+inline bool StatementRunning(const duckdb::ClientContext& client) noexcept {
+  return !client.IsInterrupted() && !client.DeadlinePassed();
+}
 
 struct MergeRequest {
   search::MergeMode mode = search::MergeMode::Compact;
@@ -71,7 +75,7 @@ class MergeTarget {
   }
 
   irs::DirectoryReader Snapshot() const;
-  search::CompactionOptions PinOptions() const;
+  std::shared_ptr<const irs::IndexFieldOptions> PinOptions() const;
   std::string ColumnName(irs::field_id id) const;
 
   search::MergeRoundPlan Plan(const irs::IndexReader& snapshot,
@@ -116,7 +120,7 @@ class ManualCompaction {
   void Plan();
 
   const MergeTarget& _target;
-  search::CompactionOptions _options;
+  std::shared_ptr<const irs::IndexFieldOptions> _options;
   duckdb::TaskScheduler* _scheduler;
   MergeRequest _request;
   search::MergeRoundPlan _plan;

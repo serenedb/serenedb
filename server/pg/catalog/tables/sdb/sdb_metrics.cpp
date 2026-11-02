@@ -118,8 +118,7 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   const auto stats =
     cache ? cache->GetStatistics() : duckdb::BlockCacheStatistics{};
   add("block_cache_capacity_bytes",
-      cache ? stats.capacity
-            : duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
+      duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
       "memory the cache of remote and in-memory index files may use, in "
       "bytes");
   add("block_cache_used_bytes", stats.used,

@@ -18,12 +18,16 @@ statement ok
 GRANT CREATE ON DATABASE essf_vault TO essf_vedernikoff;
 
 
+statement ok
+GRANT pg_create_subscription TO essf_vedernikoff;
+
+
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
 statement error
 CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslkey=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
 ----
 db error: ERROR: permission denied to use server files in the connection string
-DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may use the passfile, service and SSL file options.
 
 
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
@@ -31,7 +35,7 @@ statement error
 CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x passfile=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
 ----
 db error: ERROR: permission denied to use server files in the connection string
-DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may use the passfile, service and SSL file options.
 
 
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
@@ -39,7 +43,7 @@ statement error
 CREATE SUBSCRIPTION essf_sub CONNECTION 'service=essf_nowhere password=x' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
 ----
 db error: ERROR: permission denied to use server files in the connection string
-DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may use the passfile, service and SSL file options.
 
 
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
@@ -47,7 +51,7 @@ statement error
 CREATE SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslrootcert=/etc/hostname' PUBLICATION essf_pub WITH (connect = false, slot_name = NONE);
 ----
 db error: ERROR: permission denied to use server files in the connection string
-DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may use the passfile, service and SSL file options.
 
 
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
@@ -60,7 +64,20 @@ statement error
 ALTER SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslcert=/etc/hostname';
 ----
 db error: ERROR: permission denied to use server files in the connection string
-DETAIL: Only roles with the SUPERUSER attribute may use the passfile, service and SSL file options.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may use the passfile, service and SSL file options.
+
+
+statement ok
+GRANT pg_read_server_files TO essf_vedernikoff;
+
+
+connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault
+statement ok
+ALTER SUBSCRIPTION essf_sub CONNECTION 'host=localhost dbname=mydb password=x sslcert=/etc/hostname';
+
+
+statement ok
+REVOKE pg_read_server_files FROM essf_vedernikoff;
 
 
 connection c_sub user=essf_vedernikoff password=essf_pw database=essf_vault

@@ -1750,7 +1750,8 @@ std::string_view SettingContext(std::string_view name) {
 
 bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name) {
   const auto principal = ctx.principal;
-  return !principal || principal->is_superuser ||
+  return !principal ||
+         principal->Has(duckdb::RoleCapability::ReadAllSettings) ||
          !IsSuperuserReadSetting(ctx, name);
 }
 

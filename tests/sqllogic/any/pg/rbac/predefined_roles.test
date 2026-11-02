@@ -1,0 +1,251 @@
+control substitution on
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS prr_sub;
+
+
+statement ok
+DROP TABLE IF EXISTS prr_s.prr_t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS prr_s;
+
+
+statement ok
+DROP ROLE IF EXISTS prr_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS prr_writer;
+
+
+statement ok
+DROP ROLE IF EXISTS prr_admin;
+
+
+statement ok
+CREATE ROLE prr_reader LOGIN PASSWORD 'prr_pw';
+
+
+statement ok
+CREATE ROLE prr_writer LOGIN PASSWORD 'prr_pw';
+
+
+statement ok
+CREATE ROLE prr_admin LOGIN PASSWORD 'prr_pw';
+
+
+statement ok
+CREATE SCHEMA prr_s;
+
+
+statement ok
+CREATE TABLE prr_s.prr_t (v int);
+
+
+statement ok
+INSERT INTO prr_s.prr_t VALUES (1);
+
+
+query
+SELECT oid, rolname, rolsuper, rolcanlogin, rolinherit
+FROM pg_roles
+WHERE rolname IN ('pg_checkpoint', 'pg_create_subscription', 'pg_execute_server_program', 'pg_maintain',
+                  'pg_monitor', 'pg_read_all_data', 'pg_read_all_settings', 'pg_read_all_stats',
+                  'pg_read_server_files', 'pg_signal_autovacuum_worker', 'pg_signal_backend',
+                  'pg_stat_scan_tables', 'pg_use_reserved_connections', 'pg_write_all_data',
+                  'pg_write_server_files')
+ORDER BY rolname;
+----
+oid	rolname	rolsuper	rolcanlogin	rolinherit
+4544	pg_checkpoint	f	f	t
+6304	pg_create_subscription	f	f	t
+4571	pg_execute_server_program	f	f	t
+6337	pg_maintain	f	f	t
+3373	pg_monitor	f	f	t
+6181	pg_read_all_data	f	f	t
+3374	pg_read_all_settings	f	f	t
+3375	pg_read_all_stats	f	f	t
+4569	pg_read_server_files	f	f	t
+6392	pg_signal_autovacuum_worker	f	f	t
+4200	pg_signal_backend	f	f	t
+3377	pg_stat_scan_tables	f	f	t
+4550	pg_use_reserved_connections	f	f	t
+6182	pg_write_all_data	f	f	t
+4570	pg_write_server_files	f	f	t
+
+
+query
+SELECT pg_has_role('pg_monitor', 'pg_read_all_settings', 'USAGE') AS settings,
+       pg_has_role('pg_monitor', 'pg_read_all_stats', 'USAGE') AS stats,
+       pg_has_role('pg_monitor', 'pg_stat_scan_tables', 'USAGE') AS scan,
+       pg_has_role('pg_monitor', 'pg_read_all_data', 'USAGE') AS data;
+----
+settings	stats	scan	data
+t	t	t	f
+
+
+connection c_reader user=prr_reader password=prr_pw
+statement error
+SELECT v FROM prr_s.prr_t;
+----
+db error: ERROR: permission denied for schema prr_s
+
+
+statement ok
+GRANT pg_read_all_data TO prr_reader;
+
+
+connection c_reader user=prr_reader password=prr_pw
+query
+SELECT v FROM prr_s.prr_t;
+----
+v
+1
+
+
+connection c_reader user=prr_reader password=prr_pw
+statement error
+INSERT INTO prr_s.prr_t VALUES (2);
+----
+db error: ERROR: permission denied for table prr_t
+
+
+query
+SELECT has_table_privilege('prr_reader', 'prr_s.prr_t', 'SELECT') AS can_select,
+       has_table_privilege('prr_reader', 'prr_s.prr_t', 'INSERT') AS can_insert,
+       has_schema_privilege('prr_reader', 'prr_s', 'USAGE') AS can_use;
+----
+can_select	can_insert	can_use
+t	f	t
+
+
+statement ok
+GRANT pg_write_all_data TO prr_writer;
+
+
+connection c_writer user=prr_writer password=prr_pw
+statement ok
+INSERT INTO prr_s.prr_t VALUES (2);
+
+
+connection c_writer user=prr_writer password=prr_pw
+statement ok
+UPDATE prr_s.prr_t SET v = 3;
+
+
+connection c_writer user=prr_writer password=prr_pw
+statement error
+SELECT v FROM prr_s.prr_t;
+----
+db error: ERROR: permission denied for table prr_t
+
+
+connection c_writer user=prr_writer password=prr_pw
+statement ok
+DELETE FROM prr_s.prr_t;
+
+
+query
+SELECT count(*) AS left_over FROM prr_s.prr_t;
+----
+left_over
+0
+
+
+onlyif postgres
+connection c_reader user=prr_reader password=prr_pw
+statement error
+CHECKPOINT;
+----
+db error: ERROR: permission denied to execute CHECKPOINT command
+DETAIL: Only roles with privileges of the "pg_checkpoint" role may execute this command.
+
+
+skipif postgres
+connection c_reader user=prr_reader password=prr_pw
+statement error
+CHECKPOINT;
+----
+db error: ERROR: permission denied for function checkpoint
+
+
+statement ok
+GRANT pg_checkpoint TO prr_reader;
+
+
+connection c_reader user=prr_reader password=prr_pw
+statement ok
+CHECKPOINT;
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO prr_admin;
+
+
+connection c_admin user=prr_admin password=prr_pw
+statement error
+CREATE SUBSCRIPTION prr_sub CONNECTION 'host=127.0.0.1 port=1 dbname=prr password=prr_pw' PUBLICATION prr_pub WITH (connect = false, slot_name = NONE);
+----
+db error: ERROR: permission denied to create subscription
+DETAIL: Only roles with privileges of the "pg_create_subscription" role may create subscriptions.
+
+
+statement ok
+GRANT pg_create_subscription TO prr_admin;
+
+
+connection c_admin user=prr_admin password=prr_pw
+statement ok
+CREATE SUBSCRIPTION prr_sub CONNECTION 'host=127.0.0.1 port=1 dbname=prr password=prr_pw' PUBLICATION prr_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_admin user=prr_admin password=prr_pw
+statement ok
+DROP SUBSCRIPTION prr_sub;
+
+
+statement error
+DROP ROLE pg_monitor;
+----
+db error: ERROR: cannot drop role pg_monitor because it is required by the database system
+
+
+statement error
+ALTER ROLE pg_read_all_data LOGIN;
+----
+db error: ERROR: role name "pg_read_all_data" is reserved
+DETAIL: Cannot alter reserved roles.
+
+
+connection c_admin user=prr_admin password=prr_pw
+statement error
+GRANT pg_read_all_data TO prr_writer;
+----
+db error: ERROR: permission denied to grant role "pg_read_all_data"
+DETAIL: Only roles with the ADMIN option on role "pg_read_all_data" may grant this role.
+
+
+statement ok
+DROP TABLE prr_s.prr_t;
+
+
+statement ok
+DROP SCHEMA prr_s;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM prr_admin;
+
+
+statement ok
+DROP ROLE prr_reader;
+
+
+statement ok
+DROP ROLE prr_writer;
+
+
+statement ok
+DROP ROLE prr_admin;

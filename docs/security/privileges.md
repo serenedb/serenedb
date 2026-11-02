@@ -120,16 +120,45 @@ Listings and error messages show a role only the objects it may use:
 - A primary key, unique or foreign key violation names the offending key only to a role that may read every indexed column of the table the statement writes; any other role gets the same error without the key, for example `PRIMARY KEY or UNIQUE constraint violation: duplicate key`.
 - A database-wide `VACUUM` warns only about the tables the role can see when it skips them.
 
+## Predefined roles
+
+Every cluster has the predefined roles of PostgreSQL. A superuser, or a role with the `ADMIN` option on one of them, grants them like any other role, `GRANT pg_read_all_data TO analyst`, and a member that inherits from them gains:
+
+| Role | Grants |
+|---|---|
+| `pg_read_all_data` | `SELECT` on every table, view and sequence and `USAGE` on every schema, as if granted on each. |
+| `pg_write_all_data` | `INSERT`, `UPDATE` and `DELETE` on every table, view and sequence and `USAGE` on every schema. |
+| `pg_maintain` | `MAINTAIN` on every table, so `VACUUM` and `ANALYZE` process it. |
+| `pg_read_all_settings` | Reading every parameter with `SHOW` and `current_setting`, also those only superusers may read. |
+| `pg_read_all_stats` | The queries and details of every session in `pg_stat_activity`, `pg_stat_get_activity()` and `sdb_progress`. |
+| `pg_monitor` | Membership in `pg_read_all_settings`, `pg_read_all_stats` and `pg_stat_scan_tables`. |
+| `pg_signal_backend` | `pg_cancel_backend` and `pg_terminate_backend` on the sessions of roles that are not superusers. |
+| `pg_checkpoint` | `CHECKPOINT`, `FORCE CHECKPOINT` and the functions `checkpoint` and `force_checkpoint`. |
+| `pg_create_subscription` | `CREATE SUBSCRIPTION`, together with `CREATE` on the database. |
+| `pg_read_server_files` | Reading [server files and URLs](#server-files-and-urls). |
+| `pg_write_server_files` | Writing [server files and URLs](#server-files-and-urls). |
+
+`pg_execute_server_program`, `pg_stat_scan_tables`, `pg_use_reserved_connections` and `pg_signal_autovacuum_worker` exist for compatibility and grant nothing; `pg_database_owner` is not provided. A predefined role cannot be dropped or altered, and no other role name may start with `pg_`.
+
+## Server files and URLs
+
+Reading server files and URLs requires a superuser or a member of `pg_read_server_files`, and writing them a superuser or a member of `pg_write_server_files`:
+
+- `COPY ... FROM` a file reads it and `COPY ... TO` a file writes it; `COPY ... FROM STDIN` and `COPY ... TO STDOUT` work for everyone.
+- Every function that reads files or URLs reads them, such as `read_csv`, `read_parquet`, `read_json`, `read_text`, `read_blob` and `glob`.
+- The `stopwords_path` and `model_location` options of a [text search dictionary](../sql/statements/create_text_search_dictionary/index.md) and the `passfile`, `service`, `sslcert`, `sslkey`, `sslrootcert`, `sslcrl` and `sslcrldir` options of a subscription's connection string read server files.
+
+The `save_location` of `enable_profiling` sets the `profiling_output` parameter, which only superusers may change.
+
 ## Superuser-only operations
 
 These require a superuser, whatever privileges a role holds:
 
-- Reading or writing server files and URLs: `COPY ... FROM` or `TO` a file, and every function that reads files or URLs, such as `read_csv`, `read_parquet`, `read_json`, `read_text`, `read_blob` and `glob`. `COPY ... FROM STDIN` and `COPY ... TO STDOUT` work for everyone. The same rule applies to the `stopwords_path` and `model_location` options of a [text search dictionary](../sql/statements/create_text_search_dictionary/index.md), to the `passfile`, `service`, `sslcert`, `sslkey`, `sslrootcert`, `sslcrl` and `sslcrldir` options of a subscription's connection string, and to the `save_location` of `enable_profiling`.
-- `ATTACH` (except the form `CREATE DATABASE` runs), `DETACH`, `CONNECT`, `COPY FROM DATABASE`, `CHECKPOINT`, `FORCE CHECKPOINT`, `DROP SECRET`, the external resource statements, and the pragmas `force_checkpoint`, `enable_checkpoint_on_shutdown`, `disable_checkpoint_on_shutdown` and `add_parquet_key`.
-- The functions `checkpoint`, `force_checkpoint`, `enable_logging`, `disable_logging`, `truncate_duckdb_logs`, `duckdb_logs`, `duckdb_log_contexts`, `duckdb_secrets`, `which_secret`, `duckdb_databases`, `duckdb_extensions`, `duckdb_temporary_files`, `duckdb_external_file_cache`, `duckdb_table_sample`, `pragma_storage_info`, `pragma_metadata_info`, `pragma_database_size`, `json_serialize_plan`, `dbgen`, `dsdgen`, `iceberg_to_ducklake`, `iceberg_load_table_response`, the external resource functions, and the database connector functions that take a connection or run SQL on another server (`postgres_query`, `postgres_execute`, `postgres_scan`, `postgres_attach`, `clickhouse_query`, `clickhouse_execute`, `clickhouse_scan` and their relatives), together with the `sdb_*` names of these functions. The check is made against the role running the query, also when the function is called inside a view.
+- `ATTACH` (except the form `CREATE DATABASE` runs), `DETACH`, `CONNECT`, `COPY FROM DATABASE`, `DROP SECRET`, the external resource statements, and the pragmas `enable_checkpoint_on_shutdown`, `disable_checkpoint_on_shutdown` and `add_parquet_key`. `CHECKPOINT`, `FORCE CHECKPOINT` and the pragma `force_checkpoint` also run for members of `pg_checkpoint`.
+- The functions `enable_logging`, `disable_logging`, `truncate_duckdb_logs`, `duckdb_logs`, `duckdb_log_contexts`, `duckdb_secrets`, `which_secret`, `duckdb_databases`, `duckdb_extensions`, `duckdb_temporary_files`, `duckdb_external_file_cache`, `duckdb_table_sample`, `pragma_storage_info`, `pragma_metadata_info`, `pragma_database_size`, `json_serialize_plan`, `dbgen`, `dsdgen`, `iceberg_to_ducklake`, `iceberg_load_table_response`, the external resource functions, and the database connector functions that take a connection or run SQL on another server (`postgres_query`, `postgres_execute`, `postgres_scan`, `postgres_attach`, `clickhouse_query`, `clickhouse_execute`, `clickhouse_scan` and their relatives), together with the `sdb_*` names of these functions. The check is made against the role running the query, also when the function is called inside a view.
 - Using an AI secret other than the server-wide default named by `sdb_ai_text_default_secret`, `sdb_ai_embedding_default_secret` or `sdb_ai_system_one_default_secret`.
 
-A view reads files and URLs with its owner's authority, as it reads tables: a role with `SELECT` on a view owned by a superuser reads the files the view reads, a view owned by any other role reads no files, and a view created `WITH (security_invoker = true)` reads them with the authority of the role running the query. Reading the tables of a [foreign server](../sql/statements/create_server/index.md#privileges) needs only `USAGE` on the server.
+A view reads files and URLs with its owner's authority, as it reads tables: a role with `SELECT` on a view reads the files the view reads when the view's owner may read them, and a view created `WITH (security_invoker = true)` reads them with the authority of the role running the query. Reading the tables of a [foreign server](../sql/statements/create_server/index.md#privileges) needs only `USAGE` on the server.
 
 The functions a view calls are checked and run for the role running the query, not for the view's owner: that role needs `EXECUTE` on them, and an SQL function reads tables with its privileges unless the function is [`SECURITY DEFINER`](../sql/statements/create_macro/index.md#sql-functions).
 

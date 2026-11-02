@@ -168,13 +168,22 @@ void CheckCreateRole(duckdb::CatalogTransaction transaction,
 
 void CheckAlterRole(duckdb::CatalogTransaction transaction,
                     duckdb::AlterRoleInfo& info) {
-  const auto* caller = Enforced(transaction);
-  if (!caller) {
+  if (!transaction.HasContext() || !transaction.GetContext().principal) {
     return;
   }
   auto role =
     FindRole(transaction, info.GetQualifiedName().Name().GetIdentifierName());
   if (!role) {
+    return;
+  }
+  if (info.grant_role.empty() && IsPredefinedRole(role->oid)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_RESERVED_NAME),
+      ERR_MSG("role name \"", role->name.GetIdentifierName(), "\" is reserved"),
+      ERR_DETAIL("Cannot alter reserved roles."));
+  }
+  const auto* caller = Enforced(transaction);
+  if (!caller) {
     return;
   }
   if (!info.grant_role.empty()) {
@@ -231,17 +240,26 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
 
 void CheckDropRole(duckdb::CatalogTransaction transaction,
                    const duckdb::DropInfo& info) {
-  const auto* caller = Enforced(transaction);
-  if (!caller) {
+  if (!transaction.HasContext() || !transaction.GetContext().principal) {
     return;
   }
-  if (!caller->Has(RoleOption::CreateRole)) {
+  const auto* caller = Enforced(transaction);
+  if (caller && !caller->Has(RoleOption::CreateRole)) {
     DenyRoleAction("drop",
                    "Only roles with the CREATEROLE attribute and the ADMIN "
                    "option on the target roles may drop roles.");
   }
-  if (auto role = FindRole(
-        transaction, info.GetQualifiedName().Name().GetIdentifierName())) {
+  auto role =
+    FindRole(transaction, info.GetQualifiedName().Name().GetIdentifierName());
+  if (!role) {
+    return;
+  }
+  if (IsPredefinedRole(role->oid)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                    ERR_MSG("cannot drop role ", role->name.GetIdentifierName(),
+                            " because it is required by the database system"));
+  }
+  if (caller) {
     RequireRoleAdmin(transaction.GetContext(), *caller, *role, "drop");
   }
 }

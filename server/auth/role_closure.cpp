@@ -59,15 +59,30 @@ std::vector<duckdb::idx_t> Reachable(const RoleNodes& nodes, duckdb::idx_t role,
   return out;
 }
 
+duckdb::RoleCapability CapabilitiesOf(duckdb::idx_t role,
+                                      std::span<const duckdb::idx_t> closure) {
+  auto capabilities = duckdb::RoleCapability::None;
+  for (const auto& predefined : kPredefinedRoles) {
+    if (predefined.oid == role ||
+        absl::c_binary_search(closure, predefined.oid)) {
+      capabilities |= predefined.capability;
+    }
+  }
+  return capabilities;
+}
+
 duckdb::vector<duckdb::SecuritySnapshot::Role> InheritClosures(
   const RoleNodes& nodes) {
   duckdb::vector<duckdb::SecuritySnapshot::Role> closures;
   closures.reserve(nodes.size());
   for (const auto& [oid, node] : nodes) {
+    auto closure = Reachable(nodes, oid, &duckdb::Membership::inherit_option);
+    const auto capabilities = CapabilitiesOf(oid, closure);
     closures.push_back(
       {.role = oid,
        .options = node.options,
-       .closure = Reachable(nodes, oid, &duckdb::Membership::inherit_option),
+       .capabilities = capabilities,
+       .closure = std::move(closure),
        .settable = Reachable(nodes, oid, &duckdb::Membership::set_option)});
   }
   return closures;

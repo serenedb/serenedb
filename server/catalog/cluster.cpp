@@ -293,6 +293,21 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
     }
     CreateRole(transaction, info);
   }
+  for (const auto& predefined : auth::kPredefinedRoles) {
+    const duckdb::Identifier name{predefined.name};
+    if (GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+          .GetEntry(transaction, name)) {
+      continue;
+    }
+    duckdb::CreateRoleInfo info;
+    info.SetName(name);
+    info.oid = predefined.oid;
+    info.options = RoleOption::Inherit;
+    for (const auto role : predefined.member_of) {
+      info.member_of.push_back({.role = role, .grantor = pg::kRootUser});
+    }
+    CreateRole(transaction, info);
+  }
   const duckdb::Identifier postgres{irs::StaticStrings::kDefaultDatabase};
   if (!GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
          .GetEntry(transaction, postgres)) {
@@ -306,7 +321,9 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
   duckdb::CreateRoleInfo& info) {
-  RequireUnreservedRoleName(info.GetQualifiedName().Name());
+  if (!auth::IsPredefinedRole(info.oid)) {
+    RequireUnreservedRoleName(info.GetQualifiedName().Name());
+  }
   if (!info.password.empty()) {
     info.password = StoredPassword(info.password);
   }

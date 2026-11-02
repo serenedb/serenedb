@@ -55,7 +55,8 @@ connection c_ved user=rss_vedernikoff password=rss_pw
 statement error
 SELECT current_setting('http_proxy_password');
 ----
-db error: ERROR: must be superuser to examine "http_proxy_password"
+db error: ERROR: permission denied to examine "http_proxy_password"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 query

@@ -104,7 +104,7 @@ statement error
 PREPARE efb_direct AS SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 connection c_ved user=efb_vedernikoff password=efb_pw
@@ -112,7 +112,7 @@ statement error
 SELECT * FROM read_parquet('${__TEST_DIR__}/efb_lake.parquet');
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 connection c_ved user=efb_vedernikoff password=efb_pw
@@ -120,7 +120,7 @@ statement error
 SELECT l.id FROM efb_lake AS l, read_parquet('${__TEST_DIR__}/efb_lake.parquet') AS r WHERE l.id = r.id;
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 connection c_ved user=efb_vedernikoff password=efb_pw
@@ -128,7 +128,7 @@ statement error
 SELECT * FROM efb_lake_invoker;
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 connection c_ved user=efb_vedernikoff password=efb_pw
@@ -136,14 +136,46 @@ statement error
 SELECT * FROM efb_lake_handed;
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 statement error
 SELECT count(*) AS rows FROM efb_lake_handed;
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+statement ok
+GRANT pg_read_server_files TO efb_clickclack;
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+query
+SELECT count(*) AS rows FROM efb_lake_handed;
+----
+rows
+2
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT * FROM efb_lake_invoker;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+statement ok
+REVOKE pg_read_server_files FROM efb_clickclack;
+
+
+connection c_ved user=efb_vedernikoff password=efb_pw
+statement error
+SELECT count(*) AS rows FROM efb_lake_handed;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efb_lake.parquet"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 statement ok

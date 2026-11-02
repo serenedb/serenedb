@@ -110,7 +110,7 @@ statement error
 SELECT a FROM read_csv('${__TEST_DIR__}/eds_file.csv');
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/eds_file.csv"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 skipif postgres

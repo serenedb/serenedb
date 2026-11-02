@@ -26,6 +26,18 @@ connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vaul
 statement error
 CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false);
 ----
+db error: ERROR: permission denied to create subscription
+DETAIL: Only roles with privileges of the "pg_create_subscription" role may create subscriptions.
+
+
+statement ok
+GRANT pg_create_subscription TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false);
+----
 db error: ERROR: permission denied for database subenf_vault
 
 

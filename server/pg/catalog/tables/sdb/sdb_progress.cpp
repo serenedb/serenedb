@@ -134,7 +134,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (_closure && !_closure->is_superuser) {
+    if (_closure && !_closure->Has(duckdb::RoleCapability::ReadAllStats)) {
       const auto* role = _roles->FindByName(s.user);
       if (!role || !_closure->MemberOf(*role)) {
         Emit<kHidden>(s);
@@ -153,9 +153,10 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
 
  private:
   auth::RoleAccessRef _closure = auth::SessionClosure(Context());
-  auth::RoleGraphPtr _roles = _closure && !_closure->is_superuser
-                                ? auth::RolesOf(&Context())
-                                : auth::RoleGraphPtr{};
+  auth::RoleGraphPtr _roles =
+    _closure && !_closure->Has(duckdb::RoleCapability::ReadAllStats)
+      ? auth::RolesOf(&Context())
+      : auth::RoleGraphPtr{};
 };
 
 }  // namespace

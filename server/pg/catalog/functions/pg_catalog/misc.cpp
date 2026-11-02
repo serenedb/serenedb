@@ -438,7 +438,10 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
       if (!IsReadableSetting(context, key)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("must be superuser to examine \"", key, "\""));
+                        ERR_MSG("permission denied to examine \"", key, "\""),
+                        ERR_DETAIL("Only roles with privileges of the "
+                                   "\"pg_read_all_settings\" role may examine "
+                                   "this parameter."));
       }
       value = duckdb::Settings::FormatDisplayValue(context, value);
       last_found = row;
@@ -550,7 +553,8 @@ void SignalBackendFunction(duckdb::DataChunk& args,
                      : "Only roles with the SUPERUSER attribute may cancel "
                        "queries of roles with the SUPERUSER attribute.");
       }
-    } else if (!caller->MemberOf(role)) {
+    } else if (!caller->MemberOf(role) &&
+               !caller->Has(duckdb::RoleCapability::SignalBackend)) {
       ThrowSignalDenied<kTerminate>(
         kTerminate
           ? "Only roles with privileges of the role whose process is being "

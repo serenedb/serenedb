@@ -142,35 +142,40 @@ connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting('http_proxy_password');
 ----
-db error: ERROR: must be superuser to examine "http_proxy_password"
+db error: ERROR: permission denied to examine "http_proxy_password"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SHOW http_proxy_username;
 ----
-db error: ERROR: must be superuser to examine "http_proxy_username"
+db error: ERROR: permission denied to examine "http_proxy_username"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SHOW Calendar;
 ----
-db error: ERROR: must be superuser to examine "calendar"
+db error: ERROR: permission denied to examine "calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SHOW hba;
 ----
-db error: ERROR: must be superuser to examine "hba"
+db error: ERROR: permission denied to examine "hba"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting('hba');
 ----
-db error: ERROR: must be superuser to examine "hba"
+db error: ERROR: permission denied to examine "hba"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -200,14 +205,16 @@ connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting('http_proxy_password', true);
 ----
-db error: ERROR: must be superuser to examine "http_proxy_password"
+db error: ERROR: permission denied to examine "http_proxy_password"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting(name, true) FROM (VALUES ('Calendar')) AS t(name);
 ----
-db error: ERROR: must be superuser to examine "Calendar"
+db error: ERROR: permission denied to examine "Calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -222,7 +229,8 @@ connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting(name) FROM (VALUES ('Calendar')) AS t(name);
 ----
-db error: ERROR: must be superuser to examine "Calendar"
+db error: ERROR: permission denied to examine "Calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
@@ -252,14 +260,16 @@ connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SHOW temp_directory;
 ----
-db error: ERROR: must be superuser to examine "temp_directory"
+db error: ERROR: permission denied to examine "temp_directory"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw
 statement error
 SELECT current_setting('secret_directory');
 ----
-db error: ERROR: must be superuser to examine "secret_directory"
+db error: ERROR: permission denied to examine "secret_directory"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
 
 
 connection c_ved user=esp_vedernikoff password=esp_pw

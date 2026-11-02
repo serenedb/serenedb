@@ -257,12 +257,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
       if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
                     &Info == &tokenizer_options::kModelLocation) {
         if (const auto closure = auth::SessionClosure(_context);
-            closure && !closure->is_superuser) {
+            closure && !closure->Has(duckdb::RoleCapability::ReadServerFiles)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
             ERR_MSG("permission denied to use option \"", Info.name, "\""),
-            ERR_DETAIL("Only roles with the SUPERUSER attribute may "
-                       "reference server files."));
+            ERR_DETAIL("Only roles with privileges of the "
+                       "\"pg_read_server_files\" role may reference server "
+                       "files."));
         }
       }
       auto raw = OptionsParser::EraseOptionOrDefault<Info>();

@@ -100,7 +100,7 @@ bool EntryVisible(duckdb::ClientContext& context,
   }
   if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
        entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-      entry.Cast<duckdb::FunctionEntry>().superuser_only) {
+      !entry.Cast<duckdb::FunctionEntry>().MayCall(closure)) {
     return false;
   }
   if (entry.internal || duckdb::IsUnowned(entry)) {

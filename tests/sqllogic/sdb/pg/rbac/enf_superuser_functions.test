@@ -33,7 +33,7 @@ statement error
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT content FROM read_text(''/etc/hostname'')'));
 ----
 db error: ERROR: permission denied to access "/etc/hostname"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
 connection c_ved user=esf_vedernikoff password=esf_pw

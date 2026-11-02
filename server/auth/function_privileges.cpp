@@ -27,7 +27,6 @@ namespace {
 
 constexpr std::string_view kSuperuserFunctions[] = {
   "add_parquet_key",
-  "checkpoint",
   "clickhouse_clear_cache",
   "clickhouse_configure_pool",
   "clickhouse_execute",
@@ -54,7 +53,6 @@ constexpr std::string_view kSuperuserFunctions[] = {
   "duckdb_temporary_files",
   "enable_checkpoint_on_shutdown",
   "enable_logging",
-  "force_checkpoint",
   "iceberg_load_table_response",
   "iceberg_to_ducklake",
   "json_serialize_plan",
@@ -85,6 +83,11 @@ constexpr std::string_view kSuperuserFunctions[] = {
   "truncate_duckdb_logs",
   "truncate_sdb_logs",
   "which_secret",
+};
+
+constexpr std::string_view kCheckpointFunctions[] = {
+  "checkpoint",
+  "force_checkpoint",
 };
 
 constexpr std::string_view kFileFreeFunctions[] = {
@@ -223,7 +226,12 @@ constexpr std::string_view kFileFreeFunctions[] = {
 
 void RegisterFunctionPrivileges(duckdb::DBConfig& config) {
   for (const auto name : kSuperuserFunctions) {
-    config.superuser_functions.emplace(duckdb::Identifier{name});
+    config.superuser_functions.emplace(duckdb::Identifier{name},
+                                       duckdb::RoleCapability::None);
+  }
+  for (const auto name : kCheckpointFunctions) {
+    config.superuser_functions.emplace(duckdb::Identifier{name},
+                                       duckdb::RoleCapability::Checkpoint);
   }
   for (const auto name : kFileFreeFunctions) {
     config.file_free_functions.emplace(duckdb::Identifier{name});

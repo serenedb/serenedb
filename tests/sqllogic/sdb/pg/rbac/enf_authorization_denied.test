@@ -120,7 +120,7 @@ statement error
 COPY clickclack_vault TO '${__TEST_DIR__}/rbac_authorization_denied_never_written.csv';
 ----
 db error: ERROR: permission denied to access "<slt:ignore>/rbac_authorization_denied_never_written.csv"
-DETAIL: Only roles with the SUPERUSER attribute may access server files and URLs.
+DETAIL: Only roles with privileges of the "pg_write_server_files" role may write to server files and URLs.
 
 
 # ---- view-backed inverted index: an index defined ON a view is gated on the

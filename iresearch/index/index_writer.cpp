@@ -261,11 +261,13 @@ void RemoveKeys(std::span<const int64_t> keys, field_id key_column,
       column->Scan(state, scanned, take);
       const auto values = scanned.Values<int64_t>();
       for (duckdb::idx_t i = 0; i != take; ++i) {
-        if (const auto value = values[i];
-            value.IsValid() &&
-            absl::c_binary_search(matching, value.GetValue())) {
-          remove(value.GetValue(),
-                 static_cast<doc_id_t>(doc_limits::min() + cursor + i));
+        const auto value = values[i];
+        if (!value.IsValid()) {
+          continue;
+        }
+        const auto key = absl::c_lower_bound(matching, value.GetValue());
+        if (key != matching.end() && *key == value.GetValue()) {
+          remove(*key, static_cast<doc_id_t>(doc_limits::min() + cursor + i));
         }
       }
       cursor += take;
@@ -476,14 +478,14 @@ void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
   }
 }
 
-void ResolveKeys(const KeyRemoval& removal, field_id key_column, uint64_t tick,
-                 std::span<FlushedSegmentContext> flushed) {
+void ResolveKeys(std::span<const int64_t> keys, field_id key_column,
+                 std::span<FlushedSegmentContext> flushed,
+                 const auto& removed_at) {
   for (auto& segment : flushed) {
-    const auto end = static_cast<doc_id_t>(
-      doc_limits::min() + segment.flushed.docs.UpperBound(tick));
-    RemoveKeys(removal.keys, key_column, *segment.reader,
-               [&](int64_t, doc_id_t doc) {
-                 if (doc < end) {
+    RemoveKeys(keys, key_column, *segment.reader,
+               [&](const int64_t& key, doc_id_t doc) {
+                 if (segment.flushed.docs.TickAt(doc - doc_limits::min()) <=
+                     removed_at(key)) {
                    segment.flushed.docs_mask.Add(doc);
                  }
                });
@@ -526,7 +528,7 @@ uint64_t ResolveRemovals(
     }
   }
   uint64_t all_tick = writer_limits::kMinTick;
-  std::vector<const KeyRemoval*> key_removals;
+  std::vector<std::pair<const KeyRemoval*, uint64_t>> key_removals;
   for (const auto& segment : segments) {
     SDB_ASSERT(segment != nullptr);
     for (const auto& entry : segment->queries) {
@@ -535,8 +537,7 @@ uint64_t ResolveRemovals(
                          ResolveRemoval(*positions, targets);
                        },
                        [&](const KeyRemoval& keys) {
-                         ResolveKeys(keys, key_column, entry.tick, flushed);
-                         key_removals.emplace_back(&keys);
+                         key_removals.emplace_back(&keys, entry.tick);
                        },
                        [&](IndexWriter::Queued::AllDocs) {
                          all_tick = std::max(all_tick, entry.tick);
@@ -550,11 +551,30 @@ uint64_t ResolveRemovals(
   }
   std::vector<int64_t> unsettled;
   if (key_removals.size() == 1) {
-    unsettled = key_removals.front()->keys;
+    const auto [removal, tick] = key_removals.front();
+    unsettled = removal->keys;
+    ResolveKeys(unsettled, key_column, flushed,
+                [tick](const int64_t&) { return tick; });
   } else {
-    unsettled = key_removals | std::views::transform(&KeyRemoval::keys) |
-                std::views::join | std::ranges::to<std::vector>();
-    SortUnique(unsettled);
+    std::vector<std::pair<int64_t, uint64_t>> removed;
+    for (const auto& [removal, tick] : key_removals) {
+      for (const auto key : removal->keys) {
+        removed.emplace_back(key, tick);
+      }
+    }
+    absl::c_sort(removed);
+    std::vector<uint64_t> ticks;
+    unsettled.reserve(removed.size());
+    ticks.reserve(removed.size());
+    for (size_t i = 0; i != removed.size(); ++i) {
+      if (i + 1 == removed.size() || removed[i + 1].first != removed[i].first) {
+        unsettled.push_back(removed[i].first);
+        ticks.push_back(removed[i].second);
+      }
+    }
+    ResolveKeys(unsettled, key_column, flushed, [&](const int64_t& key) {
+      return ticks[&key - unsettled.data()];
+    });
   }
   std::vector<int64_t> settled;
   for (const auto& target : targets | std::views::values) {

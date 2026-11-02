@@ -360,9 +360,10 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
-      if (!context.CurrentRole().Can(duckdb::CatalogType::DATABASE_ENTRY,
-                                     entry->permissions,
-                                     duckdb::AclMode::Connect)) {
+      const auto& role = context.CurrentRole();
+      if (!role.Has(duckdb::RoleCapability::ReadAllStats) &&
+          !role.Can(duckdb::CatalogType::DATABASE_ENTRY, entry->permissions,
+                    duckdb::AclMode::Connect)) {
         duckdb::ThrowPermissionDenied(*entry);
       }
       return static_cast<int64_t>(
@@ -423,7 +424,9 @@ const SystemObject& TablespaceEntry(duckdb::string_t name) {
 int64_t TablespaceBytes(duckdb::ClientContext& context,
                         const SystemObject& tablespace) {
   if (tablespace.oid != kPgDefaultTablespace) {
-    if (!context.CurrentRole().Owns(kRootUser)) {
+    if (const auto& role = context.CurrentRole();
+        !role.Has(duckdb::RoleCapability::ReadAllStats) &&
+        !role.Owns(kRootUser)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("permission denied for tablespace ", tablespace.name));

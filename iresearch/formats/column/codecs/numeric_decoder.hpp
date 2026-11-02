@@ -236,7 +236,7 @@ class FrameDecoder {
     const auto at = static_cast<uint32_t>(row - m.frame.first_entry);
     const size_t need = (size_t{at} + 1) * _h.stored;
     if (f != _source_frame || need > _source_len) {
-      OpenSource(f, m, need);
+      OpenSource(f, m, need, false);
     }
     if (_h.transform != NumericTransform::Delta) {
       out = Item(_source, at);
@@ -256,8 +256,10 @@ class FrameDecoder {
     return true;
   }
 
-  void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need) {
-    const bool prefix = _lz4 && f != _source_frame;
+  void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need,
+                  bool scan) {
+    const bool prefix =
+      _lz4 && f != _source_frame && need < m.frame.raw_len;
     _summed = 0;
     _source_len = m.frame.raw_len;
     _source_held.reset();
@@ -279,7 +281,7 @@ class FrameDecoder {
       _source = _raw.data();
       _source_len = need;
     } else {
-      _scan = false;
+      _scan = scan;
       _source = Inflate(m, nullptr, _source_held);
     }
     _source_frame = f;
@@ -437,7 +439,7 @@ class FrameDecoder {
     const auto end = EndRow(f);
     if (Streams(row, f)) {
       const auto rows = std::min<uint64_t>(count, end - row);
-      DecodeRange(Meta(f), row, rows, out);
+      DecodeRange(f, Meta(f), row, rows, out);
       return rows;
     }
     if (FirstRow(f) != row || end - row > count) {
@@ -451,7 +453,7 @@ class FrameDecoder {
   }
 
   bool Streams(uint64_t row, uint32_t f) const noexcept {
-    if (_h.leaf != NumericLeaf::None || _h.Shuffled()) {
+    if (_h.Shuffled()) {
       return false;
     }
     return _h.transform == NumericTransform::For ||
@@ -460,10 +462,17 @@ class FrameDecoder {
             (row == _delta_end || row == FirstRow(f)));
   }
 
-  void DecodeRange(const NumericFrameMeta& m, uint64_t row, uint64_t rows,
-                   U* out) {
+  void DecodeRange(uint32_t f, const NumericFrameMeta& m, uint64_t row,
+                   uint64_t rows, U* out) {
     const auto at = row - m.frame.first_entry;
-    const auto* src = Data(m) + at * _h.stored;
+    const uint8_t* src = Data(m);
+    if (m.frame.comp_len != m.frame.raw_len) {
+      if (f != _source_frame || _source_len != m.frame.raw_len) {
+        OpenSource(f, m, m.frame.raw_len, true);
+      }
+      src = _source;
+    }
+    src += at * _h.stored;
     if (_h.transform == NumericTransform::For) {
       numeric::WidenAdd(src, rows, _h.stored, static_cast<U>(_h.base), out);
     } else if (_h.transform == NumericTransform::Dict) {

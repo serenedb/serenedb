@@ -26,7 +26,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
-#include <optional>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/string_layout.hpp"
@@ -54,8 +53,7 @@ struct PlainFetch final : duckdb::SegmentScanState {
     }
   }
 
-  IRS_FORCE_INLINE std::optional<uint32_t> ReadOne(data_ptr_t,
-                                                   idx_t row) const {
+  IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t, idx_t row) const {
     SDB_ENSURE(row < frames.header.row_count, "col codec: row out of range");
     return static_cast<uint32_t>(row);
   }

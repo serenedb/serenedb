@@ -503,7 +503,8 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   irs::NormColumnMeta meta;
   {
     irs::ColFileWriter file{dir.create("norms")};
-    irs::NormColumnWriter writer{1, kRows, file};
+    irs::NormColumnWriter writer{
+      1, kRows, [&]() -> irs::ColFileWriter& { return file; }, false};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }

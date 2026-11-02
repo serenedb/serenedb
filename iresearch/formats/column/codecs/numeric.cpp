@@ -298,9 +298,8 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  std::optional<NumericSegment> Seal(const ColCodecParams& params,
-                                     uint64_t rival_bytes,
-                                     NumericTuning& tuning, bool due) final {
+  NumericSegment Seal(const ColCodecParams& params, uint64_t rival_bytes,
+                      NumericTuning& tuning, bool due) final {
     if (std::is_floating_point_v<T>) {
       return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
     }
@@ -310,22 +309,22 @@ class TypedSealer final : public NumericSealer {
     return SealWith(kCompactionPlan, rival_bytes, tuning, due);
   }
 
-  std::optional<NumericSegment> SealWith(std::span<const LeafOption> plan,
-                                         uint64_t rival_bytes,
-                                         NumericTuning& tuning, bool due) {
+  NumericSegment SealWith(std::span<const LeafOption> plan,
+                          uint64_t rival_bytes, NumericTuning& tuning,
+                          bool due) {
     if (!_codes_only) {
       _values = _owned;
     }
     if (!_any_valid || _values.size() > std::numeric_limits<uint32_t>::max()) {
-      return std::nullopt;
+      return NoSegment();
     }
     DivideByGcd();
     const auto rows = static_cast<double>(_values.size());
     if (!due) {
       if (!tuning.pick) {
-        return std::nullopt;
+        return NoSegment();
       }
-      BuildCandidates(tuning.pick->transform);
+      BuildCandidates(&tuning.pick->transform);
       const auto* c = Find(*tuning.pick);
       const auto option = absl::c_find_if(
         plan, [&](const auto& o) { return o.leaf == tuning.pick->leaf; });
@@ -342,7 +341,7 @@ class TypedSealer final : public NumericSealer {
       }
       if (rival_bytes == kNoRival && (!out || drift)) {
         tuning.clock.Restart();
-        return std::nullopt;
+        return NoSegment();
       }
       if (!out) {
         return SealWith(plan, rival_bytes, tuning, true);
@@ -350,11 +349,11 @@ class TypedSealer final : public NumericSealer {
       if (drift) {
         tuning.clock.Restart();
       }
-      return out;
+      return std::move(*out);
     }
 
     SDB_ASSERT(rival_bytes != kNoRival);
-    BuildCandidates(std::nullopt);
+    BuildCandidates(nullptr);
     double best_price = static_cast<double>(rival_bytes);
     uint64_t best_bytes = rival_bytes;
     const Candidate* best = nullptr;
@@ -398,7 +397,10 @@ class TypedSealer final : public NumericSealer {
     tuning.calibrated = true;
     tuning.pick = pick;
     tuning.bytes_per_row = static_cast<double>(best_bytes) / rows;
-    return out;
+    if (!out) {
+      return NoSegment();
+    }
+    return std::move(*out);
   }
 
  private:
@@ -425,6 +427,10 @@ class TypedSealer final : public NumericSealer {
     _stats.Merge(out.stats);
     Write(c, leaf, out.bytes);
     return out;
+  }
+
+  NumericSegment NoSegment() const {
+    return {.stats = duckdb::BaseStatistics::CreateEmpty(_type)};
   }
 
   void DivideByGcd() noexcept {
@@ -461,7 +467,7 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  void BuildCandidates(std::optional<NumericTransform> only) {
+  void BuildCandidates(const NumericTransform* only) {
     const auto wanted = [&](NumericTransform t) { return !only || *only == t; };
     const auto n = static_cast<uint32_t>(_values.size());
     using S = std::make_signed_t<U>;
@@ -1151,9 +1157,8 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
 
 }  // namespace
 
-std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
-                                          uint64_t rival_bytes,
-                                          NumericTuning& tuning) {
+NumericSegment EncodeCodes(std::span<const uint32_t> codes,
+                           uint64_t rival_bytes, NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
   return sealer.SealWith(kLeaflessPlan, rival_bytes, tuning, tuning.Due());
 }

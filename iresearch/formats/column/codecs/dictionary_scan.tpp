@@ -121,7 +121,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
     order.resize(kept);
   }
 
-  IRS_FORCE_INLINE std::optional<uint32_t> ReadOne(data_ptr_t base, idx_t row) {
+  IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
     uint32_t code = 0;
@@ -136,10 +136,8 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
         code = Numeric(base).Fetch(row, kNoRow, kNoRow);
         break;
     }
-    if (code == 0) {
-      return std::nullopt;
-    }
-    SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
+    SDB_ENSURE(code == 0 || code < h.entry_count,
+               "col codec: corrupted row codes");
     return code;
   }
 

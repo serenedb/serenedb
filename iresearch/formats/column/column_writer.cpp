@@ -45,7 +45,6 @@
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -293,7 +292,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
     return CompressData(type, chunks, forced_method, meta);
   }
-  const auto named = codecs::ChoiceOf(forced_method);
+  const auto* named = codecs::ChoiceOf(forced_method);
   codecs::StringAccumulator acc{!named || named->shape == codecs::Shape::Dedup};
   if (!meta.write_string_tuning) {
     meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
@@ -361,31 +360,30 @@ bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
   if (due || !flush) {
     measure();
   }
-  std::optional<codecs::NumericSegment> segment;
   if (due || tuning.pick) {
     const auto sealer = codecs::NumericSealer::Make(type, row_count);
     for (const auto& c : chunks) {
       sealer->Add(c.data);
     }
-    segment = sealer->Seal(_codec_params, score, tuning, due);
-    if (!segment && !fn) {
+    auto segment = sealer->Seal(_codec_params, score, tuning, due);
+    if (segment.bytes.empty() && !fn) {
       measure();
       segment = sealer->Seal(_codec_params, score, tuning, true);
     }
+    if (!segment.bytes.empty()) {
+      const std::string_view part{segment.bytes};
+      CaptureBlock(
+        db,
+        *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
+                          type.InternalType()),
+        std::move(segment.stats), row_count,
+        std::span<const std::string_view>{&part, 1}, WriteCtx().Blocks(),
+        meta.data);
+      return false;
+    }
   }
-  if (!segment) {
-    Compress(*fn, std::move(state), type, chunks, meta.data);
-    return fn->validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
-  }
-  const std::string_view part{segment->bytes};
-  CaptureBlock(
-    db,
-    *codecs::GetCodec(db, duckdb::CompressionType::COMPRESSION_COL_NUMERIC,
-                      type.InternalType()),
-    std::move(segment->stats), row_count,
-    std::span<const std::string_view>{&part, 1}, WriteCtx().Blocks(),
-    meta.data);
-  return false;
+  Compress(*fn, std::move(state), type, chunks, meta.data);
+  return fn->validity == duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
 }
 
 void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,

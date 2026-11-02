@@ -80,9 +80,8 @@ struct NumericTuning {
   }
 };
 
-std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
-                                          uint64_t rival_bytes,
-                                          NumericTuning& tuning);
+NumericSegment EncodeCodes(std::span<const uint32_t> codes,
+                           uint64_t rival_bytes, NumericTuning& tuning);
 
 class NumericSealer {
  public:
@@ -93,10 +92,9 @@ class NumericSealer {
 
   virtual void Add(const duckdb::Vector& input) = 0;
 
-  virtual std::optional<NumericSegment> Seal(const ColCodecParams& params,
-                                             uint64_t rival_bytes,
-                                             NumericTuning& tuning,
-                                             bool due) = 0;
+  virtual NumericSegment Seal(const ColCodecParams& params,
+                              uint64_t rival_bytes, NumericTuning& tuning,
+                              bool due) = 0;
 };
 
 }  // namespace irs::codecs

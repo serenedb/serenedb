@@ -95,11 +95,11 @@ const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
     .get();
 }
 
-std::optional<StringChoice> ChoiceOf(CompressionType type) {
+const StringChoice* ChoiceOf(CompressionType type) {
   if (const auto* text = TextCodecOf(type)) {
-    return text->choice;
+    return &text->choice;
   }
-  return std::nullopt;
+  return nullptr;
 }
 
 CompressionType TypeOf(StringChoice choice) noexcept {
@@ -111,7 +111,7 @@ CompressionType TypeOf(StringChoice choice) noexcept {
 }
 
 uint8_t MaxLevel(CompressionType type) {
-  const auto choice = ChoiceOf(type);
+  const auto* choice = ChoiceOf(type);
   if (!choice) {
     return 0;
   }

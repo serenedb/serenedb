@@ -341,7 +341,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   if (count == 1) {
     const auto at = result_offset + result_sel.get_index(0);
     const auto entry = fetch.ReadOne(base, rows[0]);
-    if (!entry) {
+    if (Scan::kShape == Shape::Dedup && entry == 0) {
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
       return;
     }
@@ -349,12 +349,12 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       frames.decoded = DecodeWhole<Scan>(segment);
     }
     if (frames.decoded) {
-      const EntryAt one{.entry = *entry, .at = at};
+      const EntryAt one{.entry = entry, .at = at};
       EmitDecoded(*frames.decoded, std::span<const EntryAt>{&one, 1}, result,
                   frames.heap_reference);
       return;
     }
-    frames.Emit(segment, base, *entry, result, at, false);
+    frames.Emit(segment, base, entry, result, at, false);
     if (fetch.Whole()) {
       frames.decoded = DecodeWhole<Scan>(segment);
     }

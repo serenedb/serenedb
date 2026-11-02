@@ -103,18 +103,18 @@ using SegmentSink = absl::FunctionRef<void(
   StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
   std::span<const std::string_view> parts)>;
 
-bool TrainsDictionary(std::optional<StringChoice> named,
+bool TrainsDictionary(const StringChoice* named,
                       const ColCodecParams& params) noexcept;
 
 std::shared_ptr<const TrainedDictionary> TrainDictionary(
-  const StringAccumulator& acc, std::optional<StringChoice> named,
+  const StringAccumulator& acc, const StringChoice* named,
   const ColCodecParams& params, StringTuning& tuning);
 
 void Adopt(StringTuning& tuning,
            std::shared_ptr<const TrainedDictionary> dictionary, uint16_t id);
 
 SealOutcome SealSegments(const StringAccumulator& acc,
-                         std::optional<StringChoice> named,
+                         const StringChoice* named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink);

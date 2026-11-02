@@ -23,7 +23,6 @@
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/compression_function.hpp>
-#include <optional>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 
@@ -44,7 +43,7 @@ const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
                                             duckdb::CompressionType type,
                                             duckdb::PhysicalType physical);
 
-std::optional<StringChoice> ChoiceOf(duckdb::CompressionType type);
+const StringChoice* ChoiceOf(duckdb::CompressionType type);
 
 duckdb::CompressionType TypeOf(StringChoice choice) noexcept;
 

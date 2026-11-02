@@ -916,7 +916,7 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     uint64_t segments = 0;
     uint64_t rows = 0;
     const auto outcome = irs::codecs::SealSegments(
-      acc, choice, irs::ColCodecParams{.segment_target = 16 * 1024},
+      acc, &choice, irs::ColCodecParams{.segment_target = 16 * 1024},
       duckdb::LogicalType::VARCHAR, tuning,
       [&](irs::codecs::StringChoice sealed, duckdb::BaseStatistics,
           uint64_t count, std::span<const std::string_view>) {
@@ -952,7 +952,7 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
   irs::codecs::StringTuning tuning;
   std::vector<Shape> shapes;
   const auto outcome = irs::codecs::SealSegments(
-    acc, std::nullopt, irs::ColCodecParams{.segment_target = 16 * 1024},
+    acc, nullptr, irs::ColCodecParams{.segment_target = 16 * 1024},
     duckdb::LogicalType::VARCHAR, tuning,
     [&](irs::codecs::StringChoice choice, duckdb::BaseStatistics, uint64_t,
         std::span<const std::string_view>) { shapes.push_back(choice.shape); });
@@ -1288,8 +1288,7 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
       acc.Add(*c);
     }
     const auto outcome = irs::codecs::SealSegments(
-      acc, std::nullopt, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR,
-      tuning,
+      acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
          std::span<const std::string_view>) {});
     EXPECT_TRUE(outcome.sealed);
@@ -2554,12 +2553,11 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
       acc.Add(*c);
     }
     if (auto dictionary = irs::codecs::TrainDictionary(
-          acc, std::nullopt, irs::ColCodecParams{}, tuning)) {
+          acc, nullptr, irs::ColCodecParams{}, tuning)) {
       irs::codecs::Adopt(tuning, std::move(dictionary), 1);
     }
     const auto outcome = irs::codecs::SealSegments(
-      acc, std::nullopt, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR,
-      tuning,
+      acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
          std::span<const std::string_view>) {});
     EXPECT_TRUE(outcome.sealed);
@@ -2628,8 +2626,8 @@ TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
   ASSERT_NE(col, nullptr);
   uint64_t row = 0;
   for (const auto& block : col->DataBlocks()) {
-    const auto choice = irs::codecs::ChoiceOf(block.codec->type);
-    ASSERT_TRUE(choice.has_value())
+    const auto* choice = irs::codecs::ChoiceOf(block.codec->type);
+    ASSERT_NE(choice, nullptr)
       << duckdb::CompressionTypeToString(block.codec->type);
     EXPECT_EQ(choice->shape, row < kSteady ? irs::codecs::Shape::Dedup
                                            : irs::codecs::Shape::Plain)
@@ -2659,11 +2657,10 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   }
   irs::codecs::StringTuning tuning;
   std::vector<uint64_t> sizes;
+  const irs::codecs::StringChoice fsst{irs::codecs::Shape::Plain,
+                                       irs::codecs::ByteCodec::Fsst};
   const auto outcome = irs::codecs::SealSegments(
-    acc,
-    irs::codecs::StringChoice{irs::codecs::Shape::Plain,
-                              irs::codecs::ByteCodec::Fsst},
-    irs::ColCodecParams{.segment_target = kTarget},
+    acc, &fsst, irs::ColCodecParams{.segment_target = kTarget},
     duckdb::LogicalType::VARCHAR, tuning,
     [&](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
         std::span<const std::string_view> parts) {

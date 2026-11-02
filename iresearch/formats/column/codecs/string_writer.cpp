@@ -101,7 +101,7 @@ constexpr size_t Index(ByteCodec leaf) noexcept {
 
 class SegmentWriter {
  public:
-  SegmentWriter(const StringAccumulator& acc, std::optional<StringChoice> named,
+  SegmentWriter(const StringAccumulator& acc, const StringChoice* named,
                 const ColCodecParams& params, const duckdb::LogicalType& type,
                 StringTuning& tuning)
     : _acc{acc}, _named{named}, _params{params}, _type{type}, _tuning{tuning} {}
@@ -162,10 +162,10 @@ class SegmentWriter {
     SDB_ASSERT(seg.codes.size() == h.row_count);
     const uint64_t current = h.off_symtab - h.off_codes;
     const auto encoded = EncodeCodes(seg.codes, current, _tuning.codes);
-    if (!encoded) {
+    const auto& bytes = encoded.bytes;
+    if (bytes.empty()) {
       return;
     }
-    const auto& bytes = encoded->bytes;
     SDB_ASSERT(bytes.size() < current);
     const uint64_t codes_end = h.off_codes + bytes.size();
     const auto off_symtab = duckdb::AlignValue<uint64_t, 8>(codes_end);
@@ -560,7 +560,7 @@ class SegmentWriter {
   void Release(Segment* seg) { _free.push_back(seg); }
 
   const StringAccumulator& _acc;
-  std::optional<StringChoice> _named;
+  const StringChoice* _named;
   const ColCodecParams& _params;
   const duckdb::LogicalType& _type;
   StringTuning& _tuning;
@@ -630,7 +630,7 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   row_count += count;
 }
 
-bool TrainsDictionary(std::optional<StringChoice> named,
+bool TrainsDictionary(const StringChoice* named,
                       const ColCodecParams& params) noexcept {
   if (params.tier == WriteTier::Flush) {
     return false;
@@ -639,7 +639,7 @@ bool TrainsDictionary(std::optional<StringChoice> named,
 }
 
 std::shared_ptr<const TrainedDictionary> TrainDictionary(
-  const StringAccumulator& acc, std::optional<StringChoice> named,
+  const StringAccumulator& acc, const StringChoice* named,
   const ColCodecParams& params, StringTuning& tuning) {
   if (tuning.sampling_done || !TrainsDictionary(named, params)) {
     return nullptr;
@@ -664,7 +664,7 @@ void Adopt(StringTuning& tuning,
 }
 
 SealOutcome SealSegments(const StringAccumulator& acc,
-                         std::optional<StringChoice> named,
+                         const StringChoice* named,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink) {

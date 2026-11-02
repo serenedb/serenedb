@@ -106,8 +106,6 @@ class NormColumnWriter final {
  public:
   using Open = std::function<ColFileWriter&()>;
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, ColFileWriter& blocks);
-
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open,
                    bool stage_all);
 

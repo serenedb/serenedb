@@ -97,10 +97,6 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
 }
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   ColFileWriter& blocks)
-  : _id{id}, _blocks{&blocks}, _row_group_size{row_group_size} {}
-
-NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
                                    Open open, bool stage_all)
   : _id{id},
     _open{std::move(open)},

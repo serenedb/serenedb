@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/search/detail/masked_leaf.hpp"
+#include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -97,8 +98,9 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     if (last < _doc) {
       return 0;
     }
-    if (n > 2 && uint64_t{last - docs[0]} * _leaf.Len() <
-                   uint64_t{n - 2} * (_max_in_leaf - _base)) {
+    if (n > 2 &&
+        uint64_t{last - docs[0]} * _leaf.Len() <
+          uint64_t{n - 2} * irs::detail::kProbeSteps * (_max_in_leaf - _base)) {
       return Merge(docs, n, freqs);
     }
     ScoreMask hits = 0;

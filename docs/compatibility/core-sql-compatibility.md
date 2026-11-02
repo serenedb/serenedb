@@ -50,7 +50,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature               | Support State | Details                                                      |
 |-----------------------|---------------|--------------------------------------------------------------|
 | CREATE ROLE           | Yes           | See [Database Roles](../security/roles.md) |
-| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs, foreign servers; not databases or functions |
+| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, functions and procedures, databases, text search dictionaries, subscriptions, jobs, foreign servers; see [Ownership](../security/privileges.md#ownership) |
 | ALTER ROLE            | Yes           | Attributes, passwords, `VALID UNTIL`, `RENAME TO` |
 | GRANT                 | Yes           | Privileges and role membership, incl. column grants; see [Privileges](../security/privileges.md) |
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |

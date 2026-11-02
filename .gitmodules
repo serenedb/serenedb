@@ -195,6 +195,14 @@
 	path = third_party/geographiclib-c
 	url = https://github.com/serenedb/geographiclib-c.git
 	shallow = true
+[submodule "third_party/podofo"]
+	path = third_party/podofo
+	url = https://github.com/serenedb/podofo.git
+	shallow = true
+[submodule "third_party/freetype"]
+	path = third_party/freetype
+	url = https://github.com/serenedb/freetype.git
+	shallow = true
 [submodule "third_party/cmocka"]
 	path = third_party/cmocka
 	url = https://gitlab.com/cmocka/cmocka.git

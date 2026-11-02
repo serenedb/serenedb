@@ -617,6 +617,9 @@ sdb_add_module(avro DIR avro/lang/c NO_WARNINGS)
 
 sdb_add_module(libxml2 DIR libxml2-cmake)
 
+sdb_add_module(freetype DIR freetype-cmake)
+sdb_add_module(podofo DIR podofo-cmake NO_WARNINGS)
+
 ################################################################################
 ## Azure SDK (monolithic build)
 ################################################################################
@@ -703,7 +706,7 @@ else()
         FORCE
     )
     set(STATICALLY_LINK_EXTENSIONS
-        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;pdf"
         CACHE STRING
         ""
         FORCE
@@ -714,6 +717,7 @@ else()
     set(DUCKDB_EXTENSION_CONFIGS
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_pdf/extension_config.cmake"
         CACHE STRING
         ""
         FORCE
@@ -739,6 +743,12 @@ sdb_update_module(
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 sdb_add_module(duckdb COVERAGE)
+sdb_dir_compile_options(
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src
+    $<$<CONFIG:Debug>:-Wno-conversion>
+    $<$<CONFIG:Debug>:-Wno-sign-compare>
+    $<$<CONFIG:Debug>:-Wno-missing-field-initializers>
+)
 target_compile_options(duckdb_storage PRIVATE -Wno-thread-safety-analysis)
 if(TARGET iceberg_planning_scan_plan)
     target_compile_options(

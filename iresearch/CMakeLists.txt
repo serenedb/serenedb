@@ -22,6 +22,10 @@ if(FLEX_FOUND AND BISON_FOUND)
 endif()
 
 add_library(iresearch STATIC parser/lucene_lexer.cpp parser/lucene_parser.cpp)
+set_source_files_properties(
+    parser/lucene_lexer.cpp
+    PROPERTIES COMPILE_OPTIONS -Wno-sign-compare
+)
 
 add_subdirectory(analysis)
 add_subdirectory(formats)

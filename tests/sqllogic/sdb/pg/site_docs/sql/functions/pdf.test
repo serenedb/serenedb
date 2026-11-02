@@ -1,0 +1,35 @@
+control substitution on
+
+system ok
+ln -sfn ${RESOURCES}/tests/pdf/basic "$__TEST_DIR__/pdf_docs"
+
+# DOCS_TEST: read_pages
+# DOCS_TEST_BODY
+query
+SELECT page, text
+FROM read_pdf('${__TEST_DIR__}/pdf_docs/text.pdf')
+ORDER BY page;
+----
+page	text
+1	Hello PDF
+2	Second page
+
+# DOCS_TEST: read_blocks
+# DOCS_TEST_BODY
+query
+SELECT page, text, x, y
+FROM read_pdf_blocks('${__TEST_DIR__}/pdf_docs/columns.pdf')
+ORDER BY page, x;
+----
+page	text	x	y
+1	Left column	72	720
+1	Right column	320	720
+
+# DOCS_TEST: page_range
+# DOCS_TEST_BODY
+query
+SELECT page, text
+FROM read_pdf('${__TEST_DIR__}/pdf_docs/text.pdf', first_page := 2, last_page := 2);
+----
+page	text
+2	Second page

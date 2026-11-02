@@ -1855,7 +1855,7 @@ pgonly("""CREATE TABLE pgonly.identity_tab (
   qty int4 CHECK (qty BETWEEN 1 AND 100)
 )""", 'syntax error at or near "IDENTITY"')
 pgonly("CREATE FUNCTION pgonly.touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
-       'syntax error at or near "RETURN"')
+       'language "plpgsql" is not supported')
 pgonly("CREATE TRIGGER parent_touch BEFORE UPDATE ON pgonly.parent FOR EACH ROW EXECUTE FUNCTION pgonly.touch()",
        'syntax error at or near "EXECUTE"')
 pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY",

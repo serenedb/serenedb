@@ -109,6 +109,10 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 - DuckDB writes its iceberg patches against the iceberg commit it pins, older than iceberg `main`. Iceberg `main` already has `0001-can-autoload-extension-database` and its own port of `0001-table-function-signature-options`, so neither is applied, and `0002-alter-info-column-path` goes in with `git apply --3way`.
 - DuckDB's avro-c changes apply to Apache `main` with three conflicts, all where Apache's tree moved on: the CMake package lookups (`apply patches`), the test list (PRs 2 and 9), and PR 9's block reader, whose block count and size check absorbs Apache's own negative block size check ([apache/avro 3623](https://github.com/apache/avro/pull/3623)). None is dropped.
 
+### The update of 2026-10-20
+
+Upstream did not move: the boundaries of 2026-10-06 stand, and every fork's tree is its 2026-10-06 head's. Each patchset was rebuilt one commit per concern, and duckdb's ends with one `regen:` commit in place of the sixteen its pull requests had added.
+
 ### Our patchset by area (duckdb core)
 
 - **Parser and grammar:** PostgreSQL's surface in the core grammar (CREATE FUNCTION/PROCEDURE, roles and grants, FDW servers, text search dictionaries, subscriptions, REINDEX, LISTEN/NOTIFY, DISCARD, SET/RESET/SHOW scoping, TRUNCATE CASCADE/RESTART, pg_dump's sequence forms, opclass CREATE INDEX, VACUUM options, SELECT INTO, regex/SIMILAR TO/BETWEEN SYMMETRIC/JSON operators, tokenizer operators) and PostgreSQL literals (booleans, digit separators, ISO 8601 durations, `'{...}'` arrays).

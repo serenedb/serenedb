@@ -435,6 +435,12 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kVariant);
     case UNION:
       return make(kUnion);
+    case SQLNULL:
+      if (const auto* row = FindAliasedType(
+            type, [](const BuiltinType& row) { return row.type == 'p'; })) {
+        return make(*row);
+      }
+      return {kUnknown, -1, -1};
     default:
       return {kUnknown, -1, -1};
   }

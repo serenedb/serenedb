@@ -94,9 +94,21 @@ statement ok
 INSERT INTO esen_with_check VALUES (1);
 
 
+onlyif postgres
 connection c_ved user=esen_vedernikoff password=esen_pw
-statement error esen_with_check
+statement error
 INSERT INTO esen_with_check VALUES (-1);
+----
+db error: ERROR: new row for relation "esen_with_check" violates check constraint "esen_with_check_a_check"
+DETAIL: Failing row contains (-1).
+
+
+skipif postgres
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+INSERT INTO esen_with_check VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "esen_with_check" with expression CHECK(esen_hidden.esen_positive(a))
 
 
 connection c_ved user=esen_vedernikoff password=esen_pw

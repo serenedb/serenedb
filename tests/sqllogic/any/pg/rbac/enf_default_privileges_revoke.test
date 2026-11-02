@@ -94,8 +94,10 @@ db error: ERROR: permission denied for function dpr_global
 
 
 connection c_dpr user=dpr_vedernikoff password=dpr_pw
-statement error permission denied for (function|procedure) dpr_proc
+statement error
 CALL dpr_quas.dpr_proc();
+----
+db error: ERROR: permission denied for procedure dpr_proc
 
 
 statement ok

@@ -105,9 +105,20 @@ statement ok
 DROP TRIGGER edo_mine_trg ON edo_mine;
 
 
+onlyif postgres
 connection c_edo user=edo_vedernikoff password=edo_pw
-statement error must be owner of (relation|table) edo_theirs
+statement error
 DROP TRIGGER edo_theirs_trg ON edo_theirs;
+----
+db error: ERROR: must be owner of relation edo_theirs
+
+
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP TRIGGER edo_theirs_trg ON edo_theirs;
+----
+db error: ERROR: must be owner of table edo_theirs
 
 
 connection c_edo user=edo_vedernikoff password=edo_pw

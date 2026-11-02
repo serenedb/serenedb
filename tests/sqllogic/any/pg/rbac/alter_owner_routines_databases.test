@@ -119,9 +119,20 @@ ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_carol;
 db error: ERROR: must be owner of function aord_f
 
 
+onlyif postgres
 connection c_carol user=aord_carol password=aord_pw
-statement error must be owner of (function|procedure) aord_p
+statement error
 ALTER PROCEDURE aord_s.aord_p() OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of function aord_p
+
+
+skipif postgres
+connection c_carol user=aord_carol password=aord_pw
+statement error
+ALTER PROCEDURE aord_s.aord_p() OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of procedure aord_p
 
 
 statement ok

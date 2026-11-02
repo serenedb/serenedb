@@ -58,7 +58,6 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
@@ -654,13 +653,18 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
                                    ? 0
                                    : reindex_interval->GetValue<uint32_t>());
   }
-  if (_storage) {
-    connector::RunAtCommit(
-      context, [storage = _storage, settings = ResolveSettings(new_options)] {
-        storage->ApplyOptions(settings);
-      });
-  }
   return result;
+}
+
+void InvertedIndexEntry::OnAlter(const duckdb::AlterInfo& info) {
+  if (!_storage || info.type != duckdb::AlterType::ALTER_INDEX) {
+    return;
+  }
+  const auto type = info.Cast<duckdb::AlterIndexInfo>().alter_index_type;
+  if (type == duckdb::AlterIndexType::SET_INDEX_OPTIONS ||
+      type == duckdb::AlterIndexType::RESET_INDEX_OPTIONS) {
+    _storage->ApplyOptions(ResolveSettings(options));
+  }
 }
 
 void InvertedIndexEntry::CreateReindexJob(

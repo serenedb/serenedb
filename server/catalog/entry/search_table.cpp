@@ -64,7 +64,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/sort_keys.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/connection_context.h"
@@ -542,6 +541,24 @@ void SearchTableEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
 
 void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
+void SearchTableEntry::OnAlter(const duckdb::AlterInfo& info) {
+  if (info.type != duckdb::AlterType::ALTER_TABLE) {
+    return;
+  }
+  switch (info.Cast<duckdb::AlterTableInfo>().alter_table_type) {
+    case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
+      _storage->SetDeclaredCompression(
+        search::SearchTable::DeclaredCompression(GetColumns()));
+      break;
+    case duckdb::AlterTableType::SET_TABLE_OPTIONS:
+    case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
+      _storage->ApplyOptions(_options);
+      break;
+    default:
+      break;
+  }
+}
+
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();
@@ -561,14 +578,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::SetColumnCompression(
   }
   column.SetCompressionType(info.compression_type);
   column.SetCompressionLevel(info.compression_level);
-  auto result = Rebuilt(context, info, std::move(create));
-  auto declared =
-    search::SearchTable::DeclaredCompression(result->GetColumns());
-  connector::RunAtCommit(
-    context, [storage = _storage, declared = std::move(declared)]() mutable {
-      storage->SetDeclaredCompression(std::move(declared));
-    });
-  return result;
+  return Rebuilt(context, info, std::move(create));
 }
 
 void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
@@ -883,14 +893,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   }
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(create));
-  auto result = duckdb::make_uniq<SearchTableEntry>(
+  return duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage, triggers);
-  connector::RunAtCommit(context,
-                         [storage = _storage, options = result->_options] {
-                           storage->ApplyOptions(options);
-                         });
-  return result;
 }
 
 }  // namespace sdb::catalog

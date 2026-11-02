@@ -286,6 +286,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
+  void OnAlter(const duckdb::AlterInfo& info) final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);

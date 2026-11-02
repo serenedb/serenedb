@@ -60,6 +60,16 @@ statement ok
 CREATE INDEX alt_idx ON alt USING inverted(body);
 
 statement ok
+ALTER INDEX alt_idx RENAME TO alt_body_idx;
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'alt' ORDER BY indexname;
+----
+indexname
+alt_body_idx
+alt_pkey
+
+statement ok
 ALTER TABLE alt SET (refresh_interval = 0, compaction_interval = 500);
 
 statement ok

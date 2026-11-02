@@ -8583,9 +8583,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge + removal
 
-    // +1 for segments,
-    // +1 for segments_2
-    ASSERT_EQ(count + 2, irs::DirectoryCleaner::clean(dir()));
+    // +1 for segments_3
+    ASSERT_EQ(count + 1, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
@@ -8759,8 +8758,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {};
     ASSERT_TRUE(writer->Compact(check_compacting_segments));
 
-    // +1 for segments_2, +1 for segments_3
-    ASSERT_EQ(count + 2, irs::DirectoryCleaner::clean(dir()));
+    // +1 for segments_3
+    ASSERT_EQ(count + 1, irs::DirectoryCleaner::clean(dir()));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;

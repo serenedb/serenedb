@@ -1,0 +1,229 @@
+statement ok
+DROP FUNCTION IF EXISTS afa_read(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS afa_ov(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS afa_ov(text);
+
+
+statement ok
+DROP PROCEDURE IF EXISTS afa_proc(int);
+
+
+statement ok
+DROP TABLE IF EXISTS afa_secret;
+
+
+statement ok
+DROP ROLE IF EXISTS afa_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS afa_user;
+
+
+statement ok
+CREATE ROLE afa_owner LOGIN PASSWORD 'afa_pw';
+
+
+statement ok
+CREATE ROLE afa_user LOGIN PASSWORD 'afa_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO afa_owner;
+
+
+statement ok
+CREATE TABLE afa_secret (v int);
+
+
+statement ok
+INSERT INTO afa_secret VALUES (42);
+
+
+statement ok
+GRANT SELECT ON afa_secret TO afa_owner;
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+CREATE FUNCTION afa_read(a int) RETURNS int LANGUAGE sql AS 'SELECT a + max(v) FROM afa_secret';
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+CREATE FUNCTION afa_ov(a int) RETURNS text LANGUAGE sql AS 'SELECT ''int''';
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+CREATE FUNCTION afa_ov(a text) RETURNS text LANGUAGE sql AS 'SELECT ''text''';
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+CREATE PROCEDURE afa_proc(a int) LANGUAGE sql AS 'SELECT 1';
+
+
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: permission denied for table afa_secret
+
+
+connection c_user user=afa_user password=afa_pw
+statement error
+ALTER FUNCTION afa_read(int) SECURITY DEFINER;
+----
+db error: ERROR: must be owner of function afa_read
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+ALTER FUNCTION afa_read(int) SECURITY DEFINER STABLE;
+
+
+connection c_user user=afa_user password=afa_pw
+query
+SELECT afa_read(1) AS m;
+----
+m
+43
+
+
+query
+SELECT prosecdef, provolatile FROM pg_proc WHERE proname = 'afa_read';
+----
+prosecdef	provolatile
+t	s
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+ALTER ROUTINE afa_read(integer) EXTERNAL SECURITY INVOKER VOLATILE COST 10 RESTRICT;
+
+
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: permission denied for table afa_secret
+
+
+query
+SELECT prosecdef, provolatile FROM pg_proc WHERE proname = 'afa_read';
+----
+prosecdef	provolatile
+f	v
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement error
+ALTER FUNCTION afa_ov SECURITY DEFINER;
+----
+db error: ERROR: function name "afa_ov" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+ALTER FUNCTION afa_ov(text) SECURITY DEFINER;
+
+
+query
+SELECT prosecdef FROM pg_proc WHERE proname = 'afa_ov' ORDER BY prosecdef;
+----
+prosecdef
+f
+t
+
+
+connection c_user user=afa_user password=afa_pw
+query
+SELECT afa_ov(1) AS by_int, afa_ov('x'::text) AS by_text;
+----
+by_int	by_text
+int	text
+
+
+onlyif postgres
+connection c_owner user=afa_owner password=afa_pw
+statement error
+ALTER FUNCTION afa_ov(boolean) STABLE;
+----
+db error: ERROR: function afa_ov(boolean) does not exist
+
+
+skipif postgres
+connection c_owner user=afa_owner password=afa_pw
+statement error
+ALTER FUNCTION afa_ov(boolean) STABLE;
+----
+db error: ERROR: function afa_ov(BOOLEAN) does not exist
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+ALTER PROCEDURE afa_proc(int) SECURITY DEFINER;
+
+
+query
+SELECT prosecdef FROM pg_proc WHERE proname = 'afa_proc';
+----
+prosecdef
+t
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+REVOKE EXECUTE ON FUNCTION afa_read(int) FROM PUBLIC;
+
+
+connection c_owner user=afa_owner password=afa_pw
+statement ok
+ALTER FUNCTION afa_read(int) SECURITY DEFINER;
+
+
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: permission denied for function afa_read
+
+
+statement ok
+DROP FUNCTION afa_read(int);
+
+
+statement ok
+DROP FUNCTION afa_ov(int);
+
+
+statement ok
+DROP FUNCTION afa_ov(text);
+
+
+statement ok
+DROP PROCEDURE afa_proc(int);
+
+
+statement ok
+DROP TABLE afa_secret;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM afa_owner;
+
+
+statement ok
+DROP ROLE afa_owner;
+
+
+statement ok
+DROP ROLE afa_user;

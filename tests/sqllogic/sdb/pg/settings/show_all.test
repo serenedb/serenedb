@@ -21,6 +21,8 @@ allowed_directories	[]	List of directories, and directory prefixes, that are ALW
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.
 approximate_join_order_threshold	12	The minimum number of tables in a join to determine the optimal join order approximately instead of exactly.
+archive_command	(empty)	Not used. Added for PostgreSQL compatibility only.
+archive_mode	off	Not used. Added for PostgreSQL compatibility only.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
 arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
@@ -65,6 +67,7 @@ ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when ac
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
+checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
 cleanup_interval_step	1	Number of automatic refreshes between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables the periodic passes: cleanup then follows only background compaction and, on a search table, VACUUM. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
@@ -76,6 +79,7 @@ copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line 
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
+data_directory	<slt:ignore>	Shows the data directory.
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 debug_checkpoint_scan_sleep_ms	0	DEBUG SETTING: time to sleep after a checkpoint has written a table's row groups, before it installs them
 default_block_size	262144	The default block size for new duckdb database files. New means that the file is being created and does not yet exist.
@@ -187,6 +191,7 @@ max_expression_depth	1000	The maximum expression depth limit in the parser. WARN
 max_identifier_length	63	Shows the maximum identifier length. SereneDB keeps longer identifiers in full.
 max_index_keys	32	Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as pg_index.indkey and pg_constraint.conkey.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
+max_parallel_workers_per_gather	2	Not used. Added for PostgreSQL compatibility only.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
@@ -368,6 +373,8 @@ allowed_directories	[]	List of directories, and directory prefixes, that are ALW
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.
 approximate_join_order_threshold	12	The minimum number of tables in a join to determine the optimal join order approximately instead of exactly.
+archive_command	(empty)	Not used. Added for PostgreSQL compatibility only.
+archive_mode	off	Not used. Added for PostgreSQL compatibility only.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
 arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
@@ -412,6 +419,7 @@ ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when ac
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
+checkpoint_timeout	300	Not used. Added for PostgreSQL compatibility only.
 cleanup_interval_step	1	Number of automatic refreshes between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables the periodic passes: cleanup then follows only background compaction and, on a search table, VACUUM. Default: 1.
 client_encoding	UTF8	Sets the client's character set encoding.
 client_min_messages	notice	Sets the message levels that are sent to the client.
@@ -423,6 +431,7 @@ copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line 
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
+data_directory	<slt:ignore>	Shows the data directory.
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 debug_checkpoint_scan_sleep_ms	0	DEBUG SETTING: time to sleep after a checkpoint has written a table's row groups, before it installs them
 default_block_size	262144	The default block size for new duckdb database files. New means that the file is being created and does not yet exist.
@@ -534,6 +543,7 @@ max_expression_depth	1000	The maximum expression depth limit in the parser. WARN
 max_identifier_length	63	Shows the maximum identifier length. SereneDB keeps longer identifiers in full.
 max_index_keys	32	Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as pg_index.indkey and pg_constraint.conkey.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
+max_parallel_workers_per_gather	2	Not used. Added for PostgreSQL compatibility only.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).

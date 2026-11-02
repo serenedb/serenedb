@@ -105,9 +105,12 @@ std::vector<irs::ReencodeEstimate> CheckRewrites(
 }
 
 uint64_t SavedPercent(const irs::ReencodeEstimate& rewrite) {
+  if (rewrite.reencoded_bytes >= rewrite.stored_bytes) {
+    return 0;
+  }
   return static_cast<uint64_t>(
     absl::uint128{rewrite.stored_bytes - rewrite.reencoded_bytes} * 100 /
-    std::max<uint64_t>(rewrite.stored_bytes, 1));
+    rewrite.stored_bytes);
 }
 
 std::string Segments(uint64_t count) {

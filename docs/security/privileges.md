@@ -39,6 +39,8 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
+A statement's table and column privileges are checked once it is fully analyzed, so a statement that also names a column or table that does not exist reports that error rather than the missing privilege.
+
 `USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema. The expressions a table stores, its column defaults, `CHECK` constraints and generated columns, need no `USAGE` on the schemas they name from a role that inserts or updates rows; that role still needs `USAGE` or `UPDATE` on a sequence a default advances and `EXECUTE` on the functions they call.
 
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server needs `USAGE` on its foreign-data wrapper in the database the session is connected to, which only superusers hold until one grants it with `GRANT USAGE ON FOREIGN DATA WRAPPER`. Such a grant lets the role create `postgres_fdw` and `clickhouse_fdw` servers that connect wherever their options point, with a password of their own and no secrets or server files; the [rules for servers owned by roles without `SUPERUSER`](../sql/statements/create_server/index.md#servers-owned-by-roles-without-superuser) list what such a server may set.

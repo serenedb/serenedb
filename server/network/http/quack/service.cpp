@@ -342,14 +342,13 @@ class Host final : public duckdb::QuackServerHost {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_ADMIN_SHUTDOWN),
                       ERR_MSG("the server is shutting down"));
     }
-    auto auth = _service.Auth().AuthenticateCredential(
-      request.AuthString(), _context.Peer(), _context.Database());
+    auto auth = _context.Authenticate(request.AuthString());
     if (auth.status != HttpStatus::None) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PASSWORD),
                       ERR_MSG("authentication failed"));
     }
     auto session = duckdb::make_shared_ptr<Session>(
-      _service, connection_id, auth.context.user, _context.Database());
+      _service, connection_id, auth.context.user, auth.context.database);
     session->Start();
     return duckdb::make_uniq<SessionHandle>(std::move(session));
   }
@@ -361,13 +360,10 @@ class Host final : public duckdb::QuackServerHost {
 
 }  // namespace
 
-Service::Service(const CredentialProvider* credentials,
-                 const ApiKeyValidator* api_keys, const BearerValidator* bearer,
-                 CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
+Service::Service(CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
                  std::string server_id,
                  std::vector<asio_ns::ip::tcp::endpoint> endpoints)
-  : _auth{credentials, api_keys, bearer},
-    _cancel{cancel},
+  : _cancel{cancel},
     _tasks{tasks},
     _core{irs::DuckDBEngine::Instance().instance(), std::move(server_id)} {
   duckdb::QuackStorageExtensionInfo::GetState(

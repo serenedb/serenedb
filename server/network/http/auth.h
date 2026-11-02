@@ -35,6 +35,7 @@ namespace sdb::network::http {
 // ApiKey (base64(id:key), the app-to-app scheme), Bearer (service tokens).
 struct AuthContext {
   std::string user;
+  std::string database;
 };
 
 // Pluggable backends for the schemes whose stores do not exist yet; a null

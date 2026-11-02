@@ -232,15 +232,15 @@ class HttpSession final
     return _prepared[index];
   }
 
-  std::string_view User() const final { return _user; }
-
-  std::string_view Database() const final { return _database; }
-
   std::string_view Schema() const final {
     return _schema.empty() ? std::string_view{"public"} : _schema;
   }
 
-  const pg::LoginPeer& Peer() const final { return _peer; }
+  http::AuthResult Authenticate(std::string_view credential) final {
+    auto auth = _auth.AuthenticateCredential(credential, _peer, _database);
+    auth.context.database = _database;
+    return auth;
+  }
 
   const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
 

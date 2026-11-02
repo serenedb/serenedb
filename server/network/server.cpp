@@ -439,7 +439,6 @@ void Server::StartListeners() {
     }
     if (!_quack && absl::c_linear_search(spec.apis, network::HttpApi::Quack)) {
       _quack = std::make_unique<network::http::quack::Service>(
-        _credentials.get(), _api_key_validator.get(), _bearer_validator.get(),
         _cancel, _sessions, absl::StrJoin(quack_urls, ","),
         std::move(quack_endpoints));
       _quack->Start();

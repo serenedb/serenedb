@@ -29,8 +29,6 @@
 #include <yaclib/coro/task.hpp>
 
 #include "network/cancel_registry.h"
-#include "network/credentials.h"
-#include "network/http/auth.h"
 #include "network/http/handler.h"
 #include "server/utils/asio_ns.h"
 
@@ -38,9 +36,7 @@ namespace sdb::network::http::quack {
 
 class Service final {
  public:
-  Service(const CredentialProvider* credentials,
-          const ApiKeyValidator* api_keys, const BearerValidator* bearer,
-          CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
+  Service(CancelRegistry& cancel, yaclib::WaitGroup<>& tasks,
           std::string server_id,
           std::vector<asio_ns::ip::tcp::endpoint> endpoints);
   ~Service();
@@ -51,7 +47,6 @@ class Service final {
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         HttpResponseWriter& writer);
 
-  const HttpAuthenticator& Auth() const noexcept { return _auth; }
   CancelRegistry& Cancel() noexcept { return _cancel; }
   yaclib::WaitGroup<>& Tasks() noexcept { return _tasks; }
   duckdb::QuackServer& Core() noexcept { return _core; }
@@ -62,7 +57,6 @@ class Service final {
  private:
   yaclib::Future<> SweepLoop();
 
-  HttpAuthenticator _auth;
   CancelRegistry& _cancel;
   yaclib::WaitGroup<>& _tasks;
   duckdb::QuackServer _core;

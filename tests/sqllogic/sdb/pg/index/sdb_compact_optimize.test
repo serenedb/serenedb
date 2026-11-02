@@ -92,20 +92,18 @@ QUERY PLAN
 │ Merge 1:                                │
 │ 4 segments -> 1, optimize to 2 segments │
 │ Merge 1 Inputs: _1, _2, _3, _4          │
-│ Merge 1 Docs:                           │
-│ 16384 (16384 live), rowid 1..16384      │
+│ Merge 1 Docs: 16384 (16384 live)        │
 │ Merge 1 Bytes: <slt:ignore>│
 │ Merge 1 Columns:                        │
-│ 3, <slt:ignore>│
+│ 2, <slt:ignore>│
 │ Merge 1 Postings: 1 field               │
 │ Merge 2:                                │
 │ 4 segments -> 1, optimize to 2 segments │
 │ Merge 2 Inputs: _5, _6, _7, _8          │
-│ Merge 2 Docs:                           │
-│ 16384 (16384 live), rowid 16385..32768  │
+│ Merge 2 Docs: 16384 (16384 live)        │
 │ Merge 2 Bytes: <slt:ignore>│
 │ Merge 2 Columns:                        │
-│ 3, <slt:ignore>│
+│ 2, <slt:ignore>│
 │ Merge 2 Postings: 1 field               │
 ╰─────────────────────────────────────────╯
 
@@ -124,8 +122,8 @@ query
 SELECT docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
 ----
 docs	rowid_min	rowid_max
-16384	1	16384
-16384	16385	32768
+16384	NULL	NULL
+16384	NULL	NULL
 
 
 query
@@ -185,8 +183,8 @@ query
 SELECT docs, live_docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
 ----
 docs	live_docs	rowid_min	rowid_max
-16284	16284	101	16384
-16384	16384	16385	32768
+16284	16284	NULL	NULL
+16384	16384	NULL	NULL
 
 
 query
@@ -257,7 +255,7 @@ SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
 FROM sdb_segments('opt_small')
 ----
 segments	first	last
-1	1	3000
+1	NULL	NULL
 
 
 statement ok
@@ -372,8 +370,8 @@ query
 SELECT docs, rowid_min, rowid_max FROM sdb_segments('optv') ORDER BY rowid_min
 ----
 docs	rowid_min	rowid_max
-8192	1	8192
-8192	8193	16384
+8192	NULL	NULL
+8192	NULL	NULL
 
 
 query

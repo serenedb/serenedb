@@ -26,7 +26,7 @@ statement ok
 SET sdb_faults = '-irs::KeyOrder::Finish';
 
 query
-SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+SELECT count(*) AS n, count(DISTINCT rowid >> 32) AS segments FROM sof;
 ----
 n	segments
 200	2
@@ -38,15 +38,15 @@ outcome
 merged
 
 query
-SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+SELECT count(*) AS n, count(DISTINCT rowid >> 32) AS segments FROM sof;
 ----
 n	segments
 200	1
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (ORDER BY k, sdb_row_position$) AS logical
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k, rowid) AS logical
   FROM sof) WHERE physical <> logical;
 ----
 misplaced
@@ -105,7 +105,7 @@ segments	docs
 
 query
 SELECT count(*) AS out_of_order FROM (
-  SELECT k, lag(k) OVER (ORDER BY sdb_row_position$) AS previous FROM sof_steps)
+  SELECT k, lag(k) OVER (ORDER BY rowid) AS previous FROM sof_steps)
 WHERE previous > k;
 ----
 out_of_order

@@ -31,12 +31,11 @@ QUERY PLAN
 │ 149 segments -> 1, compact to 1 segment, first step                                                                                                │
 │ Merge 1 Inputs:                                                                                                                                    │
 │ _1024, _1025, _1026, _1027, _1028, _1029, _1030, _1031, +141 more                                                                                  │
-│ Merge 1 Docs:                                                                                                                                      │
-│ 304896 (304896 live), rowid 2095105..2400000                                                                                                       │
+│ Merge 1 Docs: 304896 (304896 live)                                                                                                                 │
 │ Merge 1 Bytes:                                                                                                                                     │
 │ <slt:ignore>│
 │ Merge 1 Columns:                                                                                                                                   │
-│ 3, <slt:ignore>│
+│ 2, <slt:ignore>│
 │ Merge 1 Postings: 0 fields                                                                                                                         │
 │ Not Merged:                                                                                                                                        │
 │ _1 (later step), _2 (later step), _3 (later step), _4 (later step), _5 (later step), _6 (later step), _7 (later step), _8 (later step), +1015 more │
@@ -64,7 +63,7 @@ merged	1024	2400000	2400000
 
 query
 SELECT count(*) AS out_of_order FROM (
-  SELECT k, lag(k) OVER (ORDER BY sdb_row_position$) AS previous FROM sts_compact)
+  SELECT k, lag(k) OVER (ORDER BY rowid) AS previous FROM sts_compact)
 WHERE previous < k;
 ----
 out_of_order
@@ -131,7 +130,7 @@ segments	docs
 
 query
 SELECT count(*) AS out_of_order FROM (
-  SELECT k, lag(k) OVER (ORDER BY sdb_row_position$) AS previous FROM sts_listed)
+  SELECT k, lag(k) OVER (ORDER BY rowid) AS previous FROM sts_listed)
 WHERE previous > k;
 ----
 out_of_order

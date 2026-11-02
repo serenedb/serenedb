@@ -16,7 +16,7 @@ statement ok
 VACUUM (REFRESH_TABLE) srt_small;
 
 query
-SELECT a, b FROM srt_small ORDER BY sdb_row_position$;
+SELECT a, b FROM srt_small ORDER BY rowid;
 ----
 a	b
 NULL	NULL
@@ -43,7 +43,7 @@ statement ok
 VACUUM (REFRESH_TABLE) srt_small;
 
 query
-SELECT a2, b FROM srt_small WHERE sdb_row_position$ >> 32 = (SELECT max(sdb_row_position$ >> 32) FROM srt_small) ORDER BY sdb_row_position$;
+SELECT a2, b FROM srt_small WHERE rowid >> 32 = (SELECT max(rowid >> 32) FROM srt_small) ORDER BY rowid;
 ----
 a2	b
 NULL	a
@@ -80,8 +80,8 @@ n	distinct_n	null_keys
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
   FROM srt) WHERE physical <> logical;
 ----
 misplaced
@@ -123,8 +123,8 @@ n
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
   FROM srt) WHERE physical <> logical;
 ----
 misplaced
@@ -134,14 +134,14 @@ statement ok
 VACUUM (COMPACT_TABLE) srt;
 
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments, count(*) AS n FROM srt;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt;
 ----
 segments	n
 1	7922
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
          row_number() OVER (ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
   FROM srt) WHERE physical <> logical;
 ----
@@ -161,14 +161,14 @@ outcome
 merged
 
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments, count(*) AS n FROM srt;
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt;
 ----
 segments	n
 1	8622
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
          row_number() OVER (ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
   FROM srt) WHERE physical <> logical;
 ----
@@ -187,8 +187,8 @@ VACUUM (REFRESH_TABLE) srt_ctas;
 
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY v DESC, sdb_row_position$) AS logical
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY v DESC, rowid) AS logical
   FROM srt_ctas) WHERE physical <> logical;
 ----
 misplaced

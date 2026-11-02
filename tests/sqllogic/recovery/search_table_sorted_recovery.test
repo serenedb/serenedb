@@ -81,8 +81,8 @@ n
 connection after_crash
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY k DESC NULLS FIRST, sdb_row_position$) AS logical
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k DESC NULLS FIRST, rowid) AS logical
   FROM srr) WHERE physical <> logical;
 ----
 misplaced
@@ -92,8 +92,8 @@ misplaced
 connection after_crash
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY sdb_row_position$) AS physical,
-         row_number() OVER (PARTITION BY sdb_row_position$ >> 32 ORDER BY a ASC NULLS FIRST, b DESC NULLS LAST) AS logical
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY a ASC NULLS FIRST, b DESC NULLS LAST) AS logical
   FROM srr_log) WHERE physical <> logical;
 ----
 misplaced
@@ -107,7 +107,7 @@ VACUUM (COMPACT_TABLE) srr_log;
 
 connection after_crash
 query
-SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM srr_log;
+SELECT count(DISTINCT rowid >> 32) AS segments FROM srr_log;
 ----
 segments
 1
@@ -116,7 +116,7 @@ segments
 connection after_crash
 query
 SELECT count(*) AS misplaced FROM (
-  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
          row_number() OVER (ORDER BY a ASC NULLS FIRST, b DESC NULLS LAST) AS logical
   FROM srr_log) WHERE physical <> logical;
 ----

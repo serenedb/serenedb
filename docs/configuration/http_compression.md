@@ -39,7 +39,7 @@ The ranges stop below each library's maximum. Higher levels compress a few perce
 | `zstd` | -131072 (fastest) to 8 | 3 |
 | `br` | 1 to 6 | 5 |
 | `gzip`, `deflate` | 1 to 9 | 6 |
-| `zxc` | 1 to 5 | 3 |
+| `zxc` | 1 to 7 | 3 |
 | `lz4` | 0 (fast) to 9 (high compression) | 0 |
 
 A request body's `Content-Encoding` may carry a level too: a numeric level is ignored, and a malformed one (`gzip(x)`) answers `415 Unsupported Media Type`.

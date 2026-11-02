@@ -42,9 +42,3 @@ target_sources(
 )
 
 target_link_libraries(sereneserver PUBLIC ada::ada simdutf::simdutf re2::re2)
-
-set_source_files_properties(
-    http/codecs/snappy.cpp
-    TARGET_DIRECTORY sereneserver
-    PROPERTIES COMPILE_OPTIONS -fno-rtti
-)

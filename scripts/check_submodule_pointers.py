@@ -299,7 +299,11 @@ def validate_api(
         if probe is None:
             return None
         if probe == "unknown":
-            return "fail", f"is unknown to {repo} (unpushed or dangling commit?)"
+            code, _ = api_get(f"repos/{repo}/commits/{gitlink}")
+            if code in (404, 422):
+                return "fail", f"is unknown to {repo} (unpushed or dangling commit?)"
+            if code != 200:
+                return None
     indeterminate = False
 
     def contains(name: str, sha: str) -> bool:
@@ -417,34 +421,39 @@ def reachable(rev: str | None) -> bool:
     return not any(errors)
 
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument(
-    "--reachable",
-    action="store_true",
-    help="also check that every gitlink of the commit can be fetched from its URL",
-)
-parser.add_argument("--path", help="check only this submodule path")
-parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
-parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
-parser.add_argument(
-    "--base",
-    help="check only the gitlinks that differ from this commit "
-    "(default: the merge base with origin/main)",
-)
-args, _ = parser.parse_known_args()
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--reachable",
+        action="store_true",
+        help="also check that every gitlink of the commit can be fetched from its URL",
+    )
+    parser.add_argument("--path", help="check only this submodule path")
+    parser.add_argument("--sha", help="validate this sha instead of the staged gitlink")
+    parser.add_argument("--rev", help="check the gitlinks of this commit, not the index")
+    parser.add_argument(
+        "--base",
+        help="check only the gitlinks that differ from this commit "
+        "(default: the merge base with origin/main)",
+    )
+    args, _ = parser.parse_known_args()
 
-if args.path:
-    paths = [args.path]
-else:
-    base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
-    paths = checked_paths(args.rev, base)
-    if paths is None:
-        print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
+    if args.path:
+        paths = [args.path]
+    else:
+        base = args.base or git("merge-base", args.rev or "HEAD", "origin/main")
+        paths = checked_paths(args.rev, base)
+        if paths is None:
+            print(f"cannot list the gitlinks of {args.rev or 'the index'}", file=sys.stderr)
+            sys.exit(1)
+    fetchable = not args.reachable or reachable(args.rev)
+    results = [check(path, args.sha, args.rev) for path in paths]
+    if not fetchable or "fail" in results:
         sys.exit(1)
-fetchable = not args.reachable or reachable(args.rev)
-results = [check(path, args.sha, args.rev) for path in paths]
-if not fetchable or "fail" in results:
-    sys.exit(1)
-if "pending" in results:
-    sys.exit(3)
-sys.exit(0)
+    if "pending" in results:
+        sys.exit(3)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

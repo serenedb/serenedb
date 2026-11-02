@@ -19,8 +19,8 @@ FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
 ORDER BY c_uint8;
 ----
 c_uint8	c_int64	c_float64	c_bool	c_string	c_fixedstr
-1	9223372036854775807	3.5	1	hello	abcd
-2	-9223372036854775807	-1.25	0	world	wxyz
+1	9223372036854775807	3.5	t	hello	abcd
+2	-9223372036854775807	-1.25	f	world	wxyz
 
 
 # Temporal columns. Date -> DATE, DateTime -> TIMESTAMP (second precision),
@@ -85,3 +85,26 @@ ORDER BY c_uint8;
 c_uint8	c_lowcard	c_nullable
 1	low	42
 2	high	NULL
+
+
+query
+SELECT id, b, nb
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT number AS id, toLowCardinality(toBool(number = 1)) AS b, toLowCardinality(CAST(if(number = 2, NULL, number = 0) AS Nullable(Bool))) AS nb FROM numbers(3)')
+ORDER BY id;
+----
+id	b	nb
+0	f	t
+1	t	f
+2	f	NULL
+
+query
+SELECT id, s, d
+FROM clickhouse_query('host=${CHHOST} port=${CHPORT} user=default',
+  'SELECT number AS id, toLowCardinality(CAST(multiIf(number = 0, ''x'', number = 1, '''', NULL) AS Nullable(String))) AS s, toLowCardinality(CAST(if(number = 2, NULL, toDate(''2026-11-01'') + number) AS Nullable(Date))) AS d FROM numbers(3)')
+ORDER BY id;
+----
+id	s	d
+0	x	2026-11-01
+1	(empty)	2026-11-02
+2	NULL	NULL

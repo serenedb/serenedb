@@ -170,7 +170,7 @@ std::string Decompress(std::string_view token, std::string_view in,
     LZ4F_freeDecompressionContext(dctx);
   } else if (token == "zxc") {
     out.resize(original_size);
-    zxc_decompress(in.data(), in.size(), out.data(), out.size(), nullptr);
+    zxc_decompress(in.data(), in.size(), out.data(), out.size());
   }
   return out;
 }

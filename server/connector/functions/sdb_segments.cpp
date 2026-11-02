@@ -41,7 +41,7 @@
 #include <vector>
 
 #include "connector/functions/function_values.h"
-#include "connector/segment_rewrite/merge_target.h"
+#include "connector/merge_target.h"
 #include "search/compaction/merge_planner.h"
 
 namespace sdb::connector {

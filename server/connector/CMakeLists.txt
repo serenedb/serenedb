@@ -61,13 +61,10 @@ target_sources(
         reindex_removes.cpp
         file_manifest.cpp
         duckdb_vacuum_function.cpp
+        merge_target.cpp
         duckdb_physical_search_truncate.cpp
         highlight/highlight_options.cpp
         highlight/memory_index.cpp
-        segment_rewrite/logical_segment_rewrite.cpp
-        segment_rewrite/merge_target.cpp
-        segment_rewrite/physical_segment_rewrite.cpp
-        segment_rewrite/segment_rewrite_job.cpp
 )
 
 target_link_libraries(sereneserver PRIVATE simdjson)

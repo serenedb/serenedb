@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/segment_rewrite/merge_target.h"
+#include "connector/merge_target.h"
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>

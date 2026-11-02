@@ -14,9 +14,9 @@ server/search/compaction/merge_policies.cpp:58 the index's database was detached
 server/search/compaction/merge_policies.cpp:66-68 the index was dropped while its compaction options were being pinned
 server/search/compaction/merge_policies.cpp:74 the database-detached race of line 58
 server/connector/functions/sdb_segments.cpp:113-114 every search-table and index segment carries the generated row key with its range
-server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range
-server/connector/segment_rewrite/segment_rewrite_job.cpp:97-101 every segment has the generated row key column, so a merge has columns
-server/connector/segment_rewrite/segment_rewrite_job.cpp:126 the return after an exhaustive switch over irs::MergeStep
+server/connector/functions/sdb_maintenance.cpp:192-199 every search-table and index segment carries the generated row key with its range
+server/connector/functions/sdb_maintenance.cpp:221-225 every segment has the generated row key column, so a merge has columns
+server/connector/functions/sdb_maintenance.cpp:277 the return after an exhaustive switch over irs::MergeStep
 server/search/compaction/merge_registry.cpp:70 the implicit default of an exhaustive switch over MergeOrigin
 server/search/compaction/merge_registry.cpp:78 the return after an exhaustive switch over MergeOrigin
 server/search/compaction/merge_registry.cpp:82 the implicit default of an exhaustive switch over MergeOutcome

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -34,22 +36,12 @@
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
+#include "search/inverted_index_storage.h"
 #include "search/maintenance.h"
+#include "search/search_table.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
 
-namespace duckdb {
-
-class ClientContext;
-class TaskScheduler;
-
-}  // namespace duckdb
-namespace sdb::search {
-
-class InvertedIndexStorage;
-class SearchTable;
-
-}  // namespace sdb::search
 namespace sdb::connector {
 
 struct MergeRequest {

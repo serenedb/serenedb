@@ -72,8 +72,8 @@ template<PhraseMatch M, bool HasFreq = false, bool Offs = false,
 auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
-  const PhraseTerms terms{{state.metas.data(), state.metas.size()}};
   const std::span<const TermInterval> intervals{query.positions};
+  const PhraseTerms terms{{state.metas.data(), state.metas.size()}, intervals};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds, Offs>;

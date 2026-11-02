@@ -40,22 +40,21 @@
 
 namespace irs::top {
 
-template<typename Lead, typename Others, typename Members, typename Excludes,
+template<typename Lead, typename Others, typename Joined, typename Excludes,
          typename Table>
 class PrunedConjunction : public Root {
  public:
   static constexpr uint32_t kChunk = kScoreBlock;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kMembers = !std::is_same_v<Members, utils::Empty>;
+  static constexpr bool kJoined = !std::is_same_v<Joined, utils::Empty>;
 
-  template<typename Init, typename MembersArgs, typename ExcludesArgs>
+  template<typename Init, typename JoinedArgs, typename ExcludesArgs>
   PrunedConjunction(Table table, ColumnArgsFetcher& fetcher, bool exhaustive,
-                    size_t size, Init&& init, MembersArgs&& members,
+                    size_t size, Init&& init, JoinedArgs&& joined,
                     ExcludesArgs&& excludes)
     : _others{fetcher, size - 1,
               [&](auto& leaf, size_t i) { init(leaf, i + 1); }},
-      _members{
-        std::make_from_tuple<Members>(std::forward<MembersArgs>(members))},
+      _joined{std::make_from_tuple<Joined>(std::forward<JoinedArgs>(joined))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _exhaustive{exhaustive},
@@ -192,7 +191,7 @@ class PrunedConjunction : public Root {
     if constexpr (requires { _lead.SeekCompetitive(target, max, threshold); }) {
       return _lead.SeekCompetitive(target, max, threshold);
     } else {
-      return _lead.SkipTo(target);
+      return _lead.Seek(target);
     }
   }
 
@@ -228,7 +227,7 @@ class PrunedConjunction : public Root {
 
   doc_id_t Walk(doc_id_t doc, doc_id_t last, score_t stop,
                 LoserScoreCollector& collector) {
-    if constexpr (kMembers) {
+    if constexpr (kJoined) {
       return WindowFirst(doc, last, stop, collector);
     } else {
       return DocFirst(doc, last, stop, collector);
@@ -271,7 +270,7 @@ class PrunedConjunction : public Root {
         SetBit(_mask[offset / irs::detail::kWindowBits],
                offset % irs::detail::kWindowBits);
       }
-      _members.Restrict(min, max, _mask);
+      _joined.Restrict(min, max, _mask);
       for (uint32_t i = 0; i != n; ++i) {
         const auto member = _window_docs[i];
         const auto offset = member - min;
@@ -344,14 +343,14 @@ class PrunedConjunction : public Root {
   }
 
   ABSL_CACHELINE_ALIGNED
-  utils::Need<kMembers, uint64_t[irs::detail::kWindowWords]> _mask{};
+  utils::Need<kJoined, uint64_t[irs::detail::kWindowWords]> _mask{};
   ABSL_CACHELINE_ALIGNED
-  utils::Need<kMembers, doc_id_t[irs::detail::kWindowDocs]> _window_docs;
+  utils::Need<kJoined, doc_id_t[irs::detail::kWindowDocs]> _window_docs;
   ABSL_CACHELINE_ALIGNED
-  utils::Need<kMembers, uint32_t[irs::detail::kWindowDocs]> _window_freqs;
+  utils::Need<kJoined, uint32_t[irs::detail::kWindowDocs]> _window_freqs;
   Lead _lead;
   Others _others;
-  [[no_unique_address]] Members _members;
+  [[no_unique_address]] Joined _joined;
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] utils::Need<kDocFirst, ScoreBatch> _batch;
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>

@@ -72,17 +72,6 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return target < max ? SkipTo(target) : target;
   }
 
-  doc_id_t SkipTo(doc_id_t target) {
-    if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
-      return Seek(target);
-    }
-    Base::AdvanceBlock(target);
-    if (!_needs_reposition || _cursor.LandingDoc() + 1 != target) {
-      return Seek(target);
-    }
-    return _left_in_list != 0 ? target : doc_limits::eof();
-  }
-
   template<typename Visitor>
   void ForEachDocs(doc_id_t max, Visitor&& visit) {
     Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
@@ -136,6 +125,17 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
  private:
+  doc_id_t SkipTo(doc_id_t target) {
+    if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
+      return Seek(target);
+    }
+    Base::AdvanceBlock(target);
+    if (!_needs_reposition || _cursor.LandingDoc() + 1 != target) {
+      return Seek(target);
+    }
+    return _left_in_list != 0 ? target : doc_limits::eof();
+  }
+
   IRS_FORCE_INLINE doc_id_t Scan(doc_id_t target) noexcept {
     for (auto left = _left_in_leaf;; --left) {
       const auto doc = *(std::end(_docs) - left);

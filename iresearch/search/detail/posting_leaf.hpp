@@ -63,7 +63,7 @@ struct LeafShape {
   LeafReads reads = LeafReads::Grows;
 };
 
-inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
+inline constexpr LeafShape kFillShape{.cursor = true, .holes = true};
 
 inline constexpr LeafShape kCountShape{
   .delta = true,
@@ -558,7 +558,6 @@ class PostingLeaf {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
   }
 
-  template<bool Whole>
   uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {
     static_assert(Shape.cursor);
     if (!_walk.Armed() || _walk.Pending() || n < 2 || in[n - 1] <= _last ||
@@ -585,20 +584,8 @@ class PostingLeaf {
       if constexpr (InputType::kVolatileAlways) {
         if (block != next) {
           const auto* const at = In().At(_walk.BlockStart(block));
-          if constexpr (Whole) {
-            const auto end = block + 1 != size
-                               ? reinterpret_cast<uintptr_t>(
-                                   In().At(_walk.BlockStart(block + 1)))
-                               : reinterpret_cast<uintptr_t>(at) + 1;
-            for (auto line = reinterpret_cast<uintptr_t>(at) &
-                             ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
-                 line < end; line += ABSL_CACHELINE_SIZE) {
-              __builtin_prefetch(reinterpret_cast<const void*>(line), 0, 2);
-            }
-          } else {
-            __builtin_prefetch(at, 0, 2);
-            __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
-          }
+          __builtin_prefetch(at, 0, 2);
+          __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
       }
       upper = index.Last(block);

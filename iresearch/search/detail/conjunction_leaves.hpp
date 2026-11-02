@@ -123,8 +123,8 @@ class ConjunctionLeaves {
   doc_id_t Agree(doc_id_t doc, doc_id_t end, Admit& admit) {
     while (doc < end) {
       auto it = _leaves.begin() + 1;
-      const auto end = _leaves.end();
-      for (; it != end; ++it) {
+      const auto stop = _leaves.end();
+      for (; it != stop; ++it) {
         if (!it->Covers(doc) && !admit(doc, it)) {
           doc = Lead().Next();
           break;
@@ -134,7 +134,7 @@ class ConjunctionLeaves {
           break;
         }
       }
-      if (it == end) {
+      if (it == stop) {
         return doc;
       }
     }

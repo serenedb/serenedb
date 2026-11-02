@@ -68,6 +68,23 @@ void RegisterTable(duckdb::ExtensionLoader& loader, std::string_view schema,
 duckdb::unique_ptr<duckdb::Expression> BindNull(
   duckdb::FunctionBindExpressionInput& input);
 
+struct CallerRole final : duckdb::FunctionData {
+  explicit CallerRole(duckdb::idx_t role) : role{role} {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<CallerRole>(role);
+  }
+
+  bool Equals(const duckdb::FunctionData& other) const final {
+    return role == other.Cast<CallerRole>().role;
+  }
+
+  duckdb::idx_t role;
+};
+
+duckdb::unique_ptr<duckdb::FunctionData> BindCallerRole(
+  duckdb::BindScalarFunctionInput& input);
+
 inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
   duckdb::FunctionData*) {

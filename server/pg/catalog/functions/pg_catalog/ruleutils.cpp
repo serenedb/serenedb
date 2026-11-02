@@ -613,7 +613,9 @@ Definition FunctionDefinition(const Session& session, int64_t oid) {
     case duckdb::FunctionStability::VOLATILE:
       break;
   }
-  const auto options = absl::StrCat(volatility, macro.strict ? " STRICT" : "");
+  const auto options =
+    absl::StrCat(volatility, macro.strict ? " STRICT" : "",
+                 macro.security_definer ? " SECURITY DEFINER" : "");
   absl::StrAppend(&definition, " LANGUAGE sql\n", options,
                   options.empty() ? "" : "\n", "AS ", tag, MacroBody(macro),
                   tag, "\n");

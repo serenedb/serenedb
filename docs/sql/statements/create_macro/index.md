@@ -106,6 +106,8 @@ Inside a query of the body, a column of that query, or of a query of the body ar
 
 A parameter takes a default after `DEFAULT` or `=`, as well as after `:=`. `IMMUTABLE`, `STABLE` and `VOLATILE`, volatile by default, are shown in `pg_proc.provolatile` and in the function's definition; what a call evaluates follows its body.
 
+A function runs with the privileges of the role that calls it, also when a view calls it: the tables its body reads and the functions it calls are checked for that role, and `current_user` returns it. `SECURITY DEFINER` runs the body with the privileges of the function's owner instead, and `current_user` in the body returns the owner, while the arguments are still evaluated with the caller's privileges. `SECURITY INVOKER` is the default, and `pg_proc.prosecdef` shows which one a function uses. `SECURITY DEFINER` does not make a call slower: either way the body is optimized together with the query that calls it. A `SECURITY DEFINER` function cannot be called as a window function.
+
 A function that `RETURNS void` runs its body to the end, every row of a query body included, and returns `NULL`. A function whose body modifies data cannot be called for each row of a query:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_047" />
@@ -125,6 +127,8 @@ An `OUT` parameter is a column of the result and an `INOUT` parameter is both an
 ## Overloading
 
 It is possible to overload a macro based on the types or the number of its parameters; this works for both scalar and table macros.
+
+`ALTER FUNCTION`, `ALTER PROCEDURE` and `ALTER ROUTINE` rename a function with `RENAME TO` and change its owner with `OWNER TO`. They take an argument list after the name, as in PostgreSQL, but apply to every overload of the name.
 
 By providing overloads we can have both `add_x(a, b)` and `add_x(a, b, c)` with different function bodies.
 

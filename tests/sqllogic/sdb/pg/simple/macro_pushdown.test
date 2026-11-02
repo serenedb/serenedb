@@ -70,6 +70,96 @@ a
 7
 8
 
+statement ok
+CREATE FUNCTION mp_definer_between(x bigint, lo bigint, hi bigint) RETURNS boolean LANGUAGE sql SECURITY DEFINER RETURN x > lo AND x < hi
+
+query
+EXPLAIN SELECT a FROM mp WHERE mp_definer_between(a + 1, 5, 10)
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter: (a > 4) AND (a < 9) │
+│ ~200 rows                          │
+╰────────────────────────────────────╯
+
+query
+SELECT a FROM mp WHERE mp_definer_between(a + 1, 5, 10) ORDER BY a
+----
+a
+5
+6
+7
+8
+
+statement ok
+CREATE VIEW mp_view AS SELECT a FROM mp WHERE mp_fbetween(a + 1, 5, 10)
+
+query
+EXPLAIN SELECT a FROM mp_view
+----
+QUERY PLAN
+╭─ SEQ_SCAN ─────────────────────────╮
+│ Table: mp                          │
+│ Type: Sequential Scan              │
+│ Projections: a                     │
+│ Column Filter: (a > 4) AND (a < 9) │
+│ ~200 rows                          │
+╰────────────────────────────────────╯
+
+query
+SELECT a FROM mp_view ORDER BY a
+----
+a
+5
+6
+7
+8
+
+statement ok
+CREATE FUNCTION mp_count_below(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM mp WHERE a < x'
+
+statement ok
+CREATE FUNCTION mp_definer_count_below(x bigint) RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT count(*) FROM mp WHERE a < x'
+
+query
+EXPLAIN SELECT mp_count_below(5)
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: mp                │
+│ Type: Sequential Scan    │
+│ Column Filter: a < 5     │
+│ ~200 rows                │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT mp_definer_count_below(5)
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: mp                │
+│ Type: Sequential Scan    │
+│ Column Filter: a < 5     │
+│ ~200 rows                │
+╰──────────────────────────╯
+
+query
+SELECT mp_count_below(5) AS invoker, mp_definer_count_below(5) AS definer
+----
+invoker	definer
+4	4
+
 query
 EXPLAIN SELECT a FROM mp WHERE mp_fbetween(a + (random() * 0)::bigint, 5, 10)
 ----
@@ -266,6 +356,18 @@ DROP MACRO mp_sq
 
 statement ok
 DROP MACRO mp_eq
+
+statement ok
+DROP VIEW mp_view
+
+statement ok
+DROP FUNCTION mp_definer_between
+
+statement ok
+DROP FUNCTION mp_count_below
+
+statement ok
+DROP FUNCTION mp_definer_count_below
 
 statement ok
 DROP FUNCTION mp_fbetween

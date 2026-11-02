@@ -31,7 +31,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Lookup(
   duckdb::CatalogEntryRetriever retriever{context};
   retriever.SetPrincipal(context.principal);
   retriever.SetCallback([&context](duckdb::CatalogEntry& entry) {
-    context.CheckDatabaseReference(entry.ParentCatalog());
+    context.CheckDatabaseReference(context.principal, entry.ParentCatalog());
   });
   return retriever.GetEntry(lookup, if_not_found);
 }

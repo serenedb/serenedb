@@ -155,9 +155,24 @@ bool EntryVisible(duckdb::ClientContext& context,
   }
 }
 
-void CheckReference(duckdb::ClientContext& context,
-                    const duckdb::RoleAccess& caller,
-                    duckdb::CatalogEntry& entry) {
+}  // namespace
+
+bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
+  const auto caller = context.principal;
+  return !caller || caller->is_superuser ||
+         EntryVisible(context, *caller, entry);
+}
+
+bool CanSeeDatabase(duckdb::ClientContext& context,
+                    duckdb::AttachedDatabase& database) {
+  const auto caller = context.principal;
+  return !caller || caller->is_superuser ||
+         DatabaseVisible(context, *caller, database);
+}
+
+void CheckEntryReference(duckdb::ClientContext& context,
+                         const duckdb::RoleAccess& caller,
+                         duckdb::CatalogEntry& entry) {
   if (caller.is_superuser) {
     return;
   }
@@ -185,28 +200,6 @@ void CheckReference(duckdb::ClientContext& context,
   if (entry.type != CatalogType::DATABASE_ENTRY &&
       !EntryVisible(context, caller, entry)) {
     duckdb::ThrowPermissionDenied(entry);
-  }
-}
-
-}  // namespace
-
-bool CanSee(duckdb::ClientContext& context, duckdb::CatalogEntry& entry) {
-  const auto caller = context.principal;
-  return !caller || caller->is_superuser ||
-         EntryVisible(context, *caller, entry);
-}
-
-bool CanSeeDatabase(duckdb::ClientContext& context,
-                    duckdb::AttachedDatabase& database) {
-  const auto caller = context.principal;
-  return !caller || caller->is_superuser ||
-         DatabaseVisible(context, *caller, database);
-}
-
-void CheckEntryReference(duckdb::ClientContext& context,
-                         duckdb::CatalogEntry& entry) {
-  if (const auto caller = context.principal) {
-    CheckReference(context, *caller, entry);
   }
 }
 

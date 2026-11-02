@@ -1,0 +1,601 @@
+statement ok
+DROP VIEW IF EXISTS efs_view;
+
+
+statement ok
+DROP VIEW IF EXISTS efs_definer_view;
+
+
+statement ok
+DROP VIEW IF EXISTS efs_view_arg;
+
+
+statement ok
+DROP VIEW IF EXISTS efs_view_subquery_arg;
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_above(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_echo(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_ret(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_rows(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_default(int, int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_who();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_who();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_identity(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_next();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_can_read();
+
+
+statement ok
+DROP SEQUENCE IF EXISTS efs_seq;
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_nested();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_invoker();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_arg(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_tab();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_user();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_private();
+
+
+statement ok
+DROP TABLE IF EXISTS efs_secret;
+
+
+statement ok
+DROP TABLE IF EXISTS efs_mine;
+
+
+statement ok
+DROP ROLE IF EXISTS efs_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS efs_user;
+
+
+statement ok
+CREATE ROLE efs_owner LOGIN PASSWORD 'efs_pw';
+
+
+statement ok
+CREATE ROLE efs_user LOGIN PASSWORD 'efs_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO efs_owner;
+
+
+statement ok
+CREATE TABLE efs_secret (v int);
+
+
+statement ok
+INSERT INTO efs_secret VALUES (42);
+
+
+statement ok
+GRANT SELECT ON efs_secret TO efs_owner;
+
+
+statement ok
+CREATE TABLE efs_mine (v int);
+
+
+statement ok
+INSERT INTO efs_mine VALUES (7);
+
+
+statement ok
+GRANT SELECT ON efs_mine TO efs_user;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_invoker() RETURNS int LANGUAGE sql AS 'SELECT max(v) FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT max(v) FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_arg(a int) RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT a + max(v) FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_tab() RETURNS TABLE (v int) LANGUAGE sql SECURITY DEFINER AS 'SELECT v FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_user() RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT current_user::text';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_private() RETURNS int LANGUAGE sql AS 'SELECT 5';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+REVOKE EXECUTE ON FUNCTION efs_private() FROM PUBLIC;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_nested() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT efs_private() + efs_invoker()';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_above(a int) RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT count(*)::int FROM efs_secret WHERE v > a';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_echo(t text) RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT t';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_ret(a int) RETURNS int LANGUAGE sql SECURITY DEFINER RETURN a + (SELECT max(v) FROM efs_secret);
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_rows(a int) RETURNS TABLE (v int) LANGUAGE sql SECURITY DEFINER AS 'SELECT v + a FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_default(a int, b int DEFAULT 1) RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT a + b + max(v) FROM efs_secret';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE SEQUENCE efs_seq;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_next() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT nextval(''efs_seq'')';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_can_read() RETURNS boolean LANGUAGE sql SECURITY DEFINER AS 'SELECT has_table_privilege(''efs_secret'', ''SELECT'')';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_who() RETURNS text LANGUAGE sql AS 'SELECT current_user::text';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_who() RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT efs_who()';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_identity(a int) RETURNS int LANGUAGE sql AS 'SELECT a';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE VIEW efs_view_arg AS SELECT efs_identity(v) AS m FROM efs_secret;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE VIEW efs_view_subquery_arg AS SELECT efs_identity((SELECT max(v) FROM efs_secret)) AS m;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+GRANT SELECT ON efs_view_arg, efs_view_subquery_arg TO efs_user;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE VIEW efs_view AS SELECT efs_invoker() AS m;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE VIEW efs_definer_view AS SELECT efs_definer() AS m;
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+GRANT SELECT ON efs_view, efs_definer_view TO efs_user;
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_invoker();
+----
+db error: ERROR: permission denied for table efs_secret
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer() AS m;
+----
+m
+42
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_arg(v) AS m FROM efs_mine;
+----
+m
+49
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_definer_arg((SELECT max(v) FROM efs_secret));
+----
+db error: ERROR: permission denied for table efs_secret
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_arg((SELECT max(v) FROM efs_mine)) AS m;
+----
+m
+49
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_above(v) AS above, efs_definer_ret(v) AS ret FROM efs_mine;
+----
+above	ret
+1	49
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_echo(current_user::text) AS caller, efs_definer_echo(efs_definer_user()) AS definer;
+----
+caller	definer
+efs_user	efs_owner
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_who() AS invoker, efs_definer_who() AS definer;
+----
+invoker	definer
+efs_user	efs_owner
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_default(1) AS m;
+----
+m
+44
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT nextval('efs_seq');
+----
+db error: ERROR: permission denied for sequence efs_seq
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_next() AS n;
+----
+n
+1
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT has_table_privilege('efs_secret', 'SELECT') AS caller, efs_definer_can_read() AS definer;
+----
+caller	definer
+f	t
+
+
+connection c_user user=efs_user password=efs_pw
+statement ok
+PREPARE efs_prepared(int) AS SELECT efs_definer_arg($1) AS plain, efs_definer_arg($1 + 1) AS computed;
+
+
+connection c_user user=efs_user password=efs_pw
+query
+EXECUTE efs_prepared(1);
+----
+plain	computed
+43	44
+
+
+connection c_user user=efs_user password=efs_pw
+statement ok
+DEALLOCATE efs_prepared;
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT v FROM efs_definer_tab();
+----
+v
+42
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT r.v FROM efs_mine m, efs_definer_rows(m.v) r;
+----
+v
+49
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT v FROM efs_definer_rows(1);
+----
+v
+43
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT v FROM efs_definer_rows((SELECT max(v) FROM efs_mine));
+----
+v
+49
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT v FROM efs_definer_rows((SELECT max(v) FROM efs_secret));
+----
+db error: ERROR: permission denied for table efs_secret
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT a.m AS column_argument, s.m AS subquery_argument FROM efs_view_arg a, efs_view_subquery_arg s;
+----
+column_argument	subquery_argument
+42	42
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_user() AS definer, current_user::text AS caller;
+----
+definer	caller
+efs_owner	efs_user
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_nested() AS m;
+----
+m
+47
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_private();
+----
+db error: ERROR: permission denied for function efs_private
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT m FROM efs_view;
+----
+db error: ERROR: permission denied for table efs_secret
+
+
+connection c_user user=efs_user password=efs_pw
+query
+SELECT m FROM efs_definer_view;
+----
+m
+42
+
+
+query
+SELECT proname, prosecdef FROM pg_proc WHERE proname LIKE 'efs\_%' ORDER BY proname;
+----
+proname	prosecdef
+efs_definer	t
+efs_definer_above	t
+efs_definer_arg	t
+efs_definer_can_read	t
+efs_definer_default	t
+efs_definer_echo	t
+efs_definer_nested	t
+efs_definer_next	t
+efs_definer_ret	t
+efs_definer_rows	t
+efs_definer_tab	t
+efs_definer_user	t
+efs_definer_who	t
+efs_identity	f
+efs_invoker	f
+efs_private	f
+efs_who	f
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION efs_definer() FROM PUBLIC;
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT m FROM efs_definer_view;
+----
+db error: ERROR: permission denied for function efs_definer
+
+
+statement ok
+DROP VIEW efs_view;
+
+
+statement ok
+DROP VIEW efs_definer_view;
+
+
+statement ok
+DROP VIEW efs_view_arg;
+
+
+statement ok
+DROP VIEW efs_view_subquery_arg;
+
+
+statement ok
+DROP FUNCTION efs_definer_above(int);
+
+
+statement ok
+DROP FUNCTION efs_definer_echo(text);
+
+
+statement ok
+DROP FUNCTION efs_definer_ret(int);
+
+
+statement ok
+DROP FUNCTION efs_definer_rows(int);
+
+
+statement ok
+DROP FUNCTION efs_definer_default(int, int);
+
+
+statement ok
+DROP FUNCTION efs_definer_who();
+
+
+statement ok
+DROP FUNCTION efs_who();
+
+
+statement ok
+DROP FUNCTION efs_identity(int);
+
+
+statement ok
+DROP FUNCTION efs_definer_next();
+
+
+statement ok
+DROP FUNCTION efs_definer_can_read();
+
+
+statement ok
+DROP SEQUENCE efs_seq;
+
+
+statement ok
+DROP FUNCTION efs_definer_nested();
+
+
+statement ok
+DROP FUNCTION efs_invoker();
+
+
+statement ok
+DROP FUNCTION efs_definer();
+
+
+statement ok
+DROP FUNCTION efs_definer_arg(int);
+
+
+statement ok
+DROP FUNCTION efs_definer_tab();
+
+
+statement ok
+DROP FUNCTION efs_definer_user();
+
+
+statement ok
+DROP FUNCTION efs_private();
+
+
+statement ok
+DROP TABLE efs_secret;
+
+
+statement ok
+DROP TABLE efs_mine;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM efs_owner;
+
+
+statement ok
+DROP ROLE efs_owner;
+
+
+statement ok
+DROP ROLE efs_user;

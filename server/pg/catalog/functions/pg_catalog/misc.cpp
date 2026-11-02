@@ -55,6 +55,7 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -461,6 +462,14 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
 void CurrentUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
+  if (const auto& bind_info =
+        state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo()) {
+    result.Reference(duckdb::Value{std::string{
+                       auth::RolesOf(&state.GetContext())
+                         ->NameOf(bind_info->Cast<CallerRole>().role)}},
+                     duckdb::count_t(args.size()));
+    return;
+  }
   auto& context = state.GetContext();
   const auto& conn_ctx = GetSereneDBContext(context);
   auto value = duckdb::Value(conn_ctx.EffectiveUserName());
@@ -1564,10 +1573,12 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     loader, main, "pg_xact_status", VOLATILE, nullptr,
     {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
 
-  RegisterScalar(loader, main, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, main, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  RegisterScalar(
+    loader, main, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCallerRole}});
+  RegisterScalar(
+    loader, main, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCallerRole}});
   RegisterScalar(loader, main, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
                  {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 

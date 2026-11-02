@@ -114,7 +114,7 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
-  context.CheckEntryReference(*entry);
+  context.CheckEntryReference(context.principal, *entry);
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 

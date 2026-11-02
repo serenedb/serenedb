@@ -37,6 +37,7 @@
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -1070,7 +1071,11 @@ duckdb::ScalarFunction PrivilegeFunction() {
         check.Prefetch(args.data[std::is_void_v<Role> ? 0 : 1]);
       }
       if constexpr (std::is_void_v<Role>) {
-        const auto role = GetSereneDBContext(state.GetContext()).GetRoleId();
+        const auto& caller =
+          state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo();
+        const auto role =
+          caller ? caller->Cast<CallerRole>().role
+                 : GetSereneDBContext(state.GetContext()).GetRoleId();
         duckdb::VariadicExecutor::Execute<bool, Object..., duckdb::string_t>(
           args, result, [&](Object... object, duckdb::string_t text) {
             return check.Answer(role, text, object...);
@@ -1084,7 +1089,7 @@ duckdb::ScalarFunction PrivilegeFunction() {
           });
       }
     },
-    nullptr,
+    std::is_void_v<Role> ? BindCallerRole : nullptr,
     nullptr,
     InitPrivilegeCheck<F>};
 }

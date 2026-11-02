@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 
@@ -32,6 +33,7 @@ bool CanSeeDatabase(duckdb::ClientContext& context,
                     duckdb::AttachedDatabase& database);
 
 void CheckEntryReference(duckdb::ClientContext& context,
+                         const duckdb::RoleAccess& caller,
                          duckdb::CatalogEntry& entry);
 
 }  // namespace sdb::auth

@@ -225,7 +225,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
-  context.CheckDatabaseReference(*found);
+  context.CheckDatabaseReference(context.principal, *found);
   return *found;
 }
 

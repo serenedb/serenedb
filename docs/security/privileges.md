@@ -131,6 +131,8 @@ These require a superuser, whatever privileges a role holds:
 
 A view reads files and URLs with its owner's authority, as it reads tables: a role with `SELECT` on a view owned by a superuser reads the files the view reads, a view owned by any other role reads no files, and a view created `WITH (security_invoker = true)` reads them with the authority of the role running the query. Reading the tables of a [foreign server](../sql/statements/create_server/index.md#privileges) needs only `USAGE` on the server.
 
+The functions a view calls are checked and run for the role running the query, not for the view's owner: that role needs `EXECUTE` on them, and an SQL function reads tables with its privileges unless the function is [`SECURITY DEFINER`](../sql/statements/create_macro/index.md#sql-functions).
+
 A table that has no owner, such as one created by `dbgen`, can be used only by a superuser, and so can a database a superuser attaches without a foreign server, such as a DuckDB file.
 
 ## Notes

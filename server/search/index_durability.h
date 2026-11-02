@@ -104,6 +104,7 @@ class IndexDurability {
 
  private:
   void SyncDirectory();
+  void SetCreationFloor();
   void MarkPublished();
   bool FinishPendingSave(irs::IndexWriter& writer);
   void AwaitPendingSave(std::unique_lock<absl::Mutex>& lock,

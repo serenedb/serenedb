@@ -97,6 +97,10 @@ struct SearchShardWrites {
   // them, since a key written by the first statement is only covered as far as
   // that statement looked.
   std::optional<uint64_t> certified_mark;
+  // The WAL arm's equivalent: how far into the log this transaction's
+  // statement-end probes have settled the question. The lowest of them, for
+  // the same reason, and unset for a transaction that reaches no probe at all.
+  std::optional<irs::SourcePosition> certified_tail;
   // Whether any statement asserted a key value of its own, rather than only
   // putting back one it was already replacing. False for a transaction made
   // entirely of UPDATEs that leave the key columns alone, which has no key to

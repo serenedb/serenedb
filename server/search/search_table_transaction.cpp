@@ -393,6 +393,12 @@ void SearchTableTransaction::CertifyKeys(
     std::tie(published, from) = shard->GetSnapshotWithPosition();
     wal = ReadUnpublishedTail(*shard, *store, context, from, slots, nullptr);
     RefuseUncertifiableTail(wal, shard->GetTableId());
+    // Where the commit pass picks up, for the same reason the delta arm keeps
+    // the lowest mark below: a key this statement wrote is answered for only as
+    // far as this statement looked.
+    if (!w.certified_tail || wal.boundary < *w.certified_tail) {
+      w.certified_tail = wal.boundary;
+    }
     tier = Flatten(wal);
   } else {
     auto sources = shard->ReadCertificationSources();
@@ -529,17 +535,35 @@ void SearchTableTransaction::CertifyCommit(SearchShardWrites& w,
                       ERR_MSG("The database holding search table ", table_id,
                               " is no longer attached."));
     }
-    // Reader and position as one pair, for the same reason the delta arm takes
-    // its two together: a refresh between them leaves the probe with a reader
-    // from before beside a tail from after, missing what the refresh moved.
-    auto [reader, published] = w.shard->GetSnapshotWithPosition();
-    const auto tail = ReadUnpublishedTail(*w.shard, *store, context, published,
-                                          w.pk_slots, nullptr);
+    // Resuming where the statement passes stopped, so this one answers only
+    // for what committed since. Starting over instead would re-walk every key
+    // this transaction wrote against state already ruled out -- and the rows
+    // it is committing are not in the log yet to be found either way, because
+    // `SearchTableLogWriter` writes them after this pass.
+    //
+    // Without a statement pass to resume from -- a transaction of deletes
+    // alone -- the reader and its position come together, for the same reason
+    // the delta arm takes its two that way: a refresh between them leaves the
+    // probe with a reader from before beside a tail from after, missing what
+    // the refresh moved.
+    irs::DirectoryReader reader;
+    irs::SourcePosition from;
+    if (w.certified_tail) {
+      from = *w.certified_tail;
+    } else {
+      std::tie(reader, from) = w.shard->GetSnapshotWithPosition();
+    }
+    const auto tail =
+      ReadUnpublishedTail(*w.shard, *store, context, from, w.pk_slots, nullptr);
     RefuseUncertifiableTail(tail, table_id);
     // Where the in-lock pass resumes. Set even for an empty tail: the pass
     // still has to cover whatever commits between here and the commit lock.
     w.wal_boundary = tail.boundary;
-    CertifyAgainst(w, table_id, &reader, Flatten(tail));
+    // The published reader only when no statement pass has probed it, the way
+    // the delta arm passes its own on `from_scratch`: the published position
+    // never goes backwards, so what that pass saw cannot have been missed.
+    CertifyAgainst(w, table_id, w.certified_tail ? nullptr : &reader,
+                   Flatten(tail));
     return;
   }
   auto sources = w.shard->ClaimCertificationSources(w.certified_mark);

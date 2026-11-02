@@ -1,0 +1,181 @@
+# The WAL arm's commit pass resumes where the statement passes stopped, so it
+# answers only for what committed in between. This is the window that makes
+# that resume load-bearing: a conflicting key committed by somebody else after
+# the statement looked and before the commit does.
+#
+# No fault point needed -- an explicit transaction holds the two passes apart
+# on its own, because the statement pass runs at the INSERT and the commit pass
+# at COMMIT.
+
+control substitution on
+
+statement ok
+CREATE DATABASE pkresume;
+
+
+statement ok
+CREATE TABLE pkresume.public.t (id BIGINT PRIMARY KEY, s TEXT)
+  WITH (storage='search', refresh_interval=0, compaction_interval=0);
+
+
+# Already committed, so a refusal below cannot be mistaken for the
+# statement-end probe having worked.
+statement ok
+INSERT INTO pkresume.public.t VALUES (0, 'base');
+
+
+connection first
+statement ok
+SET sdb_search_pk_certify_from_wal = true;
+
+
+connection second
+statement ok
+SET sdb_search_pk_certify_from_wal = true;
+
+
+# --- the window itself -------------------------------------------------------
+
+connection first
+statement ok
+BEGIN;
+
+
+# The statement pass runs here and finds key 1 free. Everything it certified
+# against is what the commit pass may skip.
+connection first
+statement ok
+INSERT INTO pkresume.public.t VALUES (1, 'first');
+
+
+# Committed after that pass looked, so only the commit pass can see it.
+connection second
+statement ok
+INSERT INTO pkresume.public.t VALUES (1, 'second');
+
+
+# Raised by COMMIT itself, so it arrives unwrapped and as 23505 -- unlike the
+# autocommit case, where the statement has already returned and the conflict
+# comes back as a commit failure.
+connection first
+statement error
+COMMIT;
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+# The winner is the one that committed first, and the loser left nothing
+# behind.
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkresume.public.t;
+
+
+connection default
+query
+SELECT id, s FROM pkresume.public.t ORDER BY id;
+----
+id	s
+0	base
+1	second
+
+
+# --- a published key is still refused ----------------------------------------
+
+# The commit pass drops the published reader when it resumes, on the grounds
+# that the statement pass has already probed it. This is the case that would
+# let a duplicate through if that were not so.
+connection default
+statement ok
+INSERT INTO pkresume.public.t VALUES (5, 'published');
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkresume.public.t;
+
+
+connection first
+statement ok
+BEGIN;
+
+
+connection first
+statement error
+INSERT INTO pkresume.public.t VALUES (5, 'again');
+----
+db error: ERROR: Duplicate key on column "id" violates primary key constraint.
+
+
+connection first
+statement ok
+ROLLBACK;
+
+
+# --- and one transaction cannot claim a key twice ----------------------------
+
+# Caught by the local constraint check before any search probe runs, so this
+# pins the outcome rather than the pass that reaches it.
+connection first
+statement ok
+BEGIN;
+
+
+connection first
+statement ok
+INSERT INTO pkresume.public.t VALUES (2, 'own-a');
+
+
+connection first
+statement error
+INSERT INTO pkresume.public.t VALUES (2, 'own-b');
+----
+db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "2"
+
+
+connection first
+statement ok
+ROLLBACK;
+
+
+# --- and nothing that is fine starts being refused ---------------------------
+
+connection first
+statement ok
+BEGIN;
+
+
+connection first
+statement ok
+INSERT INTO pkresume.public.t VALUES (3, 'ok-a');
+
+
+connection first
+statement ok
+INSERT INTO pkresume.public.t VALUES (4, 'ok-b');
+
+
+connection first
+statement ok
+COMMIT;
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) pkresume.public.t;
+
+
+connection default
+query
+SELECT id, s FROM pkresume.public.t ORDER BY id;
+----
+id	s
+0	base
+1	second
+3	ok-a
+4	ok-b
+5	published
+
+
+statement ok
+DROP DATABASE pkresume;

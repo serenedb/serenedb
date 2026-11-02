@@ -106,6 +106,9 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
   if (!on_disk || is_new) {
     auto writer =
       irs::IndexWriter::Make(dir, irs::OpenMode::kOmCreate, std::move(options));
+    // Before the commit, so the first meta this store ever writes carries the
+    // floor and a restart does not drop back to the beginning of the log.
+    SetCreationFloor();
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
@@ -128,6 +131,43 @@ std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
     dir, options,
     [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
   return {std::move(reader), std::move(stamp)};
+}
+
+// A store that has just been created reflects the database as of now: nothing
+// of it can sit in the WAL before this point, because it did not exist. Left
+// at the default it claims the log from its very first byte, which pins every
+// retained generation until its first publish and makes the primary-key tail
+// read walk the whole of it -- nearly all of it other tables' rows, read and
+// then discarded.
+void IndexDurability::SetCreationFloor() {
+  const auto store = AttachedDatabaseById(_db_id);
+  if (!store || !store->HasStorageManager()) {
+    return;
+  }
+  auto& storage = store->GetStorageManager();
+  // Where `ReadUnpublishedTail` refuses to read there is no position to name
+  // either: the WAL size is an undo-buffer estimate rather than an offset. A
+  // null WAL means boot replay, which installs one only once the log has been
+  // applied, so a store created there keeps the default and is stamped by the
+  // replay itself.
+  if (storage.InMemory() ||
+      store->GetRecoveryMode() == duckdb::RecoveryMode::NO_WAL_WRITES ||
+      !storage.GetWAL()) {
+    return;
+  }
+  // The block manager's iteration never runs ahead of the active WAL's, and
+  // the size is of that same active WAL, so the pair can only name a point at
+  // or before this store's first row. That is the one direction that matters:
+  // naming a later one would lose rows, while naming an earlier one costs only
+  // a longer read.
+  const irs::SourcePosition floor{
+    .generation = storage.GetBlockManager().GetCheckpointIteration(),
+    .offset = storage.GetWALSize()};
+  _position = std::max(_position, floor);
+  absl::MutexLock lock{&_positions_mutex};
+  _published = std::max(_published, floor);
+  _durable = std::max(_durable, floor);
+  _staged = std::max(_staged, floor);
 }
 
 void IndexDurability::WritePayload(const irs::SourcePosition& position,

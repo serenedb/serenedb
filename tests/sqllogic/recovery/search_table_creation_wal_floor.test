@@ -1,0 +1,114 @@
+# A search table created into a database whose WAL has already moved on needs
+# none of the log that predates it: nothing of the table can be in there,
+# because it did not exist yet.
+#
+# A store that claims the log from byte zero pins every generation a checkpoint
+# retires, until its own first publish -- and `NeededWALGeneration` takes the
+# minimum across the tables, so one such store holds on to generations every
+# other table has already let go of.
+
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE st_floor;
+
+
+statement ok
+CREATE TABLE st_floor.public.first (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+# refresh_interval = 0 keeps these rows committed but unpublished, so `first`
+# still needs the generation they are in and each checkpoint below has to
+# retain the one it retires.
+statement ok
+INSERT INTO st_floor.public.first SELECT i, 'a' FROM range(0, 100) r(i);
+
+
+statement ok
+CHECKPOINT st_floor;
+
+
+statement ok
+INSERT INTO st_floor.public.first SELECT i, 'b' FROM range(100, 200) r(i);
+
+
+statement ok
+CHECKPOINT st_floor;
+
+
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+2
+
+
+# Created with those two generations retained and a third one live. Every row
+# it will ever hold lands in the live one or later.
+statement ok
+CREATE TABLE st_floor.public.second (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO st_floor.public.second SELECT i, 'c' FROM range(0, 100) r(i);
+
+
+# `first` lets go of everything it held, leaving `second` the only table that
+# still needs any WAL at all.
+statement ok
+VACUUM (REFRESH_TABLE) st_floor.public.first;
+
+
+statement ok
+CHECKPOINT st_floor;
+
+
+# One: the generation `second` was created in, which this checkpoint retired.
+# A store claiming the log from zero would hold the two older ones here too.
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+1
+
+
+# The floor must not have been set past this table's own rows, on either side
+# of the publish.
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'a') AS a, count(*) FILTER (WHERE body = 'b') AS b FROM st_floor.public.first;
+----
+n	a	b
+200	100	100
+
+
+statement ok
+VACUUM (REFRESH_TABLE) st_floor.public.second;
+
+
+query
+SELECT count(*) AS n FROM st_floor.public.second;
+----
+n
+100
+
+
+# Nothing is needed any more, so the last generation goes too.
+statement ok
+CHECKPOINT st_floor;
+
+
+query
+SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
+----
+n
+0
+
+
+statement ok
+DROP DATABASE st_floor;

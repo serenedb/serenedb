@@ -2,14 +2,19 @@
 # bench_search_table_pk.sh -- what a declared PRIMARY KEY costs a search table
 # on the write path.
 #
-# The comparison this script is built for is ACROSS BINARIES, not within one
-# run: the same schema and the same statements, loaded by
-#   * main                  -- the PK is declared and inert (no enforcement),
-#   * this branch, delta    -- enforced against the in-memory pending delta,
-#   * this branch, WAL      -- enforced by reading the WAL tail.
-# Schema and term indexing are then identical in all three (PrimaryKeyConfig
+# The comparison this script is built for is ACROSS RUNS, not within one: the
+# same schema and the same statements, loaded by
+#   * --arm delta  -- enforced against the in-memory pending delta,
+#   * --arm wal    -- enforced by reading the WAL tail,
+#   * --arm none   -- a binary where the PK is declared and inert, e.g. main.
+# Schema and term indexing are identical in all three (PrimaryKeyConfig
 # term-indexes the key columns on main already), so the difference is
 # certification and nothing else.
+#
+# The two enforcing arms live in one binary and are chosen by a setting, so
+# their runs differ in that setting and in nothing else -- there is no second
+# build for a compiler or a flag to diverge in. Only the inert baseline needs
+# a binary of its own, because main has neither arm.
 #
 # Two shapes, because they exercise different halves:
 #   * one big transaction -- the statement-end probe (one per statement) and
@@ -33,19 +38,67 @@
 # Pre-reqs: a serened binary (any build -- use the perf preset for numbers, a
 # debug build only to check the script runs), and the hits parquet from
 # scripts/perf/download_hits.sh.
+#
+# It runs outside a checkout too, with the binary and the parquet wherever they
+# are: PERF_SERENED_BIN, PERF_PARQUET_FILE and PERF_RESULTS_DIR between them
+# leave nothing resolved against the repo.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 
+usage() {
+	cat <<'EOF'
+usage: bench_search_table_pk.sh [--arm delta|wal|none]
+
+  --arm delta  certify against the in-memory pending delta (the default)
+  --arm wal    certify by reading back the WAL tail
+  --arm none   set nothing, for a binary without the setting (e.g. main)
+EOF
+}
+
+ARM="delta"
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--arm)
+		[[ $# -ge 2 ]] || {
+			usage >&2
+			exit 2
+		}
+		ARM="$2"
+		shift 2
+		;;
+	--arm=*)
+		ARM="${1#--arm=}"
+		shift
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		echo "unknown argument: $1" >&2
+		usage >&2
+		exit 2
+		;;
+	esac
+done
+case "${ARM}" in
+delta | wal | none) ;;
+*)
+	echo "--arm must be delta, wal or none (got: ${ARM})" >&2
+	exit 2
+	;;
+esac
+
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
 SERENED_BIN="${PERF_SERENED_BIN:-${BUILD_DIR}/bin/serened}"
-RESULTS_DIR="${ROOT}/scripts/perf/results"
+RESULTS_DIR="${PERF_RESULTS_DIR:-${ROOT}/scripts/perf/results}"
 PARQUET_DIR="${PERF_PARQUET_DIR:-${HOME}/data}"
 PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/hits.parquet}"
 DATA_DIR="${PERF_PK_DATA_DIR:-${RESULTS_DIR}/search_pk_perf_data}"
 PORT="${PERF_PORT:-6264}"
-LOG="/tmp/${USER}-serened-search-pk-perf.log"
+LOG="/tmp/${USER:-$(id -un)}-serened-search-pk-perf-${ARM}.log"
 
 # Rows to load. Empty = the whole parquet file.
 PERF_PK_ROWS="${PERF_PK_ROWS:-}"
@@ -60,6 +113,13 @@ PERF_PK_DEDUP="${PERF_PK_DEDUP:-0}"
 # WAL tail behave most differently under.
 PERF_PK_REFRESH_INTERVAL="${PERF_PK_REFRESH_INTERVAL:-}"
 PERF_PK_COMPACTION_INTERVAL="${PERF_PK_COMPACTION_INTERVAL:-0}"
+# Columns of the primary key. Any list starting with watchid stays unique,
+# since watchid alone is -- which is what the staging check below verifies, so
+# a wider key needs no separate guarantee. Widening it is how the keys a
+# transaction carries are made expensive: an encoded BIGINT fits in a term's
+# inline buffer, while a text column does not, so each key a commit holds in
+# memory becomes a heap allocation instead of a free one.
+PERF_PK_COLUMNS="${PERF_PK_COLUMNS:-watchid}"
 # Also load a table with NO primary key, for within-binary context. Labelled
 # separately in the summary because it does NOT isolate certification: without
 # a PK the key column is not term-indexed either, so the gap includes indexing.
@@ -79,10 +139,13 @@ if [[ ! -x "${SERENED_BIN}" ]]; then
 fi
 
 mkdir -p "${RESULTS_DIR}"
-RUN_LOG="${RESULTS_DIR}/pk-$(date -u +%Y%m%dT%H%M%SZ).log"
+RUN_LOG="${RESULTS_DIR}/pk-${ARM}-$(date -u +%Y%m%dT%H%M%SZ).log"
 PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
 
 declare -A TIMINGS=()
+declare -A PEAK_RSS=()
+declare -A HELD_RSS=()
+SERVER_PID=""
 
 # The columns loaded alongside the key. Kept narrow on purpose: a wide row
 # would bury the key's cost under column encoding. All are hits columns; the
@@ -91,7 +154,12 @@ declare -A TIMINGS=()
 # EventTime arrives as an int64 epoch in the parquet, not a TIMESTAMP, so it is
 # carried as BIGINT -- a cast here would be measured work that has nothing to
 # do with the key.
-SRC_SELECT='"WatchID" AS watchid, "URL" AS url, "Title" AS title, "EventTime" AS eventtime'
+# Title is substituted where it is null or empty, because a search table takes
+# an empty term in a key column for a null and refuses it. A placeholder keeps
+# every row and changes no key's uniqueness -- watchid alone already decides
+# that -- and is staged off the clock, so a run with title in the key measures
+# the same load as one without it.
+SRC_SELECT="\"WatchID\" AS watchid, \"URL\" AS url, coalesce(nullif(\"Title\", ''), 'none') AS title, \"EventTime\" AS eventtime"
 COL_DEFS='watchid BIGINT, url TEXT, title TEXT, eventtime BIGINT'
 COL_LIST='watchid, url, title, eventtime'
 
@@ -132,6 +200,7 @@ start_serened() {
 	echo "starting ${SERENED_BIN} on port ${PORT}" | tee -a "${RUN_LOG}"
 	"${SERENED_BIN}" "${DATA_DIR}" --listen="postgres://127.0.0.1:${PORT}" \
 		>"${LOG}" 2>&1 &
+	SERVER_PID=$!
 	disown 2>/dev/null || true
 	for _ in $(seq 1 60); do
 		psql "${PSQL_CONN}" -c 'SELECT 1' >/dev/null 2>&1 && return
@@ -186,7 +255,56 @@ scalar() {
 	psql "${PSQL_CONN}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
+# Memory, read off the server process rather than measured inside it: what the
+# two arms differ in is how much of the committed-but-unpublished window they
+# hold, and that is a property of the process, not of any one statement.
+#
+# VmHWM is a high-water mark over the process's whole life, so without a reset
+# every shape after the first would just report the parquet staging peak.
+# Writing 5 to clear_refs drops it back to the current RSS (Documentation/
+# filesystems/proc.rst), which is what makes a per-shape peak possible.
+proc_field_mb() {
+	[[ -n "${SERVER_PID}" ]] || return 0
+	awk -v k="$1:" '$1 == k { printf "%.0f", $2 / 1024 }' \
+		"/proc/${SERVER_PID}/status" 2>/dev/null || true
+}
+reset_peak_rss() {
+	[[ -n "${SERVER_PID}" ]] || return 0
+	echo 5 >"/proc/${SERVER_PID}/clear_refs" 2>/dev/null || true
+}
+
+# Held is read BEFORE the refresh that follows each load: publishing is what
+# releases what the delta arm is holding, so after it the two arms look alike
+# again and the difference this is here to show is gone.
+#
+# Both numbers are RSS, so they carry whatever the allocator has not returned
+# to the OS; jemalloc (SDB_ALLOC=JE) is in no hurry to. Read them as an upper
+# bound on what an arm holds, and compare them between arms, not against zero.
+mem_record() {
+	local label="$1"
+	PEAK_RSS["${label}"]="$(proc_field_mb VmHWM)"
+	HELD_RSS["${label}"]="$(proc_field_mb VmRSS)"
+}
+
 start_serened
+
+# Globally, not per session: every psql below opens its own, and an arm that
+# applied to some of them and not others would be measuring neither.
+if [[ "${ARM}" != "none" ]]; then
+	# `on`/`off`, which is what SHOW reports back whichever spelling it was set
+	# with, so the check below compares like with like.
+	if [[ "${ARM}" == "wal" ]]; then WANT=on; else WANT=off; fi
+	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
+		-c "SET GLOBAL sdb_search_pk_certify_from_wal = ${WANT};" \
+		2>&1 | tee -a "${RUN_LOG}"
+	GOT=$(scalar 'SHOW sdb_search_pk_certify_from_wal;')
+	if [[ "${GOT}" != "${WANT}" ]]; then
+		echo "arm ${ARM} did not take: setting reads '${GOT}', wanted '${WANT}'" >&2
+		exit 1
+	fi
+	printf 'arm: %s (sdb_search_pk_certify_from_wal = %s)\n' "${ARM}" "${GOT}" |
+		tee -a "${RUN_LOG}"
+fi
 
 # ---------------------------------------------------------------------------
 # Source staging, all off the clock. The parquet is read once into a
@@ -221,22 +339,30 @@ if [[ "${SRC_ROWS}" != "${SRC_KEYS}" ]]; then
 	exit 1
 fi
 
+# The floor the memory numbers sit on: the source staged, no search table
+# loaded yet. Identical work in every arm, so it subtracts out.
+mem_record staged
+
 # ---------------------------------------------------------------------------
 # Shape 1: one transaction. Measures the statement-end probe; the commit passes
 # run once and are lost in the noise.
 # ---------------------------------------------------------------------------
 run_setup "create pk_single" "
-CREATE TABLE pk_single (${COL_DEFS}, PRIMARY KEY (watchid))
+CREATE TABLE pk_single (${COL_DEFS}, PRIMARY KEY (${PERF_PK_COLUMNS}))
   WITH ($(table_opts));"
+reset_peak_rss
 run_sql "single_txn_pk_insert" \
 	"INSERT INTO pk_single SELECT ${COL_LIST} FROM src;"
+mem_record single_txn_pk
 run_sql "single_txn_pk_refresh" "VACUUM (REFRESH_TABLE) pk_single;"
 
 if [[ "${PERF_PK_CONTROL}" == "1" ]]; then
 	run_setup "create nopk_single" "
 CREATE TABLE nopk_single (${COL_DEFS}) WITH ($(table_opts));"
+	reset_peak_rss
 	run_sql "single_txn_nopk_insert" \
 		"INSERT INTO nopk_single SELECT ${COL_LIST} FROM src;"
+	mem_record single_txn_nopk
 	run_sql "single_txn_nopk_refresh" "VACUUM (REFRESH_TABLE) nopk_single;"
 fi
 
@@ -293,17 +419,21 @@ batched_run() {
 batched_run many_txn_scan_floor "SELECT count(*) FROM src"
 
 run_setup "create pk_batched" "
-CREATE TABLE pk_batched (${COL_DEFS}, PRIMARY KEY (watchid))
+CREATE TABLE pk_batched (${COL_DEFS}, PRIMARY KEY (${PERF_PK_COLUMNS}))
   WITH ($(table_opts));"
+reset_peak_rss
 batched_run many_txn_pk_insert \
 	"INSERT INTO pk_batched SELECT ${COL_LIST} FROM src"
+mem_record many_txn_pk
 run_sql "many_txn_pk_refresh" "VACUUM (REFRESH_TABLE) pk_batched;"
 
 if [[ "${PERF_PK_CONTROL}" == "1" ]]; then
 	run_setup "create nopk_batched" "
 CREATE TABLE nopk_batched (${COL_DEFS}) WITH ($(table_opts));"
+	reset_peak_rss
 	batched_run many_txn_nopk_insert \
 		"INSERT INTO nopk_batched SELECT ${COL_LIST} FROM src"
+	mem_record many_txn_nopk
 	run_sql "many_txn_nopk_refresh" "VACUUM (REFRESH_TABLE) nopk_batched;"
 fi
 
@@ -316,6 +446,9 @@ PK_BATCHED_ROWS=$(scalar 'SELECT count(*) FROM pk_batched;')
 
 fmt_ms() {
 	[[ -n "${1:-}" ]] && awk -v v="$1" 'BEGIN{printf "%.0f ms", v}' || printf 'n/a'
+}
+fmt_mb() {
+	[[ -n "${1:-}" ]] && printf '%s MB' "$1" || printf 'n/a'
 }
 ratio() {
 	[[ -n "${1:-}" && -n "${2:-}" && "${2:-0}" != "0" ]] &&
@@ -330,6 +463,8 @@ sub() {
 	echo
 	echo "======== SEARCH TABLE PRIMARY KEY ========"
 	echo "binary:  ${SERENED_BIN}"
+	echo "arm:     ${ARM}"
+	echo "key:     ${PERF_PK_COLUMNS}"
 	echo "rows:    ${SRC_ROWS} (all keys distinct)"
 	echo "options: $(table_opts)"
 	echo "batches: ${PERF_PK_BATCHES}"
@@ -364,12 +499,37 @@ sub() {
 	echo "nothing: scan and per-statement overhead, which the batched inserts"
 	echo "also pay. Read the batched comparison off the minus-floor row."
 	echo
+	printf "%-28s %13s %13s\n" "memory (RSS)" "pk" "no pk"
+	printf "%-28s %13s %13s\n" "----------------------------" \
+		"-------------" "-------------"
+	printf "%-28s %13s\n" "after staging: held" \
+		"$(fmt_mb "${HELD_RSS[staged]:-}")"
+	printf "%-28s %13s %13s\n" "one transaction: peak" \
+		"$(fmt_mb "${PEAK_RSS[single_txn_pk]:-}")" \
+		"$(fmt_mb "${PEAK_RSS[single_txn_nopk]:-}")"
+	printf "%-28s %13s %13s\n" "one transaction: held" \
+		"$(fmt_mb "${HELD_RSS[single_txn_pk]:-}")" \
+		"$(fmt_mb "${HELD_RSS[single_txn_nopk]:-}")"
+	printf "%-28s %13s %13s\n" "${PERF_PK_BATCHES} transactions: peak" \
+		"$(fmt_mb "${PEAK_RSS[many_txn_pk]:-}")" \
+		"$(fmt_mb "${PEAK_RSS[many_txn_nopk]:-}")"
+	printf "%-28s %13s %13s\n" "${PERF_PK_BATCHES} transactions: held" \
+		"$(fmt_mb "${HELD_RSS[many_txn_pk]:-}")" \
+		"$(fmt_mb "${HELD_RSS[many_txn_nopk]:-}")"
+	echo "Peak is VmHWM since that shape started, the mark being reset before"
+	echo "each; held is VmRSS at the end of the load, read before the refresh"
+	echo "that publishes it. Held is where an arm holding the unpublished"
+	echo "window in memory shows up, and is the number to compare between arms;"
+	echo "peak also carries what the load itself needed. Both are RSS, so they"
+	echo "include whatever jemalloc has not yet returned to the OS."
+	echo
 	echo "rows loaded: pk_single=${PK_SINGLE_ROWS} pk_batched=${PK_BATCHED_ROWS}"
 	echo "(both must equal ${SRC_ROWS})"
 	echo
 	echo "The pk/no column conflates certification with term-indexing the key"
 	echo "column, which a table without a PK does not do. For certification"
-	echo "alone, compare the pk column across binaries: main (inert), delta, WAL."
+	echo "alone, compare the pk column across runs: --arm none (main, inert),"
+	echo "--arm delta, --arm wal."
 	echo "=========================================="
 } | tee -a "${RUN_LOG}"
 

@@ -24,7 +24,6 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <mutex>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -101,7 +100,7 @@ duckdb::unique_ptr<duckdb::PresortedMergeReader> TermKeys::CreateReader()
 }
 
 TermKeys::TermAnchor TermKeys::Anchor(uint64_t row) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (_anchors.empty()) {
     return {};
   }
@@ -110,7 +109,7 @@ TermKeys::TermAnchor TermKeys::Anchor(uint64_t row) const {
 }
 
 void TermKeys::Record(uint64_t row, bytes_view term) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (row / kAnchorStep == _anchors.size()) {
     _anchors.emplace_back(term);
   }

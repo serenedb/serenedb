@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/col_block_sink.hpp"
 
 #include <limits>
-#include <mutex>
 
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
@@ -37,19 +36,19 @@ void WriteBytes(IndexOutput& out, std::string_view bytes) {
 }  // namespace
 
 uint64_t ColBlockSink::Position() {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   return _out->Position();
 }
 
 uint64_t ColBlockSink::Append(std::string_view bytes) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   const uint64_t offset = _out->Position();
   WriteBytes(*_out, bytes);
   return offset;
 }
 
 uint64_t ColBlockSink::AppendAligned(std::span<const std::string_view> parts) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   if (const uint64_t misalign = _out->Position() % 8; misalign != 0) {
     static constexpr byte_type kPad[8]{};
     _out->WriteData(kPad, 8 - misalign);
@@ -64,7 +63,7 @@ uint64_t ColBlockSink::AppendAligned(std::span<const std::string_view> parts) {
 uint64_t ColBlockSink::AppendString(std::string_view string) {
   SDB_ENSURE(string.size() <= std::numeric_limits<uint32_t>::max(),
              "string too long for overflow format");
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   const uint64_t offset = _out->Position();
   _out->WriteU32(static_cast<uint32_t>(string.size()));
   WriteBytes(*_out, string);

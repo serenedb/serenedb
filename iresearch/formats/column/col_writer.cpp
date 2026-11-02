@@ -169,12 +169,14 @@ void ColWriter::SetFieldOptions(
 }
 
 void ColWriter::StageAll() noexcept {
+  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(Empty() && _norms.empty());
   _stage_all = true;
 }
 
 ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
   SDB_ASSERT(_stage_all);
+  absl::MutexLock lock{&_mutex};
   const auto it = _by_id.find(id);
   return it == _by_id.end() ? nullptr : it->second;
 }
@@ -183,6 +185,7 @@ uint64_t ColWriter::StagedBytes() const noexcept {
   if (!_stage_all) {
     return 0;
   }
+  absl::MutexLock lock{&_mutex};
   uint64_t bytes = 0;
   for (const auto& column : _columns) {
     bytes += column->StagedBytes();
@@ -432,6 +435,7 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
+  absl::MutexLock lock{&_mutex};
   for (auto& entry : _ann_writers) {
     if (entry->writer) {
       entry->writer->SetIdxWriter(idx);
@@ -440,6 +444,7 @@ void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
 }
 
 std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
+  absl::MutexLock lock{&_mutex};
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
@@ -450,7 +455,10 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
-void ColWriter::Rollback() noexcept { _out.reset(); }
+void ColWriter::Rollback() noexcept {
+  absl::MutexLock lock{&_mutex};
+  _out.reset();
+}
 
 constexpr auto kNoCancel = [] { return true; };
 
@@ -484,10 +492,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
     _committed = true;
     return true;
   }
-  {
-    absl::MutexLock lock{&_mutex};
-    EnsureOut();
-  }
+  EnsureOut();
   for (auto& cw : _columns) {
     if (!progress()) {
       return false;
@@ -503,16 +508,21 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   for (auto& [id, parts] : _parts) {
     assembled.emplace_back(AssembleParts(id, parts));
   }
+  std::vector<const ColumnMeta*> metas;
+  metas.reserve(_columns.size() + assembled.size());
+  for (const auto& cw : _columns) {
+    metas.emplace_back(&cw->Meta());
+  }
+  for (const auto& meta : assembled) {
+    metas.emplace_back(&meta);
+  }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    const auto columns = _columns.size() + assembled.size();
-    if (columns != 0) {
+    if (!metas.empty()) {
       footer.WriteList(
-        kColFieldColumns, "columns", columns,
+        kColFieldColumns, "columns", metas.size(),
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeColumnMeta(obj, i < _columns.size()
-                                       ? _columns[i]->Meta()
-                                       : assembled[i - _columns.size()]);
+            SerializeColumnMeta(obj, *metas[i]);
           });
         });
     }

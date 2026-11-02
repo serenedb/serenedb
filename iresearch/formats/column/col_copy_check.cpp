@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <mutex>
 #include <span>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -91,7 +90,7 @@ uint64_t StoredBytes(const ColumnReader& column) {
 
 bool ReencodeCache::Find(field_id column, const ReencodeKey& key,
                          ReencodeEstimate& estimate) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   const auto it = _entries.find(column);
   if (it == _entries.end() || it->second.key != key) {
     return false;
@@ -102,7 +101,7 @@ bool ReencodeCache::Find(field_id column, const ReencodeKey& key,
 
 void ReencodeCache::Store(field_id column, const ReencodeKey& key,
                           const ReencodeEstimate& estimate) {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
 }
 

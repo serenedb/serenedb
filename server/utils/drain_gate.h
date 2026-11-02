@@ -61,14 +61,18 @@ class DrainGate final {
   bool Close(absl::FunctionRef<bool()> cancelled) noexcept;
   void Open() noexcept;
   bool WaitOpen(absl::FunctionRef<bool()> cancelled);
-  bool IsClosed() const noexcept { return _closed.load(); }
+  bool IsClosed() const noexcept { return _state.load() & kClosed; }
 
  private:
+  static constexpr uint32_t kClosed = 1;
+  static constexpr uint32_t kPass = 2;
+
+  static bool IsOpen(std::atomic<uint32_t>* state) noexcept;
+  static bool IsDrained(std::atomic<uint32_t>* state) noexcept;
   void Leave() noexcept;
 
   absl::Mutex _mutex;
-  std::atomic<bool> _closed{false};
-  std::atomic<uint32_t> _in_flight{0};
+  std::atomic<uint32_t> _state{0};
 };
 
 }  // namespace sdb::utils

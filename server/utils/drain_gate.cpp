@@ -29,17 +29,18 @@ namespace {
 
 constexpr absl::Duration kPoll = absl::Milliseconds(100);
 
-bool IsOpen(std::atomic<bool>* closed) { return !closed->load(); }
-
-bool IsDrained(std::atomic<uint32_t>* in_flight) {
-  return in_flight->load() == 0;
-}
-
 }  // namespace
 
+bool DrainGate::IsOpen(std::atomic<uint32_t>* state) noexcept {
+  return !(state->load() & kClosed);
+}
+
+bool DrainGate::IsDrained(std::atomic<uint32_t>* state) noexcept {
+  return state->load() == kClosed;
+}
+
 auto DrainGate::TryEnter() noexcept -> Pass {
-  _in_flight.fetch_add(1);
-  if (!_closed.load()) {
+  if (!(_state.fetch_add(kPass) & kClosed)) {
     return Pass{this};
   }
   Leave();
@@ -47,22 +48,22 @@ auto DrainGate::TryEnter() noexcept -> Pass {
 }
 
 auto DrainGate::Enter() -> Pass {
-  for (;;) {
-    if (auto pass = TryEnter()) {
-      return pass;
-    }
-    absl::MutexLock lock{&_mutex, absl::Condition{IsOpen, &_closed}};
+  if (auto pass = TryEnter()) {
+    return pass;
   }
+  absl::MutexLock lock{&_mutex, absl::Condition{IsOpen, &_state}};
+  [[maybe_unused]] const auto previous = _state.fetch_add(kPass);
+  SDB_ASSERT(!(previous & kClosed));
+  return Pass{this};
 }
 
 bool DrainGate::Close(absl::FunctionRef<bool()> cancelled) noexcept {
   absl::MutexLock lock{&_mutex};
-  SDB_ASSERT(!_closed.load());
-  _closed.store(true);
-  while (
-    !_mutex.AwaitWithTimeout(absl::Condition{IsDrained, &_in_flight}, kPoll)) {
+  [[maybe_unused]] const auto previous = _state.fetch_or(kClosed);
+  SDB_ASSERT(!(previous & kClosed));
+  while (!_mutex.AwaitWithTimeout(absl::Condition{IsDrained, &_state}, kPoll)) {
     if (cancelled()) {
-      _closed.store(false);
+      _state.fetch_and(~kClosed);
       return false;
     }
   }
@@ -71,12 +72,13 @@ bool DrainGate::Close(absl::FunctionRef<bool()> cancelled) noexcept {
 
 void DrainGate::Open() noexcept {
   absl::MutexLock lock{&_mutex};
-  _closed.store(false);
+  [[maybe_unused]] const auto previous = _state.fetch_and(~kClosed);
+  SDB_ASSERT(previous & kClosed);
 }
 
 bool DrainGate::WaitOpen(absl::FunctionRef<bool()> cancelled) {
   absl::MutexLock lock{&_mutex};
-  while (!_mutex.AwaitWithTimeout(absl::Condition{IsOpen, &_closed}, kPoll)) {
+  while (!_mutex.AwaitWithTimeout(absl::Condition{IsOpen, &_state}, kPoll)) {
     if (cancelled()) {
       return false;
     }
@@ -85,9 +87,9 @@ bool DrainGate::WaitOpen(absl::FunctionRef<bool()> cancelled) {
 }
 
 void DrainGate::Leave() noexcept {
-  [[maybe_unused]] const auto previous = _in_flight.fetch_sub(1);
-  SDB_ASSERT(previous != 0);
-  if (_closed.load()) {
+  const auto previous = _state.fetch_sub(kPass);
+  SDB_ASSERT(previous >= kPass);
+  if (previous & kClosed) {
     absl::MutexLock lock{&_mutex};
   }
 }

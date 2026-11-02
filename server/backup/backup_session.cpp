@@ -210,16 +210,18 @@ std::optional<StartedBackup> BackupSession::Begin(
                                       ec);
   }
   catalog::CreateDirectory(backup_dir);
-
-  catalog::DeferRemovals();
-  absl::Cleanup undo = [&]() noexcept {
-    Resume();
+  absl::Cleanup remove_backup_dir = [&]() noexcept {
     catalog::RemoveTree(backup_dir);
   };
+
+  catalog::DeferRemovals();
+  absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
-  if (!search::GetSearchEngine().Maintenance().Close(cancelled)) {
+  auto& maintenance = search::GetSearchEngine().Maintenance();
+  if (!maintenance.Close(cancelled)) {
     return std::nullopt;
   }
+  absl::Cleanup reopen_maintenance = [&maintenance] { maintenance.Open(); };
   auto cut = RecordCut(backup_dir, pins, progress, cancelled);
   if (!cut) {
     return std::nullopt;
@@ -229,7 +231,9 @@ std::optional<StartedBackup> BackupSession::Begin(
   cut->catalog_link = cut->catalog_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), *cut);
-  std::move(undo).Cancel();
+  std::move(reopen_maintenance).Cancel();
+  std::move(resume_removals).Cancel();
+  std::move(remove_backup_dir).Cancel();
   std::move(reopen).Cancel();
 
   // Noexcept committing of backup start

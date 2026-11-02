@@ -59,8 +59,8 @@
 #include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "gtest/gtest.h"
-#include "search/inverted_index_storage.h"
 #include "search/row_position_wal.h"
+#include "search/store.h"
 
 namespace {
 
@@ -74,30 +74,23 @@ irs::IndexWriterOptions WriterOptions() {
   irs::IndexWriterOptions options;
   options.db = &EngineDb();
   options.reader_options.db = &EngineDb();
-  options.key_field = term_dict::kPKFieldId;
+  options.key_column = term_dict::kPKFieldId;
   return options;
 }
 
 void WriteRows(irs::IndexWriter::Transaction& trx,
-               std::span<const int64_t> rowids, bool index_term = false) {
-  std::vector<duckdb::string_t> keys;
+               std::span<const int64_t> rowids) {
   std::vector<int64_t> values;
   for (size_t first = 0; first < rowids.size(); first += STANDARD_VECTOR_SIZE) {
     const auto chunk = rowids.subspan(
       first, std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - first));
     duckdb::Vector ids{duckdb::LogicalType::ROW_TYPE, chunk.size()};
     std::ranges::copy(chunk, duckdb::FlatVector::GetDataMutable<int64_t>(ids));
-    keys.clear();
     values.clear();
     for (const auto rowid : chunk) {
       values.emplace_back(rowid * 10);
-      if (index_term) {
-        keys.emplace_back(primary_key::SignedKeyTerm(rowid));
-      }
     }
-    test::WriteValues(
-      trx, values, PkChunk{.key_terms = keys, .column = &ids},
-      PkPolicy{.index_term = index_term, .column = catalog::PkColumnKind::Has});
+    test::WriteValues(trx, values, &ids, catalog::PkColumnKind::Has);
   }
 }
 
@@ -168,9 +161,9 @@ class SearchRowRemovalTest : public ::testing::Test {
     Open(irs::kOmAppend);
   }
 
-  void Insert(std::span<const int64_t> rowids, bool index_term = false) {
+  void Insert(std::span<const int64_t> rowids) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    WriteRows(trx, rowids, index_term);
+    WriteRows(trx, rowids);
     ASSERT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     _model.insert(rowids.begin(), rowids.end());
@@ -774,28 +767,27 @@ TEST(WalRowPositionMapsTest, EntryTypesRoundTripTheirNames) {
   }
 }
 
-TEST_F(SearchRowRemovalTest, RowIdTermsRemoveTheLiveCopyOfTheirKey) {
-  Insert(std::vector<int64_t>{5, 6, 7, 8}, /*index_term=*/true);
-  Commit(irs::TermRemoval{{8, 5}}, std::vector<int64_t>{5, 8});
-  Insert(std::vector<int64_t>{5, 8, 9}, /*index_term=*/true);
-  Commit(irs::TermRemoval{{8, -3, 6, 100, 5, 8}},
-         std::vector<int64_t>{5, 6, 8});
+TEST_F(SearchRowRemovalTest, RowIdKeysRemoveTheLiveCopyOfTheirKey) {
+  Insert(std::vector<int64_t>{5, 6, 7, 8});
+  Commit(irs::KeyRemoval{{8, 5}}, std::vector<int64_t>{5, 8});
+  Insert(std::vector<int64_t>{5, 8, 9});
+  Commit(irs::KeyRemoval{{8, -3, 6, 100, 5, 8}}, std::vector<int64_t>{5, 6, 8});
   ASSERT_EQ(2, _writer->GetSnapshot().size());
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RowIdTermsOfOneCommitRemoveTogether) {
-  Insert(std::vector<int64_t>{1, 2, 3}, /*index_term=*/true);
-  Insert(std::vector<int64_t>{4, 5, 6}, /*index_term=*/true);
+TEST_F(SearchRowRemovalTest, RowIdKeysOfOneCommitRemoveTogether) {
+  Insert(std::vector<int64_t>{1, 2, 3});
+  Insert(std::vector<int64_t>{4, 5, 6});
   {
     auto trx = _writer->GetBatch();
-    trx.Remove(irs::TermRemoval{{5, 2}});
-    trx.Remove(irs::TermRemoval{{2, 6, 9}});
+    trx.Remove(irs::KeyRemoval{{5, 2}});
+    trx.Remove(irs::KeyRemoval{{2, 6, 9}});
     ASSERT_TRUE(trx.Commit());
   }
   {
     auto trx = _writer->GetBatch();
-    trx.Remove(irs::TermRemoval{{1}});
+    trx.Remove(irs::KeyRemoval{{1}});
     ASSERT_TRUE(trx.Commit());
   }
   _writer->RefreshCommit();
@@ -803,17 +795,17 @@ TEST_F(SearchRowRemovalTest, RowIdTermsOfOneCommitRemoveTogether) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RowIdTermsReachRowsFlushedInTheSameCommit) {
-  Insert(std::vector<int64_t>{1, 2}, /*index_term=*/true);
+TEST_F(SearchRowRemovalTest, RowIdKeysReachRowsFlushedInTheSameCommit) {
+  Insert(std::vector<int64_t>{1, 2});
   const auto write = [&](std::vector<int64_t> rowids) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    WriteRows(trx, rowids, /*index_term=*/true);
+    WriteRows(trx, rowids);
     ASSERT_TRUE(trx.Commit());
   };
   write({3, 4});
   {
     auto trx = _writer->GetBatch();
-    trx.Remove(irs::TermRemoval{{2, 4}});
+    trx.Remove(irs::KeyRemoval{{2, 4}});
     ASSERT_TRUE(trx.Commit());
   }
   write({4});
@@ -822,25 +814,24 @@ TEST_F(SearchRowRemovalTest, RowIdTermsReachRowsFlushedInTheSameCommit) {
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RowIdTermsReachAMergedInSegment) {
+TEST_F(SearchRowRemovalTest, RowIdKeysReachAMergedInSegment) {
   std::vector<int64_t> rowids(4000);
   std::iota(rowids.begin(), rowids.end(), 0);
-  Insert(std::span{rowids}.first(2000), /*index_term=*/true);
-  Insert(std::span{rowids}.subspan(2000), /*index_term=*/true);
+  Insert(std::span{rowids}.first(2000));
+  Insert(std::span{rowids}.subspan(2000));
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   const std::vector<int64_t> victims{7, 1999, 2000, 3999};
-  Commit(irs::TermRemoval{victims}, victims);
+  Commit(irs::KeyRemoval{victims}, victims);
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
 }
 
-TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
+TEST_F(SearchRowRemovalTest, RowIdKeysPassACopyTheirCommitCarriesOut) {
   for (int64_t round = 0; round != 8; ++round) {
     const int64_t base = round * 10;
     const std::vector<int64_t> keys{base, base + 1, base + 2, base + 3};
-    Insert(std::vector<int64_t>{base, base + 1, base + 2, base + 3, base + 4},
-           /*index_term=*/true);
-    Insert(std::vector<int64_t>{base + 5}, /*index_term=*/true);
+    Insert(std::vector<int64_t>{base, base + 1, base + 2, base + 3, base + 4});
+    Insert(std::vector<int64_t>{base + 5});
     std::promise<void> merging;
     std::promise<void> resume;
     std::atomic_bool parked{false};
@@ -859,13 +850,13 @@ TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
       merge.join();
       FAIL() << "the merge never reached its progress callback";
     }
-    Commit(irs::TermRemoval{keys}, keys);
+    Commit(irs::KeyRemoval{keys}, keys);
     for (const auto key : keys) {
-      Insert(std::vector<int64_t>{key}, /*index_term=*/true);
+      Insert(std::vector<int64_t>{key});
     }
     {
       auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-      WriteRows(trx, std::vector<int64_t>{base + 6}, /*index_term=*/true);
+      WriteRows(trx, std::vector<int64_t>{base + 6});
       EXPECT_TRUE(trx.Commit());
     }
     EXPECT_TRUE(_writer->RefreshBegin());
@@ -874,7 +865,7 @@ TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
     EXPECT_EQ(irs::CompactionError::Pending, merged.error);
     _writer->RefreshFinish();
     _model.insert(base + 6);
-    Commit(irs::TermRemoval{keys}, keys);
+    Commit(irs::KeyRemoval{keys}, keys);
     ExpectModel();
   }
 }

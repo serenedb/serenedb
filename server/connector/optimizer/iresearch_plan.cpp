@@ -78,7 +78,7 @@
 #include "pg/types/logical.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::optimizer {
 

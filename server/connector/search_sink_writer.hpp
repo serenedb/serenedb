@@ -50,9 +50,8 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "pg/types/logical.h"
-#include "search/inverted_index_storage.h"
 #include "search/search_analyzer_impl.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace duckdb {
@@ -72,6 +71,15 @@ inline EntryInfoProvider MakeEntryInfoProvider(
   const catalog::InvertedIndexConfig& config) {
   return
     [&config](irs::field_id field_id) { return config.FindEntry(field_id); };
+}
+
+inline TokenizerProvider BoundTokenizers(
+  catalog::IndexTokenizers::Bound tokenizers) {
+  return [tokenizers = std::move(tokenizers)](irs::field_id id) mutable {
+    const auto it = tokenizers.find(id);
+    return it == tokenizers.end() ? catalog::ColumnTokenizer{}
+                                  : std::move(it->second);
+  };
 }
 
 inline std::vector<ColumnId> IndexedColumnIds(
@@ -103,12 +111,12 @@ class SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertBaseImpl(
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-    EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy = {},
+    EntryInfoProvider&& entry_info_provider,
+    PkColumnKind pk = PkColumnKind::Has,
     std::vector<IndexedExpression>&& indexed_exprs = {},
     const catalog::InvertedIndexConfig* config = nullptr);
 
-  void InitImpl(size_t batch_size, const PkChunk& pk = {},
-                irs::CommitOnFlush* commit_on_flush = nullptr);
+  void InitImpl(size_t batch_size, const duckdb::Vector* pk = nullptr);
 
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
@@ -234,8 +242,6 @@ class SearchSinkInsertBaseImpl {
     return EnsureColumnWriter(field_id, duckdb::LogicalType::BLOB);
   }
   void AppendPkColumn(const duckdb::Vector& pk, duckdb::idx_t count);
-  void EmitPkTerms(const Field& pk_field,
-                   std::span<const duckdb::string_t> keys);
   void AppendBlobAt(irs::ColumnWriter& writer, irs::doc_id_t doc,
                     duckdb::string_t bytes);
 
@@ -259,7 +265,6 @@ class SearchSinkInsertBaseImpl {
   EntryInfoProvider _entry_info_provider;
   irs::containers::FlatHashMap<irs::field_id, catalog::ColumnTokenizer>
     _tokenizer_cache;
-  Field _pk_field;
   Field _field;
   irs::field_id _id = irs::field_limits::invalid();
   irs::DictLayout _layout = irs::DictLayout::String;
@@ -269,7 +274,7 @@ class SearchSinkInsertBaseImpl {
   irs::containers::FlatHashMap<irs::field_id, irs::ColumnWriter*>
     _column_writers;
   irs::ColumnWriter* _pk_column_writer = nullptr;
-  PkPolicy _pk_policy;
+  PkColumnKind _pk;
 
   JsonFields _json_fields;
   duckdb::ArenaAllocator _json_strings{duckdb::Allocator::DefaultAllocator()};
@@ -324,14 +329,13 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const ColumnId> indexed_columns,
     EntryInfoProvider&& entry_info_provider = NoEntryInfoProvider(),
-    PkPolicy pk_policy = {})
+    PkColumnKind pk = PkColumnKind::Has)
     : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
-                               std::move(entry_info_provider), pk_policy},
+                               std::move(entry_info_provider), pk},
       _indexed{indexed_columns.begin(), indexed_columns.end()} {}
 
-  void Init(duckdb::idx_t batch_size, const PkChunk& pk,
-            irs::CommitOnFlush* commit_on_flush = nullptr) final {
-    InitImpl(batch_size, pk, commit_on_flush);
+  void Init(duckdb::idx_t batch_size, const duckdb::Vector* pk) final {
+    InitImpl(batch_size, pk);
   }
 
   bool SwitchColumn(const ColumnDescriptor& col, const duckdb::Vector& vec,
@@ -356,7 +360,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 };
 
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
-  irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
+  irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
 
 void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,

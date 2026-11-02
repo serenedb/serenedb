@@ -50,8 +50,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
@@ -242,7 +241,7 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
   return out;
 }
 
-void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
+void CompactInvertedStorage(search::Store& inverted,
                             const irs::IndexFieldOptions& field_options,
                             std::string_view index_name,
                             duckdb::ClientContext& context,
@@ -284,12 +283,12 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
 // or a Search-table commit, in the same per-table order the walk visits them.
 // Owning pointers: the steps run after the collection walk finished.
 struct InvertedStep {
-  std::shared_ptr<search::InvertedIndexStorage> storage;
+  std::shared_ptr<search::Store> storage;
   // Owned for the whole pass, not aliased into the index: a concurrent DROP
   // INDEX destroys the bound index, and a merge that started against this
   // encoding has to finish against it.
   std::shared_ptr<const irs::IndexFieldOptions> field_options;
-  std::shared_ptr<search::SearchTable> search_data;
+  std::shared_ptr<search::Store> search_data;
   std::string name;
 };
 
@@ -388,7 +387,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         duckdb::OnEntryNotFound::RETURN_NULL);
       duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
       const catalog::InvertedIndexEntry* inverted = nullptr;
-      std::shared_ptr<search::InvertedIndexStorage> storage;
+      std::shared_ptr<search::Store> storage;
       if (entry) {
         index = &entry->Cast<duckdb::IndexCatalogEntry>();
         inverted =

@@ -37,7 +37,7 @@ using irs::analysis::FilterTokensTokenizer;
 using Options = FilterTokensTokenizer::Options;
 
 bool Passes(Options opts, std::string_view value) {
-  FilterTokensTokenizer stream{opts};
+  FilterTokensTokenizer stream{opts, tests::Cache()};
   stream.Bind(tests::EngineContext());
   const auto tokens = tests::Analyze(stream, value);
   EXPECT_TRUE(tokens.has_value());
@@ -65,7 +65,8 @@ irs::analysis::PipelineTokenizer SplitThenFilter(Options opts) {
   std::vector<irs::analysis::Tokenizer::ptr> stages;
   stages.emplace_back(irs::analysis::DelimitedTokenizer::Make(
     irs::analysis::DelimitedTokenizer::Options{.delimiter = " "}));
-  stages.emplace_back(FilterTokensTokenizer::Make(std::move(opts)));
+  stages.emplace_back(
+    FilterTokensTokenizer::Make(std::move(opts), tests::Cache()));
   return irs::analysis::PipelineTokenizer{std::move(stages)};
 }
 
@@ -76,7 +77,7 @@ TEST(filter_tokens_tokenizer_test, consts) {
 }
 
 TEST(filter_tokens_tokenizer_test, traits) {
-  auto stream = FilterTokensTokenizer::Make({});
+  auto stream = FilterTokensTokenizer::Make({}, tests::Cache());
   ASSERT_NE(nullptr, stream);
   ASSERT_EQ(irs::Type<FilterTokensTokenizer>::id(), stream->type());
   ASSERT_TRUE(stream->Traits().unique);
@@ -156,12 +157,13 @@ TEST(filter_tokens_tokenizer_test, predicate_and_length_combine) {
 }
 
 TEST(filter_tokens_tokenizer_test, predicate_must_be_boolean) {
-  FilterTokensTokenizer stream{{.predicate = "length(input)"}};
+  FilterTokensTokenizer stream{{.predicate = "length(input)"}, tests::Cache()};
   ASSERT_THROW(stream.Bind(tests::EngineContext()), irs::SqlException);
 }
 
 TEST(filter_tokens_tokenizer_test, predicate_rejects_subqueries) {
-  ASSERT_THROW(FilterTokensTokenizer({.predicate = "input IN (SELECT 'a')"}),
+  ASSERT_THROW(FilterTokensTokenizer({.predicate = "input IN (SELECT 'a')"},
+                                     tests::Cache()),
                irs::SqlException);
 }
 
@@ -225,7 +227,7 @@ TEST(filter_tokens_tokenizer_test, column_fill_matches_per_value) {
   }
   const Options opts{
     .min_length = 2, .max_length = 40, .predicate = "input NOT LIKE 'http%'"};
-  FilterTokensTokenizer stream{opts};
+  FilterTokensTokenizer stream{opts, tests::Cache()};
   stream.Bind(tests::EngineContext());
   std::vector<duckdb::string_t> vals;
   for (const auto& v : values) {

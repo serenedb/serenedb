@@ -3,9 +3,8 @@ control substitution on
 hash-threshold 100
 
 # PK storage modes for inverted indexes: fast-path views store the PK as a
-# typed columnstore column (BIGINT / STRUCT(hi, lo)); glob views also index
-# each row's (file, row) pk term for REFRESH's removes; store_pk = 'none'
-# stores no PK at all; tables keep the PK term + a BIGINT rowid column.
+# typed columnstore column (BIGINT / STRUCT(hi, lo)); store_pk = 'none'
+# stores no PK at all.
 
 statement count 3
 COPY (SELECT 1 AS id, 'pudge goes mid' AS body
@@ -143,6 +142,17 @@ CREATE INDEX spk_glob_bad ON spk_glob_v USING inverted(body store_pk_en) WITH (s
 db error: ERROR: store_pk = 'i64' requires a single-part row key; this index's key is (file_index, row)
 
 
+statement ok
+CREATE INDEX spk_i64 ON spk_v USING inverted(body store_pk_en) WITH (store_pk = 'i64');
+
+query
+SELECT id, body FROM spk_i64 WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
 statement error
 CREATE INDEX spk_glob_bad2 ON spk_glob_v USING inverted(body store_pk_en) WITH (store_pk = 'i256');
 ----
@@ -183,4 +193,4 @@ INSERT INTO spk_t VALUES (2, 'anchin reads manga');
 statement error
 DELETE FROM spk_t WHERE id = 1;
 ----
-db error: ERROR: Invalid Error: inverted index "spk_t_np" was created WITH (store_pk = 'none') and does not index row PKs: DELETE/UPDATE cannot maintain it; drop the index first or recreate it without store_pk = 'none'
+db error: ERROR: Invalid Error: inverted index "spk_t_np" was created WITH (store_pk = 'none') and does not store row PKs: DELETE/UPDATE cannot maintain it; drop the index first or recreate it without store_pk = 'none'

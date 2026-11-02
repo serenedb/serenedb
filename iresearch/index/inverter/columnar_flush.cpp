@@ -105,7 +105,6 @@ void ScatteredField::Reset(const FieldInverter& field) {
   }
 
   _s->ranked.clear();
-  _s->term_starts.clear();
   _s->docs.clear();
   _s->pos.clear();
   _s->offs_start.clear();
@@ -123,9 +122,6 @@ void ScatteredField::Reset(const FieldInverter& field) {
     BuildHistogram(field.Log(), entries.size());
   }
   RankLiveTerms(entries);
-  if (field.UniqueTerms()) {
-    FoldDuplicateTerms(entries);
-  }
   if (_all_inline) {
     const auto docs = field.InlineDocs();
     const auto* ranked = _s->ranked.data();
@@ -145,36 +141,6 @@ void ScatteredField::Reset(const FieldInverter& field) {
       Scatter<false>(log, nocc);
     }
   });
-}
-
-void ScatteredField::FoldDuplicateTerms(
-  std::span<const duckdb::string_t> entries) {
-  const auto& ranked = _s->ranked;
-  const auto same_term = [&](size_t r) {
-    return ranked[r].key == ranked[r - 1].key &&
-           entries[ranked[r].id] == entries[ranked[r - 1].id];
-  };
-  size_t first_dup = 0;
-  for (size_t r = 1; r < ranked.size(); ++r) {
-    if (same_term(r)) {
-      first_dup = r;
-      break;
-    }
-  }
-  if (!first_dup) {
-    return;
-  }
-  auto& starts = _s->term_starts;
-  starts.reserve(ranked.size() + 1);
-  for (size_t r = 0; r < first_dup; ++r) {
-    starts.push_back(static_cast<uint32_t>(r));
-  }
-  for (size_t r = first_dup + 1; r < ranked.size(); ++r) {
-    if (!same_term(r)) {
-      starts.push_back(static_cast<uint32_t>(r));
-    }
-  }
-  starts.push_back(static_cast<uint32_t>(ranked.size()));
 }
 
 void ScatteredField::BuildHistogram(const PostingLogBase& log, size_t vocab) {

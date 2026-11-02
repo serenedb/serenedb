@@ -87,7 +87,7 @@
 #include "pg/types/cast.h"
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/build.h"
 
 extern "C" int pg_encoding_max_length(int encoding);

@@ -665,45 +665,6 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
   }
 }
 
-TEST(InverterUniqueTermsTest, MatchesResolvedDictionary) {
-  constexpr size_t kDocs = 3000;
-  std::vector<std::string> vals;
-  vals.reserve(kDocs);
-  for (size_t i = 0; i < kDocs; ++i) {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "pk_%08zu", i);
-    vals.emplace_back(buf);
-  }
-  vals[100] = vals[99];
-  vals[101] = vals[99];
-  vals[102] = vals[99];
-  vals[2000] = vals[1999];
-
-  auto mem = DefaultMemory();
-  FieldsInverter inv_ref{mem};
-  FieldsInverter inv_uni{mem};
-  auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-  auto* uni = inv_uni.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-
-  std::vector<duckdb::string_t> terms;
-  for (size_t i = 0; i < kDocs; ++i) {
-    terms.push_back(
-      duckdb::string_t{vals[i].data(), static_cast<uint32_t>(vals[i].size())});
-  }
-  ASSERT_TRUE(ref->InvertKeywords([&](auto&& emit) {
-    doc_id_t doc = doc_limits::min();
-    for (const auto& term : terms) {
-      emit(term, doc++);
-    }
-  }));
-  ASSERT_TRUE(uni->InvertPrimaryKeyBlock(
-    std::span<const duckdb::string_t>{terms}, doc_limits::min()));
-
-  ASSERT_EQ(kDocs, uni->Dictionary().Size());
-  ASSERT_EQ(0, uni->Log().Size());
-  AssertSameScatter(*ref, *uni, mem);
-}
-
 TEST(InverterScatterTest, PresortedKeysTieBreak) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
@@ -797,94 +758,6 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
   ASSERT_EQ(ToBytesView("zz_abcdefgh_2"), TermBytes(scattered, 2));
 }
 
-TEST(InverterScatterTest, UniqueDictNonAdjacentDupFolds) {
-  auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-
-  const std::array<std::string_view, 3> vals{"qqqqqqqq_a", "qqqqqqqq_b",
-                                             "qqqqqqqq_a"};
-  std::vector<duckdb::string_t> terms;
-  for (const auto v : vals) {
-    terms.push_back(
-      duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
-  }
-  ASSERT_TRUE(field->InvertPrimaryKeyBlock(
-    std::span<const duckdb::string_t>{terms}, doc_limits::min()));
-  ASSERT_EQ(3, field->Dictionary().Size());
-
-  ScatterScratch scratch{mem.rm};
-  ScatteredField scattered{mem, scratch};
-  scattered.Reset(*field);
-  ASSERT_EQ(2, scattered.TermCount());
-  ASSERT_EQ(ToBytesView("qqqqqqqq_a"), TermBytes(scattered, 0));
-  ASSERT_EQ(ToBytesView("qqqqqqqq_b"), TermBytes(scattered, 1));
-  ASSERT_EQ(0, scattered.TermBegin(0));
-  ASSERT_EQ(2, scattered.TermEnd(0));
-  ASSERT_EQ(3, scattered.TermEnd(1));
-  ASSERT_TRUE(scattered.AllInline());
-  ASSERT_EQ(doc_limits::min(), RowDoc(scattered, 0));
-  ASSERT_EQ(doc_limits::min() + 2, RowDoc(scattered, 1));
-  ASSERT_EQ(doc_limits::min() + 1, RowDoc(scattered, 2));
-}
-
-TEST(InverterScatterTest, UniqueDictSortedFillIdentity) {
-  auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-
-  const std::array<std::string_view, 4> vals{"pk_00000001", "pk_00000002",
-                                             "pk_00000010", "pk_00000011"};
-  std::vector<duckdb::string_t> terms;
-  for (const auto v : vals) {
-    terms.push_back(
-      duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
-  }
-  ASSERT_TRUE(field->InvertPrimaryKeyBlock(
-    std::span<const duckdb::string_t>{terms}, doc_limits::min()));
-
-  ScatterScratch scratch{mem.rm};
-  ScatteredField scattered{mem, scratch};
-  scattered.Reset(*field);
-  ASSERT_TRUE(scattered.AllInline());
-  ASSERT_EQ(4, scattered.TermCount());
-  for (size_t r = 0; r < 4; ++r) {
-    ASSERT_EQ(ToBytesView(vals[r]), TermBytes(scattered, r));
-    ASSERT_EQ(r, scattered.TermBegin(r));
-    ASSERT_EQ(r + 1, scattered.TermEnd(r));
-    ASSERT_EQ(doc_limits::min() + static_cast<doc_id_t>(r),
-              RowDoc(scattered, r));
-  }
-}
-
-TEST(InverterScatterTest, UniqueDictDescendingFillSorts) {
-  auto mem = DefaultMemory();
-  FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-
-  const std::array<std::string_view, 3> vals{"pk_00000010", "pk_00000002",
-                                             "pk_00000001"};
-  std::vector<duckdb::string_t> terms;
-  for (const auto v : vals) {
-    terms.push_back(
-      duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
-  }
-  ASSERT_TRUE(field->InvertPrimaryKeyBlock(
-    std::span<const duckdb::string_t>{terms}, doc_limits::min()));
-
-  ScatterScratch scratch{mem.rm};
-  ScatteredField scattered{mem, scratch};
-  scattered.Reset(*field);
-  ASSERT_TRUE(scattered.AllInline());
-  ASSERT_EQ(3, scattered.TermCount());
-  ASSERT_EQ(ToBytesView("pk_00000001"), TermBytes(scattered, 0));
-  ASSERT_EQ(ToBytesView("pk_00000002"), TermBytes(scattered, 1));
-  ASSERT_EQ(ToBytesView("pk_00000010"), TermBytes(scattered, 2));
-  ASSERT_EQ(doc_limits::min() + 2, RowDoc(scattered, 0));
-  ASSERT_EQ(doc_limits::min() + 1, RowDoc(scattered, 1));
-  ASSERT_EQ(doc_limits::min(), RowDoc(scattered, 2));
-}
-
 TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
@@ -899,17 +772,6 @@ TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
     EXPECT_EQ(bytes, scattered.TermBytes());
     EXPECT_EQ(width, reader.properties().key_width);
   };
-  const auto primary = [&](field_id id,
-                           std::span<const std::string_view> vals) {
-    auto* field = inv.Emplace(id, StringLayout::kStrings, IndexFeatures::Freq);
-    std::vector<duckdb::string_t> terms;
-    for (const auto v : vals) {
-      terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
-    }
-    EXPECT_TRUE(field->InvertPrimaryKeyBlock(terms, doc_limits::min()));
-    EXPECT_TRUE(field->Log().Size() == 0);
-    return field;
-  };
   const auto keywords = [&](field_id id,
                             std::span<const std::string_view> vals) {
     auto* field = inv.Emplace(id, StringLayout::kStrings,
@@ -922,49 +784,14 @@ TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
   };
 
   const std::string_view sorted[]{"pk_00000001", "pk_00000002", "pk_00000010"};
-  check(*primary(1, sorted), 11, 33);
+  check(*keywords(1, sorted), 11, 33);
   const std::string_view mixed[]{"red", "green", "red"};
   check(*keywords(2, mixed), 0, 8);
   const std::string_view descending[]{"pk_00000010", "pk_00000002",
                                       "pk_00000001"};
-  check(*primary(3, descending), 11, 33);
+  check(*keywords(3, descending), 11, 33);
   const std::string_view fixed[]{"abc", "xyz", "abc"};
   check(*keywords(4, fixed), 3, 6);
-}
-
-TEST(InverterScatterTest, UniqueDictSortedFillMatchesRef) {
-  constexpr size_t kDocs = 3000;
-  std::vector<std::string> vals;
-  vals.reserve(kDocs);
-  for (size_t i = 0; i < kDocs; ++i) {
-    char buf[16];
-    std::snprintf(buf, sizeof buf, "pk_%08zu", i);
-    vals.emplace_back(buf);
-  }
-
-  auto mem = DefaultMemory();
-  FieldsInverter inv_ref{mem};
-  FieldsInverter inv_uni{mem};
-  auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-  auto* uni = inv_uni.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
-
-  std::vector<duckdb::string_t> terms;
-  for (size_t i = 0; i < kDocs; ++i) {
-    terms.push_back(
-      duckdb::string_t{vals[i].data(), static_cast<uint32_t>(vals[i].size())});
-  }
-  ASSERT_TRUE(ref->InvertKeywords([&](auto&& emit) {
-    doc_id_t doc = doc_limits::min();
-    for (const auto& term : terms) {
-      emit(term, doc++);
-    }
-  }));
-  ASSERT_TRUE(uni->InvertPrimaryKeyBlock(
-    std::span<const duckdb::string_t>{terms}, doc_limits::min()));
-
-  ASSERT_EQ(kDocs, uni->Dictionary().Size());
-  ASSERT_EQ(0, uni->Log().Size());
-  AssertSameScatter(*ref, *uni, mem);
 }
 
 struct RejectFill {

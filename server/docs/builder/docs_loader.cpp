@@ -56,7 +56,7 @@
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "utils/file_utils.h"
 
 namespace sdb::docs {

@@ -444,38 +444,9 @@ void BM_ScatterTermsUniqueKeep(benchmark::State& s) {
                   [](FieldInverter& f) { FillKeyword(f, GetUniqueCorpus()); });
 }
 
-void FillUniqueDict(FieldInverter& field, size_t dup_stride) {
-  const auto& corpus = GetUniqueCorpus();
-  std::vector<duckdb::string_t> terms;
-  terms.reserve(TokenBatch::kCapacity);
-  doc_id_t doc = doc_limits::min();
-  for (size_t i = 0; i < kTokens;) {
-    terms.clear();
-    const size_t n = std::min(TokenBatch::kCapacity, kTokens - i);
-    for (size_t j = 0; j < n; ++j) {
-      const size_t k = i + j;
-      const bool dup = dup_stride && k % dup_stride == 1;
-      const auto t = corpus.Term(dup ? k - 1 : k);
-      terms.push_back(duckdb::string_t{reinterpret_cast<const char*>(t.data()),
-                                       static_cast<uint32_t>(t.size())});
-    }
-    field.InvertPrimaryKeyBlock(std::span<const duckdb::string_t>{terms}, doc);
-    doc += static_cast<doc_id_t>(n);
-    i += n;
-  }
-}
-
 void BM_ScatterTermsLowCardKeep(benchmark::State& s) {
   RunScatterShape(s, IndexFeatures::Freq, false,
                   [](FieldInverter& f) { FillKeyword(f, GetLowCardCorpus()); });
-}
-void BM_ScatterTermsUniqueDictKeep(benchmark::State& s) {
-  RunScatterShape(s, IndexFeatures::None, false,
-                  [](FieldInverter& f) { FillUniqueDict(f, 0); });
-}
-void BM_ScatterTermsUniqueDictDupsKeep(benchmark::State& s) {
-  RunScatterShape(s, IndexFeatures::None, false,
-                  [](FieldInverter& f) { FillUniqueDict(f, 512); });
 }
 
 template<typename Fill>
@@ -515,15 +486,6 @@ void BM_ScatterDrainTermsUnique(benchmark::State& s) {
   RunScatterDrain(s, IndexFeatures::Freq,
                   [](FieldInverter& f) { FillKeyword(f, GetUniqueCorpus()); });
 }
-void BM_ScatterDrainUniqueDict(benchmark::State& s) {
-  RunScatterDrain(s, IndexFeatures::None,
-                  [](FieldInverter& f) { FillUniqueDict(f, 0); });
-}
-void BM_ScatterDrainUniqueDictDups(benchmark::State& s) {
-  RunScatterDrain(s, IndexFeatures::None,
-                  [](FieldInverter& f) { FillUniqueDict(f, 512); });
-}
-
 void BM_ColumnarKeyword(benchmark::State& state) {
   const auto& corpus = GetCorpus();
   auto mem = DefaultMemory();
@@ -2041,12 +2003,8 @@ BENCHMARK(BM_ScatterTermsHCKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsHCRelease)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsUniqueKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsLowCardKeep)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterTermsUniqueDictKeep)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterTermsUniqueDictDupsKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterDrainTermsHC)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterDrainTermsUnique)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterDrainUniqueDict)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterDrainUniqueDictDups)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColumnarKeyword)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColumnarKeywordLowCard)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColKeywordBlock)->Unit(benchmark::kMillisecond);

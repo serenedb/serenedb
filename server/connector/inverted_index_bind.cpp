@@ -74,7 +74,6 @@ using catalog::InvertedIndexConfig;
 using catalog::InvertedIndexFields;
 using catalog::InvertedIndexKey;
 using catalog::PkColumnKind;
-using catalog::PkPolicy;
 using catalog::TokenizerCatalogEntry;
 
 constexpr std::string_view kMetricField = "metric";
@@ -1114,7 +1113,7 @@ constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
 }
 
 // `store_pk` is checked against the key shape the index will actually have.
-PkPolicy ResolvePkPolicy(
+PkColumnKind ResolvePkColumn(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
   bool has_pk, bool single_key, bool file_row) {
   std::string store_pk = "auto";
@@ -1127,13 +1126,13 @@ PkPolicy ResolvePkPolicy(
       store_pk = "none";
     }
   }
-  PkPolicy policy{.index_term = table_backed, .column = PkColumnKind::Has};
   if (store_pk == "none") {
-    policy.index_term = false;
-    policy.column = PkColumnKind::None;
-  } else if (store_pk == "auto") {
-    policy.column = has_pk ? PkColumnKind::Has : PkColumnKind::Unable;
-  } else if (store_pk == "i64") {
+    return PkColumnKind::None;
+  }
+  if (store_pk == "auto") {
+    return has_pk ? PkColumnKind::Has : PkColumnKind::Unable;
+  }
+  if (store_pk == "i64") {
     if (!has_pk || !single_key) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1143,7 +1142,9 @@ PkPolicy ResolvePkPolicy(
                 : file_row ? "(file_index, row)"
                            : "a user key_columns struct"));
     }
-  } else if (store_pk == "i64i64") {
+    return PkColumnKind::Has;
+  }
+  if (store_pk == "i64i64") {
     if (!file_row) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1151,13 +1152,12 @@ PkPolicy ResolvePkPolicy(
                 "key; this index's key is ",
                 table_backed ? "the table rowid" : "single-part"));
     }
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("store_pk must be one of none/auto/i64/i64i64 (or "
-                            "true/false), got '",
-                            store_pk, "'"));
+    return PkColumnKind::Has;
   }
-  return policy;
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("store_pk must be one of none/auto/i64/i64i64 (or "
+                          "true/false), got '",
+                          store_pk, "'"));
 }
 
 // A key that is a bare column indexes under that column's own id, which
@@ -1350,7 +1350,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::LogicalType& generated_pk_type) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto top_k_scorer = catalog::TopKScorer(context, entry.options);
-  const auto pk = ResolvePkPolicy(
+  const auto pk = ResolvePkColumn(
     entry.options, table_backed,
     table_backed || generated_pk_type.id() != duckdb::LogicalTypeId::INVALID,
     generated_pk_type.id() != duckdb::LogicalTypeId::STRUCT,

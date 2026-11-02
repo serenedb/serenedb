@@ -208,6 +208,10 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   EXPECT_TRUE(irs::field_limits::valid(f.Id()))
     << "insert_indexed: field must have a catalog-allocated id, not "
        "field_limits::invalid()";
+  const auto block_terms = f.BlockTerms();
+  if (block_terms && block_terms->empty()) {
+    return;
+  }
   const auto requested_features = f.GetIndexFeatures();
   const auto features = requested_features & (~irs::IndexFeatures::Offs);
 
@@ -229,7 +233,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   _doc_fields.insert(&field);
 
-  if (const auto block_terms = f.BlockTerms(); block_terms.has_value()) {
+  if (block_terms) {
     const auto doc_id = doc();
     uint32_t inc_value = 1;
     for (const auto& block_term : *block_terms) {
@@ -249,9 +253,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
                    pst.positions().size()));
       inc_value = 0;
     }
-    if (!block_terms->empty()) {
-      field.docs.emplace(doc_id);
-    }
+    field.docs.emplace(doc_id);
     return;
   }
 

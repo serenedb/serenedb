@@ -353,9 +353,6 @@ struct ExpectedPosting {
 };
 
 uint32_t RowDoc(const ScatteredField& scattered, uint64_t k) {
-  if (scattered.AllInline()) {
-    return scattered.RankedInlineDocs()[k];
-  }
   return BlockAt(scattered.DocBlocks(), k);
 }
 

@@ -66,7 +66,6 @@ class FieldInverter : util::Noncopyable {
                 ColWriter* col_writer, const IndexFieldOptions* field_options)
     : _term_ids{term_ids},
       _dict{arena, rm},
-      _inline_docs{ManagedTypedAllocator<doc_id_t>{rm}},
       _log{MakePostingLog(arena, rm, LayoutFromFeatures(index_features))},
       _meta{id, index_features} {
     if (!col_writer || !IsSubsetOf(IndexFeatures::Norm, index_features)) {
@@ -86,9 +85,6 @@ class FieldInverter : util::Noncopyable {
   std::string_view Error() const noexcept { return _error; }
   doc_id_t LastDoc() const noexcept { return _state.last_doc; }
   const TermDictionary& Dictionary() const noexcept { return _dict; }
-  std::span<const doc_id_t> InlineDocs() const noexcept {
-    return {_inline_docs.data(), _inline_docs.size()};
-  }
 
   void Configure(const TokenTraits& traits) noexcept {
     _one_to_one = traits.unique;
@@ -107,7 +103,7 @@ class FieldInverter : util::Noncopyable {
   }
 
   size_t Memory() const noexcept {
-    return _dict.Memory() + _inline_docs.capacity() * sizeof(doc_id_t) +
+    return _dict.Memory() +
            VisitLog([](const auto& log) { return log.BookkeepingMemory(); });
   }
 
@@ -736,7 +732,6 @@ class FieldInverter : util::Noncopyable {
 
   TermIds _term_ids;
   TermDictionary _dict;
-  ManagedVector<doc_id_t> _inline_docs;
   PostingLogVariant _log;
   ColWriter* _col_writer = nullptr;
   NormColumnWriter* _norm_writer = nullptr;

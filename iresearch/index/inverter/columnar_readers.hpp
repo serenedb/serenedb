@@ -69,40 +69,25 @@ class ColumnarTermIterator final : public TermOnlyIterator {
       return 0;
     }
     const size_t first = _rank;
-    if (_scattered->AllInline()) {
-      const auto* docs = _scattered->RankedInlineDocs();
-      auto begin = _scattered->TermBegin(first);
-      for (size_t i = 0; i < n; ++i) {
-        const auto end = _scattered->TermEnd(first + i);
-        postings[i] = {.span = {.docs = docs + begin,
-                                .pos = nullptr,
-                                .offs_start = nullptr,
-                                .offs_end = nullptr,
-                                .count = static_cast<size_t>(end - begin)}};
-        terms[i] = AsBytesView(_scattered->TermAt(first + i));
-        begin = end;
+    auto begin = _scattered->TermBegin(first);
+    for (size_t i = 0; i < n; ++i) {
+      const auto end = _scattered->TermEnd(first + i);
+      if (end <= BlockEnd(begin)) [[likely]] {
+        postings[i] = {.span = BlockSpan(begin, end)};
+      } else {
+        postings[i] = {
+          .span = {},
+          .docs_blocks = _docs,
+          .pos_blocks = _pos,
+          .offs_start_blocks = _offs_start,
+          .offs_end_blocks = _offs_end,
+          .begin = begin,
+          .end = end,
+          .block_shift = ScatterScratch::kBlockShift,
+        };
       }
-    } else {
-      auto begin = _scattered->TermBegin(first);
-      for (size_t i = 0; i < n; ++i) {
-        const auto end = _scattered->TermEnd(first + i);
-        if (end <= BlockEnd(begin)) [[likely]] {
-          postings[i] = {.span = BlockSpan(begin, end)};
-        } else {
-          postings[i] = {
-            .span = {},
-            .docs_blocks = _docs,
-            .pos_blocks = _pos,
-            .offs_start_blocks = _offs_start,
-            .offs_end_blocks = _offs_end,
-            .begin = begin,
-            .end = end,
-            .block_shift = ScatterScratch::kBlockShift,
-          };
-        }
-        terms[i] = AsBytesView(_scattered->TermAt(first + i));
-        begin = end;
-      }
+      terms[i] = AsBytesView(_scattered->TermAt(first + i));
+      begin = end;
     }
     _rank += n;
     return n;

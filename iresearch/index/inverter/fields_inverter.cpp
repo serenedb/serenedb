@@ -28,7 +28,7 @@ namespace irs {
 namespace {
 
 bool HasTerms(const FieldInverter* field) noexcept {
-  return field && (field->Log().Size() != 0 || !field->InlineDocs().empty());
+  return field && field->Log().Size() != 0;
 }
 
 }  // namespace
@@ -47,7 +47,8 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
     for (const auto member : LayoutMembers(entry.layout)) {
       if (!IsTermMember(member)) {
         used = used || !_docs[entry.docs + DocIndex(member)].empty();
-      } else if (const auto* field = _terms[entry.terms + TermIndex(member)].field;
+      } else if (const auto* field =
+                   _terms[entry.terms + TermIndex(member)].field;
                  HasTerms(field)) {
         keyed_dicts += field->Dictionary().Size() != 1;
         index_features |= field->Meta().index_features;

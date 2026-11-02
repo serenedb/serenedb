@@ -88,7 +88,6 @@ class BackupSession final {
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;
-  bool IsActive();
 
  private:
   void Stop() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);

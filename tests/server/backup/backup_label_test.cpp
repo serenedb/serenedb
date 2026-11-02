@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_replace.h>
+#include <absl/strings/strip.h>
 #include <absl/time/time.h>
 #include <gtest/gtest.h>
 
@@ -176,12 +177,71 @@ TEST(BackupLabelTest, RejectsADuplicateDatabase) {
 }
 
 TEST(BackupLabelTest, RejectsAMissingRequiredLine) {
-  const auto body = absl::StrReplaceAll(
-    Body(Build()), {{"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n", ""}});
-  const auto parsed = ParseBackupLabel(WithChecksum(body));
+  for (std::string_view prefix :
+       {"START WAL LOCATION: ", "SERENEDB BACKUP FORMAT: ",
+        "SERENEDB SYSTEM IDENTIFIER: ", "SERENEDB CATALOG LOG: "}) {
+    auto body = Body(Build());
+    const auto at = body.find(prefix);
+    ASSERT_NE(at, std::string::npos) << prefix;
+    body.erase(at, body.find('\n', at) + 1 - at);
+    const auto parsed = ParseBackupLabel(WithChecksum(body));
+    ASSERT_FALSE(parsed.ok()) << prefix;
+    EXPECT_EQ(parsed.status().message(),
+              "backup_label is missing a required line")
+      << prefix;
+  }
+}
+
+TEST(BackupLabelTest, RejectsAnOnlyChecksumLine) {
+  const auto parsed = ParseBackupLabel(WithChecksum(""));
   ASSERT_FALSE(parsed.ok());
   EXPECT_EQ(parsed.status().message(),
             "backup_label is missing a required line");
+}
+
+TEST(BackupLabelTest, RejectsAChecksumKeyInsideALine) {
+  auto body = Body(Build());
+  body.pop_back();
+  const auto parsed = ParseBackupLabel(WithChecksum(body));
+  ASSERT_FALSE(parsed.ok());
+  EXPECT_EQ(parsed.status().message(), "backup_label has no checksum line");
+}
+
+TEST(BackupLabelTest, RejectsMalformedLines) {
+  struct Case {
+    std::string_view from;
+    std::string_view to;
+  };
+  constexpr Case kCases[] = {
+    {"START WAL LOCATION: 65DD1/B480E1C3 ",
+     "START WAL LOCATION: 65DD1-B480E1C3 "},
+    {"SERENEDB BACKUP FORMAT: 1\n", "SERENEDB BACKUP FORMAT: 1 1\n"},
+    {"SERENEDB SYSTEM IDENTIFIER: 7696604830604944365\n",
+     "SERENEDB SYSTEM IDENTIFIER: x7696604830604944365\n"},
+    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
+     "SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal\n"},
+    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
+     "SERENEDB CATALOG LOG:  2876\n"},
+    {"SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 2876\n",
+     "SERENEDB CATALOG LOG: engine_v1/backup/catalog.wal 28x6\n"},
+    {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: cut\n"},
+    {"SERENEDB DATABASE: 5 3 361 1 cut\n", "SERENEDB DATABASE: 5 3 361 cut\n"},
+    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5 69276 1\n"},
+    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: x/69276 1\n"},
+    {"SERENEDB STORE: 5/69276 1\n", "SERENEDB STORE: 5/69276\n"},
+  };
+  for (const auto& c : kCases) {
+    const auto body = absl::StrReplaceAll(Body(Build()), {{c.from, c.to}});
+    ASSERT_NE(body, Body(Build())) << c.from;
+    const auto parsed = ParseBackupLabel(WithChecksum(body));
+    ASSERT_FALSE(parsed.ok()) << c.to;
+    EXPECT_TRUE(absl::StartsWith(parsed.status().message(),
+                                 "malformed backup_label line: \""))
+      << parsed.status();
+    EXPECT_TRUE(absl::StrContains(parsed.status().message(),
+                                  absl::StripSuffix(c.to, "\n")))
+      << parsed.status();
+  }
 }
 
 TEST(BackupLabelTest, RejectsAnotherFormatVersion) {

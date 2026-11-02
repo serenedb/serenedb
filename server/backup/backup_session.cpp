@@ -292,9 +292,4 @@ void BackupSession::Stop() noexcept {
   _active = false;
 }
 
-bool BackupSession::IsActive() {
-  absl::MutexLock lock{&_mutex};
-  return _active;
-}
-
 }  // namespace sdb::backup

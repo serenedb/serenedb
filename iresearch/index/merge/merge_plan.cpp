@@ -275,6 +275,7 @@ uint64_t MergePlan::AddColumns() {
     auto column_ranges = SplitStretches(id, std::move(unsplit[i++]), target);
     if (column_ranges.size() < 2 &&
         (column_ranges.empty() || column_ranges[0].input == kEncode)) {
+      _columns->Open(id, *_col_writer);
       AddUnit({
         .kind = MergeUnitKind::Column,
         .id = id,
@@ -283,6 +284,7 @@ uint64_t MergePlan::AddColumns() {
       });
       continue;
     }
+    _col_writer->PlanParts(id, static_cast<uint32_t>(column_ranges.size()));
     auto part_deps = after_norms;
     if (_columns->HoldsText(id)) {
       part_deps = {AddUnit({
@@ -649,7 +651,8 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::ColumnCopy:
       return MergeColumn(work) && lap(MergeStep::Columns);
     case MergeUnitKind::ColumnTrain:
-      return _columns->Train(work.id, _progress) && lap(MergeStep::Columns);
+      return _columns->Train(work.id, *_col_writer, _progress) &&
+             lap(MergeStep::Columns);
     case MergeUnitKind::ColumnsFooter:
       return WriteColumnsFooter() && lap(MergeStep::ColumnsCommit);
     case MergeUnitKind::Ann:

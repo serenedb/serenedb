@@ -20,11 +20,11 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
 #include <absl/container/btree_map.h>
 #include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
@@ -34,6 +34,7 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -81,11 +82,19 @@ class ColWriter final {
                            bool hyperloglog = false,
                            ColCodecParams codec_params = {});
 
+  ColumnWriter& OpenedColumn(field_id id) noexcept;
+
+  void CloseColumn(field_id id);
+
+  void PlanParts(field_id id, uint32_t parts);
+
   ColumnWriter& OpenColumnPart(field_id id, uint32_t part,
                                duckdb::LogicalType type, bool skip_validity,
                                uint32_t row_group_size,
                                duckdb::CompressionType compression,
                                ColCodecParams codec_params);
+
+  void CloseColumnPart(field_id id, uint32_t part);
 
   bool CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
                       const ColumnReader& column, bool validity,
@@ -115,14 +124,11 @@ class ColWriter final {
 
   bool Commit(uint64_t target_row, std::span<const uint32_t> new2old = {});
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
-              std::span<const uint32_t> new2old = {})
-    ABSL_NO_THREAD_SAFETY_ANALYSIS;
+              std::span<const uint32_t> new2old = {});
 
-  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env)
-    ABSL_NO_THREAD_SAFETY_ANALYSIS;
+  yaclib::Task<> ComputeAnn(const AnnBuildEnv* env);
   yaclib::Task<> ComputeAnn(field_id column, ColReader& reader,
-                            const AnnBuildEnv* env)
-    ABSL_NO_THREAD_SAFETY_ANALYSIS;
+                            const AnnBuildEnv* env);
 
   void Rollback() noexcept;
 
@@ -133,31 +139,32 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
-  struct ColumnPart {
+  struct ColumnEntry {
     std::unique_ptr<ColumnWriter> writer;
-    ColumnMeta copy;
+    ColumnMeta meta;
   };
 
   struct ColumnParts {
-    std::vector<ColumnPart> parts;
-    std::vector<ColumnDictionaryMeta> dictionaries;
-    uint16_t own_dictionary = 0;
+    explicit ColumnParts(uint32_t count) : parts(count) {}
+
+    std::vector<ColumnEntry> parts;
+    std::array<ColumnDictionaryMeta, kMaxColumnDictionaries> dictionaries;
+    std::atomic<uint64_t> claims{0};
     absl::btree_map<std::vector<uint32_t>, ColumnDictionaryMeta>
       leaf_dictionaries;
   };
 
-  uint16_t AppendDictionary(ColumnParts& parts, std::string_view bytes)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  ColumnParts& PartsOf(field_id id);
 
-  ColumnPart& PartOf(field_id id, uint32_t part)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  ColumnEntry& PartOf(field_id id, uint32_t part);
+
+  static void Close(ColumnEntry& entry);
 
   static ColumnMeta AssembleParts(field_id id, ColumnParts& parts);
 
-  void EnsureOut() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  bool Empty() const noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void EnsureOut();
+  NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
+  bool Empty() const noexcept;
 
   Directory* _dir;
   std::string _segment_name;
@@ -165,21 +172,17 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
-  mutable absl::Mutex _mutex;
   HnswBases* _hnsw_bases = nullptr;
-  IndexOutput::ptr _out ABSL_GUARDED_BY(_mutex);
-  std::unique_ptr<ColBlockSink> _blocks ABSL_GUARDED_BY(_mutex);
-  std::unique_ptr<WriteContext> _write_ctx ABSL_GUARDED_BY(_mutex);
-  std::vector<std::unique_ptr<ColumnWriter>> _columns ABSL_GUARDED_BY(_mutex);
-  irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id
-    ABSL_GUARDED_BY(_mutex);
-  absl::btree_map<field_id, ColumnParts> _parts ABSL_GUARDED_BY(_mutex);
-  std::vector<std::unique_ptr<NormColumnWriter>> _norms ABSL_GUARDED_BY(_mutex);
-  irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id
-    ABSL_GUARDED_BY(_mutex);
-  std::vector<std::unique_ptr<AnnEntry>> _ann_writers ABSL_GUARDED_BY(_mutex);
-  irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id
-    ABSL_GUARDED_BY(_mutex);
+  IndexOutput::ptr _out;
+  std::unique_ptr<ColBlockSink> _blocks;
+  std::unique_ptr<WriteContext> _write_ctx;
+  std::vector<std::unique_ptr<ColumnEntry>> _columns;
+  irs::containers::FlatHashMap<field_id, ColumnEntry*> _by_id;
+  absl::btree_map<field_id, std::unique_ptr<ColumnParts>> _parts;
+  std::vector<std::unique_ptr<NormColumnWriter>> _norms;
+  irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
+  std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
+  irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
   bool _stage_all = false;
   bool _committed = false;
 };

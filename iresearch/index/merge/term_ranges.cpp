@@ -202,6 +202,7 @@ struct TermRangeMerge::Part {
   IndexInput::ptr pos;
   IndexInput::ptr pay;
   std::chrono::steady_clock::time_point started;
+  uint64_t nanos = 0;
   bool done = false;
 };
 
@@ -270,7 +271,7 @@ bool TermRangeMerge::FinishPart(size_t part) {
   SDB_ASSERT(part < _parts.size());
   auto& p = *_parts[part];
   SDB_ASSERT(p.writer);
-  const bool ok = std::visit(
+  p.done = std::visit(
     [&](auto& writer) {
       const bool finished = writer.Finish();
       auto& terms = writer.Terms();
@@ -295,24 +296,28 @@ bool TermRangeMerge::FinishPart(size_t part) {
       for (size_t w = 0; w != docs.words(); ++w) {
         _docs[w] |= docs.data()[w];
       }
-      p.done = finished;
       return finished;
     },
     *p.writer);
   p.writer.reset();
-  _nanos +=
+  p.nanos =
     static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now() - p.started)
                             .count());
-  return ok;
+  return p.done;
 }
 
 bool TermRangeMerge::Done() const noexcept { return PartsLeft() == 0; }
 
 size_t TermRangeMerge::PartsLeft() const noexcept {
-  absl::MutexLock lock{&_mutex};
   return static_cast<size_t>(
     absl::c_count_if(_parts, [](const auto& part) { return !part->done; }));
+}
+
+uint64_t TermRangeMerge::Nanos() const noexcept {
+  return absl::c_accumulate(
+    _parts, uint64_t{0},
+    [](uint64_t nanos, const auto& part) { return nanos + part->nanos; });
 }
 
 std::vector<TermPart> TermRangeMerge::Parts() const {
@@ -344,13 +349,11 @@ void TermRangeMerge::ReleaseParts() noexcept {
     part->terms.clear();
     part->terms.shrink_to_fit();
   }
-  absl::MutexLock lock{&_mutex};
   _docs.clear();
   _docs.shrink_to_fit();
 }
 
 uint64_t TermRangeMerge::DocCount() const noexcept {
-  absl::MutexLock lock{&_mutex};
   return math::Popcount(_docs.begin(), _docs.end());
 }
 

@@ -44,6 +44,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/trained_dictionary.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
@@ -52,10 +53,12 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <latch>
 #include <numeric>
 #include <random>
 #include <span>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -1400,6 +1403,107 @@ TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
     });
   };
   EXPECT_TRUE(absl::c_all_of(col.DictionaryMetas(), prefetched_whole));
+}
+
+TEST_F(ColumnReaderTest, ConcurrentPartsClaimEachDictionarySlotOnce) {
+  constexpr irs::field_id kS = 1;
+  constexpr uint32_t kOwners = 4;
+  constexpr uint32_t kCopiers = 8;
+  constexpr uint32_t kParts = kOwners + kCopiers;
+  constexpr uint64_t kPartRows = 100;
+  constexpr size_t kClaimedCopiers = 3;
+  using Dictionary = std::shared_ptr<const irs::codecs::TrainedDictionary>;
+  const auto dictionary = [](std::string_view name) {
+    return std::make_shared<const irs::codecs::TrainedDictionary>(
+      absl::StrCat(name, std::string(64, '.')));
+  };
+  const auto own = dictionary("own");
+  std::array<std::array<Dictionary, 2>, kParts> copies;
+  for (uint32_t part = kOwners; part != kParts; ++part) {
+    copies[part] = {dictionary(absl::StrCat("copy-", part, "-a")),
+                    dictionary(absl::StrCat("copy-", part, "-b"))};
+  }
+  for (size_t round = 0; round != 8; ++round) {
+    SCOPED_TRACE(round);
+    std::array<uint16_t, kParts> owned{};
+    std::array<bool, kParts> claimed{};
+    std::array<std::vector<uint16_t>, kParts> copied;
+    irs::MemoryDirectory dir;
+    {
+      irs::ColWriter w{dir, "seg", Db(), irs::WriteTier::Merge};
+      w.PlanParts(kS, kParts);
+      std::latch start{kParts};
+      std::vector<std::thread> threads;
+      for (uint32_t part = 0; part != kParts; ++part) {
+        threads.emplace_back([&, part] {
+          start.arrive_and_wait();
+          if (part < kOwners) {
+            owned[part] = w.AddColumnDictionary(kS, own->Bytes());
+          } else {
+            claimed[part] =
+              w.AddCopiedDictionaries(kS, copies[part], copied[part]);
+          }
+          auto& cw = w.OpenColumnPart(
+            kS, part, duckdb::LogicalType::VARCHAR, false, 4096,
+            duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+            irs::ColCodecParams{.tier = irs::WriteTier::Merge});
+          duckdb::Vector values{duckdb::LogicalType::VARCHAR, kPartRows};
+          for (uint64_t row = 0; row != kPartRows; ++row) {
+            values.SetValue(
+              row, duckdb::Value{absl::StrCat("part-", part, "-", row)});
+          }
+          duckdb::FlatVector::SetSize(values, kPartRows);
+          cw.Append(values, kPartRows);
+          w.CloseColumnPart(kS, part);
+        });
+      }
+      for (auto& thread : threads) {
+        thread.join();
+      }
+      ASSERT_TRUE(w.Commit(kParts * kPartRows));
+    }
+
+    std::vector<uint16_t> slots{owned[0]};
+    size_t claimers = 0;
+    for (uint32_t part = 1; part != kOwners; ++part) {
+      EXPECT_EQ(owned[0], owned[part]);
+    }
+    for (uint32_t part = kOwners; part != kParts; ++part) {
+      claimers += claimed[part];
+      EXPECT_EQ(claimed[part] ? 2 : 0, copied[part].size());
+      slots.insert(slots.end(), copied[part].begin(), copied[part].end());
+    }
+    EXPECT_EQ(kClaimedCopiers, claimers);
+    std::vector<uint16_t> expected(1 + 2 * kClaimedCopiers);
+    std::iota(expected.begin(), expected.end(), 1);
+    absl::c_sort(slots);
+    EXPECT_EQ(expected, slots);
+
+    irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kS);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(kParts * kPartRows, col->RowCount());
+    irs::ReadContext ctx{r};
+    const auto* dictionaries = col->Dictionaries(ctx);
+    ASSERT_NE(dictionaries, nullptr);
+    ASSERT_EQ(expected.size(), dictionaries->size());
+    EXPECT_EQ(own->Bytes(), (*dictionaries)[owned[0] - 1]->Bytes());
+    for (uint32_t part = kOwners; part != kParts; ++part) {
+      for (size_t i = 0; i != copied[part].size(); ++i) {
+        EXPECT_EQ(copies[part][i]->Bytes(),
+                  (*dictionaries)[copied[part][i] - 1]->Bytes());
+      }
+    }
+    auto state = col->InitScan(ctx);
+    for (uint32_t part = 0; part != kParts; ++part) {
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, kPartRows);
+      for (uint64_t row = 0; row != kPartRows; ++row) {
+        EXPECT_EQ(absl::StrCat("part-", part, "-", row),
+                  out.GetValue(row).ToString());
+      }
+    }
+  }
 }
 
 // STRUCT{a: BIGINT, b: VARCHAR} with struct-level and field-level NULLs across

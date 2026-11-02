@@ -4,7 +4,7 @@ iresearch/index/merge/postings_unit.cpp:468 only zero-doc terms give the shared 
 iresearch/index/merge/merge_plan.cpp:568 the refusal of an invalid norm column id is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused, a death test whose child process dies before it writes its profile
 iresearch/index/merge/merge_plan.cpp:640 the implicit default of an exhaustive switch over MergeUnitKind
 iresearch/index/merge/merge_plan.cpp:657-658 the return after an exhaustive switch over MergeUnitKind
-iresearch/formats/column/col_block_sink.cpp:63-64 a string over 4 GiB cannot be built in a test; the check guards the 32-bit length prefix of an overflow string
+iresearch/formats/column/col_block_sink.cpp:74-75 a string over 4 GiB cannot be built in a test; the check guards the 32-bit length prefix of an overflow string
 server/search/compaction/merge_planner.cpp:105-106 the merge policies offer a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
 server/search/compaction/merge_planner.cpp:262 the implicit default of an exhaustive switch over MergeMode
 server/search/compaction/merge_planner.cpp:272 the return after an exhaustive switch over MergeMode

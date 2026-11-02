@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/call_once.h>
-#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <array>
@@ -261,6 +260,7 @@ struct LeafSample {
 struct LeafDictionary {
   std::vector<uint32_t> path;
   std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+  uint16_t index = 0;
 };
 
 bool AllReady(std::span<const LeafSample> leaves) {
@@ -356,6 +356,13 @@ struct ColumnMerger::State {
     std::vector<std::vector<duckdb::sel_t>> windows;
   };
 
+  struct ColumnSlot {
+    const ColumnReader* first = nullptr;
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+    std::vector<LeafDictionary> leaves;
+    bool trained = false;
+  };
+
   const std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos) {
     auto& kept = kept_rows[si];
     absl::call_once(kept.once, [&] {
@@ -377,10 +384,14 @@ struct ColumnMerger::State {
     return kept.windows[w];
   }
 
+  auto& Slot(this auto& self, field_id column) {
+    const auto it = self.slots.find(column);
+    SDB_ASSERT(it != self.slots.end());
+    return it->second;
+  }
+
   const ColumnReader& First(field_id column) const {
-    const auto it = first_by_id.find(column);
-    SDB_ASSERT(it != first_by_id.end());
-    return *it->second;
+    return *Slot(column).first;
   }
 
   ColumnOptions Options(field_id column) const {
@@ -493,13 +504,14 @@ struct ColumnMerger::State {
     return rows;
   }
 
-  bool TrainLeaves(field_id column, const MergeProgress& progress) {
+  bool TrainLeaves(field_id column, ColWriter& output,
+                   const MergeProgress& progress) {
+    auto& slot = Slot(column);
     const auto opts = Options(column);
     std::vector<LeafSample> leaves;
-    for (auto& path : TextLeavesOf(First(column).Type())) {
+    for (auto& path : TextLeavesOf(slot.first->Type())) {
       leaves.emplace_back(std::move(path));
     }
-    std::vector<LeafDictionary> trained;
     if (TrainsColumnDictionary(*db, duckdb::LogicalType::VARCHAR,
                                opts.compression, CodecParams(opts))) {
       const auto ctxs = OpenContexts(sources, column);
@@ -531,11 +543,15 @@ struct ColumnMerger::State {
       }
     }
     for (auto& leaf : leaves) {
-      trained.emplace_back(
-        LeafDictionary{std::move(leaf.path), leaf.sampler.Train()});
+      auto dictionary = leaf.sampler.Train();
+      const uint16_t index =
+        dictionary
+          ? output.AddLeafDictionary(column, leaf.path, dictionary->Bytes())
+          : 0;
+      slot.leaves.emplace_back(std::move(leaf.path), std::move(dictionary),
+                               index);
     }
-    absl::MutexLock lock{&dictionaries_mutex};
-    leaf_dictionaries.emplace(column, std::move(trained));
+    slot.trained = true;
     return true;
   }
 
@@ -864,14 +880,8 @@ struct ColumnMerger::State {
   duckdb::DatabaseInstance* db = nullptr;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<field_id> ids;
-  irs::containers::FlatHashMap<field_id, const ColumnReader*> first_by_id;
+  irs::containers::FlatHashMap<field_id, ColumnSlot> slots;
   std::unique_ptr<KeptRows[]> kept_rows;
-  absl::Mutex dictionaries_mutex;
-  irs::containers::FlatHashMap<field_id,
-                               std::shared_ptr<const codecs::TrainedDictionary>>
-    dictionaries;
-  irs::containers::FlatHashMap<field_id, std::vector<LeafDictionary>>
-    leaf_dictionaries;
 };
 
 ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
@@ -895,7 +905,9 @@ ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
           field_options->GetFieldKind(col->Id()) == FieldKind::None) {
         continue;
       }
-      if (state.first_by_id.emplace(col->Id(), col.get()).second) {
+      if (state.slots
+            .try_emplace(col->Id(), State::ColumnSlot{.first = col.get()})
+            .second) {
         state.ids.emplace_back(col->Id());
       }
     }
@@ -964,15 +976,16 @@ bool ColumnMerger::Copyable(field_id column, size_t input) const {
   return BlocksRelocatable(*col);
 }
 
-bool ColumnMerger::Train(field_id column, const MergeProgress& progress) {
+bool ColumnMerger::Train(field_id column, ColWriter& output,
+                         const MergeProgress& progress) {
   auto& shared = *_state;
-  if (shared.First(column).Type().IsNested()) {
-    return shared.TrainLeaves(column, progress);
+  auto& slot = shared.Slot(column);
+  if (slot.first->Type().IsNested()) {
+    return shared.TrainLeaves(column, output, progress);
   }
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary;
   const auto opts = shared.Options(column);
-  if (TrainsColumnDictionary(*shared.db, shared.First(column).Type(),
-                             opts.compression, shared.CodecParams(opts))) {
+  if (TrainsColumnDictionary(*shared.db, slot.first->Type(), opts.compression,
+                             shared.CodecParams(opts))) {
     const auto ctxs = OpenContexts(shared.sources, column);
     codecs::DictionarySampler sampler;
     uint64_t sampled = 0;
@@ -988,10 +1001,9 @@ bool ColumnMerger::Train(field_id column, const MergeProgress& progress) {
     if (!progress()) {
       return false;
     }
-    dictionary = sampler.Train();
+    slot.dictionary = sampler.Train();
   }
-  absl::MutexLock lock{&shared.dictionaries_mutex};
-  shared.dictionaries.emplace(column, std::move(dictionary));
+  slot.trained = true;
   return true;
 }
 
@@ -1000,33 +1012,17 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
                               const MergeProgress& progress) {
   SDB_ASSERT(begin < end);
   auto& shared = *_state;
+  const auto& slot = shared.Slot(column);
   auto& cw = shared.OpenPart(column, part, output);
   if (cw.TrainsDictionary()) {
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-    {
-      absl::MutexLock lock{&shared.dictionaries_mutex};
-      const auto it = shared.dictionaries.find(column);
-      SDB_ASSERT(it != shared.dictionaries.end());
-      dictionary = it->second;
-    }
-    const uint16_t index =
-      dictionary ? output.AddColumnDictionary(column, dictionary->Bytes()) : 0;
-    cw.ShareLeafDictionary({}, std::move(dictionary), index);
+    SDB_ASSERT(slot.trained);
+    const uint16_t index = slot.dictionary ? output.AddColumnDictionary(
+                                               column, slot.dictionary->Bytes())
+                                           : 0;
+    cw.ShareLeafDictionary({}, slot.dictionary, index);
   }
-  std::vector<LeafDictionary> leaves;
-  {
-    absl::MutexLock lock{&shared.dictionaries_mutex};
-    if (const auto it = shared.leaf_dictionaries.find(column);
-        it != shared.leaf_dictionaries.end()) {
-      leaves = it->second;
-    }
-  }
-  for (auto& leaf : leaves) {
-    const uint16_t index =
-      leaf.dictionary
-        ? output.AddLeafDictionary(column, leaf.path, leaf.dictionary->Bytes())
-        : 0;
-    cw.ShareLeafDictionary(leaf.path, std::move(leaf.dictionary), index);
+  for (const auto& leaf : slot.leaves) {
+    cw.ShareLeafDictionary(leaf.path, leaf.dictionary, leaf.index);
   }
   const auto append = [&](uint64_t at, const duckdb::Vector& values,
                           duckdb::idx_t count) {
@@ -1043,7 +1039,7 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
     return false;
   }
   cw.PadNullsTo(end - begin);
-  cw.Finish();
+  output.CloseColumnPart(column, part);
   return true;
 }
 
@@ -1053,18 +1049,11 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
   auto& shared = *_state;
   const auto& source = shared.sources[input];
   const auto& col = *source.col_reader->Column(column);
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-  {
-    absl::MutexLock lock{&shared.dictionaries_mutex};
-    if (const auto it = shared.dictionaries.find(column);
-        it != shared.dictionaries.end()) {
-      dictionary = it->second;
-    }
-  }
+  const auto& dictionary = shared.Slot(column).dictionary;
   const auto estimate =
     dictionary
       ? EstimateReencode(*source.col_reader, col, *shared.field_options,
-                         std::move(dictionary))
+                         dictionary)
       : *EstimateReencode(*source.col_reader, col, *shared.field_options);
   if (ReencodePays(estimate)) {
     return MergeRange(column, part, begin, end, output, progress);
@@ -1083,6 +1072,21 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
                                dictionaries, progress);
 }
 
+void ColumnMerger::Open(field_id column, ColWriter& output) const {
+  const auto& shared = *_state;
+  const auto opts = shared.Options(column);
+  output.OpenColumn(column, shared.First(column).Type(), opts.skip_validity,
+                    shared.row_group_size, opts.compression, false,
+                    shared.CodecParams(opts));
+  for (const auto ann_field : shared.AnnFields(column)) {
+    auto& ann = output.AttachAnn(
+      column, *shared.field_options->GetColumnOptions(ann_field).ann_info);
+    if (!shared.order) {
+      ann.SetMergeSources(shared.sources);
+    }
+  }
+}
+
 bool ColumnMerger::Merge(field_id column, ColWriter& output,
                          const MergeProgress& progress) {
   auto& shared = *_state;
@@ -1090,17 +1094,7 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
   HyperLogLogMerger hyperloglog;
   const auto opts = shared.Options(column);
   const auto ctxs = OpenContexts(sources, column);
-
-  auto& cw = output.OpenColumn(
-    column, shared.First(column).Type(), opts.skip_validity,
-    shared.row_group_size, opts.compression, false, shared.CodecParams(opts));
-  for (const auto ann_field : shared.AnnFields(column)) {
-    auto& ann = output.AttachAnn(
-      column, *shared.field_options->GetColumnOptions(ann_field).ann_info);
-    if (!shared.order) {
-      ann.SetMergeSources(sources);
-    }
-  }
+  auto& cw = output.OpenedColumn(column);
 
   if (opts.hyperloglog) {
     hyperloglog.Begin();
@@ -1152,7 +1146,7 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
   if (opts.hyperloglog) {
     cw.SetHyperLogLog(hyperloglog.Take());
   }
-  cw.Finish();
+  output.CloseColumn(column);
   return true;
 }
 

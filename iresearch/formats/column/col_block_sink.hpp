@@ -20,11 +20,18 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
 #include <absl/synchronization/mutex.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
+
+#include "iresearch/types.hpp"
 
 namespace irs {
 
@@ -32,7 +39,10 @@ class IndexOutput;
 
 class ColBlockSink final {
  public:
-  explicit ColBlockSink(IndexOutput& out) noexcept : _out{&out} {}
+  static constexpr size_t kChunkSize = size_t{1} << 20;
+  static constexpr size_t kMaxQueued = 64 * kChunkSize;
+
+  explicit ColBlockSink(IndexOutput& out);
 
   ColBlockSink(const ColBlockSink&) = delete;
   ColBlockSink& operator=(const ColBlockSink&) = delete;
@@ -45,9 +55,26 @@ class ColBlockSink final {
 
   uint64_t AppendString(std::string_view string);
 
+  void Flush();
+
  private:
-  absl::Mutex _mutex;
+  struct Chunk {
+    std::unique_ptr<byte_type[]> data;
+    size_t size = 0;
+  };
+
+  uint64_t Write(uint64_t alignment, std::span<const std::string_view> parts);
+  void Stage(std::string_view bytes) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  std::vector<Chunk> TakeFull() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  bool HasRoom() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  bool Idle() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
   IndexOutput* _out;
+  absl::Mutex _mutex;
+  uint64_t _end ABSL_GUARDED_BY(_mutex);
+  size_t _queued ABSL_GUARDED_BY(_mutex) = 0;
+  bool _writing ABSL_GUARDED_BY(_mutex) = false;
+  std::deque<Chunk> _chunks ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace irs

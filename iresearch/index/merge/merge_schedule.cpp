@@ -27,22 +27,36 @@
 #include <algorithm>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/mutex.hpp>
+#include <span>
 #include <utility>
 
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+namespace {
+
+using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
+
+void Wake(std::span<const duckdb::InterruptState> tasks) {
+  for (const auto& task : tasks) {
+    task.Callback();
+  }
+}
+
+}  // namespace
 
 MergeSchedule::MergeSchedule(MergePlan& plan) : _plan{plan} {
   const auto units = plan.Units();
   const bool hold_postings = plan.PostingsPending();
-  absl::MutexLock lock{&_mutex};
   _rank.resize(units.size());
   _dependents.resize(units.size());
   _waiting.resize(units.size());
   _left = units.size();
-  _ranges_left = plan.TermRanges().size();
+  for (const auto& range : plan.TermRanges()) {
+    _parts_left += range->PartsLeft();
+  }
+  SDB_ASSERT(!hold_postings || _parts_left != 0);
   for (size_t unit = 0; unit != units.size(); ++unit) {
     const auto& deps = units[unit].deps;
     _waiting[unit] = deps.size();
@@ -68,22 +82,17 @@ MergeSchedule::MergeSchedule(MergePlan& plan) : _plan{plan} {
   }
 }
 
-size_t MergeSchedule::Claim(size_t threads) {
-  absl::MutexLock lock{&_mutex};
+size_t MergeSchedule::Claim(size_t threads,
+                            const duckdb::InterruptState& interrupt) {
+  Guard guard{_tasks.lock};
   if (_failed ? _running == 0 : _left == 0) {
     return kFinished;
   }
-  if (_ready.empty()) {
-    return kNoUnit;
-  }
-  if (_held != kNoUnit) {
-    size_t left = 0;
-    for (const auto& range : _plan.TermRanges()) {
-      left += range->PartsLeft();
-    }
-    if (_running + std::min(left, threads - 1) >= threads) {
-      return kNoUnit;
-    }
+  const bool reserved =
+    _held != kNoUnit &&
+    _running + std::min(_parts_left, threads - 1) >= threads;
+  if (_ready.empty() || reserved) {
+    return _tasks.BlockTask(interrupt) ? kNoUnit : kFinished;
   }
   auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
     return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
@@ -104,6 +113,13 @@ void MergeSchedule::FailLocked() {
   _ready.clear();
 }
 
+duckdb::vector<duckdb::InterruptState> MergeSchedule::TakeWoken() {
+  if (!_failed && _left != 0 && _ready.empty()) {
+    return {};
+  }
+  return _tasks.TakeBlockedTasks();
+}
+
 bool MergeSchedule::Run(size_t unit) {
   bool ok = false;
   std::exception_ptr failure;
@@ -115,75 +131,58 @@ bool MergeSchedule::Run(size_t unit) {
   if (!ok) {
     _plan.Abort();
   }
-  absl::MutexLock lock{&_mutex};
-  if (failure && !_error) {
-    _error = std::move(failure);
-  }
-  SDB_ASSERT(_running != 0);
-  --_running;
-  --_left;
-  if (!ok) {
-    FailLocked();
-    return false;
-  }
-  if (_failed) {
-    return true;
-  }
-  for (const auto next : _dependents[unit]) {
-    if (--_waiting[next] == 0) {
-      _ready.push_back(next);
+  duckdb::vector<duckdb::InterruptState> woken;
+  {
+    Guard guard{_tasks.lock};
+    if (failure && !_error) {
+      _error = std::move(failure);
     }
+    SDB_ASSERT(_running != 0);
+    --_running;
+    --_left;
+    if (!ok) {
+      FailLocked();
+    } else if (!_failed) {
+      for (const auto next : _dependents[unit]) {
+        if (--_waiting[next] == 0) {
+          _ready.push_back(next);
+        }
+      }
+    }
+    woken = TakeWoken();
   }
-  return true;
+  Wake(woken);
+  return ok;
 }
 
-void MergeSchedule::RangeDone() {
-  bool last = false;
+void MergeSchedule::PartDone() {
+  duckdb::vector<duckdb::InterruptState> woken;
   {
-    absl::MutexLock lock{&_mutex};
-    SDB_ASSERT(_ranges_left != 0);
-    last = --_ranges_left == 0;
+    Guard guard{_tasks.lock};
+    SDB_ASSERT(_parts_left != 0);
+    if (--_parts_left == 0) {
+      SDB_ASSERT(_held != kNoUnit);
+      const auto unit = std::exchange(_held, kNoUnit);
+      if (!_plan.FinishPostings()) {
+        _plan.Abort();
+        FailLocked();
+      } else if (--_waiting[unit] == 0 && !_failed) {
+        _ready.push_back(unit);
+      }
+    }
+    woken = TakeWoken();
   }
-  if (last && !ReleasePostings(_plan.FinishPostings())) {
-    return;
-  }
-  Wake();
+  Wake(woken);
 }
 
-bool MergeSchedule::ReleasePostings(bool ok) {
-  absl::MutexLock lock{&_mutex};
-  if (_held == kNoUnit) {
-    return false;
-  }
-  const auto unit = std::exchange(_held, kNoUnit);
-  if (!ok) {
-    _plan.Abort();
-    FailLocked();
-    return true;
-  }
-  SDB_ASSERT(_waiting[unit] != 0);
-  if (--_waiting[unit] == 0 && !_failed) {
-    _ready.push_back(unit);
-  }
-  return true;
-}
-
-void MergeSchedule::SetUnits(duckdb::GlobalSourceState* units) {
-  absl::MutexLock lock{&_mutex};
-  _units = units;
-}
-
-void MergeSchedule::Wake() {
-  duckdb::GlobalSourceState* units = nullptr;
+void MergeSchedule::Stop() {
+  duckdb::vector<duckdb::InterruptState> woken;
   {
-    absl::MutexLock lock{&_mutex};
-    units = _units;
+    Guard guard{_tasks.lock};
+    _tasks.PreventBlocking();
+    woken = _tasks.TakeBlockedTasks();
   }
-  if (!units) {
-    return;
-  }
-  duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{units->lock};
-  units->UnblockTasks();
+  Wake(woken);
 }
 
 bool MergeSchedule::Result() {
@@ -191,7 +190,7 @@ bool MergeSchedule::Result() {
   std::exception_ptr error;
   bool ok = false;
   {
-    absl::MutexLock lock{&_mutex};
+    Guard guard{_tasks.lock};
     error = _error;
     ok = !_failed;
   }

@@ -22,7 +22,6 @@
 
 #include <absl/synchronization/mutex.h>
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
@@ -92,12 +91,11 @@ class TermRangeMerge {
 
   uint64_t DocCount() const noexcept;
 
-  uint64_t Nanos() const noexcept { return _nanos.load(); }
+  uint64_t Nanos() const noexcept;
 
  private:
   struct Part;
 
-  std::atomic<uint64_t> _nanos{0};
   field_id _field;
   FieldProperties _props;
   std::vector<Input> _inputs;
@@ -107,7 +105,7 @@ class TermRangeMerge {
   Target _target{};
   const MergeProgress* _progress;
   bool _sorted;
-  mutable absl::Mutex _mutex;
+  absl::Mutex _mutex;
   std::vector<uint64_t> _docs;
 };
 

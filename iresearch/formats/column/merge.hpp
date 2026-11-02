@@ -68,9 +68,11 @@ class ColumnMerger {
 
   bool Copyable(field_id column, size_t input) const;
 
+  void Open(field_id column, ColWriter& output) const;
+
   bool Merge(field_id column, ColWriter& output, const MergeProgress& progress);
 
-  bool Train(field_id column, const MergeProgress& progress);
+  bool Train(field_id column, ColWriter& output, const MergeProgress& progress);
 
   bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
                   ColWriter& output, const MergeProgress& progress);

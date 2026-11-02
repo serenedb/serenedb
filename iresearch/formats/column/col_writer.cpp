@@ -36,7 +36,6 @@
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/ann_writer.hpp"
-#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -49,6 +48,16 @@
 
 namespace irs {
 namespace {
+
+constexpr uint64_t kOwnShift = 32;
+
+constexpr uint64_t SlotsOf(uint64_t claims) noexcept {
+  return claims & ((uint64_t{1} << kOwnShift) - 1);
+}
+
+constexpr uint64_t OwnOf(uint64_t claims) noexcept {
+  return claims >> kOwnShift;
+}
 
 uint64_t NewColFileId() {
   absl::BitGen gen;
@@ -66,6 +75,22 @@ uint64_t BlockRows(const std::vector<ColumnBlockMeta>& blocks) {
 
 uint64_t MetaRows(const ColumnMeta& meta) {
   return BlockRows(meta.data.empty() ? meta.validity : meta.data);
+}
+
+void DropTuning(ColumnMeta& meta) {
+  meta.write_string_tuning.reset();
+  meta.write_numeric_tuning.reset();
+  for (auto& child : meta.children) {
+    DropTuning(child);
+  }
+  for (auto& layout : meta.variant_rgs) {
+    if (layout.unshredded) {
+      DropTuning(*layout.unshredded);
+    }
+    if (layout.shredded) {
+      DropTuning(*layout.shredded);
+    }
+  }
 }
 
 void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
@@ -169,26 +194,23 @@ void ColWriter::SetFieldOptions(
 }
 
 void ColWriter::StageAll() noexcept {
-  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(Empty() && _norms.empty());
   _stage_all = true;
 }
 
 ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
   SDB_ASSERT(_stage_all);
-  absl::MutexLock lock{&_mutex};
   const auto it = _by_id.find(id);
-  return it == _by_id.end() ? nullptr : it->second;
+  return it == _by_id.end() ? nullptr : it->second->writer.get();
 }
 
 uint64_t ColWriter::StagedBytes() const noexcept {
   if (!_stage_all) {
     return 0;
   }
-  absl::MutexLock lock{&_mutex};
   uint64_t bytes = 0;
   for (const auto& column : _columns) {
-    bytes += column->StagedBytes();
+    bytes += column->writer->StagedBytes();
   }
   for (const auto& norm : _norms) {
     bytes += norm->StagedBytes();
@@ -202,10 +224,10 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     bool hyperloglog,
                                     ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
-  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(!_parts.contains(id));
   if (auto it = _by_id.find(id); it != _by_id.end()) {
-    auto& existing = *it->second;
+    SDB_ASSERT(it->second->writer);
+    auto& existing = *it->second->writer;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
@@ -215,16 +237,17 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
     return existing;
   }
   EnsureOut();
-  auto col = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
-                                            skip_validity, row_group_size,
-                                            forced, hyperloglog, codec_params);
+  auto column = std::make_unique<ColumnEntry>();
+  column->writer = std::make_unique<ColumnWriter>(
+    *_write_ctx, id, std::move(type), skip_validity, row_group_size, forced,
+    hyperloglog, codec_params);
   if (_stage_all) {
-    col->StageAll();
+    column->writer->StageAll();
   }
-  auto* ptr = col.get();
-  _by_id.emplace(id, ptr);
-  _columns.push_back(std::move(col));
-  return *ptr;
+  auto& entry = *column;
+  _by_id.emplace(id, &entry);
+  _columns.emplace_back(std::move(column));
+  return *entry.writer;
 }
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
@@ -247,6 +270,46 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   return cw;
 }
 
+ColumnWriter& ColWriter::OpenedColumn(field_id id) noexcept {
+  const auto it = _by_id.find(id);
+  SDB_ASSERT(it != _by_id.end() && it->second->writer);
+  return *it->second->writer;
+}
+
+void ColWriter::CloseColumn(field_id id) {
+  const auto it = _by_id.find(id);
+  SDB_ASSERT(it != _by_id.end());
+  Close(*it->second);
+}
+
+void ColWriter::PlanParts(field_id id, uint32_t parts) {
+  SDB_ASSERT(!_by_id.contains(id));
+  EnsureOut();
+  const bool planned =
+    _parts.try_emplace(id, std::make_unique<ColumnParts>(parts)).second;
+  SDB_ASSERT(planned);
+}
+
+ColWriter::ColumnParts& ColWriter::PartsOf(field_id id) {
+  const auto it = _parts.find(id);
+  SDB_ASSERT(it != _parts.end());
+  return *it->second;
+}
+
+ColWriter::ColumnEntry& ColWriter::PartOf(field_id id, uint32_t part) {
+  auto& parts = PartsOf(id).parts;
+  SDB_ASSERT(part < parts.size());
+  return parts[part];
+}
+
+void ColWriter::Close(ColumnEntry& entry) {
+  SDB_ASSERT(entry.writer);
+  entry.writer->Finish();
+  entry.meta = std::move(entry.writer->_meta);
+  entry.writer.reset();
+  DropTuning(entry.meta);
+}
+
 ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
                                         duckdb::LogicalType type,
                                         bool skip_validity,
@@ -254,23 +317,16 @@ ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
                                         duckdb::CompressionType compression,
                                         ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
-  absl::MutexLock lock{&_mutex};
   auto& writer = PartOf(id, part).writer;
   SDB_ASSERT(!writer);
-  EnsureOut();
   writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
                                           skip_validity, row_group_size,
                                           compression, false, codec_params);
   return *writer;
 }
 
-ColWriter::ColumnPart& ColWriter::PartOf(field_id id, uint32_t part) {
-  SDB_ASSERT(!_by_id.contains(id));
-  auto& parts = _parts[id].parts;
-  if (parts.size() <= part) {
-    parts.resize(part + 1);
-  }
-  return parts[part];
+void ColWriter::CloseColumnPart(field_id id, uint32_t part) {
+  Close(PartOf(id, part));
 }
 
 bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
@@ -278,52 +334,40 @@ bool ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                const ColumnReader& column, bool validity,
                                std::span<const uint16_t> dictionaries,
                                absl::FunctionRef<bool()> progress) {
-  ColBlockSink* sink = nullptr;
-  {
-    absl::MutexLock lock{&_mutex};
-    EnsureOut();
-    sink = _blocks.get();
-  }
-  ColumnMeta copy;
-  if (!CopyColumnBlocks(reader, column, validity, dictionaries, *sink, copy,
-                        progress)) {
-    return false;
-  }
-  absl::MutexLock lock{&_mutex};
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
-  slot.copy = std::move(copy);
-  return true;
-}
-
-uint16_t ColWriter::AppendDictionary(ColumnParts& parts,
-                                     std::string_view bytes) {
-  EnsureOut();
-  parts.dictionaries.push_back(
-    {.file_offset = _blocks->Append(bytes), .byte_size = bytes.size()});
-  return static_cast<uint16_t>(parts.dictionaries.size());
+  return CopyColumnBlocks(reader, column, validity, dictionaries, *_blocks,
+                          slot.meta, progress);
 }
 
 uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
-  absl::MutexLock lock{&_mutex};
-  auto& parts = _parts[id];
-  if (parts.own_dictionary == 0) {
-    parts.own_dictionary = AppendDictionary(parts, bytes);
-  }
-  return parts.own_dictionary;
+  auto& parts = PartsOf(id);
+  auto claims = parts.claims.load(std::memory_order_relaxed);
+  uint64_t own = 0;
+  do {
+    if (OwnOf(claims) != 0) {
+      return static_cast<uint16_t>(OwnOf(claims));
+    }
+    own = SlotsOf(claims) + 1;
+  } while (!parts.claims.compare_exchange_weak(claims, (own << kOwnShift) | own,
+                                               std::memory_order_relaxed));
+  SDB_ASSERT(own <= kMaxColumnDictionaries);
+  parts.dictionaries[own - 1] = {.file_offset = _blocks->Append(bytes),
+                                 .byte_size = bytes.size()};
+  return static_cast<uint16_t>(own);
 }
 
 uint16_t ColWriter::AddLeafDictionary(field_id id,
                                       std::span<const uint32_t> path,
                                       std::string_view bytes) {
-  absl::MutexLock lock{&_mutex};
-  auto [it, inserted] = _parts[id].leaf_dictionaries.try_emplace(
-    std::vector<uint32_t>{path.begin(), path.end()});
-  if (inserted) {
-    EnsureOut();
-    it->second = {.file_offset = _blocks->Append(bytes),
-                  .byte_size = bytes.size()};
-  }
+  const bool added =
+    PartsOf(id)
+      .leaf_dictionaries
+      .try_emplace(std::vector<uint32_t>{path.begin(), path.end()},
+                   ColumnDictionaryMeta{.file_offset = _blocks->Append(bytes),
+                                        .byte_size = bytes.size()})
+      .second;
+  SDB_ASSERT(added);
   return 1;
 }
 
@@ -332,15 +376,21 @@ bool ColWriter::AddCopiedDictionaries(
   std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
     dictionaries,
   std::vector<uint16_t>& indexes) {
-  absl::MutexLock lock{&_mutex};
-  auto& parts = _parts[id];
-  const size_t reserved = parts.own_dictionary == 0 ? 1 : 0;
-  if (parts.dictionaries.size() + reserved + dictionaries.size() >
-      kMaxColumnDictionaries) {
-    return false;
-  }
-  for (const auto& dictionary : dictionaries) {
-    indexes.push_back(AppendDictionary(parts, dictionary->Bytes()));
+  auto& parts = PartsOf(id);
+  auto claims = parts.claims.load(std::memory_order_relaxed);
+  do {
+    const uint64_t reserved = OwnOf(claims) == 0 ? 1 : 0;
+    if (SlotsOf(claims) + reserved + dictionaries.size() >
+        kMaxColumnDictionaries) {
+      return false;
+    }
+  } while (!parts.claims.compare_exchange_weak(
+    claims, claims + dictionaries.size(), std::memory_order_relaxed));
+  for (auto slot = SlotsOf(claims); const auto& dictionary : dictionaries) {
+    const auto bytes = dictionary->Bytes();
+    parts.dictionaries[slot] = {.file_offset = _blocks->Append(bytes),
+                                .byte_size = bytes.size()};
+    indexes.emplace_back(static_cast<uint16_t>(++slot));
   }
   return true;
 }
@@ -348,17 +398,15 @@ bool ColWriter::AddCopiedDictionaries(
 ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
   ColumnMeta meta;
   meta.id = id;
-  for (auto& slot : parts.parts) {
-    if (slot.writer) {
-      slot.writer->Finish();
-      slot.copy = std::move(slot.writer->_meta);
-    }
-    auto& part = slot.copy;
-    SDB_ASSERT(part.type.id() != duckdb::LogicalTypeId::INVALID,
+  for (auto& part : parts.parts) {
+    SDB_ASSERT(!part.writer);
+    SDB_ASSERT(part.meta.type.id() != duckdb::LogicalTypeId::INVALID,
                "ColWriter::Commit: column ", id, " misses a part");
-    AppendPart(meta, part);
+    AppendPart(meta, part.meta);
   }
-  meta.dictionaries = std::move(parts.dictionaries);
+  const auto slots = SlotsOf(parts.claims.load(std::memory_order_relaxed));
+  meta.dictionaries.assign(parts.dictionaries.begin(),
+                           parts.dictionaries.begin() + slots);
   for (auto& [path, dictionary] : parts.leaf_dictionaries) {
     auto* leaf = &meta;
     for (const auto child : path) {
@@ -374,7 +422,6 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
     id, row_group_size, [this]() -> ColBlockSink& {
-      absl::MutexLock lock{&_mutex};
       EnsureOut();
       return *_blocks;
     }));
@@ -388,7 +435,6 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
                                             uint32_t row_group_size) {
   SDB_ASSERT(row_group_size != 0);
-  absl::MutexLock lock{&_mutex};
   if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
     return *it->second;
   }
@@ -396,14 +442,12 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
 }
 
 NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
-  absl::MutexLock lock{&_mutex};
   SDB_ASSERT(!_norm_by_id.contains(id), "ColWriter::StreamNormColumn: column ",
              id, " already open");
   return AddNormColumn(id, 0);
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
-  absl::MutexLock lock{&_mutex};
   if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(existing.info == info && existing.column_id == column_id,
@@ -435,7 +479,6 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
-  absl::MutexLock lock{&_mutex};
   for (auto& entry : _ann_writers) {
     if (entry->writer) {
       entry->writer->SetIdxWriter(idx);
@@ -444,7 +487,6 @@ void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
 }
 
 std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
-  absl::MutexLock lock{&_mutex};
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
@@ -455,10 +497,7 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
-void ColWriter::Rollback() noexcept {
-  absl::MutexLock lock{&_mutex};
-  _out.reset();
-}
+void ColWriter::Rollback() noexcept { _out.reset(); }
 
 constexpr auto kNoCancel = [] { return true; };
 
@@ -493,29 +532,34 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
     return true;
   }
   EnsureOut();
-  for (auto& cw : _columns) {
+  for (auto& column : _columns) {
+    if (!column->writer) {
+      continue;
+    }
     if (!progress()) {
       return false;
     }
     if (_stage_all) {
-      cw->PadNullsTo(target_row);
-      cw->Reorder(new2old);
+      column->writer->PadNullsTo(target_row);
+      column->writer->Reorder(new2old);
     }
-    cw->Finish();
+    column->writer->Finish();
   }
   std::vector<ColumnMeta> assembled;
   assembled.reserve(_parts.size());
   for (auto& [id, parts] : _parts) {
-    assembled.emplace_back(AssembleParts(id, parts));
+    assembled.emplace_back(AssembleParts(id, *parts));
   }
   std::vector<const ColumnMeta*> metas;
   metas.reserve(_columns.size() + assembled.size());
-  for (const auto& cw : _columns) {
-    metas.emplace_back(&cw->Meta());
+  for (const auto& column : _columns) {
+    metas.emplace_back(column->writer ? &column->writer->Meta()
+                                      : &column->meta);
   }
   for (const auto& meta : assembled) {
     metas.emplace_back(&meta);
   }
+  _blocks->Flush();
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!metas.empty()) {
       footer.WriteList(

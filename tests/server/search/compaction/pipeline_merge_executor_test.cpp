@@ -31,6 +31,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <exception>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -91,16 +92,16 @@ const irs::CompactionPolicy& FullMerge() {
   return kPolicy;
 }
 
-class NoColumnsDirectory final : public irs::Directory {
+class NoPostingsDirectory final : public irs::Directory {
  public:
-  explicit NoColumnsDirectory(irs::Directory& impl) noexcept
+  explicit NoPostingsDirectory(irs::Directory& impl) noexcept
     : irs::Directory{impl.ResourceManager()}, _impl{impl} {}
 
   irs::DirectoryAttributes& attributes() noexcept final {
     return _impl.attributes();
   }
   irs::IndexOutput::ptr create(std::string_view name) final {
-    if (name.ends_with(".col")) {
+    if (name.ends_with(".doc")) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot create ", name));
     }
@@ -668,9 +669,13 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   constexpr size_t kThreads = 8;
   irs::MergeSchedule schedule{plan};
   const auto units = plan.Units();
+  const auto signal =
+    duckdb::make_shared_ptr<duckdb::InterruptDoneSignalState>();
+  const duckdb::InterruptState interrupt{
+    duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}};
   std::vector<size_t> ready;
-  for (auto unit = schedule.Claim(kThreads); unit < units.size();
-       unit = schedule.Claim(kThreads)) {
+  for (auto unit = schedule.Claim(kThreads, interrupt); unit < units.size();
+       unit = schedule.Claim(kThreads, interrupt)) {
     ready.push_back(unit);
   }
   const auto column = absl::c_find_if(ready, [&](size_t unit) {
@@ -703,7 +708,7 @@ TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
   irs::MemoryDirectory out;
-  NoColumnsDirectory failing{out};
+  NoPostingsDirectory failing{out};
   irs::SegmentMeta meta;
   irs::MergePlan plan{failing,  doc_map, meta, nullptr,
                       TestDb(), nullptr, {},   nullptr};

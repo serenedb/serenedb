@@ -23,11 +23,9 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <atomic>
 #include <duckdb/common/arena_linked_list.hpp>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/mutex.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/operator/order/physical_presorted_merge.hpp>
@@ -56,18 +54,8 @@
 namespace irs {
 namespace {
 
-using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
-
 struct MergeOrderSinkState final : duckdb::LocalSinkState {
   duckdb::vector<duckdb::PresortedRun> runs;
-};
-
-struct PostingsMergeGlobalState final : duckdb::GlobalSinkState {
-  explicit PostingsMergeGlobalState(size_t parts) noexcept
-    : parts{parts}, left{parts} {}
-
-  size_t parts;
-  std::atomic<size_t> left;
 };
 
 struct PostingsMergeSinkState final : duckdb::LocalSinkState {
@@ -78,18 +66,11 @@ struct PostingsMergeSinkState final : duckdb::LocalSinkState {
 
 class MergeUnitsSourceState final : public duckdb::GlobalSourceState {
  public:
-  MergeUnitsSourceState(std::shared_ptr<MergeSchedule> schedule,
-                        duckdb::idx_t threads)
-    : _schedule{std::move(schedule)}, _threads{threads} {
-    _schedule->SetUnits(this);
-  }
-
-  ~MergeUnitsSourceState() final { _schedule->SetUnits(nullptr); }
+  explicit MergeUnitsSourceState(duckdb::idx_t threads) : _threads{threads} {}
 
   duckdb::idx_t MaxThreads() final { return _threads; }
 
  private:
-  std::shared_ptr<MergeSchedule> _schedule;
   duckdb::idx_t _threads;
 };
 
@@ -161,10 +142,6 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }
-  duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
-    duckdb::ClientContext&) const final {
-    return duckdb::make_uniq<PostingsMergeGlobalState>(_merge.PartsLeft());
-  }
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
     duckdb::ExecutionContext&) const final {
     return duckdb::make_uniq<PostingsMergeSinkState>();
@@ -179,7 +156,7 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
     const auto* partitions =
       duckdb::FlatVector::GetData<uint64_t>(chunk.data[0]);
     if (state.open && state.partition != partitions[0]) {
-      FinishPartition(input.global_state, state);
+      FinishPartition(state);
     }
     if (!state.open) {
       state.partition = partitions[0];
@@ -199,16 +176,13 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
   duckdb::SinkCombineResultType Combine(
     duckdb::ExecutionContext&,
     duckdb::OperatorSinkCombineInput& input) const final {
-    FinishPartition(input.global_state, input.local_state);
+    FinishPartition(input.local_state.Cast<PostingsMergeSinkState>());
     return duckdb::SinkCombineResultType::FINISHED;
   }
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
-    duckdb::OperatorSinkFinalizeInput& input) const final {
+    duckdb::OperatorSinkFinalizeInput&) const final {
     SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_finalize");
-    if (input.global_state.Cast<PostingsMergeGlobalState>().parts == 0) {
-      _schedule->RangeDone();
-    }
     return duckdb::SinkFinalizeType::READY;
   }
 
@@ -229,18 +203,12 @@ class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
   }
 
  private:
-  void FinishPartition(duckdb::GlobalSinkState& global,
-                       duckdb::LocalSinkState& local) const {
-    auto& state = local.Cast<PostingsMergeSinkState>();
+  void FinishPartition(PostingsMergeSinkState& state) const {
     if (!state.open) {
       return;
     }
     _merge.FinishPart(state.partition);
     state.open = false;
-    if (global.Cast<PostingsMergeGlobalState>().left.fetch_sub(1) == 1) {
-      _schedule->RangeDone();
-      return;
-    }
     _schedule->PartDone();
   }
 
@@ -266,30 +234,27 @@ class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
   }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
     duckdb::ClientContext&) const final {
-    return duckdb::make_uniq<MergeUnitsSourceState>(_schedule, _threads);
+    return duckdb::make_uniq<MergeUnitsSourceState>(_threads);
   }
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk&,
     duckdb::OperatorSourceInput& input) const final {
-    auto& state = input.global_state.Cast<MergeUnitsSourceState>();
-    auto unit = MergeSchedule::kNoUnit;
-    {
-      Guard guard{state.lock};
-      unit = _schedule->Claim(_threads);
-      if (unit == MergeSchedule::kFinished) {
-        return duckdb::SourceResultType::FINISHED;
-      }
-      if (unit == MergeSchedule::kNoUnit) {
-        return state.BlockSource(input.interrupt_state);
-      }
+    const auto unit = _schedule->Claim(_threads, input.interrupt_state);
+    if (unit == MergeSchedule::kFinished) {
+      return duckdb::SourceResultType::FINISHED;
+    }
+    if (unit == MergeSchedule::kNoUnit) {
+      return duckdb::SourceResultType::BLOCKED;
     }
     if (!_schedule->Run(unit)) {
       context.client.Interrupt();
       SDB_PARK_ONCE_ON_FAILURE("pause_merge_unit_failed");
     }
-    Guard guard{state.lock};
-    state.UnblockTasks();
     return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  }
+  void SourceFinished(duckdb::ClientContext&,
+                      duckdb::GlobalSourceState&) const final {
+    _schedule->Stop();
   }
 
   duckdb::string GetName() const final { return "MERGE_UNITS"; }

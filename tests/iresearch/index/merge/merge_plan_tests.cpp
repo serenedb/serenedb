@@ -286,6 +286,37 @@ TEST_F(MergePlanTest, NormAndColumnUnitsMergeInAnyOrder) {
   }
 }
 
+TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
+  irs::MemoryDirectory out;
+  auto plan = MakePlan(out);
+  ASSERT_TRUE(plan.Prepare());
+  const auto units = plan.Units();
+  std::vector<irs::field_id> planned;
+  for (const auto& unit : units) {
+    if (unit.kind == MergeUnitKind::Column) {
+      planned.push_back(unit.id);
+    }
+  }
+  ASSERT_LT(1, planned.size());
+  const auto footer = std::ranges::find(units, MergeUnitKind::ColumnsFooter,
+                                        &irs::MergeUnit::kind);
+  ASSERT_NE(units.end(), footer);
+  std::vector<size_t> order(units.size());
+  std::iota(order.begin(), order.end(), 0);
+  std::reverse(order.begin(), order.begin() + (footer - units.begin()));
+  for (const auto unit : order) {
+    ASSERT_TRUE(plan.RunUnit(unit)) << "unit " << unit;
+  }
+  const auto merged = irs::SegmentReaderImpl::Open(
+    out, _meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, merged);
+  std::vector<irs::field_id> written;
+  for (const auto& column : merged->GetColReader()->Columns()) {
+    written.push_back(column->Id());
+  }
+  EXPECT_EQ(planned, written);
+}
+
 TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, &_small_row_groups);

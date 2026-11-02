@@ -232,7 +232,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> ForeignServerCatalogEntry::GetInfo()
 
 duckdb::unique_ptr<duckdb::CatalogEntry> ForeignServerCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
+  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
     if (const auto& alter = info.Cast<duckdb::AlterPermissionsInfo>();
         !alter.new_owner.empty()) {
       CheckOwner(context, alter.new_owner_id);

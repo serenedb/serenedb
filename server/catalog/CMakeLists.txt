@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         boot.cpp
         catalog.cpp
+        catalog_subscription.cpp
         cluster.cpp
         database_directory.cpp
         entry/database.cpp

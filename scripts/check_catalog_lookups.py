@@ -42,6 +42,7 @@ ALLOWED = {
     f"{EXTENSIONS}/core_functions/aggregate/distributive/sum.cpp": 1,
     f"{EXTENSIONS}/core_functions/scalar/generic/system_functions.cpp": 3,
     f"{ICEBERG}/execution/scan/iceberg_task_executor.cpp": 1,
+    f"{SERVER}/catalog/catalog_subscription.cpp": 1,
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
     f"{SERVER}/connector/duckdb_physical_create_index.cpp": 1,
     f"{SERVER}/connector/functions/jobs.cpp": 1,
@@ -53,7 +54,6 @@ ALLOWED = {
     f"{SERVER}/docs/builder/docs_loader.cpp": 1,
     f"{SERVER}/network/pg/pg_wire_session.cpp": 1,
     f"{SERVER}/pg/catalog/engine/scan_function.cpp": 1,
-    f"{SERVER}/pg/commands/create_subscription.cpp": 1,
     f"{SERVER}/replication/sync_session.cpp": 1,
 }
 ROUTE = {

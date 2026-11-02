@@ -76,8 +76,8 @@ A role cannot be dropped while it still owns objects, or while a grant on them n
 
 Default privileges that name the role block the drop too. Two statements clear everything that holds a role back, in the database the session is connected to:
 
-- `REASSIGN OWNED BY role [, ...] TO new_role` makes `new_role` the owner of every object the roles own in the current database, and of every database they own. Grants they hold and their default privileges stay.
-- `DROP OWNED BY role [, ...] [CASCADE | RESTRICT]` drops every object the roles own in the current database and revokes every privilege granted to them there and on databases, together with the grants they passed on, their default privileges and their foreign-data wrapper grants. Databases they own are kept. Without `CASCADE`, it fails when objects of other roles depend on the objects it would drop.
+- `REASSIGN OWNED BY role [, ...] TO new_role` makes `new_role` the owner of every object the roles own in the current database, and of every database and subscription they own. Grants they hold and their default privileges stay.
+- `DROP OWNED BY role [, ...] [CASCADE | RESTRICT]` drops every object the roles own in the current database and revokes their privileges there and on databases, together with the grants they passed on, their default privileges and their foreign-data wrapper grants. Privileges are revoked as a `REVOKE` run by the current role would: a role dropping its own objects keeps the grants others made to it, and a superuser removes those the owners made. Databases and subscriptions they own are kept. Without `CASCADE`, it fails when objects of other roles depend on the objects it would drop.
 
 Both need the privileges of every role they name, and `REASSIGN OWNED` also those of the new owner. Neither accepts the `postgres` role. Run them in each database where the role owns objects or holds privileges, then drop it:
 

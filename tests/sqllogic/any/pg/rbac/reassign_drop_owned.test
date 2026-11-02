@@ -31,6 +31,10 @@ DROP DATABASE IF EXISTS rdo_db;
 
 
 statement ok
+DROP SUBSCRIPTION IF EXISTS rdo_sub;
+
+
+statement ok
 DROP ROLE IF EXISTS rdo_alice, rdo_bob, rdo_carol;
 
 
@@ -64,6 +68,14 @@ ALTER DATABASE rdo_db OWNER TO rdo_alice;
 
 statement ok
 GRANT CREATE ON DATABASE rdo_db TO rdo_carol;
+
+
+statement ok
+CREATE SUBSCRIPTION rdo_sub CONNECTION 'host=127.0.0.1 port=1 dbname=rdo' PUBLICATION rdo_pub WITH (connect = false, slot_name = NONE);
+
+
+statement ok
+ALTER SUBSCRIPTION rdo_sub OWNER TO rdo_alice;
 
 
 connection c_alice user=rdo_alice password=rdo_pw
@@ -183,10 +195,11 @@ t2	rdo_bob
 query
 SELECT (SELECT proowner::regrole::text FROM pg_proc WHERE proname = 'rdo_f') AS func,
        (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'rdo_s') AS nsp,
-       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db;
+       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db,
+       (SELECT subowner::regrole::text FROM pg_subscription WHERE subname = 'rdo_sub') AS sub;
 ----
-func	nsp	db
-rdo_bob	rdo_bob	rdo_bob
+func	nsp	db	sub
+rdo_bob	rdo_bob	rdo_bob	rdo_bob
 
 
 query
@@ -296,10 +309,15 @@ query
 SELECT (SELECT count(*) FROM pg_class WHERE relname IN ('rdo_t', 'rdo_t_a', 'rdo_v', 'rdo_seq', 'rdo_serial', 'rdo_serial_id_seq', 'rdo_carol_v')) AS relations,
        (SELECT count(*) FROM pg_proc WHERE proname = 'rdo_f') AS functions,
        (SELECT count(*) FROM pg_namespace WHERE nspname = 'rdo_s') AS schemas,
-       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db;
+       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db,
+       (SELECT subowner::regrole::text FROM pg_subscription WHERE subname = 'rdo_sub') AS sub;
 ----
-relations	functions	schemas	db
-0	0	0	rdo_bob
+relations	functions	schemas	db	sub
+0	0	0	rdo_bob	rdo_bob
+
+
+statement ok
+DROP SUBSCRIPTION rdo_sub;
 
 
 statement ok

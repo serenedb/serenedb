@@ -1,4 +1,3 @@
-add_subdirectory(commands)
 target_sources(
     sereneserver
     PRIVATE

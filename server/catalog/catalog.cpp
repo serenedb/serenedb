@@ -688,13 +688,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   return entry;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateSubscriptionInfo& info) {
-  DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateSubscription(transaction, info);
-}
-
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
@@ -727,8 +720,11 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                 " because they are required by the database system"));
     }
   }
-  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
-      type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+  if (type == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+    AlterSubscription(transaction, info);
+    return;
+  }
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;
   }
@@ -746,13 +742,6 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropForeignServer(transaction, info);
-}
-
-void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
-                                       duckdb::DropInfo& info) {
-  DeclareModified(transaction, *this,
-                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
 }  // namespace sdb::catalog

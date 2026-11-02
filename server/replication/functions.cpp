@@ -45,9 +45,9 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
+#include "pg/types/pg_lsn.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::replication {

@@ -14,6 +14,11 @@ statement ok
 DROP TABLE IF EXISTS rdx_log;
 
 
+connection c_pg database=postgres
+statement ok
+DROP SUBSCRIPTION IF EXISTS rdx_sub_pg;
+
+
 statement ok
 DROP ROLE IF EXISTS rdx_alice, rdx_bob, rdx_carol, rdx_super, rdx_super2;
 
@@ -60,6 +65,16 @@ CREATE JOB rdx_job AFTER 1 HOUR AS INSERT INTO rdx_log VALUES (1);
 
 statement ok
 ALTER JOB rdx_job OWNER TO rdx_alice;
+
+
+connection c_pg database=postgres
+statement ok
+CREATE SUBSCRIPTION rdx_sub_pg CONNECTION 'host=127.0.0.1 port=1 dbname=rdx' PUBLICATION rdx_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_pg database=postgres
+statement ok
+ALTER SUBSCRIPTION rdx_sub_pg OWNER TO rdx_alice;
 
 
 control substitution on
@@ -120,6 +135,14 @@ jobs
 1
 
 
+connection c_pg database=postgres
+query
+SELECT subowner::regrole::text AS owner FROM pg_subscription WHERE subname = 'rdx_sub_pg';
+----
+owner
+rdx_bob
+
+
 statement ok
 DROP OWNED BY rdx_carol;
 
@@ -147,6 +170,19 @@ SELECT (SELECT count(*) FROM pg_ts_dict WHERE dictname = 'rdx_dict') AS dicts,
 ----
 dicts	servers	jobs
 0	0	0
+
+
+connection c_pg database=postgres
+query
+SELECT subowner::regrole::text AS owner FROM pg_subscription WHERE subname = 'rdx_sub_pg';
+----
+owner
+rdx_bob
+
+
+connection c_pg database=postgres
+statement ok
+DROP SUBSCRIPTION rdx_sub_pg;
 
 
 statement ok

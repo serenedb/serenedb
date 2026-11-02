@@ -18,57 +18,39 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/commands/create_subscription.h"
-
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
-#include <algorithm>
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/parsed_data/alter_subscription_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 #include <utility>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/sql_utils.h"
+#include "pg/types/pg_lsn.h"
 #include "replication/conninfo.h"
 #include "replication/publisher_session.h"
 #include "replication/subscription_engine.h"
 
-namespace sdb::pg {
+namespace sdb::catalog {
 namespace {
-
-catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
-  auto& context = conn_ctx.GetClientContext();
-  auto database = catalog::DefaultSereneDBCatalog(context);
-  if (!database) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("subscriptions are not supported by database \"",
-                            duckdb::DatabaseManager::GetDefaultDatabase(context)
-                              .GetIdentifierName(),
-                            "\""));
-  }
-  return *database;
-}
-
-std::string DatabaseOf(ConnectionContext& conn_ctx) {
-  return duckdb::DatabaseManager::GetDefaultDatabase(
-           conn_ctx.GetClientContext())
-    .GetIdentifierName();
-}
 
 bool IsSuperuser(ConnectionContext& conn_ctx) {
   return auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
@@ -153,11 +135,12 @@ constexpr Allowed kSetOptions =
 
 constexpr Allowed kPublicationOptions = Allowed::Refresh | Allowed::CopyData;
 
-SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
-                                 Allowed allowed) {
+SubscriptionOptions ParseOptions(
+  const duckdb::case_insensitive_map_t<duckdb::Value>& options,
+  Allowed allowed) {
   SubscriptionOptions result;
   for (const auto& [key, value] : options) {
-    const auto name = absl::AsciiStrToLower(key.GetIdentifierName());
+    const auto name = absl::AsciiStrToLower(key);
     const auto boolean = [&](std::string_view option_name, Allowed option,
                              std::optional<bool>& target) {
       if (name != option_name || !Has(allowed, option)) {
@@ -239,7 +222,7 @@ SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
         result.lsn = 0;
         continue;
       }
-      result.lsn = ParseLsn(text);
+      result.lsn = pg::ParseLsn(text);
       if (!result.lsn) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
@@ -260,22 +243,6 @@ SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
     ERR_MSG("password_required=false is superuser-only"),
     ERR_HINT("Subscriptions with the password_required option set to "
              "false may only be created or modified by the superuser."));
-}
-
-void RequireCreateOnDatabase(ConnectionContext& conn_ctx) {
-  auto& context = conn_ctx.GetClientContext();
-  auto& cluster = catalog::ClusterOf(context);
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(context),
-                duckdb::DatabaseManager::GetDefaultDatabase(context));
-  if (database && !auth::ClosureFor(&context, conn_ctx.GetRoleId())
-                     ->Can(duckdb::CatalogType::DATABASE_ENTRY,
-                           database->permissions, duckdb::AclMode::Create)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for database ",
-                            database->name.GetIdentifierName()));
-  }
 }
 
 void RequireExclusive(bool conflict, std::string_view a, std::string_view b) {
@@ -628,54 +595,41 @@ void RefreshRelations(ConnectionContext& conn_ctx,
                     std::make_move_iterator(fetched.end())};
 }
 
-catalog::SubscriptionCatalogEntry& RequireSubscription(
-  catalog::SereneDBCatalog& catalog, duckdb::CatalogTransaction transaction,
-  std::string_view name) {
+duckdb::optional_ptr<SubscriptionCatalogEntry> FindSubscription(
+  SereneDBCatalog& catalog, duckdb::CatalogTransaction transaction,
+  const duckdb::Identifier& name, bool missing_ok) {
   auto entry = catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-                 .GetEntry(transaction, duckdb::Identifier{name});
+                 .GetEntry(transaction, name);
   if (!entry) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("subscription \"", name, "\" does not exist"));
-  }
-  return entry->Cast<catalog::SubscriptionCatalogEntry>();
-}
-
-void RequireOwner(ConnectionContext& conn_ctx,
-                  const catalog::SubscriptionCatalogEntry& subscription) {
-  if (!auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-         ->Owns(subscription.permissions.owner)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("must be owner of subscription ",
-                            subscription.name.GetIdentifierName()));
-  }
-}
-
-void SyncAfterCommit(ConnectionContext& conn_ctx, duckdb::idx_t oid,
-                     bool restart = false) {
-  conn_ctx.DeferToCommit([database = DatabaseOf(conn_ctx), oid, restart] {
-    if (auto* engine = replication::SubscriptionEngine::gInstance) {
-      engine->Sync(database, oid, restart);
+    if (missing_ok) {
+      return nullptr;
     }
-  });
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", name.GetIdentifierName(),
+                            "\" does not exist"));
+  }
+  return entry->Cast<SubscriptionCatalogEntry>();
 }
 
-void Replace(ConnectionContext& conn_ctx, catalog::SereneDBCatalog& catalog,
-             const catalog::SubscriptionCatalogEntry& subscription,
-             duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> definition) {
-  duckdb::ReplaceDefinitionInfo alter{std::move(definition)};
-  alter.SetQualifiedName(duckdb::QualifiedName(subscription.name));
-  catalog.Alter(catalog.GetCatalogTransaction(conn_ctx.GetClientContext()),
-                alter);
+void SyncAfterCommit(ConnectionContext& conn_ctx,
+                     const SereneDBCatalog& catalog, duckdb::idx_t oid,
+                     bool restart = false) {
+  conn_ctx.DeferToCommit(
+    [database = catalog.GetName().GetIdentifierName(), oid, restart] {
+      if (auto* engine = replication::SubscriptionEngine::gInstance) {
+        engine->Sync(database, oid, restart);
+      }
+    });
 }
 
 duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> DefinitionOf(
-  const catalog::SubscriptionCatalogEntry& subscription) {
+  const SubscriptionCatalogEntry& subscription) {
   return duckdb::unique_ptr_cast<duckdb::CreateInfo,
                                  duckdb::CreateSubscriptionInfo>(
     subscription.GetInfo());
 }
 
-void CheckPublicationNames(const std::vector<std::string>& publications) {
+void CheckPublicationNames(std::span<const std::string> publications) {
   irs::containers::FlatHashSet<std::string_view> seen;
   seen.reserve(publications.size());
   for (const auto& publication : publications) {
@@ -689,12 +643,13 @@ void CheckPublicationNames(const std::vector<std::string>& publications) {
 
 }  // namespace
 
-void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
-                        std::string_view conninfo,
-                        std::vector<std::string> publications,
-                        const duckdb::named_argument_map_t& options_map) {
-  auto options = ParseOptions(options_map, kCreateOptions);
-  CheckPublicationNames(publications);
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
+  duckdb::CatalogTransaction transaction,
+  duckdb::CreateSubscriptionInfo& info) {
+  auto& conn_ctx = connector::GetSereneDBContext(transaction.GetContext());
+  auto options = ParseOptions(info.options, kCreateOptions);
+  info.options.clear();
+  CheckPublicationNames(info.publications);
 
   const bool connect = options.connect.value_or(true);
   if (!connect) {
@@ -725,34 +680,23 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
     }
   }
 
-  auto& context = conn_ctx.GetClientContext();
-  const auto role = conn_ctx.GetRoleId();
-  RequireCreateOnDatabase(conn_ctx);
-
-  duckdb::CreateSubscriptionInfo info;
-  info.SetName(duckdb::Identifier{name});
-  info.conninfo.assign(conninfo);
-  info.publications = {std::make_move_iterator(publications.begin()),
-                       std::make_move_iterator(publications.end())};
-  info.slot_name = options.slot_name.value_or(std::string{name});
+  const auto& name = info.GetQualifiedName().Name();
+  info.slot_name = options.slot_name.value_or(name.GetIdentifierName());
   info.enabled = options.enabled.value_or(true);
   info.create_slot = options.create_slot.value_or(true);
   info.copy_data = options.copy_data.value_or(true);
   info.streaming = "parallel";
   ApplySetOptions(conn_ctx, options, info);
   CheckConnInfo(conn_ctx, info);
-  info.permissions.owner = role;
   if (info.create_slot) {
     conn_ctx.PreventInTransactionBlock(
       "CREATE SUBSCRIPTION ... WITH (create_slot = true)");
   }
 
-  auto& catalog = CatalogOf(conn_ctx);
-  if (catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-        .GetEntry(catalog.GetCatalogTransaction(context),
-                  duckdb::Identifier{name})) {
+  if (FindSubscription(*this, transaction, name, true)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("subscription \"", name, "\" already exists"));
+                    ERR_MSG("subscription \"", name.GetIdentifierName(),
+                            "\" already exists"));
   }
   if (connect) {
     auto relations = FetchRelations(conn_ctx, info, info.copy_data);
@@ -762,10 +706,10 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
     info.relations = {std::make_move_iterator(relations.begin()),
                       std::make_move_iterator(relations.end())};
   }
-  auto entry =
-    catalog.CreateSubscription(catalog.GetCatalogTransaction(context), info);
+  DeclareModified(transaction, *this);
+  auto entry = duckdb::DuckCatalog::CreateSubscription(transaction, info);
   if (!entry) {
-    return;
+    return entry;
   }
   if (!connect) {
     conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -777,233 +721,220 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
   } else if (info.create_slot) {
     CreateSlot(conn_ctx, info);
   }
-  SyncAfterCommit(conn_ctx, entry->oid);
+  SyncAfterCommit(conn_ctx, *this, entry->oid);
+  return entry;
 }
 
-void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
-                      bool missing_ok, bool cascade) {
-  auto& context = conn_ctx.GetClientContext();
-  auto& catalog = CatalogOf(conn_ctx);
-  const auto transaction = catalog.GetCatalogTransaction(context);
-  auto entry = catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-                 .GetEntry(transaction, duckdb::Identifier{name});
-  if (!entry) {
-    if (missing_ok) {
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("subscription \"", name, "\" does not exist"));
+void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
+                                       duckdb::DropInfo& info) {
+  auto& conn_ctx = connector::GetSereneDBContext(transaction.GetContext());
+  auto subscription = FindSubscription(
+    *this, transaction, info.GetQualifiedName().Name(),
+    info.if_not_found != duckdb::OnEntryNotFound::THROW_EXCEPTION);
+  if (!subscription) {
+    return;
   }
-  auto& subscription = entry->Cast<catalog::SubscriptionCatalogEntry>();
-  RequireOwner(conn_ctx, subscription);
-  const auto& config = subscription.Config();
-  if (!config.slot_name.empty()) {
+  if (!subscription->Config().slot_name.empty()) {
     conn_ctx.PreventInTransactionBlock("DROP SUBSCRIPTION");
   }
-  auto definition = DefinitionOf(subscription);
-  const auto oid = subscription.oid;
+  auto definition = DefinitionOf(*subscription);
+  const auto oid = subscription->oid;
 
-  duckdb::DropInfo info;
-  info.type = duckdb::CatalogType::SUBSCRIPTION_ENTRY;
-  info.SetName(duckdb::Identifier{name});
-  info.cascade = cascade;
-  info.if_not_found = duckdb::OnEntryNotFound::THROW_EXCEPTION;
-  catalog.DropSubscription(transaction, info);
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  duckdb::DuckCatalog::DropSubscription(transaction, info);
 
-  SyncAfterCommit(conn_ctx, oid);
+  SyncAfterCommit(conn_ctx, *this, oid);
   if (definition->slot_name.empty()) {
     return;
   }
   auto* engine = replication::SubscriptionEngine::gInstance;
-  if (engine != nullptr) {
+  if (engine) {
     engine->Stop(oid);
   }
-  try {
-    DropSlot(conn_ctx, *definition);
-  } catch (...) {
-    if (engine != nullptr) {
-      engine->Sync(DatabaseOf(conn_ctx), oid);
+  absl::Cleanup resume = [&] {
+    if (engine) {
+      engine->Sync(GetName().GetIdentifierName(), oid);
     }
-    throw;
-  }
+  };
+  DropSlot(conn_ctx, *definition);
+  std::move(resume).Cancel();
 }
 
-void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
-                       std::string_view action, std::string_view argument,
-                       std::vector<std::string> publications,
-                       const duckdb::named_argument_map_t& options_map) {
-  auto& context = conn_ctx.GetClientContext();
-  auto& catalog = CatalogOf(conn_ctx);
-  auto& subscription =
-    RequireSubscription(catalog, catalog.GetCatalogTransaction(context), name);
-  RequireOwner(conn_ctx, subscription);
-  if (!subscription.Config().password_required && !IsSuperuser(conn_ctx)) {
-    ThrowPasswordNotRequired();
+void SereneDBCatalog::AlterSubscription(duckdb::CatalogTransaction transaction,
+                                        duckdb::AlterInfo& info) {
+  const auto& name = info.GetQualifiedName().Name();
+  if (info.type != duckdb::AlterType::ALTER_SUBSCRIPTION) {
+    DeclareModified(transaction, *this);
+    auto& subscriptions =
+      GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY);
+    if (!subscriptions.AlterEntry(transaction, name, info)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                      ERR_MSG("subscription \"", name.GetIdentifierName(),
+                              "\" does not exist"));
+    }
+    auto* conn_ctx =
+      transaction.HasContext()
+        ? connector::GetSereneDBContextPtr(transaction.GetContext())
+        : nullptr;
+    if (conn_ctx && info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
+      SyncAfterCommit(*conn_ctx, *this,
+                      subscriptions.GetEntry(transaction, name)->oid);
+    }
+    return;
   }
+  auto& conn_ctx = connector::GetSereneDBContext(transaction.GetContext());
+  const auto& alter = info.Cast<duckdb::AlterSubscriptionInfo>();
+  auto& subscription = *FindSubscription(*this, transaction, name, false);
   const auto oid = subscription.oid;
   auto definition = DefinitionOf(subscription);
 
-  if (action == "enable" || action == "disable") {
-    const bool enable = action == "enable";
-    if (enable && definition->slot_name.empty()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("cannot enable subscription that does not have a slot name"));
-    }
-    definition->enabled = enable;
-  } else if (action == "connection") {
-    definition->conninfo.assign(argument);
-    CheckConnInfo(conn_ctx, *definition);
-  } else if (action == "set_publication" || action == "add_publication" ||
-             action == "drop_publication") {
-    const auto options = ParseOptions(options_map, kPublicationOptions);
-    CheckPublicationNames(publications);
-    auto& current = definition->publications;
-    if (action == "set_publication") {
-      current = {publications.begin(), publications.end()};
-    } else if (action == "add_publication") {
-      for (const auto& publication : publications) {
-        if (std::find(current.begin(), current.end(), publication) !=
-            current.end()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-            ERR_MSG("publication \"", publication,
-                    "\" is already in subscription \"", name, "\""));
-        }
-        current.push_back(publication);
-      }
-    } else {
-      for (const auto& publication : publications) {
-        auto it = std::find(current.begin(), current.end(), publication);
-        if (it == current.end()) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                          ERR_MSG("publication \"", publication,
-                                  "\" is not in subscription \"", name, "\""));
-        }
-        current.erase(it);
-      }
-      if (current.empty()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("cannot drop all the publications from a subscription"));
-      }
-    }
-    if (options.refresh.value_or(true)) {
-      if (!definition->enabled) {
+  using enum duckdb::AlterSubscriptionType;
+  switch (alter.alter_subscription_type) {
+    case ENABLE:
+    case DISABLE: {
+      const bool enable = alter.alter_subscription_type == ENABLE;
+      if (enable && definition->slot_name.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("ALTER SUBSCRIPTION with refresh is not allowed for "
-                  "disabled subscriptions"),
-          ERR_HINT("Use ALTER SUBSCRIPTION ... SET PUBLICATION ... WITH "
-                   "(refresh = false)."));
+          ERR_MSG("cannot enable subscription that does not have a slot name"));
       }
-      conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION with refresh");
-      RefreshRelations(conn_ctx, *definition, options.copy_data.value_or(true));
+      definition->enabled = enable;
+      break;
     }
-  } else if (action == "refresh_publication") {
-    const auto options = ParseOptions(options_map, Allowed::CopyData);
-    if (!definition->enabled) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("ALTER SUBSCRIPTION ... REFRESH is not allowed "
-                              "for disabled subscriptions"));
-    }
-    conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION ... REFRESH");
-    RefreshRelations(conn_ctx, *definition, options.copy_data.value_or(true));
-  } else if (action == "skip") {
-    const auto options = ParseOptions(options_map, Allowed::Lsn);
-    if (!options.lsn) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("unrecognized subscription parameter"));
-    }
-    if (!IsSuperuser(conn_ctx)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be superuser to skip transaction"));
-    }
-    if (*options.lsn != 0 && *options.lsn <= subscription.RemoteLsn()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("skip WAL location (LSN ", FormatLsn(*options.lsn),
-                ") must be greater than origin LSN ",
-                FormatLsn(subscription.RemoteLsn())));
-    }
-    definition->skip_lsn = *options.lsn;
-  } else if (action == "rename") {
-    if (catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
-          .GetEntry(catalog.GetCatalogTransaction(context),
-                    duckdb::Identifier{argument})) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-        ERR_MSG("subscription \"", argument, "\" already exists"));
-    }
-    definition->SetName(duckdb::Identifier{argument});
-  } else if (action == "owner") {
-    const auto roles = auth::RolesOf(&context);
-    std::optional<duckdb::idx_t> owner;
-    if (argument == "CURRENT_USER" || argument == "CURRENT_ROLE") {
-      owner = conn_ctx.GetRoleId();
-    } else if (argument == "SESSION_USER") {
-      owner = conn_ctx.GetSessionRoleId();
-    } else {
-      for (const auto& [id, node] : roles->nodes) {
-        if (node.name == argument) {
-          owner = id;
-          break;
+    case SET_CONNECTION:
+      definition->conninfo = alter.connection;
+      CheckConnInfo(conn_ctx, *definition);
+      break;
+    case SET_PUBLICATION:
+    case ADD_PUBLICATION:
+    case DROP_PUBLICATION: {
+      const auto options = ParseOptions(alter.options, kPublicationOptions);
+      const auto& publications = alter.publications;
+      CheckPublicationNames(publications);
+      auto& current = definition->publications;
+      if (alter.alter_subscription_type == SET_PUBLICATION) {
+        current = publications;
+      } else if (alter.alter_subscription_type == ADD_PUBLICATION) {
+        for (const auto& publication : publications) {
+          if (absl::c_linear_search(current, publication)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                            ERR_MSG("publication \"", publication,
+                                    "\" is already in subscription \"",
+                                    name.GetIdentifierName(), "\""));
+          }
+          current.push_back(publication);
+        }
+      } else {
+        for (const auto& publication : publications) {
+          auto it = absl::c_find(current, publication);
+          if (it == current.end()) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                            ERR_MSG("publication \"", publication,
+                                    "\" is not in subscription \"",
+                                    name.GetIdentifierName(), "\""));
+          }
+          current.erase(it);
+        }
+        if (current.empty()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("cannot drop all the publications from a subscription"));
         }
       }
-    }
-    if (!owner) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                      ERR_MSG("role \"", argument, "\" does not exist"));
-    }
-    if (*owner == subscription.permissions.owner) {
-      return;
-    }
-    if (!auth::ClosureFor(&context, conn_ctx.GetRoleId())->CanSet(*owner)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                      ERR_MSG("must be able to SET ROLE \"", argument, "\""));
-    }
-    RequireCreateOnDatabase(conn_ctx);
-    duckdb::AlterPermissionsInfo alter{
-      duckdb::CatalogType::SUBSCRIPTION_ENTRY,
-      duckdb::QualifiedName(subscription.name)};
-    alter.new_owner = std::string{argument};
-    alter.new_owner_id = *owner;
-    catalog.Alter(catalog.GetCatalogTransaction(context), alter);
-    SyncAfterCommit(conn_ctx, oid);
-    return;
-  } else {
-    const auto options = ParseOptions(options_map, kSetOptions);
-    if (options.slot_name && options.slot_name->empty() &&
-        definition->enabled) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("cannot set slot_name = NONE for enabled subscription"));
-    }
-    const bool failover_changed =
-      options.failover && *options.failover != definition->failover;
-    if (options.failover) {
-      if (definition->enabled) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                        ERR_MSG("cannot set option \"failover\" for enabled "
-                                "subscription"));
+      if (options.refresh.value_or(true)) {
+        if (!definition->enabled) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_SYNTAX_ERROR),
+            ERR_MSG("ALTER SUBSCRIPTION with refresh is not allowed for "
+                    "disabled subscriptions"),
+            ERR_HINT("Use ALTER SUBSCRIPTION ... SET PUBLICATION ... WITH "
+                     "(refresh = false)."));
+        }
+        conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION with refresh");
+        RefreshRelations(conn_ctx, *definition,
+                         options.copy_data.value_or(true));
       }
-      if (definition->slot_name.empty()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                        ERR_MSG("cannot set option \"failover\" for a "
-                                "subscription that does not have a slot "
-                                "name"));
-      }
-      conn_ctx.PreventInTransactionBlock(
-        "ALTER SUBSCRIPTION ... SET (failover)");
+      break;
     }
-    ApplySetOptions(conn_ctx, options, *definition);
-    if (failover_changed) {
-      AlterSlotFailover(conn_ctx, *definition);
+    case REFRESH_PUBLICATION: {
+      const auto options = ParseOptions(alter.options, Allowed::CopyData);
+      if (!definition->enabled) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("ALTER SUBSCRIPTION ... REFRESH is not allowed "
+                                "for disabled subscriptions"));
+      }
+      conn_ctx.PreventInTransactionBlock("ALTER SUBSCRIPTION ... REFRESH");
+      RefreshRelations(conn_ctx, *definition, options.copy_data.value_or(true));
+      break;
+    }
+    case SKIP: {
+      const auto options = ParseOptions(alter.options, Allowed::Lsn);
+      if (!options.lsn) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("unrecognized subscription parameter"));
+      }
+      if (!IsSuperuser(conn_ctx)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be superuser to skip transaction"));
+      }
+      if (*options.lsn != 0 && *options.lsn <= subscription.RemoteLsn()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("skip WAL location (LSN ", pg::FormatLsn(*options.lsn),
+                  ") must be greater than origin LSN ",
+                  pg::FormatLsn(subscription.RemoteLsn())));
+      }
+      definition->skip_lsn = *options.lsn;
+      break;
+    }
+    case RENAME:
+      if (FindSubscription(*this, transaction, alter.new_name, true)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+          ERR_MSG("subscription \"", alter.new_name.GetIdentifierName(),
+                  "\" already exists"));
+      }
+      definition->SetName(alter.new_name);
+      break;
+    case SET_OPTIONS: {
+      const auto options = ParseOptions(alter.options, kSetOptions);
+      if (options.slot_name && options.slot_name->empty() &&
+          definition->enabled) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("cannot set slot_name = NONE for enabled subscription"));
+      }
+      const bool failover_changed =
+        options.failover && *options.failover != definition->failover;
+      if (options.failover) {
+        if (definition->enabled) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                          ERR_MSG("cannot set option \"failover\" for enabled "
+                                  "subscription"));
+        }
+        if (definition->slot_name.empty()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                          ERR_MSG("cannot set option \"failover\" for a "
+                                  "subscription that does not have a slot "
+                                  "name"));
+        }
+        conn_ctx.PreventInTransactionBlock(
+          "ALTER SUBSCRIPTION ... SET (failover)");
+      }
+      ApplySetOptions(conn_ctx, options, *definition);
+      if (failover_changed) {
+        AlterSlotFailover(conn_ctx, *definition);
+      }
+      break;
     }
   }
 
-  Replace(conn_ctx, catalog, subscription, std::move(definition));
-  SyncAfterCommit(conn_ctx, oid, action == "refresh_publication");
+  duckdb::ReplaceDefinitionInfo replace{std::move(definition)};
+  replace.SetQualifiedName(duckdb::QualifiedName(subscription.name));
+  Alter(transaction, replace);
+  SyncAfterCommit(conn_ctx, *this, oid,
+                  alter.alter_subscription_type == REFRESH_PUBLICATION);
 }
 
-}  // namespace sdb::pg
+}  // namespace sdb::catalog

@@ -36,7 +36,6 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
-#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
@@ -165,8 +164,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgFormattingFunctions(db);
 
   connector::RegisterHashFunctions(db);
-
-  connector::RegisterSubscriptionPragma(db);
 
   connector::RegisterKeyEncodingFunctions(db);
 

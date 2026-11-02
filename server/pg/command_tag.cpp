@@ -135,6 +135,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "ALTER INDEX";
     case ALTER_JOB:
       return "ALTER JOB";
+    case ALTER_SUBSCRIPTION:
+      return "ALTER SUBSCRIPTION";
     case REASSIGN_OWNED:
       return "REASSIGN OWNED";
     case DROP_OWNED:

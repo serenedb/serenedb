@@ -734,18 +734,23 @@ def test_statements_run_when_executed(servers) -> None:
 def test_detach_closes_sessions(servers) -> None:
     conn_a, conn_b, quack_b, pg_a = servers
 
-    def sessions() -> int:
+    def open_on_b(session: str) -> bool:
         return conn_b.execute(
-            "SELECT count(*) FROM quack_active_connections()").fetchone()[0]
+            "SELECT count(*) FROM quack_active_connections() "
+            "WHERE connection_id = %s", (session,)).fetchone()[0] == 1
 
-    before = sessions()
     with _connect(pg_a, time.monotonic() + 10) as conn:
         conn.execute(
             f"ATTACH 'quack:127.0.0.1:{quack_b}' AS detached (TOKEN 'postgres:')")
         conn.execute("SELECT count(*) FROM detached.public.t")
-        assert sessions() == before + 1
+        (session,) = conn.execute(
+            "SELECT quack_connection_id('detached')").fetchone()
+        assert open_on_b(session)
         conn.execute("DETACH detached")
-        assert sessions() == before
+        closed_by = time.monotonic() + 5
+        while open_on_b(session):
+            assert time.monotonic() < closed_by, "DETACH left the session open"
+            time.sleep(0.1)
 
 
 def test_quack_cancel(servers) -> None:

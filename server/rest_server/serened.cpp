@@ -28,6 +28,7 @@
 #include <cstring>
 #include <deque>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/logging/log_manager.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -215,13 +216,21 @@ int RunServer(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
+void LoadShellEngine(duckdb::DatabaseInstance& db) {
+  irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
+  irs::DuckDBEngine::ConfigureExtensions(db);
+  server::query::RegisterEngineModules(db);
+}
+
 // Trim argv in place: overwrite argv[1] with argv[0] and hand the shell
 // `argv + 1`. The shell sees {<binary>, <user args>...} with no copy.
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
   docs::RegisterShellDocsBackend();
-  return duckdb_shell::Run(argc - 1, argv + 1, subcommand);
+  return duckdb_shell::Run(
+    argc - 1, argv + 1, subcommand,
+    {.configure = &irs::DuckDBEngine::Configure, .load = &LoadShellEngine});
 }
 
 }  // namespace

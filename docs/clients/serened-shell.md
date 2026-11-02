@@ -71,6 +71,12 @@ You can also pipe a script via standard input:
 echo "SELECT 'piped' AS src;" | serened shell
 ```
 
+## SQL dialect
+
+The shell speaks the same SQL as a SereneDB server: `/` between two integers truncates, unquoted identifiers fold to lower case, `COPY ... TO` writes a CSV header only with `HEADER`, `SHOW <name>` prints a setting, `EXPLAIN` prints plans in the server's format, and a table that a view reads cannot be dropped without `CASCADE`. The PostgreSQL data types, their casts and the SQL functions that need no server, such as `to_char`, work the same way in both.
+
+What lives in a server's catalog or session needs a server: the `pg_catalog` and `information_schema` objects, roles and privileges, search, jobs, replication and the server's configuration parameters. Extensions are built in, and the shell never installs or loads one on demand.
+
 ## Safe mode
 
 `--safe`, or `.safe_mode` inside a session, turns off everything that reaches outside the engine: file and network access from SQL (reading and writing files, `COPY`, attaching database files, remote URLs) and the dot commands `.shell`, `.system`, `.open`, `.read`, `.import`, `.output`, `.once`, `.cd` and `.log`. It also locks the configuration for the rest of the session. The built-in documentation keeps working, since it is part of the binary, so `serened shell --safe -c ".docs <topic>"` gives a script or an agent the docs and nothing else.

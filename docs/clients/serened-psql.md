@@ -8,7 +8,7 @@ split: headings
 
 `serened psql` is a PostgreSQL-compatible command-line client built into the `serened` binary — no separate installation required. It connects to a running SereneDB server over the PostgreSQL wire protocol and behaves like the standard [`psql`](./psql.md) client: on startup it attaches to the server and switches to the requested database, so you can run queries interactively or in batch.
 
-To work with a local database file directly, without a running server, use [`serened shell`](./serened-shell.md) instead.
+To work with a local database file directly, without a running server, use [`serened shell`](./serened-shell.md) instead. Both speak the same [SQL dialect](./serened-shell.md#sql-dialect).
 
 ## Connect
 

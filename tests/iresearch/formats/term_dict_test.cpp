@@ -1992,6 +1992,25 @@ TEST_P(TermDictTest, ordinal_width_follows_the_bound) {
   }
 }
 
+TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
+  constexpr auto kLimit =
+    irs::term_dict::OrdinalLimit(irs::term_dict::kMaxOrdinalBytes);
+  ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
+            irs::term_dict::OrdinalBytes(kLimit));
+  const irs::FlushState state{
+    .dir = &dir(),
+    .name = kSegment,
+    .doc_count = 10,
+    .index_features = irs::IndexFeatures::None,
+  };
+  irs::IdxWriter idx{dir(), kSegment};
+  irs::term_dict::FieldWriter writer{false};
+  writer.SetIdxWriter(idx);
+  ASSERT_SQL_ERROR(writer.prepare(state, kLimit + 1),
+                   ERRCODE_PROGRAM_LIMIT_EXCEEDED);
+  writer.prepare(state, kLimit);
+}
+
 TEST_P(TermDictTest, three_byte_ordinals_past_two_byte_dictionaries) {
   constexpr irs::field_id kFillers = 0xFFFE;
   std::vector<Field> fields;

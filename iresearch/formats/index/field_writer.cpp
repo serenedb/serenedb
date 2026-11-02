@@ -337,6 +337,12 @@ bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
 
 void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   SDB_ASSERT(_idx);
+  if (keyed_dicts > OrdinalLimit(kMaxOrdinalBytes)) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("term dictionary: ", keyed_dicts,
+                            " keyed dictionaries exceed the limit of ",
+                            OrdinalLimit(kMaxOrdinalBytes)));
+  }
   Reset();
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();

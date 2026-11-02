@@ -59,15 +59,14 @@ inline constexpr size_t kMaxColumnDictionaries = 8;
 class ColWriter final {
  public:
   ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush);
+            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush,
+            bool stage_all = false);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
   ColWriter& operator=(const ColWriter&) = delete;
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
-
-  void StageAll() noexcept;
 
   ColumnWriter* StagedColumn(field_id id) noexcept;
 

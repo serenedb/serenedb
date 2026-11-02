@@ -701,14 +701,14 @@ ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
                            duckdb::LogicalType type, bool skip_validity,
                            uint32_t row_group_size,
                            duckdb::CompressionType forced, bool hyperloglog,
-                           ColCodecParams codec_params)
+                           ColCodecParams codec_params, bool stage_all)
   : _ctx{&ctx},
     _id{id},
     _type{std::move(type)},
     _skip_validity{skip_validity},
     _ingest_lists{!hyperloglog},
     _row_group_size{row_group_size},
-    _seal_at{row_group_size},
+    _seal_at{stage_all ? std::numeric_limits<uint64_t>::max() : row_group_size},
     _forced{forced},
     _codec_params{codec_params} {
   const auto pt = _type.InternalType();
@@ -727,7 +727,9 @@ ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
     _meta.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
     _hll_auto = true;
   }
-  InitIngest();
+  if (!stage_all) {
+    InitIngest();
+  }
 }
 
 void ColumnWriter::InitIngest() {
@@ -750,12 +752,6 @@ void ColumnWriter::InitIngest() {
     _ingest[i] =
       std::make_unique<ListIngest>(fields[i].second, /*borrow=*/false);
   }
-}
-
-void ColumnWriter::StageAll() noexcept {
-  SDB_ASSERT(_row_start == 0 && _staged_rows == 0);
-  _seal_at = std::numeric_limits<uint64_t>::max();
-  _ingest.clear();
 }
 
 void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {

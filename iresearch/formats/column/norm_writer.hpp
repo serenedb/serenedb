@@ -108,7 +108,8 @@ class NormColumnWriter final {
 
   NormColumnWriter(field_id id, uint32_t row_group_size, ColFileWriter& blocks);
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
+  NormColumnWriter(field_id id, uint32_t row_group_size, Open open,
+                   bool stage_all);
 
   NormColumnWriter(const NormColumnWriter&) = delete;
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
@@ -116,8 +117,6 @@ class NormColumnWriter final {
   void Append(uint64_t target_row, uint32_t value);
 
   void PadTo(uint64_t target);
-
-  void StageAll() noexcept;
 
   void Reorder(std::span<const uint32_t> new2old);
 

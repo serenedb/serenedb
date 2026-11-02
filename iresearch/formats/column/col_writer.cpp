@@ -226,12 +226,14 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
 }  // namespace
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, WriteTier tier)
+                     duckdb::DatabaseInstance& db, WriteTier tier,
+                     bool stage_all)
   : _dir{&dir},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
     _db{&db},
-    _tier{tier} {}
+    _tier{tier},
+    _stage_all{stage_all} {}
 
 ColWriter::~ColWriter() {
   if (_file && !_committed) {
@@ -257,11 +259,6 @@ void ColWriter::SetFieldOptions(
     !_field_options || CompatibleFieldOptions(_field_options, field_options),
     "ColWriter::SetFieldOptions: encodings differ mid-segment");
   _field_options = field_options;
-}
-
-void ColWriter::StageAll() noexcept {
-  SDB_ASSERT(Empty() && _norms.empty());
-  _stage_all = true;
 }
 
 ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
@@ -306,10 +303,7 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   auto column = std::make_unique<ColumnEntry>();
   column->writer = std::make_unique<ColumnWriter>(
     *_write_ctx, id, std::move(type), skip_validity, row_group_size, forced,
-    hyperloglog, codec_params);
-  if (_stage_all) {
-    column->writer->StageAll();
-  }
+    hyperloglog, codec_params, _stage_all);
   auto& entry = *column;
   _by_id.emplace(id, &entry);
   _columns.emplace_back(std::move(column));
@@ -504,13 +498,12 @@ ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> ColFileWriter& {
+    id, row_group_size,
+    [this]() -> ColFileWriter& {
       EnsureOut();
       return *_file;
-    }));
-  if (_stage_all) {
-    writer.StageAll();
-  }
+    },
+    _stage_all));
   _norm_by_id.emplace(id, &writer);
   return writer;
 }

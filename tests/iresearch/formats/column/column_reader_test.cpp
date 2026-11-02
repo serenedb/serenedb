@@ -3447,6 +3447,34 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
+TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
+  constexpr irs::field_id kId = 34;
+  constexpr uint32_t kRowGroup = 256;
+  constexpr uint64_t kRows = 600;
+  constexpr uint64_t kMd5Bytes = 16;
+  SetShreddingSize(Db(), kRowGroup);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteVariantViaSql(Db(), dir, "vseg", kId,
+                     absl::StrCat("SELECT md5(i::VARCHAR)::VARIANT FROM range(",
+                                  kRows, ") t(i)"),
+                     kRowGroup, expected);
+  ASSERT_EQ(expected.size(), kRows);
+
+  irs::ColReader r{dir, "vseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->Validity(), nullptr);
+  ASSERT_TRUE(col->DataBlocks().empty());
+  std::vector<std::string> sub_columns;
+  col->VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    sub_columns.emplace_back(absl::StrCat(sub.index, "@", sub.first_row));
+  });
+  EXPECT_EQ((std::vector<std::string>{"1@0", "2@0", "1@256", "2@256", "1@512"}),
+            sub_columns);
+  EXPECT_GE(irs::StoredBytes(*col), kRows * kMd5Bytes);
+}
+
 // VARIANT with NULL rows + leftover (mixed types) under shredding: exercises
 // Partial/Full row groups and the VARIANT-level null mask.
 TEST_F(ColumnReaderTest, VariantNullAndLeftover) {
@@ -4368,8 +4396,8 @@ TEST_F(ColumnReaderTest, SortedFlushReorderKeepsStagedStringBytes) {
   };
 
   irs::MemoryDirectory dir;
-  irs::ColWriter w{dir, "seg", Db()};
-  w.StageAll();
+  irs::ColWriter w{dir, "seg", Db(), irs::WriteTier::Flush,
+                   /*stage_all=*/true};
   auto& in_order = w.OpenColumn(kInOrder, duckdb::LogicalType::VARCHAR,
                                 /*skip_validity=*/false, kRgSize);
   auto& reversed = w.OpenColumn(kReversed, duckdb::LogicalType::VARCHAR,

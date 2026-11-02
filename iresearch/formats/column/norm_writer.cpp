@@ -101,8 +101,14 @@ NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
   : _id{id}, _blocks{&blocks}, _row_group_size{row_group_size} {}
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   Open open)
-  : _id{id}, _open{std::move(open)}, _row_group_size{row_group_size} {}
+                                   Open open, bool stage_all)
+  : _id{id},
+    _open{std::move(open)},
+    _row_group_size{stage_all ? std::numeric_limits<uint32_t>::max()
+                              : row_group_size},
+    _staged_row_group_size{stage_all ? row_group_size : 0} {
+  SDB_ASSERT(!stage_all || row_group_size != 0);
+}
 
 void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
   SDB_ASSERT(target_row >= RowCount(),
@@ -126,12 +132,6 @@ void NormColumnWriter::PadTo(uint64_t target) {
       FlushRowGroup();
     }
   }
-}
-
-void NormColumnWriter::StageAll() noexcept {
-  SDB_ASSERT(_row_group_size != 0 && RowCount() == 0);
-  _staged_row_group_size = _row_group_size;
-  _row_group_size = std::numeric_limits<uint32_t>::max();
 }
 
 void NormColumnWriter::Reorder(std::span<const uint32_t> new2old) {

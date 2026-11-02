@@ -73,7 +73,7 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 size_t SegmentWriter::memory_active() const noexcept {
   return _docs_context.MemoryActive() + _docs_mask.ByteSize() +
          _fields.MemoryActive() +
-         (_sort && _col_writer ? _col_writer->StagedBytes() : 0);
+         (_col_writer ? _col_writer->StagedBytes() : 0);
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
@@ -177,11 +177,13 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
   if (order.Empty()) {
     docs_mask = std::move(_docs_mask);
   } else {
-    const auto masked = std::move(_docs_mask).Finish();
-    masked.ForEach([&](doc_id_t doc) {
-      docs_mask.Add(order.NewDoc(doc - doc_limits::min()));
-    });
-    _docs_mask = DocumentMaskBuilder{};
+    std::move(_docs_mask)
+      .Take()
+      .ForEachRun(nullptr, [&](doc_id_t first, doc_id_t end) {
+        order.MaskRows(docs_mask, first - doc_limits::min(),
+                       end - doc_limits::min());
+        return true;
+      });
   }
 
   meta.docs_count = state.doc_count;
@@ -243,10 +245,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   }
 
   const auto* active = ActiveFieldOptions();
-  _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
-  if (_sort) {
-    _col_writer->StageAll();
-  }
+  _col_writer = std::make_unique<ColWriter>(
+    _dir, meta.name, _db, WriteTier::Flush, static_cast<bool>(_sort));
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

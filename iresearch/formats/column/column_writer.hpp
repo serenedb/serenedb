@@ -54,7 +54,7 @@ class ColumnWriter final {
   ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
                duckdb::CompressionType forced, bool hyperloglog,
-               ColCodecParams codec_params);
+               ColCodecParams codec_params, bool stage_all = false);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -78,8 +78,6 @@ class ColumnWriter final {
   }
 
   void PadNullsTo(uint64_t target_row);
-
-  void StageAll() noexcept;
 
   std::span<const WriteChunk> Staged() const noexcept {
     return {_staged.data(), _staged_chunks};

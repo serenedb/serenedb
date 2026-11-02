@@ -640,10 +640,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider,
                                     std::vector<connector::ColumnId>{col_id},
                                     std::move(entry_provider)};
-  const auto rk = KeyTerms({"pk1", "pk2", "pk3", "pk4"});
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
-  sink.Init(4, PkChunk{.key_terms = rk, .column = &pk_vec});
+  sink.Init(4, &pk_vec);
 
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   const duckdb::Value null_element{duckdb::LogicalType::VARCHAR};
@@ -714,10 +713,9 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
   DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider,
                                     std::vector<connector::ColumnId>{col_id},
                                     std::move(entry_provider)};
-  const auto rk = KeyTerms({"pk1", "pk2", "pk3", "pk4"});
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {1, 2, 3, 4});
-  sink.Init(4, PkChunk{.key_terms = rk, .column = &pk_vec});
+  sink.Init(4, &pk_vec);
 
   const auto json = duckdb::LogicalType::JSON();
   const auto type = duckdb::LogicalType::LIST(json);

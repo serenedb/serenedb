@@ -28,11 +28,6 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColWriter;
@@ -57,8 +52,7 @@ struct DocOrder {
   void MaskRows(DocumentMaskBuilder& mask, size_t from, size_t to) const;
 };
 
-std::vector<uint32_t> FlushOrder(duckdb::DatabaseInstance& db,
-                                 const SortSpec& spec, ColWriter& columns,
+std::vector<uint32_t> FlushOrder(const SortSpec& spec, ColWriter& columns,
                                  uint64_t rows);
 
 DocOrder MakeDocOrder(std::vector<uint32_t> new2old);

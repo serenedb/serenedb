@@ -73,13 +73,16 @@ std::vector<SortKey> ResolveSortKeys(
                       ERR_MSG("column \"", name.GetIdentifierName(),
                               "\" appears more than once in SORTED BY"));
     }
-    const bool descending = order.type == duckdb::OrderType::DESCENDING;
-    const bool nulls_first =
-      order.null_order == duckdb::OrderByNullType::ORDER_DEFAULT
-        ? descending
-        : order.null_order == duckdb::OrderByNullType::NULLS_FIRST;
-    keys.push_back(
-      {.column = index, .descending = descending, .nulls_first = nulls_first});
+    const auto type = order.type == duckdb::OrderType::DESCENDING
+                        ? duckdb::OrderType::DESCENDING
+                        : duckdb::OrderType::ASCENDING;
+    const auto null_order =
+      order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
+        ? order.null_order
+        : (type == duckdb::OrderType::DESCENDING
+             ? duckdb::OrderByNullType::NULLS_FIRST
+             : duckdb::OrderByNullType::NULLS_LAST);
+    keys.push_back({.column = index, .order = type, .null_order = null_order});
   }
   return keys;
 }
@@ -88,10 +91,7 @@ duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   std::span<const SortKey> keys, const duckdb::ColumnList& columns) {
   duckdb::vector<duckdb::OrderByNode> orders;
   for (const auto& key : keys) {
-    orders.emplace_back(key.descending ? duckdb::OrderType::DESCENDING
-                                       : duckdb::OrderType::ASCENDING,
-                        key.nulls_first ? duckdb::OrderByNullType::NULLS_FIRST
-                                        : duckdb::OrderByNullType::NULLS_LAST,
+    orders.emplace_back(key.order, key.null_order,
                         duckdb::make_uniq<duckdb::ColumnRefExpression>(
                           columns.GetColumn(key.column).Name()));
   }
@@ -105,8 +105,8 @@ irs::SortSpec SortSpecOf(std::span<const SortKey> keys,
     spec.keys.push_back(
       {.column = static_cast<irs::field_id>(
          connector::TableColumnId(columns.GetColumn(key.column))),
-       .descending = key.descending,
-       .nulls_first = key.nulls_first});
+       .order = key.order,
+       .null_order = key.null_order});
   }
   return spec;
 }

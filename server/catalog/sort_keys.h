@@ -31,8 +31,8 @@ namespace sdb::catalog {
 
 struct SortKey {
   duckdb::LogicalIndex column;
-  bool descending = false;
-  bool nulls_first = false;
+  duckdb::OrderType order = duckdb::OrderType::ASCENDING;
+  duckdb::OrderByNullType null_order = duckdb::OrderByNullType::NULLS_LAST;
 };
 
 std::vector<SortKey> ResolveSortKeys(

@@ -149,10 +149,13 @@ int CompareKeyValues(const duckdb::Value& lhs, const duckdb::Value& rhs,
     if (lhs.IsNull() == rhs.IsNull()) {
       return 0;
     }
-    return lhs.IsNull() == key.nulls_first ? -1 : 1;
+    return lhs.IsNull() ==
+               (key.null_order == duckdb::OrderByNullType::NULLS_FIRST)
+             ? -1
+             : 1;
   }
   const int cmp = lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);
-  return key.descending ? -cmp : cmp;
+  return key.order == duckdb::OrderType::DESCENDING ? -cmp : cmp;
 }
 
 std::vector<GeneratedDoc> GenerateDocs(Generator& gen,

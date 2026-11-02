@@ -140,8 +140,7 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     if (_sort) {
-      order =
-        MakeDocOrder(FlushOrder(_db, *_sort, *_col_writer, buffered_docs()));
+      order = MakeDocOrder(FlushOrder(*_sort, *_col_writer, buffered_docs()));
       _col_writer->Commit(buffered_docs(), order.new2old);
     } else {
       _col_writer->Commit(buffered_docs());

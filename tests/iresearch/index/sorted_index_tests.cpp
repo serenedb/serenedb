@@ -71,7 +71,8 @@ constexpr irs::field_id kTypedColumn = 2000;
 const auto kFullMerge = irs::index_utils::MakePolicy(
   irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
 
-const irs::SortSpec kByNameDesc{{{.column = kNameColumn, .descending = true}}};
+const irs::SortSpec kByNameDesc{
+  {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
 
 int64_t RemovalKey(std::string_view key) {
   EXPECT_LE(key.size(), sizeof(int64_t));
@@ -349,7 +350,8 @@ const auto kTestValuesSorted = ::testing::Combine(
 }  // namespace
 
 TEST_P(SortedIndexTestCase, simple_sequential) {
-  const irs::SortSpec spec{{{.column = kNameColumn, .descending = true}}};
+  const irs::SortSpec spec{
+    {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -416,7 +418,8 @@ TEST_P(SortedIndexTestCase, reader_components) {
 
 TEST_P(SortedIndexTestCase, simple_sequential_compact) {
   const irs::SortSpec spec{
-    {{.column = kText, .nulls_first = true}, {.column = kKey}}};
+    {{.column = kText, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
+     {.column = kKey}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -453,7 +456,8 @@ TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
 
 TEST_P(SortedIndexTestCase, europarl) {
   const irs::SortSpec spec{
-    {{.column = kDateColumn, .descending = true}, {.column = kTitleColumn}}};
+    {{.column = kDateColumn, .order = duckdb::OrderType::DESCENDING},
+     {.column = kTitleColumn}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -465,7 +469,9 @@ TEST_P(SortedIndexTestCase, europarl) {
 
 TEST_P(SortedIndexTestCase, europarl_docs_batched) {
   const irs::SortSpec spec{
-    {{.column = kTitleColumn, .nulls_first = true}, {.column = kDateColumn}}};
+    {{.column = kTitleColumn,
+      .null_order = duckdb::OrderByNullType::NULLS_FIRST},
+     {.column = kDateColumn}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -480,9 +486,10 @@ TEST_P(SortedIndexTestCase, europarl_docs_batched) {
 }
 
 TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
-  const irs::SortSpec spec{{{.column = kList, .nulls_first = true},
-                            {.column = kStruct, .descending = true},
-                            {.column = kKey}}};
+  const irs::SortSpec spec{
+    {{.column = kList, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
+     {.column = kStruct, .order = duckdb::OrderType::DESCENDING},
+     {.column = kKey}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -509,7 +516,8 @@ TEST_P(SortedIndexTestCase, check_document_order_after_compaction_dense) {
 
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_dense_with_removals) {
-  const irs::SortSpec spec{{{.column = kKey, .descending = true}}};
+  const irs::SortSpec spec{
+    {{.column = kKey, .order = duckdb::OrderType::DESCENDING}}};
   {
     auto writer = OpenSorted(spec);
     Generator gen{2};
@@ -523,8 +531,10 @@ TEST_P(SortedIndexTestCase,
 }
 
 TEST_P(SortedIndexTestCase, sorted_flush_of_every_column_kind) {
-  const irs::SortSpec spec{{{.column = kTypedColumn, .descending = true},
-                            {.column = kTypedColumn + 5, .nulls_first = true}}};
+  const irs::SortSpec spec{
+    {{.column = kTypedColumn, .order = duckdb::OrderType::DESCENDING},
+     {.column = kTypedColumn + 5,
+      .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   duckdb::Connection connection{irs::DuckDBEngine::Instance().instance()};
   auto result = connection.Query(
     "SELECT (hash(i) % 97)::BIGINT AS k, "
@@ -636,7 +646,8 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx_flush) {
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_sparse_with_gaps) {
   const irs::SortSpec spec{
-    {{.column = kKey, .nulls_first = true}, {.column = kText}}};
+    {{.column = kKey, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
+     {.column = kText}}};
   auto writer = OpenSorted(spec);
   Generator gen{3};
   size_t next_id = 0;
@@ -648,7 +659,8 @@ TEST_P(SortedIndexTestCase,
 }
 
 TEST_P(SortedIndexTestCase, check_document_order_after_compaction_sparse) {
-  const irs::SortSpec spec{{{.column = kText, .nulls_first = true}}};
+  const irs::SortSpec spec{
+    {{.column = kText, .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   auto writer = OpenSorted(spec);
   Generator gen{4};
   size_t next_id = 0;
@@ -682,7 +694,9 @@ TEST_P(SortedIndexTestCase,
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_sparse_with_removals) {
   const irs::SortSpec spec{
-    {{.column = kText, .descending = true, .nulls_first = true}}};
+    {{.column = kText,
+      .order = duckdb::OrderType::DESCENDING,
+      .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   {
     auto writer = OpenSorted(spec);
     Generator gen{6};

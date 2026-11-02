@@ -349,7 +349,8 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
 }
 
 TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
-  const irs::SortSpec spec{{{.column = kKeyColumn, .descending = true}}};
+  const irs::SortSpec spec{
+    {{.column = kKeyColumn, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory dir;
   auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
   irs::SegmentMeta segment;

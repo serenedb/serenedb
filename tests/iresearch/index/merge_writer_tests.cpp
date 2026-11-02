@@ -2565,7 +2565,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   const irs::SortSpec sort{
-    {{.column = kDocStringId, .descending = true, .nulls_first = true}}};
+    {{.column = kDocStringId,
+      .order = duckdb::OrderType::DESCENDING,
+      .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   irs::MemoryDirectory merged_dir;
   irs::SegmentMeta merged_meta;
   const irs::SegmentWriterOptions options{

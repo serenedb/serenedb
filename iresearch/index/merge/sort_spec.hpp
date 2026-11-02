@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/enums/order_type.hpp>
 #include <vector>
 
 #include "iresearch/types.hpp"
@@ -28,8 +29,8 @@ namespace irs {
 
 struct SortKey {
   field_id column;
-  bool descending = false;
-  bool nulls_first = false;
+  duckdb::OrderType order = duckdb::OrderType::ASCENDING;
+  duckdb::OrderByNullType null_order = duckdb::OrderByNullType::NULLS_LAST;
 };
 
 struct SortSpec {

@@ -21,7 +21,6 @@
 #include "iresearch/index/merge/key_merge.hpp"
 
 #include <algorithm>
-#include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -210,11 +209,7 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
       }
       _keys.push_back({.id = key.column, .type = col->Type()});
       types.push_back(col->Type());
-      modifiers.emplace_back(key.descending ? duckdb::OrderType::DESCENDING
-                                            : duckdb::OrderType::ASCENDING,
-                             key.nulls_first
-                               ? duckdb::OrderByNullType::NULLS_FIRST
-                               : duckdb::OrderByNullType::NULLS_LAST);
+      modifiers.emplace_back(key.order, key.null_order);
       break;
     }
   }

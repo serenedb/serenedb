@@ -92,9 +92,12 @@ irs::SortSpec RandomSpec(Generator& gen) {
   irs::SortSpec spec;
   const auto keys = gen.Uniform(1, 3);
   for (size_t k = 0; k != keys; ++k) {
-    spec.keys.push_back({.column = kKeys[gen.Uniform(0, std::size(kKeys) - 1)],
-                         .descending = gen.Coin(0.3),
-                         .nulls_first = gen.Coin(0.5)});
+    spec.keys.push_back(
+      {.column = kKeys[gen.Uniform(0, std::size(kKeys) - 1)],
+       .order = gen.Coin(0.3) ? duckdb::OrderType::DESCENDING
+                              : duckdb::OrderType::ASCENDING,
+       .null_order = gen.Coin(0.5) ? duckdb::OrderByNullType::NULLS_FIRST
+                                   : duckdb::OrderByNullType::NULLS_LAST});
   }
   return spec;
 }
@@ -340,7 +343,8 @@ TEST_F(SortedMergeTest, InterleavedInputsAreGathered) {
   AddSegment(Keys(2046, -2, 1024));
   AddSegment(Keys(2047, -2, 1024));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint, .descending = true}}};
+  const irs::SortSpec spec{
+    {{.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(4));
@@ -824,7 +828,8 @@ TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {
   AddSegment(Keys(1, 2, 300), true);
   const auto inputs = Snapshot();
   const WithoutColumnStore storeless{*inputs[1]};
-  const irs::SortSpec spec{{{.column = kBigint, .nulls_first = true}}};
+  const irs::SortSpec spec{
+    {{.column = kBigint, .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   for (const auto& mixed :
        {std::vector<const irs::SubReader*>{inputs[0], &storeless},
         std::vector<const irs::SubReader*>{&storeless, inputs[0]}}) {
@@ -973,7 +978,8 @@ TEST(SortedMergeAnnTest, IvfClustersCoverTheSortedDocs) {
   const auto inputs = Segments(reader);
   ASSERT_EQ(2, inputs.size());
 
-  const irs::SortSpec spec{{{.column = kBigint, .descending = true}}};
+  const irs::SortSpec spec{
+    {{.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory out;
   bool flushed = false;
   const auto merged =
@@ -1015,7 +1021,8 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
     SCOPED_TRACE(seed);
     Generator gen{seed};
     const irs::SortSpec spec{
-      {{.column = kText}, {.column = kBigint, .descending = true}}};
+      {{.column = kText},
+       {.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
     SegmentShape shape;
     shape.docs = 300;
     shape.null_ratio = 0.2;

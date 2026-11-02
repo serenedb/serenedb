@@ -566,10 +566,7 @@ duckdb::vector<duckdb::OrderByNode> InvertedIndexEntry::SortOrders() const {
     const auto& column =
       parsed_expressions[at]->Cast<duckdb::ColumnRefExpression>();
     orders.emplace_back(
-      key.descending ? duckdb::OrderType::DESCENDING
-                     : duckdb::OrderType::ASCENDING,
-      key.nulls_first ? duckdb::OrderByNullType::NULLS_FIRST
-                      : duckdb::OrderByNullType::NULLS_LAST,
+      key.order, key.null_order,
       duckdb::make_uniq<duckdb::ColumnRefExpression>(column.GetColumnName()));
   }
   return orders;

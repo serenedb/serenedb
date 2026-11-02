@@ -20,6 +20,8 @@ Use `IF NOT EXISTS` so the statement succeeds even when the database already exi
 
 <SqlLogicTest id="sql/statements/create_database/index/example_002" />
 
+The role that creates a database owns it. `OWNER role`, also written `WITH OWNER = role`, makes another role the owner; the creating role must be able to `SET ROLE` to it, and otherwise the statement fails with `must be able to SET ROLE "role"`. Creating a database requires a superuser or a role with the `CREATEDB` attribute.
+
 Once created, you can connect to it like any other database — for example with `psql`:
 
 ```sh

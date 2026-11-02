@@ -108,6 +108,8 @@ A parameter takes a default after `DEFAULT` or `=`, as well as after `:=`. `IMMU
 
 A function runs with the privileges of the role that calls it, also when a view calls it: the tables its body reads and the functions it calls are checked for that role, and `current_user` returns it. `SECURITY DEFINER` runs the body with the privileges of the function's owner instead, and `current_user` in the body returns the owner, while the arguments are still evaluated with the caller's privileges. `SECURITY INVOKER` is the default, and `pg_proc.prosecdef` shows which one a function uses. `SECURITY DEFINER` does not make a call slower: either way the body is optimized together with the query that calls it. A `SECURITY DEFINER` function cannot be called as a window function. Creating a function checks no privileges on the tables its body reads or writes and the functions it calls: the role the body runs as needs them when it runs.
 
+The body resolves the names it does not qualify through the `search_path` of the session that calls it. `SET search_path = schema, ...` (or `TO`) gives the function a path of its own, which the body uses instead, also when the function is created and when a view calls it; `SET search_path FROM CURRENT` takes the creating session's path. A `SECURITY DEFINER` function should set one, so that a caller cannot put objects of its own in the way of the names the body uses. `pg_proc.proconfig` shows the setting and `pg_get_functiondef` prints it. A function can set only `search_path`: `SET` of any other parameter fails with `SET of parameter "..." on a function is not supported`. A function that sets `search_path` cannot be called as a window function.
+
 A function that `RETURNS void` runs its body to the end, every row of a query body included, and returns `NULL`. A function whose body modifies data cannot be called for each row of a query:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_047" />
@@ -130,7 +132,7 @@ It is possible to overload a macro based on the types or the number of its param
 
 `ALTER FUNCTION`, `ALTER PROCEDURE` and `ALTER ROUTINE` rename a function with `RENAME TO` and change its owner with `OWNER TO`. They take an argument list after the name, as in PostgreSQL, but apply to every overload of the name.
 
-They also change `SECURITY DEFINER` or `SECURITY INVOKER` and `IMMUTABLE`, `STABLE` or `VOLATILE`, for the overload the argument list names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Only the function's owner or a superuser may do it. `COST`, `ROWS`, `PARALLEL` and `LEAKPROOF` are accepted and ignored, and `STRICT` or `CALLED ON NULL INPUT` may only restate what the function already is.
+They also change `SECURITY DEFINER` or `SECURITY INVOKER`, `IMMUTABLE`, `STABLE` or `VOLATILE`, and `SET search_path` (`RESET search_path` or `RESET ALL` removes it), for the overload the argument list names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Only the function's owner or a superuser may do it. `COST`, `ROWS`, `PARALLEL` and `LEAKPROOF` are accepted and ignored, and `STRICT` or `CALLED ON NULL INPUT` may only restate what the function already is.
 
 ```sql
 ALTER FUNCTION add_tax(numeric) SECURITY DEFINER STABLE;

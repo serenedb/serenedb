@@ -33,6 +33,7 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
@@ -413,6 +414,10 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
   }
   auto& alter = info.Cast<duckdb::AlterRoleInfo>();
   auth::CheckAlterRole(transaction, alter);
+  if (transaction.HasContext()) {
+    duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
+                                           alter.set_config);
+  }
   if (!HasOption(alter.set_options | alter.clear_options,
                  RoleOption::Superuser) ||
       !transaction.HasContext() ||

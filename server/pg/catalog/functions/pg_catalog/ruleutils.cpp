@@ -29,6 +29,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector_operations/binary_executor.hpp>
@@ -617,8 +618,25 @@ Definition FunctionDefinition(const Session& session, int64_t oid) {
     absl::StrCat(volatility, macro.strict ? " STRICT" : "",
                  macro.security_definer ? " SECURITY DEFINER" : "");
   absl::StrAppend(&definition, " LANGUAGE sql\n", options,
-                  options.empty() ? "" : "\n", "AS ", tag, MacroBody(macro),
-                  tag, "\n");
+                  options.empty() ? "" : "\n");
+  for (const std::string_view entry : macro.config) {
+    const auto separator = entry.find('=');
+    absl::StrAppend(
+      &definition, " SET ", entry.substr(0, separator), " TO ",
+      absl::StrJoin(
+        duckdb::CatalogSearchEntry::ParseList(
+          std::string{entry.substr(separator + 1)}),
+        ", ",
+        [](std::string* out, const duckdb::CatalogSearchEntry& path) {
+          out->append(QuoteLiteral(
+            path.GetCatalog().empty()
+              ? path.GetSchema().GetIdentifierName()
+              : absl::StrCat(path.GetCatalog().GetIdentifierName(), ".",
+                             path.GetSchema().GetIdentifierName())));
+        }),
+      "\n");
+  }
+  absl::StrAppend(&definition, "AS ", tag, MacroBody(macro), tag, "\n");
   return definition;
 }
 

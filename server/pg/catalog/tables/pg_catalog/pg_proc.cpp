@@ -240,6 +240,10 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
                : std::optional{names};
     }),
     Col<"prosrc">([](const auto& row) { return MacroBody(row.macro); }),
+    Col<"proconfig">([](const auto& row) {
+      return row.macro.config.empty() ? std::nullopt
+                                      : std::optional{row.macro.config};
+    }),
     Col<"proacl">([](const auto& row) -> const auto& {
       return row.entry.permissions.acl;
     }));

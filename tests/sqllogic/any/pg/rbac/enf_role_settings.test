@@ -90,6 +90,43 @@ session_replication_role=replica
 
 
 statement ok
+SET search_path = ers_quas, public;
+
+
+statement ok
+ALTER ROLE ers_vedernikoff SET search_path FROM CURRENT;
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT unnest(s.setconfig) AS setting
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'ers_vedernikoff'
+ORDER BY setting;
+----
+setting
+search_path=ers_quas, public
+session_replication_role=replica
+
+
+statement ok
+ALTER ROLE ers_vedernikoff SET search_path TO DEFAULT;
+
+
+query
+SELECT unnest(s.setconfig) AS setting
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'ers_vedernikoff'
+ORDER BY setting;
+----
+setting
+session_replication_role=replica
+
+
+statement ok
 ALTER ROLE ers_vedernikoff RESET ALL;
 
 

@@ -340,26 +340,30 @@ auto WithIndex(duckdb::DatabaseInstance& db, Body&& body)
   return body(*index);
 }
 
-irs::Filter::ptr Term(irs::field_id field, std::string_view term) {
+irs::Filter::ptr Term(irs::field_id field, irs::DictRef dict,
+                      std::string_view term) {
   auto filter = std::make_unique<irs::ByTerm>();
   *filter->mutable_field_id() = field;
+  *filter->mutable_dict() = dict;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
   return filter;
 }
 
-irs::Filter::ptr Prefix(irs::field_id field, std::string_view prefix) {
+irs::Filter::ptr Prefix(irs::field_id field, irs::DictRef dict,
+                        std::string_view prefix) {
   auto filter = std::make_unique<irs::ByPrefix>();
   *filter->mutable_field_id() = field;
+  *filter->mutable_dict() = dict;
   filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(prefix);
   return filter;
 }
 
 irs::Filter::ptr PathTerm(const Layout& layout, std::string_view path) {
-  return Term(layout.path.terms, path);
+  return Term(layout.path.terms, irs::StringLayout::kStrings, path);
 }
 
 irs::Filter::ptr PathPrefix(const Layout& layout, std::string_view prefix) {
-  return Prefix(layout.path.terms, prefix);
+  return Prefix(layout.path.terms, irs::StringLayout::kStrings, prefix);
 }
 
 using BlobReader = irs::ColumnReader::BlobPointReader;
@@ -929,7 +933,7 @@ std::vector<Object> NamedObjects(const DocsIndex& index, std::string_view name,
   const auto wanted = absl::StripAsciiWhitespace(kind);
   auto found = MatchingObjects(
     index,
-    *Term(index.ObjectFields().names,
+    *Term(index.ObjectFields().names, irs::StringListLayout::kStrings,
           absl::AsciiStrToLower(absl::StripAsciiWhitespace(CallName(name)))));
   std::erase_if(found,
                 [&](const Object& object) { return !OfKind(object, wanted); });
@@ -1214,8 +1218,10 @@ std::vector<Object> Objects(duckdb::DatabaseInstance& db,
   return WithIndex(db, [&](const DocsIndex& index) {
     const auto field = index.ObjectFields().kind;
     const auto wanted = absl::AsciiStrToLower(absl::StripAsciiWhitespace(kind));
-    return MatchingObjects(
-      index, *(wanted.empty() ? Prefix(field, "") : Term(field, wanted)));
+    constexpr auto kKinds = irs::StringLayout::kStrings;
+    return MatchingObjects(index,
+                           *(wanted.empty() ? Prefix(field, kKinds, "")
+                                            : Term(field, kKinds, wanted)));
   });
 }
 
@@ -1242,6 +1248,7 @@ std::vector<std::string> CompleteName(duckdb::DatabaseInstance& db,
     };
     for (const auto& object :
          MatchingObjects(index, *Prefix(index.ObjectFields().names,
+                                        irs::StringListLayout::kStrings,
                                         absl::AsciiStrToLower(prefix)))) {
       if (!OfKind(object, wanted)) {
         continue;

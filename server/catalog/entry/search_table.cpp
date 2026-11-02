@@ -375,10 +375,11 @@ namespace {
 
 void AppendIResearchBlockRows(
   const irs::ColumnReader& node, duckdb::idx_t column_id,
-  std::vector<duckdb::idx_t>& path, std::string_view type_name, size_t segment,
-  uint64_t row_base, const duckdb::virtual_column_map_t& virtual_columns,
+  std::vector<duckdb::idx_t>& path, size_t segment, uint64_t row_base,
+  const duckdb::virtual_column_map_t& virtual_columns,
   duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
   const auto blocks = node.DataBlocks();
+  const auto type_name = node.Type().ToString();
   std::string path_str = "[";
   for (size_t i = 0; i < path.size(); ++i) {
     if (i > 0) {
@@ -401,7 +402,7 @@ void AppendIResearchBlockRows(
     info.column_id = column_id;
     info.column_path = path_str;
     info.segment_idx = segment;
-    info.segment_type.assign(type_name);
+    info.segment_type = type_name;
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
     info.compression_type =
@@ -421,27 +422,14 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
                          uint64_t row_base,
                          const duckdb::virtual_column_map_t& virtual_columns,
                          duckdb::vector<duckdb::ColumnSegmentInfo>& out) {
-  AppendIResearchBlockRows(node, column_id, path, node.Type().ToString(),
-                           segment, row_base, virtual_columns, out);
-  if (const auto* validity = node.Validity()) {
-    path.emplace_back(0);
-    AppendIResearchBlockRows(*validity, column_id, path, "VALIDITY", segment,
-                             row_base, virtual_columns, out);
+  AppendIResearchBlockRows(node, column_id, path, segment, row_base,
+                           virtual_columns, out);
+  node.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    path.emplace_back(sub.index);
+    WalkIResearchColumn(sub.column, column_id, path, segment,
+                        row_base + sub.first_row, virtual_columns, out);
     path.pop_back();
-  }
-  if (duckdb::StructType::IsStruct(node.Type())) {
-    for (size_t i = 0; i < node.StructFieldCount(); ++i) {
-      path.emplace_back(i + 1);
-      WalkIResearchColumn(node.StructField(i), column_id, path, segment,
-                          row_base, virtual_columns, out);
-      path.pop_back();
-    }
-  } else if (const auto* child = node.Child()) {
-    path.emplace_back(1);
-    WalkIResearchColumn(*child, column_id, path, segment, row_base,
-                        virtual_columns, out);
-    path.pop_back();
-  }
+  });
 }
 
 std::string_view AlterName(const duckdb::AlterTableInfo& alter) {

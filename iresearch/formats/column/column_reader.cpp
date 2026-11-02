@@ -322,12 +322,9 @@ uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept {
 
 uint64_t StoredBytes(const ColumnReader& column) {
   uint64_t bytes = BlockBytes(column.DataBlocks());
-  if (const auto* validity = column.Validity()) {
-    bytes += StoredBytes(*validity);
-  }
-  for (const auto& child : column.Children()) {
-    bytes += StoredBytes(*child);
-  }
+  column.VisitSubColumns([&](const ColumnReader::SubColumn& sub) {
+    bytes += StoredBytes(sub.column);
+  });
   return bytes;
 }
 

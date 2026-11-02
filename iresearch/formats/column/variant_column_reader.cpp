@@ -64,6 +64,10 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
     // Like duckdb's checkpoint stats, an unshredded row group stays
     // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
     stats.Merge(rg_s);
+    _row_group_columns.emplace_back(*vrg.unshredded, 1, _row_count);
+    if (vrg.shredded) {
+      _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
+    }
     _row_count += rg.row_count;
     _variant_offsets.push_back(_row_count);
     _variant_rgs.push_back(std::move(vrg));

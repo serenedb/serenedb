@@ -37,6 +37,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 
@@ -258,7 +259,12 @@ TEST_F(ColCopyCheckTest, SampledRowsNeedNotLineUpWithStoredBlocks) {
 TEST_F(ColCopyCheckTest, StoredBytesOfAListCountItsElementsAndItsEnds) {
   Write({.list = true});
   const auto& list = Column(kList);
-  const auto children = list.Children();
+  std::vector<const irs::ColumnReader*> children;
+  list.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    if (sub.index != 0) {
+      children.emplace_back(&sub.column);
+    }
+  });
   ASSERT_EQ(2, children.size());
   const auto& elements = *children[0];
   const auto& ends = *children[1];

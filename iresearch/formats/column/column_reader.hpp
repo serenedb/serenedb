@@ -201,6 +201,12 @@ class ColumnReader {
     std::vector<Fetch> retired_fetches;
   };
 
+  struct SubColumn {
+    const ColumnReader& column;
+    size_t index = 0;
+    uint64_t first_row = 0;
+  };
+
   virtual ~ColumnReader() = default;
 
   static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta,
@@ -250,8 +256,18 @@ class ColumnReader {
     SDB_ASSERT(i < _children.size());
     return *_children[i];
   }
-  std::span<const std::unique_ptr<ColumnReader>> Children() const noexcept {
-    return _children;
+
+  template<typename Visitor>
+  void VisitSubColumns(Visitor&& visit) const {
+    if (_validity) {
+      visit(SubColumn{.column = *_validity});
+    }
+    for (size_t i = 0; i != _children.size(); ++i) {
+      visit(SubColumn{.column = *_children[i], .index = i + 1});
+    }
+    for (const auto& sub : _row_group_columns) {
+      visit(sub);
+    }
   }
 
   // Zonemap for row group `rg`, used by pushed table-filter pruning.
@@ -440,6 +456,7 @@ class ColumnReader {
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _validity;
   std::vector<std::unique_ptr<ColumnReader>> _children;
+  std::vector<SubColumn> _row_group_columns;
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;

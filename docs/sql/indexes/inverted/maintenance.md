@@ -149,8 +149,8 @@ Background compaction runs on its own *merge threads*, a quarter of the server's
 
 | Column | Meaning |
 |---|---|
-| `segment`, `column`, `type`, `rows`, `bytes` | The segment, the column, its type, its rows and the bytes its data takes |
-| `codecs` | The codecs of the column's own blocks, in the order they first appear. For a list these hold where each list ends, for a struct there are none (`NULL`): the values live in the nested parts, which are not listed |
+| `segment`, `column`, `type`, `rows`, `bytes` | The segment, the column, its type, its rows and the bytes its data takes, nested parts included |
+| `codecs` | The codecs of the column's own blocks, in the order they first appear. For a list these blocks say which stored list each row has; its elements and where each list ends are nested parts. A struct or a variant has no blocks of its own (`NULL`): its values are all in nested parts. Nested parts are not listed here, [`pragma_storage_info`](./columnstore.md#inspecting-storage) lists them |
 | `reencoded_bytes` | The estimated size of the column if it were encoded again with the current codec settings, as a merge would. A few row groups spread over the column are encoded on the side and compared with the bytes they take now; the estimate is kept as long as the segment is in use. `NULL` for nested columns, which are not checked |
 | `verdict` | `re-encode` when re-encoding would save more than 10% of the column's bytes, or when the codec declared with `ALTER COLUMN ... SET COMPRESSION` is one the column's blocks do not use; `copy` otherwise; `NULL` when not checked |
 

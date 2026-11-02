@@ -32,7 +32,6 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
 #include <set>
@@ -44,6 +43,7 @@
 #include "connector/reindex_removes.h"
 #include "connector/view_fast_path.h"
 #include "gtest/gtest.h"
+#include "index/compaction/policy_compaction.hpp"
 
 namespace {
 
@@ -183,8 +183,9 @@ class ReindexRemovesTest : public ::testing::Test {
       }
     }
     Mask(masked);
-    EXPECT_TRUE(_writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()})));
+    EXPECT_TRUE(tests::Compact(
+      *_writer, tests::MakePolicy(
+                  tests::CompactionCount{std::numeric_limits<size_t>::max()})));
     _writer->RefreshCommit();
     EXPECT_EQ(1, Segments().size());
     return gone;

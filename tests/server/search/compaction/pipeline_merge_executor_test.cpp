@@ -43,9 +43,7 @@
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -57,6 +55,7 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
+#include "index/compaction/policy_compaction.hpp"
 
 namespace {
 
@@ -82,9 +81,9 @@ catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
 
 constexpr ColumnId kValueColumn{1};
 
-const irs::CompactionPolicy& FullMerge() {
-  static const auto kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+const tests::CompactionPolicy& FullMerge() {
+  static const auto kPolicy = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
   return kPolicy;
 }
 
@@ -271,8 +270,8 @@ TEST_F(PipelineMergeExecutorTest, MergesKeepEveryRow) {
   const auto before = Rows();
   ASSERT_EQ(4, _writer->GetSnapshot().size());
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  const auto result = irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor));
+  const auto result =
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
   ASSERT_TRUE(result);
   EXPECT_EQ(4, result.size);
   EXPECT_GT(result.stats.profile.TotalNanos(), 0);
@@ -304,8 +303,8 @@ TEST_F(PipelineMergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
   const auto before = Postings();
   ASSERT_LT(Rows().size(), before.size());
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor)));
+  ASSERT_TRUE(
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Postings());
@@ -315,8 +314,8 @@ TEST_F(PipelineMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   const auto before = Rows();
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 1};
   EXPECT_EQ(1, executor.Threads());
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor)));
+  ASSERT_TRUE(
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
@@ -328,8 +327,8 @@ TEST_F(PipelineMergeExecutorTest, MergesRunOnTheSchedulerTheyAreGiven) {
   own.SetThreads(4, 0);
   own.RelaunchThreads();
   irs::PipelineMergeExecutor executor{TestDb(), &own, 4};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor)));
+  ASSERT_TRUE(
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   own.Join();
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
@@ -342,8 +341,8 @@ TEST_F(PipelineMergeExecutorTest, CallerRunsTheUnitsNoWorkerTook) {
   lonely.SetThreads(1, 1);
   lonely.RelaunchThreads();
   irs::PipelineMergeExecutor executor{TestDb(), &lonely, 4};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor)));
+  ASSERT_TRUE(
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
@@ -353,9 +352,9 @@ TEST_F(PipelineMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   const auto before = Rows();
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
   std::atomic<size_t> calls{0};
-  const auto result = irs::GetReady(_writer->CompactAsync(
-    FullMerge(), nullptr, [&] { return calls.fetch_add(1) < 2; }, nullptr,
-    executor));
+  const auto result = tests::Compact(
+    *_writer, FullMerge(), nullptr, [&] { return calls.fetch_add(1) < 2; },
+    nullptr, executor);
   EXPECT_FALSE(result);
   _writer->RefreshCommit();
   EXPECT_EQ(4, _writer->GetSnapshot().size());
@@ -407,8 +406,8 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
   const auto before = Rows();
   const auto postings = Postings();
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
-  const auto result = irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor));
+  const auto result =
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
   ASSERT_TRUE(result);
   EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Prepare), 0);
   _writer->RefreshCommit();
@@ -433,8 +432,8 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesPartitionOnTheirScheduler) {
   own.SetThreads(4, 0);
   own.RelaunchThreads();
   irs::PipelineMergeExecutor executor{TestDb(), &own, 4};
-  const auto result = irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor));
+  const auto result =
+    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
   own.Join();
   ASSERT_TRUE(result);
   EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Postings), 0);

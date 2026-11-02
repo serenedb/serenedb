@@ -36,7 +36,6 @@
 #include <shared_mutex>
 #include <type_traits>
 #include <variant>
-#include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/format_utils.hpp"
@@ -54,7 +53,6 @@
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/async.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
@@ -1460,32 +1458,6 @@ void IndexWriter::RevokeTicketsLocked() noexcept {
   }
 }
 
-auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
-                               const IndexFieldOptions* field_options,
-                               const MergeProgress& progress,
-                               const AnnBuildEnv* env,
-                               const PipelineMergeExecutor& executor)
-  -> yaclib::Future<CompactionResult> {
-  bool busy = false;
-  auto tickets = ReserveMerges(
-    [&policy](const IndexReader& index, const CompactingSegments& reserved,
-              MergeGroups& groups) {
-      auto& group = groups.emplace_back();
-      policy(group, index, reserved);
-      if (group.size() == 1 && !HasRemovals(group.front()->Meta())) {
-        group.clear();
-      }
-    },
-    busy);
-  if (tickets.empty()) {
-    co_return CompactionResult{
-      0, busy ? CompactionError::Busy : CompactionError::Ok};
-  }
-  SDB_ASSERT(tickets.size() == 1);
-  co_return co_await RunMerge(std::move(tickets.front()), field_options,
-                              progress, env, executor);
-}
-
 auto IndexWriter::RunMerge(MergeTicket ticket,
                            const IndexFieldOptions* field_options,
                            const MergeProgress& progress,
@@ -1620,15 +1592,6 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
             ", size=", pending_segment.segment.meta.byte_size);
   result.error = pending ? CompactionError::Pending : CompactionError::Ok;
   co_return result;
-}
-
-CompactionResult IndexWriter::Compact(const CompactionPolicy& policy,
-                                      const IndexFieldOptions* field_options,
-                                      const MergeProgress& progress) {
-  SDB_ASSERT(_db);
-  const PipelineMergeExecutor executor{*_db, nullptr, 1};
-  return GetReady(
-    CompactAsync(policy, field_options, progress, nullptr, executor));
 }
 
 void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,

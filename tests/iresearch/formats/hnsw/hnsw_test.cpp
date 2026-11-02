@@ -36,7 +36,6 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
 #include <tuple>
@@ -44,6 +43,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
@@ -398,8 +398,8 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   }
   ASSERT_EQ(2U, writer->GetSnapshot()->size());
 
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   auto merged = writer->GetSnapshot();
   ASSERT_NE(nullptr, merged);
@@ -500,8 +500,8 @@ TEST_P(HnswIndexTest, NullRowsStayOutOfTrainingAndResults) {
   check(flushed, kRows, "flush");
 
   write_part(1);
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   auto merged = writer->GetSnapshot();
   ASSERT_EQ(1U, merged->size());
@@ -536,8 +536,8 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
   }
   ASSERT_EQ(kSegments, writer->GetSnapshot()->size());
 
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   auto merged = writer->GetSnapshot();
   ASSERT_NE(nullptr, merged);
@@ -977,8 +977,8 @@ TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
       ASSERT_EQ(size_t{kD} * kD, flushed[0]->size());
       EXPECT_EQ(flushed[0], flushed[1]);
 
-      ASSERT_TRUE(writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+      ASSERT_TRUE(
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
       writer->RefreshCommit();
       const auto merged = writer->GetSnapshot();
       ASSERT_EQ(1U, merged->size());
@@ -1037,8 +1037,8 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   const auto merged = writer->GetSnapshot();
   ASSERT_EQ(1U, merged->size());

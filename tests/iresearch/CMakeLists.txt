@@ -224,7 +224,10 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE
+        iresearch-test-support
+        iresearch-policy-compaction
+        search-benchmark-common
 )
 target_include_directories(
     iresearch-tests

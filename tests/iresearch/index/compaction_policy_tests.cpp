@@ -24,8 +24,8 @@
 #include <iresearch/index/composite_reader_impl.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/index_utils.hpp>
 
+#include "index/compaction/policy_compaction.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -120,15 +120,11 @@ TEST(CompactionPoliciesTest, SegmentsUnderCompactionAreNeverPicked) {
   IndexReaderMock reader{meta};
   const irs::SegmentNames busy{"busy"};
   const irs::CompactingSegments compacting_segments{busy};
-  const irs::CompactionPolicy policies[] = {
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionBytes{.threshold = 1}),
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionBytesAccum{.threshold = 1}),
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionDocsLive{.threshold = 0.1f}),
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionDocsFill{.threshold = 0.1f}),
+  const tests::CompactionPolicy policies[] = {
+    tests::MakePolicy(tests::CompactionBytes{.threshold = 1}),
+    tests::MakePolicy(tests::CompactionBytesAccum{.threshold = 1}),
+    tests::MakePolicy(tests::CompactionDocsLive{.threshold = 0.1f}),
+    tests::MakePolicy(tests::CompactionDocsFill{.threshold = 0.1f}),
   };
   for (size_t p = 0; p != std::size(policies); ++p) {
     irs::Compaction candidates;
@@ -147,11 +143,9 @@ TEST(CompactionPoliciesTest, FullyDeletedSegmentsArePicked) {
   IndexReaderMock reader{meta};
   const irs::SegmentNames none;
   const irs::CompactingSegments compacting_segments{none};
-  const irs::CompactionPolicy policies[] = {
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionDocsLive{.threshold = 0.1f}),
-    irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionDocsFill{.threshold = 0.1f}),
+  const tests::CompactionPolicy policies[] = {
+    tests::MakePolicy(tests::CompactionDocsLive{.threshold = 0.1f}),
+    tests::MakePolicy(tests::CompactionDocsFill{.threshold = 0.1f}),
   };
   for (size_t p = 0; p != std::size(policies); ++p) {
     irs::Compaction candidates;

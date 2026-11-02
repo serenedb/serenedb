@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_gen.hpp"
@@ -222,7 +223,8 @@ TEST_F(MergeTicketTest, OverlappingGroupsAreBusy) {
   EXPECT_TRUE(second.empty());
   EXPECT_TRUE(busy);
 
-  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
+  EXPECT_EQ(CompactionError::Busy,
+            tests::Compact(*_writer, MergeEverything).error);
   EXPECT_EQ(Names({{0, 1}}), ReservedNames());
 }
 
@@ -237,7 +239,7 @@ TEST_F(MergeTicketTest, ReservesNothingWithoutWork) {
   auto none = Reserve({{}, {}}, nullptr, nullptr, &busy);
   EXPECT_TRUE(none.empty());
   EXPECT_FALSE(busy);
-  const auto compacted = _writer->Compact(MergeEverything);
+  const auto compacted = tests::Compact(*_writer, MergeEverything);
   EXPECT_EQ(CompactionError::Ok, compacted.error);
   EXPECT_EQ(0, compacted.size);
   EXPECT_TRUE(ReservedNames().empty());
@@ -396,11 +398,13 @@ TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
   EXPECT_FALSE(called);
   EXPECT_TRUE(blocked.empty());
   EXPECT_TRUE(busy);
-  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
+  EXPECT_EQ(CompactionError::Busy,
+            tests::Compact(*_writer, MergeEverything).error);
 
   pending = _writer->ArmCompactionFloor();
   EXPECT_FALSE(pending.Held());
-  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
+  EXPECT_EQ(CompactionError::Busy,
+            tests::Compact(*_writer, MergeEverything).error);
 
   ASSERT_TRUE(_writer->RefreshCommit());
   pending = _writer->ArmCompactionFloor();
@@ -429,7 +433,8 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
   EXPECT_EQ(CompactionError::Cancelled, result.error);
   EXPECT_EQ(2, result.size);
   EXPECT_FALSE(floor.Held());
-  EXPECT_EQ(CompactionError::Busy, _writer->Compact(MergeEverything).error);
+  EXPECT_EQ(CompactionError::Busy,
+            tests::Compact(*_writer, MergeEverything).error);
 
   floor = _writer->ArmCompactionFloor();
   EXPECT_TRUE(floor.Held());
@@ -448,9 +453,10 @@ TEST_F(MergeTicketTest, AStoppedMergeIsCancelledAndReleased) {
   EXPECT_FALSE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
 
-  EXPECT_EQ(
-    CompactionError::Cancelled,
-    _writer->Compact(MergeEverything, nullptr, [] { return false; }).error);
+  EXPECT_EQ(CompactionError::Cancelled,
+            tests::Compact(*_writer, MergeEverything, nullptr, [] {
+              return false;
+            }).error);
   EXPECT_TRUE(ReservedNames().empty());
 }
 

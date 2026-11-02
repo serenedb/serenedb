@@ -39,7 +39,6 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -59,6 +58,7 @@
 #include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "gtest/gtest.h"
+#include "index/compaction/policy_compaction.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/row_position_wal.h"
 
@@ -147,9 +147,9 @@ MapsBySource Logged(const irs::IndexWriter& writer,
   return doc_maps;
 }
 
-const irs::CompactionPolicy& FullMerge() {
-  static const auto kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+const tests::CompactionPolicy& FullMerge() {
+  static const auto kPolicy = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
   return kPolicy;
 }
 
@@ -443,12 +443,12 @@ TEST_F(SearchRowRemovalTest, StalePositionsAreRemappedThroughTwoMerges) {
   }
   const auto snapshot = _writer->GetSnapshot();
   const auto positions = PositionsOf(snapshot, victims);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   const std::vector<int64_t> early{1, 2};
   Remove(early);
   InsertRange(4000, 2000);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   Remove(snapshot, positions, victims);
@@ -469,7 +469,7 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
   {
     const auto snapshot = _writer->GetSnapshot();
     const auto positions = PositionsOf(snapshot, victims);
-    ASSERT_TRUE(_writer->Compact(FullMerge()));
+    ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
     _writer->RefreshCommit();
     const auto removal = MakeRemoval(positions, snapshot);
     const std::array<const irs::DocRemoval*, 1> removals{removal.get()};
@@ -585,7 +585,7 @@ TEST_F(SearchRowRemovalTest, CompactionAfterRemovalKeepsRowsRemoved) {
   InsertRange(3000, 3000);
   const std::vector<int64_t> victims{0, 2999, 3000, 5999, 1234};
   Remove(victims);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   ExpectModel();
 }
@@ -658,7 +658,7 @@ TEST_F(SearchRowRemovalTest, ManyStalePositionsInOneCommit) {
   InsertRange(4000, 4000);
   const auto snapshot = _writer->GetSnapshot();
   const auto before = PositionsIn(snapshot);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   auto trx = _writer->GetBatch();
   for (int64_t chunk = 0; chunk < 40; ++chunk) {
@@ -759,7 +759,7 @@ TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   }
   const std::vector<int64_t> victims{3, 150};
   const auto positions = PositionsOf(snapshot, victims);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   Remove(snapshot, positions, victims);
@@ -827,7 +827,7 @@ TEST_F(SearchRowRemovalTest, RowIdTermsReachAMergedInSegment) {
   std::iota(rowids.begin(), rowids.end(), 0);
   Insert(std::span{rowids}.first(2000), /*index_term=*/true);
   Insert(std::span{rowids}.subspan(2000), /*index_term=*/true);
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   const std::vector<int64_t> victims{7, 1999, 2000, 3999};
   Commit(irs::TermRemoval{victims}, victims);
   ASSERT_EQ(1, _writer->GetSnapshot().size());
@@ -846,7 +846,7 @@ TEST_F(SearchRowRemovalTest, RowIdTermsPassACopyTheirCommitCarriesOut) {
     std::atomic_bool parked{false};
     irs::CompactionResult merged;
     std::thread merge{[&, resumed = resume.get_future()] {
-      merged = _writer->Compact(FullMerge(), nullptr, [&] {
+      merged = tests::Compact(*_writer, FullMerge(), nullptr, [&] {
         if (!parked.exchange(true)) {
           merging.set_value();
           resumed.wait();
@@ -903,7 +903,7 @@ TEST_F(SearchRowRemovalTest,
   const std::vector<uint64_t> positions{
     live.at(10), MakeRowPosition(index, irs::doc_limits::min() + 5000),
     live.at(2010)};
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   Remove(snapshot, positions, victims);
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
@@ -960,7 +960,7 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
       continue;
     }
     if (action < 6) {
-      ASSERT_TRUE(_writer->Compact(FullMerge()));
+      ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
       if (rng() % 2) {
         _writer->RefreshCommit();
       }
@@ -976,7 +976,7 @@ TEST_F(SearchRowRemovalTest, RandomizedAgainstAModel) {
       }
     }
     if (rng() % 3 == 0) {
-      ASSERT_TRUE(_writer->Compact(FullMerge()));
+      ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
     }
     if (rng() % 4 == 0) {
       _writer->RefreshCommit();
@@ -1052,8 +1052,7 @@ TEST_F(SearchRowRemovalTest, ConcurrentInsertRemoveCompact) {
   }
   std::thread compactor{[&] {
     while (!stop.load()) {
-      _writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{3}));
+      tests::Compact(*_writer, tests::MakePolicy(tests::CompactionCount{3}));
     }
   }};
   std::thread refresher{[&] {

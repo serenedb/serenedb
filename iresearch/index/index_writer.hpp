@@ -106,10 +106,6 @@ class CompactingSegments {
   uint64_t _floor;
 };
 
-using CompactionPolicy =
-  std::function<void(Compaction& candidates, const IndexReader& index,
-                     const CompactingSegments& compacting_segments)>;
-
 using MergeGroups = std::vector<Compaction>;
 
 enum class CompactionError : uint32_t {
@@ -456,16 +452,6 @@ class IndexWriter : private util::Noncopyable {
   uint64_t NextTick(uint64_t queries) noexcept {
     return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
   }
-
-  CompactionResult Compact(const CompactionPolicy& policy,
-                           const IndexFieldOptions* field_options = nullptr,
-                           const MergeProgress& progress = {});
-
-  auto CompactAsync(const CompactionPolicy& policy,
-                    const IndexFieldOptions* field_options,
-                    const MergeProgress& progress, const AnnBuildEnv* env,
-                    const PipelineMergeExecutor& executor)
-    -> yaclib::Future<CompactionResult>;
 
   class MergeTicket {
    public:

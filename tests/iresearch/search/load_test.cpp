@@ -641,8 +641,6 @@ void BuildIndex(const std::string& corpus_path,
     .batch_size = 100000,
     .indexer_threads = 1,
     .refresh_interval_ms = 0,
-    .compaction_interval_ms = 5000,
-    .compaction_threads = 0,
     .compact_all = gSegmentDocs == 0,
     .segment_docs_max = gSegmentDocs,
   };

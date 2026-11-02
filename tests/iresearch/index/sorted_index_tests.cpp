@@ -35,13 +35,13 @@
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <numeric>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "index/merge/support/segment_dump.hpp"
 #include "index/merge/support/segment_gen.hpp"
@@ -68,8 +68,8 @@ constexpr irs::field_id kDateColumn = 1005;
 constexpr irs::field_id kTitleColumn = 1006;
 constexpr irs::field_id kTypedColumn = 2000;
 
-const auto kFullMerge = irs::index_utils::MakePolicy(
-  irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+const auto kFullMerge =
+  tests::MakePolicy(tests::CompactionCount{std::numeric_limits<size_t>::max()});
 
 const irs::SortSpec kByNameDesc{
   {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
@@ -257,7 +257,7 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     const auto inputs = Segments(before);
     ASSERT_LT(1, inputs.size());
     const auto expected = ExpectedSortedMerge(inputs, spec);
-    ASSERT_TRUE(writer.Compact(kFullMerge));
+    ASSERT_TRUE(tests::Compact(writer, kFullMerge));
     ASSERT_TRUE(writer.RefreshCommit());
     const auto after = writer.GetSnapshot();
     ASSERT_EQ(1, after.size());
@@ -290,7 +290,7 @@ class SortedIndexTestCase : public tests::IndexTestBase {
       WriteSegment(*writer, gen, Shape(300, null_ratio, 0.2), next_id, &spec);
     }
     const auto live = writer->GetSnapshot().live_docs_count();
-    ASSERT_TRUE(writer->Compact(kFullMerge));
+    ASSERT_TRUE(tests::Compact(*writer, kFullMerge));
     std::vector<std::string> removed;
     for (size_t id = 0; id < next_id; id += 5) {
       removed.push_back(absl::StrCat("doc-", id));
@@ -803,7 +803,7 @@ TEST_P(SortedIndexStressTestCase, commit_on_tick) {
       ExpectSameNames(*twins.plain, *twins.sorted);
       EXPECT_EQ(expected.size(), twins.sorted->GetSnapshot().live_docs_count());
       for (auto* writer : writers) {
-        writer->Compact(kFullMerge);
+        tests::Compact(*writer, kFullMerge);
         writer->RefreshCommit();
       }
       ExpectSameNames(*twins.plain, *twins.sorted);

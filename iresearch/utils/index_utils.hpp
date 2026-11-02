@@ -24,50 +24,9 @@
 #pragma once
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/index_writer.hpp"
+#include "iresearch/store/directory.hpp"
 
 namespace irs::index_utils {
-
-// merge segment if:
-//   {threshold} > segment_bytes / (all_segment_bytes / #segments)
-struct CompactionBytes {
-  float threshold = 0;
-};
-
-CompactionPolicy MakePolicy(const CompactionBytes& options);
-
-// merge segment if:
-//   {threshold} >= (segment_bytes + sum_of_merge_candidate_segment_bytes) /
-//   all_segment_bytes
-struct CompactionBytesAccum {
-  float threshold = 0;
-};
-
-CompactionPolicy MakePolicy(const CompactionBytesAccum& options);
-
-// merge first {threshold} segments
-struct CompactionCount {
-  size_t threshold = std::numeric_limits<size_t>::max();
-};
-
-CompactionPolicy MakePolicy(const CompactionCount& options);
-
-// merge segment if:
-//   {threshold} >= segment_docs{valid} / (all_segment_docs{valid} / #segments)
-struct CompactionDocsLive {
-  float threshold = 0;
-};
-
-CompactionPolicy MakePolicy(const CompactionDocsLive& options);
-
-// merge segment if:
-//   {threshold} > #segment_docs{valid} / (#segment_docs{valid} +
-//   #segment_docs{removed})
-struct CompactionDocsFill {
-  float threshold = 0;
-};
-
-CompactionPolicy MakePolicy(const CompactionDocsFill& options);
 
 // Writes segment_meta to the supplied directory
 void FlushIndexSegment(Directory& dir, IndexSegment& segment,

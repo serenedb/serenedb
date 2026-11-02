@@ -40,9 +40,7 @@
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <memory>
 #include <random>
 #include <span>
@@ -51,6 +49,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "tests_shared.hpp"
 
@@ -216,9 +215,9 @@ double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
 void CompactAll(irs::IndexWriter& writer, const irs::AnnBuildEnv* env,
                 size_t threads) {
   const auto executor = tests::merge::MakeExecutor(threads);
-  const auto result = irs::GetReady(writer.CompactAsync(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()), nullptr,
-    {}, env, executor));
+  const auto result =
+    tests::Compact(writer, tests::MakePolicy(tests::CompactionCount()), nullptr,
+                   {}, env, executor);
   ASSERT_TRUE(result);
   writer.RefreshCommit();
 }

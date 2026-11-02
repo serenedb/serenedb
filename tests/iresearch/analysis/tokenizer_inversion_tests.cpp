@@ -33,7 +33,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <map>
 #include <mutex>
 #include <string>
@@ -41,6 +40,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
@@ -545,8 +545,8 @@ void BuildIndex(const Spec& spec, std::span<const FieldPlan> plan,
   if (!consolidate) {
     return;
   }
-  const irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  const ::tests::CompactionCount compact_all;
+  ASSERT_TRUE(::tests::Compact(*writer, ::tests::MakePolicy(compact_all)));
   writer->RefreshCommit();
 }
 

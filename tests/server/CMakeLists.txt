@@ -74,7 +74,7 @@ add_executable(
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus
+    PRIVATE sereneserver gtest serene_docs_corpus iresearch-policy-compaction
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 

@@ -44,7 +44,6 @@
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/enum_name.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <optional>
@@ -53,6 +52,7 @@
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
@@ -206,8 +206,8 @@ void MergeWriterTestCase::EnsureDocBlocksNotMixed() {
   // 0: 1..10
   // 1: 11..20
   // 2: 21..30
-  const irs::index_utils::CompactionCount compact_all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  const tests::CompactionCount compact_all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
   ASSERT_TRUE(writer->RefreshCommit());
   AssertSnapshotEquality(
     writer->GetSnapshot(),
@@ -366,8 +366,9 @@ TEST_P(MergeWriterTestCase, CompactReportsMergeStats) {
     bytes += segment.Meta().byte_size;
   }
 
-  const auto result = writer->Compact(irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}));
+  const auto result = tests::Compact(
+    *writer, tests::MakePolicy(
+               tests::CompactionCount{std::numeric_limits<size_t>::max()}));
   ASSERT_TRUE(result);
   EXPECT_EQ(3, result.size);
   const auto& stats = result.stats;
@@ -389,8 +390,9 @@ TEST_P(MergeWriterTestCase, CompactReportsMergeStats) {
   EXPECT_EQ(stats.output, after[0].Meta().name);
   EXPECT_EQ(stats.output_bytes, after[0].Meta().byte_size);
 
-  const auto nothing = writer->Compact(irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}));
+  const auto nothing = tests::Compact(
+    *writer, tests::MakePolicy(
+               tests::CompactionCount{std::numeric_limits<size_t>::max()}));
   ASSERT_TRUE(nothing);
   EXPECT_EQ(0, nothing.size);
   EXPECT_TRUE(nothing.stats.inputs.empty());
@@ -1761,8 +1763,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
@@ -2093,8 +2095,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
   {
     auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
@@ -2271,8 +2273,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     {
       auto writer = irs::IndexWriter::Make(dir2, irs::kOmAppend,
                                            irs::tests::DefaultWriterOptions());
-      ASSERT_TRUE(writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+      ASSERT_TRUE(
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
       ASSERT_TRUE(writer->RefreshCommit());
     }
 

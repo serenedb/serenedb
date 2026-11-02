@@ -42,7 +42,6 @@
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -55,6 +54,7 @@
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -84,8 +84,8 @@ std::vector<irs::IndexWriter::MergeTicket> ReserveCountMerge(
   return writer.ReserveMerges(
     [](const irs::IndexReader& reader,
        const irs::CompactingSegments& compacting, irs::MergeGroups& groups) {
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())(
-        groups.emplace_back(), reader, compacting);
+      tests::MakePolicy(tests::CompactionCount())(groups.emplace_back(), reader,
+                                                  compacting);
     },
     busy);
 }
@@ -5208,8 +5208,8 @@ TEST_P(IndexTestCase, reuse_segment_writer) {
 
   // merge all segments
   {
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }
@@ -5377,7 +5377,7 @@ TEST_P(IndexTestCase, concurrent_compaction) {
           CompactRange(candidates, segments, reader, i, i + 2);
         };
 
-        if (writer->Compact(policy)) {
+        if (tests::Compact(*writer, policy)) {
           writer->RefreshCommit();
         }
 
@@ -5491,7 +5491,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
           CompactRange(candidates, segments, reader, i, i + 2);
         };
 
-        writer->Compact(policy);
+        tests::Compact(*writer, policy);
 
         i = (i + 1) % num_segments;
       }
@@ -5619,7 +5619,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
           CompactRange(candidates, segments, meta, i, i + 2);
         };
 
-        writer->Compact(policy);
+        tests::Compact(*writer, policy);
 
         i = (i + 1) % num_segments;
       }
@@ -5748,7 +5748,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
           CompactRange(candidates, segments, reader, i, i + 2);
         };
 
-        if (writer->Compact(policy)) {
+        if (tests::Compact(*writer, policy)) {
           writer->RefreshCommit();
           irs::DirectoryCleaner::clean(this->dir());
         }
@@ -5847,11 +5847,12 @@ TEST_P(IndexTestCase, compact_single_segment) {
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // nothing to compact
-    ASSERT_TRUE(
-      writer->Compact(check_compacting_segments));  // check segments registered
-                                                    // for compaction
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(tests::CompactionCount())));  // nothing to compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, check_compacting_segments));  // check segments registered
+                                             // for compaction
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
@@ -5890,13 +5891,14 @@ TEST_P(IndexTestCase, compact_single_segment) {
     count = 0;
     dir().visit(get_number_of_files_in_segments);
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // nothing to compact
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(tests::CompactionCount())));  // nothing to compact
     expected_compacting_segments = {
       0};  // expect first segment to be marked for compaction
-    ASSERT_TRUE(
-      writer->Compact(check_compacting_segments));  // check segments registered
-                                                    // for compaction
+    ASSERT_TRUE(tests::Compact(
+      *writer, check_compacting_segments));  // check segments registered
+                                             // for compaction
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     ASSERT_EQ(1 + count,
@@ -5994,8 +5996,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     std::thread compaction_thread([&writer] {
       // compact
-      ASSERT_TRUE(writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{})));
+      ASSERT_TRUE(
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{})));
 
       const std::vector<size_t> expected_compacting_segments{0, 1};
       auto check_compacting_segments =
@@ -6011,7 +6013,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           }
         };
       // check segments registered for compaction
-      ASSERT_TRUE(writer->Compact(check_compacting_segments));
+      ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
     });
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
@@ -6159,9 +6161,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       // A concurrent commit removed a doc from a candidate, so the merge can't
       // be reconciled against the moved snapshot: transient Busy, not Fail.
       ASSERT_EQ(irs::CompactionError::Busy,
-                writer
-                  ->Compact(irs::index_utils::MakePolicy(
-                    irs::index_utils::CompactionCount()))
+                tests::Compact(*writer,
+                               tests::MakePolicy(tests::CompactionCount()))
                   .error);  // compact
 
       auto check_compacting_segments =
@@ -6170,7 +6171,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
         };
       // check segments registered for compaction
-      ASSERT_TRUE(writer->Compact(check_compacting_segments));
+      ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
     });
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
@@ -6315,8 +6316,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     std::thread compaction_thread([&writer] {
       // compaction will fail because of
-      ASSERT_TRUE(writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+      ASSERT_TRUE(
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
 
       const std::vector<size_t> expected_compacting_segments{0, 1};
       auto check_compacting_segments =
@@ -6332,7 +6333,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           }
         };
       // check segments registered for compaction
-      ASSERT_TRUE(writer->Compact(check_compacting_segments));
+      ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
     });
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
@@ -6458,8 +6459,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
 
     std::thread compaction_thread([&writer] {
       // compaction will fail because of
-      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-        irs::index_utils::CompactionCount())));  // compact
+      ASSERT_TRUE(tests::Compact(
+        *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
       const std::vector<size_t> expected_compacting_segments{0, 1};
       auto check_compacting_segments =
@@ -6475,7 +6476,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
           }
         };
       // check segments registered for compaction
-      ASSERT_TRUE(writer->Compact(check_compacting_segments));
+      ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
     });
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir));
@@ -6628,8 +6629,8 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
 
     writer->RefreshBegin();
     writer->Clear();
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
 
@@ -6658,8 +6659,8 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
 
     writer->RefreshBegin();
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
     writer->Clear();
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
@@ -6685,18 +6686,18 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->Clear();
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
@@ -6723,12 +6724,12 @@ TEST_P(IndexTestCase, segment_compact_clear_commit) {
     AssertSnapshotEquality(*writer);
 
     writer->Clear();
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit transaction
@@ -6806,27 +6807,27 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -6835,8 +6836,9 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       *writer);  // commit transaction (will commit nothing)
     ASSERT_EQ(1 + count, irs::DirectoryCleaner::clean(
                            dir()));  // +1 for corresponding segments_* file
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // nothing to compact
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(tests::CompactionCount())));  // nothing to compact
     writer->RefreshCommit();
     AssertSnapshotEquality(
       *writer);  // commit transaction (will commit nothing)
@@ -6901,25 +6903,25 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
     writer->RefreshCommit();
@@ -7012,25 +7014,25 @@ TEST_P(IndexTestCase, segment_compact_commit) {
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_1
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));  // segments_1
 
@@ -7130,7 +7132,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
          const irs::CompactingSegments& compacting_segments) {
         ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
       };
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
   }
 
   const size_t segments_count = 10;
@@ -7152,7 +7154,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
         candidates.emplace_back(&reader[j++]);
       };
 
-    ASSERT_TRUE(writer->Compact(merge_adjacent));
+    ASSERT_TRUE(tests::Compact(*writer, merge_adjacent));
   }
 
   // check all segments registered
@@ -7166,7 +7168,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
             expected_compacting_segment.Meta().name));
         }
       };
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
   }
 
   writer->RefreshCommit();
@@ -7179,7 +7181,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
          const irs::CompactingSegments& compacting_segments) {
         ASSERT_EQ(0, CountCompacting(reader, compacting_segments));
       };
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
   }
 
   // validate structure
@@ -7315,27 +7317,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_FALSE(
       writer
         ->RefreshBegin());  // begin transaction (will not start transaction)
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
     // Both segments are already registered for compaction, so the policy skips
     // them and finds nothing to compact (Ok, no candidates) instead of picking
     // an in-flight segment.
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -7347,14 +7349,15 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // nothing to compact
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(tests::CompactionCount())));  // nothing to compact
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(
@@ -7426,27 +7429,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
     writer->RefreshCommit();
@@ -7457,7 +7460,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
@@ -7466,7 +7469,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure
     tests::index_t expected;
@@ -7559,27 +7562,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -7594,7 +7597,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
 
@@ -7606,7 +7609,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure
     tests::index_t expected;
@@ -7724,27 +7727,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -7760,7 +7763,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     expected_compacting_segments = {0, 1};
 
     // Check name only because of removals
-    ASSERT_TRUE(writer->Compact(check_compacting_segments_name_only));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments_name_only));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
@@ -7769,7 +7772,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -7866,27 +7869,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -7899,7 +7902,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments_name_only));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments_name_only));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
@@ -7909,7 +7912,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -8010,7 +8013,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     auto tickets = ReserveCountMerge(*writer);
     ASSERT_EQ(1, tickets.size());
@@ -8020,13 +8023,13 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments_name_only));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments_name_only));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
@@ -8039,7 +8042,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -8126,8 +8129,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     count = 0;
     ASSERT_TRUE(dir().visit(get_number_of_files_in_segments));
 
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -8165,7 +8168,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8174,17 +8177,17 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // this compaction will be postponed
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     // check compacting segments are pending
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
@@ -8233,7 +8236,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8242,17 +8245,17 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // this compaction will be postponed
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     // check compacting segments are pending
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
@@ -8301,11 +8304,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
     tests::Remove(*writer, query_doc1);
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     // this compaction will be postponed
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     // check compacting segments are pending
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     writer->RefreshAbort();
 
@@ -8314,7 +8317,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // still pending
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     tests::Remove(*writer, query_doc1);
     // make next commit
@@ -8323,11 +8326,11 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // now no compacting should be present
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // could compact successfully
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
 
     // cleanup should remove old files
     ASSERT_NE(0, irs::DirectoryCleaner::clean(dir()));
@@ -8381,27 +8384,27 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8415,7 +8418,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments_name_only));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments_name_only));
 
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);  // commit pending merge
@@ -8425,7 +8428,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -8545,29 +8548,29 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount())));  // compact
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(tests::CompactionCount())));  // compact
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8578,7 +8581,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     tests::Remove(*writer, query_doc1_doc4);
     writer->RefreshCommit();
@@ -8589,7 +8592,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // validate structure (doesn't take removals into account)
     tests::index_t expected;
@@ -8709,34 +8712,34 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_TRUE(writer->RefreshBegin());  // begin transaction
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // Segments already marked for compaction are skipped by the policy, so
     // there is nothing left to compact (Ok, no candidates).
     {
-      const auto result = writer->Compact(
-        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+      const auto result =
+        tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount()));
       ASSERT_EQ(irs::CompactionError::Ok, result.error);
       ASSERT_EQ(0, result.size);
     }
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     ASSERT_EQ(0, irs::DirectoryCleaner::clean(dir()));
 
@@ -8747,7 +8750,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {0, 1};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     tests::Remove(*writer, query_doc3_doc4);
 
@@ -8757,7 +8760,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
 
     // check compacting segments
     expected_compacting_segments = {};
-    ASSERT_TRUE(writer->Compact(check_compacting_segments));
+    ASSERT_TRUE(tests::Compact(*writer, check_compacting_segments));
 
     // +1 for segments_3
     ASSERT_EQ(count + 1, irs::DirectoryCleaner::clean(dir()));
@@ -8829,8 +8832,7 @@ TEST_P(IndexTestCase, compact_progress) {
                               &tests::GenericJsonFieldFactory);
   auto* doc1 = gen.next();
   auto* doc2 = gen.next();
-  auto policy =
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+  auto policy = tests::MakePolicy(tests::CompactionCount());
 
   // test default progress (false)
   {
@@ -8855,7 +8857,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeProgress progress;
 
-    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, progress));
+    ASSERT_TRUE(
+      tests::Compact(*writer, policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
     reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
 
@@ -8888,7 +8891,8 @@ TEST_P(IndexTestCase, compact_progress) {
 
     irs::MergeProgress progress = []() -> bool { return false; };
 
-    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, progress));
+    ASSERT_FALSE(
+      tests::Compact(*writer, policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
@@ -8933,7 +8937,8 @@ TEST_P(IndexTestCase, compact_progress) {
       return true;
     };
 
-    ASSERT_TRUE(writer->Compact(policy, /*field_options=*/nullptr, progress));
+    ASSERT_TRUE(
+      tests::Compact(*writer, policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
     reader = writer->GetSnapshot();
     tests::AssertSnapshotEquality(
@@ -8976,7 +8981,8 @@ TEST_P(IndexTestCase, compact_progress) {
       return --call_count;
     };
 
-    ASSERT_FALSE(writer->Compact(policy, /*field_options=*/nullptr, progress));
+    ASSERT_FALSE(
+      tests::Compact(*writer, policy, /*field_options=*/nullptr, progress));
     writer->RefreshCommit();  // write compacted segment
 
     reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
@@ -9010,8 +9016,7 @@ TEST_P(IndexTestCase, segment_compact) {
   const tests::Document* doc5 = gen.next();
   const tests::Document* doc6 = gen.next();
 
-  auto always_merge =
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+  auto always_merge = tests::MakePolicy(tests::CompactionCount());
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -9060,7 +9065,7 @@ TEST_P(IndexTestCase, segment_compact) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9102,7 +9107,7 @@ TEST_P(IndexTestCase, segment_compact) {
                   Merged({NameRemoval({"A"}), std::move(removal_doc2)}));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9146,7 +9151,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9190,7 +9195,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9242,7 +9247,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(merge_if_masked));
+    ASSERT_TRUE(tests::Compact(*writer, merge_if_masked));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9266,7 +9271,7 @@ TEST_P(IndexTestCase, segment_compact) {
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     tests::Remove(*writer, std::move(query_doc1));
-    ASSERT_TRUE(writer->Compact(merge_if_masked));
+    ASSERT_TRUE(tests::Compact(*writer, merge_if_masked));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9278,7 +9283,8 @@ TEST_P(IndexTestCase, segment_compact) {
       ASSERT_EQ(2, segment.docs_count());  // total count of documents
     }
 
-    ASSERT_TRUE(writer->Compact(
+    ASSERT_TRUE(tests::Compact(
+      *writer,
       merge_if_masked));  // previous removal now committed and considered
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
@@ -9306,7 +9312,7 @@ TEST_P(IndexTestCase, segment_compact) {
                   Merged({NameRemoval({"A"}), std::move(removal_doc3)}));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9353,7 +9359,7 @@ TEST_P(IndexTestCase, segment_compact) {
                   Merged({NameRemoval({"A"}), std::move(removal_doc3)}));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9402,7 +9408,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9451,7 +9457,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc3));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9504,7 +9510,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9561,7 +9567,7 @@ TEST_P(IndexTestCase, segment_compact) {
     tests::Remove(*writer, std::move(query_doc1_doc3_doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9632,7 +9638,7 @@ TEST_P(IndexTestCase, segment_compact) {
     // defragment segments
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9714,7 +9720,7 @@ TEST_P(IndexTestCase, segment_compact) {
     AssertSnapshotEquality(*writer);
 
     // defragment segments
-    ASSERT_TRUE(writer->Compact(always_merge));
+    ASSERT_TRUE(tests::Compact(*writer, always_merge));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9801,10 +9807,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc6));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionBytes options;
+    tests::CompactionBytes options;
     options.threshold = 1;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing merge
+    ASSERT_TRUE(
+      tests::Compact(*writer,
+                     tests::MakePolicy(options)));  // value garanteeing merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9877,10 +9884,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionBytes options;
+    tests::CompactionBytes options;
     options.threshold = 0;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing non-merge
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(options)));  // value garanteeing non-merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -9950,10 +9958,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionBytesAccum options;
+    tests::CompactionBytesAccum options;
     options.threshold = 1;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing merge
+    ASSERT_TRUE(
+      tests::Compact(*writer,
+                     tests::MakePolicy(options)));  // value garanteeing merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
     // segments merged because segment[0] is a candidate and needs to be
@@ -9997,10 +10006,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionBytesAccum options;
+    tests::CompactionBytesAccum options;
     options.threshold = 0;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing non-merge
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(options)));  // value garanteeing non-merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -10074,10 +10084,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionDocsLive options;
+    tests::CompactionDocsLive options;
     options.threshold = 1;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing merge
+    ASSERT_TRUE(
+      tests::Compact(*writer,
+                     tests::MakePolicy(options)));  // value garanteeing merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -10124,10 +10135,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     ASSERT_TRUE(InsertWithName(*writer, *doc5));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionDocsLive options;
+    tests::CompactionDocsLive options;
     options.threshold = 0;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing non-merge
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(options)));  // value garanteeing non-merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -10204,10 +10216,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionDocsFill options;
+    tests::CompactionDocsFill options;
     options.threshold = 1;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing merge
+    ASSERT_TRUE(
+      tests::Compact(*writer,
+                     tests::MakePolicy(options)));  // value garanteeing merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -10255,10 +10268,11 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     tests::Remove(*writer, std::move(query_doc2_doc4));
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
-    irs::index_utils::CompactionDocsFill options;
+    tests::CompactionDocsFill options;
     options.threshold = 0;
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(options)));  // value garanteeing non-merge
+    ASSERT_TRUE(tests::Compact(
+      *writer,
+      tests::MakePolicy(options)));  // value garanteeing non-merge
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
 
@@ -10701,8 +10715,8 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove) {
 
   // this compaction should bring us to one compacted segment without
   // removals.
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -10765,8 +10779,8 @@ TEST_P(IndexTestCase, writer_insert_immediate_remove_all) {
 
   // this compaction should bring us to one compacted segment without
   // removes.
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 
@@ -10826,8 +10840,8 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment) {
   }
 
   // this compaction should still be ok
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 }
@@ -10866,8 +10880,8 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
 
   // this compaction should bring us to one compacted segment without
   // removes.
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   // Remove all documents from 'new' segment
   auto query_doc4 = MakeByTerm(kNameFieldId, "D");
   tests::Remove(*writer, query_doc4);
@@ -10895,8 +10909,8 @@ TEST_P(IndexTestCase, writer_remove_all_from_last_segment_compaction) {
   }
 
   // this compaction should still be ok
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  ASSERT_TRUE(
+    tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
   writer->RefreshCommit();
   AssertSnapshotEquality(*writer);
 }

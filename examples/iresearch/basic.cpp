@@ -23,6 +23,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iostream>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
@@ -32,7 +33,9 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -42,11 +45,12 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
+#include <utility>
 
 #include "examples.h"
 
@@ -417,10 +421,27 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   auto before = writer.GetSnapshot();
   std::cout << "Before compaction: " << before.size() << " segment(s)\n";
 
-  auto policy =
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{});
-
-  writer.Compact(policy);
+  bool busy = false;
+  auto tickets = writer.ReserveMerges(
+    [](const irs::IndexReader& index, const irs::CompactingSegments& compacting,
+       irs::MergeGroups& groups) {
+      auto& group = groups.emplace_back();
+      for (const auto& segment : index) {
+        if (!compacting.contains(segment.Meta().name)) {
+          group.emplace_back(&segment);
+        }
+      }
+      if (group.size() == 1 && !irs::HasRemovals(group.front()->Meta())) {
+        group.clear();
+      }
+    },
+    busy);
+  const irs::PipelineMergeExecutor executor{
+    Db(), &duckdb::TaskScheduler::GetScheduler(Db()), 1};
+  for (auto& ticket : tickets) {
+    irs::GetReady(
+      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor));
+  }
   writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.

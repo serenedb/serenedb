@@ -206,9 +206,9 @@ void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
   const auto& columns = table.GetColumns();
   const auto keys = ResolveSortKeys(columns, info.sort_orders);
   info.sort_orders = SortOrdersOf(keys, columns);
-  const auto stored = StoredColumns(info, columns);
+  auto stored = StoredColumns(info, columns);
   for (const auto& key : keys) {
-    if (stored.contains(key.column.index)) {
+    if (!stored.emplace(key.column.index).second) {
       continue;
     }
     const auto& name = columns.GetColumn(key.column).Name();

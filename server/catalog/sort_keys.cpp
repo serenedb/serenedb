@@ -23,7 +23,6 @@
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -36,7 +35,6 @@ std::vector<SortKey> ResolveSortKeys(
   std::span<const duckdb::OrderByNode> orders) {
   std::vector<SortKey> keys;
   keys.reserve(orders.size());
-  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& order : orders) {
     const auto& expr = *order.expression;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF ||
@@ -67,22 +65,16 @@ std::vector<SortKey> ResolveSortKeys(
                   "\" with collation \"", collation, "\""));
       }
     }
-    const auto index = column.Logical();
-    if (!seen.emplace(index.index).second) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-                      ERR_MSG("column \"", name.GetIdentifierName(),
-                              "\" appears more than once in SORTED BY"));
-    }
-    const auto type = order.type == duckdb::OrderType::DESCENDING
-                        ? duckdb::OrderType::DESCENDING
-                        : duckdb::OrderType::ASCENDING;
-    const auto null_order =
-      order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
-        ? order.null_order
-        : (type == duckdb::OrderType::DESCENDING
-             ? duckdb::OrderByNullType::NULLS_FIRST
-             : duckdb::OrderByNullType::NULLS_LAST);
-    keys.push_back({.column = index, .order = type, .null_order = null_order});
+    const bool desc = order.type == duckdb::OrderType::DESCENDING;
+    keys.push_back({
+      .column = column.Logical(),
+      .order =
+        desc ? duckdb::OrderType::DESCENDING : duckdb::OrderType::ASCENDING,
+      .null_order = order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
+                      ? order.null_order
+                    : desc ? duckdb::OrderByNullType::NULLS_FIRST
+                           : duckdb::OrderByNullType::NULLS_LAST,
+    });
   }
   return keys;
 }

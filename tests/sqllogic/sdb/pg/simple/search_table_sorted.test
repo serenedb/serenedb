@@ -197,6 +197,65 @@ misplaced
 statement ok
 DROP TABLE srt_ctas;
 
+statement ok
+CREATE TABLE srt_rep (k INTEGER, n INTEGER)
+  SORTED BY (k, k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'srt_rep';
+----
+definition
+CREATE TABLE public.srt_rep(k INTEGER, n INTEGER) SORTED BY (k ASC NULLS LAST, k DESC NULLS FIRST)
+
+statement ok
+INSERT INTO srt_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 7919) % 101 END, i FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_rep;
+
+statement ok
+INSERT INTO srt_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 31) % 57 END, 3000 + i FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_rep;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt_rep;
+----
+segments	n
+2	5000
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST, rowid) AS logical
+  FROM srt_rep) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) srt_rep;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt_rep;
+----
+segments	n
+1	5000
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST, rowid) AS logical
+  FROM srt_rep) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE srt_rep;
+
 statement error
 CREATE TABLE srt_bad (a INTEGER) SORTED BY (b) WITH (storage = 'search');
 ----
@@ -231,12 +290,6 @@ statement error
 CREATE TABLE srt_bad (a INTEGER, b AS (a * 2)) SORTED BY (b) WITH (storage = 'search');
 ----
 db error: ERROR: SORTED BY cannot use generated column "b"
-
-
-statement error
-CREATE TABLE srt_bad (a INTEGER) SORTED BY (a, a DESC) WITH (storage = 'search');
-----
-db error: ERROR: column "a" appears more than once in SORTED BY
 
 
 statement error

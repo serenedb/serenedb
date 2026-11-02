@@ -32,12 +32,6 @@ CREATE INDEX iis_bad ON iis USING inverted (body) SORTED BY (k + 1);
 db error: ERROR: SORTED BY takes column names, not "(k + 1)"
 
 
-statement error
-CREATE INDEX iis_bad ON iis USING inverted (body) SORTED BY (k, k DESC);
-----
-db error: ERROR: column "k" appears more than once in SORTED BY
-
-
 statement ok
 CREATE TABLE iis_collated (k VARCHAR COLLATE nocase, body VARCHAR);
 
@@ -215,6 +209,81 @@ SELECT split_part(pg_get_indexdef('iis_idx'::regclass), ' WITH', 1) AS def;
 ----
 def
 CREATE INDEX iis_idx ON public.iis USING inverted (kk, body) INCLUDE (id, kk, ts) SORTED BY (kk DESC, ts)
+
+
+statement ok
+CREATE TABLE iis_rep (k INTEGER, body VARCHAR);
+
+
+statement ok
+CREATE INDEX iis_rep_idx ON iis_rep USING inverted (body) SORTED BY (k, k DESC)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT split_part(pg_get_indexdef('iis_rep_idx'::regclass), ' WITH', 1) AS def;
+----
+def
+CREATE INDEX iis_rep_idx ON public.iis_rep USING inverted (body) INCLUDE (k) SORTED BY (k, k DESC)
+
+
+query
+SELECT split_part(split_part(sql, ' WITH', 1), ' USING ', 2) AS def FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'iis_rep_idx';
+----
+def
+inverted (body, k included ()) SORTED BY (k ASC NULLS LAST, k DESC NULLS FIRST)
+
+
+statement ok
+INSERT INTO iis_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 7919) % 101 END, 'row ' || i FROM range(3000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iis_rep;
+
+
+query
+SELECT count(*) AS n, list(k) = list(k ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST) AS sorted FROM iis_rep_idx;
+----
+n	sorted
+3000	t
+
+
+statement ok
+INSERT INTO iis_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 31) % 57 END, 'more ' || i FROM range(2000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iis_rep;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iis_rep_idx');
+----
+segments	docs
+2	5000
+
+
+statement ok
+VACUUM (COMPACT_INDEX) iis_rep_idx;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iis_rep_idx');
+----
+segments	docs
+1	5000
+
+
+query
+SELECT count(*) AS n, list(k) = list(k ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST) AS sorted FROM iis_rep_idx;
+----
+n	sorted
+5000	t
+
+
+statement ok
+DROP TABLE iis_rep;
 
 
 statement ok

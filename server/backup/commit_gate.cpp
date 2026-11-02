@@ -20,18 +20,16 @@
 
 #include "backup/commit_gate.h"
 
-#include <absl/base/no_destructor.h>
-
 namespace sdb::backup {
 
 utils::DrainGate& CommitGate() {
-  static absl::NoDestructor<utils::DrainGate> gGate;
-  return *gGate;
+  static utils::DrainGate gGate;
+  return gGate;
 }
 
 utils::DrainGate& CheckpointGate() {
-  static absl::NoDestructor<utils::DrainGate> gGate;
-  return *gGate;
+  static utils::DrainGate gGate;
+  return gGate;
 }
 
 }  // namespace sdb::backup

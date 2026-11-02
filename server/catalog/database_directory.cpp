@@ -21,7 +21,6 @@
 #include "catalog/database_directory.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/base/no_destructor.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
@@ -52,8 +51,8 @@ struct RemovalGate {
 };
 
 RemovalGate& Gate() {
-  static absl::NoDestructor<RemovalGate> gGate;
-  return *gGate;
+  static RemovalGate gGate;
+  return gGate;
 }
 
 void RunRemoval(Removal&& removal) {

@@ -20,7 +20,6 @@
 
 #include "backup/pg_control.h"
 
-#include <absl/base/no_destructor.h>
 #include <absl/crc/crc32c.h>
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
@@ -170,8 +169,8 @@ void EnsurePgVersion(const std::filesystem::path& data_dir) {
 }
 
 PositionSource& PositionSource::Instance() {
-  static absl::NoDestructor<PositionSource> gSource;
-  return *gSource;
+  static PositionSource gSource;
+  return gSource;
 }
 
 void PositionSource::Open(const std::filesystem::path& data_dir) {

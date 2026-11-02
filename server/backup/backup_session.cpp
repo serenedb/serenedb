@@ -20,7 +20,6 @@
 
 #include "backup/backup_session.h"
 
-#include <absl/base/no_destructor.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 
@@ -139,8 +138,8 @@ void Resume() noexcept {
 }  // namespace
 
 BackupSession& BackupSession::Instance() {
-  static absl::NoDestructor<BackupSession> gSession;
-  return *gSession;
+  static BackupSession gSession;
+  return gSession;
 }
 
 std::optional<StartedBackup> BackupSession::Begin(

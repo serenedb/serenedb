@@ -55,6 +55,18 @@ DROP FUNCTION IF EXISTS efs_definer_can_read();
 
 
 statement ok
+DROP FUNCTION IF EXISTS efs_reads_mine();
+
+
+statement ok
+DROP FUNCTION IF EXISTS efs_definer_reads_mine();
+
+
+statement ok
+DROP PROCEDURE IF EXISTS efs_add_mine(int);
+
+
+statement ok
 DROP SEQUENCE IF EXISTS efs_seq;
 
 
@@ -215,6 +227,21 @@ CREATE FUNCTION efs_definer_next() RETURNS bigint LANGUAGE sql SECURITY DEFINER 
 
 connection c_owner user=efs_owner password=efs_pw
 statement ok
+CREATE FUNCTION efs_reads_mine() RETURNS int LANGUAGE sql AS 'SELECT max(v) FROM efs_mine';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_definer_reads_mine() RETURNS int LANGUAGE sql SECURITY DEFINER AS 'SELECT max(v) FROM efs_mine';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE PROCEDURE efs_add_mine(x int) LANGUAGE sql AS 'INSERT INTO efs_mine VALUES (x)';
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement ok
 CREATE FUNCTION efs_definer_can_read() RETURNS boolean LANGUAGE sql SECURITY DEFINER AS 'SELECT has_table_privilege(''efs_secret'', ''SELECT'')';
 
 
@@ -357,6 +384,35 @@ f	t
 
 
 connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_reads_mine() AS m;
+----
+m
+7
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_definer_reads_mine();
+----
+db error: ERROR: permission denied for table efs_mine
+
+
+connection c_owner user=efs_owner password=efs_pw
+statement error
+SELECT efs_reads_mine();
+----
+db error: ERROR: permission denied for table efs_mine
+
+
+connection c_user user=efs_user password=efs_pw
+statement error
+CALL efs_add_mine(1);
+----
+db error: ERROR: permission denied for table efs_mine
+
+
+connection c_user user=efs_user password=efs_pw
 statement ok
 PREPARE efs_prepared(int) AS SELECT efs_definer_arg($1) AS plain, efs_definer_arg($1 + 1) AS computed;
 
@@ -463,6 +519,7 @@ query
 SELECT proname, prosecdef FROM pg_proc WHERE proname LIKE 'efs\_%' ORDER BY proname;
 ----
 proname	prosecdef
+efs_add_mine	f
 efs_definer	t
 efs_definer_above	t
 efs_definer_arg	t
@@ -471,6 +528,7 @@ efs_definer_default	t
 efs_definer_echo	t
 efs_definer_nested	t
 efs_definer_next	t
+efs_definer_reads_mine	t
 efs_definer_ret	t
 efs_definer_rows	t
 efs_definer_tab	t
@@ -479,6 +537,7 @@ efs_definer_who	t
 efs_identity	f
 efs_invoker	f
 efs_private	f
+efs_reads_mine	f
 efs_who	f
 
 
@@ -547,6 +606,18 @@ DROP FUNCTION efs_definer_next();
 
 statement ok
 DROP FUNCTION efs_definer_can_read();
+
+
+statement ok
+DROP FUNCTION efs_reads_mine();
+
+
+statement ok
+DROP FUNCTION efs_definer_reads_mine();
+
+
+statement ok
+DROP PROCEDURE efs_add_mine(int);
 
 
 statement ok

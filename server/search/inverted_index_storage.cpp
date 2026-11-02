@@ -26,6 +26,7 @@
 
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
@@ -51,6 +52,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/term_dict.h"
 #include "query/transaction.h"
 #include "search/scorer_options.h"
 #include "storage_engine/search_engine.h"
@@ -65,35 +67,45 @@ InvertedIndexStorage::InvertedIndexStorage(
   : _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
+    _in_memory{in_memory},
+    _read_only{read_only},
+    _is_new{is_new},
+    _segment_memory_max{options.segment_memory_max},
+    _segment_docs_max{options.segment_docs_max},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
   SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
 
-  _delete_log_open = is_new;
+  if (const auto& scorer_options = top_k_scorer) {
+    _topk_scorer = MakeScorer(*scorer_options);
+  }
+  if (is_new) {
+    Open();
+  }
+}
+
+void InvertedIndexStorage::Open() {
+  _delete_log_open = _is_new;
   irs::ResourceManagementOptions resource_manager;
   resource_manager.transactions = _writers_memory;
   resource_manager.readers = _readers_memory;
   resource_manager.compactions = _compactions_memory;
   resource_manager.file_descriptors = _file_descriptors_count;
-  auto opened = OpenStorageDirectory(*_directory, index_id, is_new, in_memory,
-                                     resource_manager);
+  auto opened = OpenStorageDirectory(*_directory, _index_id, _is_new,
+                                     _in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
-  if (const auto& scorer_options = top_k_scorer) {
-    _topk_scorer = MakeScorer(*scorer_options);
-  }
-
-  if (read_only) {
+  if (_read_only) {
     return;
   }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
-  writer_options.segment_memory_max = options.segment_memory_max;
-  writer_options.segment_docs_max = options.segment_docs_max;
+  writer_options.segment_memory_max = _segment_memory_max;
+  writer_options.segment_docs_max = _segment_docs_max;
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock
@@ -104,6 +116,7 @@ InvertedIndexStorage::InvertedIndexStorage(
 #endif
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
+  writer_options.key_field = connector::term_dict::kPKFieldId;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
@@ -116,7 +129,7 @@ InvertedIndexStorage::InvertedIndexStorage(
   }
 
   auto [writer, stamp] = _durability.OpenWriter(
-    *_dir, Path(), opened.on_disk, is_new, std::move(writer_options),
+    *_dir, Path(), opened.on_disk, _is_new, std::move(writer_options),
     [this] { return GetFileManifest(); });
   _writer = std::move(writer);
 
@@ -170,6 +183,8 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   SetTasksSettings(options);
+  _segment_memory_max = options.segment_memory_max;
+  _segment_docs_max = options.segment_docs_max;
   if (!_writer) {
     return;
   }
@@ -346,32 +361,59 @@ void InvertedIndexStorage::FinishCheckpoint() {
   }
 }
 
-bool InvertedIndexStorage::AppendDeleteLog(std::vector<int64_t>&& rows) {
+std::vector<int64_t> InvertedIndexStorage::AppendDeleteLog(
+  std::vector<int64_t> rows) {
   duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
   if (!_delete_log_open.load(std::memory_order_relaxed)) {
-    return false;
+    return rows;
   }
-  _delete_log.push_back(std::move(rows));
-  return true;
+  const auto begin = _delete_log_rowid_begin.load(std::memory_order_acquire);
+  const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
+  std::vector<int64_t> logged;
+  std::vector<int64_t> native;
+  for (const auto row : rows) {
+    (row < begin || row >= end ? native : logged).push_back(row);
+  }
+  if (!logged.empty()) {
+    _delete_log.emplace_back(std::move(logged));
+  }
+  return native;
 }
 
-std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
-  std::vector<std::vector<int64_t>> batches;
-  {
-    duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
-    _delete_log_open.store(false, std::memory_order_release);
-    batches = std::exchange(_delete_log, {});
+std::vector<irs::TermRemoval> InvertedIndexStorage::TakeDeleteLog() {
+  duckdb::lock_guard<duckdb::mutex> lock{_delete_log_mutex};
+  _delete_log_open.store(false, std::memory_order_release);
+  return std::exchange(_delete_log, {});
+}
+
+template<typename Remove>
+void InvertedIndexStorage::CommitRemovalWith(const Remove& remove) {
+  auto trx = GetTransaction();
+  remove(trx);
+  trx.RegisterFlush();
+  if (!trx.Commit()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("inverted index ", _index_id,
+                            ": failed to commit a removal: out of memory"));
   }
-  size_t total = 0;
-  for (const auto& batch : batches) {
-    total += batch.size();
-  }
-  std::vector<int64_t> rows;
-  rows.reserve(total);
-  for (const auto& batch : batches) {
-    rows.insert(rows.end(), batch.begin(), batch.end());
-  }
-  return rows;
+}
+
+void InvertedIndexStorage::CommitRemoval(
+  std::shared_ptr<const irs::DocRemoval> removal) {
+  CommitRemovalWith([&](auto& trx) { trx.Remove(std::move(removal)); });
+}
+
+void InvertedIndexStorage::CommitRemoval(
+  std::vector<irs::TermRemoval> removals) {
+  CommitRemovalWith([&](auto& trx) {
+    for (auto& removal : removals) {
+      trx.Remove(std::move(removal));
+    }
+  });
+}
+
+void InvertedIndexStorage::CommitRemoveAll() {
+  CommitRemovalWith([](auto& trx) { trx.RemoveAll(); });
 }
 
 void ThrowIfRefreshFailed(const absl::Status& status,

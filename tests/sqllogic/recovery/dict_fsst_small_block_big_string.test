@@ -7,18 +7,20 @@ CREATE DATABASE dfsb WITH (BLOCK_SIZE = 16384);
 
 statement ok
 CREATE TABLE dfsb.big AS
-  SELECT ord, CASE WHEN ord % 50 = 7
-    THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16200) r(i))
-    ELSE 'v' || ord::VARCHAR END AS s
-  FROM range(2000) t(ord) ORDER BY ord;
+  SELECT ord, coalesce(w.s, 'v' || ord::VARCHAR) AS s
+  FROM range(2000) t(ord) LEFT JOIN (
+    SELECT o AS ord, string_agg(chr((32 + (hash(o * 16384 + i) % 95))::INTEGER), '' ORDER BY i) AS s
+    FROM range(7, 2000, 50) r(o), range(16200) c(i) GROUP BY o) w USING (ord)
+  ORDER BY ord;
 
 
 statement ok
 CREATE TABLE dfsb.ctrl AS
-  SELECT ord, CASE WHEN ord % 50 = 7
-    THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(6000) r(i))
-    ELSE 'v' || ord::VARCHAR END AS s
-  FROM range(2000) t(ord) ORDER BY ord;
+  SELECT ord, coalesce(w.s, 'v' || ord::VARCHAR) AS s
+  FROM range(2000) t(ord) LEFT JOIN (
+    SELECT o AS ord, string_agg(chr((32 + (hash(o * 16384 + i) % 95))::INTEGER), '' ORDER BY i) AS s
+    FROM range(7, 2000, 50) r(o), range(6000) c(i) GROUP BY o) w USING (ord)
+  ORDER BY ord;
 
 
 statement ok
@@ -28,11 +30,11 @@ CHECKPOINT dfsb;
 # every row survived with its exact value
 query
 SELECT count(*) AS n,
-       bool_and(s = CASE WHEN ord % 50 = 7
-         THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(16200) r(i))
-         ELSE 'v' || ord::VARCHAR END) AS rows_match,
-       max(length(s)) AS max_len
-  FROM dfsb.big;
+       bool_and(t.s = coalesce(w.s, 'v' || t.ord::VARCHAR)) AS rows_match,
+       max(length(t.s)) AS max_len
+  FROM dfsb.big t LEFT JOIN (
+    SELECT o AS ord, string_agg(chr((32 + (hash(o * 16384 + i) % 95))::INTEGER), '' ORDER BY i) AS s
+    FROM range(7, 2000, 50) r(o), range(16200) c(i) GROUP BY o) w USING (ord);
 ----
 n	rows_match	max_len
 2000	t	16200
@@ -40,11 +42,11 @@ n	rows_match	max_len
 
 query
 SELECT count(*) AS n,
-       bool_and(s = CASE WHEN ord % 50 = 7
-         THEN (SELECT string_agg(chr((32 + (hash(ord * 16384 + i) % 95))::INTEGER), '' ORDER BY i) FROM range(6000) r(i))
-         ELSE 'v' || ord::VARCHAR END) AS rows_match,
-       max(length(s)) AS max_len
-  FROM dfsb.ctrl;
+       bool_and(t.s = coalesce(w.s, 'v' || t.ord::VARCHAR)) AS rows_match,
+       max(length(t.s)) AS max_len
+  FROM dfsb.ctrl t LEFT JOIN (
+    SELECT o AS ord, string_agg(chr((32 + (hash(o * 16384 + i) % 95))::INTEGER), '' ORDER BY i) AS s
+    FROM range(7, 2000, 50) r(o), range(6000) c(i) GROUP BY o) w USING (ord);
 ----
 n	rows_match	max_len
 2000	t	6000

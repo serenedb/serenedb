@@ -27,6 +27,7 @@
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -48,6 +49,14 @@ class BitsetStorage {
       _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
       _alloc{_words + kWindowDocs / kBits + 1},
       _bits{std::make_unique<uint64_t[]>(_alloc + 1)} {}
+
+  BitsetStorage(doc_id_t docs_count, memory::AllocateOnlyTag)
+    : _end{kMin + docs_count},
+      _words{static_cast<uint32_t>((docs_count + (kBits - 1)) / kBits)},
+      _alloc{_words + kWindowDocs / kBits + 1},
+      _bits{std::make_unique_for_overwrite<uint64_t[]>(_alloc + 1)} {
+    _bits[0] = 0;
+  }
 
   uint64_t* Words() noexcept { return _bits.get() + 1; }
   const uint64_t* Words() const noexcept { return _bits.get() + 1; }
@@ -199,7 +208,7 @@ inline void AndNotWindow(const BitsetStorage& set, doc_id_t min, doc_id_t max,
 }
 
 inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, uint64_t begin,
-                                     const uint64_t* IRS_RESTRICT src,
+                                     const UnalignedWord* IRS_RESTRICT src,
                                      uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
@@ -222,7 +231,7 @@ inline IRS_FORCE_INLINE void OrBlock(uint64_t* IRS_RESTRICT dst, uint64_t begin,
 
 inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
                                         uint64_t begin,
-                                        const uint64_t* IRS_RESTRICT src,
+                                        const UnalignedWord* IRS_RESTRICT src,
                                         uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
@@ -243,10 +252,9 @@ inline IRS_FORCE_INLINE void ClearBlock(uint64_t* IRS_RESTRICT dst,
   dst[words] &= ~carry;
 }
 
-inline IRS_FORCE_INLINE uint64_t CountBlock(const uint64_t* IRS_RESTRICT dst,
-                                            uint64_t begin,
-                                            const uint64_t* IRS_RESTRICT src,
-                                            uint32_t words) noexcept {
+inline IRS_FORCE_INLINE uint64_t
+CountBlock(const uint64_t* IRS_RESTRICT dst, uint64_t begin,
+           const UnalignedWord* IRS_RESTRICT src, uint32_t words) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;
   SDB_ASSERT(words != 0);
   dst += begin >> BitsetStorage::kWordShift;
@@ -270,7 +278,7 @@ inline IRS_FORCE_INLINE uint64_t CountBlock(const uint64_t* IRS_RESTRICT dst,
 
 inline IRS_FORCE_INLINE void RetainBlock(uint64_t* IRS_RESTRICT dst,
                                          uint64_t begin,
-                                         const uint64_t* IRS_RESTRICT src,
+                                         const UnalignedWord* IRS_RESTRICT src,
                                          uint32_t words,
                                          uint64_t last) noexcept {
   constexpr auto kBits = BitsetStorage::kBits;

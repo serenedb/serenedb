@@ -1,0 +1,47 @@
+statement ok
+DROP ROLE IF EXISTS phr_ao_member;
+
+
+statement ok
+DROP ROLE IF EXISTS phr_ao_group;
+
+
+statement ok
+CREATE ROLE phr_ao_group;
+
+
+statement ok
+CREATE ROLE phr_ao_member;
+
+
+statement ok
+GRANT phr_ao_group TO phr_ao_member WITH ADMIN OPTION;
+
+
+query
+SELECT pg_has_role('phr_ao_member', 'phr_ao_member', 'USAGE WITH ADMIN OPTION') AS self_admin,
+       pg_has_role('phr_ao_member', 'phr_ao_member', 'MEMBER') AS self_member,
+       pg_has_role('phr_ao_member', 'phr_ao_group', 'MEMBER WITH ADMIN OPTION') AS admin_of,
+       pg_has_role('phr_ao_group', 'phr_ao_member', 'MEMBER WITH ADMIN OPTION') AS reversed_admin,
+       pg_has_role('phr_ao_member', 'phr_ao_group', 'SET') AS can_set;
+----
+self_admin	self_member	admin_of	reversed_admin	can_set
+f	t	t	f	t
+
+
+query
+SELECT pg_has_role(member, 'phr_ao_group', 'MEMBER') AS is_member
+FROM (VALUES (1, 'phr_ao_member'), (2, 'phr_ao_member'), (3, 'phr_ao_group')) AS t(i, member) ORDER BY i;
+----
+is_member
+t
+t
+t
+
+
+statement ok
+DROP ROLE phr_ao_member;
+
+
+statement ok
+DROP ROLE phr_ao_group;

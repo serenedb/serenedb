@@ -19,10 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/hits/make.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>

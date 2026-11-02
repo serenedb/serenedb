@@ -52,6 +52,42 @@ QUERY PLAN
 │ ~1 row               │
 ╰──────────────────────╯
 
+# DOCS_TEST: inspect_plan_lookup_join
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN SELECT a, b
+FROM sentences_idx
+WHERE b @@ 'fox'
+ORDER BY BM25(sentences_idx.tableoid)
+LIMIT 1;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: iresearch_pk                                       │
+│ ~1 row                                                  │
+╰────────────────────────────┬────────────────────────────╯
+                             ├───────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ─────╮
+│ Top: 1                                                  │  │ Index: sentences_idx │
+│ Order By: #0 ASC                                        │  │ Lookup: table        │
+│ ~1 row                                                  │  │ Projections: b, a    │
+╰────────────────────────────┬────────────────────────────╯  │ ~1 row               │
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮  ╰──────────────────────╯
+│ Index: sentences_idx                                    │
+│ Index Filter:                                           │
+│ ╭─ Term ───────────╮                                    │
+│ │ Field: b(string) │                                    │
+│ │ Value: fox       │                                    │
+│ ╰──────────────────╯                                    │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~1 row                                                  │
+╰─────────────────────────────────────────────────────────╯
+
 # DOCS_TEST: example_002
 
 # DOCS_TEST_BODY

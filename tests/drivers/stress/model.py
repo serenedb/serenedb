@@ -183,9 +183,11 @@ class Model:
             if key in self._owned:
                 self.apply(key, ABSENT, outcome)
 
-    def collapse(self, observed):
+    def collapse(self, observed, unread=()):
         findings = []
         for key, cands in list(self._owned.items()):
+            if key in unread:
+                continue
             if key not in observed:
                 seen = ABSENT
             else:
@@ -226,12 +228,4 @@ class Model:
                 only = next(iter(cands))
                 if only is not ABSENT:
                     out[key] = only
-        return out
-
-    def row_bearing_keys(self):
-        out = {}
-        for key, cands in self._owned.items():
-            states = [c for c in cands if isinstance(c, Present)]
-            if states:
-                out[key] = states
         return out

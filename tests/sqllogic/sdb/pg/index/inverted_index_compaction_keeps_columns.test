@@ -1,0 +1,67 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY ckc_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE ckc (id BIGINT, body TEXT, tag TEXT, n INTEGER);
+
+statement ok
+CREATE INDEX ckc_idx ON ckc USING inverted (id, n, body ckc_en, (lower(tag)) included())
+  INCLUDE (tag)
+  WITH (compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO ckc SELECT i, 'fox ' || repeat('dog ', i % 5), 'Tag' || (i % 3), CASE WHEN i % 4 = 0 THEN NULL ELSE i END FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ckc;
+
+statement ok
+INSERT INTO ckc SELECT i, 'fox ' || repeat('dog ', i % 5), 'Tag' || (i % 3), CASE WHEN i % 4 = 0 THEN NULL ELSE i END FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ckc;
+
+query
+SELECT value FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'ckc_idx');
+----
+value
+2
+
+statement ok
+VACUUM (COMPACT_TABLE) ckc;
+
+query
+SELECT value FROM sdb_metrics WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'ckc_idx');
+----
+value
+1
+
+query
+SELECT id FROM ckc_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ckc_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+5
+10
+15
+
+query
+SELECT id, tag, lower(tag) AS low FROM ckc_idx WHERE body @@ ts_phrase('fox') AND id IN (1, 102, 200) ORDER BY id;
+----
+id	tag	low
+1	Tag1	tag1
+102	Tag0	tag0
+200	Tag2	tag2
+
+query
+SELECT count(*) AS n FROM ckc_idx WHERE n IS NULL;
+----
+n
+50
+
+query
+SELECT count(*) AS n FROM ckc_idx WHERE n > 150;
+----
+n
+37

@@ -26,7 +26,6 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <vector>
 
@@ -225,12 +224,6 @@ std::vector<Rejected> RejectedConfigs() {
   return out;
 }
 
-duckdb::ClientContext& Context() {
-  static auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
-
 }  // namespace
 
 TEST(TokenizerConfig, InvalidOptionsAreRefused) {
@@ -260,7 +253,7 @@ TEST(TokenizerConfig, RefusalLeavesTheCacheUsable) {
   }
   for (const auto* spec : tests::fuzz::SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto tokenizer = tests::fuzz::Make(*spec, Context());
+    auto tokenizer = tests::fuzz::Make(*spec, tests::EngineContext());
     ASSERT_NE(nullptr, tokenizer)
       << "a refused config poisoned the shared resource cache";
     const auto res = tests::fuzz::AnalyzeValue(
@@ -279,7 +272,7 @@ TEST(TokenizerConfig, InvalidSqlExpressionsAreRefused) {
       auto tokenizer =
         SqlTokenizer::Make({.expression = std::string{expression}});
       if (tokenizer) {
-        tokenizer->Bind(Context());
+        tokenizer->Bind(tests::EngineContext());
       } else {
         threw = true;
       }

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/detail/exact_scan.hpp"
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make.hpp"
 
 namespace irs::docs {
@@ -47,7 +48,7 @@ class ExactDocs : public Root {
 
 }  // namespace
 
-Root::ptr Make(const ExactVectorQuery& query, const Context&) {
+Root::ptr Family::Make(const ExactVectorQuery& query, const Context&) {
   return memory::make_managed<ExactDocs>(query);
 }
 

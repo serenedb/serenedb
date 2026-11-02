@@ -34,7 +34,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <utility>
 
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector::inet_terms {
 namespace {

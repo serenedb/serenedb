@@ -34,7 +34,7 @@ struct ByVectorExactOptions {
   using FilterType = ByVectorExact;
 
   std::vector<float> query;
-  field_id centroids_id = field_limits::invalid();
+  field_id ann_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   float radius = std::numeric_limits<float>::max();
   bool inclusive = false;

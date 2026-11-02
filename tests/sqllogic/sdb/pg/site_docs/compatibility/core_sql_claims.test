@@ -241,6 +241,10 @@ SELECT a.c FROM (VALUES (1)) a(c) WHERE NOT EXISTS (SELECT 1 FROM (VALUES (2)) b
 statement ok
 SELECT * FROM generate_series(1,3);
 
+# queries: Column Definition Lists
+statement error
+SELECT * FROM json_to_record('{"a":1}') AS t(a int);
+
 # queries: Lateral Subqueries
 statement ok
 SELECT a.c, b.x FROM (VALUES (1)) a(c) CROSS JOIN LATERAL (SELECT a.c+1 AS x) b;
@@ -349,7 +353,7 @@ statement ok
 SELECT NULL::boolean;
 
 # types: box
-statement error
+statement ok
 SELECT NULL::box;
 
 # types: bytea
@@ -387,7 +391,7 @@ statement ok
 SELECT NULL::cidr;
 
 # types: circle
-statement error
+statement ok
 SELECT NULL::circle;
 
 # types: date
@@ -419,23 +423,23 @@ statement error
 SELECT NULL::jsonb;
 
 # types: line
-statement error
+statement ok
 SELECT NULL::line;
 
 # types: lseg
-statement error
+statement ok
 SELECT NULL::lseg;
 
 # types: macaddr
-statement error
+statement ok
 SELECT NULL::macaddr;
 
 # types: macaddr8
-statement error
+statement ok
 SELECT NULL::macaddr8;
 
 # types: money
-statement error
+statement ok
 SELECT NULL::money;
 
 # types: numeric [ (p, s) ]
@@ -443,23 +447,156 @@ statement ok
 SELECT NULL::numeric(10,2);
 
 # types: path
-statement error
+statement ok
 SELECT NULL::path;
 
 # types: pg_lsn
-statement error
+statement ok
 SELECT NULL::pg_lsn;
+
+# types: regclass, regtype, regproc, regprocedure, regnamespace, regrole, regcollation, regdictionary
+statement ok
+SELECT 'pg_class'::regclass::text, 'int4'::regtype::text, 'pg_catalog.array_in'::regproc::text, 'int4in(cstring)'::regprocedure::text, 'pg_catalog'::regnamespace::text, '"C"'::regcollation::text;
+
+# types: regoper, regoperator, regconfig
+statement ok
+SELECT 0::regoper::text, 0::regoperator::text, 0::regconfig::text;
+
+# sysinfo: format_type
+statement ok
+SELECT format_type(1700, 655366);
+
+# sysinfo: to_regclass
+statement ok
+SELECT to_regclass('pg_class')::text, to_regtype('int4')::text, to_regproc('array_in')::text, to_regnamespace('public')::text;
+
+# sysinfo: pg_get_keywords
+statement ok
+SELECT word, catcode, catdesc FROM pg_get_keywords();
+
+# sysinfo: pg_get_function_sqlbody
+statement ok
+SELECT pg_get_function_sqlbody('lower(text)'::regprocedure);
+
+# sysinfo: pg_get_partkeydef
+statement ok
+SELECT pg_get_partkeydef('pg_class'::regclass), pg_get_partition_constraintdef('pg_class'::regclass);
+
+# sysinfo: pg_get_replica_identity_index
+statement ok
+SELECT pg_get_replica_identity_index('pg_class');
+
+# sysinfo: pg_input_is_valid
+statement ok
+SELECT pg_input_is_valid('42', 'integer'), pg_input_error_info('x', 'integer');
+
+# sysinfo: getpgusername
+statement ok
+SELECT getpgusername();
+
+# sysinfo: pg_basetype
+statement ok
+SELECT pg_basetype('int4'::regtype);
+
+# sysinfo: pg_collation_for
+statement ok
+SELECT pg_collation_for('a'::text);
+
+# sysinfo: pg_sequence_parameters
+statement ok
+CREATE SEQUENCE sysinfo_seq;
+
+statement ok
+SELECT * FROM pg_sequence_parameters('sysinfo_seq'::regclass), pg_get_sequence_data('sysinfo_seq');
+
+statement ok
+DROP SEQUENCE sysinfo_seq;
+
+# sysinfo: pg_tablespace_size
+statement ok
+SELECT pg_tablespace_size('pg_default'), pg_tablespace_size('pg_global');
+
+# sysinfo: pg_tablespace_databases
+statement ok
+SELECT * FROM pg_tablespace_databases(1663);
+
+# sysinfo: pg_size_bytes
+statement ok
+SELECT pg_size_bytes('1.5 GB');
+
+# sysinfo: pg_column_size
+statement ok
+SELECT pg_column_size('abc'::text), pg_column_size(ROW(1, 'abc'));
+
+# sysinfo: pg_column_compression
+statement ok
+SELECT pg_column_compression('abc'::text), pg_column_toast_chunk_id('abc'::text);
+
+# sysinfo: makeaclitem
+statement ok
+SELECT makeaclitem(0, 0, 'SELECT', false);
+
+# sysinfo: has_parameter_privilege
+statement ok
+SELECT has_parameter_privilege('work_mem', 'SET');
+
+# sysinfo: has_largeobject_privilege
+statement ok
+SELECT has_largeobject_privilege(0, 'SELECT');
+
+# sysinfo: pg_settings_get_flags
+statement ok
+SELECT pg_settings_get_flags('work_mem');
+
+# sysinfo: unicode_version
+statement ok
+SELECT unicode_version(), icu_unicode_version(), unicode_assigned('abc');
+
+# sysinfo: pg_current_logfile
+statement ok
+SELECT pg_current_logfile(), pg_current_logfile('stderr');
+
+# sysinfo: pg_jit_available
+statement ok
+SELECT pg_jit_available(), pg_numa_available();
+
+# sysinfo: pg_collation_actual_version
+statement ok
+SELECT pg_collation_actual_version(950), pg_database_collation_actual_version(oid) FROM pg_database WHERE datname = current_database();
+
+# sysinfo: pg_safe_snapshot_blocking_pids
+statement ok
+SELECT pg_safe_snapshot_blocking_pids(pg_backend_pid());
+
+# sysinfo: pg_available_wal_summaries
+statement ok
+SELECT * FROM pg_available_wal_summaries();
+
+# sysinfo: pg_extension_update_paths
+statement ok
+SELECT * FROM pg_extension_update_paths(NULL);
+
+# sysinfo: pg_wal_lsn_diff
+statement ok
+SELECT pg_wal_lsn_diff('0/4D2', '0/1'), pg_lsn(1234::numeric);
+
+statement error
+SELECT * FROM pg_extension_update_paths('plpgsql');
+----
+db error: ERROR: extension "plpgsql" is not available
+HINT: The extension must first be installed on the system where PostgreSQL is running.
+
 
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;
 
 # types: point
-statement error
+statement ok
 SELECT NULL::point;
 
 # types: polygon
-statement error
+statement ok
 SELECT NULL::polygon;
 
 # types: real
@@ -523,7 +660,7 @@ statement ok
 SELECT NULL::uuid;
 
 # types: xml
-statement error
+statement ok
 SELECT NULL::xml;
 
 # op_logic_cmp: AND
@@ -639,11 +776,11 @@ statement ok
 SELECT 2 ^ 3;
 
 # op_math: |/
-statement error
+statement ok
 SELECT |/ 25.0;
 
 # op_math: ||/
-statement error
+statement ok
 SELECT ||/ 27.0;
 
 # op_math: @
@@ -659,7 +796,7 @@ statement ok
 SELECT 5 | 3;
 
 # op_math: #
-statement error
+statement ok
 SELECT 5 # 3;
 
 # op_math: ~
@@ -735,7 +872,7 @@ statement ok
 SELECT log10(100.0);
 
 # op_math: min_scale
-statement error
+statement ok
 SELECT min_scale(1.230);
 
 # op_math: mod
@@ -759,7 +896,7 @@ statement ok
 SELECT round(1.5);
 
 # op_math: scale
-statement error
+statement ok
 SELECT scale(1.230);
 
 # op_math: sign
@@ -771,7 +908,7 @@ statement ok
 SELECT sqrt(4.0);
 
 # op_math: trim_scale
-statement error
+statement ok
 SELECT trim_scale(1.230);
 
 # op_math: trunc
@@ -887,7 +1024,7 @@ statement ok
 SELECT 'a' || 'b';
 
 # op_text: btrim
-statement error
+statement ok
 SELECT btrim('  x  ');
 
 # op_text: bit_length
@@ -954,6 +1091,10 @@ SELECT 'abc' ^@ 'a';
 statement ok
 SELECT ascii('x');
 
+# op_text: casefold
+statement ok
+SELECT casefold('ABC');
+
 # op_text: chr
 statement ok
 SELECT chr(65);
@@ -987,7 +1128,7 @@ statement ok
 SELECT md5('abc');
 
 # op_text: parse_ident
-statement error
+statement ok
 SELECT parse_ident('a.b');
 
 # op_text: quote_ident
@@ -1031,7 +1172,7 @@ statement ok
 SELECT string_to_array('a,b,c',',');
 
 # op_text: string_to_table
-statement error
+statement ok
 SELECT * FROM string_to_table('a,b,c',',');
 
 # op_text: strpos
@@ -1055,7 +1196,7 @@ statement ok
 SELECT translate('12345','143','ax');
 
 # op_text: unistr
-statement error
+statement ok
 SELECT unistr('d\0061t\+000061');
 
 # op_bytea: ||
@@ -1067,7 +1208,7 @@ statement ok
 SELECT bit_length('\x01'::bytea);
 
 # op_bytea: btrim
-statement error
+statement ok
 SELECT btrim('\x010203'::bytea, '\x03'::bytea);
 
 # op_bytea: ltrim
@@ -1102,6 +1243,14 @@ SELECT trim('\x03'::bytea from '\x010203'::bytea);
 statement error
 SELECT bit_count('\x0102'::bytea);
 
+# op_bytea: crc32
+statement ok
+SELECT crc32('\x0102'::bytea);
+
+# op_bytea: crc32c
+statement ok
+SELECT crc32c('\x0102'::bytea);
+
 # op_bytea: get_bit
 statement ok
 SELECT get_bit('\x0102'::bytea, 7);
@@ -1127,15 +1276,15 @@ statement ok
 SELECT set_byte('\x0102'::bytea, 1, 255);
 
 # op_bytea: sha224
-statement error
+statement ok
 SELECT sha224('\x0102'::bytea);
 
 # op_bytea: sha384
-statement error
+statement ok
 SELECT sha384('\x0102'::bytea);
 
 # op_bytea: sha512
-statement error
+statement ok
 SELECT sha512('\x0102'::bytea);
 
 # op_bytea: substr
@@ -1175,7 +1324,7 @@ statement ok
 SELECT '1010'::bit(4) | '1100'::bit(4);
 
 # op_bit: #
-statement error
+statement ok
 SELECT '1010'::bit(4) # '1100'::bit(4);
 
 # op_bit: ~
@@ -1271,19 +1420,19 @@ statement ok
 SELECT regexp_substr('abcabc','b');
 
 # op_pattern: to_char
-statement error
+statement ok
 SELECT to_char(now(),'YYYY');
 
 # op_pattern: to_date
-statement error
+statement ok
 SELECT to_date('2020-01-01','YYYY-MM-DD');
 
 # op_pattern: to_number
-statement error
+statement ok
 SELECT to_number('123','999');
 
 # op_pattern: to_timestamp
-statement error
+statement ok
 SELECT to_timestamp('2020-01-01','YYYY-MM-DD');
 
 # op_datetime: +
@@ -1310,6 +1459,10 @@ SELECT age(TIMESTAMP '2020-01-01', TIMESTAMP '2010-01-01');
 statement ok
 SELECT clock_timestamp();
 
+# op_datetime: pg_sleep_for
+statement ok
+SELECT pg_sleep_for('1 millisecond'), pg_sleep_until(clock_timestamp());
+
 # op_datetime: current_date
 statement ok
 SELECT current_date;
@@ -1335,7 +1488,7 @@ statement ok
 SELECT date_part('year', TIMESTAMP '2020-01-01');
 
 # op_datetime: date_subtract
-statement error
+statement ok
 SELECT date_subtract(TIMESTAMP '2020-01-01', INTERVAL '1 day');
 
 # op_datetime: date_trunc
@@ -1351,15 +1504,15 @@ statement ok
 SELECT isfinite(DATE '2020-01-01');
 
 # op_datetime: justify_days
-statement error
+statement ok
 SELECT justify_days(INTERVAL '35 days');
 
 # op_datetime: justify_hours
-statement error
+statement ok
 SELECT justify_hours(INTERVAL '27 hours');
 
 # op_datetime: justify_interval
-statement error
+statement ok
 SELECT justify_interval(INTERVAL '1 mon -1 hour');
 
 # op_datetime: localtime
@@ -1375,7 +1528,7 @@ statement ok
 SELECT make_date(2020,1,1);
 
 # op_datetime: make_interval
-statement error
+statement ok
 SELECT make_interval(1,2,3,4,5,6,7);
 
 # op_datetime: make_time
@@ -1391,12 +1544,16 @@ statement ok
 SELECT now();
 
 # op_datetime: statement_timestamp
-statement error
+statement ok
 SELECT statement_timestamp();
 
 # op_datetime: timeofday
 statement ok
 SELECT timeofday();
+
+# op_datetime: timestamp
+statement ok
+SELECT pg_catalog.timestamp(DATE '2020-01-01'), timestamptz(DATE '2020-01-01');
 
 # op_datetime: transaction_timestamp
 statement ok
@@ -1407,7 +1564,7 @@ statement ok
 SELECT to_timestamp(1577836800);
 
 # op_datetime: OVERLAPS
-statement error
+statement ok
 SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15');
 
 # op_datetime: EXTRACT
@@ -1442,15 +1599,15 @@ statement ok
 SELECT uuid_extract_version('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid);
 
 # op_misc1: xmltext
-statement error
+statement ok
 SELECT xmltext('foo');
 
 # op_misc1: xmlcomment
-statement error
+statement ok
 SELECT xmlcomment('foo');
 
 # op_misc1: xmlconcat
-statement error
+statement ok
 SELECT xmlconcat('<a/>'::xml,'<b/>'::xml);
 
 # op_misc1: xmlelement
@@ -1470,15 +1627,15 @@ statement error
 SELECT xmlroot('<a/>'::xml, version '1.0');
 
 # op_misc1: xmlagg
-statement error
+statement ok
 SELECT xmlagg(c) FROM (VALUES ('<a/>'::xml)) t(c);
 
 # op_misc1: IS DOCUMENT
-statement error
+statement ok
 SELECT '<a>x</a>'::xml IS DOCUMENT;
 
 # op_misc1: IS NOT DOCUMENT
-statement error
+statement ok
 SELECT '<a>x</a>'::xml IS NOT DOCUMENT;
 
 # op_misc1: XMLEXISTS
@@ -1486,15 +1643,15 @@ statement error
 SELECT xmlexists('//a' PASSING BY VALUE '<a/>'::xml);
 
 # op_misc1: xml_is_well_formed
-statement error
+statement ok
 SELECT xml_is_well_formed('<a/>');
 
 # op_misc1: xpath
-statement error
+statement ok
 SELECT xpath('/a', '<a>x</a>'::xml);
 
 # op_misc1: xpath_exists
-statement error
+statement ok
 SELECT xpath_exists('/a', '<a>x</a>'::xml);
 
 # op_misc1: XMLTABLE
@@ -1502,199 +1659,199 @@ statement error
 SELECT * FROM xmltable('/a' PASSING '<a>x</a>'::xml COLUMNS v text PATH '.');
 
 # op_geo: +
-statement error
+statement ok
 SELECT point '(1,2)' + point '(3,4)';
 
 # op_geo: -
-statement error
+statement ok
 SELECT point '(1,2)' - point '(3,4)';
 
 # op_geo: *
-statement error
+statement ok
 SELECT point '(1,2)' * point '(3,4)';
 
 # op_geo: /
-statement error
+statement ok
 SELECT point '(1,2)' / point '(3,4)';
 
 # op_geo: @-@
-statement error
+statement ok
 SELECT @-@ lseg '((0,0),(1,0))';
 
 # op_geo: @@
-statement error
+statement ok
 SELECT @@ circle '((0,0),1)';
 
 # op_geo: #
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' # box '((1,1),(3,3))';
 
 # op_geo: ##
-statement error
+statement ok
 SELECT point '(0,0)' ## lseg '((1,1),(2,2))';
 
 # op_geo: \<->
-statement error
+statement ok
 SELECT point '(0,0)' <-> point '(3,4)';
 
 # op_geo: @>
-statement error
+statement ok
 SELECT box '((0,0),(3,3))' @> point '(1,1)';
 
 # op_geo: \<@
-statement error
+statement ok
 SELECT point '(1,1)' <@ box '((0,0),(3,3))';
 
 # op_geo: &&
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' && box '((1,1),(3,3))';
 
 # op_geo: \<\<
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' << box '((2,2),(3,3))';
 
 # op_geo: >>
-statement error
+statement ok
 SELECT box '((2,2),(3,3))' >> box '((0,0),(1,1))';
 
 # op_geo: &\<
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' &< box '((1,1),(3,3))';
 
 # op_geo: &>
-statement error
+statement ok
 SELECT box '((1,1),(3,3))' &> box '((0,0),(2,2))';
 
 # op_geo: \<\<\|
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' <<| box '((0,2),(1,3))';
 
 # op_geo: \|>>
-statement error
+statement ok
 SELECT box '((0,2),(1,3))' |>> box '((0,0),(1,1))';
 
 # op_geo: &\<\|
-statement error
+statement ok
 SELECT box '((0,0),(1,2))' &<| box '((0,1),(1,3))';
 
-# op_geo: |&>
-statement error
+# op_geo: \|&>
+statement ok
 SELECT box '((0,1),(1,3))' |&> box '((0,0),(1,2))';
 
 # op_geo: \<^
-statement error
+statement ok
 SELECT box '((0,0),(1,1))' <^ box '((0,2),(1,3))';
 
 # op_geo: >^
-statement error
+statement ok
 SELECT box '((0,2),(1,3))' >^ box '((0,0),(1,1))';
 
 # op_geo: ?#
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' ?# box '((1,1),(3,3))';
 
 # op_geo: ?-
-statement error
-SELECT lseg '((0,0),(1,0))' ?- lseg '((0,2),(1,2))';
+statement ok
+SELECT point '(0,0)' ?- point '(1,0)';
 
-# op_geo: ?|
-statement error
-SELECT lseg '((0,0),(0,1))' ?| lseg '((2,0),(2,1))';
+# op_geo: ?\|
+statement ok
+SELECT ?| lseg '((0,0),(0,1))', point '(0,0)' ?| point '(0,1)';
 
-# op_geo: ?-|
-statement error
-SELECT point '(0,0)' ?-| lseg '((0,0),(1,0))';
+# op_geo: ?-\|
+statement ok
+SELECT lseg '((0,0),(1,0))' ?-| lseg '((0,0),(0,1))';
 
-# op_geo: ?||
-statement error
+# op_geo: ?\|\|
+statement ok
 SELECT lseg '((0,0),(0,1))' ?|| lseg '((2,0),(2,1))';
 
 # op_geo: ~=
-statement error
+statement ok
 SELECT box '((0,0),(2,2))' ~= box '((0,0),(2,2))';
 
 # op_geo: area
-statement error
+statement ok
 SELECT area(box '((0,0),(2,2))');
 
 # op_geo: center
-statement error
+statement ok
 SELECT center(box '((0,0),(2,2))');
 
 # op_geo: diagonal
-statement error
+statement ok
 SELECT diagonal(box '((0,0),(2,2))');
 
 # op_geo: diameter
-statement error
+statement ok
 SELECT diameter(circle '((0,0),2)');
 
 # op_geo: height
-statement error
+statement ok
 SELECT height(box '((0,0),(2,3))');
 
 # op_geo: isopen
-statement error
+statement ok
 SELECT isopen(path '[(0,0),(1,1),(2,0)]');
 
 # op_geo: length
-statement error
+statement ok
 SELECT length(lseg '((0,0),(3,4))');
 
 # op_geo: npoints
-statement error
+statement ok
 SELECT npoints(path '((0,0),(1,1),(2,0))');
 
 # op_geo: pclose
-statement error
+statement ok
 SELECT pclose(path '[(0,0),(1,1),(2,0)]');
 
 # op_geo: popen
-statement error
+statement ok
 SELECT popen(path '((0,0),(1,1),(2,0))');
 
 # op_geo: radius
-statement error
+statement ok
 SELECT radius(circle '((0,0),2)');
 
 # op_geo: slope
-statement error
+statement ok
 SELECT slope(point '(0,0)', point '(2,2)');
 
 # op_geo: width
-statement error
+statement ok
 SELECT width(box '((0,0),(2,3))');
 
 # op_geo: box
-statement error
+statement ok
 SELECT box(circle '((0,0),2)');
 
-# op_geo: bounding_box
-statement error
+# op_geo: bound_box
+statement ok
 SELECT bound_box(box '((0,0),(1,1))', box '((2,2),(3,3))');
 
 # op_geo: circle
-statement error
+statement ok
 SELECT circle(point '(0,0)', 2);
 
 # op_geo: line
-statement error
+statement ok
 SELECT line(point '(0,0)', point '(1,1)');
 
 # op_geo: lseg
-statement error
+statement ok
 SELECT lseg(point '(0,0)', point '(1,1)');
 
 # op_geo: path
-statement error
+statement ok
 SELECT NULL::path;
 
 # op_geo: point
-statement error
+statement ok
 SELECT point(1,2);
 
 # op_geo: polygon
-statement error
+statement ok
 SELECT polygon(box '((0,0),(2,2))');
 
 # op_net: <<
@@ -1734,11 +1891,11 @@ statement ok
 SELECT inet '192.168.1.5/24' + 5;
 
 # op_net: -
-statement error
+statement ok
 SELECT inet '192.168.1.10/24' - inet '192.168.1.5/24';
 
 # op_net: abbrev
-statement error
+statement ok
 SELECT abbrev(inet '10.1.0.0/16');
 
 # op_net: broadcast
@@ -1754,19 +1911,19 @@ statement ok
 SELECT host(inet '192.168.1.5/24');
 
 # op_net: hostmask
-statement error
+statement ok
 SELECT hostmask(inet '192.168.23.20/30');
 
 # op_net: inet_merge
-statement error
+statement ok
 SELECT inet_merge(inet '192.168.1.5/24', inet '192.168.2.5/24');
 
 # op_net: inet_same_family
-statement error
+statement ok
 SELECT inet_same_family(inet '192.168.1.5/24', inet '::1');
 
 # op_net: masklen
-statement error
+statement ok
 SELECT masklen(inet '192.168.1.5/24');
 
 # op_net: netmask
@@ -1778,7 +1935,7 @@ statement ok
 SELECT network(inet '192.168.1.5/24');
 
 # op_net: set_masklen
-statement error
+statement ok
 SELECT set_masklen(inet '192.168.1.5/24', 16);
 
 # op_net: text
@@ -2000,7 +2157,7 @@ statement error
 SELECT '{"a":1}' IS JSON;
 
 # op_json: json_array_elements
-statement error
+statement ok
 SELECT json_array_elements('[1,2,3]'::json);
 
 # op_json: jsonb_array_elements
@@ -2008,7 +2165,7 @@ statement error
 SELECT jsonb_array_elements('[1,2,3]'::jsonb);
 
 # op_json: json_array_elements_text
-statement error
+statement ok
 SELECT json_array_elements_text('["a","b"]'::json);
 
 # op_json: jsonb_array_elements_text
@@ -2032,7 +2189,7 @@ statement error
 SELECT * FROM jsonb_each('{"a":1}'::jsonb);
 
 # op_json: json_each_text
-statement error
+statement ok
 SELECT * FROM json_each_text('{"a":1}'::json);
 
 # op_json: jsonb_each_text
@@ -2040,7 +2197,7 @@ statement error
 SELECT * FROM jsonb_each_text('{"a":1}'::jsonb);
 
 # op_json: json_object_keys
-statement error
+statement ok
 SELECT json_object_keys('{"a":1,"b":2}'::json);
 
 # op_json: jsonb_object_keys
@@ -2051,6 +2208,12 @@ SELECT jsonb_object_keys('{"a":1,"b":2}'::jsonb);
 statement error
 SELECT * FROM json_populate_record(null::record, '{"a":1}'::json);
 
+statement ok
+CREATE TYPE op_json_row AS (a int);
+
+statement ok
+SELECT * FROM json_populate_record(null::op_json_row, '{"a":1}'::json);
+
 # op_json: jsonb_populate_record
 statement error
 SELECT * FROM jsonb_populate_record(null::record, '{"a":1}'::jsonb);
@@ -2058,6 +2221,9 @@ SELECT * FROM jsonb_populate_record(null::record, '{"a":1}'::jsonb);
 # op_json: json_populate_recordset
 statement error
 SELECT * FROM json_populate_recordset(null::record, '[{"a":1}]'::json);
+
+statement ok
+SELECT * FROM json_populate_recordset(null::op_json_row, '[{"a":1}]'::json);
 
 # op_json: jsonb_populate_recordset
 statement error
@@ -2156,7 +2322,7 @@ statement ok
 SELECT array_dims('{1,2,3}'::int[]);
 
 # op_arr_range: array_fill
-statement error
+statement ok
 SELECT array_fill(7, '{3}'::int[]);
 
 # op_arr_range: array_lower
@@ -2188,11 +2354,11 @@ statement ok
 SELECT array_replace('{1,2,3}'::int[], 2, 9);
 
 # op_arr_range: array_sample
-statement error
+statement ok
 SELECT array_sample('{1,2,3,4}'::int[], 2);
 
 # op_arr_range: array_shuffle
-statement error
+statement ok
 SELECT array_shuffle('{1,2,3}'::int[]);
 
 # op_arr_range: array_to_string
@@ -2216,87 +2382,87 @@ statement ok
 SELECT unnest('{1,2,3}'::int[]);
 
 # op_arr_range: @>
-statement error
+statement ok
 SELECT int4range(1,10) @> 5;
 
 # op_arr_range: <@
-statement error
+statement ok
 SELECT int4range(2,4) <@ int4range(1,10);
 
 # op_arr_range: &&
-statement error
+statement ok
 SELECT int4range(1,5) && int4range(4,10);
 
 # op_arr_range: <<
-statement error
+statement ok
 SELECT int4range(1,5) << int4range(6,10);
 
 # op_arr_range: >>
-statement error
+statement ok
 SELECT int4range(6,10) >> int4range(1,5);
 
 # op_arr_range: &<
-statement error
+statement ok
 SELECT int4range(1,5) &< int4range(4,10);
 
 # op_arr_range: &>
-statement error
+statement ok
 SELECT int4range(4,10) &> int4range(1,5);
 
 # op_arr_range: -|-
-statement error
+statement ok
 SELECT int4range(1,5) -|- int4range(5,10);
 
 # op_arr_range: +
-statement error
+statement ok
 SELECT int4range(1,5) + int4range(4,10);
 
 # op_arr_range: *
-statement error
+statement ok
 SELECT int4range(1,10) * int4range(4,20);
 
 # op_arr_range: -
-statement error
+statement ok
 SELECT int4range(1,10) - int4range(4,20);
 
 # op_arr_range: lower
-statement error
+statement ok
 SELECT lower(int4range(1,10));
 
 # op_arr_range: upper
-statement error
+statement ok
 SELECT upper(int4range(1,10));
 
 # op_arr_range: isempty
-statement error
+statement ok
 SELECT isempty(int4range(1,10));
 
 # op_arr_range: lower_inc
-statement error
+statement ok
 SELECT lower_inc(int4range(1,10));
 
 # op_arr_range: upper_inc
-statement error
+statement ok
 SELECT upper_inc(int4range(1,10));
 
 # op_arr_range: lower_inf
-statement error
+statement ok
 SELECT lower_inf(int4range(1,10));
 
 # op_arr_range: upper_inf
-statement error
+statement ok
 SELECT upper_inf(int4range(1,10));
 
 # op_arr_range: range_merge
-statement error
+statement ok
 SELECT range_merge(int4range(1,5), int4range(8,10));
 
 # op_arr_range: multirange
-statement error
+statement ok
 SELECT multirange(int4range(1,5));
 
 # op_arr_range: unnest
-statement error
+statement ok
 SELECT unnest(int4multirange(int4range(1,5), int4range(8,10)));
 
 # op_agg: any_value
@@ -2340,7 +2506,7 @@ statement ok
 SELECT count(c) FROM (VALUES (1),(2),(3)) t(c);
 
 # op_agg: json(b)_agg
-statement error
+statement ok
 SELECT json_agg(c) FROM (VALUES (1)) t(c);
 
 # op_agg: json(b)_objectagg
@@ -2348,7 +2514,7 @@ statement error
 SELECT jsonb_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
 
 # op_agg: json(b)_object_agg
-statement error
+statement ok
 SELECT json_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
 
 # op_agg: json_arrayagg
@@ -2364,7 +2530,7 @@ statement ok
 SELECT min(c) FROM (VALUES (1),(2),(3)) t(c);
 
 # op_agg: range(_intersect)_agg
-statement error
+statement ok
 SELECT range_agg(c) FROM (VALUES ('[1,2)'::int4range),('[3,4)'::int4range)) t(c);
 
 # op_agg: string_agg
@@ -2566,14 +2732,17 @@ SELECT COALESCE(NULL, 1, 2);
 statement ok
 SELECT NULL::timestamp with time zone;
 
-# op_seq_cond: lastval (function absent)
+# op_seq_cond: lastval
 statement error
 SELECT lastval();
+----
+db error: ERROR: lastval is not yet defined in this session
+
 
 # op_datetime: make_timestamptz (function absent)
 statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);
 
-# op_geo: isclosed (function absent; does not crash)
-statement error
+# op_geo: isclosed
+statement ok
 SELECT isclosed(NULL);

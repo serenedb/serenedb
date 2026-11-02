@@ -96,4 +96,6 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<TokenPhraseQuery>;
+
 }  // namespace irs

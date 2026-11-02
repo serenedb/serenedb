@@ -85,6 +85,15 @@ docs	any_column	body	authid
 t	t	t	f
 
 connection sfp_reader user=sfp_reader password=sfp_pw
+query
+SELECT column_name FROM sfp_snap.information_schema.columns
+WHERE table_name = 'sfp_docs' ORDER BY ordinal_position;
+----
+column_name
+id
+body
+
+connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'BOGUS');
 ----
@@ -106,7 +115,7 @@ connection sfp_reader user=sfp_reader password=sfp_pw
 statement error
 SELECT count(*) FROM sfp_session.pg_catalog.pg_hba_file_rules;
 ----
-db error: ERROR: permission denied for table pg_hba_file_rules
+db error: ERROR: permission denied for function pg_hba_file_rules
 
 
 connection default

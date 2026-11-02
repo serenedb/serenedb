@@ -5,7 +5,7 @@ SET log_query_path = '${__TEST_DIR__}/log_query_path.log'
 
 
 statement ok
-SELECT 1 AS first_query
+SELECT 'first_query_with_a_long_text_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' AS first_query
 
 
 statement ok
@@ -28,7 +28,17 @@ SET log_query_path = ''
 
 
 query
-SELECT content LIKE '%second_query%' AS logged FROM read_text('${__TEST_DIR__}/log_query_path.log')
+SELECT content LIKE '%first_query_with_a_long_text%' AS first, content LIKE '%second_query%' AS second
+FROM read_text('${__TEST_DIR__}/log_query_path.log')
 ----
-logged
-t
+first	second
+t	t
+
+
+query
+SELECT count(*) AS garbled
+FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('${__TEST_DIR__}/log_query_path.log'))
+WHERE line <> '' AND NOT (line LIKE 'SELECT %' OR line LIKE 'SET %')
+----
+garbled
+0

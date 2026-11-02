@@ -184,7 +184,7 @@ duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
 
 duckdb::Value OrderBound(const ScanGlobalState& g) {
   const auto& dyn = g.order_dynamic_filter;
-  if (!dyn || !dyn->initialized.load(std::memory_order_acquire)) {
+  if (!dyn || dyn->version.load(std::memory_order_acquire) == 0) {
     return duckdb::Value{};
   }
   duckdb::lock_guard<duckdb::mutex> lock{dyn->lock};

@@ -25,7 +25,6 @@
 #include <format>
 #include <iresearch/analysis/sql_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <map>
 #include <random>
@@ -33,6 +32,7 @@
 #include <string_view>
 #include <vector>
 
+#include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
@@ -45,12 +45,6 @@ namespace {
 using namespace tests::fuzz;
 using irs::analysis::SqlTokenizer;
 using Clock = std::chrono::steady_clock;
-
-duckdb::ClientContext& Context() {
-  static auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
 
 uint64_t NameSeed(std::string_view name) {
   uint64_t h = 0xCBF29CE484222325ull;
@@ -589,7 +583,7 @@ Built Build(const std::string& expression) {
     return out;
   }
   try {
-    out.tokenizer->Bind(Context());
+    out.tokenizer->Bind(tests::EngineContext());
   } catch (const irs::SqlException& e) {
     out.stage = Stage::BindFailed;
     out.error = e.what();

@@ -343,10 +343,13 @@ SELECT array_length(encode_geojson('{"type":"Polygon","coordinates":[[[0,0],[0,1
 has_terms
 t
 
-# The JSON templates have no list form.
+# The JSON templates have no list form: a list is read as one JSON array.
 
-statement error No function matches
+query
 SELECT encode_geopoint(['{"lat": 1, "lng": 2}'], 'lat', 'lng');
+----
+encode_geopoint
+NULL
 
 
 # --- A list option takes a list or the string spelling of the dictionary form ---

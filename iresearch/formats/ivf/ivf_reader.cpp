@@ -125,6 +125,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                         opts.max_search_fanout))) {
     return QueryBuilder::Empty();
   }
+  state.top_k = opts.top_k;
+  state.rescore_width = opts.rescore_width;
 
   auto query = memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},

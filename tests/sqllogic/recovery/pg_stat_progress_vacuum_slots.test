@@ -1,0 +1,53 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE psv (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO psv SELECT i, 'doc ' || i FROM range(0, 100) r(i);
+
+statement ok
+CREATE INDEX psv_body ON psv USING inverted (body);
+
+statement ok
+SET sdb_faults = 'pause_vacuum_mid_walk';
+
+connection vacuumer
+statement async ok
+VACUUM (COMPACT_TABLE) psv;
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT param1, param9, param10, relid = 'psv'::regclass AS on_psv
+FROM pg_stat_get_progress_info('VACUUM');
+----
+param1	param9	param10	on_psv
+2	1	1	t
+
+connection default
+query
+SELECT phase, indexes_total, indexes_processed, datname = current_database() AS in_db
+FROM pg_stat_progress_vacuum WHERE relid = 'psv'::regclass;
+----
+phase	indexes_total	indexes_processed	in_db
+vacuuming indexes	1	1	t
+
+connection default
+statement ok
+SET sdb_faults = '-pause_vacuum_mid_walk';
+
+wait
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_progress_vacuum WHERE relid = 'psv'::regclass;
+----
+n
+0
+
+connection default
+statement ok
+DROP TABLE psv;

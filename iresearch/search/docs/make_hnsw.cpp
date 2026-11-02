@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -56,7 +57,7 @@ class HnswHits : public Root {
 
 }  // namespace
 
-Root::ptr Make(const HnswQuery& query, const Context&) {
+Root::ptr Family::Make(const HnswQuery& query, const Context&) {
   return memory::make_managed<HnswHits>(query.RunSearch());
 }
 

@@ -22,10 +22,13 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
 #include <memory>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -56,28 +59,7 @@ template<bool Offs>
 using FixedTermPosition = std::pair<FixedTermPositionImpl<Offs>*, TermInterval>;
 
 template<typename T>
-struct TermPositionTraits {
-  using PositionImpl = PosAttr;
-
-  static PosAttr::value_t Position(T& pos) {
-    auto res = pos_limits::eof();
-    pos.first->visit(&res, [](void* ctx, auto& it) {
-      SDB_ASSERT(ctx);
-      auto& position = *reinterpret_cast<PosAttr::value_t*>(ctx);
-      if (pos_limits::valid(it.position->value())) {
-        position = std::min(position, it.position->value());
-      }
-      return true;
-    });
-    return res;
-  }
-
-  static const TermInterval& Interval(const T& pos) noexcept {
-    return pos.second;
-  }
-
-  static void ResetPos(const T&) {}
-};
+struct TermPositionTraits;
 
 template<bool Offs>
 struct TermPositionTraits<FixedTermPosition<Offs>> {
@@ -102,9 +84,6 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
   }
 };
 
-// clang-format off
-// clang-format on
-
 template<typename Iterator>
 class SinglePositionStrategy {
  public:
@@ -112,9 +91,8 @@ class SinglePositionStrategy {
   using Traits = TermPositionTraits<Value>;
   using PositionImpl = Traits::PositionImpl;
 
-  SinglePositionStrategy(Iterator& it, PositionImpl& lead_position,
-                         bool = false)
-    : _lead_it{it}, _lead_pos{lead_position} {}
+  SinglePositionStrategy(Iterator&, PositionImpl& lead_position, bool = false)
+    : _lead_pos{lead_position} {}
 
   void NotifyNextLead(const Iterator&) noexcept {
     SDB_ASSERT(pos_limits::valid(_lead_pos.value()));
@@ -145,7 +123,6 @@ class SinglePositionStrategy {
   consteval bool NextPermutation(Iterator&, const Iterator&) { return false; }
 
  private:
-  Iterator& _lead_it;
   PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
 };
@@ -337,7 +314,6 @@ class PhraseMatcher {
   static_assert(!HasBoost || HasFreq);
 
   static constexpr bool kHasScale = HasBoost;
-  static constexpr bool kHasFreq = HasFreq;
   static constexpr bool kOffsets = Offs;
   static constexpr size_t kRarestLeadSlots = 4;
   static constexpr bool kRarestLead =
@@ -451,13 +427,25 @@ class PhraseMatcher {
 
   IRS_FORCE_INLINE void TakeBoost() noexcept {
     if constexpr (HasBoost) {
-      score_t match = kNoBoost;
-      for (const auto& slot : _pos) {
-        match = std::min(match, Traits::Boost(slot));
-      }
-      _phrase_boost = std::max(_phrase_boost, match);
+      _phrase_boost =
+        std::max(_phrase_boost, MinBoost(_pos.begin(), _pos.end()));
     }
   }
+
+  template<typename Iterator>
+  IRS_FORCE_INLINE static score_t MinBoost(Iterator it,
+                                           const Iterator& end) noexcept {
+    score_t match = kNoBoost;
+    for (; it != end; ++it) {
+      match = std::min(match, Traits::Boost(*it));
+    }
+    return match;
+  }
+
+  static constexpr auto kByDocFreq = [](const TermPosition& lhs,
+                                        const TermPosition& rhs) noexcept {
+    return lhs.first->DocFreq() < rhs.first->DocFreq();
+  };
 
   template<bool Ordered = false>
   uint32_t NextPositionGeneric() {
@@ -528,7 +516,6 @@ class PhraseMatcher {
     return phrase_freq;
   }
 
- private:
   struct Side {
     uint32_t matches = 0;
     PosAttr::value_t lead_bound = 0;
@@ -545,26 +532,16 @@ class PhraseMatcher {
     if (lead_it + 1 == _pos.end()) {
       return NextPositionFrom<false, true>(lead_it);
     }
-    const auto rarest = [](auto first, auto last) {
-      auto freq = first->first->DocFreq();
-      for (++first; first != last; ++first) {
-        freq = std::min(freq, first->first->DocFreq());
-      }
-      return freq;
-    };
-    if (rarest(_pos.begin(), lead_it) < rarest(lead_it + 1, _pos.end())) {
+    const std::span before{_pos.begin(), lead_it};
+    const std::span after{lead_it + 1, _pos.end()};
+    if (kByDocFreq(*absl::c_min_element(before, kByDocFreq),
+                   *absl::c_min_element(after, kByDocFreq))) {
       return NextPositionFrom<true, true, true>(lead_it);
     }
     return NextPositionFrom<true, true>(lead_it);
   }
 
-  static Side Whole() noexcept {
-    Side side{.matches = 1};
-    if constexpr (HasBoost) {
-      side.boost = kNoBoost;
-    }
-    return side;
-  }
+  static Side Whole() noexcept { return {.matches = 1, .boost = kNoBoost}; }
 
   template<bool Forward, bool Backward, bool BackwardFirst = false>
   uint32_t NextPositionFrom(typename Positions::iterator lead_it) {
@@ -674,31 +651,21 @@ class PhraseMatcher {
                                      const Iterator& end) noexcept {
     ++side.matches;
     if constexpr (HasBoost) {
-      score_t match = kNoBoost;
-      for (auto it = lead_it + 1; it != end; ++it) {
-        match = std::min(match, Traits::Boost(*it));
-      }
-      side.boost = std::max(side.boost, match);
+      side.boost = std::max(side.boost, MinBoost(lead_it + 1, end));
     }
   }
 
-  auto Rarest() {
-    return absl::c_min_element(_pos, [](const auto& l, const auto& r) {
-      return l.first->DocFreq() < r.first->DocFreq();
-    });
-  }
+  auto Rarest() { return absl::c_min_element(_pos, kByDocFreq); }
 
   void OrderByDocFreq() {
     if constexpr (Offs) {
     } else if constexpr (HasIntervals) {
-      if (_pos.back().first->DocFreq() < _pos.front().first->DocFreq()) {
+      if (kByDocFreq(_pos.back(), _pos.front())) {
         absl::c_reverse(_pos);
         _reversed = !_reversed;
       }
     } else {
-      absl::c_sort(_pos, [](const auto& l, const auto& r) {
-        return l.first->DocFreq() < r.first->DocFreq();
-      });
+      absl::c_sort(_pos, kByDocFreq);
     }
   }
 

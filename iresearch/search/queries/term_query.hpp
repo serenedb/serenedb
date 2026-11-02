@@ -46,6 +46,8 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<TermQuery>;
+
 QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const SubReader& segment,
                                 const TermReader* reader,

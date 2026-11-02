@@ -1,0 +1,195 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/decimal.hpp>
+#include <duckdb/inet/inet_type.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <string_view>
+
+namespace sdb::pg {
+
+// PG logical types for DuckDB -- base type + alias, following the same
+// pattern as DuckDB's LogicalType::JSON() (VARCHAR + alias "JSON").
+//
+// DECLARE_PG_TYPE(REGTYPE, Regtype, "regtype", BIGINT) expands to:
+//   inline constexpr std::string_view kRegtypeAlias = "regtype";
+//   inline LogicalType REGTYPE() { ... with BIGINT + alias "regtype" ... }
+//   inline bool IsRegtype(const LogicalType&) { ... }
+
+#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId)       \
+  inline constexpr std::string_view k##Name##Alias = alias_str;   \
+  inline bool Is##Name(const duckdb::LogicalType& type) {         \
+    SDB_ASSERT(type.id() == duckdb::LogicalTypeId::BaseTypeId);   \
+    return type.GetTypeInfo().alias == alias_str;                 \
+  }                                                               \
+  inline duckdb::LogicalType UPPER() {                            \
+    return duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId) \
+      .WithAlias(alias_str);                                      \
+  }
+
+// clang-format off
+DECLARE_PG_TYPE(OID,            Oid,            "oid",             BIGINT)
+DECLARE_PG_TYPE(REGTYPE,        Regtype,        "regtype",         BIGINT)
+DECLARE_PG_TYPE(REGCLASS,       Regclass,       "regclass",        BIGINT)
+DECLARE_PG_TYPE(REGPROC,        Regproc,        "regproc",         BIGINT)
+DECLARE_PG_TYPE(REGNAMESPACE,   Regnamespace,   "regnamespace",    BIGINT)
+DECLARE_PG_TYPE(REGOPER,        Regoper,        "regoper",         BIGINT)
+DECLARE_PG_TYPE(REGOPERATOR,    Regoperator,    "regoperator",     BIGINT)
+DECLARE_PG_TYPE(REGPROCEDURE,   Regprocedure,   "regprocedure",    BIGINT)
+DECLARE_PG_TYPE(REGROLE,        Regrole,        "regrole",         BIGINT)
+DECLARE_PG_TYPE(REGCONFIG,      Regconfig,      "regconfig",       BIGINT)
+DECLARE_PG_TYPE(REGDICTIONARY,  Regdictionary,  "regdictionary",   BIGINT)
+DECLARE_PG_TYPE(REGCOLLATION,   Regcollation,   "regcollation",    BIGINT)
+DECLARE_PG_TYPE(TID,            Tid,            "tid",             BIGINT)
+DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
+DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
+DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
+DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
+DECLARE_PG_TYPE(REFCURSOR,      Refcursor,      "refcursor",       VARCHAR)
+DECLARE_PG_TYPE(ACLITEM,        Aclitem,        "aclitem",         VARCHAR)
+DECLARE_PG_TYPE(XML,            Xml,            "xml",             VARCHAR)
+DECLARE_PG_TYPE(CHAR,            Char,           "char",            VARCHAR)
+DECLARE_PG_TYPE(CARDINALNUMBER, CardinalNumber, "cardinal_number", INTEGER)
+DECLARE_PG_TYPE(CHARACTERDATA,  CharacterData,  "character_data",  VARCHAR)
+DECLARE_PG_TYPE(SQLIDENTIFIER,  SqlIdentifier,  "sql_identifier",  VARCHAR)
+DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
+DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
+DECLARE_PG_TYPE(PG_NODE_TREE,   PgNodeTree,     "pg_node_tree",    VARCHAR)
+DECLARE_PG_TYPE(PG_LSN,         PgLsn,          "pg_lsn",          UBIGINT)
+DECLARE_PG_TYPE(MACADDR,        Macaddr,        "macaddr",         UBIGINT)
+DECLARE_PG_TYPE(MACADDR8,       Macaddr8,       "macaddr8",        UBIGINT)
+DECLARE_PG_TYPE(ANYARRAY,       Anyarray,       "anyarray",        VARCHAR)
+DECLARE_PG_TYPE(PG_NDISTINCT,   PgNdistinct,    "pg_ndistinct",    VARCHAR)
+DECLARE_PG_TYPE(PG_DEPENDENCIES, PgDependencies, "pg_dependencies", VARCHAR)
+DECLARE_PG_TYPE(PG_MCV_LIST,    PgMcvList,      "pg_mcv_list",     VARCHAR)
+// clang-format on
+
+// PG pseudo-type `void`: functions declared RETURNS VOID still need a
+// representable result type. We back it with SQLNULL.
+inline duckdb::LogicalType VOID() {
+  return duckdb::LogicalType(duckdb::LogicalTypeId::SQLNULL).WithAlias("void");
+}
+
+// 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
+// as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
+// oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
+inline const irs::containers::FlatHashSet<std::string_view> kOidLikeAliases = {
+  kOidAlias,          kRegprocAlias,   kRegprocedureAlias,  kRegoperAlias,
+  kRegoperatorAlias,  kRegclassAlias,  kRegtypeAlias,       kRegroleAlias,
+  kRegnamespaceAlias, kRegconfigAlias, kRegdictionaryAlias, kRegcollationAlias,
+  kXidAlias,          kCidAlias,
+};
+
+inline bool IsOidLike(const duckdb::LogicalType& type) {
+  SDB_ASSERT(type.id() == duckdb::LogicalTypeId::BIGINT);
+  return kOidLikeAliases.contains(type.GetTypeInfo().alias);
+}
+
+inline bool IsRegLike(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::BIGINT &&
+         type.GetAlias().starts_with("reg");
+}
+
+#undef DECLARE_PG_TYPE
+
+inline constexpr std::string_view kCtidAlias = "ctid";
+
+inline duckdb::LogicalType CTID() {
+  static const auto kType =
+    duckdb::LogicalType::STRUCT(
+      {{"block_number", duckdb::LogicalType::UINTEGER},
+       {"tuple_offset", duckdb::LogicalType::USMALLINT}})
+      .WithAlias(std::string{kCtidAlias});
+  return kType;
+}
+
+inline constexpr std::string_view kMoneyAlias = "money";
+
+inline bool IsMoney(const duckdb::LogicalType& type) {
+  SDB_ASSERT(type.id() == duckdb::LogicalTypeId::DECIMAL);
+  return type.GetTypeInfo().alias == kMoneyAlias;
+}
+
+inline duckdb::LogicalType MONEY() {
+  static const auto kType =
+    duckdb::LogicalType::DECIMAL(duckdb::Decimal::MAX_WIDTH_INT64 + 1, 2)
+      .WithAlias(std::string{kMoneyAlias});
+  return kType;
+}
+
+inline constexpr std::string_view kInt2vectorAlias = "int2vector";
+inline constexpr std::string_view kOidvectorAlias = "oidvector";
+
+inline bool IsInt2vector(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::LIST &&
+         type.GetTypeInfo().alias == kInt2vectorAlias;
+}
+
+inline bool IsOidvector(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::LIST &&
+         type.GetTypeInfo().alias == kOidvectorAlias;
+}
+
+inline duckdb::LogicalType INT2VECTOR() {
+  return duckdb::LogicalType::LIST(duckdb::LogicalType::SMALLINT)
+    .WithAlias(std::string{kInt2vectorAlias});
+}
+
+inline duckdb::LogicalType OIDVECTOR() {
+  return duckdb::LogicalType::LIST(OID()).WithAlias(
+    std::string{kOidvectorAlias});
+}
+
+inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
+inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
+
+inline constexpr duckdb::idx_t kInetIpTypeChild = 0;
+inline constexpr duckdb::idx_t kInetAddressChild = 1;
+inline constexpr duckdb::idx_t kInetMaskChild = 2;
+inline constexpr duckdb::idx_t kInetChildCount = 3;
+
+inline constexpr uint64_t kInetV6SortBit = uint64_t{1} << 63;
+
+inline bool IsInet(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetTypeInfo().alias == kInetAlias;
+}
+
+inline bool IsCidr(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetTypeInfo().alias == kCidrAlias;
+}
+
+inline bool IsInetOrCidr(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto& alias = type.GetTypeInfo().alias;
+  return alias == kInetAlias || alias == kCidrAlias;
+}
+
+inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+inline duckdb::LogicalType CIDR() { return duckdb::make_cidr_type(); }
+
+}  // namespace sdb::pg

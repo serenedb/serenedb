@@ -17,8 +17,8 @@ control substitution on
 # rather than pinned to the old floor of 64.
 #
 # quant = 'none' is pinned so the graph traverses raw f32; with a quantizer the
-# scan layer reads sdb_ann_oversample * k of the beam's hits back at full
-# precision, and the beam is widened to hold that pool.
+# scan layer reads back at full precision the beam's hits whose code score
+# could still reach the k-th exact score, and never widens the beam for it.
 # ============================================================================
 
 statement ok
@@ -98,7 +98,7 @@ SET sdb_nprobe = 3;
 ----
 db error: ERROR: unrecognized configuration parameter "sdb_nprobe"
 
-Did you mean: "role"
+Did you mean: "sdb_ann_rescore_width"
 
 
 query
@@ -144,12 +144,11 @@ INSERT INTO hnsw_efq SELECT i,
 statement ok
 VACUUM (REFRESH_TABLE) hnsw_efq;
 
-# sdb_ann_oversample is HNSW's own oversample; sdb_ann_oversample is the IVF
-# one and does not reach here. The pool it asks for is read back at full
-# precision, and the beam is widened to hold it -- so an oversample of 4 at
-# LIMIT 5 searches at least 20 however narrow ef is set.
+# A rescore width reads more of the beam back at full precision but never
+# widens the beam, so a beam of 1 still searches at the LIMIT's floor and the
+# full five come back.
 statement ok
-SET sdb_ann_oversample = 4;
+SET sdb_ann_rescore_width = 100;
 
 statement ok
 SET sdb_hnsw_ef_search = 1;
@@ -163,11 +162,10 @@ count
 5
 
 
-# 0 disables the rescore, as Elasticsearch's oversample of 0 does. Nothing
-# widens the beam past the LIMIT then, but the LIMIT is still a floor, so the
-# full five come back and they come back straight from the quantized codes.
+# 0 disables the rescore. The LIMIT is still the beam's floor, so the full five
+# come back, straight from the quantized codes.
 statement ok
-SET sdb_ann_oversample = 0;
+SET sdb_ann_rescore_width = 0;
 
 query
 SELECT count(*) FROM (
@@ -179,8 +177,8 @@ count
 
 
 # On this linear dataset the codes separate the neighbours cleanly, so the
-# answer is the exact one either way: the oversample is a recall knob, never a
-# correctness one.
+# answer is the exact one either way: the rescore width is a recall knob, never
+# a correctness one.
 query
 SELECT pk FROM hnsw_efq_idx
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
@@ -194,4 +192,4 @@ pk
 
 
 statement ok
-SET sdb_ann_oversample = 3;
+SET sdb_ann_rescore_width = 3;

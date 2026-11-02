@@ -1,0 +1,12 @@
+statement error
+SELECT xpath('/a', '<a/>'::xml, [['x', 'u'], NULL]);
+----
+db error: ERROR: invalid array for XML namespace mapping
+DETAIL: The array must be two-dimensional with length of the second axis equal to 2.
+
+
+statement error
+SELECT xpath_exists('/a', '<a/>'::xml, [NULL, ['x', 'u']]);
+----
+db error: ERROR: invalid array for XML namespace mapping
+DETAIL: The array must be two-dimensional with length of the second axis equal to 2.

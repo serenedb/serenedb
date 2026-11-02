@@ -55,7 +55,7 @@ t
 
 query
 SELECT run_count >= 2 AS counted, failure_count, last_status, next_run > last_start AS rescheduled
-FROM sdb_jobs() WHERE job_name = 'js_every';
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_every';
 ----
 counted	failure_count	last_status	rescheduled
 t	0	success	t
@@ -82,7 +82,7 @@ ALTER JOB js_every SUSPEND;
 
 
 query ok retry 80 backoff 250ms
-SELECT running FROM sdb_jobs() WHERE job_name = 'js_every';
+SELECT running FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_every';
 ----
 running
 f
@@ -133,7 +133,7 @@ query ok retry 80 backoff 250ms
 SELECT running,
   extract(minute FROM next_run AT TIME ZONE 'UTC') = 0
     AND extract(second FROM next_run AT TIME ZONE 'UTC') = 0 AS on_the_hour
-FROM sdb_jobs() WHERE job_name = 'js_every';
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_every';
 ----
 running	on_the_hour
 f	t
@@ -144,7 +144,7 @@ CREATE JOB js_broken EVERY 1 SECOND AS INSERT INTO js_ticks VALUES ('broken', 'n
 
 
 query ok retry 80 backoff 250ms
-SELECT failure_count >= 2 AS failing, last_status FROM sdb_jobs() WHERE job_name = 'js_broken';
+SELECT failure_count >= 2 AS failing, last_status FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_broken';
 ----
 failing	last_status
 t	failed
@@ -152,7 +152,7 @@ t	failed
 
 query
 SELECT last_error LIKE '%not a timestamp%' AS explained, run_count = failure_count AS never_succeeded
-FROM sdb_jobs() WHERE job_name = 'js_broken';
+FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_broken';
 ----
 explained	never_succeeded
 t	t
@@ -242,7 +242,7 @@ t
 
 
 query ok retry 80 backoff 250ms
-SELECT schema_name, last_status FROM sdb_jobs() WHERE job_name = 'js_moved';
+SELECT schema_name, last_status FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'js_moved';
 ----
 schema_name	last_status
 js_renamed_space	success
@@ -273,7 +273,7 @@ DROP JOB js_every;
 
 
 query
-SELECT count(*) FROM sdb_jobs() WHERE starts_with(job_name, 'js_');
+SELECT count(*) FROM sdb_jobs() WHERE database_name = current_database() AND starts_with(job_name, 'js_');
 ----
 count
 0

@@ -1,0 +1,56 @@
+statement ok
+SET TimeZone = 'UTC';
+
+query
+SELECT justify_days(INTERVAL '1 month -1 day') AS a,
+       justify_days(INTERVAL '-1 month 1 day') AS b,
+       justify_interval(INTERVAL '-1 day -1 hour') AS c,
+       justify_interval(INTERVAL '-1 day 1 hour') AS d;
+----
+a	b	c	d
+29 days	-29 days	-1 days -01:00:00	-23:00:00
+
+query
+SELECT justify_interval(INTERVAL '1 month -1 day') AS a,
+       justify_interval(INTERVAL '1 month -1 hour') AS b,
+       justify_interval(INTERVAL '-1 month 1 day') AS c,
+       justify_interval(INTERVAL '-1 month 1 hour') AS d,
+       justify_interval(INTERVAL '1 month 1 hour') AS e;
+----
+a	b	c	d	e
+29 days	29 days 23:00:00	-29 days	-29 days -23:00:00	1 mon 01:00:00
+
+query
+SELECT justify_days(INTERVAL '1 month 1 day') AS a,
+       justify_days(INTERVAL '-1 month -1 day') AS b,
+       justify_days(INTERVAL '1 day') AS c,
+       justify_interval(INTERVAL '1 month 1 day') AS d,
+       justify_interval(INTERVAL '-1 month -1 day') AS e,
+       justify_interval(INTERVAL '-1 month -1 hour') AS f;
+----
+a	b	c	d	e	f
+1 mon 1 day	-1 mons -1 days	1 day	1 mon 1 day	-1 mons -1 days	-1 mons -01:00:00
+
+query
+SELECT date_subtract(TIMESTAMPTZ '2020-01-02 00:00+00', INTERVAL '1 day', NULL::text) AS a,
+       date_subtract(TIMESTAMPTZ '2020-01-02 00:00+00', INTERVAL '1 day', NULLIF('UTC', 'UTC')) AS b;
+----
+a	b
+NULL	NULL
+
+statement error
+SELECT justify_hours(INTERVAL '-2147483648 days -24 hours');
+----
+db error: ERROR: interval out of range
+
+
+statement error
+SELECT justify_hours(INTERVAL '2147483647 days 24 hours');
+----
+db error: ERROR: interval out of range
+
+
+statement error
+SELECT justify_days(INTERVAL '-2147483648 months -30 days');
+----
+db error: ERROR: interval out of range

@@ -1,0 +1,54 @@
+statement ok
+CREATE TABLE reg_oids_t (id int PRIMARY KEY)
+
+statement ok
+CREATE VIEW reg_oids_v AS SELECT 1 AS a
+
+statement ok
+CREATE SEQUENCE reg_oids_seq
+
+statement ok
+CREATE TYPE reg_oids_pair AS (x int, y int)
+
+statement ok
+CREATE TABLE reg_oids_rows AS SELECT name, relation::bigint AS relation FROM (VALUES ('missing', 999999), ('system table', 1259), ('system view', 'pg_stat_activity'::regclass::oid::bigint), ('table', 'reg_oids_t'::regclass::oid::bigint), ('view', 'reg_oids_v'::regclass::oid::bigint), ('key index', 'reg_oids_t_pkey'::regclass::oid::bigint), ('sequence', 'reg_oids_seq'::regclass::oid::bigint), ('composite type', 'reg_oids_pair'::regtype::oid::bigint)) AS v(name, relation)
+
+query
+SELECT name, pg_type_is_visible((relation | (1::bigint << 30))::oid) AS row_type, pg_type_is_visible((relation | (1::bigint << 30) | (1::bigint << 31))::oid) AS row_array, (relation | (1::bigint << 30))::oid::regtype::text = (relation | (1::bigint << 30))::text AS row_type_unnamed FROM reg_oids_rows ORDER BY name
+----
+name	row_type	row_array	row_type_unnamed
+composite type	NULL	NULL	t
+key index	NULL	NULL	t
+missing	NULL	NULL	t
+sequence	NULL	NULL	t
+system table	NULL	NULL	t
+system view	NULL	NULL	t
+table	t	t	f
+view	t	t	f
+
+query
+SELECT pg_type_is_visible(('reg_oids_t'::regclass::oid::bigint - 1)::oid) AS not_a_type
+----
+not_a_type
+NULL
+
+query
+SELECT '"union"[]'::regtype::text AS union_array, 'geometry[]'::regtype::text AS geometry_array, 'variant[]'::regtype::text AS variant_array, to_regtype('_union')::text AS union_by_name
+----
+union_array	geometry_array	variant_array	union_by_name
+"union"[]	geometry[]	variant[]	"union"[]
+
+statement ok
+DROP TABLE reg_oids_rows
+
+statement ok
+DROP TYPE reg_oids_pair
+
+statement ok
+DROP SEQUENCE reg_oids_seq
+
+statement ok
+DROP VIEW reg_oids_v
+
+statement ok
+DROP TABLE reg_oids_t

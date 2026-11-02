@@ -42,9 +42,7 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
       out.push_back(c);
     }
   }
-  if (escaped) {
-    out.push_back(AsByte(RegexpMeta::kEscape));
-  }
+  SDB_ASSERT(!escaped);
 
   return bytes_view{out.data(), out.size()};
 }
@@ -81,7 +79,7 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
   }
 
   if (escaped) {
-    has_escapes = true;
+    return RegexpType::Complex;
   }
 
   return has_escapes ? RegexpType::LiteralEscaped : RegexpType::Literal;

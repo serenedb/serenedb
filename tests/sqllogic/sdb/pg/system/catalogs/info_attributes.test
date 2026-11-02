@@ -1,0 +1,35 @@
+statement ok
+DROP SCHEMA IF EXISTS tinker_attr CASCADE;
+
+
+statement ok
+CREATE SCHEMA tinker_attr;
+
+
+statement ok
+CREATE TYPE tinker_attr.march AS (a int, c numeric(5, 2), d timestamp, e text, f int[]);
+
+
+query
+SELECT attribute_name, ordinal_position, data_type, character_octet_length, numeric_precision,
+       numeric_precision_radix, numeric_scale, datetime_precision, attribute_udt_name
+FROM information_schema.attributes WHERE udt_schema = 'tinker_attr'
+ORDER BY ordinal_position;
+----
+attribute_name	ordinal_position	data_type	character_octet_length	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	attribute_udt_name
+a	1	integer	NULL	32	2	0	NULL	int4
+c	2	numeric	NULL	5	10	2	NULL	numeric
+d	3	timestamp without time zone	NULL	NULL	NULL	NULL	6	timestamp
+e	4	text	1073741824	NULL	NULL	NULL	NULL	text
+f	5	ARRAY	NULL	NULL	NULL	NULL	NULL	_int4
+
+
+query
+SELECT pg_get_viewdef('information_schema.attributes'::regclass) LIKE '%_pg_truetypid(a, t)%' AS whole_row_helpers;
+----
+whole_row_helpers
+t
+
+
+statement ok
+DROP SCHEMA tinker_attr CASCADE;

@@ -93,7 +93,8 @@ struct OrBits {
     SetBitRange(words, first, first + len);
   }
 
-  IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
+  IRS_FORCE_INLINE void Bitset(uint64_t prev,
+                               const UnalignedWord* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
     OrBlock(words, prev + 1 - kMin, src, n);
   }
@@ -118,7 +119,8 @@ struct ClearBits {
     ClearBitRange(words, first, first + len);
   }
 
-  IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
+  IRS_FORCE_INLINE void Bitset(uint64_t prev,
+                               const UnalignedWord* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
     ClearBlock(words, prev + 1 - kMin, src, n);
   }
@@ -179,7 +181,8 @@ struct RetainBits {
     keep = (uint64_t{2} << (last % kBits)) - 1;
   }
 
-  IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
+  IRS_FORCE_INLINE void Bitset(uint64_t prev,
+                               const UnalignedWord* IRS_RESTRICT src,
                                uint32_t n, uint64_t max) noexcept {
     const auto first = prev + 1 - kMin;
     const auto last = max - kMin;

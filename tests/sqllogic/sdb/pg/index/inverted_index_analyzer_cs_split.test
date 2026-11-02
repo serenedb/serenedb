@@ -54,10 +54,6 @@ EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, geo     │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_inc_idx     │
 │ Lookup: table            │
@@ -73,8 +69,8 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo (i),    │
-│              pk (l)      │
+│ Projections: pk (l),     │
+│              geo (i)     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -104,10 +100,6 @@ EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, geo     │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_noi_idx     │
 │ Lookup: table            │
@@ -123,7 +115,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo, pk     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -156,10 +148,6 @@ EXPLAIN SELECT pk, geo FROM t_geo_src_noi_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, geo     │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_src_noi_idx │
 │ Lookup: table            │
@@ -175,8 +163,8 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo (i),    │
-│              pk (l)      │
+│ Projections: pk (l),     │
+│              geo (i)     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -212,10 +200,6 @@ EXPLAIN SELECT pk, geo FROM t_geo_src_zstd_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────────╮
-│ Projections: pk, geo      │
-│ ~1 row                    │
-╰─────────────┬─────────────╯
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: t_geo_src_zstd_idx │
 │ Lookup: table             │
@@ -231,8 +215,8 @@ QUERY PLAN
 │ │ Range: *, <1000      │  │
 │ │ Verify: table filter │  │
 │ ╰──────────────────────╯  │
-│ Projections: geo (i),     │
-│              pk (l)       │
+│ Projections: pk (l),      │
+│              geo (i)      │
 │ ~1 row                    │
 ╰───────────────────────────╯
 
@@ -270,11 +254,7 @@ EXPLAIN SELECT pk, b FROM t_wild_inc_idx
 WHERE b @@ ts_like('percent_alpha_one');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections: pk, b                         │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_inc_idx                      │
 │ Lookup: table                              │
 │ Index Filter:                              │
@@ -297,7 +277,7 @@ QUERY PLAN
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
-│ Projections: b (i), pk (l)                 │
+│ Projections: pk (l), b (i)                 │
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 
@@ -326,11 +306,7 @@ EXPLAIN SELECT pk, b FROM t_wild_noi_idx
 WHERE b @@ ts_like('percent_alpha_one');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections: pk, b                         │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_noi_idx                      │
 │ Lookup: table                              │
 │ Index Filter:                              │
@@ -353,7 +329,7 @@ QUERY PLAN
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
-│ Projections: b, pk                         │
+│ Projections: pk, b                         │
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 

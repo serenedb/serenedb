@@ -29,6 +29,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -133,19 +134,8 @@ class BooleanWindow {
   doc_id_t Compute(doc_id_t min, doc_id_t max, size_t words) {
     auto* const own = _own.data();
     detail::Clear(own, words);
-    doc_id_t next;
-    if constexpr (kLead) {
-      next = _lead.FillOr(min, max, own);
-      if constexpr (kOthers) {
-        next = std::max(next, _others.Restrict(min, max, own));
-      }
-    } else {
-      next = _optional.Fill(min, max, own);
-    }
-    if constexpr (kExcludes) {
-      _excludes.Remove(min, max, own);
-    }
-    return next;
+    return detail::FillClauses(_lead, _others, _optional, _excludes, min, max,
+                               own);
   }
 
   template<ScoreMergeType Inner>

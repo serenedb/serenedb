@@ -103,6 +103,10 @@
 #define ERRCODE_STACKED_DIAGNOSTICS_ACCESSED_WITHOUT_ACTIVE_HANDLER \
   MAKE_SQLSTATE('0', 'Z', '0', '0', '2')
 
+/* Class 10 - XQuery Error */
+#define ERRCODE_INVALID_ARGUMENT_FOR_XQUERY \
+  MAKE_SQLSTATE('1', '0', '6', '0', '8')
+
 /* Class 20 - Case Not Found */
 #define ERRCODE_CASE_NOT_FOUND MAKE_SQLSTATE('2', '0', '0', '0', '0')
 

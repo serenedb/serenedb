@@ -45,6 +45,8 @@ constexpr uint8_t kBqLayout = 1;
 constexpr float kBqSigmas = 2.f / 3.f;
 constexpr float kBqOneBitMagnitude = 0.79788456f;
 constexpr float kBqTwoBitMagnitude = 1.2651580f;
+constexpr double kBqTwoCellSpread = 0.14269;
+constexpr double kBqThreeCellSpread = 0.031738;
 
 constexpr size_t kBqCut0 = 0;
 constexpr size_t kBqCut1 = 1;
@@ -596,6 +598,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
 
   void Rekey(std::span<const float> query) {
     const BqLayout& lay = _stats->Layout();
+    _query.assign(query.begin(), query.end());
     if (Binary()) {
       if (_symmetric || M == VectorMetric::L2Sqr || _stats->Normalized()) {
         BqEncode(lay, _stats->Model(kBqCut0), query.data(), _bits.data());
@@ -656,6 +659,22 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
   uint32_t QueryBits() const noexcept { return _query_bits; }
   bool Binary() const noexcept { return _query_bits == 1; }
   bool Symmetric() const noexcept { return _symmetric; }
+  std::span<const float> Query() const noexcept { return _query; }
+
+  double WeightRounding() const noexcept {
+    double var = 0.0;
+    double mean = 0.0;
+    const auto add = [&](std::span<const float> w, std::span<const int8_t> q) {
+      for (size_t k = 0; k < w.size(); ++k) {
+        const double e = q[k] * double{_inv_scale} - w[k];
+        var += e * e / 4.0;
+        mean += e / 2.0;
+      }
+    };
+    add(_w0, _q0);
+    add(_w1, _q1);
+    return var + mean * mean;
+  }
 
   score_t Score(const uint8_t* code) const noexcept {
     const BqLayout& lay = _stats->Layout();
@@ -683,6 +702,7 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
   std::shared_ptr<const BinaryQuantizerStats<M>> _stats;
   uint32_t _query_bits;
   bool _symmetric;
+  std::vector<float> _query;
   std::vector<float> _w0;
   std::vector<float> _w1;
   std::vector<uint8_t> _bits;
@@ -723,6 +743,27 @@ class BinaryQuantizerReader final : public QuantizerReader {
     });
   }
 
+  void ScoreErrors(const byte_type* base, uint32_t record_size,
+                   std::span<const uint32_t> ids, std::span<score_t> scores,
+                   score_t* errors) final {
+    Errors(
+      [&](size_t i) {
+        return reinterpret_cast<const uint8_t*>(
+          base + static_cast<size_t>(ids[i]) * record_size);
+      },
+      scores.first(ids.size()), errors);
+  }
+
+  void BlockErrors(std::span<const byte_type> block, std::span<score_t> scores,
+                   score_t* errors) final {
+    Errors(
+      [&](size_t i) {
+        return reinterpret_cast<const uint8_t*>(block.data() +
+                                                i * _lay.record_size);
+      },
+      scores, errors);
+  }
+
   bool Decode(const byte_type* code, float* out) const final {
     const auto& stats = _cb->Stats();
     const float* base = stats.Model(kBqBase);
@@ -745,6 +786,7 @@ class BinaryQuantizerReader final : public QuantizerReader {
     } else {
       _own->Rekey(query);
     }
+    _errors_ready = false;
     return true;
   }
 
@@ -769,10 +811,71 @@ class BinaryQuantizerReader final : public QuantizerReader {
   }
 
  private:
+  template<typename Row>
+  void Errors(Row row, std::span<score_t> scores, score_t* errors) {
+    if (!_errors_ready) {
+      PrepareErrors();
+    }
+    if (_cur->Binary()) {
+      for (size_t i = 0; i < scores.size(); ++i) {
+        scores[i] = _fine->Score(row(i));
+      }
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      for (size_t i = 0; i < scores.size(); ++i) {
+        errors[i] =
+          std::sqrt(std::max(0.f, -scores[i]) * _error_slope + _error_var);
+      }
+    } else {
+      std::fill_n(errors, scores.size(), std::sqrt(_error_var));
+    }
+  }
+
+  void PrepareErrors() {
+    const BinaryQuantizerCodebook<M>* est = _cur;
+    if (_cur->Binary()) {
+      if (!_fine) {
+        _fine = std::make_unique<BinaryQuantizerCodebook<M>>(
+          _cb->StatsPtr(), _cur->Query(), 8U, false);
+      } else {
+        _fine->Rekey(_cur->Query());
+      }
+      est = _fine.get();
+    }
+    const auto& stats = _cb->Stats();
+    const float* step0 = stats.Model(kBqStep0);
+    const float* step1 = stats.Model(kBqStep1);
+    const auto query = est->Query();
+    const bool three = _lay.bits == 2 && !_lay.half;
+    double weighted = 0.0;
+    double total = 0.0;
+    for (uint32_t j = 0; j < _lay.d; ++j) {
+      const double s0 = step0[j];
+      const double s1 = step1[j];
+      const double v = three ? kBqThreeCellSpread * (s0 + s1) * (s0 + s1)
+                             : kBqTwoCellSpread * s0 * s0;
+      total += v;
+      weighted += double{query[j]} * query[j] * v;
+    }
+    const double rounding = est->WeightRounding();
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _error_slope =
+        static_cast<float>(4.0 * total / static_cast<double>(_lay.d));
+      _error_var = static_cast<float>(rounding);
+    } else {
+      _error_var = static_cast<float>(weighted + rounding);
+    }
+    _errors_ready = true;
+  }
+
   std::shared_ptr<const BinaryQuantizerCodebook<M>> _cb;
   const BinaryQuantizerCodebook<M>* _cur;
   std::unique_ptr<BinaryQuantizerCodebook<M>> _own;
+  std::unique_ptr<BinaryQuantizerCodebook<M>> _fine;
   BqLayout _lay;
+  float _error_slope = 0.f;
+  float _error_var = 0.f;
+  bool _errors_ready = false;
 };
 
 template<VectorMetric M>

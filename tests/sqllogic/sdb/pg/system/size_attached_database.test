@@ -1,0 +1,25 @@
+control substitution on
+
+statement ok
+ATTACH ':memory:' AS size_mem_${__DATABASE__};
+
+
+connection size_attached
+statement ok
+USE size_mem_${__DATABASE__};
+
+
+connection size_attached
+statement ok
+SELECT pg_schema_size('main');
+
+
+connection size_attached
+statement error
+SELECT pg_schema_size(2200);
+----
+db error: ERROR: schema with OID 2200 does not exist
+
+
+statement ok
+DETACH size_mem_${__DATABASE__};

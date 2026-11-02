@@ -1280,3 +1280,34 @@ query
 SELECT * FROM information_schema.user_mappings LIMIT 0
 ----
 authorization_identifier	foreign_server_catalog	foreign_server_name
+
+
+statement ok
+CREATE TABLE cc_virtual (a int, v int GENERATED ALWAYS AS (a + 1) VIRTUAL);
+
+
+statement ok
+CREATE VIEW _cc_view AS SELECT 1 AS a;
+
+
+query
+SELECT attname, attgenerated FROM pg_attribute WHERE attrelid = 'cc_virtual'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	attgenerated
+a	(empty)
+v	v
+
+
+query
+SELECT typname FROM pg_type WHERE typelem = '_cc_view'::regtype;
+----
+typname
+__cc_view
+
+
+statement ok
+DROP VIEW _cc_view;
+
+
+statement ok
+DROP TABLE cc_virtual;

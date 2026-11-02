@@ -37,9 +37,6 @@
 #include <variant>
 #include <vector>
 
-#include "pg/pg_catalog/pg_type.h"
-#include "pg/sql_utils.h"
-
 namespace sdb::pg {
 
 void CheckPositiveInt(std::string_view name, int value);

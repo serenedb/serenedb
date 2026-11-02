@@ -1,0 +1,80 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE obcr_t (a SERIAL, b INT);
+
+
+statement ok
+CREATE SEQUENCE "OBCR_T_A_SEQ" OWNED BY obcr_t.b;
+
+
+statement ok
+CREATE TABLE obcr_v (a INT);
+
+
+statement ok
+CREATE TABLE "OBCR_V" (a INT);
+
+
+statement ok
+CREATE VIEW obcr_w AS SELECT a FROM "OBCR_V";
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE TABLE obcr_trigger (x INT);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT refobjsubid AS col, objid::regclass::text AS obj, deptype FROM pg_depend
+WHERE refobjid = 'obcr_t'::regclass AND classid = 'pg_class'::regclass ORDER BY refobjsubid;
+----
+col	obj	deptype
+1	obcr_t_a_seq	a
+2	"OBCR_T_A_SEQ"	a
+
+
+connection after_crash
+statement ok
+DROP TABLE obcr_t;
+
+
+connection after_crash
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname IN ('obcr_t_a_seq', 'OBCR_T_A_SEQ');
+----
+sequences
+0
+
+
+connection after_crash
+statement ok
+DROP TABLE obcr_v;
+
+
+connection after_crash
+statement error (?i)depend on it
+DROP TABLE "OBCR_V";
+
+
+connection after_crash
+statement ok
+DROP VIEW obcr_w;
+
+
+connection after_crash
+statement ok
+DROP TABLE "OBCR_V";

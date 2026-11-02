@@ -36,6 +36,11 @@ count
 1
 
 statement ok
+CREATE TABLE drop_view_oids AS
+SELECT (SELECT oid FROM pg_database WHERE datname = current_database()) AS db, index_oid AS idx
+FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'drop_view_idx';
+
+statement ok
 DROP VIEW drop_view_v;
 
 # The index went with the view.
@@ -45,6 +50,18 @@ SELECT count(*) FROM pg_class WHERE relname = 'drop_view_idx';
 count
 0
 
+skipif pg-wire-extended
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+skipif pg-wire-extended
+statement error connection closed
+SELECT 1;
+
+onlyif pg-wire-extended
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
 # Across a restart the index must stay gone (no orphaned definition row gets
 # resurrected), and recreating the same names must work cleanly.
 connection after_drop
@@ -52,6 +69,14 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) FROM pg_class WHERE relname = 'drop_view_idx';
 ----
 count
+0
+
+connection after_drop
+query
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), drop_view_oids
+WHERE file LIKE '%/engine_v1/' || db || '/' || idx || '/%';
+----
+leftover
 0
 
 connection after_drop

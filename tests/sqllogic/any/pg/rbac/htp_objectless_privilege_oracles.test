@@ -77,12 +77,50 @@ ok
 t
 
 
+query
+SELECT has_language_privilege('htp_vedernikoff', 'internal', 'USAGE') AS usage,
+       has_language_privilege('htp_vedernikoff', 'sql', 'USAGE WITH GRANT OPTION') AS grantable,
+       has_language_privilege('postgres', 99999::oid, 'USAGE') AS superuser_missing,
+       has_language_privilege('htp_vedernikoff', 99999::oid, 'USAGE') IS NULL AS missing;
+----
+usage	grantable	superuser_missing	missing
+t	f	t	t
+
+
+statement error
+SELECT has_language_privilege('htp_vedernikoff', 'htp_nosuch_language', 'USAGE');
+----
+db error: ERROR: language "htp_nosuch_language" does not exist
+
+
+statement error
+SELECT has_language_privilege('sql', 'EXECUTE');
+----
+db error: ERROR: unrecognized privilege type: "EXECUTE"
+
+
+
 # --- no RLS -> row security never active ---
 query
 SELECT row_security_active('pg_class') AS active;
 ----
 active
 f
+
+
+query
+SELECT row_security_active(99999) AS missing_oid, row_security_active(NULL::text) IS NULL AS null_input,
+       pg_statistics_obj_is_visible(99999) IS NULL AS no_statistics;
+----
+missing_oid	null_input	no_statistics
+f	t	t
+
+
+statement error
+SELECT row_security_active('htp_nosuch_relation');
+----
+db error: ERROR: relation "htp_nosuch_relation" does not exist
+
 
 
 statement ok

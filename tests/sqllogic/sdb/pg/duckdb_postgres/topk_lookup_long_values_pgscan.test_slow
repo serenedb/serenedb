@@ -1,0 +1,51 @@
+control substitution on
+
+hash-threshold 100
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS tkpg_${__DATABASE__} (TYPE postgres);
+
+statement ok
+DROP SCHEMA IF EXISTS tkpg_${__DATABASE__}.tkpg CASCADE;
+
+statement ok
+CREATE SCHEMA tkpg_${__DATABASE__}.tkpg;
+
+statement ok
+CREATE TABLE tkpg_docs AS
+SELECT i AS id,
+       (i * 7919) % 1000003 AS n,
+       'title-' || i || '-long-enough-to-not-inline' AS title,
+       CASE WHEN i % 10 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
+       array_to_string(list_transform(range(16), x -> md5(i::VARCHAR || '-' || x::VARCHAR)), ' ') AS body
+FROM generate_series(1, 5000) t(i);
+
+statement ok
+CREATE TABLE tkpg_${__DATABASE__}.tkpg.docs AS SELECT * FROM tkpg_docs;
+
+statement ok
+CALL postgres_execute('tkpg_${__DATABASE__}', 'ALTER TABLE tkpg.docs ADD PRIMARY KEY (id)');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tkpg_words_${__DATABASE__} AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm, offset);
+
+statement ok
+CREATE VIEW tkpg_v AS SELECT * FROM tkpg_${__DATABASE__}.tkpg.docs;
+
+statement ok
+CREATE INDEX tkpg_idx ON tkpg_v USING inverted (body tkpg_words_${__DATABASE__}, n) INCLUDE (n);
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || id || '-long-enough-to-not-inline' AND body LIKE 'red fox %')
+FROM (SELECT id, title, body FROM tkpg_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(tkpg_idx.tableoid) DESC LIMIT 10);
+----
+count	count
+10	10
+
+statement ok
+DROP SCHEMA tkpg_${__DATABASE__}.tkpg CASCADE;
+
+statement ok
+DETACH tkpg_${__DATABASE__};

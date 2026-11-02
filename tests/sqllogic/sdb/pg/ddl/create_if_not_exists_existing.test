@@ -1,0 +1,262 @@
+control substitution on
+
+# CREATE ... IF NOT EXISTS of a name already taken leaves the existing object as
+# it is and does no work: it creates nothing, runs no query, binds no body and
+# validates no options.
+
+
+# --- tables ---
+
+statement ok
+CREATE TABLE ine_t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_t (other INT);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_t AS SELECT error('not run') AS x;
+
+
+query
+SELECT string_agg(column_name, ',' ORDER BY ordinal_position) AS cols FROM information_schema.columns
+WHERE table_name = 'ine_t';
+----
+cols
+id,body
+
+
+statement ok
+CREATE TEMP TABLE ine_tt (a INT);
+
+
+statement ok
+CREATE TEMP TABLE IF NOT EXISTS ine_tt (b INT);
+
+
+query
+SELECT count(a) AS n FROM ine_tt;
+----
+n
+0
+
+
+# A search table creates no storage and no hidden sequence for the skipped one.
+statement ok
+CREATE TABLE ine_s (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE ine_s_sequences AS
+SELECT count(*) AS n FROM pg_class WHERE relkind = 'S' AND relname LIKE 'ine_s%';
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_s (id INT, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_s (x INT) WITH (storage = 'search');
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relkind = 'S' AND relname LIKE 'ine_s%') - n AS added
+FROM ine_s_sequences;
+----
+added
+0
+
+
+# A name held by another kind of relation is taken too.
+statement ok
+CREATE SEQUENCE ine_seq;
+
+
+statement ok
+CREATE INDEX ine_t_idx ON ine_t (body);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_seq (a INT);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_seq AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ine_t_idx AS SELECT 1 AS a;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS ine_t AS SELECT * FROM ine_missing;
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname IN ('ine_seq', 'ine_t_idx', 'ine_t') ORDER BY relname;
+----
+relname	relkind
+ine_seq	S
+ine_t	r
+ine_t_idx	i
+
+
+# --- views ---
+
+statement ok
+CREATE VIEW ine_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS ine_v AS SELECT * FROM ine_missing;
+
+
+statement ok
+CREATE TEMP VIEW ine_tv AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TEMP VIEW IF NOT EXISTS ine_tv AS SELECT 2 AS b;
+
+
+query
+SELECT (SELECT a FROM ine_v) AS v, (SELECT a FROM ine_tv) AS tv;
+----
+v	tv
+1	1
+
+
+# --- indexes ---
+
+statement ok
+CREATE UNIQUE INDEX ine_u ON ine_t (id);
+
+
+statement ok
+CREATE UNIQUE INDEX IF NOT EXISTS ine_u ON ine_t (body);
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'ine_u';
+----
+indexdef
+CREATE UNIQUE INDEX ine_u ON public.ine_t USING secondary (id)
+
+
+# A transaction that already wrote to a search table may still skip an index
+# that exists on it.
+statement ok
+CREATE INDEX ine_s_idx ON ine_s USING inverted (body);
+
+
+statement ok
+BEGIN;
+
+
+statement count 1
+INSERT INTO ine_s VALUES (1, 'a');
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS ine_s_idx ON ine_s USING inverted (id);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'ine_s_idx';
+----
+def
+CREATE INDEX ine_s_idx ON public.ine_s USING inverted (body)
+
+
+# --- types, dictionaries, functions, secrets ---
+
+statement ok
+CREATE TYPE ine_e AS ENUM ('a');
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS ine_e AS ENUM (SELECT error('not run')::VARCHAR);
+
+
+query
+SELECT enum_range(NULL::ine_e)::VARCHAR AS labels;
+----
+labels
+[a]
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ine_d AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS ine_d AS split_text(case := 'bogus');
+
+
+query
+SELECT ts_lexize('ine_d', 'ABC') AS lexemes;
+----
+lexemes
+{abc}
+
+
+statement ok
+CREATE MACRO ine_tm() AS TABLE SELECT 1 AS x;
+
+
+statement ok
+CREATE MACRO IF NOT EXISTS ine_tm() AS TABLE SELECT 2 AS y;
+
+
+query
+SELECT * FROM ine_tm();
+----
+x
+1
+
+
+statement ok
+CREATE FUNCTION ine_f(x INT) RETURNS INT AS 'SELECT x' LANGUAGE SQL;
+
+
+statement ok
+CREATE FUNCTION IF NOT EXISTS ine_f(x INT) RETURNS INT AS 'SELECT x * 2' LANGUAGE SQL;
+
+
+statement ok
+CREATE PROCEDURE ine_p() LANGUAGE sql AS $$ SELECT 1 $$;
+
+
+statement ok
+CREATE PROCEDURE IF NOT EXISTS ine_p() LANGUAGE sql AS $$ SELECT 2 $$;
+
+
+query
+SELECT ine_f(3) AS f, (SELECT trim(prosrc) FROM pg_proc WHERE proname = 'ine_p') AS p;
+----
+f	p
+3	SELECT 1
+
+
+statement ok
+CREATE SECRET ine_sec_${__DATABASE__} (TYPE s3, KEY_ID 'k1');
+
+
+statement ok
+CREATE SECRET IF NOT EXISTS ine_sec_${__DATABASE__} (TYPE s3, KEY_ID 'k2');
+
+
+query
+SELECT secret_string LIKE '%k1%' AS kept FROM duckdb_secrets() WHERE name = 'ine_sec_${__DATABASE__}';
+----
+kept
+t
+
+
+statement ok
+DROP SECRET ine_sec_${__DATABASE__};

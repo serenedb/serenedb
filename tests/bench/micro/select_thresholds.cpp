@@ -127,8 +127,8 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     }
     writer.Commit(w);
   }
-  blk->reader =
-    std::make_unique<irs::ColReader>(blk->dir, std::string{kSegName}, CsDb());
+  blk->reader = std::make_unique<irs::ColReader>(
+    blk->dir, std::string{kSegName}, CsDb(), irs::IOAdvice::SEQUENTIAL);
   const auto* col = blk->reader->Column(kField);
   if (col == nullptr) {
     std::fprintf(stderr, "BuildBlk(%s): column missing\n", shape.name);

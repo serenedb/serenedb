@@ -51,40 +51,22 @@ count	count	count	count	count	count	count	count
 5	5	5	5	3	3	0	5
 
 
-# EXPLAIN: count(*) over the inverted-index scan must engage the
-# count-only fast path. The scan reports "Output: row-count only" instead
-# of a Projections list.
 query
 EXPLAIN SELECT count(*) FROM ct_idx;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────╮
-│ Aggregates: count_star() │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: ct_idx            │
-│ Output: row-count only   │
-│ ~5 rows                  │
-╰──────────────────────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 
-# EXPLAIN: count(<constant>) is equivalent to count(*) -- DuckDB rewrites
-# the aggregate to count_star() upstream, so the scan-side path is the
-# same count-only optimization.
 query
 EXPLAIN SELECT count(42) FROM ct_idx;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────╮
-│ Aggregates: count_star() │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: ct_idx            │
-│ Output: row-count only   │
-│ ~5 rows                  │
-╰──────────────────────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 
 # EXPLAIN: count(<column>) must materialise the column to skip nulls --

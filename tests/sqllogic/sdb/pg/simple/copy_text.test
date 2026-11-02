@@ -180,3 +180,45 @@ SELECT a, b IS NULL AS null_b, length(b) AS len FROM csv_case_dst ORDER BY a;
 a	null_b	len
 1	f	0
 2	t	NULL
+
+
+statement ok
+CREATE TABLE xml_src (id INT, body TEXT);
+
+
+statement ok
+CREATE TABLE xml_dst (id INT, body XML);
+
+
+statement count 2
+INSERT INTO xml_src VALUES (1, '<a/>'), (2, '<a/><b/>');
+
+
+statement count 2
+COPY xml_src TO '${__TEST_DIR__}/copy_text_xml.txt' (FORMAT text);
+
+
+statement ok
+SET xmloption = document;
+
+
+statement error
+COPY xml_dst FROM '${__TEST_DIR__}/copy_text_xml.txt' (FORMAT text);
+----
+db error: ERROR: COPY FROM: invalid input for column 2
+
+
+statement ok
+RESET xmloption;
+
+
+statement count 2
+COPY xml_dst FROM '${__TEST_DIR__}/copy_text_xml.txt' (FORMAT text);
+
+
+query
+SELECT id, body FROM xml_dst ORDER BY id;
+----
+id	body
+1	<a/>
+2	<a/><b/>

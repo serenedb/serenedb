@@ -24,9 +24,11 @@
 #include <optional>
 #include <span>
 
-#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/detail/window.hpp"
+#include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/vector_exact_query.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
@@ -45,7 +47,7 @@ class ExactScanner {
     _doc = _last;
     _end = _last;
     if (const auto* inner = query.Inner()) {
-      _set.emplace(MakeDocSet(inner, rows));
+      _matches = docs::MakeRoot(*inner, {});
     }
     if (const auto& column = query.Column();
         column.HasValidity() && column.MergedStatistics().CanHaveNull()) {
@@ -56,6 +58,8 @@ class ExactScanner {
   void Reset(doc_id_t min, doc_id_t max) noexcept {
     _doc = std::clamp(min, doc_limits::min(), _last);
     _end = doc_limits::eof(max) ? _last : std::clamp(max, _doc, _last);
+    _at = 0;
+    _len = 0;
   }
 
   uint32_t Next(doc_id_t* docs, score_t* dists) {
@@ -130,24 +134,33 @@ class ExactScanner {
   };
 
   uint32_t Collect(doc_id_t* docs) {
-    uint32_t n = 0;
-    if (_set) {
-      for (auto doc = _set->Probe(_doc);
-           n < kRun && !doc_limits::eof(doc) && doc < _end;
-           doc = _set->Probe(doc + 1)) {
-        docs[n++] = doc;
-      }
-      _doc = n == 0 ? _end : docs[n - 1] + 1;
-    } else {
+    if (!_matches) {
+      uint32_t n = 0;
       for (; n < kRun && _doc < _end; ++_doc) {
         docs[n++] = _doc;
       }
+      return n;
     }
+    while (_at == _len) {
+      if (_doc >= _end) {
+        return 0;
+      }
+      const auto max = _end - _doc > kWindowDocs ? _doc + kWindowDocs : _end;
+      _len = _matches->Run(_doc, max, _window.data());
+      _at = 0;
+      _doc = max;
+    }
+    const auto n = std::min(kRun, _len - _at);
+    std::copy_n(_window.data() + _at, n, docs);
+    _at += n;
     return n;
   }
 
   RawVectorReader _reader;
-  std::optional<LazyBitset> _set;
+  docs::Root::ptr _matches;
+  SlackBuf<doc_id_t, kWindowDocs, doc_limits::kDocsSlack> _window;
+  uint32_t _at = 0;
+  uint32_t _len = 0;
   std::optional<Validity> _validity;
   std::optional<score_t> _threshold;
   bool _inclusive;

@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/scorers/make_window.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
@@ -41,7 +42,20 @@ namespace irs::lead {
 
 template<typename Lead, typename Others, typename Optional, typename Excludes,
          typename Score = utils::Empty>
-class BooleanWindow {
+class BooleanWindow
+  : public detail::BooleanWindowBase<
+      BooleanWindow<Lead, Others, Optional, Excludes, Score>, Score,
+      !std::is_same_v<Score, utils::Empty>,
+      !std::is_same_v<Score, utils::Empty> && !detail::LazyReset<Optional>()> {
+  using Base = detail::BooleanWindowBase<
+    BooleanWindow, Score, !std::is_same_v<Score, utils::Empty>,
+    !std::is_same_v<Score, utils::Empty> && !detail::LazyReset<Optional>()>;
+  using Base::_doc;
+  using Base::_filled;
+  using Base::_gathered;
+  using Base::_min;
+  using Base::_window;
+
  public:
   static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
@@ -57,13 +71,13 @@ class BooleanWindow {
   BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OthersArgs&& others, OptionalArgs&& optional,
                 ExcludesArgs&& excludes, Score score = {})
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
+    : Base{score},
+      _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
       _optional{
         std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
-      _score{score} {}
+        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
 
   BooleanWindow(BooleanWindow&&) = delete;
   BooleanWindow& operator=(BooleanWindow&&) = delete;
@@ -74,7 +88,7 @@ class BooleanWindow {
     if (target <= _doc) {
       return _doc;
     }
-    return _doc = From(target);
+    return _doc = this->From(target);
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)
@@ -84,110 +98,20 @@ class BooleanWindow {
     _gathered[slot] = _filled ? _window[_doc - _min] : score_t{0};
   }
 
-  ScoreFunction PrepareScore()
-    requires kScored
-  {
-    return detail::MakeWindowScore(_score.inner, _gathered, _score.absorbed);
-  }
-
-  void CollectScorers(std::vector<ScoreFunction>& out)
-    requires kScored
-  {
-    detail::AppendScorer(out, PrepareScore());
+  doc_id_t FillWindow(doc_id_t min, doc_id_t max, uint64_t* words) {
+    if constexpr (kScored) {
+      return _optional.Fill(min, max, words, _window);
+    } else {
+      return detail::FillClauses(_lead, _others, _optional, _excludes, min, max,
+                                 words);
+    }
   }
 
  private:
-  doc_id_t From(doc_id_t target) {
-    if (doc_limits::eof(target)) {
-      return doc_limits::eof();
-    }
-    for (;;) {
-      if (!_filled || target >= _min + detail::kWindowDocs) {
-        if (_spent) {
-          return doc_limits::eof();
-        }
-        Refill(target);
-      }
-      if (const auto found = Find(target - _min);
-          found != detail::kWindowDocs) {
-        return _min + found;
-      }
-      if (_spent) {
-        return doc_limits::eof();
-      }
-      if (!detail::NextWindow(_min, _next, target)) {
-        return doc_limits::eof();
-      }
-    }
-  }
-
-  void Refill(doc_id_t target) {
-    SDB_ASSERT(!_filled || target >= _min);
-    auto* const words = _mask.data();
-    if constexpr (kScored && !detail::LazyReset<Optional>()) {
-      for (uint32_t w = 0; w != detail::kWindowWords; ++w) {
-        auto word = words[w];
-        words[w] = 0;
-        const auto base = w * detail::kWindowBits;
-        while (word != 0) {
-          _window[base + std::countr_zero(word)] = 0;
-          word = PopBit(word);
-        }
-      }
-    } else {
-      detail::Clear(words, detail::kWindowWords);
-    }
-    _min = target;
-    _filled = true;
-    const auto max = _min + detail::kWindowDocs;
-    doc_id_t next;
-    if constexpr (kLead) {
-      next = _lead.FillOr(_min, max, words);
-      if constexpr (kOthers) {
-        next = std::max(next, _others.Restrict(_min, max, words));
-      }
-    } else if constexpr (kScored) {
-      next = _optional.Fill(_min, max, words, _window);
-    } else {
-      next = _optional.Fill(_min, max, words);
-    }
-    if constexpr (kExcludes) {
-      _excludes.Remove(_min, max, words);
-    }
-    _next = next;
-    _spent = doc_limits::eof(next);
-  }
-
-  doc_id_t Find(doc_id_t offset) const noexcept {
-    auto word = offset / detail::kWindowBits;
-    auto bits = _mask[word] & (~uint64_t{0} << (offset % detail::kWindowBits));
-    for (;;) {
-      if (bits != 0) {
-        return static_cast<doc_id_t>(word * detail::kWindowBits +
-                                     std::countr_zero(bits));
-      }
-      if (++word == detail::kWindowWords) {
-        return detail::kWindowDocs;
-      }
-      bits = _mask[word];
-    }
-  }
-
-  detail::Scratch _mask{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kScored, score_t[detail::kWindowDocs]> _window{};
-  [[no_unique_address]] ABSL_CACHELINE_ALIGNED
-    utils::Need<kScored, score_t[kScoreBlock]> _gathered{};
   [[no_unique_address]] Lead _lead;
   [[no_unique_address]] Others _others;
   [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
-  doc_id_t _min = 0;
-  doc_id_t _next = doc_limits::eof();
-  doc_id_t _doc = doc_limits::invalid();
-  bool _filled = false;
-  bool _spent = false;
-  [[no_unique_address]] Score _score;
 };
 
 }  // namespace irs::lead

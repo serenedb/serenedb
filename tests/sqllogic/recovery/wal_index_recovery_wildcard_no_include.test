@@ -31,11 +31,7 @@ query
 EXPLAIN SELECT pk, b FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one');
 ----
 QUERY PLAN
-╭─ PROJECTION ───────────────────────────────╮
-│ Projections: pk, b                         │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: wal_wild_ni_idx                     │
 │ Lookup: table                              │
 │ Index Filter:                              │
@@ -58,7 +54,7 @@ QUERY PLAN
 │ │ And("\\x1fpercent", "alpha", "one\\x1f") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
-│ Projections: b, pk                         │
+│ Projections: pk, b                         │
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 

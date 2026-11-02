@@ -2,7 +2,7 @@ control substitution on
 
 # Doc examples for the "Behavioral Differences from PostgreSQL" section of the
 # compatibility/core-sql-compatibility page. The `_pgscan` suffix tells
-# tests/sqllogic/run.sh to bring up a real postgres backend at ${PGHOST}:${PGPORT}.
+# scripts/ci/test.py to bring up a real postgres backend at ${PGHOST}:${PGPORT}.
 # Comparisons run each expression on BOTH engines: the PostgreSQL side via
 # postgres_query() on the attached postgres, the SereneDB side locally
 # (COALESCE(TRY(...), 'error') turns a local evaluation error into 'error').

@@ -33,10 +33,6 @@ EXPLAIN SELECT pk, geo FROM wal_geo_ni_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: pk, geo     │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: wal_geo_ni_idx    │
 │ Lookup: table            │
@@ -52,7 +48,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo, pk     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 

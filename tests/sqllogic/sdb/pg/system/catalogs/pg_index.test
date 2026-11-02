@@ -1,0 +1,389 @@
+statement ok
+DROP TABLE IF EXISTS roshan_idx_pit;
+
+
+statement ok
+DROP TABLE IF EXISTS courier_idx_plain;
+
+
+statement ok
+DROP SCHEMA IF EXISTS zeus_idx_ns CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_idx_shard;
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_idx_vault;
+
+
+query
+SELECT relname, relkind, relnatts FROM pg_class WHERE oid = 2610;
+----
+relname	relkind	relnatts
+pg_index	r	21
+
+
+query
+SELECT attname, atttypid::regtype::text AS typ FROM pg_attribute WHERE attrelid = 'pg_index'::regclass AND attnum BETWEEN 1 AND 6 ORDER BY attnum;
+----
+attname	typ
+indexrelid	oid
+indrelid	oid
+indnatts	smallint
+indnkeyatts	smallint
+indisunique	boolean
+indnullsnotdistinct	boolean
+
+
+statement ok
+CREATE TABLE roshan_idx_pit (id int PRIMARY KEY, aegis text UNIQUE, cheese int, refresher int, rapier text, CONSTRAINT roshan_idx_uq2 UNIQUE (cheese, refresher));
+
+
+statement ok
+CREATE INDEX roshan_idx_cheese ON roshan_idx_pit (cheese);
+
+
+statement ok
+CREATE UNIQUE INDEX roshan_idx_rapier ON roshan_idx_pit (rapier);
+
+
+statement ok
+CREATE INDEX roshan_idx_multi ON roshan_idx_pit (refresher, aegis);
+
+
+query
+SELECT indexrelid::regclass::text AS idx, indrelid::regclass::text AS rel, indnatts, indnkeyatts, indisunique, indnullsnotdistinct, indisprimary, indisexclusion, indimmediate, indisclustered, indisvalid, indcheckxmin, indisready, indislive, indisreplident, array_to_string(indkey, ' ') AS indkey, array_to_string(indcollation, ' ') AS indcollation, array_to_string(indoption, ' ') AS indoption, indexprs IS NULL AS no_exprs, indpred IS NULL AS no_pred
+FROM pg_index WHERE indrelid = 'roshan_idx_pit'::regclass ORDER BY 1;
+----
+idx	rel	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indoption	no_exprs	no_pred
+roshan_idx_cheese	roshan_idx_pit	1	1	f	f	f	f	t	f	t	f	t	t	f	3	0	0	t	t
+roshan_idx_multi	roshan_idx_pit	2	2	f	f	f	f	t	f	t	f	t	t	f	4 2	0 100	0 0	t	t
+roshan_idx_pit_aegis_key	roshan_idx_pit	1	1	t	f	f	f	t	f	t	f	t	t	f	2	100	0	t	t
+roshan_idx_pit_pkey	roshan_idx_pit	1	1	t	f	t	f	t	f	t	f	t	t	f	1	0	0	t	t
+roshan_idx_rapier	roshan_idx_pit	1	1	t	f	f	f	t	f	t	f	t	t	f	5	100	0	t	t
+roshan_idx_uq2	roshan_idx_pit	2	2	t	f	f	f	t	f	t	f	t	t	f	3 4	0 0	0 0	t	t
+
+
+query
+SELECT indexrelid::regclass::text AS idx, regexp_replace(pg_get_indexdef(indexrelid), ' USING \w+ ', ' USING ') AS def
+FROM pg_index WHERE indrelid = 'roshan_idx_pit'::regclass ORDER BY 1;
+----
+idx	def
+roshan_idx_cheese	CREATE INDEX roshan_idx_cheese ON public.roshan_idx_pit USING (cheese)
+roshan_idx_multi	CREATE INDEX roshan_idx_multi ON public.roshan_idx_pit USING (refresher, aegis)
+roshan_idx_pit_aegis_key	CREATE UNIQUE INDEX roshan_idx_pit_aegis_key ON public.roshan_idx_pit USING (aegis)
+roshan_idx_pit_pkey	CREATE UNIQUE INDEX roshan_idx_pit_pkey ON public.roshan_idx_pit USING (id)
+roshan_idx_rapier	CREATE UNIQUE INDEX roshan_idx_rapier ON public.roshan_idx_pit USING (rapier)
+roshan_idx_uq2	CREATE UNIQUE INDEX roshan_idx_uq2 ON public.roshan_idx_pit USING (cheese, refresher)
+
+
+query
+SELECT c.relname, c.relkind, c.relnatts = i.indnatts AS natts_ok, c.relnamespace::regnamespace::text AS nsp, i.indisunique
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE i.indrelid = 'roshan_idx_pit'::regclass ORDER BY c.relname;
+----
+relname	relkind	natts_ok	nsp	indisunique
+roshan_idx_cheese	i	t	public	f
+roshan_idx_multi	i	t	public	f
+roshan_idx_pit_aegis_key	i	t	public	t
+roshan_idx_pit_pkey	i	t	public	t
+roshan_idx_rapier	i	t	public	t
+roshan_idx_uq2	i	t	public	t
+
+
+query
+SELECT c.relname, c.relhasindex FROM pg_class c WHERE c.oid = 'roshan_idx_pit'::regclass;
+----
+relname	relhasindex
+roshan_idx_pit	t
+
+
+query
+SELECT indexrelid::regclass::text AS idx FROM pg_index WHERE indexrelid = 'roshan_idx_multi'::regclass;
+----
+idx
+roshan_idx_multi
+
+
+query
+SELECT indexrelid::regclass::text AS idx FROM pg_index WHERE indexrelid IN ('roshan_idx_multi'::regclass, 'roshan_idx_pit_pkey'::regclass) ORDER BY 1;
+----
+idx
+roshan_idx_multi
+roshan_idx_pit_pkey
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT indexrelid, indrelid, indnatts, indisunique, indisprimary, array_to_string(indkey, ' ') AS k FROM pg_index WHERE indrelid = 'roshan_idx_pit'::regclass
+  EXCEPT
+  SELECT indexrelid, indrelid, indnatts, indisunique, indisprimary, array_to_string(indkey, ' ') AS k FROM pg_index WHERE indrelid::text = 'roshan_idx_pit'::regclass::oid::text
+) s;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT indexrelid, indrelid, indnatts, indisunique, indisprimary, array_to_string(indkey, ' ') AS k FROM pg_index WHERE indrelid::text = 'roshan_idx_pit'::regclass::oid::text
+  EXCEPT
+  SELECT indexrelid, indrelid, indnatts, indisunique, indisprimary, array_to_string(indkey, ' ') AS k FROM pg_index WHERE indexrelid IN (SELECT oid FROM pg_class WHERE relname LIKE 'roshan\_idx\_%' AND relkind = 'i')
+) s;
+----
+diff
+0
+
+
+query
+SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+WHERE i.indexrelid = 'roshan_idx_multi'::regclass ORDER BY a.attname;
+----
+attname
+aegis
+refresher
+
+
+query
+SELECT a.attname, a.attnum FROM pg_attribute a WHERE a.attrelid = 'roshan_idx_multi'::regclass ORDER BY a.attnum;
+----
+attname	attnum
+refresher	1
+aegis	2
+
+
+query
+SELECT c.conname, c.conindid::regclass::text AS idx, i.indisprimary
+FROM pg_constraint c JOIN pg_index i ON i.indexrelid = c.conindid
+WHERE c.conrelid = 'roshan_idx_pit'::regclass AND c.contype IN ('p', 'u') ORDER BY c.conname;
+----
+conname	idx	indisprimary
+roshan_idx_pit_aegis_key	roshan_idx_pit_aegis_key	f
+roshan_idx_pit_pkey	roshan_idx_pit_pkey	t
+roshan_idx_uq2	roshan_idx_uq2	f
+
+
+query
+SELECT t.relname AS tbl, ic.relname AS idx
+FROM pg_class t JOIN pg_index i ON i.indrelid = t.oid JOIN pg_class ic ON ic.oid = i.indexrelid
+WHERE t.relname = 'roshan_idx_pit' AND i.indisprimary;
+----
+tbl	idx
+roshan_idx_pit	roshan_idx_pit_pkey
+
+
+query
+SELECT indexrelid FROM pg_index WHERE indexrelid = 1259;
+----
+indexrelid
+
+
+statement ok
+CREATE TABLE courier_idx_plain (gold int, speed int);
+
+
+query
+SELECT count(*) AS n FROM pg_index WHERE indrelid = 'courier_idx_plain'::regclass;
+----
+n
+0
+
+
+query
+SELECT relhasindex FROM pg_class WHERE oid = 'courier_idx_plain'::regclass;
+----
+relhasindex
+f
+
+
+statement ok
+CREATE INDEX courier_idx_gold ON courier_idx_plain (gold);
+
+
+query
+SELECT indexrelid::regclass::text AS idx, array_to_string(indkey, ' ') AS indkey FROM pg_index WHERE indrelid = 'courier_idx_plain'::regclass;
+----
+idx	indkey
+courier_idx_gold	1
+
+
+query
+SELECT relhasindex FROM pg_class WHERE oid = 'courier_idx_plain'::regclass;
+----
+relhasindex
+t
+
+
+statement ok
+ALTER INDEX roshan_idx_multi RENAME TO roshan_idx_multi2;
+
+
+query
+SELECT indexrelid::regclass::text AS idx FROM pg_index WHERE indrelid = 'roshan_idx_pit'::regclass AND NOT indisunique ORDER BY 1;
+----
+idx
+roshan_idx_cheese
+roshan_idx_multi2
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'roshan_idx_multi';
+----
+n
+0
+
+
+statement ok
+DROP INDEX roshan_idx_cheese;
+
+
+query
+SELECT count(*) AS n FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'roshan_idx_cheese';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_index WHERE indrelid = 'roshan_idx_pit'::regclass;
+----
+n
+5
+
+
+statement ok
+CREATE SCHEMA zeus_idx_ns;
+
+
+statement ok
+CREATE TABLE zeus_idx_ns.bolt (id int PRIMARY KEY, arc int);
+
+
+statement ok
+CREATE INDEX zeus_idx_arc ON zeus_idx_ns.bolt (arc);
+
+
+query
+SELECT i.indexrelid::regclass::text AS idx, i.indrelid::regclass::text AS rel, c.relnamespace::regnamespace::text AS nsp
+FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+WHERE i.indrelid = 'zeus_idx_ns.bolt'::regclass ORDER BY 1;
+----
+idx	rel	nsp
+zeus_idx_ns.bolt_pkey	zeus_idx_ns.bolt	zeus_idx_ns
+zeus_idx_ns.zeus_idx_arc	zeus_idx_ns.bolt	zeus_idx_ns
+
+
+query
+SELECT regexp_replace(pg_get_indexdef('zeus_idx_ns.zeus_idx_arc'::regclass), ' USING \w+ ', ' USING ') AS def;
+----
+def
+CREATE INDEX zeus_idx_arc ON zeus_idx_ns.bolt USING (arc)
+
+
+statement ok
+DROP TABLE zeus_idx_ns.bolt;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('zeus_idx_arc', 'bolt_pkey') AND relnamespace = 'zeus_idx_ns'::regnamespace;
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA zeus_idx_ns;
+
+
+statement ok
+DROP TABLE courier_idx_plain;
+
+
+statement ok
+DROP TABLE roshan_idx_pit;
+
+
+statement ok
+CREATE TABLE roshan_idx_shard (a int, b int, s text);
+
+
+statement ok
+CREATE INDEX roshan_idx_shard_expr ON roshan_idx_shard ((a + 1)) WHERE b > 0;
+
+
+statement ok
+CREATE INDEX roshan_idx_shard_mix ON roshan_idx_shard (s, (a + b));
+
+
+query
+SELECT indexrelid::regclass::text AS idx, indnatts, indnkeyatts, array_to_string(indkey, ' ') AS indkey, array_to_string(indcollation, ' ') AS indcollation, pg_get_expr(indexprs, indrelid) AS exprs, pg_get_expr(indpred, indrelid) AS pred
+FROM pg_index WHERE indrelid = 'roshan_idx_shard'::regclass ORDER BY 1;
+----
+idx	indnatts	indnkeyatts	indkey	indcollation	exprs	pred
+roshan_idx_shard_expr	1	1	0	0	(a + 1)	(b > 0)
+roshan_idx_shard_mix	2	2	3 0	100 0	(a + b)	NULL
+
+
+query
+SELECT c.relname, c.relnatts, a.attname, a.attnum
+FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
+WHERE c.oid IN ('roshan_idx_shard_expr'::regclass, 'roshan_idx_shard_mix'::regclass)
+ORDER BY 1, 4;
+----
+relname	relnatts	attname	attnum
+roshan_idx_shard_expr	1	expr	1
+roshan_idx_shard_mix	2	s	1
+roshan_idx_shard_mix	2	expr	2
+
+
+statement ok
+CREATE TABLE roshan_idx_vault (id int PRIMARY KEY, lore text, gold int);
+
+
+statement ok
+CREATE INDEX roshan_idx_vault_inc ON roshan_idx_vault USING inverted (gold included(), lore);
+
+
+query
+SELECT indnatts, indnkeyatts, array_to_string(indkey, ' ') AS indkey, array_to_string(indcollation, ' ') AS indcollation
+FROM pg_index WHERE indexrelid = 'roshan_idx_vault_inc'::regclass;
+----
+indnatts	indnkeyatts	indkey	indcollation
+2	1	2 3	100
+
+
+query
+SELECT a.attname, a.attnum, pg_get_indexdef(a.attrelid, a.attnum, true) AS def
+FROM pg_attribute a WHERE a.attrelid = 'roshan_idx_vault_inc'::regclass ORDER BY a.attnum;
+----
+attname	attnum	def
+lore	1	lore
+gold	2	gold
+
+
+query
+SELECT (information_schema._pg_expandarray(i.indkey)).x AS attnum,
+       (information_schema._pg_expandarray(i.indkey)).n AS position
+FROM pg_index i WHERE i.indexrelid = 'roshan_idx_vault_inc'::regclass
+ORDER BY 2;
+----
+attnum	position
+2	1
+3	2
+
+
+statement ok
+DROP TABLE roshan_idx_vault;
+
+
+statement ok
+DROP TABLE roshan_idx_shard;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'roshan\_idx\_%' OR relname LIKE 'courier\_idx\_%';
+----
+n
+0

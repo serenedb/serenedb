@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/search/count/root.hpp"
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -78,18 +79,8 @@ class BooleanWindow : public Root {
       const doc_id_t max = std::min<doc_id_t>(min + detail::kWindowDocs, end);
 
       auto* const words = _mask.data();
-      doc_id_t next;
-      if constexpr (kLead) {
-        next = _lead.FillOr(min, max, words);
-        if constexpr (kOthers) {
-          next = std::max(next, _others.Restrict(min, max, words));
-        }
-      } else {
-        next = _optional.Fill(min, max, words);
-      }
-      if constexpr (kExcludes) {
-        _excludes.Remove(min, max, words);
-      }
+      const auto next = detail::FillClauses(_lead, _others, _optional,
+                                            _excludes, min, max, words);
 
       total += _table.CountAndClear(
         min, words, static_cast<uint32_t>(detail::WindowWords(min, max)));

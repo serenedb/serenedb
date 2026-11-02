@@ -20,57 +20,10 @@
 
 #include "iresearch/search/docs/make.hpp"
 
-#include <span>
-
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/docs/empty.hpp"
-#include "iresearch/search/docs/make_boolean.hpp"
-#include "iresearch/search/docs/plan.hpp"
-#include "iresearch/search/queries/approx_query.hpp"
-#include "iresearch/search/queries/multiterm_query.hpp"
-#include "iresearch/search/queries/ngram_similarity_query.hpp"
-#include "iresearch/search/queries/phrase_query.hpp"
-#include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs::docs {
-
-Root::ptr Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (terms.size() == 1) {
-    return MakePosting(detail::ClauseOf(terms.front(), field), query.Segment(),
-                       ctx);
-  }
-  return MakeDisjunctionOfTerms(
-    terms, field, *detail::DocOf(*field),
-    static_cast<doc_id_t>(query.Segment().docs_count()), ctx);
-}
-
-Root::ptr Make(const FixedPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeFixedPhraseSlop(query, ctx); },
-    [&] { return MakeFixedPhraseIntervals(query, ctx); },
-    [&] { return MakeFixedPhrase(query, ctx); });
-}
-
-Root::ptr Make(const VariadicPhraseQuery& query, const Context& ctx) {
-  return detail::ResolveMatch(
-    query, [&] { return MakeVariadicPhraseSlop(query, ctx); },
-    [&] { return MakeVariadicPhraseIntervals(query, ctx); },
-    [&] { return MakeVariadicPhrase(query, ctx); });
-}
-
-Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
-  return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
-}
-
-Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  return query.Approx().PlanDocs(ctx);
-}
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {

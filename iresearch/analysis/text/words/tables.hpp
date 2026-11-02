@@ -60,7 +60,7 @@ inline constexpr uint8_t kWbExtPictFlag = 0x80;
 inline constexpr size_t kWbPropCount = 19;
 
 // clang-format off
-ABSL_CACHELINE_ALIGNED inline constexpr std::array<uint16_t, 8192> kWbStage1{{
+ABSL_CACHELINE_ALIGNED inline constexpr std::array<uint16_t, 8193> kWbStage1{{
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
   16, 1, 17, 18, 19, 1, 20, 21, 22, 23, 24, 25, 26, 27, 1, 28,
   29, 30, 31, 32, 33, 34, 35, 36, 31, 37, 31, 38, 39, 40, 41, 31,
@@ -573,6 +573,7 @@ ABSL_CACHELINE_ALIGNED inline constexpr std::array<uint16_t, 8192> kWbStage1{{
   31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31,
   31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31,
   31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31,
+  31,
 }};
 
 ABSL_CACHELINE_ALIGNED inline constexpr std::array<uint8_t, 36096> kWbStage2{{

@@ -41,6 +41,6 @@ Beside `engine_v1`, the root of the data directory holds:
 
 `engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
 
-Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
+Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that or in the middle of it, or crashes while an object is being created, it removes what is left of the directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

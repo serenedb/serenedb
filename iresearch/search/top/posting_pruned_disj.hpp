@@ -20,13 +20,13 @@
 
 #pragma once
 
-#include "iresearch/search/top/prune_leaf.hpp"
+#include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
 
 template<typename InputType>
-class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
-  using Base = PruneLeafBase<InputType, false>;
+class PostingPrunedDisj : public PrunedLeafBase<InputType, false> {
+  using Base = PrunedLeafBase<InputType, false>;
 
   using Base::_cursor;
   using Base::_doc;

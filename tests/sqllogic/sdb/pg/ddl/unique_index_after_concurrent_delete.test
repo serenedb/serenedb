@@ -1,0 +1,128 @@
+# A unique index or primary key built after a committed DELETE removed the only
+# duplicate succeeds while an older transaction still sees the deleted row; that
+# transaction still finds the row, new duplicates are refused, and the index
+# finds no deleted row once its id is reused.
+
+statement ok
+CREATE TABLE ud (id INT, body TEXT)
+
+
+statement ok
+INSERT INTO ud VALUES (1, 'a'), (2, 'b'), (1, 'dup')
+
+
+connection old
+statement ok
+BEGIN
+
+
+connection old
+query
+SELECT count(*) AS n FROM ud
+----
+n
+3
+
+
+statement ok
+DELETE FROM ud WHERE body = 'dup'
+
+
+statement ok
+CREATE UNIQUE INDEX ud_id ON ud (id)
+
+
+connection old
+query
+SELECT body FROM ud WHERE id = 1 ORDER BY body
+----
+body
+a
+dup
+
+
+query
+SELECT body FROM ud WHERE id = 1
+----
+body
+a
+
+
+statement error
+INSERT INTO ud VALUES (1, 'again')
+----
+db error: ERROR: Duplicate key "id: 1" violates unique constraint.
+
+
+statement ok
+CREATE TABLE udp (id INT, body TEXT)
+
+
+statement ok
+INSERT INTO udp VALUES (1, 'a'), (1, 'dup')
+
+
+connection old
+statement ok
+COMMIT
+
+
+connection old
+statement ok
+BEGIN
+
+
+connection old
+query
+SELECT count(*) AS n FROM udp
+----
+n
+2
+
+
+statement ok
+DELETE FROM udp WHERE body = 'dup'
+
+
+statement ok
+ALTER TABLE udp ADD PRIMARY KEY (id)
+
+
+connection old
+query
+SELECT body FROM udp WHERE id = 1 ORDER BY body
+----
+body
+a
+dup
+
+
+connection old
+statement ok
+COMMIT
+
+
+statement error
+INSERT INTO udp VALUES (1, 'again')
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+statement ok
+INSERT INTO ud VALUES (3, 'c')
+
+
+query
+SELECT body FROM ud WHERE id = 1
+----
+body
+a
+
+
+query
+SELECT id, body FROM ud ORDER BY id
+----
+id	body
+1	a
+2	b
+3	c

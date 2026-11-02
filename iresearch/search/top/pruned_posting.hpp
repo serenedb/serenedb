@@ -27,15 +27,15 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
 #include "iresearch/search/top/admit.hpp"
-#include "iresearch/search/top/prune_leaf.hpp"
+#include "iresearch/search/top/pruned_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::top {
 
 template<typename InputType, typename Excludes, typename Table>
-class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
-  using Base = PruneLeafBase<InputType, true>;
+class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
+  using Base = PrunedLeafBase<InputType, true>;
 
   using Base::_cursor;
   using Base::_doc;

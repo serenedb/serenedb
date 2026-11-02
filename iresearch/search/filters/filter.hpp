@@ -34,6 +34,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/ann/root.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -86,6 +87,7 @@ enum class QueryKind : uint32_t {
   Boolean,
   Phrase,
   DocsMask,
+  Ann,
 };
 
 class QueryBuilder : public memory::Managed {
@@ -110,6 +112,7 @@ class QueryBuilder : public memory::Managed {
 
   const SubReader& Segment() const noexcept { return _segment; }
   QueryKind Kind() const noexcept { return _kind; }
+  uint32_t EstimateMin() const noexcept { return _estimate_min; }
   uint32_t EstimateMax() const noexcept { return _estimate_max; }
   uint32_t EstimateMatches() const noexcept { return _estimate_matches; }
   uint64_t Postings() const noexcept { return _postings; }
@@ -152,6 +155,10 @@ class QueryBuilder : public memory::Managed {
 
   virtual top::Root::ptr PlanTop(const top::Context& ctx) const = 0;
 
+  virtual ann::Root::ptr PlanAnn(const ann::Context& /*ctx*/) const {
+    return {};
+  }
+
   virtual lead::Node::ptr PlanLead(const detail::ScoredCtx& ctx) const = 0;
 
   virtual probe::Node::ptr PlanProbe(const detail::ScoredCtx& ctx,
@@ -162,6 +169,7 @@ class QueryBuilder : public memory::Managed {
 
  protected:
   const SubReader& _segment;
+  uint32_t _estimate_min = 0;
   uint32_t _estimate_max = 0;
   uint32_t _estimate_matches = 0;
   uint64_t _postings = 0;

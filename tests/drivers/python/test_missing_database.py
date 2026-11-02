@@ -12,13 +12,13 @@ start too. Empty directories a crashed first boot left are removed.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import time
 from pathlib import Path
 
 import psycopg
 import pytest
+from serened import listens_on, reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -31,15 +31,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class _Server:
     def __init__(self, datadir: Path, *flags: str) -> None:
-        self.port = _free_port()
+        self.reserved = reserve_port()
+        self.port = self.reserved.getsockname()[1]
         self.log = datadir.parent / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
@@ -57,17 +52,20 @@ class _Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            try:
-                self.connect().close()
-                return True
-            except psycopg.OperationalError:
-                time.sleep(0.2)
+            if listens_on(self.proc.pid, [self.port]):
+                try:
+                    self.connect().close()
+                    return True
+                except psycopg.OperationalError:
+                    pass
+            time.sleep(0.2)
         return False
 
     def stop(self) -> None:
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(timeout=60)
+        self.reserved.close()
 
     def output(self) -> str:
         return self.log.read_text()
@@ -89,12 +87,18 @@ def test_missing_database_file(tmp_path: Path) -> None:
             conn.execute("CREATE DATABASE lost")
             conn.execute("CREATE TABLE lost.public.t(a INTEGER)")
             conn.execute("INSERT INTO lost.public.t VALUES (1)")
+            conn.execute("CREATE INDEX t_inv ON lost.public.t USING inverted (a)")
+            conn.execute("CREATE TABLE lost.public.s(a INTEGER PRIMARY KEY, b TEXT) "
+                         "WITH (storage = 'search')")
+            conn.execute("INSERT INTO lost.public.s VALUES (1, 'x')")
             oid = conn.execute(
                 "SELECT oid FROM pg_database WHERE datname = 'lost'"
             ).fetchone()[0]
     finally:
         server.stop()
-    for path in (datadir / "engine_v1" / str(oid)).glob("data.db*"):
+    database_dir = datadir / "engine_v1" / str(oid)
+    assert sum(path.is_dir() for path in database_dir.iterdir()) == 2
+    for path in database_dir.glob("data.db*"):
         path.unlink()
 
     refused = _Server(datadir)

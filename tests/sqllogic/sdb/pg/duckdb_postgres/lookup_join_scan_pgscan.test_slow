@@ -1,0 +1,236 @@
+control substitution on
+
+hash-threshold 100
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljs_${__DATABASE__} (TYPE postgres, remote true);
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljs_rc_${__DATABASE__} (TYPE postgres, isolation_level 'read committed', remote true);
+
+statement ok
+DROP SCHEMA IF EXISTS ljs_${__DATABASE__}.ljs CASCADE;
+
+statement ok
+CREATE SCHEMA ljs_${__DATABASE__}.ljs;
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.t (id BIGINT PRIMARY KEY, k INTEGER, title TEXT, body TEXT, price NUMERIC(10, 2), tags TEXT[])');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'INSERT INTO ljs.t SELECT i, i % 7, ''title-'' || i || ''-long-enough-to-not-inline'', CASE WHEN i % 11 = 0 THEN NULL ELSE repeat(md5(i::text), 8) END, i * 1.5, ARRAY[''a'' || i, ''b''] FROM generate_series(1, 3000) i');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE VIEW ljs.v AS SELECT * FROM ljs.t');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.p (id BIGINT, k INTEGER, title TEXT) PARTITION BY RANGE (id)');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.p1 PARTITION OF ljs.p FOR VALUES FROM (0) TO (2000)');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.p2 PARTITION OF ljs.p FOR VALUES FROM (2000) TO (4000)');
+
+statement ok
+CALL postgres_execute('ljs_${__DATABASE__}', 'INSERT INTO ljs.p SELECT id, k, title FROM ljs.t');
+
+query
+EXPLAIN SELECT id, title, body FROM ljs_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: ctid                         │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+                  ├───────────────────────────────╮
+╭─ POSTGRES_SCAN ─┴─────────────────╮  ╭─ POSTGRES_SCAN ─────╮
+│ Table: t                          │  │ Table: t            │
+│ Projections: id, k                │  │ Projections: title, │
+│ Column Filter:                    │  │              body   │
+│ optional: Dynamic Filter (k <= ?) │  │ ~0 rows             │
+│ ~0 rows                           │  ╰─────────────────────╯
+╰───────────────────────────────────╯
+
+query
+SELECT id, title, body IS NOT DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 8) END) AS body_ok, price, tags
+FROM ljs_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
+----
+id	title	body_ok	price	tags
+2996	title-2996-long-enough-to-not-inline	t	4494.00	{a2996,b}
+2989	title-2989-long-enough-to-not-inline	t	4483.50	{a2989,b}
+2982	title-2982-long-enough-to-not-inline	t	4473.00	{a2982,b}
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || id || '-long-enough-to-not-inline' AND body IS NOT DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 8) END))
+FROM (SELECT * FROM ljs_${__DATABASE__}.ljs.t ORDER BY k DESC, id LIMIT 1500);
+----
+count	count
+1500	1500
+
+query
+EXPLAIN SELECT id, title FROM ljs_${__DATABASE__}.ljs.t WHERE k = 3 LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────╮
+│ Key: ctid            │
+│ ~0 rows              │
+╰───────────┬──────────╯
+            ├────────────────────────╮
+╭─ POSTGRES_SCAN ──────╮  ╭─ POSTGRES_SCAN ─────╮
+│ Table: t             │  │ Table: t            │
+│ Projections: k       │  │ Projections: id,    │
+│ Column Filter: k = 3 │  │              title  │
+│ ~0 rows              │  │ ~0 rows             │
+╰──────────────────────╯  ╰─────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || id || '-long-enough-to-not-inline' AND k = 3)
+FROM (SELECT * FROM ljs_${__DATABASE__}.ljs.t WHERE k = 3 LIMIT 5);
+----
+count	count
+5	5
+
+query
+EXPLAIN SELECT id, title FROM ljs_${__DATABASE__}.ljs.v ORDER BY k, id LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: v                          │
+│ Projections: id, title, k         │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM ljs_${__DATABASE__}.ljs.v ORDER BY k, id LIMIT 3;
+----
+id	title
+7	title-7-long-enough-to-not-inline
+14	title-14-long-enough-to-not-inline
+21	title-21-long-enough-to-not-inline
+
+query
+EXPLAIN SELECT id, title FROM ljs_${__DATABASE__}.ljs.p ORDER BY k, id LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: p                          │
+│ Projections: id, title, k         │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM ljs_${__DATABASE__}.ljs.p ORDER BY k, id LIMIT 3;
+----
+id	title
+7	title-7-long-enough-to-not-inline
+14	title-14-long-enough-to-not-inline
+21	title-21-long-enough-to-not-inline
+
+query
+EXPLAIN SELECT id, title FROM ljs_rc_${__DATABASE__}.ljs.t ORDER BY k, id LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: t                          │
+│ Projections: id, title, k         │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM ljs_rc_${__DATABASE__}.ljs.t ORDER BY k, id LIMIT 3;
+----
+id	title
+7	title-7-long-enough-to-not-inline
+14	title-14-long-enough-to-not-inline
+21	title-21-long-enough-to-not-inline
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljs_local_${__DATABASE__} (TYPE postgres, remote false);
+
+query
+EXPLAIN SELECT id, title, body FROM ljs_local_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1, #2           │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: t                          │
+│ Projections: id, title, body, k   │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM ljs_local_${__DATABASE__}.ljs.t ORDER BY k, id DESC LIMIT 3;
+----
+id	title
+2996	title-2996-long-enough-to-not-inline
+2989	title-2989-long-enough-to-not-inline
+2982	title-2982-long-enough-to-not-inline
+
+statement ok
+DETACH ljs_local_${__DATABASE__};
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE ljs_${__DATABASE__}.ljs.t SET title = 'changed' WHERE id = 7;
+
+query
+EXPLAIN SELECT id, title FROM ljs_${__DATABASE__}.ljs.t ORDER BY k, id LIMIT 3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: #0, #1               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ POSTGRES_SCAN ─┴─────────────────╮
+│ Table: t                          │
+│ Projections: id, title, k         │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (k <= ?) │
+│ ~0 rows                           │
+╰───────────────────────────────────╯
+
+query
+SELECT id, title FROM ljs_${__DATABASE__}.ljs.t ORDER BY k, id LIMIT 3;
+----
+id	title
+7	changed
+14	title-14-long-enough-to-not-inline
+21	title-21-long-enough-to-not-inline
+
+statement ok
+ROLLBACK;
+
+statement ok
+DROP SCHEMA ljs_${__DATABASE__}.ljs CASCADE;
+
+statement ok
+DETACH ljs_rc_${__DATABASE__};
+
+statement ok
+DETACH ljs_${__DATABASE__};

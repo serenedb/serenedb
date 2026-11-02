@@ -161,6 +161,12 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
     if (spec.schema.empty()) {
       SDB_FATAL(GENERAL, "empty 'schema' in endpoint '", url, "'");
     }
+  } else if (key == "create_schema") {
+    if (!is_http) {
+      SDB_FATAL(GENERAL, "'create_schema' is only valid on an http endpoint '",
+                url, "'");
+    }
+    spec.create_schema = ParseBoolParam(value, key, url);
   } else if (key == "mode") {
     if (!is_unix) {
       SDB_FATAL(GENERAL, "'mode' is only valid on a unix endpoint '", url, "'");

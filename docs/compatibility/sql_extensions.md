@@ -18,7 +18,8 @@ Many of the features originally introduced by SereneDB (e.g., [`GROUP BY ALL`](.
 ## Clauses
 
 -   Creating tables and inserting data:
-    -   [`CREATE OR REPLACE TABLE`](../sql/statements/create_table/index.md#create-or-replace): avoid `DROP TABLE IF EXISTS` statements in scripts.
+    -   [`CREATE OR REPLACE TABLE`](../sql/statements/create_table/index.md#create-or-replace): avoid `DROP TABLE IF EXISTS` followed by `CREATE TABLE` in scripts.
+    -   [`CREATE OR REPLACE INDEX`](../sql/statements/create_index/index.md#create-or-replace-index): avoid `DROP INDEX IF EXISTS` followed by `CREATE INDEX` in scripts.
     -   [`CREATE TABLE ... AS SELECT` (CTAS)](../sql/statements/create_table/index.md#create-table--as-select-ctas): create a new table from the output of a table without manually defining a schema.
     -   [`INSERT INTO ... BY NAME`](../sql/statements/insert/index.md#insert-into--by-name): this variant of the `INSERT` statement allows using column names instead of positions.
     -   [`INSERT OR IGNORE INTO ...`](../sql/statements/insert/index.md#insert-or-ignore-into): insert the rows that do not result in a conflict due to `UNIQUE` or `PRIMARY KEY` constraints.

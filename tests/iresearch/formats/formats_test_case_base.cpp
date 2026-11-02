@@ -45,7 +45,6 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -118,11 +117,8 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   ASSERT_TRUE(index_files.empty());
 }
 
-auto MakeByTerm(irs::field_id id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id id, std::string_view value) {
+  return {id, {std::string{value}}};
 }
 
 TEST_P(FormatTestCase, directory_artifact_cleaner) {
@@ -191,7 +187,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new index_meta file + doc_mask
     // file, remove old)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -203,7 +199,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -215,7 +211,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -268,7 +264,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
 
     // delete record from first segment (creating new doc_mask file)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -311,7 +307,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete record from first segment (creating new doc_mask file, not-remove
     // old)
     {
-      tests::Remove(*writer, *(query_doc2));
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -323,7 +319,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta but leave first segment)
     {
-      tests::Remove(*writer, *(query_doc3));
+      tests::Remove(*writer, query_doc3);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -335,7 +331,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *(query_doc4));
+      tests::Remove(*writer, query_doc4);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -386,7 +382,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      tests::Remove(*writer, *(query_doc1));
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -1141,7 +1137,7 @@ TEST_P(FormatTestCase, format_utils_footer) {
     });
   };
   const auto read = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream);
     uint32_t value = 0;
     uint64_t data_size = 0;
@@ -1177,7 +1173,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
 
   irs::bstring bytes;
   {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
+    auto stream = dir().open("file", irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream);
     bytes.resize(stream->Length());
     stream->ReadData(0, bytes.data(), bytes.size());
@@ -1191,7 +1187,7 @@ TEST_P(FormatTestCase, format_utils_footer_damaged) {
     }
   };
   const auto read = [&](std::string_view name) {
-    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
     ASSERT_NE(nullptr, stream);
     irs::format_utils::ReadFooter(
       *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
@@ -1272,7 +1268,7 @@ void RoundTrip(std::string_view segment_name, uint64_t row_count,
     populate(w);
     w.Commit(row_count);
   }
-  irs::ColReader r{dir, segment_name, db};
+  irs::ColReader r{dir, segment_name, db, irs::IOAdvice::SEQUENTIAL};
   verify(r);
 }
 
@@ -1481,7 +1477,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _1 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_1", db};
+    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
     ASSERT_EQ(r.Columns().size(), 6u);
     // Try to get an invalid column id (`field_limits::invalid()`).
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1646,7 +1642,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _2 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_2", db};
+    irs::ColReader r{dir, "_2", db, irs::IOAdvice::SEQUENTIAL};
     ASSERT_EQ(r.Columns().size(), 3u);
 
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1693,7 +1689,7 @@ TEST_P(FormatTestCase, columns_rw) {
   // Segment _1 -- new sub-scenarios (multi-column independence,
   // random-order point access, boundary docs, wrong-column-id sweep).
   {
-    irs::ColReader r{dir, "_1", db};
+    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
     const auto* col_f0 = r.Column(kF0);
     const auto* col_f2 = r.Column(kF2);
     ASSERT_NE(col_f0, nullptr);
@@ -1801,7 +1797,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRowCount);
   }
 
-  irs::ColReader r{dir, "columns_rw_typed", db};
+  irs::ColReader r{dir, "columns_rw_typed", db, irs::IOAdvice::SEQUENTIAL};
   ASSERT_TRUE(r.HasColumn(kIntId));
   ASSERT_TRUE(r.HasColumn(kStrId));
   EXPECT_FALSE(r.HasColumn(0));  // wrong column id
@@ -1992,7 +1988,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRgRowCount);
   }
   {
-    irs::ColReader rr{dir, "columns_rw_typed_rg", db};
+    irs::ColReader rr{dir, "columns_rw_typed_rg", db,
+                      irs::IOAdvice::SEQUENTIAL};
     const auto* col_int = rr.Column(kRgIntId);
     const auto* col_str = rr.Column(kRgStrId);
     ASSERT_NE(col_int, nullptr);
@@ -2191,7 +2188,8 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_bit_mask_rg", db};
+    irs::ColReader r{dir, "columns_rw_bit_mask_rg", db,
+                     irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2359,7 +2357,8 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_dense_mask_rg", db};
+    irs::ColReader r{dir, "columns_rw_dense_mask_rg", db,
+                     irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2559,7 +2558,8 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_big_document_rg", db};
+    irs::ColReader r{dir, "columns_rw_big_document_rg", db,
+                     irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -2653,7 +2653,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   for (size_t s = 0; s < segs.size(); ++s) {
     const auto& seg = segs[s];
     const uint64_t prefix = s == 0 ? 0 : s == 1 ? 1000 : 2000;
-    irs::ColReader r{dir, seg.name, db};
+    irs::ColReader r{dir, seg.name, db, irs::IOAdvice::SEQUENTIAL};
     ASSERT_TRUE(r.HasColumn(kIdCol)) << "seg=" << seg.name;
     ASSERT_TRUE(r.HasColumn(kNameCol)) << "seg=" << seg.name;
     // Wrong-column-id negative lookups (sweep).
@@ -2755,7 +2755,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, kBigSeg, db};
+    irs::ColReader r{dir, kBigSeg, db, irs::IOAdvice::SEQUENTIAL};
     const auto* id_col = r.Column(kIdCol);
     const auto* name_col = r.Column(kNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -2953,7 +2953,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "same_col_empty_repeat_rg", db};
+    irs::ColReader r{dir, "same_col_empty_repeat_rg", db,
+                     irs::IOAdvice::SEQUENTIAL};
     const auto* id_col = r.Column(kBigIdCol);
     const auto* name_col = r.Column(kBigNameCol);
     ASSERT_NE(id_col, nullptr);
@@ -3137,7 +3138,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "sparse_dense_block_rg", db};
+    irs::ColReader r{dir, "sparse_dense_block_rg", db,
+                     irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
@@ -3388,7 +3390,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "border_case_rg", db};
+    irs::ColReader r{dir, "border_case_rg", db, irs::IOAdvice::SEQUENTIAL};
     const auto* dense_col = r.Column(kBigDenseId);
     const auto* sparse_col = r.Column(kBigSparseId);
     ASSERT_NE(dense_col, nullptr);
@@ -3576,7 +3578,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "issue700_rg", db};
+    irs::ColReader r{dir, "issue700_rg", db, irs::IOAdvice::SEQUENTIAL};
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);

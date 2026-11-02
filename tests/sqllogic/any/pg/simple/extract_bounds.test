@@ -1,0 +1,27 @@
+statement ok
+SET TimeZone = 'Etc/GMT-1';
+
+onlyif postgres
+query
+SELECT pg_catalog.extract('hour', TIMESTAMPTZ '294247-01-10 04:00:54.775806+00') AS a,
+       pg_catalog.extract('hour', TIMESTAMPTZ '294247-01-10 03:00:54.775807+00') AS b;
+----
+a	b
+5	4
+
+skipif postgres
+statement error
+SELECT pg_catalog.extract('hour', TIMESTAMPTZ '294247-01-10 04:00:54.775806+00');
+----
+db error: ERROR: timestamp out of range
+
+
+skipif postgres
+statement error
+SELECT pg_catalog.extract('hour', TIMESTAMPTZ '294247-01-10 03:00:54.775807+00');
+----
+db error: ERROR: timestamp out of range
+
+
+statement ok
+SET TimeZone = 'UTC';

@@ -1,0 +1,146 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dic_sti AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE sti (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sti VALUES (1, 'fox before');
+
+statement ok
+SET GLOBAL checkpoint_threshold = '64KB';
+
+statement ok
+SET sdb_faults = 'search_insert_sink_before_config';
+
+connection writer
+statement async ok
+INSERT INTO sti SELECT 100 + i, 'fox ' || repeat('pad ', 250) FROM range(100) r(i);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_insert_sink_before_config:parked';
+
+connection ddl
+statement async ok
+CREATE INDEX sti_body ON sti USING inverted (body dic_sti);
+
+connection default
+query ok retry 40 backoff 100ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CREATE INDEX%';
+----
+n
+1
+
+sleep 300ms
+
+connection default
+statement ok
+SET sdb_faults = 'search_insert_sink_before_config:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) sti;
+
+connection default
+query
+SELECT count(*) AS n FROM sti_body WHERE body @@ 'fox';
+----
+n
+101
+
+connection default
+statement ok
+SET sdb_faults = 'search_insert_sink_before_config';
+
+connection writer
+statement async ok
+INSERT INTO sti SELECT 200 + i, 'fox ' || repeat('pad ', 250) FROM range(100) r(i);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_insert_sink_before_config:parked';
+
+connection ddl
+statement ok
+DROP INDEX sti_body;
+
+connection default
+statement ok
+SET sdb_faults = 'search_insert_sink_before_config:release';
+
+wait
+
+connection default
+statement ok
+CREATE INDEX sti_body ON sti USING inverted (body dic_sti);
+
+connection default
+statement ok
+SET sdb_faults = 'search_insert_sink_after_config';
+
+connection writer
+statement async ok
+INSERT INTO sti SELECT 300 + i, 'fox ' || repeat('pad ', 250) FROM range(100) r(i);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_insert_sink_after_config:parked';
+
+connection ddl
+statement ok
+DROP INDEX sti_body;
+
+connection default
+statement ok
+SET sdb_faults = 'search_insert_sink_after_config:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) sti;
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) sti;
+
+connection default
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id >= 200) AS late FROM sti;
+----
+n	late
+301	200
+
+connection default
+statement ok
+CREATE INDEX sti_body ON sti USING inverted (body dic_sti);
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) sti;
+
+connection default
+query
+SELECT count(*) AS n FROM sti_body WHERE body @@ 'fox';
+----
+n
+301
+
+connection default
+statement ok
+SET GLOBAL checkpoint_threshold = '16MB';
+
+connection default
+statement ok
+DROP TABLE sti;

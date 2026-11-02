@@ -6,6 +6,10 @@ add_library(
     line_source.cpp
 )
 target_link_libraries(search-benchmark-common PUBLIC iresearch simdjson)
+target_compile_definitions(
+    search-benchmark-common
+    PUBLIC SDB_REMAP_EXECUTABLE=$<IF:$<BOOL:${SDB_REMAP_EXECUTABLE}>,true,false>
+)
 target_include_directories(
     search-benchmark-common
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/iresearch

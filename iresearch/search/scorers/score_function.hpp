@@ -74,6 +74,48 @@ struct ScoreOperator : memory::Managed {
   }
 };
 
+template<typename Derived, bool PostingBlock = true>
+struct ScoreOperatorOf : ScoreOperator {
+  score_t Score() const noexcept final {
+    score_t res{};
+    Self().ScoreImpl(&res, 1);
+    return res;
+  }
+
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    Self().ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    Self().template ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    Self().template ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    Self().ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    Self().template ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    Self().template ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
+  }
+
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    if constexpr (PostingBlock) {
+      Self().ScoreImpl(res, kPostingBlock);
+    } else {
+      ScoreOperator::ScorePostingBlock(res);
+    }
+  }
+
+ private:
+  const Derived& Self() const noexcept {
+    return static_cast<const Derived&>(*this);
+  }
+};
+
 struct DefaultScore final : public ScoreOperator {
   score_t Score() const noexcept final;
 

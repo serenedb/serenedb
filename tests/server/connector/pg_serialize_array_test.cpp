@@ -49,8 +49,8 @@
 #include <vector>
 
 #include "pg/deserialize.h"
-#include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "pg/types/mapping.h"
 #include "server/utils/message_buffer.h"
 
 namespace {
@@ -63,8 +63,7 @@ class PgSerializeArrayTest : public ::testing::Test {
 
   void SetUp() final {
     // flush_size=1 so every Commit(true) drains via the send callback into
-    // `_collected`. types_cache is only consulted by STRUCT serialization;
-    // initialize it for safety even though our test types don't need it.
+    // `_collected`.
     _buffer = std::make_unique<sdb::message::Buffer>(
       /*min_growth=*/64, /*max_growth=*/4096, /*flush_size=*/1,
       [this](sdb::message::SequenceView view) {
@@ -72,7 +71,7 @@ class PgSerializeArrayTest : public ::testing::Test {
           _collected.append(static_cast<const char*>(buf.data()), buf.size());
         }
       });
-    _ctx.types_cache = std::make_unique<sdb::pg::TypesSerializationCache>();
+    _ctx.caches = std::make_unique<sdb::pg::SerializationCaches>();
   }
 
   // Run one column serializer through a Writer (the wire layer's per-row unit)
@@ -321,8 +320,7 @@ TEST_F(PgSerializeArrayTest, AllArrayFixedNestedIsMultiDim) {
   const auto body = std::string_view{framed}.substr(4);
   EXPECT_EQ(LoadBE32(body, 0), 2);  // ndim=2 (rectangular flatten)
   // Multi-dim uses the SCALAR leaf OID (int4=23), not the array OID.
-  EXPECT_EQ(LoadBE32(body, 8), sdb::pg::Type2Oid(duckdb::LogicalType::INTEGER,
-                                                 /*in_array=*/false));
+  EXPECT_EQ(LoadBE32(body, 8), sdb::pg::Type2Oid(duckdb::LogicalType::INTEGER));
   EXPECT_EQ(LoadBE32(body, 12), 2);  // dim0
   EXPECT_EQ(LoadBE32(body, 20), 2);  // dim1
 }

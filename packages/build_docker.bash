@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Builds Docker images for available architectures and loads them into the local daemon.
-# Does NOT push -- use push_docker.bash for that.
+# Builds the Docker image of this machine's architecture, natively, from its install tarball
+# (packages/tarball/install-<arch>.tar.gz, made by build_targz.bash) and loads it into the local
+# daemon as <registry>/serenedb:<version>-<arch> (written to GITHUB_OUTPUT as image=).
 #
 # Environment Configuration:
 #   DOCKER_TAG               Version tag (if unset, derived from find_version.bash)
@@ -26,111 +27,54 @@ error() {
 
 cleanup() {
 	rm -rf "${BUILD_DIR:-}"
-	rm -f /tmp/serenedb-amd64.tar /tmp/serenedb-arm64.tar
 	docker buildx rm "${BUILDER_NAME}" 2>/dev/null || true
 }
 
-# --- Detect host architecture ---
-RAW_ARCH=$(uname -m)
-case $RAW_ARCH in
-x86_64) HOST_ARCH="amd64" ;;
-aarch64) HOST_ARCH="arm64" ;;
-*) error "Unsupported architecture: $RAW_ARCH" ;;
+case $(uname -m) in
+x86_64) ARCH="amd64" ;;
+aarch64) ARCH="arm64" ;;
+*) error "Unsupported architecture: $(uname -m)" ;;
 esac
 
-# --- Determine version ---
 if [ -z "${DOCKER_TAG:-}" ]; then
 	source "${SCRIPT_DIR}/find_version.bash"
 	DOCKER_TAG="${SERENEDB_VERSION}"
 fi
 [ -z "${DOCKER_TAG:-}" ] && error "Failed to determine version"
-VERSION="$DOCKER_TAG"
+
 FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
+LOCAL_IMAGE="${FULL_IMAGE_NAME}:${DOCKER_TAG}-${ARCH}"
+TARBALL="${TARBALL_DIR}/install-${ARCH}.tar.gz"
+[ -e "$TARBALL" ] || error "No ${TARBALL}. Run build_targz.bash first."
 
-# --- Detect available arch tarballs ---
-AVAILABLE_ARCHES=()
-for arch in amd64 arm64; do
-	tarball="${TARBALL_DIR}/install-${arch}.tar.gz"
-	if [ -f "$tarball" ] || [ -L "$tarball" ]; then
-		AVAILABLE_ARCHES+=("$arch")
-	fi
-done
-
-if [ ${#AVAILABLE_ARCHES[@]} -eq 0 ]; then
-	error "No install-{arch}.tar.gz found in ${TARBALL_DIR}. Run build_targz.bash first."
-fi
-
-# --- Prepare build context ---
 BUILD_DIR=$(mktemp -d)
 trap cleanup EXIT INT TERM
+cp "${DOCKER_DIR}/Dockerfile" "${DOCKER_DIR}/entrypoint.sh" "${BUILD_DIR}/"
+cp "$TARBALL" "${BUILD_DIR}/install-${ARCH}.tar.gz"
 
-log "=== SereneDB Docker Build ==="
-log "Version:  ${VERSION}"
-log "Image:    ${FULL_IMAGE_NAME}"
-log "Arches:   ${AVAILABLE_ARCHES[*]}"
+docker buildx rm "$BUILDER_NAME" >/dev/null 2>&1 || true
+docker buildx create --name "$BUILDER_NAME" --driver-opt network=host >/dev/null
 
-cp "${DOCKER_DIR}/Dockerfile" "${BUILD_DIR}/"
-cp "${DOCKER_DIR}/entrypoint.sh" "${BUILD_DIR}/"
+log "Building ${LOCAL_IMAGE} for linux/${ARCH}..."
+docker buildx build \
+	--builder "$BUILDER_NAME" \
+	--platform "linux/${ARCH}" \
+	-t "$LOCAL_IMAGE" \
+	--label "org.opencontainers.image.version=${DOCKER_TAG}" \
+	--label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+	--label "org.opencontainers.image.revision=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')" \
+	--provenance=false \
+	--sbom=false \
+	--no-cache \
+	--load \
+	--file "${BUILD_DIR}/Dockerfile" \
+	"${BUILD_DIR}"
 
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	cp "${TARBALL_DIR}/install-${arch}.tar.gz" "${BUILD_DIR}/install-${arch}.tar.gz"
-	log "  Tarball (${arch}): $(du -h "${BUILD_DIR}/install-${arch}.tar.gz" | cut -f1)"
-done
-
-log "  Context size: $(du -sh "${BUILD_DIR}" | cut -f1)"
-
-# --- Setup buildx ---
-log "Configuring Docker Buildx..."
-if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-	docker buildx rm "$BUILDER_NAME" >/dev/null
-fi
-docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
-
-LABEL_ARGS=(
-	--label "org.opencontainers.image.version=${VERSION}"
-	--label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	--label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
-)
-
-# --- Build each arch and load into daemon ---
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	log "Building linux/${arch}..."
-	docker buildx build \
-		--platform "linux/${arch}" \
-		-t "${FULL_IMAGE_NAME}:${VERSION}-${arch}" \
-		"${LABEL_ARGS[@]}" \
-		--output "type=docker,dest=/tmp/serenedb-${arch}.tar" \
-		--no-cache \
-		--file "${BUILD_DIR}/Dockerfile" \
-		"${BUILD_DIR}"
-done
-
-log "Loading images..."
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	docker load </tmp/serenedb-${arch}.tar
-	rm -f "/tmp/serenedb-${arch}.tar"
-done
-
-# --- Smoke test (native arch only) ---
 log "=== Smoke test ==="
-SMOKE_ARCH="${AVAILABLE_ARCHES[0]}"
-if docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "${FULL_IMAGE_NAME}:${VERSION}-${SMOKE_ARCH}" --version 2>/dev/null; then
-	log "  Version check passed (${SMOKE_ARCH})"
-else
-	if [ "$SMOKE_ARCH" != "$HOST_ARCH" ]; then
-		log "  Skipping smoke test: built ${SMOKE_ARCH} but host is ${HOST_ARCH}"
-	else
-		error "  Version check failed"
-	fi
-fi
+docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} "$LOCAL_IMAGE" --version ||
+	error "Version check failed"
 
-# --- Summary ---
-log ""
-log "=== Build complete ==="
-log "Images in local daemon:"
-for arch in "${AVAILABLE_ARCHES[@]}"; do
-	log "  ${FULL_IMAGE_NAME}:${VERSION}-${arch}"
-done
-log ""
-log "To test:  docker run -d -p 7890:7890 ${FULL_IMAGE_NAME}:${VERSION}-${HOST_ARCH}"
-log "To push:  DOCKER_TAG=${VERSION} ./packages/push_docker.bash"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+	echo "image=${LOCAL_IMAGE}" >>"$GITHUB_OUTPUT"
+fi
+log "Built ${LOCAL_IMAGE}"

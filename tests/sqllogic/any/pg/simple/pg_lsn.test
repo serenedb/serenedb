@@ -1,0 +1,67 @@
+query
+SELECT pg_lsn(1234::numeric), pg_lsn(0::numeric), pg_lsn(1234), pg_lsn(NULL::numeric),
+       pg_typeof(pg_lsn(1234::numeric))::text AS t;
+----
+pg_lsn	pg_lsn	pg_lsn	pg_lsn	t
+0/4D2	0/0	0/4D2	NULL	pg_lsn
+
+
+query
+SELECT pg_lsn(1.4::numeric) AS a, pg_lsn(1.5::numeric) AS b, pg_lsn(2.5::numeric) AS c,
+       pg_lsn(4294967296::numeric) AS high
+----
+a	b	c	high
+0/1	0/2	0/3	1/0
+
+
+statement error (pg_lsn out of range|Failed to cast decimal value -1 to type UINT64)
+SELECT pg_lsn(-1::numeric);
+
+
+query
+SELECT '{0/1,FF/0}'::pg_lsn[] AS lsns;
+----
+lsns
+{0/1,FF/0}
+
+
+query
+SELECT pg_wal_lsn_diff('0/4D2', '0/1') AS forward, pg_wal_lsn_diff('0/1', '0/4D2') AS backward,
+       pg_wal_lsn_diff('1/0', '0/0') AS high, pg_wal_lsn_diff('0/1'::pg_lsn, NULL) AS null_lsn,
+       pg_typeof(pg_wal_lsn_diff('0/1', '0/0'))::text AS t;
+----
+forward	backward	high	null_lsn	t
+1233	-1233	4294967296	NULL	numeric
+
+
+query
+SELECT '0/4D2'::pg_lsn + 16 AS plus, 16 + '0/4D2'::pg_lsn AS plus_left, '0/4D2'::pg_lsn - 16 AS minus,
+       '0/4D2'::pg_lsn + 4294967296 AS high, '0/4D2'::pg_lsn + 16::int AS plus_int,
+       pg_typeof('0/4D2'::pg_lsn + 16)::text AS t
+----
+plus	plus_left	minus	high	plus_int	t
+0/4E2	0/4E2	0/4C2	1/4D2	0/4E2	pg_lsn
+
+
+query
+SELECT 1 + x AS one_plus, x - 1 AS minus_one, pg_typeof(1 + x)::text AS t
+FROM (VALUES (2.5::numeric(10, 1))) v(x)
+----
+one_plus	minus_one	t
+3.5	1.5	numeric
+
+
+query
+SELECT '0/1'::pg_lsn - '0/4D2'::pg_lsn AS backward, 'FFFFFFFF/FFFFFFFF'::pg_lsn - '0/0'::pg_lsn AS full_range,
+       pg_typeof('0/1'::pg_lsn - '0/4D2'::pg_lsn)::text AS t
+----
+backward	full_range	t
+-1233	18446744073709551615	numeric
+
+
+statement error (pg_lsn out of range|Failed to cast decimal value -15 to type UINT64)
+SELECT '0/1'::pg_lsn - 16;
+
+
+statement error (pg_lsn out of range|Failed to cast decimal value 18446744073709551616 to type UINT64)
+SELECT 'FFFFFFFF/FFFFFFFF'::pg_lsn + 1;

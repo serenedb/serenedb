@@ -47,10 +47,10 @@ ALL_FAULTS = frozenset(
 )
 
 _SOURCE_LITERAL = re.compile(
-    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|WaitWhileFailurePointDebugging)'
+    r'(?:SDB_IF_FAILURE|SDB_WAIT_ON_FAILURE|FaultPoints::WaitWhileArmed)'
     r'\s*\(\s*"([^"]+)"'
 )
-_SOURCE_DIRS = ("server", "iresearch")
+_SOURCE_DIRS = ("server", "iresearch", "third_party/duckdb/src", "third_party/duckdb/extension")
 _SOURCE_EXTS = (".cpp", ".cc", ".hpp", ".hh", ".h", ".ipp", ".tpp")
 
 

@@ -38,7 +38,6 @@
 
 #include "iresearch/utils/common.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::utils {

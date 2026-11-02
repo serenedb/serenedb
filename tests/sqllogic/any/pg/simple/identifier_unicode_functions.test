@@ -1,0 +1,50 @@
+query
+SELECT parse_ident('_abc') AS a, parse_ident('éa.b') AS b, parse_ident('a', true) AS c, parse_ident('a.b c', false) AS d;
+----
+a	b	c	d
+{_abc}	{éa,b}	{a}	{a,b}
+
+query
+SELECT t, parse_ident(t) AS p FROM (VALUES ('a.b'), ('c'), ('d.e.f')) v(t) ORDER BY t;
+----
+t	p
+a.b	{a,b}
+c	{c}
+d.e.f	{d,e,f}
+
+query
+SELECT unistr('\E000') = chr(57344) AS a, unistr('\+00E000') = chr(57344) AS b;
+----
+a	b
+t	t
+
+statement error
+SELECT unistr('\DC00');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('\D800x');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('\D800\\');
+----
+db error: ERROR: invalid Unicode surrogate pair
+
+
+statement error
+SELECT unistr('\12x4');
+----
+db error: ERROR: invalid Unicode escape
+HINT: Unicode escapes must be \XXXX, \+XXXXXX, \uXXXX, or \UXXXXXXXX.
+
+
+statement error
+SELECT unistr('\u12x4');
+----
+db error: ERROR: invalid Unicode escape
+HINT: Unicode escapes must be \XXXX, \+XXXXXX, \uXXXX, or \UXXXXXXXX.

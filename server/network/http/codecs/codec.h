@@ -45,7 +45,7 @@ inline constexpr size_t kOutBlock = 16 * 1024;
 inline constexpr LevelRange kZstdLevels{.min = -(1 << 17), .max = 8};
 inline constexpr LevelRange kBrotliLevels{.min = 1, .max = 6};
 inline constexpr LevelRange kDeflateLevels{.min = 1, .max = 9};
-inline constexpr LevelRange kZxcLevels{.min = 1, .max = 5};
+inline constexpr LevelRange kZxcLevels{.min = 1, .max = 7};
 inline constexpr LevelRange kLz4Levels{.min = 0, .max = 9};
 
 [[noreturn]] void ThrowCodecError(std::string_view coding,

@@ -88,22 +88,13 @@ c
 0
 
 
-# Always-true filter on a NOT NULL-valued column: dropped from the scan, and
-# the filter-only column drops out of the output, so the count stays count-only.
 query
 EXPLAIN SELECT count(*) FROM stp WHERE x >= 0;
 ----
 QUERY PLAN
-╭─ UNGROUPED_AGGREGATE ────╮
-│ Aggregates: count_star() │
-│ ~1 row                   │
-╰─────────────┬────────────╯
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: stp               │
-│ Lookup: search           │
-│ Output: row-count only   │
-│ ~200 rows                │
-╰──────────────────────────╯
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
 
 
 query

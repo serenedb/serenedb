@@ -1,0 +1,31 @@
+# serenedb-only: SYSTEM_USER of a connection that authenticated with a
+# password is the pg_hba method and the role, scram-sha-256 under the default
+# rules. Cannot run on PostgreSQL: the shared PG test container admits every
+# connection with trust, which leaves SYSTEM_USER NULL.
+
+statement ok
+DROP ROLE IF EXISTS sysuser_vedernikoff;
+
+
+statement ok
+CREATE ROLE sysuser_vedernikoff LOGIN PASSWORD 'sysuser_secret';
+
+
+query
+SELECT system_user IS NULL OR system_user = ('scram-sha-256:' || session_user) AS trusted_or_password;
+----
+trusted_or_password
+t
+
+
+connection c_sysuser user=sysuser_vedernikoff password=sysuser_secret
+query
+SELECT system_user AS keyword, pg_catalog.system_user() AS function, session_user;
+----
+keyword	function	session_user
+scram-sha-256:sysuser_vedernikoff	scram-sha-256:sysuser_vedernikoff	sysuser_vedernikoff
+
+
+connection default
+statement ok
+DROP ROLE sysuser_vedernikoff;

@@ -110,6 +110,13 @@ SELECT count(*) AS paused FROM sdb_progress WHERE command = 'CREATE TABLE AS' AN
 paused
 1
 
+connection watcher
+query
+SELECT command, io_type FROM sdb_progress WHERE command = 'CREATE TABLE AS';
+----
+command	io_type
+CREATE TABLE AS	(empty)
+
 connection pg database=postgres
 statement ok
 INSERT INTO sfi_big SELECT i FROM range(300000, 300100) t(i);

@@ -1,0 +1,11 @@
+query
+SELECT n.nspname FROM pg_namespace n JOIN information_schema.sql_parts p ON p.feature_id = n.oid::text WHERE p.is_supported = 'NO';
+----
+nspname
+pg_catalog
+
+query
+SELECT count(*) > 0 AS visible FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE has_schema_privilege(current_user, n.nspname, 'USAGE') AND c.relkind = 'r';
+----
+visible
+t

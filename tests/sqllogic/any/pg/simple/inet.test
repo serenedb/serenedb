@@ -1,8 +1,8 @@
 # INET type behavior shared with PostgreSQL: type I/O (IPv4 + IPv6), host,
-# family, network, broadcast, subnet containment, arithmetic, arrays. Lives in
-# any/ so it is validated against a real PostgreSQL as well as serenedb.
-# netmask() and html_escape/html_unescape are serenedb-extension-specific and
-# live in sdb/pg/simple/inet.test.
+# family, network, netmask, broadcast, subnet containment, arithmetic and
+# bitwise operators, arrays. Lives in any/ so it is validated against a real
+# PostgreSQL as well as serenedb. html_escape/html_unescape are
+# serenedb-extension-specific and live in sdb/pg/simple/inet.test.
 
 query
 SELECT '192.168.0.1/24'::INET AS a;
@@ -16,6 +16,33 @@ SELECT '2001:db8::1/64'::INET AS a6;
 ----
 a6
 2001:db8::1/64
+
+
+query
+SELECT '192.168.1.5'::inet::text AS a, '192.168.1.5/24'::inet::text AS b,
+       '::1'::inet::text AS d, CAST('10.0.0.1'::inet AS varchar) AS e, '192.168.1.5'::inet AS f,
+       'x' || '10.0.0.1'::inet AS g;
+----
+a	b	d	e	f	g
+192.168.1.5/32	192.168.1.5/24	::1/128	10.0.0.1/32	192.168.1.5	x10.0.0.1/32
+
+
+onlyif postgres
+query
+SELECT concat('x', '10.0.0.1'::inet) AS c, format('%s', '10.0.0.1'::inet) AS f,
+       array_to_string(ARRAY['10.0.0.1'::inet], ',') AS a;
+----
+c	f	a
+x10.0.0.1	10.0.0.1	10.0.0.1
+
+
+skipif postgres
+query
+SELECT concat('x', '10.0.0.1'::inet) AS c, format('%s', '10.0.0.1'::inet) AS f,
+       array_to_string(ARRAY['10.0.0.1'::inet], ',') AS a;
+----
+c	f	a
+x10.0.0.1/32	10.0.0.1/32	10.0.0.1/32
 
 
 query
@@ -225,6 +252,94 @@ id	ips
 3	{}
 
 
+query
+SELECT masklen('192.168.1.5/24'::inet) AS v4, masklen('192.168.1.5'::inet) AS v4_host,
+       masklen('2001:db8::1/64'::inet) AS v6, masklen('::1'::inet) AS v6_host;
+----
+v4	v4_host	v6	v6_host
+24	32	64	128
+
+
+query
+SELECT set_masklen('192.168.1.5/24'::inet, 16) AS shorter,
+       set_masklen('192.168.1.5/24'::inet, -1) AS full_v4,
+       set_masklen('2001:db8::1/64'::inet, 48) AS v6,
+       set_masklen('2001:db8::1/64'::inet, -1) AS full_v6,
+       set_masklen('192.168.1.5'::inet, 0) AS zero;
+----
+shorter	full_v4	v6	full_v6	zero
+192.168.1.5/16	192.168.1.5	2001:db8::1/48	2001:db8::1	192.168.1.5/0
+
+
+statement error
+SELECT set_masklen('192.168.1.5/24'::inet, 33);
+----
+db error: ERROR: invalid mask length: 33
+
+
+statement error
+SELECT set_masklen('::1'::inet, 129);
+----
+db error: ERROR: invalid mask length: 129
+
+
+statement error
+SELECT set_masklen('10.0.0.1'::inet, -2);
+----
+db error: ERROR: invalid mask length: -2
+
+
+query
+SELECT hostmask('192.168.23.20/30'::inet) AS v4, hostmask('10.0.0.1'::inet) AS v4_host,
+       hostmask('0.0.0.0/0'::inet) AS v4_all, hostmask('2001:db8::/64'::inet) AS v6,
+       hostmask('::/0'::inet) AS v6_all;
+----
+v4	v4_host	v4_all	v6	v6_all
+0.0.0.3	0.0.0.0	255.255.255.255	::ffff:ffff:ffff:ffff	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+
+query
+SELECT abbrev('10.1.0.0/16'::inet) AS net, abbrev('10.1.0.0'::inet) AS host,
+       abbrev('2001:db8::/32'::inet) AS v6;
+----
+net	host	v6
+10.1.0.0/16	10.1.0.0	2001:db8::/32
+
+
+query
+SELECT masklen(ip) AS m, hostmask(ip) AS h, abbrev(ip) AS a, set_masklen(ip, 8) AS s,
+       set_masklen('10.0.0.1'::inet, NULL) AS sn
+FROM (VALUES (NULL::inet)) AS t(ip);
+----
+m	h	a	s	sn
+NULL	NULL	NULL	NULL	NULL
+
+
+statement ok
+CREATE TABLE inet_masks (id INTEGER, ip INET, bits INTEGER);
+
+
+statement ok
+INSERT INTO inet_masks VALUES (1, '10.1.2.3/8', 24), (2, '2001:db8::1/32', 64), (3, '192.168.0.1', -1), (4, NULL, 8), (5, '10.0.0.1', NULL);
+
+
+query
+SELECT id, masklen(ip) AS m, set_masklen(ip, bits) AS s, hostmask(ip) AS h, abbrev(ip) AS a
+FROM inet_masks
+ORDER BY id;
+----
+id	m	s	h	a
+1	8	10.1.2.3/24	0.255.255.255	10.1.2.3/8
+2	32	2001:db8::1/64	::ffff:ffff:ffff:ffff:ffff:ffff	2001:db8::1/32
+3	32	192.168.0.1	0.0.0.0	192.168.0.1
+4	NULL	NULL	NULL	NULL
+5	32	NULL	0.0.0.0	10.0.0.1
+
+
+statement ok
+DROP TABLE inet_masks;
+
+
 # The extended-protocol client renders regtype as a raw OID (no OID->name map),
 # so the regtype-name checks run on the simple protocol only.
 skipif pg-wire-extended
@@ -242,6 +357,103 @@ SELECT 'inet'::regtype AS rt;
 rt
 inet
 
+
+query
+SELECT '10.1.2.3'::inet << '10.0.0.0/8'::inet AS sub, '10.0.0.0/8'::inet << '10.0.0.0/8'::inet AS sub_self,
+       '10.0.0.0/8'::inet <<= '10.0.0.0/8'::inet AS subeq_self, '10.0.0.0/8'::inet >> '10.1.2.3'::inet AS sup,
+       '10.0.0.0/8'::inet >>= '10.0.0.0/8'::inet AS supeq_self, '10.1.0.0/16'::inet && '10.0.0.0/8'::inet AS overlap,
+       '10.1.0.0/16'::inet && '11.0.0.0/8'::inet AS no_overlap;
+----
+sub	sub_self	subeq_self	sup	supeq_self	overlap	no_overlap
+t	f	t	t	t	t	f
+
+
+query
+SELECT '::1'::inet <<= '0.0.0.0/0'::inet AS v6_in_v4, '0.0.0.1'::inet << '::/0'::inet AS v4_in_v6,
+       '2001:db8::1'::inet << '2001:db8::/32'::inet AS v6_sub, '2001:db9::1'::inet <<= '2001:db8::/32'::inet AS v6_outside,
+       '2001:db8::/32'::inet && '2001:db8:1::/48'::inet AS v6_overlap;
+----
+v6_in_v4	v4_in_v6	v6_sub	v6_outside	v6_overlap
+f	f	t	f	t
+
+
+query
+SELECT ~ '10.1.2.3/8'::inet AS not_v4, ~ '::1'::inet AS not_v6, '10.1.2.3/8'::inet & '0.0.255.255/16'::inet AS and_v4,
+       '10.1.2.3/24'::inet | '0.0.0.255'::inet AS or_v4, '10.1.2.3'::inet - '10.1.0.0'::inet AS minus,
+       '10.0.0.0'::inet - '10.1.2.3'::inet AS minus_negative;
+----
+not_v4	not_v6	and_v4	or_v4	minus	minus_negative
+245.254.253.252/8	ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffe	0.0.2.3/16	10.1.2.255	515	-66051
+
+
+query
+SELECT '10.1.2.3'::inet + 5 AS plus, 5 + '10.1.2.3'::inet AS plus_commuted, '10.1.2.3'::inet - 4 AS minus_int,
+       '2001:db8::ffff'::inet + 1 AS v6_plus, '2001:db8::'::inet - '2001:db8::ffff'::inet AS v6_minus;
+----
+plus	plus_commuted	minus_int	v6_plus	v6_minus
+10.1.2.8	10.1.2.8	10.1.1.255	2001:db8::1:0	-65535
+
+
+query
+SELECT inet_merge('10.1.2.3'::inet, '10.2.0.0/16'::inet) AS merge, inet_merge('192.168.1.5/24'::inet, '192.168.2.5/24'::inet) AS merge_24,
+       inet_merge('2001:db8::1'::inet, '2001:db8::ff'::inet) AS merge_v6, inet_same_family('10.1.2.3'::inet, '::1'::inet) AS diff,
+       inet_same_family('10.1.2.3'::inet, '10.0.0.0/8'::cidr) AS same;
+----
+merge	merge_24	merge_v6	diff	same
+10.0.0.0/14	192.168.0.0/22	2001:db8::/120	f	t
+
+
+query
+SELECT netmask('192.168.1.5/24'::inet) AS mask, netmask('10.1.2.3/8'::inet) AS mask8, netmask('2001:db8::1/32'::inet) AS mask_v6,
+       netmask('10.0.0.0/0'::inet) AS mask0, netmask('10.0.0.1'::inet) AS mask32;
+----
+mask	mask8	mask_v6	mask0	mask32
+255.255.255.0	255.0.0.0	ffff:ffff::	0.0.0.0	255.255.255.255
+
+
+statement error (result is out of range|Cannot add to IPv4 Address: result out of range)
+SELECT '255.255.255.255'::inet + 1;
+
+
+statement error (result is out of range|Underflow in HUGEINT subtraction)
+SELECT '0.0.0.0'::inet - 1;
+
+
+statement error
+SELECT '10.1.2.3'::inet & '::1'::inet;
+----
+db error: ERROR: cannot AND inet values of different sizes
+
+
+statement error
+SELECT '10.1.2.3'::inet | '::1'::inet;
+----
+db error: ERROR: cannot OR inet values of different sizes
+
+
+statement error
+SELECT '10.1.2.3'::inet - '::1'::inet;
+----
+db error: ERROR: cannot subtract inet values of different sizes
+
+
+statement error
+SELECT inet_merge('10.1.2.3'::inet, '::1'::inet);
+----
+db error: ERROR: cannot merge addresses from different families
+
+
+statement ok
+CREATE FUNCTION inet_host_and_mask(a inet) RETURNS text LANGUAGE sql AS $$ SELECT host(a) || '/' || masklen(a) $$;
+
+
+query
+SELECT inet_host_and_mask('10.0.0.1/24'::inet) AS v4, inet_host_and_mask('2001:db8::1/64'::inet) AS v6;
+----
+v4	v6
+10.0.0.1/24	2001:db8::1/64
+
+
 query
 SELECT pg_typeof('10.0.0.1'::INET)::oid AS inet_oid, pg_typeof(ARRAY['10.0.0.1'::INET])::oid AS inet_array_oid, 'inet'::regtype::oid AS by_name, 'inet[]'::regtype::oid AS array_by_name;
 ----
@@ -254,3 +466,10 @@ SELECT oid, typname, typelem, typarray, typinput::oid AS typinput, typoutput::oi
 oid	typname	typelem	typarray	typinput	typoutput	typreceive	typsend
 869	inet	0	1041	910	911	2496	2497
 1041	_inet	869	0	750	751	2400	2401
+
+
+query
+SELECT inet_merge('2001:db8::1'::inet, '2002:db8::1'::inet) AS merge;
+----
+merge
+2000::/14

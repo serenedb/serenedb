@@ -79,7 +79,7 @@ In practice **BM25 is the right default** for almost all full-text ranking — i
 
 How they differ, simple to advanced:
 
-- **TF-IDF** rewards a term that is frequent in the document and rare across the collection. It is linear in term frequency, so a few very common terms can dominate.
+- **TF-IDF** rewards a term that is frequent in the document and rare across the collection. Its term-frequency weight has no ceiling (SereneDB uses the square root of the count), so a few very frequent terms can dominate.
 - **BM25** is TF-IDF with two refinements: term-frequency *saturation* (`k1`) so the 10th occurrence counts far less than the 1st, and *length normalization* (`b`) so long documents are not unfairly favored for containing a term more times.
 - **Language models** (`lm_*`) flip the question: instead of weighting terms, they estimate the probability that the document's word distribution would *generate* the query, smoothing each document with the whole-collection distribution so unseen terms do not zero out the score. They tend to track BM25 closely while exposing a single, interpretable smoothing knob.
 - **DFI** is *parameter-free*: it scores a term by how far its observed frequency diverges from what statistical independence would predict, so there is nothing to tune at all.
@@ -98,7 +98,7 @@ The [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) relevance score.
 | `k1` | `FLOAT` | `1.2` | Term-frequency saturation. Higher = extra occurrences keep mattering; lower = they saturate sooner. |
 | `b` | `FLOAT` | `0.75` | Document-length normalization, in `[0, 1]`. `b = 0` disables it (a.k.a. BM15); `b = 1` fully normalizes by length. |
 
-**How it works.** A term contributes more when it appears often in a document and rarely across the collection, but each extra occurrence adds ever less (controlled by `k1`), and the contribution is scaled down for long documents (controlled by `b`). This is the standard relevance model behind Lucene, Elasticsearch and OpenSearch — start here and tune only if results need it.
+**How it works.** A term contributes more when it appears often in a document and rarely across the collection, but each extra occurrence adds ever less (controlled by `k1`), and the contribution is scaled down for long documents (controlled by `b`). It is the standard relevance model for full-text search — start here and tune only if results need it.
 
 <SqlLogicTest id="sql/functions/full_text_search/bm25" />
 
@@ -117,7 +117,7 @@ The classic [tf–idf](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) (term-frequ
 | :--- | :--- | :--- | :--- |
 | `with_norms` | `BOOLEAN` | `false` | Apply document-length normalization. Requires the `norm` flag on the column to have an effect. |
 
-**How it works.** Each matched term contributes `tf × idf`: more occurrences in the row and rarer occurrence across the collection both raise the score. It is cheaper than BM25 but has no term-frequency saturation, so a handful of very frequent terms can dominate — prefer BM25 unless you specifically want this baseline.
+**How it works.** Each matched term contributes `√tf × idf`: more occurrences in the row and rarer occurrence across the collection both raise the score. It has no term-frequency saturation, so a handful of very frequent terms can dominate — prefer BM25 unless you specifically want this baseline.
 
 <SqlLogicTest id="sql/functions/full_text_search/tfidf" />
 

@@ -46,7 +46,6 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "pg/connection_context.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 namespace {

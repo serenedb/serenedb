@@ -48,14 +48,14 @@ FROM information_schema.views
 WHERE table_name LIKE 'viewdef%';
 ----
 table_name	view_definition
-viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+viewdef odd	SELECT id AS x FROM viewdef_t WHERE ("name" = 'a');
 
 connection other user=postgres
 query
 SELECT viewname, definition FROM pg_views WHERE viewname LIKE 'viewdef%';
 ----
 viewname	definition
-viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+viewdef odd	SELECT id AS x FROM viewdef_t WHERE ("name" = 'a');
 
 connection other user=postgres
 query
@@ -65,7 +65,7 @@ WHERE relname LIKE 'viewdef%'
 ORDER BY relname;
 ----
 relname	pg_get_viewdef	pg_get_viewdef
-viewdef odd	SELECT id FROM viewdef_t WHERE ("name" = 'a');	SELECT id FROM viewdef_t WHERE ("name" = 'a');
+viewdef odd	SELECT id AS x FROM viewdef_t WHERE ("name" = 'a');	SELECT id AS x FROM viewdef_t WHERE ("name" = 'a');
 viewdef_t	NULL	NULL
 
 

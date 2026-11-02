@@ -37,12 +37,13 @@ The functions below are difficult to categorize into specific function types and
 | [`if(a, b, c)`](#ifa-b-c)                                                                            | Ternary conditional operator.                                                                                                                                                                                                                                                                                                                                                       |
 | [`ifnull(expr, other)`](#ifnullexpr-other)                                                           | A two-argument version of coalesce.                                                                                                                                                                                                                                                                                                                                                 |
 | [`is_histogram_other_bin(arg)`](#is_histogram_other_binarg)                                          | Returns `true` when `arg` is the "catch-all element" of its datatype for the purpose of the [`histogram_exact`](../../sql/functions/aggregates/index.md#histogram_exactarg-elements) function, which is equal to the "right-most boundary" of its datatype for the purpose of the [`histogram`](../../sql/functions/aggregates/index.md#histogramarg-boundaries) function.            |
+| [`lastval()`](#lastval)                                                                              | Return the value `nextval` most recently returned in the current session, for whichever sequence it advanced.                                                                                                                                                                                                                                                                      |
 | [`md5(string)`](#md5string)                                                                          | Returns the MD5 hash of the `string` as a `VARCHAR`.                                                                                                                                                                                                                                                                                                                                |
 | [`md5_number(string)`](#md5_numberstring)                                                            | Returns the MD5 hash of the `string` as a `UHUGEINT`.                                                                                                                                                                                                                                                                                                                               |
 | [`md5_number_lower(string)`](#md5_number_lowerstring)                                                | Returns the lower 64-bit segment of the MD5 hash of the `string` as a `UBIGINT`.                                                                                                                                                                                                                                                                                                    |
 | [`md5_number_upper(string)`](#md5_number_upperstring)                                                | Returns the upper 64-bit segment of the MD5 hash of the `string` as a `UBIGINT`.                                                                                                                                                                                                                                                                                                    |
 | [`nextval('sequence_name')`](#nextvalsequence_name)                                                  | Return the following value of the sequence.                                                                                                                                                                                                                                                                                                                                         |
-| [`nullif(a, b)`](#nullifa-b)                                                                         | Return `NULL` if `a = b`, else return `a`. Equivalent to `CASE WHEN a = b THEN NULL ELSE a END`.                                                                                                                                                                                                                                                                                    |
+| [`nullif(a, b)`](#nullifa-b)                                                                         | Return `NULL` if `a = b`, else return `a`, in the type `a` and `b` are compared in.                                                                                                                                                                                                                                                                                                 |
 | [`parse_formatted_bytes(string)`](#parse_formatted_bytesstring)                                      | Parse a human-readable byte size string (e.g., `'16 KiB'`) into a `UBIGINT` number of bytes. Throws an error on invalid input.                                                                                                                                                                                                                                                      |
 | [`pg_typeof(expression)`](#pg_typeofexpression)                                                      | Returns the lower case name of the data type of the result of the expression. For PostgreSQL compatibility.                                                                                                                                                                                                                                                                         |
 | [`query(`_`query_string`_`)`](#queryquery_string)                                                    | Table function that parses and executes the query defined in _`query_string`_. Only constant strings are allowed. Warning: this function allows invoking arbitrary queries, potentially altering the database state.                                                                                                                                                                |
@@ -217,6 +218,12 @@ Returns `true` when `arg` is the "catch-all element" of its datatype for the pur
 
 <SqlLogicTest id="sql/functions/utility/is_histogram_other_bin" />
 
+#### `lastval()`
+
+Return the value `nextval` most recently returned in the current session, for whichever sequence it advanced. It fails until `nextval` has run in the session, after that sequence is dropped, and without `USAGE` or `SELECT` on that sequence.
+
+<SqlLogicTest id="sql/functions/utility/lastval" />
+
 #### `md5(string)`
 
 Returns the MD5 hash of the `string` as a `VARCHAR`.
@@ -243,13 +250,13 @@ Returns the upper 8 bytes of the MD5 hash of `string` as a `UBIGINT`.
 
 #### `nextval('sequence_name')`
 
-Return the following value of the sequence.
+Return the following value of the sequence. `sequence_name` is read as the name is in SQL text, optionally schema-qualified: an unquoted part folds as an unquoted identifier does, a part in double quotes is kept as written. `currval` and `setval` read the name the same way.
 
 <SqlLogicTest id="sql/functions/utility/nextval" />
 
 #### `nullif(a, b)`
 
-Return `NULL` if a = b, else return a. Equivalent to `CASE WHEN a = b THEN NULL ELSE a END`.
+Return `NULL` if `a = b`, else return `a`. The result has the type `a` and `b` are compared in, so `nullif(5, 5.5)` is a `NUMERIC`. Each argument is evaluated once.
 
 <SqlLogicTest id="sql/functions/utility/nullif" />
 

@@ -1,0 +1,143 @@
+statement ok
+DROP VIEW IF EXISTS rubick_rw_lift;
+
+
+statement ok
+DROP VIEW IF EXISTS rubick_rw_steal;
+
+
+statement ok
+DROP TABLE IF EXISTS rubick_rw_spell;
+
+
+query
+SELECT count(*) AS views_without_rule FROM pg_class c
+WHERE c.relkind = 'v' AND c.relhasrules
+  AND NOT EXISTS (SELECT 1 FROM pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename = '_RETURN');
+----
+views_without_rule
+0
+
+
+query
+SELECT count(*) AS null_actions FROM pg_rewrite WHERE ev_action IS NULL;
+----
+null_actions
+0
+
+
+statement ok
+CREATE TABLE rubick_rw_spell (id INT, name TEXT);
+
+
+statement ok
+CREATE VIEW rubick_rw_steal AS SELECT id, name FROM rubick_rw_spell WHERE id > 0;
+
+
+statement ok
+CREATE VIEW rubick_rw_lift AS SELECT count(*) AS n FROM rubick_rw_steal;
+
+
+query
+SELECT rulename, ev_class::regclass::text AS rel, ev_type, ev_enabled, is_instead,
+       ev_qual::text AS ev_qual, ev_action IS NOT NULL AS has_action
+FROM pg_rewrite
+WHERE ev_class IN ('rubick_rw_steal'::regclass, 'rubick_rw_lift'::regclass, 'rubick_rw_spell'::regclass)
+ORDER BY 2;
+----
+rulename	rel	ev_type	ev_enabled	is_instead	ev_qual	has_action
+_RETURN	rubick_rw_lift	1	O	t	<>	t
+_RETURN	rubick_rw_steal	1	O	t	<>	t
+
+
+query
+SELECT rulename FROM pg_rewrite WHERE ev_class = 'rubick_rw_steal'::regclass;
+----
+rulename
+_RETURN
+
+
+query
+SELECT count(*) AS n FROM pg_rewrite WHERE ev_class = 'rubick_rw_spell'::regclass;
+----
+n
+0
+
+
+query
+SELECT ev_class::regclass::text AS rel
+FROM pg_rewrite
+WHERE oid = (SELECT oid FROM pg_rewrite WHERE ev_class = 'rubick_rw_lift'::regclass);
+----
+rel
+rubick_rw_lift
+
+
+query
+SELECT count(*) AS n
+FROM (SELECT * FROM pg_rewrite OFFSET 0) r
+WHERE r.ev_class IN ('rubick_rw_steal'::regclass, 'rubick_rw_lift'::regclass);
+----
+n
+2
+
+
+query
+SELECT c.relname, c.relkind, c.relhasrules, r.rulename
+FROM pg_class c
+LEFT JOIN pg_rewrite r ON r.ev_class = c.oid
+WHERE c.relname LIKE 'rubick_rw%'
+ORDER BY 1;
+----
+relname	relkind	relhasrules	rulename
+rubick_rw_lift	v	t	_RETURN
+rubick_rw_spell	r	f	NULL
+rubick_rw_steal	v	t	_RETURN
+
+
+query
+SELECT DISTINCT d.refobjid::regclass::text AS ref, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_rewrite'::regclass
+  AND d.objid = (SELECT oid FROM pg_rewrite WHERE ev_class = 'rubick_rw_steal'::regclass)
+ORDER BY 1;
+----
+ref	deptype
+rubick_rw_spell	n
+rubick_rw_steal	i
+
+
+query
+SELECT count(*) AS n FROM pg_rules WHERE tablename LIKE 'rubick_rw%';
+----
+n
+0
+
+
+statement ok
+DROP VIEW rubick_rw_lift;
+
+
+query
+SELECT r.rulename, r.ev_class::regclass::text AS rel
+FROM pg_rewrite r
+JOIN pg_class c ON c.oid = r.ev_class
+WHERE c.relname LIKE 'rubick_rw%'
+ORDER BY 2;
+----
+rulename	rel
+_RETURN	rubick_rw_steal
+
+
+statement ok
+DROP TABLE rubick_rw_spell CASCADE;
+
+
+query
+SELECT count(*) AS n
+FROM pg_rewrite r
+JOIN pg_class c ON c.oid = r.ev_class
+WHERE c.relname LIKE 'rubick_rw%';
+----
+n
+0

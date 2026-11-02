@@ -1,4 +1,4 @@
-# Tests that all system views defined in system_views.h can be queried without errors
+# Tests that all system views can be queried without errors
 #
 # Each view is tested with SELECT COUNT(*) >= 0 to verify it is queryable
 
@@ -449,6 +449,16 @@ SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_xact_user_functions
 ----
 ?column?
 t
+
+
+query
+SELECT pg_stat_get_function_calls(0) AS calls,
+       pg_stat_get_function_total_time(0) AS total_time,
+       pg_stat_get_xact_function_self_time(0) AS xact_self_time,
+       pg_stat_get_function_calls(NULL) IS NULL AS null_in
+----
+calls	total_time	xact_self_time	null_in
+0	0	0	t
 
 
 query
@@ -1016,3 +1026,18 @@ SELECT COUNT(*) >= 0 FROM information_schema.user_mappings
 ----
 ?column?
 t
+
+
+statement ok
+PREPARE sv_gap AS SELECT $2::int;
+
+
+query
+SELECT array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name = 'sv_gap';
+----
+parameter_types
+unknown
+
+
+statement ok
+DEALLOCATE sv_gap;

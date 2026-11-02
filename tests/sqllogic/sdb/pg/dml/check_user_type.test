@@ -148,5 +148,65 @@ statement ok
 DROP TABLE ct
 
 
+# --- UNIQUE index on a user-type column, and on a cast to a user type ---
+
+statement ok
+CREATE TABLE uq_col (id INT, k chk_kind)
+
+
+statement ok
+CREATE UNIQUE INDEX uq_col_k ON uq_col (k)
+
+
+statement ok
+INSERT INTO uq_col VALUES (1, 'y')
+
+
+statement error
+INSERT INTO uq_col VALUES (2, 'y')
+----
+db error: ERROR: Duplicate key "k: y" violates unique constraint.
+
+
+statement ok
+CREATE TABLE uq_expr (id INT, s TEXT)
+
+
+statement ok
+CREATE UNIQUE INDEX uq_expr_k ON uq_expr ((CAST(s AS chk_kind)))
+
+
+statement ok
+INSERT INTO uq_expr VALUES (1, 'y'), (2, 'n')
+
+
+statement error
+INSERT INTO uq_expr VALUES (3, 'y')
+----
+db error: ERROR: Duplicate key "CAST(s AS chk_kind): y" violates unique constraint.
+
+
+statement error
+UPDATE uq_expr SET s = 'y' WHERE id = 2
+----
+db error: ERROR: Duplicate key "CAST(s AS chk_kind): y" violates unique constraint.
+
+
+query
+SELECT id, s FROM uq_expr ORDER BY id
+----
+id	s
+1	y
+2	n
+
+
+statement ok
+DROP TABLE uq_expr
+
+
+statement ok
+DROP TABLE uq_col
+
+
 statement ok
 DROP TYPE chk_kind

@@ -767,6 +767,48 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   ASSERT_EQ(2, windows);
 }
 
+TEST(lazy_bitset_test, unfilled_windows_read_empty_over_reused_memory) {
+  constexpr irs::doc_id_t kDocs = 100000;
+  const std::vector<irs::doc_id_t> docs{3, 60000};
+
+  size_t windows = 0;
+  auto node =
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  {
+    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
+  }
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::MakeGenericDocsMask(nullptr)};
+
+  ASSERT_EQ(60000, set.Probe(4));
+  for (irs::doc_id_t doc = kMin; doc <= kDocs; ++doc) {
+    ASSERT_EQ(doc == 3 || doc == 60000, set.Contains(doc)) << doc;
+  }
+  ASSERT_EQ(uint64_t{2}, set.Count());
+}
+
+TEST(lazy_bitset_test, skipped_windows_read_empty_over_reused_memory) {
+  constexpr irs::doc_id_t kDocs = 100000;
+  const std::vector<irs::doc_id_t> docs{3, 20000, 70000};
+
+  size_t windows = 0;
+  auto node =
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows);
+  {
+    irs::detail::BitsetStorage dirty{kDocs, irs::memory::kAllocateOnly};
+    std::fill_n(dirty.Words(), dirty.Alloc(), ~uint64_t{0});
+  }
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::MakeGenericDocsMask(nullptr)};
+
+  set.SkipTo(50000);
+  ASSERT_EQ(70000, set.Probe(50000));
+  for (irs::doc_id_t doc = kMin; doc <= kDocs; ++doc) {
+    ASSERT_EQ(doc == 70000, set.Contains(doc)) << doc;
+  }
+}
+
 namespace {
 
 irs::DocumentMaskBuilder MakeBuilder(const std::vector<irs::doc_id_t>& docs) {

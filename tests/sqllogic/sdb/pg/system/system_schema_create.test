@@ -1,0 +1,37 @@
+statement error permission denied to create "pg_catalog\.pudge_hook"
+CREATE TABLE pg_catalog.pudge_hook (id INT)
+
+
+statement error permission denied to create "pg_catalog\.pudge_hook"
+CREATE TABLE pg_catalog.pudge_hook AS SELECT 1 AS id
+
+
+statement error permission denied to create "information_schema\.pudge_rot"
+CREATE VIEW information_schema.pudge_rot AS SELECT 1
+
+
+statement error permission denied to create "pg_catalog\.pudge_cleaver"
+CREATE MACRO pg_catalog.pudge_cleaver(a, b) AS 1
+
+
+statement error permission denied to create "pg_catalog\.pudge_flesh"
+CREATE SEQUENCE pg_catalog.pudge_flesh
+
+
+statement error permission denied to create "pg_catalog\.pudge_mood"
+CREATE TYPE pg_catalog.pudge_mood AS ENUM ('hungry', 'full')
+
+
+statement error permission denied: "pg_class" is a system catalog
+CREATE INDEX pudge_idx ON pg_catalog.pg_class (relname)
+
+
+statement error permission denied: "pg_tables" is a system catalog
+CREATE INDEX pudge_idx ON pg_catalog.pg_tables USING inverted (tablename)
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('pudge_hook', 'pudge_rot', 'pudge_flesh');
+----
+count
+0

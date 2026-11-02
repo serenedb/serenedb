@@ -1,0 +1,91 @@
+statement ok
+DROP SERVER IF EXISTS chopa_srv_meat;
+
+
+statement ok
+DROP SERVER IF EXISTS chopa_srv_memory;
+
+
+statement ok
+DROP ROLE IF EXISTS chopa_srv_hook;
+
+
+statement ok
+CREATE ROLE chopa_srv_hook LOGIN PASSWORD 'chopa_srv_hook_pw';
+
+
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname = 'chopa_srv_meat';
+----
+srvname
+
+
+statement error
+CREATE SERVER chopa_srv_meat FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', database 'chopa_db');
+----
+db error: ERROR: Unable to connect to Postgres<slt:ignore>
+
+
+query
+SELECT srvname, srvoptions FROM pg_foreign_server WHERE srvname = 'chopa_srv_meat';
+----
+srvname	srvoptions
+
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE oid = 27182;
+----
+n
+0
+
+
+connection chopa_conn user=chopa_srv_hook password=chopa_srv_hook_pw
+statement error
+SELECT srvname FROM pg_foreign_server;
+----
+db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+
+
+connection chopa_conn user=chopa_srv_hook password=chopa_srv_hook_pw
+statement error
+SELECT srvoptions FROM pg_foreign_server WHERE srvname = 'chopa_srv_meat';
+----
+db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+
+
+connection default
+statement ok
+CREATE SERVER chopa_srv_memory FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:');
+
+
+connection default
+query
+SELECT has_server_privilege('chopa_srv_memory', 'USAGE') AS by_name, has_server_privilege(oid, 'USAGE') AS by_oid,
+       has_server_privilege('chopa_srv_hook', oid, 'USAGE') AS hook_by_oid,
+       has_server_privilege('chopa_srv_hook', 'chopa_srv_memory', 'USAGE') AS hook_by_name,
+       has_server_privilege('chopa_srv_hook', 'pg_class'::regclass::oid, 'USAGE') AS not_a_server
+FROM pg_foreign_server WHERE srvname = 'chopa_srv_memory';
+----
+by_name	by_oid	hook_by_oid	hook_by_name	not_a_server
+t	t	f	f	NULL
+
+
+connection default
+statement error
+SELECT has_server_privilege('chopa_srv_nosuch', 'USAGE');
+----
+db error: ERROR: server "chopa_srv_nosuch" does not exist
+
+
+connection default
+statement ok
+DROP SERVER chopa_srv_memory;
+
+
+connection default
+statement ok
+DROP SERVER IF EXISTS chopa_srv_meat;
+
+
+statement ok
+DROP ROLE chopa_srv_hook;

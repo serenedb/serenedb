@@ -277,6 +277,7 @@ TEST(DuckDBThreads, RelaunchWhileAnotherWorkerRelaunchesDoesNotDeadlock) {
 struct SpinState {
   std::atomic<bool> stop{false};
   std::atomic<int64_t> chunks{0};
+  std::atomic<int64_t> held_ns{0};
   std::atomic<int64_t> yields{0};
   std::atomic<int64_t> running{0};
   std::atomic<int64_t> finished{0};
@@ -288,11 +289,15 @@ class SpinTask final : public duckdb::Task {
 
   duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode mode) final {
     ++_state.running;
+    auto last = std::chrono::steady_clock::now();
     while (!_state.stop) {
-      const auto until =
-        std::chrono::steady_clock::now() + std::chrono::microseconds(20);
-      while (std::chrono::steady_clock::now() < until) {
+      const auto until = last + std::chrono::microseconds(20);
+      auto now = last;
+      while (now < until) {
+        now = std::chrono::steady_clock::now();
       }
+      _state.held_ns += std::chrono::nanoseconds{now - last}.count();
+      last = now;
       ++_state.chunks;
       if (duckdb::TaskScheduler::ShouldYield(mode)) {
         ++_state.yields;
@@ -486,11 +491,11 @@ TEST(DuckDBScheduler, TwoHeavyQueriesShareWorkers) {
   ASSERT_TRUE(WaitFor([&] { return first.state.running == 4; }));
   SpinQuery second{scheduler, 4};
   ASSERT_TRUE(WaitFor([&] { return second.state.chunks > 0; }));
-  const auto first_start = first.state.chunks.load();
-  const auto second_start = second.state.chunks.load();
+  const auto first_start = first.state.held_ns.load();
+  const auto second_start = second.state.held_ns.load();
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  const auto first_done = first.state.chunks - first_start;
-  const auto second_done = second.state.chunks - second_start;
+  const auto first_done = first.state.held_ns - first_start;
+  const auto second_done = second.state.held_ns - second_start;
   EXPECT_GT(first_done * 2, second_done);
   EXPECT_GT(second_done * 2, first_done);
 }
@@ -506,8 +511,8 @@ TEST(DuckDBScheduler, MoreQueriesThanWorkersAllProgress) {
   int64_t least = std::numeric_limits<int64_t>::max();
   int64_t most = 0;
   for (auto& query : queries) {
-    least = std::min<int64_t>(least, query->state.chunks);
-    most = std::max<int64_t>(most, query->state.chunks);
+    least = std::min<int64_t>(least, query->state.held_ns);
+    most = std::max<int64_t>(most, query->state.held_ns);
   }
   EXPECT_GT(least * 3, most);
 }

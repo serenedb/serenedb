@@ -168,14 +168,10 @@ query
 EXPLAIN SELECT pk, x FROM te WHERE x = 50;
 ----
 QUERY PLAN
-╭─ PROJECTION ──────────╮
-│ Projections: pk, x    │
-│ ~1 row                │
-╰───────────┬───────────╯
 ╭─ IRESEARCH_SCAN ──────╮
 │ Index: te             │
 │ Lookup: search        │
-│ Projections: x, pk    │
+│ Projections: pk, x    │
 │ Column Filter: x = 50 │
 │ ~1 row                │
 ╰───────────────────────╯

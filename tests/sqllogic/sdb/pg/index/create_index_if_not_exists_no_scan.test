@@ -39,6 +39,30 @@ CREATE VIEW cinx_v AS SELECT 1 AS x;
 
 
 statement ok
+CREATE UNIQUE INDEX cinx_t_u ON cinx_t (i);
+
+
+statement ok
+CREATE INDEX cinx_t_part ON cinx_t USING inverted (t) WHERE i > 10;
+
+
+statement ok
+CREATE TEMP TABLE cinx_tmp AS SELECT * FROM cinx_t;
+
+
+statement ok
+CREATE INDEX cinx_tmp_art ON cinx_tmp (i);
+
+
+statement ok
+CREATE VIEW cinx_tv AS SELECT i, t FROM cinx_t;
+
+
+statement ok
+CREATE INDEX cinx_tv_inv ON cinx_tv USING inverted (i);
+
+
+statement ok
 SET profiling_renderer_settings = {'deterministic': true};
 
 
@@ -53,6 +77,42 @@ QUERY PLAN
 
 query
 EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_art ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE UNIQUE INDEX IF NOT EXISTS cinx_t_u ON cinx_t (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_t_part ON cinx_t USING inverted (t) WHERE i > 10;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_tmp_art ON cinx_tmp (i);
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX IF NOT EXISTS cinx_tv_inv ON cinx_tv USING inverted (i);
 ----
 QUERY PLAN
 ╭─ Summary ───────────╮
@@ -161,6 +221,10 @@ cinx_seq	S
 cinx_t	r
 cinx_t_art	i
 cinx_t_inv	i
+cinx_t_part	i
+cinx_t_u	i
+cinx_tv	v
+cinx_tv_inv	i
 cinx_v	v
 
 
@@ -180,6 +244,14 @@ i	t
 
 statement ok
 DROP VIEW cinx_v;
+
+
+statement ok
+DROP VIEW cinx_tv;
+
+
+statement ok
+DROP TABLE cinx_tmp;
 
 
 statement ok

@@ -187,8 +187,6 @@ SELECT sequence_name FROM duckdb_sequences() WHERE database_name = 'eik_dst' ORD
 sequence_name
 child_id_seq
 q
-st_numbered_pk_seq
-st_pk_seq
 
 
 query

@@ -36,9 +36,6 @@ statement ok
 DELETE FROM rr WHERE id >= 180000 AND id % 997 = 0;
 
 statement ok
-SET sdb_faults = 'search_delete_wal_rowids';
-
-statement ok
 DELETE FROM rr WHERE id >= 150000 AND id < 155000;
 
 statement ok
@@ -71,8 +68,8 @@ connection after
 query
 SELECT count(*) FILTER (WHERE id >= 20000 AND id < 90000) AS singles_kept,
        count(*) FILTER (WHERE id >= 130000 AND id < 150000) AS untouched,
-       count(*) FILTER (WHERE id >= 155000 AND id < 180000) AS after_legacy
+       count(*) FILTER (WHERE id >= 155000 AND id < 180000) AS after_range
 FROM rr;
 ----
-singles_kept	untouched	after_legacy
+singles_kept	untouched	after_range
 69930	20000	25000

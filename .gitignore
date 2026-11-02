@@ -66,8 +66,6 @@ tests/drivers/c/harness
 !/.claude/rules/
 /CLAUDE.local.md
 
-# Local act secrets (fakes for local CI runs)
-.secrets
 
 /scripts/perf/results/
 

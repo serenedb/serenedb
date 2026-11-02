@@ -4,7 +4,7 @@ statement ok
 SET sdb_ivf_search_nprobe TO 2048;
 
 statement ok
-SET sdb_ann_oversample = 32;
+SET sdb_ann_rescore_width = 100;
 
 system ok
 mkdir -p $__TEST_DIR__/vsvh/part=p0 $__TEST_DIR__/vsvh/part=p1 $__TEST_DIR__/vsvh/part=p2 $__TEST_DIR__/vsvh/part=p3
@@ -107,7 +107,7 @@ statement ok
 RESET sdb_disable_top_k_optimization;
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;
 
 query
 SELECT count(*) FROM ((SELECT * FROM vsvh_v EXCEPT SELECT * FROM vsvh_idx)

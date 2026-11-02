@@ -1,0 +1,137 @@
+control substitution on
+
+# CREATE OR REPLACE INDEX drops the existing index of the name, which may sit on
+# another table than the one the new index is built on. Dropping it is the
+# owner's of that table to do, as DROP INDEX is: a role that owns only the
+# target table must not be able to replace another role's index through it.
+
+
+statement ok
+CREATE ROLE rio_a_${__DATABASE__};
+
+
+statement ok
+CREATE ROLE rio_b_${__DATABASE__};
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO rio_a_${__DATABASE__};
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA public TO rio_b_${__DATABASE__};
+
+
+statement ok
+SET ROLE rio_a_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE rio_t (x INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX rio_i ON rio_t USING inverted (body);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE rio_b_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE rio_u (y INTEGER);
+
+
+statement error
+CREATE OR REPLACE INDEX rio_i ON rio_t (x);
+----
+db error: ERROR: must be owner of table rio_t
+
+
+statement error
+CREATE OR REPLACE INDEX rio_i ON rio_u (y);
+----
+db error: ERROR: must be owner of table rio_t
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
+----
+tablename	indexdef
+rio_t	CREATE INDEX rio_i ON public.rio_t USING inverted (body) WITH (row_group_size='122880', refresh_interval='1000', compaction_interval='1000', cleanup_interval_step='1', segment_memory_max='268435456', segment_docs_max='0', compaction_max_segments='10', compaction_max_segments_bytes='5368709120', compaction_floor_segment_bytes='2097152')
+
+
+# The owner of the index's table may replace it, on its own table or on one it
+# can index.
+statement ok
+SET ROLE rio_a_${__DATABASE__};
+
+
+statement ok
+CREATE OR REPLACE INDEX rio_i ON rio_t (x);
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
+----
+tablename	indexdef
+rio_t	CREATE INDEX rio_i ON public.rio_t USING secondary (x)
+
+
+statement ok
+ALTER TABLE rio_u OWNER TO rio_a_${__DATABASE__};
+
+
+statement ok
+SET ROLE rio_a_${__DATABASE__};
+
+
+statement ok
+CREATE OR REPLACE INDEX rio_i ON rio_u (y);
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT tablename, indexdef FROM pg_indexes WHERE indexname = 'rio_i';
+----
+tablename	indexdef
+rio_u	CREATE INDEX rio_i ON public.rio_u USING secondary (y)
+
+
+statement ok
+DROP TABLE rio_t;
+
+
+statement ok
+DROP TABLE rio_u;
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM rio_a_${__DATABASE__};
+
+
+statement ok
+REVOKE ALL ON SCHEMA public FROM rio_b_${__DATABASE__};
+
+
+statement ok
+DROP ROLE rio_a_${__DATABASE__};
+
+
+statement ok
+DROP ROLE rio_b_${__DATABASE__};

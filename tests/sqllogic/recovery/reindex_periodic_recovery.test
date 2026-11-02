@@ -127,8 +127,15 @@ system ok
 ln -sfn ${RESOURCES}/tests/iceberg/plain_nohint_v2 $__TEST_DIR__/rpr_ice
 
 connection e2_after
-system ok
-sleep 1.2
+statement ok
+CREATE TEMP TABLE rpr_runs AS SELECT failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rpr_ice_idx';
+
+connection e2_after
+query ok retry 400 backoff 250ms
+SELECT failure_count >= (SELECT failure_count + 2 FROM rpr_runs) AS failed FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rpr_ice_idx';
+----
+failed
+t
 
 connection e2_after
 query

@@ -1,0 +1,214 @@
+# Many inverted indexes on one search table, several on the same text column
+# and several on the same vector column: each answers from its own definition,
+# after writes, a drop of one of them, a compaction and a replace.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mi_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE MACRO mi_vec(i) AS
+  list_transform(range(16),
+                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+
+statement ok
+CREATE TABLE mi_ref (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16]);
+
+statement ok
+INSERT INTO mi_ref SELECT i, 'fox number ' || i, mi_vec(i) FROM range(2000) t(i);
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000;
+
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+statement ok
+SET sdb_ann_rescore_width = 100;
+
+statement ok
+CREATE TABLE mi (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO mi SELECT * FROM mi_ref WHERE id < 800;
+
+statement ok
+VACUUM (REFRESH_TABLE) mi;
+
+statement ok
+INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 800 AND id < 1500;
+
+statement ok
+VACUUM (REFRESH_TABLE) mi;
+
+statement ok
+CREATE INDEX mi_kw ON mi USING inverted (body);
+
+statement ok
+CREATE INDEX mi_txt ON mi USING inverted (body mi_en);
+
+statement ok
+CREATE INDEX mi_txt2 ON mi USING inverted (id, body mi_en);
+
+statement ok
+CREATE INDEX mi_sq8 ON mi USING inverted (id, emb ivf (metric = 'l2', quant = 'sq8'));
+
+statement ok
+CREATE INDEX mi_pq ON mi USING inverted (id, emb ivf (metric = 'l2', quant = 'pq', pq_m = 8));
+
+statement ok
+CREATE INDEX mi_hnsw ON mi USING inverted (id, emb hnsw (metric = 'l2'));
+
+statement ok
+CREATE INDEX mi_cos ON mi USING inverted (id, emb ivf (metric = 'cosine'));
+
+query
+SELECT (SELECT count(*) FROM mi_kw WHERE body = 'fox number 7') AS kw,
+       (SELECT count(*) FROM mi_txt WHERE body @@ 'fox') AS txt,
+       (SELECT count(*) FROM mi_txt2 WHERE body @@ 'number' AND id < 100) AS txt2;
+----
+kw	txt	txt2
+1	1500	100
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_sq8 ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref WHERE id < 1500 ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_pq ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref WHERE id < 1500 ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_hnsw ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref WHERE id < 1500 ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_cos ORDER BY emb <=> mi_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref WHERE id < 1500 ORDER BY emb <=> mi_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref WHERE id < 1500 ORDER BY emb <-> mi_vec(1234.5) LIMIT 10)) t;
+----
+hits
+10
+
+# --- New rows reach every index ---
+
+statement ok
+INSERT INTO mi SELECT * FROM mi_ref WHERE id >= 1500;
+
+statement ok
+VACUUM (REFRESH_TABLE) mi;
+
+query
+SELECT (SELECT count(*) FROM mi_kw WHERE body = 'fox number 1777') AS kw,
+       (SELECT count(*) FROM mi_txt WHERE body @@ 'fox') AS txt,
+       (SELECT count(*) FROM mi_txt2 WHERE body @@ 'number' AND id >= 1500) AS txt2;
+----
+kw	txt	txt2
+1	2000	500
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_pq ORDER BY emb <-> mi_vec(1777.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(1777.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_hnsw ORDER BY emb <-> mi_vec(1777.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(1777.5) LIMIT 10)) t;
+----
+hits
+10
+
+# --- Dropping one index leaves the others on the same columns working ---
+
+statement ok
+DROP INDEX mi_sq8;
+
+statement ok
+DROP INDEX mi_txt;
+
+statement ok
+VACUUM (COMPACT_TABLE) mi;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('mi') WHERE column_name = 'id';
+----
+segments
+1
+
+query
+SELECT (SELECT count(*) FROM mi_kw WHERE body = 'fox number 7') AS kw,
+       (SELECT count(*) FROM mi_txt2 WHERE body @@ 'fox') AS txt2;
+----
+kw	txt2
+1	2000
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_pq ORDER BY emb <-> mi_vec(333.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(333.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_hnsw ORDER BY emb <-> mi_vec(333.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(333.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_cos ORDER BY emb <=> mi_vec(333.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <=> mi_vec(333.5) LIMIT 10)) t;
+----
+hits
+10
+
+# --- Replacing one of them with another quantization ---
+
+statement ok
+CREATE OR REPLACE INDEX mi_hnsw ON mi USING inverted (id, emb hnsw (metric = 'l2', quant = 'sq8'));
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_hnsw ORDER BY emb <-> mi_vec(999.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(999.5) LIMIT 10)) t;
+----
+hits
+10
+
+query
+SELECT count(*) AS hits FROM (
+  (SELECT id FROM mi_pq ORDER BY emb <-> mi_vec(999.5) LIMIT 10)
+  INTERSECT (SELECT id FROM mi_ref ORDER BY emb <-> mi_vec(999.5) LIMIT 10)) t;
+----
+hits
+10

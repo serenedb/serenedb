@@ -1,0 +1,39 @@
+# serenedb-only: where pg_catalog.extract differs from PostgreSQL. numeric has
+# no Infinity, so an infinite source gives NULL for the fields PostgreSQL
+# answers with Infinity; the scale of the result is fixed per query, so julian
+# of a timestamp always has 20 fractional digits and a field that is not a
+# constant gives six.
+
+query
+SELECT pg_catalog.extract('epoch', TIMESTAMP 'infinity') IS NULL AS epoch,
+       pg_catalog.extract('year', DATE '-infinity') IS NULL AS year,
+       pg_catalog.extract('julian', TIMESTAMPTZ 'infinity') IS NULL AS julian;
+----
+epoch	year	julian
+t	t	t
+
+
+query
+SELECT pg_catalog.extract('julian', TIMESTAMP '2021-01-03 00:00:00') AS midnight;
+----
+midnight
+2459218.00000000000000000000
+
+
+query
+SELECT unit, pg_catalog.extract(unit, TIMESTAMP '2021-01-03 04:05:06.5') AS value
+FROM (VALUES ('year'), ('second'), ('julian')) AS t(unit)
+ORDER BY unit;
+----
+unit	value
+julian	2459218.170214
+second	6.500000
+year	2021.000000
+
+
+query
+SELECT unit, pg_catalog.extract(unit, TIMESTAMP '0001-01-01 06:00:00' - INTERVAL '5000 years') AS value
+FROM (VALUES ('julian')) AS t(unit);
+----
+unit	value
+julian	-104785.750000

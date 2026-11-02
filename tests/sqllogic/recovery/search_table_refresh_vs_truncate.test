@@ -24,15 +24,21 @@ connection default
 statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_index_refresh:parked';
 
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait';
+
 connection truncater
 statement async ok
 TRUNCATE rvt;
 
-# Best effort: a TRUNCATE that waits for the refresh is indistinguishable from
-# one that has not got to its Clear yet, so the sleep only gives an
-# unsynchronised Clear time to land inside the refresh window. If it has not,
-# the run misses a regression rather than failing spuriously.
-sleep 1s
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh_lock_wait:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_lock_wait:release';
 
 connection default
 statement ok

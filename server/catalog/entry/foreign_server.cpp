@@ -26,11 +26,11 @@
 #include <absl/strings/strip.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>

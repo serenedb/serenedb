@@ -33,9 +33,6 @@ statement ok
 UPDATE dr SET body = 'updated' WHERE id >= 120000 AND id < 130000 AND id % 1000 <> 7;
 
 statement ok
-SET sdb_faults = 'search_delete_wal_rowids';
-
-statement ok
 DELETE FROM dr WHERE id >= 150000 AND id < 160000 AND id % 1000 <> 7;
 
 statement ok

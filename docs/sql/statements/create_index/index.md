@@ -7,7 +7,6 @@ import RailroadDiagram from '@site/src/components/RailroadDiagram';
 import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
-import DocCallout from "@site/src/components/DocCallout";
 
 ## `CREATE INDEX`
 
@@ -26,11 +25,6 @@ Create index `s_idx` that allows for duplicate values on column `revenue` of tab
 Create index if it does not yet exist:
 
 <SqlLogicTest id="sql/statements/create_index/index/example_003" />
-
-<DocCallout type="tip">
-The `CREATE INDEX IF NOT EXISTS` statement does not have an “early exit” at the moment, instead, it will attempt to create the index and only check its existence before committing it to storage.
-Therefore, it may run for a longer time compared to other `IF NOT EXISTS` statements, which terminate early.
-</DocCallout>
 
 Create compound index `gy_idx` on `genre` and `year` columns:
 
@@ -84,6 +78,12 @@ Remove the index `title_idx`:
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />
 
-## Limitations
+## `CREATE OR REPLACE INDEX`
 
-The `CREATE INDEX` clause does not support the `OR REPLACE` modifier.
+`CREATE OR REPLACE INDEX` builds the new index and drops the existing index of the same name, in one transaction. Until it commits, other connections keep using the old index; if the build fails or the transaction rolls back, the old index stays as it was. Both indexes exist until the commit, so the replace needs memory and disk space for both. The new index is defined only by the statement: the old index's options, predicate and comment are not carried over.
+
+Replace an index with one on more columns:
+
+<SqlLogicTest id="sql/statements/create_index/index/example_007" />
+
+The replacement can be of another index type, and can be on another table than the index it replaces; it requires ownership of both tables. The name must belong to an index: if it belongs to a table, view or sequence, the statement fails with `Existing object "name" is of type Table, trying to replace with type Index`. `OR REPLACE` and `IF NOT EXISTS` cannot be combined.

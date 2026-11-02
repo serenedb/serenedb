@@ -73,11 +73,12 @@ namespace sdb {
 
 ConnectionContext::ConnectionContext(
   duckdb::ClientContext& duckdb_ctx, std::string_view user,
-  duckdb::idx_t role_id, std::string_view dbname, duckdb::idx_t database_id,
-  message::Buffer* send_buffer, int32_t backend_pid,
+  std::string_view system_user, duckdb::idx_t role_id, std::string_view dbname,
+  duckdb::idx_t database_id, message::Buffer* send_buffer, int32_t backend_pid,
   network::CancelRegistry* cancel_registry)
   : Transaction{duckdb_ctx},
     _user{user},
+    _system_user{system_user},
     _database_name{dbname},
     _database_id{database_id},
     _backend_pid{backend_pid},

@@ -20,10 +20,15 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <span>
 #include <utility>
 
 #include "iresearch/search/count/root.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
+#include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::count {
@@ -49,5 +54,34 @@ class Subtract : public Root {
   Root::ptr _excluded;
   bool _partial;
 };
+
+Root::ptr MakeSubtractConjunction(std::span<const detail::PostingClause> terms,
+                                  std::span<const QueryBuilder::ptr> filters,
+                                  const SubReader& segment, const Context& ctx);
+Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
+                                  const detail::PostingClause& second,
+                                  const SubReader& segment, const Context& ctx);
+
+template<typename Term>
+doc_id_t RarestOf(std::span<const Term> terms) noexcept {
+  SDB_ASSERT(terms.size() == 2);
+  return std::min(detail::CookieOf(terms.front()).docs_count,
+                  detail::CookieOf(terms.back()).docs_count);
+}
+
+template<typename Term>
+doc_id_t DensestOf(std::span<const Term> terms) noexcept {
+  SDB_ASSERT(terms.size() == 2);
+  return std::max(detail::CookieOf(terms.front()).docs_count,
+                  detail::CookieOf(terms.back()).docs_count);
+}
+
+template<typename Term>
+bool SubtractsPair(std::span<const Term> terms, doc_id_t docs_count) noexcept {
+  if (terms.size() != 2) {
+    return false;
+  }
+  return detail::ProbeBeatsFold(RarestOf(terms), DensestOf(terms), docs_count);
+}
 
 }  // namespace irs::count

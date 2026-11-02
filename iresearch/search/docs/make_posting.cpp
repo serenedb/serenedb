@@ -18,19 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/docs/family.hpp"
 #include "iresearch/search/docs/plan.hpp"
 #include "iresearch/search/docs/posting.hpp"
+#include "iresearch/search/docs/single_posting.hpp"
 #include "iresearch/search/lead/plan.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 
 namespace irs::docs {
 
-Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
-                      const Context& ctx) {
+Root::ptr Family::MakePosting(const detail::PostingClause& posting,
+                              const SubReader&, const Context&,
+                              ScoreMergeType) {
   const auto& meta = posting.state.cookie;
   SDB_ASSERT(meta.docs_count != 0);
   if (meta.docs_count == 1) {
-    return MakeSinglePosting(doc_limits::min() + meta.doc_delta, ctx);
+    return memory::make_managed<SinglePosting>(doc_limits::min() +
+                                               meta.doc_delta);
   }
   const auto& own = *posting.state.reader;
   const auto& in = *detail::DocOf(own);
@@ -40,11 +44,6 @@ Root::ptr MakePosting(const detail::PostingClause& posting, const SubReader&,
                   detail::FreqOf(own));
     return root;
   });
-}
-
-Root::ptr Make(const TermQuery& query, const Context& ctx) {
-  return MakePosting(detail::PostingClause{query.State()}, query.Segment(),
-                     ctx);
 }
 
 }  // namespace irs::docs

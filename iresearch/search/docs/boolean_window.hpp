@@ -26,6 +26,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/emit.hpp"
 #include "iresearch/search/docs/root.hpp"
@@ -81,18 +82,8 @@ class BooleanWindow : public Root {
       SDB_ASSERT(_min <= doc_limits::eof() - detail::kWindowDocs);
       const doc_id_t max = _min + detail::kWindowDocs;
       auto* const words = _mask.data();
-      doc_id_t next;
-      if constexpr (kLead) {
-        next = _lead.FillOr(_min, max, words);
-        if constexpr (kOthers) {
-          next = std::max(next, _others.Restrict(_min, max, words));
-        }
-      } else {
-        next = _optional.Fill(_min, max, words);
-      }
-      if constexpr (kExcludes) {
-        _excludes.Remove(_min, max, words);
-      }
+      const auto next = detail::FillClauses(_lead, _others, _optional,
+                                            _excludes, _min, max, words);
       _emit.Opened(_min, max, words);
       if (doc_limits::eof(next)) {
         _spent = true;

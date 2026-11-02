@@ -388,6 +388,13 @@ CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 
 > +---+----+
 > (1 row)
 
+\pset tuples_only on<NL>\pset format unaligned<NL>SELECT $1 + 1 AS r<NL>\bind 5<NL>\g<NL>SELECT $1 * 2 AS r<NL>\bind 5<NL>\g<NL>SELECT 7 - $1 AS r<NL>\bind 5<NL>\g<NL>SELECT upper($1) AS r<NL>\bind ab<NL>\g
+----
+> 6
+> 10
+> 2
+> AB
+
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
 ----
 > +--------+---+
@@ -850,12 +857,15 @@ skipif postgres
 
 \dew
 ----
->     List of foreign-data wrappers
-> +------+-------+---------+-----------+
-> | Name | Owner | Handler | Validator |
-> +------+-------+---------+-----------+
-> +------+-------+---------+-----------+
-> (0 rows)
+>            List of foreign-data wrappers
+> +----------------+----------+---------+-----------+
+> |      Name      |  Owner   | Handler | Validator |
+> +----------------+----------+---------+-----------+
+> | clickhouse_fdw | postgres | -       | -         |
+> | iceberg_fdw    | postgres | -       | -         |
+> | postgres_fdw   | postgres | -       | -         |
+> +----------------+----------+---------+-----------+
+> (3 rows)
 
 \dy
 ----
@@ -1120,32 +1130,29 @@ skipif postgres
 > +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
 > (1 row)
 
-# serened has no tablespace concept; pg_tablespace is empty. PG ships
-# pg_default/pg_global; we only assert serened's own empty \db output.
-skipif postgres
 \db
 ----
 >         List of tablespaces
 > +------------+----------+----------+
 > |    Name    |  Owner   | Location |
 > +------------+----------+----------+
-> | pg_default | postgres | [NULL]   |
-> | pg_global  | postgres | [NULL]   |
+> | pg_default | postgres |          |
+> | pg_global  | postgres |          |
 > +------------+----------+----------+
 > (2 rows)
 
-# Non-default config knobs differ per server; serened additionally has no
-# pg_settings.source/boot_val so \dconfig is unconditionally empty here.
-# Tracked: https://github.com/serenedb/serenedb/issues/739
+# Non-default config knobs differ per server: PG also lists its config file's
+# settings.
 skipif postgres
 \dconfig
 ----
 > List of non-default configuration parameters
-> +-----------+-------+
-> | Parameter | Value |
-> +-----------+-------+
-> +-----------+-------+
-> (0 rows)
+> +------------------+-------+
+> |    Parameter     | Value |
+> +------------------+-------+
+> | application_name | psql  |
+> +------------------+-------+
+> (1 row)
 
 # pg_cast is empty on serened; DuckDB doesn't expose its cast graph via
 # any duckdb_* table function and CastFunctionSet has no public iterator.
@@ -1195,9 +1202,8 @@ skipif postgres
 > +------+-------+---------+-------------+
 > (0 rows)
 
-# serened access methods: iresearch backs tables;
-# secondary/inverted back indexes (server/catalog/entry.h). PG ships
-# heap/btree/gin/... -- entirely different storage layer.
+# serened access methods: heap and iresearch back tables, secondary and
+# inverted back indexes. PG ships btree/gin/... as well.
 skipif postgres
 \dA
 ----
@@ -1205,11 +1211,12 @@ skipif postgres
 > +-----------+-------+
 > |   Name    | Type  |
 > +-----------+-------+
+> | heap      | Table |
 > | inverted  | Index |
 > | iresearch | Table |
 > | secondary | Index |
 > +-----------+-------+
-> (3 rows)
+> (4 rows)
 
 # serened's pg_opclass surfaces the `ivf` and `hnsw` builtins (inverted AM,
 # FLOAT[]) plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.
@@ -1220,7 +1227,7 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
-> | inverted | any        | [NULL]       | included       | no       |
+> | inverted | "any"      | [NULL]       | included       | no       |
 > | inverted | real[]     | [NULL]       | hnsw           | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |
@@ -1236,7 +1243,7 @@ skipif postgres
 > +----------+------------+--------------+----------------+----------+
 > |    AM    | Input type | Storage type | Operator class | Default? |
 > +----------+------------+--------------+----------------+----------+
-> | inverted | any        | [NULL]       | included       | no       |
+> | inverted | "any"      | [NULL]       | included       | no       |
 > | inverted | real[]     | [NULL]       | hnsw           | no       |
 > | inverted | real[]     | [NULL]       | ivf            | no       |
 > | inverted | text       | [NULL]       | otel_body_dict | no       |

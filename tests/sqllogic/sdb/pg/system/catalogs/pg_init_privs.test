@@ -1,0 +1,118 @@
+statement ok
+DROP SCHEMA IF EXISTS roshan_ini_pit CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS roshan_ini_cheese;
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_init_privs;
+----
+readable
+t
+
+
+query
+SELECT count(*) FROM pg_init_privs WHERE privtype NOT IN ('i', 'e');
+----
+count
+0
+
+
+query
+SELECT objoid::regclass::text AS relation, objsubid, privtype, initprivs
+FROM pg_init_privs
+WHERE classoid = 'pg_class'::regclass
+  AND objoid IN ('pg_class'::regclass, 'pg_authid'::regclass, 'pg_tables'::regclass, 'sdb_settings'::regclass)
+ORDER BY 1;
+----
+relation	objsubid	privtype	initprivs
+pg_authid	0	i	{postgres=arwdDxtm/postgres}
+pg_class	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
+pg_tables	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
+sdb_settings	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
+
+
+query
+SELECT objoid::regnamespace::text AS schema, privtype, initprivs
+FROM pg_init_privs WHERE classoid = 'pg_namespace'::regclass
+ORDER BY 1;
+----
+schema	privtype	initprivs
+pg_catalog	i	{postgres=UC/postgres,=U/postgres}
+public	i	{postgres=UC/postgres,=U/postgres}
+
+
+query
+SELECT (SELECT count(*) FROM pg_init_privs WHERE classoid = 'pg_class'::regclass) =
+       (SELECT count(*) FROM pg_class WHERE relnamespace = 'pg_catalog'::regnamespace) AS every_catalog_relation;
+----
+every_catalog_relation
+t
+
+
+statement ok
+CREATE ROLE roshan_ini_cheese LOGIN PASSWORD 'refresher';
+
+
+statement ok
+CREATE SCHEMA roshan_ini_pit AUTHORIZATION roshan_ini_cheese;
+
+
+statement ok
+CREATE TABLE roshan_ini_pit.aegis (id INTEGER);
+
+
+statement ok
+GRANT SELECT ON roshan_ini_pit.aegis TO PUBLIC;
+
+
+query
+SELECT count(*) FROM pg_init_privs
+WHERE objoid IN ('roshan_ini_pit'::regnamespace::oid, 'roshan_ini_pit.aegis'::regclass::oid);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_init_privs i JOIN pg_class c ON c.oid = i.objoid
+WHERE i.classoid = 'pg_class'::regclass AND c.relnamespace <> 'pg_catalog'::regnamespace;
+----
+count
+0
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO roshan_ini_cheese;
+
+
+query
+SELECT initprivs FROM pg_init_privs WHERE objoid = 'public'::regnamespace;
+----
+initprivs
+{postgres=UC/postgres,=U/postgres}
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM roshan_ini_cheese;
+
+
+connection c_roshan_ini user=roshan_ini_cheese password=refresher
+query
+SELECT has_table_privilege('pg_init_privs', 'SELECT') AS readable,
+       count(*) FILTER (WHERE objoid = 'roshan_ini_pit.aegis'::regclass) AS mine
+FROM pg_init_privs;
+----
+readable	mine
+t	0
+
+
+connection default
+statement ok
+DROP SCHEMA roshan_ini_pit CASCADE;
+
+
+statement ok
+DROP ROLE roshan_ini_cheese;

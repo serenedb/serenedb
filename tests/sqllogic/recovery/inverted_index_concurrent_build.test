@@ -1,0 +1,67 @@
+# Builds of inverted indexes on the same regular table and on a view of it run
+# at the same time without conflicts: each is held before its commit until all
+# three are in flight, then all three commit.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE cb (id INT PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO cb SELECT i, 'fox ' || i FROM generate_series(1, 5000) s(i);
+
+statement ok
+CREATE VIEW cbv AS SELECT id, body FROM cb;
+
+statement ok
+CREATE INDEX cb_x ON cb USING inverted (body);
+
+statement ok
+SET sdb_faults = 'pause_create_index_before_commit';
+
+connection a
+statement async ok
+CREATE INDEX cb_a ON cb USING inverted (body);
+
+connection b
+statement async ok
+CREATE OR REPLACE INDEX cb_x ON cb USING inverted (body, id);
+
+connection c
+statement async ok
+CREATE INDEX cbv_a ON cbv USING inverted (body);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_progress_create_index WHERE phase = 'finalizing';
+----
+n
+3
+
+connection default
+statement ok
+SET sdb_faults = '-pause_create_index_before_commit';
+
+wait
+
+connection default
+query
+SELECT index_name, table_name, regexp_extract(regexp_replace(sql, ' WITH \(.*', ''), 'USING inverted \((.*)\)$', 1) AS keys
+FROM duckdb_indexes()
+WHERE database_name = current_database() AND table_name IN ('cb', 'cbv') AND index_name <> 'cb_pkey'
+ORDER BY index_name;
+----
+index_name	table_name	keys
+cb_a	cb	body
+cb_x	cb	body, id
+cbv_a	cbv	body
+
+connection default
+query
+SELECT (SELECT count(*) FROM cb_a WHERE body = 'fox 7') AS a,
+       (SELECT count(*) FROM cb_x WHERE body = 'fox 7' AND id = 7) AS x,
+       (SELECT count(*) FROM cbv_a WHERE body = 'fox 7') AS va;
+----
+a	x	va
+1	1	1

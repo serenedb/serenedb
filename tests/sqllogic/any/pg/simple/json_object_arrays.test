@@ -1,0 +1,48 @@
+query
+SELECT id, json_object(a) AS o FROM (VALUES (1, ARRAY['a', '1']), (2, NULL::text[])) v(id, a) ORDER BY id;
+----
+id	o
+1	{"a" : "1"}
+2	NULL
+
+query
+SELECT id, json_object(a) AS o FROM (VALUES (1, ARRAY[ARRAY['a', '1'], ARRAY['b', '2']]), (2, NULL::text[][])) v(id, a) ORDER BY id;
+----
+id	o
+1	{"a" : "1", "b" : "2"}
+2	NULL
+
+query
+SELECT id, json_object(k, v) AS o FROM (VALUES (1, ARRAY['a'], ARRAY['1']), (2, NULL::text[], ARRAY['1']), (3, ARRAY['a'], NULL::text[])) v(id, k, v) ORDER BY id;
+----
+id	o
+1	{"a" : "1"}
+2	NULL
+3	NULL
+
+query
+SELECT json_object('{{a,1},{b,2}}') AS a, json_object('  { {a,1}}') AS b, json_object('{a,1}') AS c, json_object(' {a, 1, b, 2}') AS d;
+----
+a	b	c	d
+{"a" : "1", "b" : "2"}	{"a" : "1"}	{"a" : "1"}	{"a" : "1", "b" : "2"}
+
+statement error
+SELECT json_object('{a,1,b}');
+----
+db error: ERROR: array must have even number of elements
+
+
+statement error
+SELECT json_object(ARRAY['a'], ARRAY['1', '2']);
+----
+db error: ERROR: mismatched array dimensions
+
+
+statement error (multidimensional arrays must have array expressions with matching dimensions|array must have two columns)
+SELECT json_object(ARRAY[ARRAY['a', '1'], NULL::text[]]);
+
+statement error (malformed array literal: "\{\{a,1\},\{b\}\}"|array must have two columns)
+SELECT json_object('{{a,1},{b}}');
+
+statement error (malformed array literal: "a"|Type VARCHAR with value 'a' can't be cast to the destination type VARCHAR\[\])
+SELECT json_object('a');

@@ -21,7 +21,9 @@ if ! getent passwd "$(id -u)" >/dev/null; then
 fi
 
 cd "$ICEBERG_DIR"
-rm -rf data/generated
+if [[ -z "${ICEBERG_GENERATED_DIR:-}" ]]; then
+	rm -rf data/generated
+fi
 mkdir -p .catalogs
 for catalog in "$@"; do
 	echo "Generating Iceberg test data for the '$catalog' catalog..."

@@ -32,7 +32,7 @@ n
 
 
 statement ok
-SET GLOBAL debug_wal_fsync_sleep_ms = 3000
+SET sdb_faults = 'pause_wal_sync'
 
 
 connection s1
@@ -40,7 +40,8 @@ statement async ok
 COMMIT
 
 
-sleep 1s
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_wal_sync:parked'
 
 
 connection s2
@@ -50,6 +51,10 @@ TRUNCATE tcw
 db error: ERROR: Attempting to truncate table "tcw" but another transaction has added rows to this table
 
 
+statement ok
+SET sdb_faults = 'pause_wal_sync:release'
+
+
 connection s1
 wait
 
@@ -57,10 +62,6 @@ wait
 connection s3
 statement ok
 COMMIT
-
-
-statement ok
-SET GLOBAL debug_wal_fsync_sleep_ms = 0
 
 
 connection s2

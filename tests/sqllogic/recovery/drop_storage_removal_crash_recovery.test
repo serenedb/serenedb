@@ -1,0 +1,829 @@
+control substitution on
+
+# A dropped search table, inverted index or database has its directory removed
+# in the background after the commit. A crash in the middle of that removal
+# must leave a data directory that boots without the dropped object and with
+# everything else intact.
+#
+# The fault point stops a removal once it deleted one file of the directory, and
+# parks it there; the crash comes while it is parked.
+
+
+statement ok
+CREATE TABLE dsr_keep (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO dsr_keep VALUES (1, 'kept');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dsr_keep;
+
+
+statement ok
+CREATE TABLE dsr_oids (name TEXT, oid BIGINT);
+
+
+statement ok
+INSERT INTO dsr_oids SELECT 'db', oid FROM pg_database WHERE datname = current_database();
+
+
+# The files left in the directory of a dropped object of this database, and of
+# a dropped database.
+statement ok
+CREATE MACRO dsr_leftover(object) AS (
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = 'db') || '/'
+                  || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+
+
+statement ok
+CREATE MACRO dsr_database_leftover(object) AS (
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+
+
+# ----------------------------------------------------------------------
+# 1. A search table.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE dsr_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO dsr_s VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dsr_s;
+
+
+statement ok
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'dsr_s';
+
+
+query
+SELECT dsr_leftover('dsr_s') > 0 AS stored;
+----
+stored
+t
+
+
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+statement ok
+DROP TABLE dsr_s;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+# Under the extended protocol the Sync that follows the SET is already the
+# next packet, so the SET itself is what the connection dies on.
+skipif pg-wire-extended
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_table
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_s';
+----
+n
+0
+
+
+connection after_table
+query
+SELECT dsr_leftover('dsr_s') AS leftover;
+----
+leftover
+0
+
+
+connection after_table
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept
+
+
+# ----------------------------------------------------------------------
+# 2. An inverted index on a table.
+# ----------------------------------------------------------------------
+
+connection after_table
+statement ok
+CREATE TABLE dsr_t (id INT, body TEXT);
+
+
+connection after_table
+statement ok
+INSERT INTO dsr_t VALUES (1, 'alpha'), (2, 'beta');
+
+
+connection after_table
+statement ok
+CREATE INDEX dsr_t_idx ON dsr_t USING inverted (body);
+
+
+connection after_table
+statement ok
+VACUUM (REFRESH_TABLE) dsr_t;
+
+
+connection after_table
+statement ok
+INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_t_idx';
+
+
+connection after_table
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_table
+statement ok
+DROP INDEX dsr_t_idx;
+
+
+connection after_table
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_table
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_table
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_table
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_index
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_t_idx';
+----
+n
+0
+
+
+connection after_index
+query
+SELECT dsr_leftover('dsr_t_idx') AS leftover;
+----
+leftover
+0
+
+
+connection after_index
+query
+SELECT id, body FROM dsr_t ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+
+# ----------------------------------------------------------------------
+# 3. A database.
+# ----------------------------------------------------------------------
+
+connection after_index
+statement ok
+CREATE DATABASE dsr_db;
+
+
+connection after_index
+statement ok
+CREATE TABLE dsr_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+connection after_index
+statement ok
+INSERT INTO dsr_db.public.s VALUES (1, 'alpha');
+
+
+connection after_index
+statement ok
+VACUUM (REFRESH_TABLE) dsr_db.public.s;
+
+
+connection after_index
+statement ok
+INSERT INTO dsr_oids SELECT 'dsr_db', oid FROM pg_database WHERE datname = 'dsr_db';
+
+
+connection after_index
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_index
+statement ok
+DROP DATABASE dsr_db;
+
+
+connection after_index
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_index
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_index
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_index
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_database
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'dsr_db';
+----
+n
+0
+
+
+connection after_database
+query
+SELECT dsr_database_leftover('dsr_db') AS leftover;
+----
+leftover
+0
+
+
+connection after_database
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept
+
+
+# ----------------------------------------------------------------------
+# 4. A search table replaced by CREATE OR REPLACE TABLE.
+# ----------------------------------------------------------------------
+
+connection after_database
+statement ok
+CREATE TABLE dsr_r (id INT, body TEXT) WITH (storage = 'search');
+
+
+connection after_database
+statement ok
+INSERT INTO dsr_r VALUES (1, 'old');
+
+
+connection after_database
+statement ok
+VACUUM (REFRESH_TABLE) dsr_r;
+
+
+connection after_database
+statement ok
+INSERT INTO dsr_oids SELECT 'dsr_r_old', table_oid FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'dsr_r';
+
+
+connection after_database
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_database
+statement ok
+BEGIN;
+
+
+connection after_database
+statement ok
+CREATE OR REPLACE TABLE dsr_r (id INT, body TEXT, extra INT) WITH (storage = 'search');
+
+
+connection after_database
+statement ok
+INSERT INTO dsr_r VALUES (2, 'new', 20);
+
+
+connection after_database
+statement ok
+COMMIT;
+
+
+connection after_database
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_database
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_database
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_database
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_replace
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body, extra FROM dsr_r ORDER BY id;
+----
+id	body	extra
+2	new	20
+
+
+connection after_replace
+query
+SELECT dsr_leftover('dsr_r_old') AS leftover;
+----
+leftover
+0
+
+
+connection after_replace
+query
+SELECT id, body FROM dsr_keep;
+----
+id	body
+1	kept
+
+
+# ----------------------------------------------------------------------
+# 5. A search table with an inverted index.
+# ----------------------------------------------------------------------
+
+connection after_replace
+statement ok
+CREATE TABLE dsr_si (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+connection after_replace
+statement ok
+INSERT INTO dsr_si VALUES (1, 'alpha');
+
+
+connection after_replace
+statement ok
+CREATE INDEX dsr_si_idx ON dsr_si USING inverted (body);
+
+
+connection after_replace
+statement ok
+VACUUM (REFRESH_TABLE) dsr_si;
+
+
+connection after_replace
+statement ok
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+WHERE database_name = current_database() AND table_name = 'dsr_si';
+
+
+connection after_replace
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_replace
+statement ok
+DROP TABLE dsr_si;
+
+
+connection after_replace
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_replace
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_replace
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_replace
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_search_index
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dsr_si', 'dsr_si_idx');
+----
+n
+0
+
+
+connection after_search_index
+query
+SELECT dsr_leftover('dsr_si') AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
+----
+leftover	kept
+0	1
+
+
+# ----------------------------------------------------------------------
+# 6. An inverted index replaced by CREATE OR REPLACE INDEX.
+# ----------------------------------------------------------------------
+
+connection after_search_index
+statement ok
+CREATE TABLE dsr_t2 (id INT, body TEXT);
+
+
+connection after_search_index
+statement ok
+INSERT INTO dsr_t2 VALUES (1, 'alpha'), (2, 'beta');
+
+
+connection after_search_index
+statement ok
+CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
+
+
+connection after_search_index
+statement ok
+VACUUM (REFRESH_TABLE) dsr_t2;
+
+
+connection after_search_index
+statement ok
+INSERT INTO dsr_oids SELECT 'dsr_ri_old', index_oid FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_ri';
+
+
+connection after_search_index
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_search_index
+statement ok
+CREATE OR REPLACE INDEX dsr_ri ON dsr_t2 USING inverted (id, body);
+
+
+connection after_search_index
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_search_index
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_search_index
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_search_index
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_index_replace
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'dsr_ri';
+----
+def
+CREATE INDEX dsr_ri ON public.dsr_t2 USING inverted (id, body)
+
+
+connection after_index_replace
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS ids FROM dsr_ri WHERE body @@ 'alpha';
+----
+ids
+1
+
+
+connection after_index_replace
+query
+SELECT dsr_leftover('dsr_ri_old') AS leftover;
+----
+leftover
+0
+
+
+# ----------------------------------------------------------------------
+# 7. An inverted index on a view.
+# ----------------------------------------------------------------------
+
+connection after_index_replace
+statement ok
+CREATE VIEW dsr_v AS SELECT id, body FROM dsr_t2;
+
+
+connection after_index_replace
+statement ok
+CREATE INDEX dsr_v_idx ON dsr_v USING inverted (body);
+
+
+connection after_index_replace
+statement ok
+INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_v_idx';
+
+
+connection after_index_replace
+query
+SELECT dsr_leftover('dsr_v_idx') > 0 AS stored;
+----
+stored
+t
+
+
+connection after_index_replace
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_index_replace
+statement ok
+DROP INDEX dsr_v_idx;
+
+
+connection after_index_replace
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_index_replace
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_index_replace
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_index_replace
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_view_index
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dsr_v_idx';
+----
+n
+0
+
+
+connection after_view_index
+query
+SELECT dsr_leftover('dsr_v_idx') AS leftover, (SELECT count(*) FROM dsr_v) AS rows;
+----
+leftover	rows
+0	2
+
+
+# ----------------------------------------------------------------------
+# 8. A table dropped with its inverted index.
+# ----------------------------------------------------------------------
+
+connection after_view_index
+statement ok
+DROP VIEW dsr_v;
+
+
+connection after_view_index
+statement ok
+INSERT INTO dsr_oids SELECT 'dsr_ri_new', index_oid FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'dsr_ri';
+
+
+connection after_view_index
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_view_index
+statement ok
+DROP TABLE dsr_t2;
+
+
+connection after_view_index
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_view_index
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_view_index
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_view_index
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_table_with_index
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dsr_t2', 'dsr_ri');
+----
+n
+0
+
+
+connection after_table_with_index
+query
+SELECT dsr_leftover('dsr_ri_new') AS leftover;
+----
+leftover
+0
+
+
+# ----------------------------------------------------------------------
+# 9. A database holding every kind of storage.
+# ----------------------------------------------------------------------
+
+connection after_table_with_index
+statement ok
+CREATE DATABASE dsr_all;
+
+
+connection after_table_with_index
+statement ok
+CREATE TABLE dsr_all.public.t (id INT PRIMARY KEY, body TEXT);
+
+
+connection after_table_with_index
+statement ok
+CREATE INDEX t_art ON dsr_all.public.t (body);
+
+
+connection after_table_with_index
+statement ok
+CREATE INDEX t_inv ON dsr_all.public.t USING inverted (body);
+
+
+connection after_table_with_index
+statement ok
+CREATE TABLE dsr_all.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+connection after_table_with_index
+statement ok
+CREATE INDEX s_inv ON dsr_all.public.s USING inverted (body);
+
+
+connection after_table_with_index
+statement ok
+INSERT INTO dsr_all.public.t VALUES (1, 'alpha');
+
+
+connection after_table_with_index
+statement ok
+INSERT INTO dsr_all.public.s VALUES (1, 'alpha');
+
+
+connection after_table_with_index
+statement ok
+VACUUM (REFRESH_TABLE) dsr_all.public.t;
+
+
+connection after_table_with_index
+statement ok
+VACUUM (REFRESH_TABLE) dsr_all.public.s;
+
+
+connection after_table_with_index
+statement ok
+INSERT INTO dsr_oids SELECT 'dsr_all', oid FROM pg_database WHERE datname = 'dsr_all';
+
+
+connection after_table_with_index
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+connection after_table_with_index
+statement ok
+DROP DATABASE dsr_all;
+
+
+connection after_table_with_index
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+skipif pg-wire-extended
+connection after_table_with_index
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+skipif pg-wire-extended
+connection after_table_with_index
+statement error connection closed
+SELECT 1;
+
+
+onlyif pg-wire-extended
+connection after_table_with_index
+statement error connection closed
+SET sdb_faults = 'crash_on_packet';
+
+
+# --- restart ---
+
+connection after_full_database
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'dsr_all';
+----
+n
+0
+
+
+connection after_full_database
+query
+SELECT dsr_database_leftover('dsr_all') AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
+----
+leftover	kept
+0	1

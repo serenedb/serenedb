@@ -1,0 +1,165 @@
+control substitution on
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+statement ok
+CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
+  TYPE azure,
+  CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
+  SCOPE 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ljaz_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE ljaz_src AS
+SELECT i AS id,
+       'title-' || i || '-long-enough-to-not-inline' AS title,
+       CASE WHEN i % 3 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i AS body,
+       i * 10 AS n
+FROM generate_series(1, 3000) t(i);
+
+statement ok
+COPY (SELECT * FROM ljaz_src) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_one.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM ljaz_src WHERE id <= 1500) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_1.parquet' (FORMAT parquet);
+
+statement ok
+COPY (SELECT * FROM ljaz_src WHERE id > 1500) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_2.parquet' (FORMAT parquet);
+
+query
+EXPLAIN SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet') ORDER BY id % 1500, id LIMIT 4;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────╮
+│ Projections: #0, #1, #2, #3      │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+╭─ PROJECTION ────┴────────────────╮
+│ Projections: id, title, body, n, │
+│              id % 1500           │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+╭─ LOOKUP_JOIN ───┴────────────────╮
+│ Key: file_index, file_row_number │
+│ ~4 rows                          │
+╰─────────────────┬────────────────╯
+                  ├────────────────────────────────╮
+╭─ TOP_N ─────────┴────────────────╮  ╭─ READ_PARQUET ─────────╮
+│ Top: 4                           │  │ Function: READ_PARQUET │
+│ Order By: #1 ASC, id ASC         │  │ Projections: title,    │
+│ ~4 rows                          │  │              body, n   │
+╰─────────────────┬────────────────╯  │ ~4 rows                │
+╭─ PROJECTION ────┴────────────────╮  ╰────────────────────────╯
+│ Projections: id, id % 1500,      │
+│              file_index,         │
+│              file_row_number     │
+│ ~3,000 rows                      │
+╰─────────────────┬────────────────╯
+╭─ READ_PARQUET ──┴────────────────╮
+│ Function: READ_PARQUET           │
+│ Projections: id                  │
+│ ~3,000 rows                      │
+╰──────────────────────────────────╯
+
+query
+SELECT id, title FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet') ORDER BY id % 1500, id LIMIT 4;
+----
+id	title
+1500	title-1500-long-enough-to-not-inline
+3000	title-3000-long-enough-to-not-inline
+1	title-1-long-enough-to-not-inline
+1501	title-1501-long-enough-to-not-inline
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || id || '-long-enough-to-not-inline' AND n = id * 10)
+FROM (SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet') LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+statement ok
+CREATE VIEW ljaz_v_one AS SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_one.parquet');
+
+statement ok
+CREATE VIEW ljaz_v_glob AS SELECT * FROM read_parquet('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_lj_glob_*.parquet');
+
+statement ok
+CREATE INDEX ljaz_v_one_idx ON ljaz_v_one USING inverted (body ljaz_words, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX ljaz_v_glob_idx ON ljaz_v_glob USING inverted (body ljaz_words, n) INCLUDE (n);
+
+query
+EXPLAIN SELECT title, n FROM ljaz_v_glob_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljaz_v_glob_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: file_index, file_row_number                        │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├───────────────────────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮                  ╭─ INDEX_SOURCE ───────╮
+│ Key: iresearch_pk                                       │                  │ Lookup: glob parquet │
+│ ~5 rows                                                 │                  │ Projections: title   │
+╰────────────────────────────┬────────────────────────────╯                  │ ~5 rows              │
+                             ├────────────────────────────────────────────╮  ╰──────────────────────╯
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ───────╮
+│ Top: 5                                                  │  │ Index: ljaz_v_glob_idx │
+│ Order By: #0 ASC                                        │  │ Projections: n, pk     │
+│ ~5 rows                                                 │  │ ~5 rows                │
+╰────────────────────────────┬────────────────────────────╯  ╰────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: ljaz_v_glob_idx                                  │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~600 rows                                               │
+╰─────────────────────────────────────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM ljaz_v_one_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljaz_v_one_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM ljaz_v_one_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM ljaz_v_glob_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljaz_v_glob_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM ljaz_v_glob_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT title, n FROM ljaz_v_glob_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-3000-long-enough-to-not-inline	30000
+title-2997-long-enough-to-not-inline	29970
+title-2994-long-enough-to-not-inline	29940

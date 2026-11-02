@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
@@ -36,7 +37,6 @@
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -47,8 +47,8 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"

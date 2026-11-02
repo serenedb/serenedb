@@ -2,16 +2,15 @@ target_sources(
     iresearch
     PRIVATE
         application_exit.cpp
-        async_utils.cpp
         attributes.cpp
         bit_packing.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp
-        debugging.cpp
         directory_utils.cpp
         duckdb_engine.cpp
         file_utils_ext.cpp
+        huge_page_allocator.cpp
         index_utils.cpp
         levenshtein_default_pdp.cpp
         levenshtein_utils.cpp

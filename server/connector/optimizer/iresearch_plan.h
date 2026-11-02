@@ -22,6 +22,7 @@
 
 #include <duckdb/common/vector.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <optional>
 
 #include "connector/scan/scan_bind.h"
@@ -49,6 +50,12 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
   duckdb::ClientContext& context, duckdb::unique_ptr<duckdb::Expression> expr);
+
+const duckdb::BoundColumnRefExpression* SoleColumn(
+  const duckdb::Expression& conjunct);
+
+duckdb::unique_ptr<duckdb::Expression> ColumnFormOf(
+  duckdb::unique_ptr<duckdb::Expression> conjunct);
 
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   duckdb::ClientContext& context, const connector::ScanBindData& scan,

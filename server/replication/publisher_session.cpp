@@ -30,8 +30,8 @@
 
 #include <array>
 #include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <exception>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>

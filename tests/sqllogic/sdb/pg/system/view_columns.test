@@ -1,0 +1,41 @@
+# A view whose column list repeats a name its query also produces: PostgreSQL
+# rejects it, SereneDB binds its columns as b, b:1, c, and the catalogs name
+# them the same way.
+
+statement ok
+CREATE TABLE vcd_t (a INTEGER, b INTEGER);
+
+
+statement ok
+CREATE VIEW vcd_v (b) AS SELECT a, b, b AS c FROM vcd_t;
+
+
+query
+SELECT "b:1" AS second_b, c FROM vcd_v;
+----
+second_b	c
+
+
+query
+SELECT attnum, attname FROM pg_attribute WHERE attrelid = 'vcd_v'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attnum	attname
+1	b
+2	b:1
+3	c
+
+
+query
+SELECT ordinal_position, column_name FROM information_schema.columns WHERE table_name = 'vcd_v' ORDER BY ordinal_position;
+----
+ordinal_position	column_name
+1	b
+2	b:1
+3	c
+
+
+query
+SELECT has_column_privilege('vcd_v', 'b:1', 'SELECT');
+----
+has_column_privilege
+t

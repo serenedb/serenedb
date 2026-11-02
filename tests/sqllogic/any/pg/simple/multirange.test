@@ -1,0 +1,444 @@
+query
+SELECT '{}'::int4multirange AS a, '{[1,3)}'::int4multirange AS b, '{[1,3), [5,7)}'::int4multirange AS c,
+       '{[5,7),[1,3)}'::int4multirange AS d, '{[1,3),[2,6)}'::int4multirange AS e, '{[1,3),[3,5)}'::int4multirange AS f,
+       '{empty}'::int4multirange AS g, '{[1,3),empty,[5,7)}'::int4multirange AS h,
+       '  { [1,3) , (,2] }  '::int4multirange AS i, '{(,)}'::int4multirange AS j, '{[1,1)}'::int4multirange AS k,
+       '{EMPTY, [2,4]}'::int4multirange AS l, '{["1","3")}'::int4multirange AS m, '{ }'::int4multirange AS n;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n
+{}	{[1,3)}	{[1,3),[5,7)}	{[1,3),[5,7)}	{[1,6)}	{[1,5)}	{}	{[1,3),[5,7)}	{(,3)}	{(,)}	{}	{[2,5)}	{[1,3)}	{}
+
+
+query
+SELECT '{[1,5), [10,20]}'::int8multirange AS a, '{[2020-01-01,2020-01-05], [2020-01-06,2020-01-10)}'::datemultirange AS b,
+       '{["2020-01-01 10:00","2020-01-01 12:00"), ["2020-01-01 11:00","2020-01-01 13:00")}'::tsmultirange AS c,
+       '{[2020-01-01,infinity)}'::datemultirange AS d, '{(,2020-01-01), [2020-01-01, 2020-01-02)}'::datemultirange AS e;
+----
+a	b	c	d	e
+{[1,5),[10,21)}	{[2020-01-01,2020-01-10)}	{["2020-01-01 10:00:00","2020-01-01 13:00:00")}	{[2020-01-01,infinity)}	{(,2020-01-02)}
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT '{["2020-01-01 10:00+02","2020-01-01 12:00+02"), ["2020-01-02 00:00+00",)}'::tstzmultirange AS a,
+       tstzmultirange(tstzrange('2020-01-01 10:00+00', '2020-01-01 11:00+00')) AS b;
+----
+a	b
+{["2020-01-01 08:00:00+00","2020-01-01 10:00:00+00"),["2020-01-02 00:00:00+00",)}	{["2020-01-01 10:00:00+00","2020-01-01 11:00:00+00")}
+
+
+statement ok
+RESET TimeZone
+
+
+statement error (malformed multirange literal)
+SELECT '[1,3)'::int4multirange;
+
+
+statement error (malformed multirange literal)
+SELECT '{[1,3)'::int4multirange;
+
+
+statement error (malformed multirange literal)
+SELECT '{[1,3),}'::int4multirange;
+
+
+statement error (malformed multirange literal)
+SELECT '{[1,3) [5,7)}'::int4multirange;
+
+
+statement error (malformed multirange literal)
+SELECT '{[1,3)} x'::int4multirange;
+
+
+statement error (malformed multirange literal)
+SELECT '{empty empty}'::int4multirange;
+
+
+statement error
+SELECT '{[1,3}'::int4multirange;
+----
+db error: ERROR: malformed multirange literal: "{[1,3}"
+DETAIL: Unexpected end of input.
+
+
+
+statement error (range lower bound must be less than or equal to range upper bound)
+SELECT '{[3,1)}'::int4multirange;
+
+
+statement error (invalid input syntax for type integer|Could not convert string 'x' to INT32)
+SELECT '{[x,1)}'::int4multirange;
+
+
+query
+SELECT pg_input_is_valid('{[1,3)', 'int4multirange') AS a, pg_input_is_valid('{[3,1)}', 'int4multirange') AS b,
+       pg_input_is_valid('{[1,3), [5,7)}', 'int4multirange') AS c, pg_input_is_valid('{}', 'datemultirange') AS d;
+----
+a	b	c	d
+f	f	t	t
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('{[1,3)', 'int4multirange');
+----
+message	detail	sql_error_code
+malformed multirange literal: "{[1,3)"	Unexpected end of input.	22P02
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('{[1,3),}', 'int4multirange');
+----
+message	detail	sql_error_code
+malformed multirange literal: "{[1,3),}"	Expected range start.	22P02
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('{[1,3) x}', 'int4multirange');
+----
+message	detail	sql_error_code
+malformed multirange literal: "{[1,3) x}"	Expected comma or end of multirange.	22P02
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('{}x', 'int4multirange');
+----
+message	detail	sql_error_code
+malformed multirange literal: "{}x"	Junk after closing right brace.	22P02
+
+
+query
+SELECT message, detail, sql_error_code FROM pg_input_error_info('x', 'int4multirange');
+----
+message	detail	sql_error_code
+malformed multirange literal: "x"	Missing left brace.	22P02
+
+
+query
+SELECT message, sql_error_code FROM pg_input_error_info('{[1,2), [3,1)}', 'int4multirange');
+----
+message	sql_error_code
+range lower bound must be less than or equal to range upper bound	22000
+
+
+query
+SELECT sql_error_code FROM pg_input_error_info('{[1,2), [x,1)}', 'int4multirange');
+----
+sql_error_code
+22P02
+
+
+query
+SELECT int4multirange() AS a, int4multirange(int4range(1, 3)) AS b, int4multirange(int4range(5, 7), int4range(1, 3)) AS c,
+       int4multirange(int4range(1, 3), int4range(2, 5), 'empty') AS d, multirange(int4range(1, 3)) AS e,
+       multirange('empty'::int4range) AS f, int8multirange(int8range(1, 2)) AS g, datemultirange() AS h,
+       int4multirange(NULL::int4range) IS NULL AS i, multirange(NULL::int4range) IS NULL AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+{}	{[1,3)}	{[1,3),[5,7)}	{[1,5)}	{[1,3)}	{}	{[1,2)}	{}	t	t
+
+
+statement error (multirange values cannot contain null members)
+SELECT int4multirange(int4range(1, 3), NULL);
+
+
+query
+SELECT '[1,3)'::int4range::int4multirange AS a, 'empty'::int4range::int4multirange AS b,
+       CAST(daterange('2020-01-01', '2020-01-03') AS datemultirange) AS c;
+----
+a	b	c
+{[1,3)}	{}	{[2020-01-01,2020-01-03)}
+
+
+query
+SELECT lower('{[1,3), [5,7)}'::int4multirange) AS a, upper('{[1,3), [5,7)}'::int4multirange) AS b,
+       lower('{}'::int4multirange) IS NULL AS c, upper('{(,5)}'::int4multirange) AS d,
+       lower('{(,5)}'::int4multirange) IS NULL AS e, isempty('{}'::int4multirange) AS f,
+       isempty('{[1,2)}'::int4multirange) AS g, lower_inc('{[1,3), [5,7)}'::int4multirange) AS h,
+       upper_inc('{[1,3), [5,7)}'::int4multirange) AS i, lower_inf('{(,3), [5,7)}'::int4multirange) AS j,
+       upper_inf('{[1,3), [5,)}'::int4multirange) AS k, lower_inc('{}'::int4multirange) AS l,
+       upper_inf('{}'::int4multirange) AS m, range_merge('{[1,3), [5,7)}'::int4multirange) AS n,
+       range_merge('{}'::int4multirange) AS o;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o
+1	7	t	5	t	t	f	t	f	t	t	f	f	[1,7)	empty
+
+
+query
+SELECT '{[1,3), [5,7)}'::int4multirange @> 2 AS a, '{[1,3), [5,7)}'::int4multirange @> 4 AS b,
+       4 <@ '{[1,3), [5,7)}'::int4multirange AS c, 6 <@ '{[1,3), [5,7)}'::int4multirange AS d,
+       '{[1,3), [5,7)}'::int4multirange @> int4range(5, 6) AS e, '{[1,3), [5,7)}'::int4multirange @> int4range(2, 6) AS f,
+       '{[1,3), [5,7)}'::int4multirange @> 'empty'::int4range AS g, '{}'::int4multirange @> 'empty'::int4range AS h,
+       int4range(1, 3) <@ '{[1,3), [5,7)}'::int4multirange AS i, int4range(1, 10) @> '{[1,3), [5,7)}'::int4multirange AS j,
+       int4range(2, 10) @> '{[1,3), [5,7)}'::int4multirange AS k, int4range(1, 10) @> '{}'::int4multirange AS l,
+       '{[1,3), [5,7)}'::int4multirange <@ int4range(0, 7) AS m,
+       '{[1,3), [5,7)}'::int4multirange @> '{[1,2), [5,6)}'::int4multirange AS n,
+       '{[1,3), [5,7)}'::int4multirange @> '{[1,2), [3,6)}'::int4multirange AS o,
+       '{[1,2)}'::int4multirange <@ '{[1,3), [5,7)}'::int4multirange AS p,
+       '{}'::int4multirange <@ '{}'::int4multirange AS q;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o	p	q
+t	f	f	t	t	f	t	t	t	t	f	t	t	t	f	t	t
+
+
+query
+SELECT '{[1,3), [5,7)}'::int4multirange && '{[3,5)}'::int4multirange AS a,
+       '{[1,3), [5,7)}'::int4multirange && '{[2,4)}'::int4multirange AS b,
+       '{[1,3), [5,7)}'::int4multirange && int4range(6, 9) AS c, int4range(3, 5) && '{[1,3), [5,7)}'::int4multirange AS d,
+       '{}'::int4multirange && '{}'::int4multirange AS e, '{[1,3)}'::int4multirange << '{[5,7)}'::int4multirange AS f,
+       '{[1,3)}'::int4multirange << int4range(3, 4) AS g, int4range(8, 9) >> '{[1,3), [5,7)}'::int4multirange AS h,
+       '{[1,3), [5,7)}'::int4multirange &< '{[2,7)}'::int4multirange AS i,
+       '{[1,3), [5,7)}'::int4multirange &> int4range(0, 2) AS j,
+       int4range(2, 5) &< '{[1,3), [5,7)}'::int4multirange AS k,
+       '{[1,3)}'::int4multirange -|- '{[3,5)}'::int4multirange AS l, '{[1,3)}'::int4multirange -|- int4range(4, 5) AS m,
+       int4range(7, 9) -|- '{[1,3), [5,7)}'::int4multirange AS n, '{}'::int4multirange << '{[1,2)}'::int4multirange AS o;
+----
+a	b	c	d	e	f	g	h	i	j	k	l	m	n	o
+f	t	t	f	f	t	t	t	t	t	t	t	f	t	f
+
+
+query
+SELECT '{[1,2), [5,6), [9,10)}'::int4multirange && '{[3,4), [9,12)}'::int4multirange AS a,
+       '{[1,2), [5,6), [9,10)}'::int4multirange && '{[2,5), [6,9), [10,11)}'::int4multirange AS b,
+       '{[1,4), [6,10)}'::int4multirange @> '{[2,3), [7,8), [9,10)}'::int4multirange AS c,
+       '{[1,4), [6,10)}'::int4multirange @> '{[2,3), [4,5)}'::int4multirange AS d,
+       '{[1,4), [6,10)}'::int4multirange @> '{[0,1)}'::int4multirange AS e,
+       '{[1,4), [6,10)}'::int4multirange @> '{[7,8), [12,13)}'::int4multirange AS f,
+       '{(,4), [6,)}'::int4multirange @> '{[-10,-5), [100,200)}'::int4multirange AS g;
+----
+a	b	c	d	e	f	g
+t	f	t	f	f	f	t
+
+
+query
+SELECT '{[1,3), [5,7)}'::int4multirange + '{[3,5)}'::int4multirange AS a,
+       '{[1,3), [5,7)}'::int4multirange + '{[10,12)}'::int4multirange AS b,
+       '{[1,3), [5,7)}'::int4multirange * '{[2,6)}'::int4multirange AS c,
+       '{[1,3), [5,7)}'::int4multirange * '{}'::int4multirange AS d,
+       '{[1,10)}'::int4multirange - '{[2,3), [5,6)}'::int4multirange AS e,
+       '{[1,3), [5,7)}'::int4multirange - '{[0,20)}'::int4multirange AS f,
+       '{[1,3), [5,7)}'::int4multirange - '{}'::int4multirange AS g,
+       '{(,)}'::int4multirange - '{[1,3), [5,7)}'::int4multirange AS h,
+       '{[1,5), [8,12)}'::int4multirange * '{[2,9), [11,15)}'::int4multirange AS i,
+       '{[1,5), [8,12)}'::int4multirange - '{[2,3), [4,9)}'::int4multirange AS j;
+----
+a	b	c	d	e	f	g	h	i	j
+{[1,7)}	{[1,3),[5,7),[10,12)}	{[2,3),[5,6)}	{}	{[1,2),[3,5),[6,10)}	{}	{[1,3),[5,7)}	{(,1),[3,5),[7,)}	{[2,5),[8,9),[11,12)}	{[1,2),[3,4),[9,12)}
+
+
+query
+SELECT '{[1,3)}'::int4multirange = '{[1,3)}'::int4multirange AS a, '{[1,3)}'::int4multirange = '{[1,2), [2,3)}'::int4multirange AS b,
+       '{[1,3)}'::int4multirange < '{[1,4)}'::int4multirange AS c, '{}'::int4multirange < '{[1,2)}'::int4multirange AS d,
+       '{[1,3), [5,7)}'::int4multirange < '{[1,3)}'::int4multirange AS e,
+       '{[1,3)}'::int4multirange <> '{[1,3), [5,7)}'::int4multirange AS f;
+----
+a	b	c	d	e	f
+t	t	t	t	f	t
+
+
+query
+SELECT m FROM (VALUES ('{[3,5)}'::int4multirange), ('{}'), ('{[1,3), [5,7)}'), ('{[1,3)}'), ('{(,1)}'), ('{[1,)}'),
+                      ('{[1,3), [4,5)}')) t(m) ORDER BY m;
+----
+m
+{}
+{(,1)}
+{[1,3)}
+{[1,3),[4,5)}
+{[1,3),[5,7)}
+{[1,)}
+{[3,5)}
+
+
+query
+SELECT range_agg(r) AS a, range_agg(r) FILTER (WHERE r IS NULL) IS NULL AS b,
+       range_agg(r) FILTER (WHERE isempty(r)) AS c, range_intersect_agg(r) AS d
+FROM (VALUES (int4range(1, 5)), (int4range(3, 8)), (int4range(10, 12)), (NULL), ('empty'::int4range)) t(r);
+----
+a	b	c	d
+{[1,8),[10,12)}	t	{}	empty
+
+
+query
+SELECT range_intersect_agg(r) AS a, range_agg(m) AS b, range_intersect_agg(m) AS c
+FROM (VALUES (int4range(1, 10), '{[1,3), [5,7)}'::int4multirange), (int4range(2, 8), '{[2,6)}'::int4multirange),
+             (int4range(3, 12), '{[0,20)}'::int4multirange)) t(r, m);
+----
+a	b	c
+[3,8)	{[0,20)}	{[2,3),[5,6)}
+
+
+query
+SELECT g, range_agg(r) AS a, range_intersect_agg(r) AS b
+FROM (VALUES (1, int4range(1, 5)), (1, int4range(5, 8)), (2, int4range(1, 3)), (2, int4range(2, 9)),
+             (3, NULL::int4range)) t(g, r)
+GROUP BY g ORDER BY g;
+----
+g	a	b
+1	{[1,8)}	empty
+2	{[1,9)}	[2,3)
+3	NULL	NULL
+
+
+query
+SELECT range_agg(m) AS a, range_agg(m) FILTER (WHERE m = '{}') AS b, range_intersect_agg(m) FILTER (WHERE false) IS NULL AS c
+FROM (VALUES ('{}'::int4multirange), ('{[1,2)}'::int4multirange)) t(m);
+----
+a	b	c
+{[1,2)}	{}	t
+
+
+query
+SELECT range_agg(d) AS a FROM (VALUES (daterange('2020-01-01', '2020-01-03')), (daterange('2020-01-03', '2020-01-05')),
+                                      (daterange('2020-02-01', NULL))) t(d);
+----
+a
+{[2020-01-01,2020-01-05),[2020-02-01,)}
+
+
+query
+SELECT ARRAY['{[1,2)}'::int4multirange, '{}'::int4multirange, '{[1,2), [3,4)}'::int4multirange] AS a,
+       ROW('{[1,2)}'::int4multirange) AS b, ROW('{}'::int4multirange) AS c,
+       ROW('{[1,2), [3,4)}'::int4multirange, 1) AS d, ARRAY[ROW('{[1,2)}'::int4multirange)] AS e,
+       ARRAY['{["2020-01-01 10:00","2020-01-01 12:00")}'::tsmultirange] AS f,
+       ROW('{["2020-01-01 10:00","2020-01-01 12:00")}'::tsmultirange) AS g;
+----
+a	b	c	d	e	f	g
+{"{[1,2)}","{}","{[1,2),[3,4)}"}	("{[1,2)}")	({})	("{[1,2),[3,4)}",1)	{"(\\"{[1,2)}\\")"}	{"{[\\"2020-01-01 10:00:00\\",\\"2020-01-01 12:00:00\\")}"}	("{[""2020-01-01 10:00:00"",""2020-01-01 12:00:00"")}")
+
+
+query
+SELECT '{"{[1,3), [5,7)}","{}",NULL}'::int4multirange[] AS a, ('{"{[1,3)}","{[5,7)}"}'::int4multirange[])[2] AS b,
+       '{"{[2020-01-01,2020-01-05)}"}'::datemultirange[] AS c;
+----
+a	b	c
+{"{[1,3),[5,7)}","{}",NULL}	{[5,7)}	{"{[2020-01-01,2020-01-05)}"}
+
+
+statement ok
+CREATE TABLE multirange_t (id INT, m int4multirange, d datemultirange);
+
+
+statement ok
+INSERT INTO multirange_t VALUES (1, '{[1,3), [5,7)}', '{[2020-01-01,2020-01-05)}'), (2, '{}', '{}'), (3, NULL, NULL),
+                                (4, '{(,0), [10,)}', '{[2019-01-01,2019-12-31]}');
+
+
+query
+SELECT id, m, d FROM multirange_t ORDER BY id;
+----
+id	m	d
+1	{[1,3),[5,7)}	{[2020-01-01,2020-01-05)}
+2	{}	{}
+3	NULL	NULL
+4	{(,0),[10,)}	{[2019-01-01,2020-01-01)}
+
+
+query
+SELECT id FROM multirange_t WHERE m @> 6 OR d @> '2019-06-01'::date ORDER BY id;
+----
+id
+1
+4
+
+
+query
+SELECT id, m FROM multirange_t ORDER BY m, id;
+----
+id	m
+2	{}
+4	{(,0),[10,)}
+1	{[1,3),[5,7)}
+3	NULL
+
+
+query
+SELECT range_agg(m) AS a, range_intersect_agg(m) AS b FROM multirange_t;
+----
+a	b
+{(,0),[1,3),[5,7),[10,)}	{}
+
+
+query
+SELECT id, upper(m) AS u, m + '{[3,5)}'::int4multirange AS plus FROM multirange_t ORDER BY id;
+----
+id	u	plus
+1	7	{[1,7)}
+2	NULL	{[3,5)}
+3	NULL	NULL
+4	NULL	{(,0),[3,5),[10,)}
+
+
+statement ok
+DROP TABLE multirange_t;
+
+
+statement error
+SELECT '{[1,3)}'::int4multirange::int4range;
+
+
+statement error
+SELECT '{[1,3)}'::int4multirange + int4range(3, 5);
+
+
+query
+SELECT m::text AS a, '{[1,3), [5,7)}'::int4multirange::varchar AS b, length('{[1,3)}'::int4multirange::text) AS c
+FROM (VALUES ('{[5,7), [1,3)}'::int4multirange)) t(m);
+----
+a	b	c
+{[1,3),[5,7)}	{[1,3),[5,7)}	7
+
+
+statement ok
+CREATE FUNCTION multirange_type_and_text(m int4multirange) RETURNS text LANGUAGE sql AS $$ SELECT pg_typeof(m)::text || ' ' || m::text $$;
+
+
+query
+SELECT multirange_type_and_text('{[5,7), [1,3)}'::int4multirange) AS v;
+----
+v
+int4multirange {[1,3),[5,7)}
+
+
+query
+SELECT '{[1,\3)}'::int4multirange AS a, '{["\1",3)}'::int4multirange AS b, '{["1",3), ["5" , "7")}'::int4multirange AS c;
+----
+a	b	c
+{[1,3)}	{[1,3)}	{[1,3),[5,7)}
+
+
+statement error
+SELECT ''::int4multirange;
+----
+db error: ERROR: malformed multirange literal: ""
+DETAIL: Missing left brace.
+
+
+statement error
+SELECT '   '::int4multirange;
+----
+db error: ERROR: malformed multirange literal: "   "
+DETAIL: Missing left brace.
+
+
+statement error
+SELECT '{["1"'::int4multirange;
+----
+db error: ERROR: malformed multirange literal: "{["1""
+DETAIL: Unexpected end of input.
+
+
+statement error (invalid input syntax for type integer: "1""|Could not convert string '1"' to INT32)
+SELECT '{["1""",3)}'::int4multirange;
+
+
+query
+SELECT bool_and(m = int4multirange(int4range(greatest(i - 40, 1), i + 1))) AS a, count(*) AS n
+FROM (SELECT i, range_agg(int4range(i, i + 1)) OVER (ORDER BY i ROWS BETWEEN 40 PRECEDING AND CURRENT ROW) AS m
+      FROM generate_series(1, 100) AS i) t;
+----
+a	n
+t	100

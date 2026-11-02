@@ -21,11 +21,10 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <type_traits>
 #include <utility>
-
-#include "iresearch/utils/debugging.hpp"
 
 namespace irs::utils {
 

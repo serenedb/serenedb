@@ -176,6 +176,49 @@ SELECT count(*) FROM (
 count
 0
 
+query
+EXPLAIN SELECT category, body FROM vqs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id DESC LIMIT 2;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────────────╮
+│ Key: file_index, file_row_number  │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────────╮
+╭─ TOP_N ─────────┴─────────────────╮  ╭─ INDEX_SOURCE ─────────╮
+│ Top: 2                            │  │ Lookup: iceberg        │
+│ Order By: #0 DESC                 │  │ Projections: body,     │
+│ ~1 row                            │  │              category  │
+╰─────────────────┬─────────────────╯  │ ~1 row                 │
+╭─ IRESEARCH_SCAN ┴─────────────────╮  ╰────────────────────────╯
+│ Index: vqs_idx                    │
+│ Lookup: iceberg                   │
+│ Index Filter:                     │
+│ ╭─ Term ──────────────╮           │
+│ │ Field: body(string) │           │
+│ │ Value: pudge        │           │
+│ ╰─────────────────────╯           │
+│ Column Filter:                    │
+│ optional: Dynamic Filter (id > ?) │
+│ Projections: id, pk               │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+query
+SELECT id, category, body FROM vqs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id DESC LIMIT 2;
+----
+id	category	body
+7	hero	pudge dismembers
+6	item	aghanim scepter for pudge
+
+query
+SELECT count(*) FROM (SELECT id, category, body FROM vqs_idx LIMIT 4 OFFSET 1) l
+JOIN srv_${__DATABASE__}.${__DATABASE__}.vqs_t s USING (id)
+WHERE l.category = s.category AND l.body = s.body;
+----
+count
+4
+
 statement ok
 DROP INDEX vqs_idx;
 

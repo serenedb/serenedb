@@ -18,15 +18,22 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <roaring/memory.h>
+
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/live_count.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/with_mask.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iterator>
+#include <memory>
+#include <new>
 #include <optional>
 #include <random>
 #include <roaring/roaring.hh>
@@ -126,12 +133,33 @@ std::string FrozenBlob(const irs::DocumentMask& mask) {
 }
 
 irs::DocumentMask ReadFrozen(std::string_view blob) {
-  irs::BytesViewInput in{irs::ViewCast<irs::byte_type>(blob)};
-  return irs::DocumentMask::ReadFrozen(in, blob.size());
+  static constexpr std::align_val_t kAlignment{32};
+  std::shared_ptr<irs::byte_type> frozen{
+    static_cast<irs::byte_type*>(
+      ::operator new(std::max<size_t>(blob.size(), 1), kAlignment)),
+    [](irs::byte_type* bytes) { ::operator delete(bytes, kAlignment); }};
+  std::memcpy(frozen.get(), blob.data(), blob.size());
+  return irs::DocumentMask{std::move(frozen), blob.size()};
 }
 
 irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {
   return ReadFrozen(FrozenBlob(mask));
+}
+
+std::vector<doc_id_t> DocsOfRuns(const irs::DocumentMask& mask,
+                                 const irs::DocumentMask* except) {
+  std::vector<doc_id_t> docs;
+  doc_id_t previous = 0;
+  mask.ForEachRun(except, [&](doc_id_t first, doc_id_t last) {
+    EXPECT_LT(first, last);
+    EXPECT_LT(previous, first);
+    previous = last;
+    for (auto doc = first; doc < last; ++doc) {
+      docs.push_back(doc);
+    }
+    return true;
+  });
+  return docs;
 }
 
 MaskKind KindOf(irs::DocumentMaskBuilder mask, uint32_t bitset_from = kArrays) {
@@ -316,6 +344,43 @@ TEST_P(DocumentMaskTest, contains_and_count) {
         << first << ".." << last;
     }
   });
+}
+
+TEST_P(DocumentMaskTest, runs_and_range_counts_match_reference) {
+  std::vector<doc_id_t> expected;
+  for (doc_id_t doc = 1; doc <= kLimit; ++doc) {
+    if (_ref->Masked(doc)) {
+      expected.push_back(doc);
+    }
+  }
+  ASSERT_EQ(expected, DocsOfRuns(_mask, nullptr));
+  const auto empty = Build({});
+  ASSERT_EQ(expected, DocsOfRuns(_mask, &empty));
+  std::vector<doc_id_t> excepted{70055, 131072, 200001};
+  for (size_t i = 0; i < expected.size(); i += 3) {
+    excepted.push_back(expected[i]);
+  }
+  const auto except = Build(Join({excepted, Every(70040, 70070, 1)}));
+  std::vector<doc_id_t> rest;
+  for (const auto doc : expected) {
+    if (!except.Contains(doc)) {
+      rest.push_back(doc);
+    }
+  }
+  ASSERT_EQ(rest, DocsOfRuns(_mask, &except));
+  for (const auto [first, last] : {std::pair<doc_id_t, doc_id_t>{1, kLimit},
+                                   {1, 2},
+                                   {5, 5},
+                                   {9, 3},
+                                   {65535, 65537},
+                                   {1000, 140000},
+                                   {131000, 131200},
+                                   {7, 300},
+                                   {200000, kLimit + 10}}) {
+    ASSERT_EQ(first < last ? _ref->CountMasked(first, last) : 0,
+              _mask.CountInRange(first, last))
+      << first << ".." << last;
+  }
 }
 
 TEST_P(DocumentMaskTest, probe_test_and_next_live) {
@@ -638,6 +703,186 @@ TEST(document_mask_test, builder_copies_and_merges_a_frozen_mask) {
   ASSERT_TRUE(mask.Contains(200000));
   ASSERT_FALSE(mask.Contains(5));
   ASSERT_EQ(mask, RoundTrip(mask));
+}
+
+TEST(document_mask_test, builder_takes_what_finish_would_hold) {
+  const auto docs =
+    Join({Every(1, 65536, 3), Every(70000, 70100, 1), {200000}});
+  auto taken = Builder(docs);
+  const auto mask = std::move(taken).Take();
+  ASSERT_EQ(docs.size(), mask.Count());
+  EXPECT_EQ(Build(docs), mask);
+  EXPECT_EQ(docs, DocsOfRuns(mask, nullptr));
+}
+
+TEST(document_mask_test, builder_reports_a_failed_allocation) {
+  const auto docs = Build({3, 4, 7, 9});
+  const auto except = Build({4, 9});
+  roaring_init_memory_hook({
+    .malloc = [](size_t) -> void* { return nullptr; },
+    .realloc = [](void*, size_t) -> void* { return nullptr; },
+    .calloc = [](size_t, size_t) -> void* { return nullptr; },
+    .free = [](void* p) { std::free(p); },
+    .aligned_malloc = [](size_t, size_t) -> void* { return nullptr; },
+    .aligned_free = [](void* p) { std::free(p); },
+  });
+  absl::Cleanup restore = [] {
+    roaring_init_memory_hook({
+      .malloc = [](size_t size) { return std::malloc(size); },
+      .realloc = [](void* p, size_t size) { return std::realloc(p, size); },
+      .calloc = [](size_t n, size_t size) { return std::calloc(n, size); },
+      .free = [](void* p) { std::free(p); },
+      .aligned_malloc = [](size_t alignment, size_t size) -> void* {
+        void* p = nullptr;
+        return posix_memalign(&p, alignment, size) == 0 ? p : nullptr;
+      },
+      .aligned_free = [](void* p) { std::free(p); },
+    });
+  };
+  ASSERT_SQL_ERROR(irs::DocumentMaskBuilder{docs}, ERRCODE_OUT_OF_MEMORY);
+  EXPECT_EQ((std::vector<doc_id_t>{3, 7}), DocsOfRuns(docs, &except));
+  std::move(restore).Invoke();
+  irs::DocumentMaskBuilder copy{docs};
+  ASSERT_EQ(4, copy.Count());
+}
+
+TEST(document_mask_test, runs_and_merges_of_any_containers_match_a_reference) {
+  constexpr doc_id_t kChunk = 65536;
+  const auto shape = [](uint32_t seed) {
+    std::mt19937 gen{seed};
+    std::vector<std::vector<doc_id_t>> parts;
+    for (doc_id_t chunk = 0; chunk < 4; ++chunk) {
+      const doc_id_t base = chunk * kChunk + (chunk == 0 ? 1 : 0);
+      const doc_id_t end = (chunk + 1) * kChunk;
+      switch (gen() % 4) {
+        case 0:
+          break;
+        case 1:
+          parts.push_back(Random(base, end, 0.002, gen()));
+          break;
+        case 2:
+          parts.push_back(Random(base, end, 0.4, gen()));
+          break;
+        default:
+          for (uint32_t run = gen() % 6; run != 0; --run) {
+            const doc_id_t first = base + gen() % (end - base);
+            parts.push_back(Every(
+              first, std::min<doc_id_t>(end, first + 1 + gen() % 300), 1));
+          }
+      }
+    }
+    return Join(std::move(parts));
+  };
+  for (uint32_t round = 0; round < 48; ++round) {
+    SCOPED_TRACE(round);
+    const auto docs = shape(2 * round + 1);
+    const auto masked = shape(2 * round + 2);
+    std::vector<doc_id_t> rest;
+    std::set_difference(docs.begin(), docs.end(), masked.begin(), masked.end(),
+                        std::back_inserter(rest));
+    for (const auto bitset_from :
+         {kArrays, irs::DocumentMaskBuilder::kBitsetFrom}) {
+      const auto mask = Build(docs, bitset_from);
+      const auto except = Build(masked, bitset_from);
+      ASSERT_EQ(rest, DocsOfRuns(mask, &except));
+
+      std::vector<doc_id_t> all;
+      std::set_union(docs.begin(), docs.end(), masked.begin(), masked.end(),
+                     std::back_inserter(all));
+      irs::DocumentMaskBuilder merged;
+      merged.Merge(mask);
+      merged.Merge(except);
+      ASSERT_EQ(all.size(), merged.Count());
+      ASSERT_EQ(all, DocsOfRuns(std::move(merged).Finish(), nullptr));
+    }
+  }
+}
+
+TEST(document_mask_test, runs_stop_when_the_visitor_asks) {
+  const auto docs = Join({Every(1, 10, 1),
+                          Every(20, 30, 1),
+                          {70000, 70002},
+                          Every(140000, 140100, 1)});
+  for (const bool frozen : {false, true}) {
+    SCOPED_TRACE(frozen);
+    auto mask = Build(docs);
+    if (frozen) {
+      mask = RoundTrip(mask);
+    }
+    const auto except = Build({25});
+    for (const auto* skip :
+         {static_cast<const irs::DocumentMask*>(nullptr), &except}) {
+      for (size_t stop = 1; stop <= 6; ++stop) {
+        std::vector<std::pair<doc_id_t, doc_id_t>> runs;
+        mask.ForEachRun(skip, [&](doc_id_t first, doc_id_t last) {
+          runs.emplace_back(first, last);
+          return runs.size() < stop;
+        });
+        EXPECT_EQ(std::min<size_t>(stop, skip ? 6 : 5), runs.size()) << stop;
+      }
+    }
+  }
+}
+
+TEST(document_mask_test, runs_cross_bitset_words_and_containers) {
+  const auto docs =
+    Join({Every(1, 65536, 3), Every(62, 67, 1), Every(100, 300, 1),
+          Every(65500, 65600, 1), Every(131008, 131200, 1)});
+  for (const bool frozen : {false, true}) {
+    auto mask = Build(docs);
+    if (frozen) {
+      mask = RoundTrip(mask);
+    }
+    EXPECT_EQ(docs, DocsOfRuns(mask, nullptr)) << frozen;
+    const auto except = Build(Every(64, 66, 1));
+    std::vector<doc_id_t> rest;
+    for (const auto doc : docs) {
+      if (doc != 64 && doc != 65) {
+        rest.push_back(doc);
+      }
+    }
+    EXPECT_EQ(rest, DocsOfRuns(mask, &except)) << frozen;
+  }
+}
+
+TEST(document_mask_test, builder_counts_the_docs_ranges_add) {
+  std::mt19937 gen{17};
+  for (int round = 0; round < 60; ++round) {
+    irs::DocumentMaskBuilder builder;
+    std::vector<bool> model(kLimit + 70000, false);
+    size_t count = 0;
+    const auto add = [&](doc_id_t first, doc_id_t last) {
+      for (auto doc = first; doc < last; ++doc) {
+        if (!model[doc]) {
+          model[doc] = true;
+          ++count;
+        }
+      }
+    };
+    const uint32_t singles = round % 3 == 0 ? 0 : round % 3 == 1 ? 500 : 20000;
+    for (uint32_t i = 0; i < singles; ++i) {
+      const doc_id_t doc = 1 + gen() % kLimit;
+      builder.Add(doc);
+      add(doc, doc + 1);
+    }
+    ASSERT_EQ(count, builder.Count());
+    for (int step = 0; step < 64; ++step) {
+      const doc_id_t first = 1 + gen() % kLimit;
+      const doc_id_t length =
+        gen() % 8 == 0 ? 1 + gen() % 70000 : 1 + gen() % 40;
+      add(first, first + length);
+      builder.AddRange(first, first + length);
+      ASSERT_EQ(count, builder.Count()) << round << " " << step;
+      builder.AddRange(first, first);
+      builder.AddRange(first, first + length);
+      ASSERT_EQ(count, builder.Count()) << round << " " << step;
+    }
+    const auto mask = std::move(builder).Finish();
+    ASSERT_EQ(count, mask.Count());
+    for (doc_id_t doc = 1; doc < model.size(); doc += 7) {
+      ASSERT_EQ(model[doc], mask.Contains(doc)) << doc;
+    }
+  }
 }
 
 TEST(document_mask_test, read_frozen_rejects_corruption) {

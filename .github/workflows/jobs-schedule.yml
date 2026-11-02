@@ -1,105 +1,200 @@
-name: auto | nightly
+name: serenedb | nightly
+
+run-name: "serenedb | nightly [${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'publish' || 'no publish' }}]"
 
 on:
   schedule:
-    - cron: '0 5 * * *'
-    - cron: '0 1 * * 1'
-    - cron: '0 1 * * 2'
-    - cron: '0 1 * * 3'
-    - cron: '0 1 * * 4'
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
-      COVERAGE:
-        description: "run the coverage build (never scheduled: too long for the nightly)"
+      PUBLISH:
+        description: 'When everything is green: replace the draft release and push the images (version and nightly tags)'
         type: boolean
-        required: false
+        default: false
+      CORPUS:
+        description: 'Also run the sqlite corpus (tests/sqllogic/any/pg/sqlite)'
+        type: boolean
         default: false
 
+permissions:
+  actions: read
+  statuses: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
+
 jobs:
-  coverage:
-    if: github.event_name == 'workflow_dispatch' && inputs.COVERAGE
-    uses: ./.github/workflows/build-reusable.yml
+  perf:
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: linux-amd64
-      CONFIG: coverage
-      IRESEARCH: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
+      CONFIG: perf
+      TEST_ARGS: --stress-profile soak --postgres all ${{ inputs.CORPUS && '--corpus' || '' }}
     secrets: inherit
 
-  everything:
-    if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/build-reusable.yml
+  dev:
+    uses: ./.github/workflows/config.yml
     with:
-      LOCATION: linux-amd64
       CONFIG: dev
-      IRESEARCH: true
-      RE2: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      STRESS: true
-      STRESS_PROFILE: soak
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  asan:
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: asan
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  tsan:
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: tsan
+      TEST_ARGS: --stress-profile soak-tsan ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  msan:
+    uses: ./.github/workflows/config.yml
+    with:
+      CONFIG: msan
+      TEST_ARGS: --stress-profile soak ${{ inputs.CORPUS && '--corpus' || '' }}
+    secrets: inherit
+
+  perf-arm64:
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: perf
+      LOCATION: linux-arm64
+    secrets: inherit
+
+  dev-arm64:
+    uses: ./.github/workflows/build.yml
+    with:
+      CONFIG: dev
+      LOCATION: linux-arm64
     secrets: inherit
 
   macos:
-    if: github.event.schedule == '0 5 * * *'
     uses: ./.github/workflows/build-macos-reusable.yml
 
-  release-check:
-    if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/make-package.yml
-    with:
-      LOCATION: linux-amd64
-      RTA: required
-      UPLOAD_ARTIFACTS: false
+  coverage:
+    name: coverage dev (linux-amd64)
+    needs: dev
+    if: ${{ !cancelled() && needs.dev.outputs.remote == 'true' }}
+    runs-on:
+      - linux-amd64
+      - lan
+    timeout-minutes: 60
+    env:
+      SDB_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          clean: false
 
-  sanitizer:
-    # Explicit allowlist, not "not the 5am cron": any newly added schedule would
-    # otherwise silently start running a sanitizer build.
-    if: >-
-      github.event.schedule == '0 1 * * 1' ||
-      github.event.schedule == '0 1 * * 2' ||
-      github.event.schedule == '0 1 * * 3' ||
-      github.event.schedule == '0 1 * * 4'
-    uses: ./.github/workflows/build-reusable.yml
+      - name: Clean the checkout
+        run: |
+          git config --global --add safe.directory '*'
+          docker run --rm ${SDB_DOCKER_OWNER:+--label "serenedb.owner=$SDB_DOCKER_OWNER"} -v "$PWD:/w" alpine:3.22 rm -rf /w/out
+          git clean -ffdxq
+
+      - name: Coverage of the whole system
+        env:
+          RUNS: ${{ needs.dev.outputs.runs }}
+        run: |
+          python3 scripts/ci/ci.py coverage-nightly --digest "${{ needs.dev.outputs.digest }}" --run "$SDB_RUN_ID" \
+            --shards "$(python3 -c 'import json, os; print(sum(not r["check"] for r in json.loads(os.environ["RUNS"]).values()))')"
+
+      - name: Upload the coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-nightly
+          path: |
+            out/coverage-nightly/components.json
+            out/coverage-nightly/coverage.lcov.zst
+          retention-days: 30
+
+  release:
+    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos]
+    uses: ./.github/workflows/release.yml
     with:
-      LOCATION: linux-amd64
-      CONFIG: >-
-        ${{ github.event.schedule == '0 1 * * 1' && 'msan'
-         || github.event.schedule == '0 1 * * 2' && 'asan'
-         || github.event.schedule == '0 1 * * 3' && 'ubsan'
-         || 'tsan' }}
-      # RUN_EXTRA: nightly sanitizers run the full in-scope set, not just ours + drivers.
-      RUN_EXTRA: true
-      IRESEARCH: true
-      DUCKDB_SUITES: "core,cpp,avro,azure,httpfs,iceberg,inet,markdown,postgres_scanner,spatial,interop"
-      SQLITE: true
-      SQLSMITH: true
-      FUZZ_QUERIES: "10000"
-      FUZZ_PARALLEL: "4"
-      STRESS: true
-      # The thread-sanitizer night gets the profile with the longer client
-      # deadlines; instrumented ops are far slower and would otherwise read as
-      # stalls.
-      STRESS_PROFILE: >-
-        ${{ github.event.schedule == '0 1 * * 4' && 'soak-tsan' || 'soak' }}
+      RTA: required
+      PUSH_IMAGES_2_REGISTRY: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      CREATE_GITHUB_RELEASE: ${{ github.event_name == 'schedule' || inputs.PUBLISH }}
+      DOCKER_EXTRA_TAGS: ${{ (github.event_name == 'schedule' || inputs.PUBLISH) && 'nightly' || '' }}
     secrets: inherit
 
-  notify:
-    needs: [coverage, everything, release-check, sanitizer]
-    if: always() && !cancelled()
+  timing:
+    name: learn the timings
+    needs: [perf, dev, asan, tsan, msan]
+    if: ${{ !cancelled() }}
+    runs-on:
+      - linux-amd64
+      - lan
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          clean: false
+      - name: Update the timing store
+        run: |
+          for config in perf dev asan tsan msan; do
+            python3 scripts/ci/ci.py update-timing --config "$config" --arch x86_64
+          done
+
+  report:
+    name: Report Status
+    needs: [perf, dev, asan, tsan, msan, perf-arm64, dev-arm64, macos, release, timing, coverage]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-          submodules: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
+      - name: Fetch the results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: results
+      - name: Fetch the coverage
+        if: needs.coverage.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-nightly
+          path: coverage
+      - name: Compare the coverage with the last nightly
+        id: coverage
+        if: needs.coverage.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/coverage/nightly.py render --current coverage --repo "$GITHUB_REPOSITORY" \
+            --exclude-run "$GITHUB_RUN_ID" --out coverage/report.md --warnings coverage/warnings.txt
+          { echo 'warnings<<EOF'; cat coverage/warnings.txt; echo EOF; } >> "$GITHUB_OUTPUT"
+      - name: Write the report
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/report.py --results results --whole-coverage coverage/report.md --out report.md
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            report.md
+            report.json
+          if-no-files-found: ignore
+          retention-days: 90
       - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
@@ -107,10 +202,11 @@ jobs:
           TG_THREAD_ID_MAIN: "51"
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: main
+          BRANCH: ${{ github.ref_name }}
           JOB_STATUS: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
           ACTOR: ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}
-          RUN_NAME: "auto | nightly"
+          RUN_NAME: "serenedb | nightly"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COVERAGE_WARNINGS: ${{ steps.coverage.outputs.warnings }}
         run: ./scripts/send_notification.bash

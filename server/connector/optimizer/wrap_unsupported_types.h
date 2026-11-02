@@ -20,13 +20,12 @@
 
 #pragma once
 
-namespace duckdb {
+#include <duckdb/planner/bound_statement.hpp>
+#include <duckdb/planner/planner_extension.hpp>
 
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace sdb::optimizer {
 
-void RegisterWrapUnsupportedTypesExtension(duckdb::DatabaseInstance& db);
+void WrapVariantOutputs(duckdb::PlannerExtensionInput& input,
+                        duckdb::BoundStatement& statement);
 
 }  // namespace sdb::optimizer

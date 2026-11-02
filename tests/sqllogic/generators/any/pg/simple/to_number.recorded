@@ -1,0 +1,136 @@
+5c75e83d29ad645d	-34338492
+3ab5bfe2cb9e9bb8	-34338492.654878
+c7eefd39200f21bd	-564646.654564
+78cec3c63556e33b	-0.00001
+e148c6cff9067664	-5.01
+d6f91ac8efb9eca4	-5.01
+22f9cc015a52cbcd	544448.78
+1686317e9490549f	0.01
+db755b06c2bc68df	0.0
+c789429d951bf9a9	0
+a2cd890c63bffdde	-0.01
+1bbf8f688ed90d40	-0.01
+44150c757c8a1073	-0.01
+4b12e7963d34e28c	3450
+6b199bdc9e9c76a3	123
+9d6b85e06aec930a	123456
+f13a2cc642e16e39	1234.56
+f2b4c595feb2beeb	1234.56
+f761cecca7e46abb	1234.56
+c2cca830b0cf0805	1234.56
+5aafdfe92fff1e1e	1234.56
+86f4ce20235fc19d	42
+c489a5b5947bd67d	1234.560000000000000000
+4565f69c93f49fba	108
+d8e8a51a6c5f1c90	2020
+b0f5ad59c6a04b86	14
+67af7bab2438c126	14
+c2a88b63376bc857	1000
+4f6a25251810e7db	14
+12905e7e741da8a6	14
+d9dbaf2dbbcb1a5d	2020
+a547a9a4714ed7af	5
+d99171e2ce236d15	5
+e05599b237887add	-5
+401cf4c9ef2cb4b5	5
+f7546e69abf0181e	-5
+690f8ff5a8970aab	5
+e88c018115d9ca7d	-1.5
+15a616e32086ebba	-1.5
+8a4ef4dc3b5183ef	-1
+5f63d972a5179761	1
+bc7399f7bb974135	1
+edf62fad34799af0	5
+7ed7fd9bd09d003e	-5
+6e601ab4102f5a8f	-5
+fd336e954c6dc1ff	5
+5c0423ca18aa1525	-5
+c52fecbb4e71f725	5
+0238023ec8352ec0	5
+4e57027b4aaa8e05	-5
+c5eb81ce776acc08	5
+44d900beb8d20de6	5
+9ed6888e99be8e8d	54
+06b1a20f101cff23	54
+1907e7630790c158	54
+c999fc62f81f7cc3	54
+e8c58a730fb680ec	12
+916aea398e92a3df	1234
+d7cd8d6ce61b41f4	1234
+d7352d999ae4efcd	1234
+bf2d2e56b93ca55f	234
+4badba2e6e78a7b9	123
+67a37006a15eb8b9	1
+690bebbc3fc3858b	1
+03ffb288442e4bfb	1
+cd325193c19aa526	1
+15243e7e62b0a938	12
+3feb9527c7bd541e	12
+420dacc2e137600f	1
+35e4adfde189708a	12
+5444a5595c0ca820	12
+1145d5c3d6a46fc9	1.5
+9de6fa87c99a9b6e	0.5
+a92ba7d2eb828a49	1
+28491c512624d232	1.5
+390c856122f70457	1.5
+03482f1cf663a556	12
+ab7c88b3dff8ca7c	12
+b862a6e9a360731c	12
+d970170fb56eeb93	0.10000000000000000
+97e2f76b96ba2a02	1.20000000000000000
+9cf8fa869a1effa9	1.230000000000000000
+f679a756d7758e6b	NULL
+3515d8dd5cb42293	NULL
+ca14e254c48df857	NULL
+21a7cbed2c12c51a	NULL
+64b1807fa7a3639b	NULL
+d8be56d5cf06b8de	1
+e182b0c13c170495	NULL
+f6a9e1395353d229	NULL
+5f634fcbf275e43c	5
+1ad1e2ca2b8b7fbf	5
+0641b0d149716073	1.5
+0ffb2b42ca9884f9	1
+a773a637732b1f9a	12
+8a94d7bded7425b3	1
+e4258a630e1dd73c	-1
+0cadc984e5afd61f	1
+1f382291827c1e2a	5
+d4ea3171db7f6233	5
+acdc22ffd939a1da	5
+450d8410af719f32	7	12.5	12.5	14
+1b53be4dc5766e4c	1.23456	2.5
+1832880986d7551d	14	2020
+914dc597122f82ff	1.5
+4d43174da0eb745a	NULL
+5b3148e8dac179d4	1.25
+1c5ddd0a789b2074	NULL
+2e2aa0a8aea12031	error	db error: ERROR: numeric field overflow\nDETAIL: A field with precision 1, scale 0 must round to an absolute value less than 10^1.
+7720960da5128988	error	db error: ERROR: numeric field overflow\nDETAIL: A field with precision 2, scale 0 must round to an absolute value less than 10^2.
+5dc8b418ecb68a97	error	db error: ERROR: numeric field overflow\nDETAIL: A field with precision 4, scale 0 must round to an absolute value less than 10^4.
+5e4cddd8399132c0	error	db error: ERROR: invalid input syntax for type numeric: " "
+815888180de4d686	error	db error: ERROR: invalid input syntax for type numeric: "-"
+3a97347f2cc84036	error	db error: ERROR: invalid input syntax for type numeric: " "
+3581e463766b0a7a	error	db error: ERROR: "EEEE" not supported for input
+2a39ecf5b0057d58	error	db error: ERROR: "RN" is incompatible with other formats\nDETAIL: "RN" may only be used together with "FM".
+6db4f7ad82ae6d70	error	db error: ERROR: cannot use "RN" twice
+f2f5c4d8224e8c74	error	db error: ERROR: invalid input syntax for type numeric: " "
+6d10a48892e2e616	error	db error: ERROR: invalid Roman numeral
+74e41358b295ba14	error	db error: ERROR: invalid Roman numeral
+6c278786b7d1812e	error	db error: ERROR: invalid Roman numeral
+022659fb849e8959	error	db error: ERROR: invalid Roman numeral
+bcc92e974a780015	error	db error: ERROR: invalid Roman numeral
+b610559c0c5ab860	error	db error: ERROR: invalid Roman numeral
+015c1357d63257d5	error	db error: ERROR: invalid Roman numeral
+0eb14ddeb689ee09	error	db error: ERROR: invalid Roman numeral
+3688951951787189	error	db error: ERROR: invalid Roman numeral
+bc93463bae4b7ade	error	db error: ERROR: invalid Roman numeral
+a3a76696a99ac5e4	error	db error: ERROR: invalid Roman numeral
+42751ca17bb44c2f	error	db error: ERROR: invalid Roman numeral
+ee81723a03173bff	error	db error: ERROR: invalid Roman numeral
+b88ccff6582779df	error	db error: ERROR: invalid Roman numeral
+4c7f4961aa5774df	error	db error: ERROR: invalid Roman numeral
+21632e34d3c3c17c	error	db error: ERROR: invalid Roman numeral
+d39619dc6cf8e86b	error	db error: ERROR: invalid Roman numeral
+b2cf9a67773ec559	error	db error: ERROR: invalid Roman numeral

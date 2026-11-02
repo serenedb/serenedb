@@ -1,0 +1,270 @@
+control substitution on
+
+query
+SELECT TRY_CAST('(1,2' AS point) IS NULL AS a, TRY_CAST('{0,0,1}' AS line) IS NULL AS b,
+       TRY_CAST('<(1,2),-1>' AS circle) IS NULL AS c, TRY_CAST('[(0,0),(1,1)]' AS polygon) IS NULL AS d,
+       TRY_CAST('(0,0),(2,2)' AS box) AS e;
+----
+a	b	c	d	e
+t	t	t	t	(2,2),(0,0)
+
+
+query
+SELECT i, TRY_CAST(x AS point) AS p FROM (VALUES (1, '(1,2'), (2, '(3,4)'), (3, '(5,6')) t(i, x) ORDER BY i;
+----
+i	p
+1	NULL
+2	(3,4)
+3	NULL
+
+
+query
+SELECT CAST({'x': 1::DOUBLE, 'y': 2::DOUBLE} AS point) AS a,
+       CAST({'high_x': 0::DOUBLE, 'high_y': 0::DOUBLE, 'low_x': 2::DOUBLE, 'low_y': 2::DOUBLE} AS box) AS b,
+       CAST({'x': 1::DOUBLE, 'y': 2::DOUBLE, 'radius': 3::DOUBLE} AS circle) AS c,
+       CAST({'a': 1::DOUBLE, 'b': -1::DOUBLE, 'c': 0::DOUBLE} AS line) AS d,
+       CAST({'x1': 0::DOUBLE, 'y1': 0::DOUBLE, 'x2': 1::DOUBLE, 'y2': 1::DOUBLE} AS lseg) AS e,
+       CAST({'closed': false, 'points': [{'x': 0::DOUBLE, 'y': 0::DOUBLE}, {'x': 1::DOUBLE, 'y': 1::DOUBLE}]} AS path) AS f,
+       CAST({'points': [{'x': 0::DOUBLE, 'y': 0::DOUBLE}, {'x': 1::DOUBLE, 'y': 1::DOUBLE}]} AS polygon) AS g;
+----
+a	b	c	d	e	f	g
+(1,2)	(2,2),(0,0)	<(1,2),3>	{1,-1,0}	[(0,0),(1,1)]	[(0,0),(1,1)]	((0,0),(1,1))
+
+
+statement error
+SELECT CAST({'a': 0::DOUBLE, 'b': 0::DOUBLE, 'c': 1::DOUBLE} AS line);
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT CAST({'x': 1::DOUBLE, 'y': 2::DOUBLE, 'radius': -3::DOUBLE} AS circle);
+----
+db error: ERROR: invalid radius in external "circle" value
+
+
+statement error
+SELECT CAST({'closed': true, 'points': []::STRUCT(x DOUBLE, y DOUBLE)[]} AS path);
+----
+db error: ERROR: invalid number of points in external "path" value
+
+
+statement error
+SELECT CAST({'points': []::STRUCT(x DOUBLE, y DOUBLE)[]} AS polygon);
+----
+db error: ERROR: invalid number of points in external "polygon" value
+
+
+statement error
+SELECT {'a': 0, 'b': 0, 'c': 1}::line;
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT ROW(0.0, 0.0, 1.0)::line;
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT '{"a": 0, "b": 0, "c": 1}'::json::line;
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT ({'a': 0.0, 'b': 0.0, 'c': 1.0}::VARIANT)::line;
+----
+db error: ERROR: invalid line specification: A and B cannot both be zero
+
+
+statement error
+SELECT {'x': 1, 'y': 2, 'radius': -3}::circle;
+----
+db error: ERROR: invalid radius in external "circle" value
+
+
+query
+SELECT TRY_CAST({'a': 0, 'b': 0, 'c': 1} AS line) IS NULL AS a, {'a': 1, 'b': -1, 'c': 0}::line AS b,
+       ROW(1, 2)::point AS c, '{"x": 1, "y": 2, "radius": 3}'::json::circle AS d;
+----
+a	b	c	d
+t	{1,-1,0}	(1,2)	<(1,2),3>
+
+
+query
+SELECT CAST({'x': NULL::DOUBLE, 'y': 2::DOUBLE} AS point) IS NULL AS a,
+       CAST({'points': [{'x': 0::DOUBLE, 'y': NULL::DOUBLE}]} AS polygon) IS NULL AS b,
+       CAST({'points': [{'x': 0::DOUBLE, 'y': 0::DOUBLE}, NULL]} AS polygon) IS NULL AS c;
+----
+a	b	c
+t	t	t
+
+
+statement ok
+CREATE TABLE geometric_keys (p point);
+
+
+statement error
+CREATE INDEX geometric_keys_p ON geometric_keys (p);
+----
+db error: ERROR: Invalid Type [point]: Invalid type for index key.
+
+
+statement ok
+CREATE TABLE geometric_copy (id INT, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement count 3
+INSERT INTO geometric_copy VALUES
+  (1, '(1,2)', '{1,-1,0}', '[(0,0),(1,1)]', '(1,1),(0,0)', '[(0,0),(1,1)]', '((0,0),(1,1),(1,0))', '<(0,0),1>'),
+  (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  (3, '(-1.5,1e300)', '{0,1,-1e-300}', '[(1,1),(1,1)]', '(-1,-1),(-1,-1)', '((0,0))', '((7,8),(9,10))',
+   '<(1,1),NaN>');
+
+
+statement count 3
+COPY geometric_copy TO '${__TEST_DIR__}/geometric_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement count 3
+COPY geometric_copy TO '${__TEST_DIR__}/geometric_copy.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE geometric_csv (id INT, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement count 3
+COPY geometric_csv FROM '${__TEST_DIR__}/geometric_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement ok
+CREATE TABLE geometric_parquet (id INT, p point, l line, s lseg, b box, a path, g polygon, c circle);
+
+
+statement count 3
+COPY geometric_parquet FROM '${__TEST_DIR__}/geometric_copy.parquet' (FORMAT PARQUET);
+
+
+statement count 3
+INSERT INTO geometric_parquet SELECT * FROM read_parquet('${__TEST_DIR__}/geometric_copy.parquet');
+
+
+query
+SELECT 'csv' AS source, * FROM geometric_csv
+UNION ALL
+SELECT 'parquet' AS source, * FROM geometric_parquet
+ORDER BY source, id;
+----
+source	id	p	l	s	b	a	g	c
+csv	1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1)]	((0,0),(1,1),(1,0))	<(0,0),1>
+csv	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+csv	3	(-1.5,1e+300)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8),(9,10))	<(1,1),NaN>
+parquet	1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1)]	((0,0),(1,1),(1,0))	<(0,0),1>
+parquet	1	(1,2)	{1,-1,0}	[(0,0),(1,1)]	(1,1),(0,0)	[(0,0),(1,1)]	((0,0),(1,1),(1,0))	<(0,0),1>
+parquet	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+parquet	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+parquet	3	(-1.5,1e+300)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8),(9,10))	<(1,1),NaN>
+parquet	3	(-1.5,1e+300)	{0,1,-1e-300}	[(1,1),(1,1)]	(-1,-1),(-1,-1)	((0,0))	((7,8),(9,10))	<(1,1),NaN>
+
+
+query
+SELECT box '(1,1),(0,0)' = box '(2,2),(1,1)' AS a, circle '<(0,0),1>' = circle '<(5,5),1>' AS b,
+       line '{1,-1,0}' = line '{2,-2,0}' AS c, path '((0,0),(1,1))' = path '[(5,5),(6,6)]' AS d,
+       point '(1,2)' = point '(1,2)' AS e, polygon '((0,0),(1,1))' = polygon '((0,0),(1,1))' AS f,
+       lseg '[(0,0),(1,1)]' < lseg '[(0,0),(2,2)]' AS g, point '(1,2)' < point '(1,3)' AS h;
+----
+a	b	c	d	e	f	g	h
+f	f	f	f	t	t	t	t
+
+
+query
+SELECT p, count(*) AS n FROM (VALUES (point '(2,1)'), (point '(1,2)'), (point '(1,2)'), (point '(1,1)')) t(p)
+GROUP BY p
+ORDER BY p;
+----
+p	n
+(1,1)	1
+(1,2)	2
+(2,1)	1
+
+
+query
+SELECT DISTINCT b FROM (VALUES (box '(1,1),(0,0)'), (box '(1,1),(0,0)'), (box '(2,2),(1,1)')) t(b)
+ORDER BY b;
+----
+b
+(1,1),(0,0)
+(2,2),(1,1)
+
+
+statement error
+SELECT point '(1,2)' <-> '(3,4)';
+----
+db error: ERROR: Could not choose a best candidate function for the function call "<->(point, STRING_LITERAL)". In order to select one, please add explicit type casts.<slt:ignore>
+
+
+statement ok
+PREPARE geometric_question_mark AS SELECT ?-1 AS a, ?||'b' AS b;
+
+
+query
+EXECUTE geometric_question_mark(5, 'a');
+----
+a	b
+4	ab
+
+
+statement ok
+DEALLOCATE geometric_question_mark;
+
+
+query
+SELECT point '(1,2)' <-> point '(3,4)' AS a, '(3,4)'::point <-> point '(1,2)' AS b;
+----
+a	b
+2.8284271247461903	2.8284271247461903
+
+
+statement ok
+CREATE TABLE geometric_box_arrays (id INT, b box[], bb box[][]);
+
+
+statement count 2
+INSERT INTO geometric_box_arrays VALUES
+  (1, '{(1,1),(0,0);(3,3),(2,2)}', '{{(1,1),(0,0)};{(3,3),(2,2)}}'),
+  (2, '{NULL;(1,1),(0,0)}', NULL);
+
+
+statement count 2
+COPY geometric_box_arrays TO '${__TEST_DIR__}/geometric_box_arrays.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE geometric_box_arrays_parquet (id INT, b box[], bb box[][]);
+
+
+statement count 2
+COPY geometric_box_arrays_parquet FROM '${__TEST_DIR__}/geometric_box_arrays.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT 'source' AS t, * FROM geometric_box_arrays
+UNION ALL
+SELECT 'parquet' AS t, * FROM geometric_box_arrays_parquet
+ORDER BY t, id;
+----
+t	id	b	bb
+parquet	1	{(1,1),(0,0);(3,3),(2,2)}	{{(1,1),(0,0)};{(3,3),(2,2)}}
+parquet	2	{NULL;(1,1),(0,0)}	NULL
+source	1	{(1,1),(0,0);(3,3),(2,2)}	{{(1,1),(0,0)};{(3,3),(2,2)}}
+source	2	{NULL;(1,1),(0,0)}	NULL
+
+
+query
+SELECT '{{{{{{{(1,1),(0,0)}}}}}};{{{{{{(3,3),(2,2)}}}}}}}'::box[][][][][][][] AS b;
+----
+b
+{{{{{{{(1,1),(0,0)}}}}}};{{{{{{(3,3),(2,2)}}}}}}}

@@ -35,7 +35,7 @@
 #include <vector>
 
 #include "break_test_utils.hpp"
-#include "tests_config.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -68,8 +68,8 @@ std::vector<std::string> Terms(std::string_view text) {
 }
 
 TEST(words_unicode_test, word_break_test_conformance) {
-  const auto cases = tests::LoadBreakTestCases(IRS_TEST_RESOURCE_DIR
-                                               "/unicode/WordBreakTest.txt");
+  const auto cases = tests::LoadBreakTestCases(
+    TestEnv::resource("unicode/WordBreakTest.txt").c_str());
   ASSERT_EQ(1944u, cases.size());
   size_t failures = 0;
   for (const auto& c : cases) {

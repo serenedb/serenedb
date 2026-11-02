@@ -44,7 +44,6 @@
 namespace duckdb {
 
 class ClientContext;
-class SequenceCatalogEntry;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;
@@ -107,9 +106,6 @@ TableEngine ReadStorageEngine(
 
 void RequireSearchTableIndexOption(std::string_view name);
 
-inline constexpr std::string_view kGeneratedPkSequenceTag =
-  "sdb_generated_pk_seq";
-
 using persistence::SearchTableOptions;
 
 class SearchTableEntry final : public duckdb::TableCatalogEntry,
@@ -141,7 +137,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
     const irs::DirectoryReader& reader, const duckdb::TableCatalogEntry& table,
-    duckdb::column_t generated_pk);
+    duckdb::column_t key_column);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -151,10 +147,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
+  duckdb::Value Option(std::string_view name) const;
+
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
+  void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
@@ -164,32 +163,20 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
                              duckdb::LogicalUpdate& update,
                              duckdb::ClientContext& context) final;
 
-  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> GeneratedPkSequence(
-    duckdb::ClientContext& context) const;
-
-  const duckdb::Identifier& PkSequenceName() const noexcept {
-    return _pk_sequence;
-  }
-
-  bool NumbersRowsWith(const duckdb::CatalogEntry& sequence) const final {
-    return sequence.name == _pk_sequence &&
-           sequence.ParentSchemaName() == ParentSchemaName();
-  }
-
   duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {
     return this;
   }
 
-  void ReplayInsert(duckdb::ClientContext& context, duckdb::DataChunk& chunk,
-                    duckdb::optional_idx row_start) final;
-  void ReplayDelete(duckdb::ClientContext& context,
+  void ReplayInsert(duckdb::ClientContext& context,
                     duckdb::DataChunk& chunk) final;
-  void ReplayDeleteRanges(duckdb::ClientContext& context,
-                          const duckdb::vector<duckdb::row_t>& starts,
-                          const duckdb::vector<duckdb::idx_t>& counts) final;
-  void ReplayTruncate(duckdb::ClientContext& context) final;
-  void ReplayAdoptSegments(duckdb::ClientContext& context,
-                           duckdb::vector<std::string> segments) final;
+  void ReplayDeleteRowPositions(
+    std::shared_ptr<const duckdb::data_t> entry,
+    const duckdb::vector<duckdb::WALFrozenRowPositionGroup>& groups) final;
+  void ReplayRowPositionMaps(
+    std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
+    const duckdb::vector<duckdb::WALFrozenRowPositionMap>& maps) final;
+  void ReplayTruncate() final;
+  void ReplayAdoptSegments(duckdb::vector<std::string> segments) final;
 
   const auto& Storage() const noexcept { return _storage; }
 
@@ -203,7 +190,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
-  duckdb::Identifier _pk_sequence;
 };
 
 std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(

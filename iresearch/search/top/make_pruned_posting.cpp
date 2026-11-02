@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/fault_points.hpp>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -28,7 +29,6 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/make.hpp"
 #include "iresearch/search/top/pruned_posting.hpp"
-#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

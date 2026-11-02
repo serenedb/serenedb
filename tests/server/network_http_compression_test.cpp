@@ -355,7 +355,7 @@ std::string Unlz4(std::string_view in) {
 std::string Unzxc(std::string_view in) {
   std::string out(zxc_get_decompressed_size(in.data(), in.size()), '\0');
   const int64_t rc =
-    zxc_decompress(in.data(), in.size(), out.data(), out.size(), nullptr);
+    zxc_decompress(in.data(), in.size(), out.data(), out.size());
   EXPECT_GE(rc, 0) << zxc_error_name(static_cast<int>(rc));
   out.resize(rc > 0 ? static_cast<size_t>(rc) : 0);
   return out;
@@ -398,8 +398,8 @@ std::string Lz4(std::string_view in) {
 
 std::string Zxc(std::string_view in) {
   std::string out(zxc_compress_bound(in.size()), '\0');
-  const int64_t size =
-    zxc_compress(in.data(), in.size(), out.data(), out.size(), nullptr);
+  const int64_t size = zxc_compress(in.data(), in.size(), out.data(),
+                                    out.size(), ZXC_LEVEL_DEFAULT);
   EXPECT_GT(size, 0);
   out.resize(size > 0 ? static_cast<size_t>(size) : 0);
   return out;
@@ -743,6 +743,13 @@ TEST(NetworkHttpCompression, DecodeContentCorruptOrTruncated) {
       << coding;
     EXPECT_EQ(DecodeErrcode(kNoise, coding), ERRCODE_DATA_EXCEPTION) << coding;
   }
+}
+
+TEST(NetworkHttpCompression, ZxcConcatenatedFramesAndTrailingBytes) {
+  EXPECT_EQ(DecodeAll(absl::StrCat(Zxc(kLarge), Zxc(kNoise)), "zxc"),
+            absl::StrCat(kLarge, kNoise));
+  EXPECT_EQ(DecodeErrcode(absl::StrCat(Zxc(kLarge), kNoise), "zxc"),
+            ERRCODE_DATA_EXCEPTION);
 }
 
 std::string ZstdWithWindowLog(std::string_view in, int window_log) {

@@ -294,6 +294,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──┴─────────────────╮
 │ Groups: #0                         │
 │ Aggregates: count_star()           │
+│ Group Limit: 2                     │
 │ ~3 rows                            │
 ╰──────────────────┬─────────────────╯
 ╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────╮

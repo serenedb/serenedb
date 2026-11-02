@@ -35,6 +35,10 @@ The table below shows the available scalar functions for `INTERVAL` types.
 | [`datepart(part, interval)`](#datepartpart-interval)        | Alias of `date_part`.                                                                                                                                                                                     |
 | [`extract(part FROM interval)`](#extractpart-from-interval) | Alias of `date_part`.                                                                                                                                                                                     |
 | [`epoch(interval)`](#epochinterval)                         | Get total number of seconds, as double precision floating point number, in interval.                                                                                                                      |
+| [`justify_days(interval)`](#justify_daysinterval)           | Turn every 30 days into a month.                                                                                                                                                                          |
+| [`justify_hours(interval)`](#justify_hoursinterval)         | Turn every 24 hours into a day.                                                                                                                                                                           |
+| [`justify_interval(interval)`](#justify_intervalinterval)   | Turn every 24 hours into a day and every 30 days into a month, and give all parts the same sign.                                                                                                         |
+| [`make_interval(years, months, weeks, days, hours, mins, secs)`](#make_intervalyears-months-weeks-days-hours-mins-secs) | Construct an interval from its parts; every part defaults to `0`, so named arguments such as `make_interval(days => 10)` set only the parts given.                                    |
 | [`to_centuries(integer)`](#to_centuriesinteger)             | Construct a century interval.                                                                                                                                                                             |
 | [`to_days(integer)`](#to_daysinteger)                       | Construct a day interval.                                                                                                                                                                                 |
 | [`to_decades(integer)`](#to_decadesinteger)                 | Construct a decade interval.                                                                                                                                                                              |
@@ -76,6 +80,30 @@ Alias of `date_part`.
 Get total number of seconds, as double precision floating point number, in interval.
 
 <SqlLogicTest id="sql/functions/interval/epoch" />
+
+#### `justify_days(interval)`
+
+Turn every 30 days into a month.
+
+<SqlLogicTest id="sql/functions/interval/justify_days" />
+
+#### `justify_hours(interval)`
+
+Turn every 24 hours into a day.
+
+<SqlLogicTest id="sql/functions/interval/justify_hours" />
+
+#### `justify_interval(interval)`
+
+Turn every 24 hours into a day and every 30 days into a month, and give all parts the same sign.
+
+<SqlLogicTest id="sql/functions/interval/justify_interval" />
+
+#### `make_interval(years, months, weeks, days, hours, mins, secs)`
+
+Construct an interval from its parts; every part defaults to `0`, so named arguments such as `make_interval(days => 10)` set only the parts given.
+
+<SqlLogicTest id="sql/functions/interval/make_interval" />
 
 #### `to_centuries(integer)`
 

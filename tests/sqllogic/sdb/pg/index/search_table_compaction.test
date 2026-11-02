@@ -370,3 +370,117 @@ SELECT count(*), sum(id) FROM sc_tgt;
 ----
 count	sum
 800	320400
+
+
+# A CREATE INDEX that fails leaves the table compacting as before.
+statement ok
+CREATE TABLE sc_abort (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_abort
+
+
+statement ok
+INSERT INTO sc_abort SELECT i, 'fox' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_abort
+
+
+statement error
+CREATE INDEX sc_abort_idx ON sc_abort USING inverted ((body::INT))
+----
+db error: ERROR: Could not convert string 'fox' to INT32
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sc_abort
+
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_abort') WHERE column_name = 'id';
+----
+segments
+1
+
+
+# A transaction that still sees a dropped index reads all of it, also from the
+# segments a compaction merged after the drop.
+statement ok
+CREATE TABLE sc_snap (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+CREATE TABLE sc_snap_other (id INT)
+
+
+statement ok
+CREATE INDEX sc_snap_idx ON sc_snap USING inverted (body)
+
+
+statement ok
+INSERT INTO sc_snap SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_snap
+
+
+statement ok
+INSERT INTO sc_snap SELECT i, 'fox' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_snap
+
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ
+
+
+connection reader
+query
+SELECT count(*) AS n FROM sc_snap_other
+----
+n
+0
+
+
+connection writer
+statement ok
+DROP INDEX sc_snap_idx
+
+
+connection writer
+statement ok
+VACUUM (COMPACT_TABLE) sc_snap
+
+
+connection writer
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('sc_snap') WHERE column_name = 'id';
+----
+segments
+1
+
+
+connection reader
+query
+SELECT count(*) AS n FROM sc_snap_idx WHERE body @@ 'fox'
+----
+n
+200
+
+
+connection reader
+statement ok
+COMMIT

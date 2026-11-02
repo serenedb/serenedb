@@ -22,6 +22,7 @@
 
 #include "data_input.hpp"
 
+#include <algorithm>
 #include <memory>
 
 #include "iresearch/utils/memory.hpp"
@@ -30,6 +31,24 @@
 #include "iresearch/utils/std.hpp"
 
 namespace irs {
+
+void ReadOnce(IndexInput& in, byte_type* b, size_t count) {
+  constexpr uint64_t kChunk = uint64_t{64} << 20;
+  constexpr uint64_t kAhead = 2 * kChunk;
+  const auto start = in.Position();
+  in.Prefetch(start, std::min<uint64_t>(count, kAhead));
+  for (uint64_t done = 0; done < count;) {
+    const auto n = std::min<uint64_t>(count - done, kChunk);
+    if (done + kAhead < count) {
+      in.Prefetch(start + done + kAhead,
+                  std::min<uint64_t>(count - done - kAhead, kChunk));
+    }
+    in.ReadData(start + done, b + done, n);
+    in.Evict(start + done, n);
+    done += n;
+  }
+  in.Seek(start + count);
+}
 
 InputBuf::InputBuf(IndexInput* in) : _in(in) { SDB_ASSERT(_in); }
 

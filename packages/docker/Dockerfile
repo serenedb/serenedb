@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 LABEL maintainer="SereneDB GmbH <support@serenedb.com>"
 LABEL org.opencontainers.image.title="SereneDB"

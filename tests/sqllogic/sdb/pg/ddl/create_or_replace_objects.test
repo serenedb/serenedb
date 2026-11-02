@@ -1,8 +1,8 @@
 # CREATE OR REPLACE across every object kind serenedb accepts it for.
 #
 # PostgreSQL has OR REPLACE only for views, functions and triggers; tables,
-# sequences, types, macros, secrets and schemas follow duckdb, where a replace
-# is a DROP of the old entry plus a CREATE of the new one in the same
+# indexes, sequences, types, macros, secrets and schemas follow duckdb, where a
+# replace is a DROP of the old entry plus a CREATE of the new one in the same
 # transaction. That drop is RESTRICT: anything that depends on the old entry
 # refuses the replace and leaves it untouched. What the old entry owned (its
 # rows, indexes, triggers and comments) goes with it; its privileges are
@@ -560,6 +560,24 @@ CREATE OR REPLACE TABLE coro_ki (a INT);
 db error: ERROR: Existing object "coro_ki" is of type Index, trying to replace with type Table
 
 
+statement error
+CREATE OR REPLACE INDEX coro_kt ON coro_kt (a);
+----
+db error: ERROR: Existing object "coro_kt" is of type Table, trying to replace with type Index
+
+
+statement error
+CREATE OR REPLACE INDEX coro_kv ON coro_kt USING inverted (a);
+----
+db error: ERROR: Existing object "coro_kv" is of type View, trying to replace with type Index
+
+
+statement error
+CREATE OR REPLACE INDEX coro_ks ON coro_kt (a);
+----
+db error: ERROR: Existing object "coro_ks" is of type Sequence, trying to replace with type Index
+
+
 query
 SELECT relname, relkind FROM pg_class WHERE relname LIKE 'coro_k%' ORDER BY relname;
 ----
@@ -629,6 +647,12 @@ db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single 
 
 statement error
 CREATE OR REPLACE SECRET IF NOT EXISTS coro_x (TYPE s3, KEY_ID 'k', SECRET 's', SCOPE 's3://coro-objects-bucket');
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE INDEX IF NOT EXISTS coro_x ON coro_x USING inverted (a);
 ----
 db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
 
@@ -2562,6 +2586,25 @@ CREATE OR REPLACE TEXT SEARCH DICTIONARY coro_unused_dict AS keyword();
 db error: ERROR: syntax error at or near "TEXT"
 
 
+# Neither is there one for a database, a role or a foreign server.
+statement error
+CREATE OR REPLACE DATABASE coro_db;
+----
+db error: ERROR: syntax error at or near "DATABASE"
+
+
+statement error
+CREATE OR REPLACE ROLE coro_role;
+----
+db error: ERROR: syntax error at or near "ROLE"
+
+
+statement error
+CREATE OR REPLACE SERVER coro_srv FOREIGN DATA WRAPPER postgres;
+----
+db error: ERROR: syntax error at or near "SERVER"
+
+
 query
 SELECT id FROM coro_inv_idx WHERE body @@ ts_phrase('alpha');
 ----
@@ -2626,6 +2669,649 @@ n
 
 statement ok
 DROP TABLE coro_inv;
+
+
+# --- OR REPLACE INDEX -------------------------------------------------------
+
+# The replacing index is built over every row; an index that fails to build
+# leaves the old one in place. It is defined by the statement alone: it may be
+# of another type and on another table, and nothing of the old index -- its
+# options, comment or a view index's refresh job -- is carried over.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY coro_ix_dict AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TABLE coro_ix (id INT, body TEXT);
+
+
+statement count 3
+INSERT INTO coro_ix VALUES (1, 'Alpha beta'), (2, 'gamma'), (3, 'alpha');
+
+
+# On a free name OR REPLACE only creates the index.
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix (id, body);
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+indexdef
+CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id, body)
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement error
+INSERT INTO coro_ix VALUES (1, 'dup');
+----
+db error: ERROR: Duplicate key "id: 1" violates unique constraint.
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (1, 'dup');
+
+
+statement error
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+----
+db error: ERROR: Data contains duplicates on indexed column(s)
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+indexdef
+CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id)
+
+
+statement count 1
+DELETE FROM coro_ix WHERE body = 'dup';
+
+
+# A replace that fails at COMMIT or rolls back leaves only the old index, which
+# takes the rows the new one would refuse.
+statement ok
+BEGIN;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (1, 'dup');
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ix_art ON coro_ix (id);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (1, 'dup');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX coro_ix_art;
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ix_art ON coro_ix (body);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (2, 'dup');
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+indexdef
+CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (id)
+
+
+statement count 2
+DELETE FROM coro_ix WHERE body = 'dup';
+
+
+# An inverted index replaced with another dictionary answers with it at once,
+# and indexes the rows written after it.
+statement ok
+CREATE INDEX coro_ix_inv ON coro_ix USING inverted (body);
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+3
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_inv ON coro_ix USING inverted (id, body coro_ix_dict);
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (4, 'ALPHA');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ix;
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement error
+CREATE OR REPLACE INDEX coro_ix_inv ON coro_ix USING inverted ((body::INT));
+----
+db error: ERROR: Could not convert string <slt:ignore>
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'coro_ix_inv';
+----
+def
+CREATE INDEX coro_ix_inv ON public.coro_ix USING inverted (id, body coro_ix_dict)
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_inv ON coro_ix USING inverted (body);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ix VALUES (5, 'Alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ix;
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'coro_ix_inv';
+----
+def
+CREATE INDEX coro_ix_inv ON public.coro_ix USING inverted (id, body coro_ix_dict)
+
+
+query
+SELECT id FROM coro_ix_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+5
+
+
+statement count 1
+DELETE FROM coro_ix WHERE id = 5;
+
+
+# A plain index replaced by an inverted one, and back.
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix USING inverted (body coro_ix_dict);
+
+
+query
+SELECT id FROM coro_ix_art WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix (body);
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+indexdef
+CREATE INDEX coro_ix_art ON public.coro_ix USING secondary (body)
+
+
+# The replacement may be on another table: the old index leaves its table, and
+# its comment goes with it.
+statement ok
+CREATE TABLE coro_ix2 (id INT);
+
+
+statement ok
+COMMENT ON INDEX coro_ix_art IS 'old';
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ix_art ON coro_ix2 USING inverted (id);
+
+
+query
+SELECT tablename, obj_description('coro_ix_art'::regclass) AS comment
+FROM pg_indexes WHERE indexname = 'coro_ix_art';
+----
+tablename	comment
+coro_ix2	NULL
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'coro_ix' ORDER BY indexname;
+----
+indexname
+coro_ix_inv
+
+
+# A UNIQUE index is replaced on another column the same way, and so is one
+# dropped and created again under its name in one transaction.
+statement ok
+CREATE TABLE coro_ixt (id INT, body TEXT);
+
+
+statement count 2
+INSERT INTO coro_ixt VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixt_u ON coro_ixt (id);
+
+
+statement ok
+CREATE OR REPLACE UNIQUE INDEX coro_ixt_u ON coro_ixt (body);
+
+
+statement count 1
+INSERT INTO coro_ixt VALUES (1, 'c');
+
+
+statement error
+INSERT INTO coro_ixt VALUES (3, 'a');
+----
+db error: ERROR: Duplicate key "body: a" violates unique constraint.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX coro_ixt_u;
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixt_u ON coro_ixt (body, id);
+
+
+statement ok
+COMMIT;
+
+
+statement count 1
+INSERT INTO coro_ixt VALUES (3, 'a');
+
+
+statement ok
+DROP TABLE coro_ixt;
+
+
+# Every index the transaction dropped releases its name, not only the last one.
+statement ok
+CREATE TABLE coro_ixm (a INT, b INT, c INT);
+
+
+statement count 2
+INSERT INTO coro_ixm VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_1 ON coro_ixm (a);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_2 ON coro_ixm (b);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX coro_ixm_1;
+
+
+statement ok
+DROP INDEX coro_ixm_2;
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_2 ON coro_ixm (c);
+
+
+statement ok
+CREATE UNIQUE INDEX coro_ixm_1 ON coro_ixm (c, a);
+
+
+statement ok
+COMMIT;
+
+
+statement count 1
+INSERT INTO coro_ixm VALUES (1, 10, 300);
+
+
+statement error
+INSERT INTO coro_ixm VALUES (5, 50, 100);
+----
+db error: ERROR: Duplicate key "c: 100" violates unique constraint.
+
+
+statement ok
+DROP TABLE coro_ixm;
+
+
+# A search table rebuilds the replacing index from its documents.
+statement ok
+CREATE TABLE coro_ixs (id INT PRIMARY KEY, body TEXT, extra INT) WITH (storage = 'search');
+
+
+statement count 3
+INSERT INTO coro_ixs VALUES (1, 'Alpha beta', 10), (2, 'gamma', 20), (3, 'alpha', 30);
+
+
+statement ok
+CREATE INDEX coro_ixs_inv ON coro_ixs USING inverted (body);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+query
+SELECT id FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+3
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (id, body coro_ix_dict) INCLUDE (extra);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+query
+SELECT id, extra FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id	extra
+1	10
+3	30
+
+
+statement count 1
+INSERT INTO coro_ixs VALUES (4, 'ALPHA', 40);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+query
+SELECT id, extra FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id	extra
+1	10
+3	30
+4	40
+
+
+statement error
+CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted ((body::INT));
+----
+db error: ERROR: Could not convert string <slt:ignore>
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ixs_inv';
+----
+indexdef
+CREATE INDEX coro_ixs_inv ON public.coro_ixs USING inverted (id, body coro_ix_dict) INCLUDE (extra)
+
+
+query
+SELECT id, extra FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id	extra
+1	10
+3	30
+4	40
+
+
+# Until the COMMIT another connection reads through the old index, and a second
+# replace of the name is refused; a ROLLBACK keeps the old index, which goes on
+# indexing new documents.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (body);
+
+
+connection s2
+query
+SELECT indexdef FROM pg_indexes WHERE indexname = 'coro_ixs_inv';
+----
+indexdef
+CREATE INDEX coro_ixs_inv ON public.coro_ixs USING inverted (id, body coro_ix_dict) INCLUDE (extra)
+
+
+connection s2
+query
+SELECT id FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+connection s2
+statement error
+CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (id);
+----
+db error: ERROR: search table "coro_ixs" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ixs VALUES (5, 'Alpha', 50);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+query
+SELECT id, extra FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id	extra
+1	10
+3	30
+4	40
+5	50
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE INDEX coro_ixs_inv ON coro_ixs USING inverted (body);
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement ok
+VACUUM (REFRESH_TABLE) coro_ixs;
+
+
+connection s2
+query
+SELECT id FROM coro_ixs_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+3
+
+
+# A view index's refresh job is the one the replacing statement asks for.
+statement ok
+CREATE VIEW coro_ixv AS SELECT id, body FROM coro_ix;
+
+
+statement ok
+CREATE INDEX coro_ixv_inv ON coro_ixv USING inverted (body) WITH (reindex_interval = 1000);
+
+
+query
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'coro_ixv_inv';
+----
+schedule
+AFTER INTERVAL '00:00:01'
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ixv_inv ON coro_ixv USING inverted (id, body coro_ix_dict) WITH (reindex_interval = 5000);
+
+
+query
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'coro_ixv_inv';
+----
+schedule
+AFTER INTERVAL '00:00:05'
+
+
+query
+SELECT id FROM coro_ixv_inv WHERE body @@ 'alpha' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+CREATE OR REPLACE INDEX coro_ixv_inv ON coro_ixv USING inverted (id, body coro_ix_dict);
+
+
+query
+SELECT count(*) AS n FROM sdb_jobs() WHERE job_name = 'coro_ixv_inv';
+----
+n
+0
+
+
+statement ok
+DROP VIEW coro_ixv;
+
+
+statement ok
+DROP TABLE coro_ixs;
+
+
+statement ok
+DROP TABLE coro_ix2;
+
+
+statement ok
+DROP TABLE coro_ix;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY coro_ix_dict;
 
 
 # --- OR REPLACE MACRO / FUNCTION --------------------------------------------

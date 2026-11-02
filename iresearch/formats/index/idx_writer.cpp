@@ -146,6 +146,8 @@ void IdxWriter::Commit() {
             obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
             obj.WriteProperty<uint64_t>(4, "stats_byte_size",
                                         e.meta.stats_byte_size);
+            obj.WriteProperty<uint64_t>(5, "root_byte_size",
+                                        e.meta.root_byte_size);
           });
         });
     }
@@ -158,6 +160,17 @@ void IdxWriter::Commit() {
             obj.WriteProperty<uint64_t>(0, "id", e.id);
             obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
             obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
+            const auto& h = e.meta.header;
+            obj.WriteProperty<uint32_t>(3, "d", h.d);
+            obj.WriteProperty<uint8_t>(4, "metric",
+                                       static_cast<uint8_t>(h.metric));
+            obj.WriteProperty<uint8_t>(5, "quant",
+                                       static_cast<uint8_t>(h.quant));
+            obj.WriteProperty<uint32_t>(6, "ef_construction",
+                                        h.ef_construction);
+            obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
+            obj.WriteProperty<uint64_t>(8, "rows", h.rows);
+            obj.WriteProperty<bool>(9, "rotated", h.rotated);
           });
         });
     }

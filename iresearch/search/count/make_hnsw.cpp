@@ -18,12 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 
 namespace irs::count {
 
-Root::ptr Make(const HnswQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const HnswQuery& query, const Context& ctx) {
   auto hits = query.RunSearch(ctx.table);
   if (!ctx.table || ctx.table->Foldable()) {
     return MakeConstant(hits.size());

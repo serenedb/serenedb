@@ -1,0 +1,20 @@
+query
+SELECT nspname, nspname AS again FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema') ORDER BY 1;
+----
+nspname	again
+information_schema	information_schema
+pg_catalog	pg_catalog
+
+
+query
+SELECT relname, relkind, relname AS again, relname AS third FROM pg_class WHERE relname = 'pg_namespace';
+----
+relname	relkind	again	third
+pg_namespace	r	pg_namespace	pg_namespace
+
+
+query
+SELECT sizing_name, sizing_name AS again FROM information_schema.sql_sizing WHERE sizing_id = 30;
+----
+sizing_name	again
+MAXIMUM COLUMN NAME LENGTH	MAXIMUM COLUMN NAME LENGTH

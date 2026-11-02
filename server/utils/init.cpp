@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/string_utils.hpp>

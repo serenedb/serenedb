@@ -215,3 +215,15 @@ s
 a
 ä
 z
+
+# DOCS_TEST: example_018
+
+# DOCS_TEST_BODY
+
+query
+SELECT name
+FROM names
+WHERE name COLLATE "default" = 'HÄNNES' COLLATE NOCASE;
+----
+name
+hännes

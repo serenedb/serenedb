@@ -109,3 +109,62 @@ FROM read_csv('${__TEST_DIR__}/sql_functions_dateformat_example_007_1_test_csv.c
 ----
 d	ts
 1992-02-03	1992-03-02 20:32:45
+
+# DOCS_TEST: to_char_timestamp
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_char(TIMESTAMP '2024-03-05 14:07:09', 'FMDay, FMDD FMMonth YYYY, HH12:MI AM') AS result;
+----
+result
+Tuesday, 5 March 2024, 02:07 PM
+
+# DOCS_TEST: to_char_timestamptz
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_char(TIMESTAMPTZ '2024-03-05 14:07:09+00', 'YYYY-MM-DD HH24:MI:SS TZ OF') AS result;
+----
+result
+2024-03-05 14:07:09 UTC +00
+
+# DOCS_TEST: to_char_interval
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_char(INTERVAL '1 day 02:03:04', 'DD "days" HH24:MI:SS') AS result;
+----
+result
+01 days 02:03:04
+
+# DOCS_TEST: to_date
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_date('05 Mar 2024', 'DD Mon YYYY') AS result;
+----
+result
+2024-03-05
+
+# DOCS_TEST: to_timestamp
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_timestamp('2024-03-05 02:07:09 PM +02', 'YYYY-MM-DD HH12:MI:SS AM TZH') AS result;
+----
+result
+2024-03-05 12:07:09+00
+
+# DOCS_TEST: to_date_out_of_range
+
+# DOCS_TEST_BODY
+
+query error
+SELECT to_date('2024-13-05', 'YYYY-MM-DD');
+----
+db error: ERROR: date/time field value out of range: "2024-13-05"

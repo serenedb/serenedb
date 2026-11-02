@@ -52,4 +52,6 @@ class ApproxQuery : public QueryBuilderImpl<ApproxQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<ApproxQuery>;
+
 }  // namespace irs

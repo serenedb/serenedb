@@ -1,0 +1,44 @@
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE procs (signature text);
+
+statement ok
+INSERT INTO procs VALUES ('abs(integer)');
+
+statement ok
+SET sdb_faults = 'pause_procedure_in_after_find';
+
+connection reader
+query async
+SELECT to_regprocedure(signature)::text AS proc FROM procs;
+----
+proc
+abs(integer)
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_procedure_in_after_find:parked';
+
+connection reloader
+statement ok
+CREATE SECRET regprocedure_builtins_reload (TYPE s3, KEY_ID 'key', SECRET 'secret');
+
+connection reloader
+query
+SELECT 'abs(bigint)'::regprocedure::text AS proc;
+----
+proc
+abs(bigint)
+
+connection default
+statement ok
+SET sdb_faults = 'pause_procedure_in_after_find:release';
+
+wait
+
+connection default
+statement ok
+DROP SECRET regprocedure_builtins_reload;

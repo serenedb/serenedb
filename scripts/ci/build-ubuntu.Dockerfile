@@ -1,9 +1,13 @@
-FROM docker:latest AS docker-cli
-FROM rust:latest AS rust
+FROM docker:29.9.2 AS docker-cli
+FROM rust:1.99.1 AS rust
+FROM duckdb/duckdb:1.5.5 AS vanilla-duckdb
 
 FROM ubuntu:26.04
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+COPY --from=vanilla-duckdb /duckdb /opt/duckdb-1.5.5/duckdb
+ENV VANILLA_DUCKDB=/opt/duckdb-1.5.5/duckdb
 
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo /usr/local/cargo
@@ -31,7 +35,7 @@ RUN \
   apt-get install -y --no-install-recommends \
       curl wget gnupg \
       ninja-build cmake ccache make \
-      llvm-23 clang-23 lld-23 libclang-rt-23-dev \
+      llvm-23 clang-23 lld-23 lldb-23 libclang-rt-23-dev zstd libcap2-bin \
       bison flex libfl-dev \
       dh-make fakeroot \
       python3 python3-dev python3-pip perl \
@@ -59,6 +63,7 @@ RUN \
   Rscript -e 'install.packages("RPostgres", repos="https://cloud.r-project.org", quiet=TRUE)' && \
   Rscript -e 'library(RPostgres)' && \
   gem install --no-document pg && \
+  setcap cap_sys_ptrace+ep /usr/lib/llvm-23/bin/lldb-server && \
   ln -sf /usr/bin/clang-23 /usr/bin/clang && \
   ln -sf /usr/bin/clang++-23 /usr/bin/clang++ && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang && \

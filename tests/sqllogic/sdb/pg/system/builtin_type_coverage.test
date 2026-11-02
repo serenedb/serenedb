@@ -1,0 +1,152 @@
+statement ok
+DROP TABLE IF EXISTS btc_every_type
+
+statement ok
+DROP TYPE IF EXISTS btc_mood
+
+query
+SELECT string_agg(typname, ' ' ORDER BY typname) AS types
+FROM pg_type
+WHERE oid < 16384 AND typrelid = 0 AND typtype IN ('b', 'd')
+  AND typcategory <> 'A'
+----
+types
+aclitem bit bool box bpchar bytea cardinal_number char character_data cid cidr circle date float4 float8 gtsvector inet int2 int4 int8 interval json jsonb jsonpath line lseg macaddr macaddr8 money name numeric oid path pg_brin_bloom_summary pg_brin_minmax_multi_summary pg_dependencies pg_lsn pg_mcv_list pg_ndistinct pg_node_tree pg_snapshot point polygon refcursor regclass regcollation regconfig regdictionary regnamespace regoper regoperator regproc regprocedure regrole regtype sql_identifier text tid time time_stamp timestamp timestamptz timetz tsvector txid_snapshot uuid varbit varchar xid xid8 xml yes_or_no
+
+
+statement ok
+CREATE TABLE btc_every_type (
+  c_aclitem aclitem, c_bit bit, c_bool bool, c_bpchar bpchar, c_bytea bytea,
+  c_cardinal_number cardinal_number, c_char "char",
+  c_character_data character_data, c_cid cid, c_date date, c_float4 float4,
+  c_float8 float8, c_inet inet, c_int2 int2, c_int4 int4, c_int8 int8,
+  c_interval interval, c_json json, c_name name, c_numeric numeric,
+  c_oid oid, c_pg_node_tree pg_node_tree, c_regclass regclass,
+  c_regcollation regcollation, c_regconfig regconfig,
+  c_regdictionary regdictionary, c_regnamespace regnamespace,
+  c_regoper regoper, c_regoperator regoperator, c_regproc regproc,
+  c_regprocedure regprocedure, c_regrole regrole, c_regtype regtype,
+  c_sql_identifier sql_identifier, c_text text, c_tid tid, c_time time,
+  c_time_stamp time_stamp, c_timestamp timestamp, c_timestamptz timestamptz,
+  c_timetz timetz, c_uuid uuid, c_varbit varbit, c_varchar varchar,
+  c_xid xid, c_xid8 xid8, c_yes_or_no yes_or_no)
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'btc_every_type'::regclass AND attnum > 0
+  AND format_type(atttypid, atttypmod) <> substr(attname, 3)
+ORDER BY attnum
+----
+attname	type
+c_bit	bit varying
+c_bool	boolean
+c_bpchar	text
+c_cardinal_number	information_schema.cardinal_number
+c_char	"char"
+c_character_data	information_schema.character_data
+c_float4	real
+c_float8	double precision
+c_int2	smallint
+c_int4	integer
+c_int8	bigint
+c_numeric	numeric(18,3)
+c_sql_identifier	information_schema.sql_identifier
+c_time	time without time zone
+c_time_stamp	information_schema.time_stamp
+c_timestamp	timestamp without time zone
+c_timestamptz	timestamp with time zone
+c_timetz	time with time zone
+c_varbit	bit varying
+c_varchar	text
+c_yes_or_no	information_schema.yes_or_no
+
+
+query
+SELECT (SELECT count(*) FROM pg_type WHERE typtype IN ('r', 'm')) AS range_types,
+       (SELECT count(*) FROM pg_range) AS ranges
+----
+range_types	ranges
+12	6
+
+
+query
+SELECT string_agg(typname, ' ' ORDER BY typname) AS pseudo_types
+FROM pg_type
+WHERE oid < 16384 AND typtype = 'p'
+----
+pseudo_types
+_record any anyarray anycompatible anycompatiblearray anycompatiblemultirange anycompatiblenonarray anycompatiblerange anyelement anyenum anymultirange anynonarray anyrange cstring event_trigger fdw_handler index_am_handler internal language_handler pg_ddl_command record table_am_handler trigger tsm_handler unknown void
+
+
+query
+SELECT count(*) AS row_types
+FROM pg_type
+WHERE oid < 16384 AND typtype = 'c'
+----
+row_types
+213
+
+
+query
+SELECT t.oid, t.typname, t.typrelid::regclass::text AS relation,
+       a.oid AS array_oid, a.typname AS array_name, c.reltype = t.oid AS reltype
+FROM pg_type t
+JOIN pg_type a ON a.oid = t.typarray AND a.typelem = t.oid
+JOIN pg_class c ON c.oid = t.typrelid
+WHERE t.oid IN ('pg_class'::regtype, 'pg_statistic'::regtype,
+                'information_schema._pg_foreign_tables'::regtype)
+ORDER BY t.oid
+----
+oid	typname	relation	array_oid	array_name	reltype
+83	pg_class	pg_class	273	_pg_class	t
+10029	pg_statistic	pg_statistic	10028	_pg_statistic	t
+12442	_pg_foreign_tables	information_schema._pg_foreign_tables	12441	__pg_foreign_tables	t
+
+
+query
+SELECT format_type('_pg_class'::regtype, NULL) AS array_type,
+       83::regtype::text AS row_type,
+       'pg_statistic[]'::regtype::oid AS statistic_array,
+       (SELECT format_type(atttypid, atttypmod) || ' ' || attalign
+        FROM pg_attribute
+        WHERE attrelid = 'pg_statistic_ext_data'::regclass
+          AND attname = 'stxdexpr') AS stxdexpr
+----
+array_type	row_type	statistic_array	stxdexpr
+pg_class[]	pg_class	10028	pg_statistic[] d
+
+
+statement ok
+CREATE TYPE btc_mood AS ENUM ('ok')
+
+
+query
+SELECT count(*) AS unreferenced
+FROM pg_proc p
+WHERE p.oid < 16384
+  AND p.proname NOT IN (SELECT function_name FROM duckdb_functions()
+                        WHERE database_name IN ('system', current_database()))
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_type t
+    WHERE p.oid IN (t.typinput::oid, t.typoutput::oid, t.typreceive::oid,
+                    t.typsend::oid, t.typmodin::oid, t.typmodout::oid,
+                    t.typanalyze::oid, t.typsubscript::oid))
+  AND NOT EXISTS (SELECT 1 FROM pg_am a WHERE a.amhandler::oid = p.oid)
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_language l
+    WHERE p.oid IN (l.lanplcallfoid, l.laninline, l.lanvalidator))
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_range r
+    WHERE p.oid IN (r.rngcanonical::oid, r.rngsubdiff::oid))
+----
+unreferenced
+0
+
+
+statement ok
+DROP TYPE btc_mood
+
+statement ok
+DROP TABLE btc_every_type

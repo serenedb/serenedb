@@ -60,3 +60,14 @@ id	b
 1	0000000001
 2	1011001110
 3	1111111111
+
+
+query
+SELECT B'1010' # B'0110' AS bit_xor, 5 # 3 AS int_xor, (-1)::bigint # 1 AS bigint_xor;
+----
+bit_xor	int_xor	bigint_xor
+1100	6	-2
+
+
+statement error (cannot XOR bit strings of different sizes|Cannot XOR bit strings of different sizes)
+SELECT B'10' # B'011';

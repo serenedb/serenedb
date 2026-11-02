@@ -39,6 +39,7 @@
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>

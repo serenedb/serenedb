@@ -10,15 +10,13 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import socket
-import subprocess
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import psycopg
 import pytest
+from serened import Serened  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -55,39 +53,9 @@ DOCS_PER_BULK = 50
 READERS = 3
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 # A TSan build exits 66 once it has findings to report, and CI reads those from
 # the sanitizer logs rather than the exit status, so it is not a test signal.
 _CLEAN_EXITS = (0, -15) + ((66,) if os.environ.get("TSAN_OPTIONS") else ())
-
-
-def _wait_http(port: int, deadline: float) -> None:
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=2):
-                return
-        except OSError:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.2)
-
-
-def _connect(port: int, deadline: float) -> psycopg.Connection:
-    while True:
-        try:
-            return psycopg.connect(
-                host="127.0.0.1", port=port, user="postgres", dbname="postgres",
-                autocommit=True,
-            )
-        except psycopg.OperationalError:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.2)
 
 
 def _body(fixture: str, content_type: str) -> bytes:
@@ -106,24 +74,18 @@ def _call(conn: http.client.HTTPConnection, method: str, path: str,
 
 @pytest.fixture
 def server(tmp_path: Path):
-    pg_port, http_port = _free_port(), _free_port()
-    listen = (f"postgres://127.0.0.1:{pg_port},"
-              f"http://127.0.0.1:{http_port}?api=otel&api=es")
-    proc = subprocess.Popen(
-        [SERENED_BIN, str(tmp_path), f"--listen={listen}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-    )
-    pg = _connect(pg_port, time.monotonic() + 60)
-    # The HTTP listener binds independently of pg-wire, so pg answering does
-    # not mean this one is up yet -- under a sanitizer the gap is seconds.
-    _wait_http(http_port, time.monotonic() + 60)
+    serened = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                      log_path=str(tmp_path / "serened.log"),
+                      http="api=otel&api=es")
+    serened.start()
+    pg = psycopg.connect(serened.dsn(), autocommit=True)
     try:
-        yield proc, pg, http_port
+        yield serened.proc, pg, serened.http_port
     finally:
         pg.close()
-        proc.terminate()
-        _, stderr = proc.communicate(timeout=60)
-        assert proc.returncode in _CLEAN_EXITS, stderr.decode(errors="replace")
+        returncode = serened.graceful_stop(timeout=60)
+        serened.stop()
+        assert returncode in _CLEAN_EXITS, serened.log.tail(0)
 
 
 def _counts(pg: psycopg.Connection) -> dict[str, int]:
@@ -189,7 +151,7 @@ def test_concurrent_otel_and_es_ingest(server) -> None:
             conn.close()
 
     def reader() -> None:
-        pg_conn = _connect(pg.info.port, time.monotonic() + 60)
+        pg_conn = psycopg.connect(pg.info.dsn, autocommit=True)
         http_conn = http.client.HTTPConnection("127.0.0.1", http_port,
                                                timeout=120)
         try:

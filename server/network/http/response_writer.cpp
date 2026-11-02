@@ -24,7 +24,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
-#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <string>
 #include <utility>
 

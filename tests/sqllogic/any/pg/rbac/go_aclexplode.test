@@ -14,6 +14,10 @@ DROP ROLE IF EXISTS go_acl_mop;
 
 
 statement ok
+DROP ROLE IF EXISTS "go acl quoted";
+
+
+statement ok
 CREATE TABLE go_iceberg_kostya (id int, payload text);
 
 
@@ -162,9 +166,49 @@ privilege_type	is_grantable
 SELECT	t
 
 
+# ---- A constant ACL array explodes the same way as a catalog column. ----
+query
+SELECT pg_get_userbyid(grantee) AS grantee, privilege_type, is_grantable
+FROM aclexplode(ARRAY['go_acl_mop=r*w/postgres']::aclitem[])
+ORDER BY privilege_type;
+----
+grantee	privilege_type	is_grantable
+go_acl_mop	SELECT	t
+go_acl_mop	UPDATE	f
+
+
+statement ok
+CREATE ROLE "go acl quoted";
+
+
+statement ok
+GRANT SELECT ON go_iceberg_kostya TO "go acl quoted";
+
+
+query
+SELECT pg_get_userbyid(grantee) AS grantee, pg_get_userbyid(grantor) AS grantor, privilege_type
+FROM pg_class c, aclexplode(c.relacl)
+WHERE c.relname = 'go_iceberg_kostya' AND pg_get_userbyid(grantee) = 'go acl quoted';
+----
+grantee	grantor	privilege_type
+go acl quoted	postgres	SELECT
+
+
+query
+SELECT grantee, privilege_type FROM information_schema.table_privileges
+WHERE table_name = 'go_iceberg_kostya' AND grantee = 'go acl quoted';
+----
+grantee	privilege_type
+go acl quoted	SELECT
+
+
 # ---- Cleanup (table first to clear dependencies). ----
 statement ok
 DROP TABLE go_iceberg_kostya;
+
+
+statement ok
+DROP ROLE "go acl quoted";
 
 
 statement ok

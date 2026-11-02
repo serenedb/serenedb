@@ -3055,6 +3055,71 @@ QUERY PLAN
 │ ~7 rows                                      │
 ╰──────────────────────────────────────────────╯
 
+# The dictionary marks both ends of a term with the byte 0x1F. A pattern that
+# holds that byte itself matches the terms that have it, and no others.
+statement ok
+CREATE TABLE rx_marker (id INT PRIMARY KEY, msg VARCHAR)
+
+statement ok
+CREATE INDEX rx_marker_idx ON rx_marker USING inverted (id, msg rx_dict)
+
+statement ok
+INSERT INTO rx_marker VALUES (1, 'abc'), (2, 'a' || chr(31) || 'b'), (3, chr(31) || 'x'), (4, 'y' || chr(31)), (5, '')
+
+statement ok
+VACUUM (REFRESH_TABLE) rx_marker
+
+query
+SELECT id FROM rx_marker WHERE msg LIKE '%' || chr(31) || '%' ORDER BY id
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_like('%' || chr(31) || '%') ORDER BY id
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_like(chr(31) || '%') ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_like('%' || chr(31)) ORDER BY id
+----
+id
+4
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_like('a' || chr(31) || 'b') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_regexp('.*\x1f.*') ORDER BY id
+----
+id
+2
+3
+4
+
+query
+SELECT id FROM rx_marker_idx WHERE msg @@ ts_regexp('\x1fx') ORDER BY id
+----
+id
+3
+
+statement ok
+DROP TABLE rx_marker
+
 statement ok
 DROP TABLE rx_t
 

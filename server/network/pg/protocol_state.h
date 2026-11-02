@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
@@ -34,7 +35,6 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <duckdb/transaction/transaction_context.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>

@@ -51,3 +51,41 @@ DROP TABLE dcrk;
 
 statement ok
 DROP TABLE dcrk_pk;
+
+
+# The same for a key declared in the table definition, and for a unique index.
+statement ok
+CREATE TABLE dcrk_u (a INTEGER, b INTEGER, CONSTRAINT dcrk_u_b_key UNIQUE (b));
+
+statement ok
+INSERT INTO dcrk_u VALUES (1, 10);
+
+statement ok
+ALTER TABLE dcrk_u DROP CONSTRAINT dcrk_u_b_key;
+
+statement ok
+INSERT INTO dcrk_u VALUES (2, 10);
+
+statement ok
+CREATE UNIQUE INDEX dcrk_u_a ON dcrk_u (a);
+
+statement error
+INSERT INTO dcrk_u VALUES (1, 11);
+----
+db error: ERROR: Duplicate key "a: 1" violates unique constraint.
+
+
+statement ok
+DROP INDEX dcrk_u_a;
+
+statement ok
+INSERT INTO dcrk_u VALUES (1, 11);
+
+query
+SELECT count(*) FROM dcrk_u;
+----
+count
+3
+
+statement ok
+DROP TABLE dcrk_u;

@@ -24,10 +24,10 @@
 
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/boolean_groups.hpp"
-#include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/posting_probe.hpp"
 #include "iresearch/search/detail/probe_leaves.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/boolean_window.hpp"
 #include "iresearch/search/probe/impl.hpp"
@@ -55,22 +55,40 @@ Result ResolvePostingDocs(const detail::PostingClause& posting, Make&& make) {
     });
 }
 
-template<typename Term>
-Node::ptr MakeSparseDisjunctionDocs(std::span<const Term> terms,
-                                    std::span<const QueryBuilder::ptr> filters,
-                                    const TermReader* field,
-                                    const SubReader& segment,
-                                    uint64_t interrogations) {
+template<typename Scoring>
+auto ClauseFor(const SubReader& segment, const detail::ScoredCtx& ctx,
+               const Scoring& scoring) {
+  if constexpr (detail::kScores<Scoring>) {
+    return ScoredClauseOf(segment, ctx, scoring.recipe);
+  } else {
+    return detail::ProbeClauseOf(segment);
+  }
+}
+
+template<typename Musts, typename Optional, typename Excludes, typename Score,
+         typename... Args>
+Node::ptr MakeSparse(Score score, Args&&... args) {
+  using Node = BooleanSparse<Musts, Optional, Excludes, Score>;
+  return memory::make_managed<Impl<Node>>(std::piecewise_construct,
+                                          std::forward<Args>(args)..., score);
+}
+
+template<typename Term, typename Scoring>
+Node::ptr MakeSparseDisjunction(
+  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
+  const TermReader* field, const SubReader& segment, uint64_t interrogations,
+  const Scoring& scoring, const detail::ScoredCtx& ctx, score_t absorbed) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   return detail::BuildProbeLeaves<Node::ptr>(
     terms, filters, field, segment, interrogations, detail::ProbeOrder::Densest,
+    scoring, ClauseFor(segment, ctx, scoring),
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
       return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
         size, [&]<size_t N> -> Node::ptr {
-          using Node =
-            BooleanSparse<utils::Empty, OrLeaves<Leaf, N>, utils::Empty>;
-          return memory::make_managed<Impl<Node>>(
-            std::piecewise_construct, std::forward_as_tuple(),
+          return MakeSparse<utils::Empty,
+                            OrLeaves<Leaf, N, detail::kScores<Scoring>>,
+                            utils::Empty>(
+            detail::ScoreOf(scoring, absorbed), std::forward_as_tuple(),
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
             std::forward_as_tuple());
         });
@@ -78,82 +96,37 @@ Node::ptr MakeSparseDisjunctionDocs(std::span<const Term> terms,
 }
 
 template<typename Term>
-Node::ptr MakeDisjunctionDocs(std::span<const Term> terms,
-                              std::span<const QueryBuilder::ptr> filters,
-                              const TermReader* field, const SubReader& segment,
-                              uint64_t interrogations) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  if (filters.empty() && !terms.empty()) {
-    const auto* const doc =
-      detail::DocOf(detail::FieldOf(terms.front(), field));
-    const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-    if (doc != nullptr &&
-        detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
-      return detail::MakeBitsetNode<Node::ptr>(
-        detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
-    }
-  }
-  return MakeSparseDisjunctionDocs(terms, filters, field, segment,
-                                   interrogations);
-}
-
-template<typename Term, typename ClauseFn>
-Node::ptr MakeSparseDisjunctionScored(
-  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
-  detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, const SubReader& segment, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
-  score_t absorbed = 0) {
-  SDB_ASSERT(terms.size() + filters.size() > 1);
-  return detail::BuildOptionalLeaves<Node::ptr>(
-    terms, filters, uniformity, field, scorer, boost, segment, recipe,
-    interrogations, clause,
-    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
-        size, [&]<size_t N> -> Node::ptr {
-          using Node = BooleanSparse<utils::Empty, OrLeaves<Leaf, N, true>,
-                                     utils::Empty, detail::Scored>;
-          return memory::make_managed<Impl<Node>>(
-            std::piecewise_construct, std::forward_as_tuple(),
-            std::forward_as_tuple(size, std::forward<decltype(init)>(init)),
-            std::forward_as_tuple(), detail::Scored{merge, absorbed});
-        });
-    },
-    detail::ProbeOrder::Densest);
-}
-
-template<typename Term>
-Node::ptr MakeWindowDisjunctionScored(
-  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
-  detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, const SubReader& segment, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, const detail::ScoredCtx& ctx, score_t absorbed = 0) {
+Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
+                                std::span<const QueryBuilder::ptr> filters,
+                                const TermReader* field,
+                                const detail::TermScoring& scoring,
+                                const detail::ScoredCtx& ctx,
+                                score_t absorbed) {
   const IndexInput* doc = nullptr;
   std::vector<detail::FillNode::ptr> rest;
-  if (!detail::CollectDenseScored(terms, filters, field, doc, rest,
-                                  [&](const QueryBuilder& child) {
-                                    return child.PlanFill(ctx, merge);
-                                  })) {
+  if (!detail::CollectDense(terms, filters, field, doc, rest,
+                            [&](const QueryBuilder& child) {
+                              return child.PlanFill(ctx, scoring.merge);
+                            })) {
     return {};
   }
-  return detail::BuildScoredWindow<Node::ptr>(
-    terms, field, scorer, boost, doc, rest, uniformity, recipe, merge,
+  return detail::BuildWindowSet<Node::ptr>(
+    terms, field, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Node::ptr {
       using Node = BooleanWindow<detail::OrGroup<Set>, detail::Scored>;
       return memory::make_managed<Impl<Node>>(
         std::piecewise_construct,
         std::forward_as_tuple(std::forward<decltype(args)>(args)...),
-        detail::Scored{merge, absorbed});
+        detail::Scored{scoring.merge, absorbed});
     });
 }
 
-template<typename Term, typename ClauseFn>
-Node::ptr MakeDisjunctionScored(
-  std::span<const Term> terms, std::span<const QueryBuilder::ptr> filters,
-  detail::Terms uniformity, const TermReader* field, const Scorer* scorer,
-  score_t boost, const SubReader& segment, const detail::ScoreRecipe& recipe,
-  ScoreMergeType merge, uint64_t interrogations, ClauseFn clause,
-  const detail::ScoredCtx& ctx, score_t absorbed = 0) {
+template<typename Term, typename Scoring>
+Node::ptr MakeDisjunction(std::span<const Term> terms,
+                          std::span<const QueryBuilder::ptr> filters,
+                          const TermReader* field, const SubReader& segment,
+                          uint64_t interrogations, const Scoring& scoring,
+                          const detail::ScoredCtx& ctx, score_t absorbed = 0) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   if (filters.empty() && !terms.empty()) {
     const auto* const doc =
@@ -161,46 +134,46 @@ Node::ptr MakeDisjunctionScored(
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     if (doc != nullptr &&
         detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
-      if (auto windowed = MakeWindowDisjunctionScored(
-            terms, filters, uniformity, field, scorer, boost, segment, recipe,
-            merge, ctx, absorbed)) {
-        return windowed;
+      if constexpr (detail::kScores<Scoring>) {
+        if (auto windowed = MakeWindowDisjunction(terms, filters, field,
+                                                  scoring, ctx, absorbed)) {
+          return windowed;
+        }
+      } else {
+        return detail::MakeBitsetNode<Node::ptr>(
+          detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
       }
     }
   }
-  return MakeSparseDisjunctionScored(terms, filters, uniformity, field, scorer,
-                                     boost, segment, recipe, merge,
-                                     interrogations, clause, absorbed);
+  return MakeSparseDisjunction(terms, filters, field, segment, interrogations,
+                               scoring, ctx, absorbed);
 }
 
-inline Node::ptr BuildOptionalProbe(
-  std::span<const detail::PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, uint32_t min_should_match,
-  const SubReader& segment, uint64_t interrogations) {
-  SDB_ASSERT(min_should_match != 0);
-  return min_should_match == 1
-           ? MakeDisjunctionDocs(should, should_filters, nullptr, segment,
-                                 interrogations)
-           : MakeSparseThresholdDocs(should, should_filters, segment,
-                                     min_should_match, interrogations);
-}
-
-inline Node::ptr BuildOptionalProbeScored(
-  std::span<const detail::PostingClause> should,
-  std::span<const QueryBuilder::ptr> should_filters, detail::Terms uniformity,
-  uint32_t min_should_match, const SubReader& segment,
-  const detail::ScoreRecipe& recipe, ScoreMergeType merge,
-  uint64_t interrogations, const detail::ScoredCtx& ctx) {
-  SDB_ASSERT(min_should_match != 0);
-  SDB_ASSERT(should.size() + should_filters.size() >= min_should_match);
-  return min_should_match == 1
-           ? MakeDisjunctionScored(should, should_filters, uniformity, nullptr,
-                                   nullptr, kNoBoost, segment, recipe, merge,
-                                   interrogations,
-                                   ScoredClauseOf(segment, ctx, recipe), ctx)
-           : MakeSparseThresholdScored(should, should_filters, uniformity,
-                                       segment, recipe, merge, min_should_match,
-                                       interrogations, ctx);
+template<typename Scoring>
+Node::ptr MakeSparseThreshold(std::span<const detail::PostingClause> terms,
+                              std::span<const QueryBuilder::ptr> filters,
+                              const SubReader& segment, uint32_t min_match,
+                              uint64_t interrogations, const Scoring& scoring,
+                              const detail::ScoredCtx& ctx, score_t absorbed) {
+  SDB_ASSERT(min_match > 1);
+  if (terms.size() + filters.size() < min_match) {
+    return {};
+  }
+  return detail::BuildProbeLeaves<Node::ptr>(
+    terms, filters, nullptr, segment, interrogations,
+    detail::ProbeOrder::Densest, scoring, ClauseFor(segment, ctx, scoring),
+    [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
+      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
+        size, [&]<size_t N> -> Node::ptr {
+          return MakeSparse<utils::Empty,
+                            ThresholdLeaves<Leaf, N, detail::kScores<Scoring>>,
+                            utils::Empty>(
+            detail::ScoreOf(scoring, absorbed), std::forward_as_tuple(),
+            std::forward_as_tuple(size, std::forward<decltype(init)>(init),
+                                  min_match),
+            std::forward_as_tuple());
+        });
+    });
 }
 
 }  // namespace irs::probe

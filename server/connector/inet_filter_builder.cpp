@@ -35,7 +35,7 @@
 
 #include "connector/functions/ts_common.hpp"
 #include "connector/inet_terms.h"
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {

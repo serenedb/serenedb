@@ -78,3 +78,39 @@ ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2;
 id
 4
 3
+
+query
+WITH ann AS (
+  SELECT id, rowid AS pos FROM h
+  ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2)
+SELECT ann.id, ann.pos = h.rowid AS same FROM ann JOIN h USING (id)
+ORDER BY ann.id;
+----
+id	same
+1	t
+4	t
+
+query
+WITH ann AS (
+  SELECT id, rowid AS pos FROM h WHERE tag = 'b'
+  ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 1)
+SELECT ann.id, ann.pos = h.rowid AS same FROM ann JOIN h USING (id)
+ORDER BY ann.id;
+----
+id	same
+3	t
+
+statement ok
+DELETE FROM h WHERE rowid IN (
+  SELECT rowid FROM h
+  ORDER BY vec <-> array_value(1::FLOAT, 2::FLOAT, 3::FLOAT) LIMIT 2);
+
+statement ok
+VACUUM (REFRESH_TABLE) h;
+
+query
+SELECT id FROM h ORDER BY id;
+----
+id
+2
+3

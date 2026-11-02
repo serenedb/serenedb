@@ -1,0 +1,52 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE cdsr_src;
+
+statement ok
+CREATE DATABASE cdsr_dst;
+
+statement ok
+CREATE SCHEMA cdsr_src.s;
+
+statement ok
+CREATE TABLE cdsr_src.s.t (v INTEGER);
+
+statement ok
+CREATE INDEX t_v ON cdsr_src.s.t (v);
+
+statement ok
+INSERT INTO cdsr_src.s.t VALUES (1), (2);
+
+statement ok
+COPY FROM DATABASE cdsr_src TO cdsr_dst;
+
+statement ok
+ALTER SCHEMA cdsr_dst.s RENAME TO s2;
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+statement ok
+CREATE TABLE cdsr_compact (x INTEGER);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT v FROM cdsr_dst.s2.t WHERE v = 2;
+----
+v
+2
+
+connection after_restart
+query
+SELECT index_name FROM duckdb_indexes() WHERE database_name = 'cdsr_dst';
+----
+index_name
+t_v

@@ -21,6 +21,7 @@
 #include <duckdb/common/types/variant.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/string_stats.hpp>
 #include <duckdb/storage/statistics/struct_stats.hpp>
 #include <duckdb/storage/statistics/variant_stats.hpp>
 
@@ -28,6 +29,110 @@
 #include "connector/scan/scan_function.h"
 
 namespace sdb::connector {
+namespace {
+
+const duckdb::BaseStatistics* StoredColumnStats(
+  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  ColumnId col_id) {
+  if (bind.relation.IsInvertedIndex()) {
+    const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
+    if (!info || !info->store_values) {
+      return nullptr;
+    }
+  } else if (col_id > kMaxRealColumnIdValue) {
+    return nullptr;
+  }
+  return reader.GetColumnStats(col_id);
+}
+
+const irs::FieldTermRange* KeywordTermRange(const ScanBindData& bind,
+                                            const irs::DirectoryReader& reader,
+                                            duckdb::idx_t column_index) {
+  if (!bind.relation.inverted_config ||
+      bind.columns.types[column_index] != duckdb::LogicalType::VARCHAR) {
+    return nullptr;
+  }
+  const auto& index = bind.relation.ScannedIndex();
+  const auto field_id = index.TermField(bind.columns.ids[column_index]);
+  return index.IsKeywordField(field_id) ? reader.GetTermRange(field_id)
+                                        : nullptr;
+}
+
+duckdb::string_t AsStringT(irs::bytes_view bytes) {
+  return {reinterpret_cast<const char*>(bytes.data()),
+          static_cast<uint32_t>(bytes.size())};
+}
+
+duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
+  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  duckdb::idx_t column_index) {
+  if (column_index >= bind.columns.ids.size()) {
+    return nullptr;
+  }
+  const auto* stored =
+    StoredColumnStats(bind, reader, bind.columns.ids[column_index]);
+  const auto* bounds = KeywordTermRange(bind, reader, column_index);
+  if (!bounds) {
+    return stored ? stored->ToUnique() : nullptr;
+  }
+  auto stats =
+    stored ? stored->ToUnique()
+           : duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
+               .ToUnique();
+  duckdb::StringStats::SetMin(*stats, AsStringT(bounds->min),
+                              duckdb::StringStatsType::EXACT_STATS);
+  duckdb::StringStats::SetMax(*stats, AsStringT(bounds->max),
+                              duckdb::StringStatsType::EXACT_STATS);
+  return stats;
+}
+
+class ScanPartition final : public duckdb::PartitionRowGroup {
+ public:
+  explicit ScanPartition(const ScanBindData& bind,
+                         search::InvertedIndexSnapshotPtr snapshot)
+    : _bind{bind}, _snapshot{std::move(snapshot)} {}
+
+  duckdb::unique_ptr<duckdb::BaseStatistics> GetColumnStatistics(
+    const duckdb::StorageIndex& index) final {
+    if (index.HasChildren()) {
+      return nullptr;
+    }
+    return ColumnStats(_bind, _snapshot->reader,
+                       ScanColumnOfStorage(_bind, index.GetPrimaryIndex()));
+  }
+
+  bool MinMaxIsExact(const duckdb::StorageIndex&) final { return true; }
+
+  bool HasPendingWrites() final { return false; }
+
+ private:
+  const ScanBindData& _bind;
+  search::InvertedIndexSnapshotPtr _snapshot;
+};
+
+}  // namespace
+
+duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
+  duckdb::ClientContext& context, duckdb::GetPartitionStatsInput& input) {
+  duckdb::vector<duckdb::PartitionStatistics> result;
+  if (!input.bind_data) {
+    return result;
+  }
+  const auto& bind = input.bind_data->Cast<ScanBindData>();
+  if (!bind.ReadsEveryRow()) {
+    return result;
+  }
+  auto snapshot = bind.Snapshot(context);
+  const auto& reader = snapshot->reader;
+  auto& stats = result.emplace_back();
+  stats.count = reader.live_docs_count();
+  stats.count_type = duckdb::CountType::COUNT_EXACT;
+  if (reader.docs_count() == reader.live_docs_count()) {
+    stats.partition_row_group =
+      duckdb::make_shared_ptr<ScanPartition>(bind, std::move(snapshot));
+  }
+  return result;
+}
 
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
   duckdb::ClientContext& context,
@@ -40,26 +145,19 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();
+  const auto snapshot = bind.Snapshot(context);
+  if (!input.column_index.HasChildren()) {
+    auto stats = ColumnStats(bind, snapshot->reader, column_index);
+    SDB_ASSERT(!stats || stats->GetType() == bind.columns.types[column_index]);
+    return stats;
+  }
   if (column_index >= bind.columns.ids.size()) {
     return nullptr;
   }
-  const auto col_id = bind.columns.ids[column_index];
-  if (bind.relation.IsInvertedIndex()) {
-    const auto* info = bind.relation.ScannedIndex().FindColumnInfo(col_id);
-    if (!info || !info->store_values) {
-      return nullptr;
-    }
-  } else if (col_id > kMaxRealColumnIdValue) {
-    return nullptr;
-  }
-  const auto snapshot = bind.Snapshot(context);
-  const auto* stats = snapshot->reader.GetColumnStats(col_id);
+  const auto* stats =
+    StoredColumnStats(bind, snapshot->reader, bind.columns.ids[column_index]);
   if (!stats) {
     return nullptr;
-  }
-  if (!input.column_index.HasChildren()) {
-    SDB_ASSERT(stats->GetType() == bind.columns.types[column_index]);
-    return stats->ToUnique();
   }
   const duckdb::BaseStatistics* leaf = stats;
   const duckdb::ColumnIndex* node = &input.column_index;

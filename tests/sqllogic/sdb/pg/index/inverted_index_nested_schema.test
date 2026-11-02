@@ -1,0 +1,89 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS iins_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS iins_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE iins_src_${__DATABASE__};
+
+
+statement ok
+USE iins_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA iins_outer;
+
+
+statement ok
+CREATE SCHEMA iins_outer.iins_inner;
+
+
+statement ok
+CREATE TABLE iins_outer.iins_inner.iins_t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO iins_outer.iins_inner.iins_t VALUES (1, 'pudge goes mid'), (2, 'arelav is skuf');
+
+
+statement ok
+CREATE VIEW iins_outer.iins_inner.iins_v AS SELECT id, body FROM iins_outer.iins_inner.iins_t;
+
+
+statement ok
+CREATE INDEX iins_tidx ON iins_outer.iins_inner.iins_t USING inverted (id, body);
+
+
+statement ok
+CREATE INDEX iins_vidx ON iins_outer.iins_inner.iins_v USING inverted (id, body);
+
+
+query
+SELECT (SELECT count(*) FROM iins_outer.iins_inner.iins_tidx) AS t,
+  (SELECT count(*) FROM iins_outer.iins_inner.iins_vidx) AS v;
+----
+t	v
+2	2
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/iins_export';
+
+
+statement ok
+CREATE DATABASE iins_dst_${__DATABASE__};
+
+
+statement ok
+USE iins_dst_${__DATABASE__};
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/iins_export';
+
+
+query
+SELECT schema_name, index_name FROM duckdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
+----
+schema_name	index_name
+iins_inner	iins_tidx
+iins_inner	iins_vidx
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE iins_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE iins_dst_${__DATABASE__};

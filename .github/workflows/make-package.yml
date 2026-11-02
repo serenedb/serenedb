@@ -45,6 +45,11 @@ on:
         type: boolean
         required: false
         default: false
+      PUSH_IMAGE:
+        description: "Push the Docker image under <version>-<arch> once it passed its RTA, for the release to join the architectures"
+        type: boolean
+        required: false
+        default: false
       SERENEDB_VERSION_PATCH:
         description: "Version patch number"
         type: string
@@ -56,7 +61,7 @@ on:
         required: false
         default: ""
       BUILD_CONFIG:
-        description: "Internal: JSON overrides (e.g. BUILD_IMAGE)"
+        description: "Internal: JSON environment overrides"
         type: string
         required: false
         default: '{}'
@@ -65,20 +70,24 @@ on:
         description: "Whether packaging succeeded"
         value: ${{ jobs.package.outputs.packages_ok }}
       rta_ok:
-        description: "Whether deb + tarball RTA passed (true when RTA=off or both passed)"
+        description: "Whether the deb, tarball and Docker RTA passed (true when RTA=off or all passed)"
         value: ${{ jobs.package.outputs.rta_ok }}
+      image_digest:
+        description: "Digest of the pushed Docker image (empty unless PUSH_IMAGE)"
+        value: ${{ jobs.package.outputs.image_digest }}
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
+  SDB_STORE_HOST: ${{ secrets.SDB_STORE_HOST }}
 
 jobs:
   package:
     name: "package (${{ inputs.LOCATION }})"
     outputs:
       packages_ok: ${{ steps.package.outcome == 'success' }}
-      rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' }}
+      rta_ok: ${{ steps.deb_rta.outcome != 'failure' && steps.tarball_rta.outcome != 'failure' && steps.docker_image.outcome == 'success' && steps.docker_rta.outcome != 'failure' }}
+      image_digest: ${{ steps.docker_push.outputs.image_digest }}
     runs-on:
       - ${{ inputs.LOCATION }}
     permissions:
@@ -96,32 +105,34 @@ jobs:
       - name: Set build flags
         run: |
           # Hardcoded release configuration
-          echo "BUILDMODE=Release" >> $GITHUB_ENV
-          echo "SDB_DEBUG_INFO=STACK" >> $GITHUB_ENV
-          echo "SDB_DEV=Off" >> $GITHUB_ENV
-          echo "SDB_GTEST=Off" >> $GITHUB_ENV
-          echo "SDB_FAULT_INJECTION=Off" >> $GITHUB_ENV
-          echo "SDB_LTO=On" >> $GITHUB_ENV
-          echo "SDB_COVERAGE=Off" >> $GITHUB_ENV
-          echo "SANITIZERS=" >> $GITHUB_ENV
-          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
-          echo "SDB_VTUNE=Off" >> $GITHUB_ENV
-          echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
-          echo "STRIP_TARBALL=true" >> $GITHUB_ENV
-          echo "DEBUG_SYMBOLS=true" >> $GITHUB_ENV
-          echo "SDB_STATIC=On" >> $GITHUB_ENV
+          {
+            echo "BUILDMODE=Release"
+            echo "SDB_DEBUG_INFO=STACK"
+            echo "SDB_DEV=Off"
+            echo "SDB_GTEST=Off"
+            echo "SDB_FAULT_INJECTION=Off"
+            echo "SDB_LTO=On"
+            echo "SDB_COVERAGE=Off"
+            echo "SANITIZERS="
+            echo "SDB_ALLOC=JE"
+            echo "SDB_VTUNE=Off"
+            echo "DEB_TAR_PACKAGES=true"
+            echo "STRIP_TARBALL=true"
+            echo "DEBUG_SYMBOLS=true"
+            echo "SDB_STATIC=On"
+          } >> "$GITHUB_ENV"
 
           # Version
           PATCH="${{ inputs.SERENEDB_VERSION_PATCH }}"
           if [[ -z "$PATCH" ]]; then
             PATCH="0"
           fi
-          echo "SERENEDB_VERSION_PATCH=$PATCH" >> $GITHUB_ENV
+          echo "SERENEDB_VERSION_PATCH=$PATCH" >> "$GITHUB_ENV"
 
           # Parse BUILD_CONFIG overrides
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
           if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
-            echo "$BUILD_CONFIG" | docker run --rm -i --label "serenedb.owner=$SDB_DOCKER_OWNER" ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+            echo "$BUILD_CONFIG" | docker run --rm -i --label "serenedb.owner=$SDB_DOCKER_OWNER" ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> "$GITHUB_ENV"
           fi
 
           git config --global --add safe.directory '*'
@@ -132,6 +143,9 @@ jobs:
           fetch-depth: 1
           submodules: true
           clean: true
+
+      - name: Pick the build image
+        run: echo "BUILD_IMAGE=$(python3 scripts/ci/ci.py image)" >> "$GITHUB_ENV"
 
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
@@ -180,16 +194,45 @@ jobs:
         continue-on-error: ${{ inputs.RTA == 'test' }}
         run: ./scripts/ci/steps/08-ci-tarball-rta.bash
 
+      - name: Docker image
+        id: docker_image
+        if: steps.package.outcome == 'success'
+        run: |
+          docker logout >/dev/null 2>&1 || true
+          ./packages/build_docker.bash
+
+      - name: Docker RTA
+        id: docker_rta
+        if: inputs.RTA != 'off' && steps.docker_image.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        env:
+          DOCKER_TEST_IMAGE: ${{ steps.docker_image.outputs.image }}
+        run: ./scripts/ci/steps/08-ci-docker-rta.bash
+
+      - name: Push the image
+        id: docker_push
+        if: inputs.PUSH_IMAGE && steps.docker_image.outcome == 'success' && steps.docker_rta.outcome != 'failure'
+        env:
+          IMAGE: ${{ steps.docker_image.outputs.image }}
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+        run: |
+          trap 'docker logout >/dev/null 2>&1 || true' EXIT
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker push "$IMAGE"
+          digest=$(docker image inspect --format '{{join .RepoDigests "\n"}}' "$IMAGE" | sed -n "s|^${IMAGE%:*}@||p" | head -1)
+          [[ -n "$digest" ]] || { echo "the push reported no digest" >&2; exit 1; }
+          echo "image_digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Upload packages
         if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: packages-${{ inputs.LOCATION }}
-          path: |
-            serenedb-*.tar.gz
-            serenedb*.deb
-          if-no-files-found: ignore
-          retention-days: 1
+        env:
+          LOCATION: ${{ inputs.LOCATION }}
+        run: |
+          for f in serenedb-*.tar.gz serenedb*.deb; do
+            [[ -e "$f" ]] || continue
+            python3 scripts/ci/ci.py upload "$f" "artifacts/packages-${LOCATION}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/$f"
+          done
 
       - name: Upload build logs
         if: always()

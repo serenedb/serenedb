@@ -13,6 +13,15 @@ BEGIN ATOMIC
 END;
 
 statement ok
+CREATE PROCEDURE pudge_hook(x INTEGER) LANGUAGE SQL AS 'SELECT x';
+
+statement ok
+CREATE FUNCTION strict_plus(x INTEGER) RETURNS INTEGER LANGUAGE SQL STRICT AS 'SELECT coalesce(x, 0) + 1';
+
+statement ok
+CREATE FUNCTION void_note(x INTEGER) RETURNS void LANGUAGE SQL AS 'SELECT x';
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 statement error connection closed
@@ -40,6 +49,50 @@ SELECT * FROM vedernikoff() ORDER BY score;
 name	score
 kostya	322
 deadinside	993
+
+connection after_crash
+query
+SELECT proname, prokind, prorettype::regtype::text AS ret, proretset,
+       coalesce(pg_get_function_result(oid), 'NULL') AS result
+FROM pg_proc
+WHERE proname IN ('babsky', 'clickclack', 'vedernikoff', 'pudge_hook')
+ORDER BY 1;
+----
+proname	prokind	ret	proretset	result
+babsky	f	integer	f	integer
+clickclack	f	integer	f	integer
+pudge_hook	p	void	f	NULL
+vedernikoff	f	record	t	TABLE(name text, score integer)
+
+connection after_crash
+query
+SELECT strict_plus(NULL) AS for_null, strict_plus(1) AS for_one, void_note(1) IS NULL AS void_null, pg_typeof(void_note(1))::text AS void_type;
+----
+for_null	for_one	void_null	void_type
+NULL	2	t	void
+
+connection after_crash
+query
+SELECT proname, proisstrict, prorettype::regtype::text AS ret, trim(regexp_replace(pg_get_functiondef(oid), '[[:space:]]+', ' ', 'g')) AS definition
+FROM pg_proc
+WHERE proname IN ('strict_plus', 'void_note')
+ORDER BY 1;
+----
+proname	proisstrict	ret	definition
+strict_plus	t	integer	CREATE OR REPLACE FUNCTION public.strict_plus(x integer) RETURNS integer LANGUAGE sql STRICT AS $function$SELECT coalesce(x, 0) + 1$function$
+void_note	f	void	CREATE OR REPLACE FUNCTION public.void_note(x integer) RETURNS void LANGUAGE sql AS $function$SELECT x$function$
+
+connection after_crash
+statement ok
+DROP FUNCTION strict_plus;
+
+connection after_crash
+statement ok
+DROP FUNCTION void_note;
+
+connection after_crash
+statement ok
+DROP PROCEDURE pudge_hook;
 
 connection after_crash
 statement ok

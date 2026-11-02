@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/base/config.h>
 #include <stringzilla/utf8_graphemes/serial.h>
 #include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_sentences/serial.h>
@@ -66,19 +67,27 @@ using SegmentFn = sz_size_t (*)(sz_cptr_t, sz_size_t, sz_size_t*, sz_size_t*,
 
 #ifdef __x86_64__
 inline bool HasAvx512() noexcept {
+#ifdef ABSL_HAVE_MEMORY_SANITIZER
+  return false;
+#else
   static const bool kHas = __builtin_cpu_supports("avx512bw") &&
                            __builtin_cpu_supports("avx512vl") &&
                            __builtin_cpu_supports("avx512dq") &&
                            __builtin_cpu_supports("avx512vbmi") &&
                            __builtin_cpu_supports("avx512vbmi2");
   return kHas;
+#endif
 }
 
 inline bool HasAvx512Bw() noexcept {
+#ifdef ABSL_HAVE_MEMORY_SANITIZER
+  return false;
+#else
   static const bool kHas = __builtin_cpu_supports("avx512f") &&
                            __builtin_cpu_supports("avx512vl") &&
                            __builtin_cpu_supports("avx512bw");
   return kHas;
+#endif
 }
 #elif defined(__aarch64__)
 inline bool HasSve() noexcept {

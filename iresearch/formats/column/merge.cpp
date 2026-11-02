@@ -93,6 +93,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       continue;
     }
     for (const auto& col : s.col_reader->Columns()) {
+      if (field_options &&
+          field_options->GetFieldKind(col->Id()) == FieldKind::None) {
+        continue;
+      }
       if (seen_ids.insert(col->Id()).second) {
         ordered_cols.emplace_back(col->Id(), col.get());
       }
@@ -141,8 +145,12 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
                         row_group_size, opts.compression, false);
-    if (opts.ann_info) {
-      output.AttachAnn(field_id_v, *opts.ann_info).SetMergeSources(sources);
+    if (field_options) {
+      for (const auto ann : field_options->AnnFields(field_id_v)) {
+        output
+          .AttachAnn(field_id_v, *field_options->GetColumnOptions(ann).ann_info)
+          .SetMergeSources(sources);
+      }
     }
 
     if (opts.hyperloglog) {

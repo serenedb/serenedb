@@ -1,0 +1,140 @@
+# array_fill
+
+query
+SELECT array_fill(7, ARRAY[3]), array_fill('x'::text, ARRAY[2]), array_fill(NULL::int, ARRAY[2]), array_fill(1.5, '{1}');
+----
+array_fill	array_fill	array_fill	array_fill
+{7,7,7}	{x,x}	{NULL,NULL}	{1.5}
+
+
+query
+SELECT array_fill(7, ARRAY[2, 3]), array_fill('ab'::text, ARRAY[1, 2, 1]);
+----
+array_fill	array_fill
+{{7,7,7},{7,7,7}}	{{{ab},{ab}}}
+
+
+query
+SELECT array_fill(7, ARRAY[0]), array_fill(7, '{}'), array_fill(7, ARRAY[2, 0]), array_fill(7, ARRAY[3], ARRAY[1]), array_fill(7, ARRAY[2, 2], ARRAY[1, 1]);
+----
+array_fill	array_fill	array_fill	array_fill	array_fill
+{}	{}	{}	{7,7,7}	{{7,7},{7,7}}
+
+
+query
+SELECT n, array_fill(n, ARRAY[n]) FROM (VALUES (0), (1), (3)) AS t(n) ORDER BY n;
+----
+n	array_fill
+0	{}
+1	{1}
+3	{3,3,3}
+
+
+query
+SELECT r, c, array_fill(0, ARRAY[r, c]) FROM (VALUES (1, 2), (2, 1)) AS t(r, c) ORDER BY r;
+----
+r	c	array_fill
+1	2	{{0,0}}
+2	1	{{0},{0}}
+
+
+statement error
+SELECT array_fill(7, NULL);
+----
+db error: ERROR: dimension array or low bound array cannot be null
+
+
+statement error
+SELECT array_fill(7, ARRAY[3], NULL);
+----
+db error: ERROR: dimension array or low bound array cannot be null
+
+
+statement error
+SELECT array_fill(7, ARRAY[NULL::int]);
+----
+db error: ERROR: dimension values cannot be null
+
+
+statement error
+SELECT array_fill(7, ARRAY[-1]);
+----
+db error: ERROR: array size exceeds the maximum allowed (134217727)
+
+
+statement error
+SELECT array_fill(7, ARRAY[100000, 100000]);
+----
+db error: ERROR: array size exceeds the maximum allowed (134217727)
+
+
+skipif serenedb
+statement error
+SELECT array_fill(7, ARRAY[1, 1, 1, 1, 1, 1, 1]);
+----
+db error: ERROR: number of array dimensions (7) exceeds the maximum allowed (6)
+
+
+onlyif serenedb
+query
+SELECT array_fill(7, ARRAY[1, 1, 1, 1, 1, 1, 1]);
+----
+array_fill
+{{{{{{{7}}}}}}}
+
+
+statement error
+SELECT array_fill(7, ARRAY[3], ARRAY[1, 1]);
+----
+db error: ERROR: wrong number of array subscripts
+DETAIL: Low bound array has different size than dimensions array.
+
+
+statement error
+SELECT array_fill(7, ARRAY[1], ARRAY[2147483647]);
+----
+db error: ERROR: array lower bound is too large: 2147483647
+
+
+# array_shuffle
+
+query
+SELECT array_length(array_shuffle(ARRAY[1, 2, 3, 4, 5]), 1), ARRAY(SELECT v FROM unnest(array_shuffle(ARRAY[3, 1, 2])) AS t(v) ORDER BY v);
+----
+array_length	array
+5	{1,2,3}
+
+
+query
+SELECT array_shuffle(ARRAY[[1, 2], [1, 2], [1, 2]]), array_shuffle('{}'::int[]), array_shuffle(ARRAY['x']), array_shuffle(NULL::int[]);
+----
+array_shuffle	array_shuffle	array_shuffle	array_shuffle
+{{1,2},{1,2},{1,2}}	{}	{x}	NULL
+
+
+# array_sample
+
+query
+SELECT array_length(array_sample(ARRAY[1, 2, 3, 4, 5], 3), 1), array_sample(ARRAY[1, 2, 3, 4, 5], 2) <@ ARRAY[1, 2, 3, 4, 5], array_sample(ARRAY[1, 2, 3], 0), array_sample('{}'::int[], 0);
+----
+array_length	?column?	array_sample	array_sample
+3	t	{}	{}
+
+
+query
+SELECT ARRAY(SELECT v FROM unnest(array_sample(ARRAY['c', 'a', 'b'], 3)) AS t(v) ORDER BY v), array_sample(ARRAY[[1, 2], [1, 2]], 1), array_sample(NULL::int[], 1), array_sample(ARRAY[1], NULL);
+----
+array	array_sample	array_sample	array_sample
+{a,b,c}	{{1,2}}	NULL	NULL
+
+
+statement error
+SELECT array_sample(ARRAY[1, 2, 3], 4);
+----
+db error: ERROR: sample size must be between 0 and 3
+
+
+statement error
+SELECT array_sample(ARRAY[1, 2, 3], -1);
+----
+db error: ERROR: sample size must be between 0 and 3

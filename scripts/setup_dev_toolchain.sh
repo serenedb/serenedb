@@ -86,6 +86,16 @@ update-alternatives --get-selections | while read -r group _ value; do
 	fi
 done
 
+for versioned in /usr/bin/*-"$version"; do
+	link=${versioned%-"$version"}
+	if [[ -e "$link" || -L "$link" || "$link" == *clang-format* ]]; then
+		continue
+	fi
+	if [[ "$(readlink -f "$versioned")" =~ ^/usr/lib/llvm-$version/ ]]; then
+		run ln -s "${versioned##*/}" "$link"
+	fi
+done
+
 if [[ "$dry_run" != true ]]; then
 	for tool in clang clang++ clangd lldb llvm-symbolizer; do
 		if command -v "$tool" >/dev/null; then

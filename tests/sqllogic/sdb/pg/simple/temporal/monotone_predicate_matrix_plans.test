@@ -1,0 +1,173 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE g AS SELECT TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE AS ts, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2024-12-28' + (i % 300)::INTEGER)::DATE AS d, (i % 1000)::DOUBLE AS price, (i % 5)::SMALLINT AS sev, i AS v, (TIMESTAMP '2024-12-28 00:00:00' + INTERVAL (i * 7) MINUTE)::TIMESTAMP_MS AS tsms FROM range(50000) t(i);
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, NULL, NULL, NULL, -1, NULL), ('infinity', 'infinity', 'infinity', 'inf', 1, -2, NULL), ('-infinity', '-infinity', '-infinity', '-inf', 2, -3, NULL), (TIMESTAMP '2025-01-15 12:00:00', TIMESTAMPTZ '2025-01-15 12:00:00+00', DATE '2025-01-15', 'nan', 3, -4, TIMESTAMP '2025-01-15 12:00:00');
+
+statement ok
+CREATE TABLE zt AS SELECT zone, make_timestamptz(epoch_us(t) + (m - 576) * 300000000 + (m * 7919) % 300000000) AS tstz, m AS v FROM (VALUES ('Antarctica/Casey', TIMESTAMPTZ '2010-03-04 15:00:00+00'), ('Antarctica/Casey', TIMESTAMPTZ '2012-02-21 17:00:00+00'), ('America/Havana', TIMESTAMPTZ '2025-11-02 05:00:00+00'), ('America/Havana', TIMESTAMPTZ '2025-03-09 05:00:00+00'), ('Europe/Berlin', TIMESTAMPTZ '2025-10-26 01:00:00+00'), ('Europe/Berlin', TIMESTAMPTZ '2025-03-30 01:00:00+00'), ('Australia/Lord_Howe', TIMESTAMPTZ '2025-04-05 15:00:00+00'), ('Pacific/Kiritimati', TIMESTAMPTZ '1994-12-31 10:00:00+00'), ('Africa/Cairo', TIMESTAMPTZ '2023-10-26 21:00:00+00'), ('America/Sao_Paulo', TIMESTAMPTZ '2018-02-18 02:00:00+00')) a(zone, t), range(0, 1153) r(m);
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE time_bucket(INTERVAL '15 minutes', ts) = TIMESTAMP '2025-01-15 10:00';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                             │
+│ ~1 row                                                                               │
+╰───────────────────────────────────────────┬──────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────┴──────────────────────────────────────────╮
+│ Table: g                                                                             │
+│ Type: Sequential Scan                                                                │
+│ Column Filter:                                                                       │
+│ (ts >= '2025-01-15 10:00:00'::TIMESTAMP) AND (ts < '2025-01-15 10:15:00'::TIMESTAMP) │
+│ ~10,000 rows                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE epoch_ms(ts) BETWEEN 1736899200000 AND 1736985600000;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                       │
+│ ~1 row                                                                                         │
+╰────────────────────────────────────────────────┬───────────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────────────┴───────────────────────────────────────────────╮
+│ Table: g                                                                                       │
+│ Type: Sequential Scan                                                                          │
+│ Column Filter:                                                                                 │
+│ (ts >= '2025-01-14 23:59:59.9995'::TIMESTAMP) AND (ts < '2025-01-16 00:00:00.0005'::TIMESTAMP) │
+│ ~10,000 rows                                                                                   │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE year(ts) = 2025 AND floor(price / 100) = 3;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                              │
+│ ~1 row                                                                                │
+╰───────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────┴───────────────────────────────────────────╮
+│ Table: g                                                                              │
+│ Type: Sequential Scan                                                                 │
+│ Column Filter:                                                                        │
+│ (ts >= '2025-01-01 00:00:00'::TIMESTAMP) AND (ts < '2026-01-01 00:00:00'::TIMESTAMP), │
+│ (price >= 300) AND (price < 400)                                                      │
+│ ~10,000 rows                                                                          │
+╰───────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE tstz::DATE = DATE '2025-01-15';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                     │
+│ ~1 row                                                                                                                       │
+╰───────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────╮
+│ Table: g                                                                                                                     │
+│ Type: Sequential Scan                                                                                                        │
+│ Column Filter:                                                                                                               │
+│ (tstz >= '2025-01-14 23:00:00+00'::TIMESTAMP WITH TIME ZONE) AND (tstz < '2025-01-15 23:00:00+00'::TIMESTAMP WITH TIME ZONE) │
+│ ~10,000 rows                                                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE date_trunc('day', ts) IN (TIMESTAMP '2025-01-15', TIMESTAMP '2025-01-17');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                                                                         │
+│ ~1 row                                                                                                                                                                           │
+╰─────────────────────────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ──────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: g                                                                                                                                                                         │
+│ Type: Sequential Scan                                                                                                                                                            │
+│ Column Filter:                                                                                                                                                                   │
+│ ((ts >= '2025-01-15 00:00:00'::TIMESTAMP) AND (ts < '2025-01-16 00:00:00'::TIMESTAMP)) OR ((ts >= '2025-01-17 00:00:00'::TIMESTAMP) AND (ts < '2025-01-18 00:00:00'::TIMESTAMP)) │
+│ ~10,000 rows                                                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE v // 1000 = 3;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────╮
+│ Aggregates: count_star()       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ SEQ_SCAN ─────┴───────────────╮
+│ Table: g                       │
+│ Type: Sequential Scan          │
+│ Column Filter:                 │
+│ (v >= 3000) AND (v < 4000)     │
+│ ~10,000 rows                   │
+╰────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM g WHERE date_trunc('day', ts) = TIMESTAMP '2025-01-15 12:00';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+statement ok
+SET TimeZone = 'Antarctica/Casey';
+
+query
+EXPLAIN SELECT count(*) FROM zt WHERE date_trunc('day', tstz) = TIMESTAMPTZ '2010-03-04 16:00:00+00';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                     │
+│ ~1 row                                                                       │
+╰───────────────────────────────────────┬──────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────┴──────────────────────────────────────╮
+│ Table: zt                                                                    │
+│ Type: Sequential Scan                                                        │
+│ Column Filter:                                                               │
+│ date_trunc('day', tstz) = '2010-03-04 16:00:00+00'::TIMESTAMP WITH TIME ZONE │
+│ ~2 rows                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM zt WHERE date_trunc('day', tstz) = TIMESTAMPTZ '2010-03-09 16:00:00+00';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                     │
+│ ~1 row                                                                                                                       │
+╰───────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────╮
+│ Table: zt                                                                                                                    │
+│ Type: Sequential Scan                                                                                                        │
+│ Column Filter:                                                                                                               │
+│ (tstz >= '2010-03-09 16:00:00+00'::TIMESTAMP WITH TIME ZONE) AND (tstz < '2010-03-10 16:00:00+00'::TIMESTAMP WITH TIME ZONE) │
+│ ~2,306 rows                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT count(*) FROM zt WHERE date_trunc('hour', tstz) = TIMESTAMPTZ '2025-10-26 01:00:00+00';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                     │
+│ ~1 row                                                                                                                       │
+╰───────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────╯
+╭─ SEQ_SCAN ────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────╮
+│ Table: zt                                                                                                                    │
+│ Type: Sequential Scan                                                                                                        │
+│ Column Filter:                                                                                                               │
+│ (tstz >= '2025-10-26 00:00:00+00'::TIMESTAMP WITH TIME ZONE) AND (tstz < '2025-10-26 02:00:00+00'::TIMESTAMP WITH TIME ZONE) │
+│ ~2,306 rows                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

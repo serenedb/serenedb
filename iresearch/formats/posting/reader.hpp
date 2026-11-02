@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/assert.hpp>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
@@ -30,7 +32,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/debugging.hpp"
 
 namespace irs {
 

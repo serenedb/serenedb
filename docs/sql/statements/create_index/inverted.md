@@ -76,6 +76,26 @@ An index on a search table can't be partial: there, `CREATE INDEX … WHERE …`
 
 An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
+## Several indexes on a search table column
+
+A search table can have several indexes on the same column or expression, each with its own text search dictionary. A query on the table itself (`FROM <table>`) answers a predicate on that column through the index created first, also after a restart. To search through another of them, query that index (`FROM <index>`).
+
+## Replacing an index
+
+`CREATE OR REPLACE INDEX` rebuilds an inverted index under its name, for example to give a column another dictionary, to give a vector column another quantization, or to add `INCLUDE` columns. The new index indexes every row of the table or view; other connections keep querying the old index until the replacing transaction commits. See [`CREATE OR REPLACE INDEX`](./index.md#create-or-replace-index).
+
+Switch a column from verbatim matching to a lowercasing dictionary:
+
+<SqlLogicTest id="sql/statements/create_index/inverted/example_001" />
+
+## Concurrent changes
+
+The indexes of a search table share its storage. A transaction that creates, replaces or drops an index of a search table, or alters or drops the table, holds the table until it commits or rolls back. Meanwhile any such change from another transaction fails with `search table "<name>" is being changed by another transaction`; retry it once the first transaction ends. Reads and writes of the table are not affected, and one transaction can make any number of these changes.
+
+Writes to a search table never wait for an index change. `CREATE INDEX` and `CREATE OR REPLACE INDEX` on a search table wait for the transactions that wrote to the table before the statement started to commit or roll back, so that their rows are indexed too; cancelling the statement ends the wait.
+
+An inverted index on a regular table or a view has storage of its own, so transactions can create, replace or drop different indexes of the same table or view at the same time.
+
 ## Examples
 
 Create a dictionary, index two text columns with it, then query the index:

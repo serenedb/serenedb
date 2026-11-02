@@ -126,7 +126,8 @@ void LayoutSlop(CompiledPhrase& phrase) {
   for (uint32_t i = 0; i != n; ++i) {
     groups[i] = find(i);
   }
-  detail::slop::BuildGroupPairs(groups, n, slop.pairs);
+  detail::slop::BuildGroupPairs(
+    n, [&](size_t i) { return groups[i]; }, slop.pairs);
 }
 
 void LayoutAutomaton(CompiledPhrase& phrase) {

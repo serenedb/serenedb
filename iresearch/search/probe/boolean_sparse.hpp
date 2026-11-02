@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/probe/concept.hpp"
 #include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -35,15 +36,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {
-
-template<typename Optional>
-consteval bool OptionalDecides() {
-  if constexpr (requires { Optional::kDecides; }) {
-    return Optional::kDecides;
-  } else {
-    return true;
-  }
-}
 
 template<typename Musts, typename Optional, typename Excludes,
          typename Score = utils::Empty>

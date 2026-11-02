@@ -1,0 +1,28 @@
+statement ok
+SET preserve_identifier_case = 'uppercase';
+
+
+statement ok
+CREATE SEQUENCE snc_seq;
+
+
+query
+SELECT nextval('snc_seq') AS n, currval('SNC_SEQ') AS c, setval('snc_seq', 10) AS s, nextval('"SNC_SEQ"') AS q;
+----
+N	C	S	Q
+1	1	10	11
+
+
+query
+SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND sequence_name ILIKE 'snc%';
+----
+sequence_name
+SNC_SEQ
+
+
+statement ok
+DROP SEQUENCE snc_seq;
+
+
+statement ok
+RESET preserve_identifier_case;

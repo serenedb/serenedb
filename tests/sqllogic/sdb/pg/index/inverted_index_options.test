@@ -34,7 +34,7 @@ SELECT c.relname, a.amname, c.reloptions FROM pg_class c LEFT JOIN pg_am a ON a.
 ----
 relname	amname	reloptions
 opt_default	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=268435456,segment_docs_max=0,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152}
-opt_sec	secondary	{}
+opt_sec	secondary	NULL
 opt_tuned	inverted	{row_group_size=122880,refresh_interval=1000,compaction_interval=1000,cleanup_interval_step=1,segment_memory_max=67108864,segment_docs_max=5000,compaction_max_segments=4,compaction_max_segments_bytes=1073741824,compaction_floor_segment_bytes=4194304}
 
 

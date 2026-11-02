@@ -95,6 +95,8 @@ struct ByNestedOptions {
   }
 };
 
+bool IsValidMatch(const ByNestedOptions::MatchType& match) noexcept;
+
 class ByNestedFilter final : public FilterWithOptions<ByNestedOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,

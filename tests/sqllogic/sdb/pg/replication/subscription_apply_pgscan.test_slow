@@ -285,7 +285,7 @@ statement ok
 CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_conflict SET v = ''FIVE'' WHERE id = 5');
 
 
-sleep 3s
+sleep 1s
 
 
 connection default
@@ -422,10 +422,18 @@ ALTER SUBSCRIPTION rapp_sub OWNER TO rapp_sub_owner;
 
 
 statement ok
+CREATE TEMP TABLE rapp_errors AS SELECT apply_error_count FROM pg_stat_subscription_stats WHERE subname = 'rapp_sub';
+
+
+statement ok
 CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_owned VALUES (1)');
 
 
-sleep 2s
+query ok retry 120 backoff 250ms
+SELECT apply_error_count > (SELECT apply_error_count FROM rapp_errors) AS refused FROM pg_stat_subscription_stats WHERE subname = 'rapp_sub';
+----
+refused
+t
 
 
 query

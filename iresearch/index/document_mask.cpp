@@ -23,6 +23,8 @@
 #include <absl/strings/str_cat.h>
 #include <roaring/containers/containers.h>
 
+#include <algorithm>
+#include <new>
 #include <roaring/roaring.hh>
 #include <utility>
 
@@ -35,7 +37,13 @@ namespace {
 
 using roaring::api::roaring_bitmap_t;
 
-constexpr size_t kFrozenAlignment = 32;
+constexpr std::align_val_t kFrozenAlignment{32};
+
+struct FrozenFree {
+  void operator()(byte_type* p) const noexcept {
+    ::operator delete(p, kFrozenAlignment);
+  }
+};
 
 constexpr size_t kSlotBytes =
   sizeof(void*) + sizeof(uint16_t) + sizeof(uint8_t);
@@ -175,43 +183,47 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
 }
 
 DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
-  DocumentMask mask;
-  mask._frozen.reset(
-    static_cast<byte_type*>(roaring_aligned_malloc(kFrozenAlignment, size)));
-  if (!mask._frozen && size != 0) [[unlikely]] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-      ERR_MSG("Failed to allocate a document mask of ", size, " byte(s)"));
-  }
-  auto* buf = mask._frozen.get();
-  in.ReadData(0, buf, size);
+  std::shared_ptr<byte_type> frozen{
+    static_cast<byte_type*>(::operator new(size, kFrozenAlignment)),
+    FrozenFree{}};
+  in.ReadData(0, frozen.get(), size);
+  return DocumentMask{std::move(frozen), size};
+}
 
+DocumentMask::DocumentMask(std::shared_ptr<const byte_type> frozen,
+                           uint64_t size)
+  : _frozen{std::move(frozen)} {
   const auto* view = roaring::api::roaring_bitmap_frozen_view(
-    reinterpret_cast<const char*>(buf), size);
+    reinterpret_cast<const char*>(_frozen.get()), size);
   if (view == nullptr) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INDEX_CORRUPTED),
       ERR_MSG("Corrupted frozen document mask of ", size, " byte(s)"));
   }
-  mask._set.roaring = *view;
+  _set.roaring = *view;
 
-  const auto& set = mask._set.roaring;
-  mask._count = roaring::api::roaring_bitmap_get_cardinality(&set);
-  if (mask._count == 0 ||
+  const auto& set = _set.roaring;
+  _count = roaring::api::roaring_bitmap_get_cardinality(&set);
+  if (_count == 0 ||
       roaring::api::roaring_bitmap_minimum(&set) < doc_limits::min() ||
       doc_limits::eof(roaring::api::roaring_bitmap_maximum(&set)))
     [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                     ERR_MSG("Invalid document id in a frozen document mask "
                             "of ",
-                            mask._count, " document(s)"));
+                            _count, " document(s)"));
   }
-  mask._kind = KindOf(set);
-  return mask;
+  _kind = KindOf(set);
 }
 
 bool DocumentMask::Contains(doc_id_t doc) const noexcept {
   return roaring::api::roaring_bitmap_contains(&_set.roaring, doc);
+}
+
+uint64_t DocumentMask::CountInRange(doc_id_t first,
+                                    doc_id_t last) const noexcept {
+  return roaring::api::roaring_bitmap_range_cardinality(&_set.roaring, first,
+                                                        last);
 }
 
 size_t DocumentMask::ByteSize() const noexcept {
@@ -306,8 +318,14 @@ void DocumentMaskBuilder::AddRange(doc_id_t first, doc_id_t last) {
   if (first == last) {
     return;
   }
+  if (last - first == 1) {
+    Add(first);
+    return;
+  }
+  const auto present =
+    roaring::api::roaring_bitmap_range_cardinality(&_set, first, last);
   roaring::api::roaring_bitmap_add_range(&_set, first, last);
-  _count = roaring::api::roaring_bitmap_get_cardinality(&_set);
+  _count += (last - first) - present;
 }
 
 void DocumentMaskBuilder::Merge(const DocumentMaskBuilder& other) {
@@ -335,6 +353,10 @@ DocumentMask DocumentMaskBuilder::Finish(uint32_t bitset_from) && noexcept {
   roaring::api::roaring_bitmap_run_optimize(&_set);
   roaring::api::roaring_bitmap_shrink_to_fit(&_set);
   Densify(_set, bitset_from);
+  return DocumentMask{_set, std::exchange(_count, 0)};
+}
+
+DocumentMask DocumentMaskBuilder::Take() && noexcept {
   return DocumentMask{_set, std::exchange(_count, 0)};
 }
 

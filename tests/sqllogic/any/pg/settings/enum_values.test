@@ -1,0 +1,140 @@
+# Enum settings accept PostgreSQL's hidden spellings and show the value they stand for
+statement ok
+SET client_min_messages = debug;
+
+
+skipif serenedb # SereneDB shows client_min_messages as it was set
+query
+SHOW client_min_messages;
+----
+client_min_messages
+debug2
+
+
+onlyif serenedb
+query
+SHOW client_min_messages;
+----
+client_min_messages
+debug
+
+
+statement ok
+SET client_min_messages = INFO;
+
+
+query
+SHOW client_min_messages;
+----
+client_min_messages
+info
+
+
+statement ok
+SET client_min_messages = 'Warning';
+
+
+skipif serenedb # SereneDB shows client_min_messages as it was set
+query
+SHOW client_min_messages;
+----
+client_min_messages
+warning
+
+
+onlyif serenedb
+query
+SHOW client_min_messages;
+----
+client_min_messages
+Warning
+
+
+statement ok
+RESET client_min_messages;
+
+
+skipif serenedb # SereneDB has no synchronous_commit setting
+statement ok
+SET synchronous_commit = yes;
+
+
+onlyif serenedb
+statement error
+SET synchronous_commit = yes;
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+skipif serenedb # SereneDB has no synchronous_commit setting
+query
+SHOW synchronous_commit;
+----
+synchronous_commit
+on
+
+
+onlyif serenedb
+query error
+SHOW synchronous_commit;
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+skipif serenedb # SereneDB has no synchronous_commit setting
+statement ok
+SET synchronous_commit = '0';
+
+
+onlyif serenedb
+statement error
+SET synchronous_commit = '0';
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+skipif serenedb # SereneDB has no synchronous_commit setting
+query
+SELECT current_setting('synchronous_commit') AS value;
+----
+value
+off
+
+
+onlyif serenedb
+query error
+SELECT current_setting('synchronous_commit') AS value;
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+skipif serenedb # SereneDB has no synchronous_commit setting
+statement ok
+RESET synchronous_commit;
+
+
+onlyif serenedb
+statement error
+RESET synchronous_commit;
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+query
+SELECT 'info' = ANY(enumvals) AS info_listed, 'debug' = ANY(enumvals) AS debug_listed FROM pg_settings WHERE name = 'client_min_messages';
+----
+info_listed	debug_listed
+f	f
+
+
+skipif serenedb # SereneDB accepts any client_min_messages value
+statement error
+SET client_min_messages = 'verbose';
+----
+db error: ERROR: invalid value for parameter "client_min_messages": "verbose"
+HINT: Available values: debug5, debug4, debug3, debug2, debug1, log, notice, warning, error.
+
+
+onlyif serenedb
+statement ok
+SET client_min_messages = 'verbose';

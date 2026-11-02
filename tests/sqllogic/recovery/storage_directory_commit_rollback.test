@@ -1,0 +1,390 @@
+control substitution on
+
+# A search table, an inverted index on a table and one on a view each own a
+# directory. A committed drop removes it, a rolled-back drop keeps it, and a
+# rolled-back create removes the one it made; a create that is skipped makes
+# none. Nothing is left that no object owns.
+
+
+statement ok
+CREATE TABLE sdl_t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO sdl_t VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+CREATE VIEW sdl_v AS SELECT id, body FROM sdl_t;
+
+
+statement ok
+CREATE TABLE sdl_oids (name TEXT, oid BIGINT);
+
+
+statement ok
+INSERT INTO sdl_oids SELECT 'db', oid FROM pg_database WHERE datname = current_database();
+
+
+# The directories under this database that no search table or inverted index
+# owns.
+statement ok
+CREATE MACRO sdl_orphans() AS (
+  SELECT count(DISTINCT regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1))
+  FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'db') || '/%'
+    AND regexp_extract(file, '/engine_v1/[0-9]+/([0-9]+)/', 1)::BIGINT NOT IN (
+      SELECT table_oid FROM duckdb_tables() WHERE database_name = current_database()
+      UNION ALL
+      SELECT index_oid FROM duckdb_indexes() WHERE database_name = current_database()));
+
+
+statement ok
+CREATE MACRO sdl_stored(object) AS (
+  SELECT count(*) > 0 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+  WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'db') || '/'
+                  || (SELECT oid FROM sdl_oids WHERE name = object) || '/%');
+
+
+# ----------------------------------------------------------------------
+# 1. A committed drop removes the directory.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE INDEX sdl_t_inv ON sdl_t USING inverted (body);
+
+
+statement ok
+CREATE TABLE sdl_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sdl_s VALUES (1, 'alpha');
+
+
+statement ok
+CREATE INDEX sdl_s_inv ON sdl_s USING inverted (body);
+
+
+statement ok
+CREATE INDEX sdl_v_inv ON sdl_v USING inverted (body);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_t;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_s;
+
+
+statement ok
+INSERT INTO sdl_oids
+  SELECT index_name, index_oid FROM duckdb_indexes()
+  WHERE database_name = current_database() AND index_name IN ('sdl_t_inv', 'sdl_v_inv')
+  UNION ALL
+  SELECT table_name, table_oid FROM duckdb_tables()
+  WHERE database_name = current_database() AND table_name = 'sdl_s';
+
+
+query
+SELECT sdl_stored('sdl_t_inv') AS t_inv, sdl_stored('sdl_s') AS s, sdl_stored('sdl_v_inv') AS v_inv;
+----
+t_inv	s	v_inv
+t	t	t
+
+
+statement ok
+DROP INDEX sdl_t_inv;
+
+
+statement ok
+DROP TABLE sdl_s;
+
+
+statement ok
+DROP INDEX sdl_v_inv;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT sdl_stored('sdl_t_inv') AS t_inv, sdl_stored('sdl_s') AS s, sdl_stored('sdl_v_inv') AS v_inv,
+       sdl_orphans() AS orphans;
+----
+t_inv	s	v_inv	orphans
+f	f	f	0
+
+
+# ----------------------------------------------------------------------
+# 2. A rolled-back drop keeps the directory and its data.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE INDEX sdl_keep_inv ON sdl_t USING inverted (body);
+
+
+statement ok
+CREATE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sdl_keep_s VALUES (1, 'alpha');
+
+
+statement ok
+CREATE INDEX sdl_keep_s_inv ON sdl_keep_s USING inverted (body);
+
+
+statement ok
+CREATE INDEX sdl_keep_v_inv ON sdl_v USING inverted (body);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_t;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_keep_s;
+
+
+statement ok
+INSERT INTO sdl_oids
+  SELECT index_name, index_oid FROM duckdb_indexes()
+  WHERE database_name = current_database() AND index_name IN ('sdl_keep_inv', 'sdl_keep_v_inv')
+  UNION ALL
+  SELECT table_name, table_oid FROM duckdb_tables()
+  WHERE database_name = current_database() AND table_name = 'sdl_keep_s';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP INDEX sdl_keep_inv;
+
+
+statement ok
+DROP TABLE sdl_keep_s;
+
+
+statement ok
+DROP INDEX sdl_keep_v_inv;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT sdl_stored('sdl_keep_inv') AS t_inv, sdl_stored('sdl_keep_s') AS s,
+       sdl_stored('sdl_keep_v_inv') AS v_inv, sdl_orphans() AS orphans;
+----
+t_inv	s	v_inv	orphans
+t	t	t	0
+
+
+query
+SELECT (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM sdl_keep_inv WHERE body @@ 'alpha') AS t_inv,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM sdl_keep_s WHERE body @@ 'alpha') AS s,
+       (SELECT string_agg(id::TEXT, ',' ORDER BY id) FROM sdl_keep_v_inv WHERE body @@ 'alpha') AS v_inv;
+----
+t_inv	s	v_inv
+1	1	1
+
+
+# ----------------------------------------------------------------------
+# 3. A rolled-back create removes the directory it made.
+# ----------------------------------------------------------------------
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX sdl_rb_inv ON sdl_t USING inverted (body);
+
+
+statement ok
+CREATE TABLE sdl_rb_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX sdl_rb_v_inv ON sdl_v USING inverted (body);
+
+
+statement ok
+CREATE OR REPLACE INDEX sdl_keep_inv ON sdl_t USING inverted (id, body);
+
+
+statement ok
+CREATE OR REPLACE TABLE sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+ROLLBACK;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT sdl_orphans() AS orphans, sdl_stored('sdl_keep_inv') AS kept,
+       sdl_stored('sdl_keep_s') AS kept_table;
+----
+orphans	kept	kept_table
+0	t	t
+
+
+query
+SELECT string_agg(id::TEXT, ',' ORDER BY id) AS s FROM sdl_keep_s WHERE body @@ 'alpha';
+----
+s
+1
+
+
+query
+SELECT regexp_replace(indexdef, ' WITH \(.*', '') AS def FROM pg_indexes WHERE indexname = 'sdl_keep_inv';
+----
+def
+CREATE INDEX sdl_keep_inv ON public.sdl_t USING inverted (body)
+
+
+# ----------------------------------------------------------------------
+# 4. A create that IF NOT EXISTS skips makes no directory.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE IF NOT EXISTS sdl_keep_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS sdl_keep_inv ON sdl_t USING inverted (id);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS sdl_keep_v_inv ON sdl_v USING inverted (id);
+
+
+query
+SELECT sdl_orphans() AS orphans;
+----
+orphans
+0
+
+
+# ----------------------------------------------------------------------
+# 5. A committed DROP DATABASE removes the database's whole directory.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE DATABASE sdl_db;
+
+
+statement ok
+CREATE TABLE sdl_db.public.t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX t_art ON sdl_db.public.t (body);
+
+
+statement ok
+CREATE INDEX t_inv ON sdl_db.public.t USING inverted (body);
+
+
+statement ok
+CREATE TABLE sdl_db.public.s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX s_inv ON sdl_db.public.s USING inverted (body);
+
+
+statement ok
+INSERT INTO sdl_db.public.t VALUES (1, 'alpha');
+
+
+statement ok
+INSERT INTO sdl_db.public.s VALUES (1, 'alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_db.public.t;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdl_db.public.s;
+
+
+statement ok
+INSERT INTO sdl_oids SELECT 'sdl_db', oid FROM pg_database WHERE datname = 'sdl_db';
+
+
+query
+SELECT count(*) > 0 AS stored FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'sdl_db') || '/%';
+----
+stored
+t
+
+
+statement ok
+DROP DATABASE sdl_db;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**')
+WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM sdl_oids WHERE name = 'sdl_db') || '/%';
+----
+leftover
+0
+
+
+# ----------------------------------------------------------------------
+# 6. A failed CREATE DATABASE of a name whose dropped database another
+#    transaction still sees removes the directory it made.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE DATABASE sdl_db2;
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'sdl_db2';
+----
+n
+1
+
+
+statement ok
+DROP DATABASE sdl_db2;
+
+
+statement ok
+SET sdb_faults = 'unable_to_create';
+
+
+statement error
+CREATE DATABASE sdl_db2;
+----
+db error: ERROR: internal error
+
+
+statement ok
+RESET sdb_faults;
+
+
+connection holder
+statement ok
+COMMIT;
+
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS orphans FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/')
+WHERE regexp_extract(file, '[^/]+$') NOT IN (SELECT oid::TEXT FROM pg_database);
+----
+orphans
+0

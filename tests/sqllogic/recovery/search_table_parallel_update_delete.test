@@ -77,10 +77,31 @@ segs
 
 ###############################################################################
 # 1. A parallel UPDATE of every row: each row replaced exactly once, none lost,
-#    none left stale. Every old segment is fully removed, so what is left are
-#    the segments the sink threads wrote -- more than the one a serial UPDATE
-#    would produce.
+#    none left stale. The fault point fails a sink thread taking the parallel
+#    path, so it pins that four threads take it and one thread does not; which
+#    threads get rows is up to the scheduler, so no segment count can.
 ###############################################################################
+
+statement ok
+SET sdb_faults = 'search_update_parallel_sink_fails';
+
+statement error
+UPDATE pud SET b = 'none' WHERE md5(b) = '';
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET threads = 1;
+
+statement count 0
+UPDATE pud SET b = 'none' WHERE md5(b) = '';
+
+statement ok
+SET threads = 4;
+
+statement ok
+RESET sdb_faults;
 
 statement count 8000
 UPDATE pud SET b = 'u1_' || a;
@@ -97,12 +118,6 @@ FROM pud;
 ----
 n	updated	stale	d
 8000	8000	0	8000
-
-query
-SELECT count(DISTINCT row_group_id) > 1 AS parallel FROM pragma_storage_info('pud');
-----
-parallel
-t
 
 statement ok
 UPDATE pud_plain SET b = 'u1_' || a;

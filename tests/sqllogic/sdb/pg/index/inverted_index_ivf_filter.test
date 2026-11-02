@@ -133,7 +133,7 @@ count
 5
 
 statement ok
-SET sdb_ann_oversample = 2
+SET sdb_ann_rescore_width = 2
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -144,7 +144,7 @@ pk
 13
 
 statement ok
-SET sdb_ann_oversample = 4
+SET sdb_ann_rescore_width = 4
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -170,7 +170,7 @@ statement ok
 RESET sdb_disable_top_k_optimization
 
 statement ok
-RESET sdb_ann_oversample
+RESET sdb_ann_rescore_width
 
 statement ok
 DROP TABLE shortf

@@ -19,7 +19,7 @@ SELECT has_table_privilege(999999::oid, 'SELECT') AS t,
        pg_get_indexdef(999999::oid) AS i;
 ----
 t	s	i
-NULL	NULL	NULL
+NULL	t	NULL
 
 statement error
 SELECT pg_schema_size(999999::BIGINT);
@@ -69,6 +69,26 @@ db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
 
 statement ok
 PRAGMA serenedb_reindex_by_id(999999);
+
+statement ok
+CREATE TABLE ddc_keyed (id int, CONSTRAINT ddc_custom_pk PRIMARY KEY (id));
+
+
+statement error
+SELECT 'ddc_custom_pk'::regclass;
+----
+db error: ERROR: relation "ddc_custom_pk" does not exist
+
+
+query
+SELECT count(*) AS subscriptions FROM pg_stat_get_subscription(NULL);
+----
+subscriptions
+0
+
+
+statement ok
+DROP TABLE ddc_keyed;
 
 statement ok
 USE ${__DATABASE__};

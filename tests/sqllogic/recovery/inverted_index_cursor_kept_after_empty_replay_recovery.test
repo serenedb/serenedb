@@ -64,7 +64,12 @@ n
 1333
 
 
-sleep 1500ms
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT value AS docs FROM sdb_metrics WHERE metric = 'num_docs' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'vjling_ward_b');
+----
+docs
+1333
 
 
 connection after_crash

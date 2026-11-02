@@ -1,0 +1,263 @@
+# DOCS_TEST: own_schema
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY otel_words AS
+    split_by_non_alpha(case := 'lower', break := 'alnum')
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY otel_keyword AS keyword();
+
+statement ok
+CREATE TABLE otel_logs (
+    "timestamp"         TIMESTAMP_NS NOT NULL,
+    observed_timestamp  TIMESTAMP_NS,
+    trace_id            VARCHAR,
+    span_id             VARCHAR,
+    trace_flags         INTEGER,
+    severity_text       VARCHAR,
+    severity_number     SMALLINT,
+    service_name        VARCHAR,
+    event_name          VARCHAR,
+    body                VARCHAR USING COMPRESSION zstd,
+    resource_schema_url VARCHAR,
+    scope_schema_url    VARCHAR,
+    scope_name          VARCHAR,
+    scope_version       VARCHAR,
+    resource_attributes JSON,
+    scope_attributes    JSON,
+    log_attributes      JSON
+) WITH (storage = 'search', optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+CREATE INDEX otel_logs_idx ON otel_logs USING inverted (
+    "timestamp",
+    body            otel_words,
+    severity_text,
+    severity_number,
+    service_name,
+    event_name,
+    trace_id,
+    (log_attributes ->> 'error.type') otel_keyword
+);
+
+# DOCS_TEST_END
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY IF NOT EXISTS otel_body_dict AS
+    split_text(case := 'lower', break := 'alpha')
+    WITH (frequency, position, norm);
+
+statement count 5
+INSERT INTO otel_logs SELECT * FROM otel_parse_logs('{
+  "resourceLogs": [{
+    "resource": {
+      "attributes": [
+        {"key": "service.name", "value": {"stringValue": "checkout"}}
+      ]
+    },
+    "scopeLogs": [{
+      "scope": {},
+      "logRecords": [
+        {
+          "timeUnixNano": "1788868810000000000",
+          "severityNumber": 17,
+          "severityText": "ERROR",
+          "body": {"stringValue": "upstream reset: downstream_remote_disconnect"},
+          "attributes": [
+            {"key": "error.type", "value": {"stringValue": "downstream_remote_disconnect"}}
+          ]
+        },
+        {
+          "timeUnixNano": "1788868811000000000",
+          "severityNumber": 9,
+          "severityText": "INFO",
+          "body": {"stringValue": "order placed"}
+        },
+        {
+          "timeUnixNano": "1788868812000000000",
+          "severityNumber": 17,
+          "severityText": "ERROR",
+          "body": {"stringValue": "payment gateway timed out"},
+          "attributes": [
+            {"key": "error.type", "value": {"stringValue": "timeout"}}
+          ]
+        },
+        {
+          "timeUnixNano": "1788868813000000000",
+          "severityNumber": 13,
+          "severityText": "WARN",
+          "body": {"stringValue": "remote peer closed the stream"},
+          "attributes": [
+            {"key": "error.type", "value": {"stringValue": "remote"}}
+          ]
+        },
+        {
+          "timeUnixNano": "1788868814000000000",
+          "severityNumber": 17,
+          "severityText": "ERROR",
+          "body": {"stringValue": "inventory lookup timed out"},
+          "attributes": [
+            {"key": "error.type", "value": {"stringValue": "timeout"}}
+          ]
+        }
+      ]
+    }]
+  }]
+}');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+# DOCS_TEST: body_tokens
+
+# DOCS_TEST_BODY
+
+query
+SELECT ts_lexize('otel_body_dict', 'upstream reset: downstream_remote_disconnect') AS shipped,
+       ts_lexize('otel_words', 'upstream reset: downstream_remote_disconnect') AS split;
+----
+shipped	split
+{upstream,reset,downstream_remote_disconnect}	{upstream,reset,downstream,remote,disconnect}
+
+# DOCS_TEST: body_part
+
+# DOCS_TEST_BODY
+
+query
+SELECT "timestamp", severity_text, body
+FROM otel_logs
+WHERE body @@ 'remote'
+ORDER BY "timestamp";
+----
+timestamp	severity_text	body
+2026-09-08 12:00:10	ERROR	upstream reset: downstream_remote_disconnect
+2026-09-08 12:00:13	WARN	remote peer closed the stream
+
+# DOCS_TEST: body_phrase
+
+# DOCS_TEST_BODY
+
+query
+SELECT "timestamp", severity_text, body
+FROM otel_logs
+WHERE body @@ phraseto_tsquery('downstream_remote_disconnect');
+----
+timestamp	severity_text	body
+2026-09-08 12:00:10	ERROR	upstream reset: downstream_remote_disconnect
+
+# DOCS_TEST: attribute_filter
+
+# DOCS_TEST_BODY
+
+query
+SELECT "timestamp", severity_text, body
+FROM otel_logs
+WHERE (log_attributes ->> 'error.type') @@ 'downstream_remote_disconnect';
+----
+timestamp	severity_text	body
+2026-09-08 12:00:10	ERROR	upstream reset: downstream_remote_disconnect
+
+query
+SELECT "timestamp", severity_text, body
+FROM otel_logs
+WHERE (log_attributes ->> 'error.type') @@ 'remote';
+----
+timestamp	severity_text	body
+2026-09-08 12:00:13	WARN	remote peer closed the stream
+
+# DOCS_TEST: attribute_counts
+
+# DOCS_TEST_BODY
+
+query
+SELECT log_attributes ->> 'error.type' AS error_type, count(*) AS n
+FROM otel_logs
+WHERE log_attributes ->> 'error.type' IS NOT NULL
+GROUP BY ALL
+ORDER BY n DESC, error_type;
+----
+error_type	n
+timeout	2
+downstream_remote_disconnect	1
+remote	1
+
+# DOCS_TEST: body_compression
+
+# DOCS_TEST_BODY
+
+query
+SELECT DISTINCT compression
+FROM pragma_storage_info('otel_logs')
+WHERE column_name = 'body';
+----
+compression
+ZSTD
+
+# DOCS_TEST_END
+
+query
+SELECT "timestamp"
+FROM otel_logs
+WHERE body @@ 'downstream_remote_disconnect'
+ORDER BY "timestamp";
+----
+timestamp
+2026-09-08 12:00:10
+2026-09-08 12:00:13
+
+statement error
+SELECT unnest(ts_dict_agg((log_attributes ->> 'error.type'))) AS error_type
+FROM otel_logs;
+----
+db error: ERROR: ts_dict_agg() argument must be an indexed column
+
+
+include ../../otel/schema.inc
+
+statement ok
+INSERT INTO otel_logs ("timestamp", body) VALUES (now()::TIMESTAMP_NS, 'just now');
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+# DOCS_TEST: retention
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE JOB otel_logs_retention EVERY 1 HOUR AS
+    DELETE FROM otel_logs
+    WHERE "timestamp" @@ ts_lt(now()::TIMESTAMP_NS - INTERVAL '30 days');
+
+statement ok
+CREATE JOB otel_traces_retention EVERY 1 HOUR AS
+    DELETE FROM otel_traces
+    WHERE "timestamp" @@ ts_lt(now()::TIMESTAMP_NS - INTERVAL '30 days');
+
+statement ok
+CREATE JOB otel_metrics_sum_retention EVERY 1 HOUR AS
+    DELETE FROM otel_metrics_sum
+    WHERE "timestamp" @@ ts_lt(now()::TIMESTAMP_NS - INTERVAL '90 days');
+
+# DOCS_TEST_END
+
+statement ok
+EXECUTE JOB otel_logs_retention;
+
+statement ok
+EXECUTE JOB otel_traces_retention;
+
+statement ok
+EXECUTE JOB otel_metrics_sum_retention;
+
+statement ok
+VACUUM (REFRESH_TABLE) otel_logs;
+
+query
+SELECT body FROM otel_logs ORDER BY body;
+----
+body
+just now

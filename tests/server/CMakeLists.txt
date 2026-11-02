@@ -16,6 +16,7 @@ add_executable(
     metrics_test.cpp
     network_duck_executor_test.cpp
     network_duck_pump_test.cpp
+    network_gate_test.cpp
     network_h1_codec_test.cpp
     network_header_test.cpp
     network_http_compression_test.cpp
@@ -38,6 +39,7 @@ add_executable(
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
     scorer_bounds_test.cpp
+    search_engine_test.cpp
     search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
@@ -45,6 +47,7 @@ add_executable(
     catalog/entry/tokenizer_test.cpp
     catalog/entry/inverted_index_config_test.cpp
     connector/ai_functions_test.cpp
+    connector/col_filter_share_test.cpp
     connector/copy_in_batches_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
@@ -53,7 +56,9 @@ add_executable(
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
     connector/pgoutput_test.cpp
+    connector/reindex_removes_test.cpp
     connector/scram_client_test.cpp
+    connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
@@ -70,8 +75,3 @@ if(SDB_EMBEDDED_DOCS)
     add_dependencies(serenedb-tests serened)
     sdb_embed_docs_index(serenedb-tests)
 endif()
-
-target_compile_definitions(
-    serenedb-tests
-    PRIVATE "SDB_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/resources\""
-)

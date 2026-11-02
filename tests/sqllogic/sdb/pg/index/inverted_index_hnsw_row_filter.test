@@ -500,3 +500,58 @@ pk
 
 statement ok
 RESET sdb_ann_force_exact;
+
+
+statement ok
+CREATE TABLE hnsw_rarr (pk INTEGER PRIMARY KEY, emb FLOAT[2], pair INTEGER[2], grp INTEGER);
+
+
+statement ok
+CREATE INDEX hnsw_rarr_idx ON hnsw_rarr
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none', m = 2, ef_construction = 2))
+  INCLUDE (pair, grp);
+
+
+statement ok
+INSERT INTO hnsw_rarr SELECT i, [i, 0]::FLOAT[2], [i % 7, i % 7]::INTEGER[2],
+  CASE WHEN i % 10 = 0 THEN 0 ELSE 1 END FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rarr;
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE r.pair = [3, 3]::INTEGER[2] OR r.grp = 1) AS passing FROM (
+  SELECT pk FROM hnsw_rarr_idx WHERE pair = [3, 3]::INTEGER[2] OR grp = 1
+  ORDER BY emb <-> [2500.1, 0]::FLOAT[2] LIMIT 3) t JOIN hnsw_rarr r USING (pk);
+----
+n	passing
+3	3
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE r.pair = [3, 3]::INTEGER[2] OR r.grp = 1) AS passing FROM (
+  SELECT pk FROM hnsw_rarr_idx WHERE pair = [3, 3]::INTEGER[2] OR grp = 1
+  ORDER BY emb <-> [2500.1, 0]::FLOAT[2] LIMIT 3) t JOIN hnsw_rarr r USING (pk);
+----
+n	passing
+3	3
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+
+statement ok
+DROP TABLE hnsw_rarr;

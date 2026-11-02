@@ -1,5 +1,9 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    directory: "/serene-ui"
+    directories:
+      - "/apps/serene-ui"
+      - "/apps/serene-docs-search"
+    schedule:
+      interval: "weekly"
     open-pull-requests-limit: 0

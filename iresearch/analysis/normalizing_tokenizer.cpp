@@ -115,13 +115,16 @@ duckdb::text::TransformOptions MakeTransformOptions(
                                                         : CaseFolding::DEFAULT,
     .strip_marks = !options.accent,
     .strip_before_case = fast,
+    .keep_marks = options.keep_marks,
   };
 }
 
 }  // namespace
 
-NormalizingTokenizer::NormalizingTokenizer(Options options)
-  : _options{std::move(options)}, _transform{MakeTransformOptions(_options)} {
+NormalizingTokenizer::NormalizingTokenizer(Options options,
+                                           duckdb::SharedObjectCache& cache)
+  : _options{std::move(options)},
+    _transform{MakeTransformOptions(_options), cache} {
   const char* locale_name = _options.locale.GetName().c_str();
   if (_options.fold) {
     _options.case_convert = Case::Lower;
@@ -167,8 +170,9 @@ size_t NormalizingTokenizer::ConvertCase(std::string_view bytes,
   return casing::CaseConvertUtf8<C == Case::Lower>(bytes, out);
 }
 
-Tokenizer::ptr NormalizingTokenizer::Make(Options opts) {
-  return std::make_unique<NormalizingTokenizer>(std::move(opts));
+Tokenizer::ptr NormalizingTokenizer::Make(Options opts,
+                                          duckdb::SharedObjectCache& cache) {
+  return std::make_unique<NormalizingTokenizer>(std::move(opts), cache);
 }
 
 template<TokenLayout Layout, typename Sink>

@@ -884,7 +884,7 @@ Tokenizer::ptr MakeNorm() {
   opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   opts.accent = false;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeNormNfkcAccent() {
@@ -893,21 +893,21 @@ Tokenizer::ptr MakeNormNfkcAccent() {
   opts.case_convert = Case::Lower;
   opts.accent = false;
   opts.form = NormForm::Nfkc;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeNormLower() {
   NormalizingTokenizer::Options opts;
   opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeNormFold() {
   NormalizingTokenizer::Options opts;
   opts.locale = duckdb::text::Locale::FromName("en");
   opts.fold = true;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeNormNfd() {
@@ -915,14 +915,14 @@ Tokenizer::ptr MakeNormNfd() {
   opts.locale = duckdb::text::Locale::FromName("en");
   opts.case_convert = Case::Lower;
   opts.form = NormForm::Nfd;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeNormNfkcCf() {
   NormalizingTokenizer::Options opts;
   opts.locale = duckdb::text::Locale::FromName("en");
   opts.form = NormForm::NfkcCf;
-  return NormalizingTokenizer::Make(std::move(opts));
+  return NormalizingTokenizer::Make(std::move(opts), tests::Cache());
 }
 
 Tokenizer::ptr MakeCollation() {
@@ -1352,7 +1352,7 @@ Tokenizer::ptr MakePipelineTextImpl(bool seg_lower) {
     o.locale = duckdb::text::Locale::FromName("en");
     o.case_convert = seg_lower ? Case::None : Case::Lower;
     o.accent = false;
-    subs.push_back(NormalizingTokenizer::Make(std::move(o)));
+    subs.push_back(NormalizingTokenizer::Make(std::move(o), tests::Cache()));
   }
   {
     StopwordsTokenizer::Options s;
@@ -1444,7 +1444,7 @@ Tokenizer::ptr MakePipelineT2RewriteImpl(bool with_stem) {
     o.locale = duckdb::text::Locale::FromName("en");
     o.case_convert = Case::Lower;
     o.accent = false;
-    subs.push_back(NormalizingTokenizer::Make(std::move(o)));
+    subs.push_back(NormalizingTokenizer::Make(std::move(o), tests::Cache()));
   }
   if (with_stem) {
     StemmingTokenizer::Options o;
@@ -1537,7 +1537,7 @@ Tokenizer::ptr MakePipelineSqlSplitNorm() {
   o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = Case::Lower;
   o.accent = false;
-  subs.push_back(NormalizingTokenizer::Make(std::move(o)));
+  subs.push_back(NormalizingTokenizer::Make(std::move(o), tests::Cache()));
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 

@@ -22,25 +22,21 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/hits/make_boolean.hpp"
+#include "iresearch/search/hits/family.hpp"
 #include "iresearch/search/hits/posting.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::hits {
 
-Root::ptr MakeBoostedPosting(const BooleanQuery& query,
-                             const SubReader& segment, const Context& ctx,
-                             ScoreMergeType merge, score_t absorbed) {
-  if (merge != ScoreMergeType::Sum || absorbed != 0 ||
-      query.MinShouldMatch() != 0) {
-    return {};
-  }
-  const std::span must = query.Terms(Occur::Must);
-  const std::span should = query.Terms(Occur::Should);
-  if (must.size() != 1 || should.size() != 1 ||
-      !query.Queries(Occur::Must).empty() ||
-      !query.Queries(Occur::Should).empty()) {
+Root::ptr Family::MakeBoosted(
+  std::span<const irs::detail::PostingClause> must,
+  std::span<const QueryBuilder::ptr> must_filters,
+  std::span<const irs::detail::PostingClause> should,
+  std::span<const QueryBuilder::ptr> should_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge, score_t absorbed) {
+  if (merge != ScoreMergeType::Sum || absorbed != 0 || must.size() != 1 ||
+      should.size() != 1 || !must_filters.empty() || !should_filters.empty()) {
     return {};
   }
   const auto& lead = must.front();

@@ -9,7 +9,7 @@
 # tests.
 #
 # Local:  tests/drivers/network/run.sh
-# CI:     invoked by scripts/ci/steps/049-ci-in-docker-run-network-tests.bash
+# CI:     the network:hba unit of scripts/ci/test.py
 # RTA:    invoked by scripts/ci/steps/08-ci-{docker,deb,tarball}-rta.bash with
 #         SERENED pointing at the released binary
 #

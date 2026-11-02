@@ -49,6 +49,7 @@ struct DirectoryReaderImpl::Init {
   irs::containers::FlatHashMap<field_id,
                                duckdb::unique_ptr<duckdb::BaseStatistics>>
     column_stats;
+  irs::containers::FlatHashMap<field_id, FieldTermRange> term_ranges;
 };
 
 DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
@@ -72,6 +73,19 @@ DirectoryReaderImpl::Init::Init(const Directory& dir, const DirectoryMeta& meta,
     file_refs.emplace_back(refs.add(filename));
     docs_count += segment.docs_count;
     live_docs_count += segment.live_docs_count;
+
+    for (const auto id : reader.field_ids()) {
+      const auto* field = reader.field(id);
+      if (!field || field->size() == 0) {
+        continue;
+      }
+      const auto [it, emplaced] =
+        term_ranges.try_emplace(id, FieldTermRange{field->min(), field->max()});
+      if (!emplaced) {
+        it->second.min = std::min(it->second.min, field->min());
+        it->second.max = std::max(it->second.max, field->max());
+      }
+    }
 
     const auto* col_reader = reader.GetColReader();
     if (!col_reader) {
@@ -152,7 +166,8 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, const Directory& dir,
     _file_refs{std::move(init.file_refs)},
     _meta{std::move(meta)},
     _opts{opts},
-    _column_stats{std::move(init.column_stats)} {}
+    _column_stats{std::move(init.column_stats)},
+    _term_ranges{std::move(init.term_ranges)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
   const Directory& dir, const IndexReaderOptions& opts,

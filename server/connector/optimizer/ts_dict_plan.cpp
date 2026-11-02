@@ -247,9 +247,26 @@ const duckdb::BoundColumnRefExpression* SingleColumnRefChild(
   return &children[0]->Cast<duckdb::BoundColumnRefExpression>();
 }
 
+const duckdb::LogicalGet* TsDictSourceGet(const duckdb::LogicalOperator& aggr) {
+  const auto* node = &aggr;
+  while (node->children.size() == 1) {
+    node = node->children[0].get();
+    switch (node->type) {
+      case duckdb::LogicalOperatorType::LOGICAL_GET:
+        return &node->Cast<duckdb::LogicalGet>();
+      case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
+      case duckdb::LogicalOperatorType::LOGICAL_FILTER:
+        break;
+      default:
+        return nullptr;
+    }
+  }
+  return nullptr;
+}
+
 duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   duckdb::BoundAggregateExpression& agg, duckdb::LogicalOperator& root,
-  duckdb::ClientContext& context) {
+  const duckdb::LogicalGet* source, duckdb::ClientContext& context) {
   const auto& fn = agg.Function().GetName().GetIdentifierName();
   const auto fn_info = TsDictFnFor(fn);
   SDB_ASSERT(fn_info.has_value());
@@ -259,7 +276,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
                     ERR_MSG(fn, "() argument must be an indexed column"));
   }
   auto resolved = ResolveIResearchScanColumn(root, col_ref->Binding());
-  if (!resolved) {
+  if (!resolved || resolved->found.get != source) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(fn, "() requires an inverted index scan in the same sub-query"));
@@ -1604,9 +1621,10 @@ void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       ERR_HINT("compute the ts_dict_* aggregate in a separate subquery"));
   }
   bool converted = false;
+  const auto* source = TsDictSourceGet(aggr);
   for (const auto i : ts_dict_calls) {
     auto& agg = aggr.expressions[i]->Cast<duckdb::BoundAggregateExpression>();
-    aggr.expressions[i] = PushdownTsDictCall(agg, root, context);
+    aggr.expressions[i] = PushdownTsDictCall(agg, root, source, context);
     converted = true;
   }
 

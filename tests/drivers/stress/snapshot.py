@@ -29,8 +29,8 @@ DEPENDENCY_ENTRY_TYPE = "Dependency"
 def generated_name_re(run_tag):
     # The kind letter must cover every family the generator makes: t table,
     # q sequence, v view, i index, d text search dictionary, s foreign server.
-    # Engine-derived names (<table>_pkey, <table>_pk_seq) never match, which is
-    # what keeps them out of the ghost check.
+    # Engine-derived names (<table>_pkey, <table>_<column>_seq) never match,
+    # which is what keeps them out of the ghost check.
     return re.compile(rf"^s{re.escape(run_tag)}_w\d+_(?:t|q|v|i|d|s|b|a)\d+$")
 
 
@@ -46,6 +46,7 @@ class Snapshot:
         self.epoch = None
         self.orphan_files = []
         self.row_tokens = {}
+        self.row_errors = {}
         self.database_count = 1
         self.catalog_wal_bytes = None
         self.errors = []
@@ -62,6 +63,7 @@ def _rows(conn, sql, params=None):
 
 def read_row_tokens(conn, keys):
     out = {}
+    errors = {}
     for key in keys:
         if key[0] != ops.TABLE:
             continue
@@ -70,9 +72,9 @@ def read_row_tokens(conn, keys):
                 cur.execute(f"SELECT label FROM {key[1]}")
                 out[key] = frozenset(
                     r[0] for r in cur.fetchall() if r[0] is not None)
-        except Exception:
-            continue
-    return out
+        except Exception as exc:
+            errors[key] = f"{type(exc).__name__}: {exc}"
+    return out, errors
 
 
 def catalog_wal_size(datadir):
@@ -83,7 +85,7 @@ def catalog_wal_size(datadir):
         return None
 
 
-def take(conn, run_tag, datadir=None, row_keys=(), scan_artifacts=False):
+def take(conn, run_tag, datadir=None, scan_artifacts=False):
     snap = Snapshot(run_tag)
     like = f"s{run_tag}\\_%"
 
@@ -134,9 +136,9 @@ def take(conn, run_tag, datadir=None, row_keys=(), scan_artifacts=False):
     except Exception as exc:
         snap.errors.append(f"sdb_deferred_catalog failed: {exc}")
 
-    wanted = [k for k in row_keys if k in snap.pg_objects]
+    wanted = [k for k in snap.pg_objects if k[0] == ops.TABLE]
     if wanted:
-        snap.row_tokens = read_row_tokens(conn, wanted)
+        snap.row_tokens, snap.row_errors = read_row_tokens(conn, wanted)
 
     if datadir:
         # Artifact reclamation is deferred to a background pool after the commit

@@ -280,6 +280,7 @@ class Writer {
   // out-of-line spanning path (which may split the bytes across two chunks --
   // callers that need them contiguous use Alloc/Write(capacity, op) instead).
   IRS_FORCE_INLINE void WriteBytes(const char* src, size_t n) {
+    SDB_ASSERT(src);
     auto* tail = _buffer->_tail;
     _written += n;
     if (n <= tail->FreeSpace()) [[likely]] {

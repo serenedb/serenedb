@@ -43,8 +43,6 @@ class HnswWriter final : public AnnWriter {
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
-  field_id ColumnId() const noexcept final { return _info.centroids_id; }
-
   bool Empty() const noexcept final { return _graph.Empty(); }
 
   void SetMergeSources(std::span<const MergeSource> sources) noexcept final {

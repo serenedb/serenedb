@@ -22,13 +22,46 @@
 
 #include <cstdint>
 
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 
 struct LMStats {
   score_t collection_prob;
 };
+
+inline void CollectLMStats(LMStats& stats, const FieldCollector* field,
+                           const TermCollector* term) noexcept {
+  const auto ttf_field = field ? field->total_term_freq : 0;
+  const auto ttf_term = term ? term->total_term_freq : 0;
+
+  const double num = static_cast<double>(ttf_term) + 1.0;
+  const double den = static_cast<double>(ttf_field) + 1.0;
+  stats.collection_prob = static_cast<score_t>(num / den);
+}
+
+template<template<bool> typename Score>
+ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
+                              score_t param) {
+  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
+  if (!freq || stats.collection_prob <= 0.f) {
+    return ScoreFunction::Default();
+  }
+
+  const uint32_t* norm = NormsOf(ctx);
+
+  const auto* scale = ScaleOf(ctx);
+
+  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+    return ScoreFunction::Make<Score<HasScale>>(ctx.boost, param, stats, freq,
+                                                norm, scale);
+  });
+}
 
 }  // namespace irs

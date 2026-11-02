@@ -7,7 +7,7 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CI_DIR="$(dirname "$SCRIPT_DIR")"
 
-TARBALL="${TARBALL:-$(ls "${WORKSPACE}"/serenedb-*.tar.gz 2>/dev/null | head -1)}"
+TARBALL="${TARBALL:-$(find -H "${WORKSPACE}" -maxdepth 1 -name 'serenedb-*.tar.gz' ! -name '*-dbgsym.tar.gz' -print -quit)}"
 if [[ -z "$TARBALL" ]]; then
 	echo "ERROR: No tarball found in ${WORKSPACE}"
 	exit 1

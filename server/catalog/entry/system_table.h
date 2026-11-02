@@ -23,20 +23,14 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
-#include <memory>
 
-#include "pg/system_catalog.h"
+#include "pg/catalog/engine/registry.h"
 
 namespace duckdb {
 
 struct CreateTableInfo;
 
 }  // namespace duckdb
-namespace sdb::pg {
-
-class VirtualTable;
-
-}  // namespace sdb::pg
 namespace sdb::catalog {
 
 class SereneDBCatalog;
@@ -44,10 +38,9 @@ class SereneDBCatalog;
 class SystemTableEntry final : public duckdb::TableCatalogEntry {
  public:
   SystemTableEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                   duckdb::CreateTableInfo& info,
-                   const pg::VirtualTable& table);
+                   duckdb::CreateTableInfo& info, const pg::SystemTable& table);
 
-  const duckdb::ColumnList& GetColumns() const final { return _columns; }
+  const duckdb::ColumnList& GetColumns() const final;
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext&, duckdb::column_t) final {
@@ -66,18 +59,16 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) final;
 
-  const pg::VirtualTable& Table() const noexcept { return _table; }
+  const pg::SystemTable& Table() const noexcept { return _table; }
 
  private:
-  duckdb::ColumnList _columns;
-  const pg::VirtualTable& _table;
+  const pg::SystemTable& _table;
 };
 
 class SystemViewEntry final : public duckdb::ViewCatalogEntry {
  public:
   SystemViewEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                  duckdb::CreateViewInfo& info,
-                  std::shared_ptr<pg::ViewBinding> binding);
+                  duckdb::CreateViewInfo& info, const pg::StaticView& view);
 
   duckdb::shared_ptr<duckdb::ViewColumnInfo> GetColumnInfo() const final;
 
@@ -88,9 +79,11 @@ class SystemViewEntry final : public duckdb::ViewCatalogEntry {
                      const duckdb::vector<duckdb::Identifier>& names) final;
 
  private:
-  std::shared_ptr<pg::ViewBinding> _binding;
+  const pg::StaticView& _view;
 };
 
 void MountSystemSchemas(SereneDBCatalog& catalog);
+
+[[noreturn]] void RefuseSystemCatalog(const duckdb::CatalogEntry& relation);
 
 }  // namespace sdb::catalog

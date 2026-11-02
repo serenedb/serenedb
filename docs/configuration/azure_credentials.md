@@ -48,7 +48,7 @@ The chain resolves credentials automatically from where you already are — the 
 
 <SqlLogicTest id="configuration/azure_credentials/example_chain" />
 
-Accepted chain links: `cli`, `env`, `managed_identity`, `workload_identity`, `default` (the [Azure SDK default chain](https://learn.microsoft.com/en-us/azure/developer/intro/azure-developer-auth-overview)). **Development-friendly**: `CHAIN 'cli'` after `az login` is the quickest way to query from a laptop as yourself — with the usual personal-credential caveats (it is *your* identity, and it stops working when your session does).
+Accepted chain links: `cli`, `env`, `managed_identity`, `workload_identity`, `default` (the [Azure SDK default chain](https://learn.microsoft.com/en-us/azure/developer/cpp/sdk/authentication/credential-chains)). **Development-friendly**: `CHAIN 'cli'` after `az login` is the quickest way to query from a laptop as yourself — with the usual personal-credential caveats (it is *your* identity, and it stops working when your session does).
 
 ## Connection string
 

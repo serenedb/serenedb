@@ -1,0 +1,31 @@
+statement ok
+SET TimeZone = 'UTC';
+
+onlyif postgres
+query
+SELECT to_timestamp('294247-01-10 05:00', 'YYYY-MM-DD HH24:MI') AS a,
+       to_timestamp('294247-01-10 04:00 -05', 'YYYY-MM-DD HH24:MI TZH') AS b,
+       to_timestamp('294247-01-10 04:00:54.775807', 'YYYY-MM-DD HH24:MI:SS.US') AS c;
+----
+a	b	c
+294247-01-10 05:00:00+00	294247-01-10 09:00:00+00	294247-01-10 04:00:54.775807+00
+
+skipif postgres
+statement error
+SELECT to_timestamp('294247-01-10 05:00', 'YYYY-MM-DD HH24:MI');
+----
+db error: ERROR: timestamp out of range
+
+
+skipif postgres
+statement error
+SELECT to_timestamp('294247-01-10 04:00 -05', 'YYYY-MM-DD HH24:MI TZH');
+----
+db error: ERROR: timestamp out of range
+
+
+skipif postgres
+statement error
+SELECT to_timestamp('294247-01-10 04:00:54.775807', 'YYYY-MM-DD HH24:MI:SS.US');
+----
+db error: ERROR: timestamp out of range

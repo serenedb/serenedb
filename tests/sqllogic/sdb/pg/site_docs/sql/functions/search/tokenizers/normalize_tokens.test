@@ -65,3 +65,14 @@ SELECT normalize_tokens(['ＦＵＬＬ Straße ﬁ', '①'], form := 'nfkc_cf') 
 ----
 tokens
 {"full strasse fi",1}
+
+# DOCS_TEST: keep_marks
+
+# DOCS_TEST_BODY
+
+query
+SELECT normalize_tokens(['Йод', 'Ёлка', 'Café'], case := 'lower', accent := false) AS stripped,
+       normalize_tokens(['Йод', 'Ёлка', 'Café'], case := 'lower', accent := false, keep_marks := ['U+0306']) AS kept;
+----
+stripped	kept
+{иод,елка,cafe}	{йод,елка,cafe}

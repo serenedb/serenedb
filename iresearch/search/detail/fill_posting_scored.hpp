@@ -23,9 +23,8 @@
 #include <utility>
 
 #include "iresearch/search/detail/plain_scored.hpp"
-#include "iresearch/search/detail/posting_count_scored.hpp"
+#include "iresearch/search/detail/posting_window_scored.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/fill/posting_scored.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs::detail {

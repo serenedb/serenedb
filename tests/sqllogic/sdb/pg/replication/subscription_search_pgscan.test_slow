@@ -9,15 +9,19 @@ CALL postgres_execute('rsrch_${__DATABASE__}', 'SELECT pg_drop_replication_slot(
 
 
 statement ok
-CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rsrch_pub; DROP TABLE IF EXISTS rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rsrch_pub; DROP TABLE IF EXISTS rsrch_plain, rsrch_indexed, rsrch_inv, rsrch_full; END $$');
 
 
 statement ok
-CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rsrch_plain (id int PRIMARY KEY, body text); CREATE TABLE rsrch_indexed (id int PRIMARY KEY, body text); CREATE TABLE rsrch_inv (id int PRIMARY KEY, body text); INSERT INTO rsrch_plain SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_indexed SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_inv SELECT g, ''doc '' || g FROM generate_series(1, 100) g; CREATE PUBLICATION rsrch_pub FOR TABLE rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rsrch_plain (id int PRIMARY KEY, body text); CREATE TABLE rsrch_indexed (id int PRIMARY KEY, body text); CREATE TABLE rsrch_inv (id int PRIMARY KEY, body text); INSERT INTO rsrch_plain SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_indexed SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_inv SELECT g, ''doc '' || g FROM generate_series(1, 100) g; CREATE TABLE rsrch_full (a int, b text); ALTER TABLE rsrch_full REPLICA IDENTITY FULL; CREATE PUBLICATION rsrch_pub FOR TABLE rsrch_plain, rsrch_indexed, rsrch_inv, rsrch_full; END $$');
 
 
 statement ok
 CREATE TABLE rsrch_plain (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE rsrch_full (a INTEGER, b TEXT) WITH (storage = 'search');
 
 
 statement ok
@@ -44,7 +48,7 @@ query ok retry 240 backoff 250ms
 SELECT count(*) FILTER (WHERE r.srsubstate = 'r') AS ready FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid WHERE c.relname LIKE 'rsrch%';
 ----
 ready
-3
+4
 
 
 query ok retry 120 backoff 250ms
@@ -95,11 +99,35 @@ hits
 
 
 statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'INSERT INTO rsrch_full VALUES (1, ''x''), (1, ''x''), (2, NULL), (3, ''y'')');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsrch_full;
+----
+n
+4
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN UPDATE rsrch_full SET b = ''z'' WHERE a = 2; DELETE FROM rsrch_full WHERE ctid = (SELECT min(ctid) FROM rsrch_full WHERE a = 1); UPDATE rsrch_full SET a = 30 WHERE a = 3; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT a, b FROM rsrch_full ORDER BY a;
+----
+a	b
+1	x
+2	z
+30	y
+
+
+statement ok
 DROP SUBSCRIPTION rsrch_sub;
 
 
 statement ok
-CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rsrch_pub; DROP TABLE rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rsrch_pub; DROP TABLE rsrch_plain, rsrch_indexed, rsrch_inv, rsrch_full; END $$');
 
 
 statement ok

@@ -197,7 +197,8 @@ def test_mistyped_schema_is_rejected(conn):
         )
         try:
             status, payload = _post(conn, "/v1/logs", body)
-            assert status == 500, payload
+            assert status == 503, payload
+            assert json.loads(payload)["code"] == 14, payload
             message = json.loads(payload)["message"]
             assert "invalid OpenTelemetry schema" in message, message
             assert '"timestamp"' in message, message
@@ -217,7 +218,8 @@ def test_dropped_table_is_reported_missing(conn):
         pg.execute("DROP TABLE otel_logs")
         try:
             status, payload = _post(conn, "/v1/logs", body)
-            assert status == 500, payload
+            assert status == 503, payload
+            assert json.loads(payload)["code"] == 14, payload
             message = json.loads(payload)["message"]
             assert "schema is missing" in message, message
         finally:

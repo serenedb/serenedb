@@ -37,11 +37,14 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/geo_terms.hpp"
+#include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/search/queries/query_builder_impl.tpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/types.hpp"
@@ -412,4 +415,13 @@ PrepareCollector::ptr GeoDistanceFilter::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<AllCollector>(scorer, stats);
 }
 
+namespace detail {
+
+template<typename Family, typename Parser, typename Acceptor, typename Ctx>
+typename Family::Result MakeQuery(const GeoQuery<Parser, Acceptor>& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, GeoKind>(query, ctx);
+}
+
+}  // namespace detail
 }  // namespace irs

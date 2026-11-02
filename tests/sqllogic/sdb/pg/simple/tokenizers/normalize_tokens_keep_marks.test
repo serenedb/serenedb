@@ -1,0 +1,129 @@
+query
+SELECT normalize_tokens('Йод Ёлка Café ắ', case := 'lower', accent := false) AS stripped,
+       normalize_tokens('Йод Ёлка Café ắ', case := 'lower', accent := false, keep_marks := ['U+0306']) AS kept;
+----
+stripped	kept
+{"иод елка cafe a"}	{"йод елка cafe ă"}
+
+query
+SELECT normalize_tokens('Йод', accent := false, keep_marks := [chr(774)]) AS character,
+       normalize_tokens('Йод', accent := false, keep_marks := ['u+306', 'U+0306']) AS repeated,
+       normalize_tokens('Йод', accent := false, keep_marks := '"U+0306"') AS quoted;
+----
+character	repeated	quoted
+{Йод}	{Йод}	{Йод}
+
+query
+SELECT normalize_tokens('Йё', form := 'nfd', accent := false, keep_marks := ['U+0306']) = ['И' || chr(774) || 'е'] AS decomposed;
+----
+decomposed
+t
+
+query
+SELECT normalize_tokens('ЙОД', locale := 'tr_TR', case := 'lower', accent := false, keep_marks := ['U+0306']) AS icu_path;
+----
+icu_path
+{йод}
+
+query
+SELECT normalize_tokens('istanbul', locale := 'tr_TR', case := 'upper', accent := false) AS stripped,
+       normalize_tokens('istanbul', locale := 'tr_TR', case := 'upper', accent := false, keep_marks := ['U+0307']) AS kept;
+----
+stripped	kept
+{ISTANBUL}	{İSTANBUL}
+
+query
+SELECT normalize_tokens('Ìa', locale := 'lt', case := 'lower', accent := false) AS stripped,
+       normalize_tokens('Ìa', locale := 'lt', case := 'lower', accent := false, keep_marks := ['U+0307']) = ['i' || chr(775) || 'a'] AS kept;
+----
+stripped	kept
+{ia}	t
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ru_strip AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false) | stem_words('ru_RU.UTF-8');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ru_keep AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false, keep_marks := ['U+0306']) | stem_words('ru_RU.UTF-8');
+
+query
+SELECT ts_lexize('ru_strip', 'Большой чайный край войны') AS stripped,
+       ts_lexize('ru_keep', 'Большой чайный край войны') AS kept;
+----
+stripped	kept
+{большо,чаины,кра,воин}	{больш,чайн,кра,войн}
+
+statement error
+SELECT normalize_tokens('Йод', keep_marks := ['U+0306']);
+----
+db error: ERROR: "keep_marks" parameter requires "accent" to be false
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY keep_without_strip AS normalize_tokens(accent := true, keep_marks := ['U+0306']);
+----
+db error: ERROR: "keep_marks" parameter requires "accent" to be false
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['a']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "a" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+0439']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U+0439" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+XYZ']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U+XYZ" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U0306']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U0306" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+0306U+0308']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U+0306U+0308" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := [chr(774) || chr(776)]);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "̆̈" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement error
+SELECT normalize_tokens('Йод', accent := false, keep_marks := ['U+110000']);
+----
+db error: ERROR: invalid value in "keep_marks" parameter
+DETAIL: "U+110000" is not a single nonspacing mark
+HINT: Nonspacing marks that accent := false keeps: a list of single marks, each given as the character or as U+XXXX
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ru_strip;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ru_keep;

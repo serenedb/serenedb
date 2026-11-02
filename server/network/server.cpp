@@ -401,9 +401,11 @@ void Server::StartListeners() {
     const std::string_view database = spec.database.empty()
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
-    if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      const std::string_view schema =
-        spec.schema.empty() ? std::string_view{"public"} : spec.schema;
+    const bool serves_otel =
+      absl::c_linear_search(spec.apis, network::HttpApi::Otel);
+    const std::string_view schema =
+      spec.schema.empty() ? std::string_view{"public"} : spec.schema;
+    if (serves_otel && spec.create_schema) {
       if (const auto status = otel::EnsureSchema(database, schema);
           !status.ok()) {
         SDB_FATAL(GENERAL, "endpoint '", spec.url,
@@ -414,6 +416,14 @@ void Server::StartListeners() {
                                [](const catalog::DatabaseCatalogEntry&) {})) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
+    }
+    if (serves_otel && !spec.create_schema) {
+      if (const auto status = otel::CheckSchema(database, schema);
+          !status.ok()) {
+        SDB_WARN(GENERAL, "endpoint '", spec.url,
+                 "': OpenTelemetry schema: ", status.message(),
+                 ". Exports answer 503 until it matches.");
+      }
     }
   }
   for (const auto& spec : specs) {

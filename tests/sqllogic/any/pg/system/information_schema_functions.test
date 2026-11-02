@@ -1,0 +1,91 @@
+control substitution on
+
+statement ok
+CREATE TABLE isf (a int, b int, c int);
+
+
+statement ok
+CREATE INDEX isf_cb ON isf (c, b);
+
+
+query
+SELECT information_schema._pg_index_position('isf_cb'::regclass, 2::int2) AS second,
+       information_schema._pg_index_position('isf_cb'::regclass, 1::int2) IS NULL AS absent,
+       information_schema._pg_index_position('isf'::regclass, 1::int2) IS NULL AS table_oid,
+       information_schema._pg_index_position(12345, 1::int2) IS NULL AS missing;
+----
+second	absent	table_oid	missing
+2	t	t	t
+
+
+query
+SELECT information_schema._pg_interval_type(1186, 327679) AS year_only,
+       information_schema._pg_interval_type(1186, 470286339) AS day_to_second,
+       information_schema._pg_interval_type(1186, 2147418115) IS NULL AS full_range,
+       information_schema._pg_datetime_precision(1186, 327679) AS interval_precision,
+       information_schema._pg_char_max_length(1560, 8) AS bit_length,
+       information_schema._pg_char_octet_length(25, 10) IS NULL AS text_octets;
+----
+year_only	day_to_second	full_range	interval_precision	bit_length	text_octets
+YEAR	DAY TO SECOND(3)	t	6	8	t
+
+
+statement error invalid INTERVAL typmod: 0x0
+SELECT information_schema._pg_interval_type(1186, 0);
+
+
+statement error
+SELECT format_type(1186, 196608);
+----
+db error: ERROR: invalid INTERVAL typmod: 0x30000
+
+
+statement ok
+CREATE TABLE isf_collated (a text COLLATE "default", b text COLLATE "POSIX");
+
+
+query
+SELECT attname, attcollation FROM pg_attribute WHERE attrelid = 'isf_collated'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	attcollation
+a	100
+b	951
+
+
+statement ok
+CREATE ROLE isf_reader_${__DATABASE__};
+
+
+statement ok
+CREATE VIEW isf_view AS SELECT 1 AS a;
+
+
+statement ok
+SET ROLE isf_reader_${__DATABASE__};
+
+
+query
+SELECT count(*) AS visible FROM information_schema.columns WHERE table_name = 'isf_view';
+----
+visible
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP VIEW isf_view;
+
+
+statement ok
+DROP ROLE isf_reader_${__DATABASE__};
+
+
+statement ok
+DROP TABLE isf_collated;
+
+
+statement ok
+DROP TABLE isf;

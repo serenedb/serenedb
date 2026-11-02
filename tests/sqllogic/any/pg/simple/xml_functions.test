@@ -1,0 +1,161 @@
+query
+SELECT xml_is_well_formed_document('<foo>bar</foo>') AS document_element,
+       xml_is_well_formed_document('abc') AS document_text,
+       xml_is_well_formed_content('<foo>bar</foo>') AS content_element,
+       xml_is_well_formed_content('abc') AS content_text;
+----
+document_element	document_text	content_element	content_text
+t	f	t	t
+
+
+query
+SELECT xml_is_well_formed('abc') AS text, xml_is_well_formed('<a/><b/>') AS two_elements;
+----
+text	two_elements
+t	t
+
+
+statement ok
+SET xmloption TO DOCUMENT;
+
+
+query
+SELECT xml_is_well_formed('abc') AS text,
+       xml_is_well_formed('<>') AS empty_tag,
+       xml_is_well_formed('<abc/>') AS empty_element,
+       xml_is_well_formed('<foo>bar</foo>') AS element,
+       xml_is_well_formed('<foo>bar</foo') AS unclosed_tag,
+       xml_is_well_formed('<foo><bar>baz</foo>') AS unclosed_element,
+       xml_is_well_formed('<a/><b/>') AS two_elements;
+----
+text	empty_tag	empty_element	element	unclosed_tag	unclosed_element	two_elements
+f	f	t	t	f	f	f
+
+
+query
+SELECT xml_is_well_formed('<local:data xmlns:local="http://127.0.0.1"><local:piece id="1">number one</local:piece><local:piece id="2" /></local:data>') AS namespaced,
+       xml_is_well_formed('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</my:foo>') AS wrong_end_prefix,
+       xml_is_well_formed('<pg:foo xmlns:pg="http://postgresql.org/stuff">bar</pg:foo>') AS same_end_prefix,
+       xml_is_well_formed('<invalidentity>&</abc>') AS bare_ampersand,
+       xml_is_well_formed('<undefinedentity>&idontexist;</abc>') AS undefined_entity,
+       xml_is_well_formed('<invalidns xmlns=''&lt;''/>') AS invalid_namespace,
+       xml_is_well_formed('<relativens xmlns=''relative''/>') AS relative_namespace,
+       xml_is_well_formed('<twoerrors>&idontexist;</unbalanced>') AS two_errors;
+----
+namespaced	wrong_end_prefix	same_end_prefix	bare_ampersand	undefined_entity	invalid_namespace	relative_namespace	two_errors
+t	f	t	f	f	t	t	f
+
+
+statement ok
+SET xmloption TO CONTENT;
+
+
+query
+SELECT xml_is_well_formed('abc') AS text;
+----
+text
+t
+
+
+statement ok
+RESET xmloption;
+
+
+query
+SELECT xml_is_well_formed_content('') AS empty_content,
+       xml_is_well_formed_document('') AS empty_document,
+       xml_is_well_formed_content(' ') AS blank_content,
+       xml_is_well_formed_document(' <a/> ') AS padded_document;
+----
+empty_content	empty_document	blank_content	padded_document
+t	f	t	t
+
+
+query
+SELECT xml_is_well_formed_content('<?xml version="1.0"?><a/>') AS declaration,
+       xml_is_well_formed_content('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a/><b/>') AS full_declaration,
+       xml_is_well_formed_content('<?xml version=''1.0'' standalone=''no''?>text') AS single_quotes,
+       xml_is_well_formed_content('<?xml version="1.0"?>') AS declaration_only,
+       xml_is_well_formed_content('<?xml-stylesheet href="a.xsl"?><a/>') AS stylesheet_pi;
+----
+declaration	full_declaration	single_quotes	declaration_only	stylesheet_pi
+t	t	t	t	t
+
+
+query
+SELECT xml_is_well_formed_content('<?xml encoding="UTF-8"?><a/>') AS no_version,
+       xml_is_well_formed_content('<?xml version="1.0"standalone="yes"?><a/>') AS no_space,
+       xml_is_well_formed_content('<?xml version="1.0" standalone="maybe"?><a/>') AS bad_standalone,
+       xml_is_well_formed_content('<?xml version="1.0"') AS unfinished,
+       xml_is_well_formed_content('<?xml') AS bare_start,
+       xml_is_well_formed_content('<a/><?xml version="1.0"?>') AS late_declaration;
+----
+no_version	no_space	bad_standalone	unfinished	bare_start	late_declaration
+f	f	f	f	f	f
+
+
+query
+SELECT xml_is_well_formed_content('<!DOCTYPE a><a/>') AS doctype,
+       xml_is_well_formed_content('<!DOCTYPE a><a/><b/>') AS doctype_two_elements,
+       xml_is_well_formed_content('<?xml version="1.0"?><!-- c --><?pi x?><!DOCTYPE a><a/>') AS doctype_after_prolog,
+       xml_is_well_formed_content('<!-- c --><a/><b/>') AS comment_first;
+----
+doctype	doctype_two_elements	doctype_after_prolog	comment_first
+t	f	t	t
+
+
+query
+SELECT xml_is_well_formed_document('<!DOCTYPE a [<!ENTITY e "x">]><a>&e;</a>') AS internal_entity,
+       xml_is_well_formed_document('<a>&e;</a>') AS undeclared_entity,
+       xml_is_well_formed_document('<!DOCTYPE a [<!ENTITY e SYSTEM "file:///nonexistent/e.xml">]><a>&e;</a>') AS external_entity,
+       xml_is_well_formed_document('<!DOCTYPE a SYSTEM "http://127.0.0.1:1/a.dtd"><a/>') AS external_dtd,
+       xml_is_well_formed_content('<a>&amp;&lt;&#65;&#x42;</a>') AS predefined_entities,
+       xml_is_well_formed_content('<a>&#0;</a>') AS invalid_char_reference;
+----
+internal_entity	undeclared_entity	external_entity	external_dtd	predefined_entities	invalid_char_reference
+t	f	t	t	t	f
+
+
+query
+SELECT xml_is_well_formed_content('<x:a/>') AS undeclared_prefix,
+       xml_is_well_formed_content('<a b="1" b="2"/>') AS repeated_attribute,
+       xml_is_well_formed_content('<a><![CDATA[<b>]]></a>') AS cdata,
+       xml_is_well_formed_content('<a>é ✓</a>') AS non_ascii,
+       xml_is_well_formed_content('</a>') AS end_tag_only;
+----
+undeclared_prefix	repeated_attribute	cdata	non_ascii	end_tag_only
+t	f	t	t	f
+
+
+query
+SELECT xml_is_well_formed(NULL) AS any_null,
+       xml_is_well_formed_document(NULL) AS document_null,
+       xml_is_well_formed_content(NULL) AS content_null;
+----
+any_null	document_null	content_null
+NULL	NULL	NULL
+
+
+query
+SELECT id, xml_is_well_formed_content(x) AS content, xml_is_well_formed_document(x) AS document
+FROM (VALUES (1, '<a/>'), (2, 'a'), (3, '<a>'), (4, NULL), (5, '<a/><b/>')) AS t(id, x)
+ORDER BY id;
+----
+id	content	document
+1	t	t
+2	t	f
+3	f	f
+4	NULL	NULL
+5	t	f
+
+
+query
+SELECT count(*) FILTER (WHERE xml_is_well_formed_content(x)) AS content,
+       count(*) FILTER (WHERE xml_is_well_formed_document(x)) AS document
+FROM (
+  SELECT CASE i % 3 WHEN 0 THEN '<a/>' WHEN 1 THEN '<a>' ELSE 'text' END AS x
+  FROM generate_series(1, 300000) AS i
+) AS t;
+----
+content	document
+200000	100000

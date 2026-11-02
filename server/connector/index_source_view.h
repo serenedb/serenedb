@@ -75,10 +75,6 @@ class ViewIndexSourceBase : public irs::IndexSource {
     absl::FunctionRef<duckdb::idx_t(std::string_view)> col_by_name,
     absl::FunctionRef<duckdb::LogicalType(duckdb::idx_t)> add_source_column);
 
-  std::span<const int64_t> SortRows(const duckdb::Vector& pk,
-                                    duckdb::idx_t count);
-  void SortFilesRows(const duckdb::Vector& pk, duckdb::idx_t count);
-
   void AliasOutput(duckdb::DataChunk& output);
   void RunCastPass(duckdb::DataChunk& output, duckdb::idx_t row_count);
   void GatherNonLookupColumns(duckdb::DataChunk& output, duckdb::idx_t count);
@@ -92,9 +88,6 @@ class ViewIndexSourceBase : public irs::IndexSource {
 
   duckdb::DataChunk _tf_target;
 
-  std::vector<duckdb::idx_t> _sort_perm;
-  std::vector<int64_t> _sorted_rows;
-  std::vector<int64_t> _sorted_files;
   // Doc-id-keyed (non-lookup) output slots + a reusable selection, computed
   // once at init: GatherNonLookupColumns reorders exactly these slots each
   // batch, so neither is rebuilt per batch.

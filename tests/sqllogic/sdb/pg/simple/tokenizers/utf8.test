@@ -345,6 +345,13 @@ t
 
 
 query
+SELECT stem_words(['книжками', 'читала', 'учителями', 'зеленого'], 'uk_UA.UTF-8') AS t;
+----
+t
+{книжк,чит,учител,зелен}
+
+
+query
 SELECT split_text_icu('日本語のテキストを分割する', 'ja_JP.UTF-8') AS t;
 ----
 t

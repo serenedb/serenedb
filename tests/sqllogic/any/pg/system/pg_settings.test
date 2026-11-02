@@ -60,3 +60,17 @@ WHERE name = 'default_transaction_isolation';
 ----
 setting
 read committed
+
+
+query
+SELECT name, setting, context FROM pg_settings WHERE name = 'max_index_keys';
+----
+name	setting	context
+max_index_keys	32	internal
+
+
+query
+SHOW max_index_keys;
+----
+max_index_keys
+32

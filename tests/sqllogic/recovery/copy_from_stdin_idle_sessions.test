@@ -1,0 +1,77 @@
+control substitution on
+
+statement ok
+SET GLOBAL threads = 2;
+
+
+statement ok
+CREATE TABLE idle_copy (a INT);
+
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 - "$port" '$__DATABASE__' <<'PYEOF'
+import socket, struct, sys
+port, db = int(sys.argv[1]), sys.argv[2]
+def frame(t, body=b''):
+    return t + struct.pack('!i', len(body) + 4) + body
+def z(*parts):
+    return b''.join(p.encode() + b'\0' for p in parts)
+def read(s, n):
+    b = b''
+    while len(b) < n:
+        c = s.recv(n - len(b))
+        if not c:
+            raise EOFError
+        b += c
+    return b
+def message(s):
+    t = read(s, 1)
+    return t, read(s, struct.unpack('!i', read(s, 4))[0] - 4)
+def until(s, stop):
+    rows = []
+    while True:
+        t, body = message(s)
+        if t == b'D':
+            rows.append(body[6:].decode())
+        if t in stop:
+            return t, rows
+def connect():
+    s = socket.create_connection(('127.0.0.1', port))
+    params = z('user', 'postgres', 'database', db) + b'\0'
+    s.sendall(struct.pack('!ii', len(params) + 8, 196608) + params)
+    return s
+main = connect()
+until(main, b'Z')
+main.sendall(frame(b'Q', z("SELECT current_setting('threads')")))
+threads = int(until(main, b'Z')[1][0])
+for fmt, row in (('csv', b'1\n'), ('json', b'{"a": 1}\n')):
+    copies = []
+    for _ in range(threads):
+        c = connect()
+        until(c, b'Z')
+        c.sendall(frame(b'Q', z('COPY idle_copy FROM STDIN (FORMAT %s)' % fmt)))
+        until(c, b'G')
+        copies.append(c)
+    probe = connect()
+    probe.settimeout(10)
+    try:
+        until(probe, b'Z')
+        probe.sendall(frame(b'Q', z('SELECT 42')))
+        print(fmt, 'probe answered', until(probe, b'Z')[1])
+    except socket.timeout:
+        print(fmt, 'probe got no answer in 10 s')
+    for c in copies:
+        c.sendall(frame(b'd', row) + frame(b'c'))
+    for c in copies:
+        until(c, b'Z')
+main.sendall(frame(b'Q', z('SELECT count(*) = %d FROM idle_copy' % (2 * threads))))
+print('rows loaded', until(main, b'Z')[1])
+PYEOF
+----
+csv probe answered ['42']
+json probe answered ['42']
+rows loaded ['t']
+
+
+statement ok
+RESET GLOBAL threads;

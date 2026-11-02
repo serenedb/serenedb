@@ -1,0 +1,167 @@
+control substitution on
+
+hash-threshold 100
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS ljpg_${__DATABASE__} (TYPE postgres);
+
+statement ok
+CREATE SCHEMA ljpg_${__DATABASE__}.ljpg;
+
+statement ok
+CREATE TABLE ljpg_${__DATABASE__}.ljpg.keyed (id BIGINT PRIMARY KEY, title TEXT, body TEXT, n INTEGER);
+
+statement ok
+INSERT INTO ljpg_${__DATABASE__}.ljpg.keyed
+SELECT i, 'title-' || i || '-long-enough-to-not-inline',
+       CASE WHEN i % 3 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i, i * 10
+FROM generate_series(1, 3000) t(i);
+
+statement ok
+CREATE TABLE ljpg_${__DATABASE__}.ljpg.unkeyed (id BIGINT, title TEXT, body TEXT, n INTEGER);
+
+statement ok
+INSERT INTO ljpg_${__DATABASE__}.ljpg.unkeyed SELECT * FROM ljpg_${__DATABASE__}.ljpg.keyed;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ljpg_words_${__DATABASE__} AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE VIEW ljpg_keyed_v AS SELECT id, title, body, n FROM ljpg_${__DATABASE__}.ljpg.keyed;
+
+statement ok
+CREATE VIEW ljpg_unkeyed_v AS SELECT id, title, body, n FROM ljpg_${__DATABASE__}.ljpg.unkeyed;
+
+statement ok
+CREATE INDEX ljpg_keyed_idx ON ljpg_keyed_v USING inverted (body ljpg_words_${__DATABASE__}, n) INCLUDE (n);
+
+statement ok
+CREATE INDEX ljpg_unkeyed_idx ON ljpg_unkeyed_v USING inverted (body ljpg_words_${__DATABASE__}, n) INCLUDE (n);
+
+query
+EXPLAIN SELECT title, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljpg_keyed_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ───────────────────────────────────────────╮
+│ Key: ctid                                               │
+│ ~5 rows                                                 │
+╰────────────────────────────┬────────────────────────────╯
+                             ├──────────────────────────────────────────╮
+╭─ LOOKUP_JOIN ──────────────┴────────────────────────────╮  ╭─ INDEX_SOURCE ─────╮
+│ Key: iresearch_pk                                       │  │ Projections: title │
+│ ~5 rows                                                 │  │ ~5 rows            │
+╰────────────────────────────┬────────────────────────────╯  ╰────────────────────╯
+                             ├───────────────────────────────────────────╮
+╭─ TOP_N ────────────────────┴────────────────────────────╮  ╭─ IRESEARCH_SCAN ──────╮
+│ Top: 5                                                  │  │ Index: ljpg_keyed_idx │
+│ Order By: #0 ASC                                        │  │ Projections: n, pk    │
+│ ~5 rows                                                 │  │ ~5 rows               │
+╰────────────────────────────┬────────────────────────────╯  ╰───────────────────────╯
+╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
+│ Index: ljpg_keyed_idx                                   │
+│ Index Filter:                                           │
+│ ╭─ Term ──────────────╮                                 │
+│ │ Field: body(string) │                                 │
+│ │ Value: fox          │                                 │
+│ ╰─────────────────────╯                                 │
+│ Column Filter:                                          │
+│ optional: Dynamic Filter (sdb_inverted_index_score < ?) │
+│ Score: bm25(k1=1.2, b=0.75)                             │
+│ Projections: sdb_inverted_index_score, iresearch_pk     │
+│ ~600 rows                                               │
+╰─────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT title, n FROM ljpg_unkeyed_idx LIMIT 2500 OFFSET 7;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ─────────────╮
+│ Key: ctid                 │
+│ ~2,500 rows               │
+╰─────────────┬─────────────╯
+              ├───────────────────────────╮
+╭─ LOOKUP_JOIN ─────────────╮  ╭─ INDEX_SOURCE ─────╮
+│ Key: iresearch_pk         │  │ Projections: title │
+│ ~2,500 rows               │  │ ~2,500 rows        │
+╰─────────────┬─────────────╯  ╰────────────────────╯
+              ├─────────────────────────────╮
+╭─ STREAMING_LIMIT ─────────╮  ╭─ IRESEARCH_SCAN ────────╮
+│ Limit: 2500               │  │ Index: ljpg_unkeyed_idx │
+│ Offset: 7                 │  │ Projections: n, pk      │
+│ ~0 rows                   │  │ ~2,500 rows             │
+╰─────────────┬─────────────╯  ╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: ljpg_unkeyed_idx   │
+│ Projections: iresearch_pk │
+│ ~3,000 rows               │
+╰───────────────────────────╯
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljpg_keyed_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM ljpg_keyed_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM ljpg_unkeyed_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(ljpg_unkeyed_idx.tableoid) ASC LIMIT 5);
+----
+count	count
+5	5
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM ljpg_unkeyed_idx LIMIT 2500 OFFSET 7);
+----
+count	count
+2500	2500
+
+query
+SELECT title, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-3000-long-enough-to-not-inline	30000
+title-2997-long-enough-to-not-inline	29970
+title-2994-long-enough-to-not-inline	29940
+
+statement ok
+DELETE FROM ljpg_${__DATABASE__}.ljpg.keyed WHERE id IN (2997, 3000);
+
+query
+SELECT title, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-2994-long-enough-to-not-inline	29940
+
+statement ok
+SET disabled_optimizers = 'late_materialization';
+
+query
+SELECT title, n FROM ljpg_keyed_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-2994-long-enough-to-not-inline	29940
+title-2991-long-enough-to-not-inline	29910
+title-2988-long-enough-to-not-inline	29880
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+DROP SCHEMA ljpg_${__DATABASE__}.ljpg CASCADE;
+
+statement ok
+DETACH ljpg_${__DATABASE__};

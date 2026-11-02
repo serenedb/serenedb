@@ -91,6 +91,15 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
     assert all(s is sockets[0] for s in sockets)
 
 
+@pytest.mark.skipif(not TOKEN, reason="the server has no bearer token")
+def test_the_bearer_token_is_masked_in_settings():
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        setting = conn.execute(
+            "SELECT setting FROM sdb_settings WHERE name = 'auth_bearer_token'"
+        ).fetchone()[0]
+    assert setting == "***"
+
+
 def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
     wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
     answers = []

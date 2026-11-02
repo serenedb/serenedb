@@ -8,12 +8,6 @@ control substitution on
 # column became unreadable. The fix strips the storage-only LowCardinality wrapper
 # before parsing the type, restoring whole-table bind.
 #
-# NOTE: reading the VALUES of a LowCardinality(Nullable(<numeric>)) column is a
-# separate clickhouse-cpp deserialization limitation (the vendored client cannot
-# materialize that column at all), so this test reads the table's sibling column.
-# LowCardinality(String) -- the common, non-"suspicious" case -- reads fine and is
-# exercised by types_chscan (chtest.types_all.c_lowcard).
-#
 # Fixture chtest.lc_nullable: id BIGINT + three LowCardinality(Nullable(<numeric>)) cols.
 
 statement ok
@@ -27,6 +21,13 @@ SELECT id FROM chlc.chtest.lc_nullable ORDER BY id;
 id
 1
 2
+
+query
+SELECT id, n32, n64, f64 FROM chlc.chtest.lc_nullable ORDER BY id;
+----
+id	n32	n64	f64
+1	42	-7	2.5
+2	NULL	NULL	NULL
 
 statement ok
 DETACH chlc;

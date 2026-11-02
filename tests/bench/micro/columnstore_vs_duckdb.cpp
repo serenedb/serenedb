@@ -148,8 +148,8 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
     }
     w.Commit(seg->rows);
   }
-  seg->reader =
-    std::make_unique<irs::ColReader>(seg->dir, std::string{kSeg}, CsDb());
+  seg->reader = std::make_unique<irs::ColReader>(
+    seg->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

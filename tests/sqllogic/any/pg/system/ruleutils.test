@@ -115,10 +115,76 @@ on_table	zero	viewdef_of_table	viewdef_zero	constraint_zero	rule_zero	trigger_ze
 t	t	t	t	t	t	t	t	t
 
 
+query
+SELECT pg_get_indexdef('ru.child_pk'::regclass, -1, true) AS negative_column,
+       pg_get_constraintdef('ru.child_pk'::regclass) IS NULL AS index_oid;
+----
+negative_column	index_oid
+(empty)	t
+
+
+statement ok
+CREATE TABLE ru.after_keys (x integer);
+
+
+query
+SELECT count(*) AS defs
+FROM generate_series('ru.parent'::regclass::oid::bigint, 'ru.after_keys'::regclass::oid::bigint) AS o
+WHERE pg_get_constraintdef(o::oid) IS NOT NULL;
+----
+defs
+12
+
+
+statement ok
+CREATE VIEW ru.star_v (x, y) AS SELECT * FROM ru.parent;
+
+
+statement ok
+CREATE VIEW ru.part_v (x) AS SELECT * FROM ru.parent;
+
+
+query
+SELECT string_agg(attname, ',' ORDER BY attnum) AS columns
+FROM pg_attribute WHERE attrelid = 'ru.part_v'::regclass AND attnum > 0;
+----
+columns
+x,code
+
+
+skipif serenedb
+query
+SELECT btrim(regexp_replace(pg_get_viewdef('ru.star_v'::regclass), '\s+', ' ', 'g')) AS star,
+       btrim(regexp_replace(pg_get_viewdef('ru.part_v'::regclass), '\s+', ' ', 'g')) AS part;
+----
+star	part
+SELECT id AS x, code AS y FROM ru.parent;	SELECT id AS x, code FROM ru.parent;
+
+
+onlyif serenedb
+query
+SELECT btrim(regexp_replace(pg_get_viewdef('ru.star_v'::regclass), '\s+', ' ', 'g')) AS star,
+       btrim(regexp_replace(pg_get_viewdef('ru.part_v'::regclass), '\s+', ' ', 'g')) AS part;
+----
+star	part
+SELECT * FROM (SELECT * FROM ru.parent) AS star_v(x, y);	SELECT * FROM (SELECT * FROM ru.parent) AS part_v(x);
+
+
 query error
 SELECT pg_get_viewdef('ru.no_such_view');
 ----
 db error: ERROR: relation "ru.no_such_view" does not exist
+
+
+query
+SELECT pg_get_viewdef('pg_catalog.pg_tables'::regclass) LIKE '%pg_class%' AS pg_tables,
+       pg_get_viewdef('information_schema.tables'::regclass) LIKE '%pg_class%' AS info_tables,
+       pg_get_viewdef('pg_tables') LIKE '%relkind%' AS by_name,
+       pg_get_ruledef((SELECT oid FROM pg_rewrite WHERE ev_class = 'pg_catalog.pg_tables'::regclass))
+         LIKE 'CREATE RULE "\_RETURN" AS%pg_tables%' AS ruledef;
+----
+pg_tables	info_tables	by_name	ruledef
+t	t	t	t
 
 
 statement ok
@@ -184,10 +250,11 @@ CREATE TEMP VIEW ru_temp_view AS SELECT id FROM ru_temp;
 query
 SELECT pg_get_viewdef('ru_temp_view'::regclass) IS NOT NULL AS view_def,
        pg_get_indexdef('ru_temp_v'::regclass) IS NOT NULL AS index_def,
-       pg_get_indexdef('ru_temp_v'::regclass, 1, false) AS index_column;
+       pg_get_indexdef('ru_temp_v'::regclass, 1, false) AS index_column,
+       pg_get_indexdef('ru_temp_v'::regclass, 0, true) LIKE 'CREATE INDEX ru_temp_v ON ru_temp USING % (v)' AS pretty_def;
 ----
-view_def	index_def	index_column
-t	t	v
+view_def	index_def	index_column	pretty_def
+t	t	v	t
 
 
 statement ok
@@ -200,3 +267,34 @@ DROP TABLE ru_temp;
 
 statement ok
 DROP SCHEMA ru CASCADE;
+
+
+statement ok
+CREATE TABLE ru_qualified (a int CHECK (ru_qualified.a > 0));
+
+
+statement ok
+CREATE TABLE ru_self (id int PRIMARY KEY, parent int REFERENCES ru_self (id));
+
+
+query
+SELECT pg_get_constraintdef(oid) AS def, pg_get_expr(conbin, conrelid) AS bin
+FROM pg_constraint WHERE conrelid = 'ru_qualified'::regclass AND contype = 'c';
+----
+def	bin
+CHECK ((a > 0))	(a > 0)
+
+
+query
+SELECT confrelid::regclass AS referenced FROM pg_constraint WHERE conrelid = 'ru_self'::regclass AND contype = 'f';
+----
+referenced
+ru_self
+
+
+statement ok
+DROP TABLE ru_self;
+
+
+statement ok
+DROP TABLE ru_qualified;

@@ -41,6 +41,24 @@ n
 1
 
 
+query
+SELECT w.fdwname
+FROM pg_foreign_server s JOIN pg_foreign_data_wrapper w ON w.oid = s.srvfdw
+WHERE s.srvname = 'srv_${__DATABASE__}';
+----
+fdwname
+postgres_fdw
+
+
+query
+SELECT foreign_data_wrapper_name
+FROM information_schema.foreign_servers
+WHERE foreign_server_name = 'srv_${__DATABASE__}';
+----
+foreign_data_wrapper_name
+postgres_fdw
+
+
 # Seed the vedernikoff table on the remote postgres THROUGH the named server
 # (postgres_scanner supports writes), then read it back through the same server.
 statement ok

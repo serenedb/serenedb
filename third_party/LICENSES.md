@@ -126,4 +126,4 @@ to display them.
 Libraries used only by the test suite, not shipped in the distribution.
 
 * [sqllogictest-rs](https://github.com/risinglightdb/sqllogictest-rs)
-* [sqlite sqllogictest](https://github.com/gregrahn/sqllogictest/blob/master/COPYRIGHT.md)
+* [sqlite sqllogictest](https://github.com/serenedb/sqllogictest), its `COPYRIGHT.md`

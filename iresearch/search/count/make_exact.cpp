@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/make.hpp"
 #include "iresearch/search/detail/exact_scan.hpp"
 
@@ -53,7 +54,7 @@ class ExactCount : public Root {
 
 }  // namespace
 
-Root::ptr Make(const ExactVectorQuery& query, const Context& ctx) {
+Root::ptr Family::Make(const ExactVectorQuery& query, const Context& ctx) {
   return memory::make_managed<ExactCount>(query, ctx.table);
 }
 

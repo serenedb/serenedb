@@ -13,7 +13,7 @@ Use it for exact-match or keyword columns — tags, codes, names, enum-like valu
 
 The template name is unrelated to the `NORM` [feature flag](../../../statements/create_text_search_dictionary/index.md#feature-flags), which stores per-document length factors. A `norm` dictionary accepts all four flags — `FREQUENCY`, `POSITION`, `NORM` and `OFFSET` — as long as their dependencies hold: `OFFSET` requires `POSITION`, and `POSITION` and `NORM` require `FREQUENCY`.
 
-**As a function:** `normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
+**As a function:** `normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc', keep_marks := [])` — the value first, then the options in the order below. See [tokenizer functions](./index.md) for how a value, a list and a chain of calls behave.
 
 <SqlLogicTest id="sql/functions/search/tokenizers/normalize_tokens/function_form" />
 
@@ -25,6 +25,7 @@ The template name is unrelated to the `NORM` [feature flag](../../../statements/
 | `CASE` | string | `'none'` | Case conversion: `'none'`, `'lower'`, `'upper'`, `'fold'` |
 | `ACCENT` | boolean | `true` | Preserve accent marks (`false` folds them away) |
 | `FORM` | string | `'nfc'` | Unicode normalization form: `'nfc'`, `'nfd'`, `'nfkc'`, `'nfkd'`, `'nfkc_cf'` |
+| `KEEP_MARKS` | list of strings | none | Nonspacing marks that `ACCENT = false` keeps, each given as the mark itself or as `'U+XXXX'`; see [keeping marks](#keeping-marks) |
 
 `LOCALE` is optional and affects nothing but case conversion — the normalization form and accent folding are locale-independent. A value that is not a valid locale is rejected with `Invalid locale "<value>" for option "locale"`, see [locales](./split_text_icu.md#locales). `CASE` and `FORM` accept their values case-insensitively, so `'Lower'` and `'NFKC'` also work.
 
@@ -46,6 +47,14 @@ Normalization to `FORM` always applies; `CASE` conversion and, when `ACCENT = fa
 | `café 2²` | `FORM = 'nfkc'`, `CASE = 'lower'` | `café 22` |
 
 Because two values collide only when their normalized forms are identical, a `normalize_tokens` dictionary with `CASE = 'lower'` and `ACCENT = false` makes `CAFÉ`, `Café` and `cafe` all match.
+
+### Keeping marks
+
+Accent folding removes every nonspacing mark, including marks that some languages treat as part of a letter rather than as an accent. The Cyrillic letter `й` is `и` followed by U+0306 COMBINING BREVE, so `ACCENT = false` turns `й` into `и`, and a stemmer placed after `normalize_tokens` then sees different words. `KEEP_MARKS` lists the marks that accent folding leaves in place, so `KEEP_MARKS = ['U+0306']` keeps `й` while `Ё` still becomes `Е` and `é` still becomes `e`:
+
+<SqlLogicTest id="sql/functions/search/tokenizers/normalize_tokens/keep_marks" />
+
+A kept mark is kept wherever it appears, not only on the letters that need it: with U+0306 kept, Romanian `ă` keeps its breve too. Each entry is a single nonspacing mark (Unicode category Mn), written either as the character itself or as `'U+'` followed by its hexadecimal code point; anything else, such as a letter or two marks in one entry, is rejected with `invalid value in "keep_marks" parameter`. `KEEP_MARKS` only refines accent folding, so it requires `ACCENT = false` and is rejected otherwise.
 
 ### Compatibility normalization
 

@@ -34,7 +34,9 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "pg/pg_types.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/catalog/oids.h"
+#include "pg/connection_context.h"
 
 namespace sdb::auth {
 namespace {
@@ -136,6 +138,9 @@ std::shared_ptr<const RoleGraph> BuildRoleGraph(
       node.options = role.Options();
       node.is_superuser = role.IsSuperuser();
     });
+  for (const auto& [oid, node] : graph->nodes) {
+    graph->by_name.emplace(node.name, oid);
+  }
   return graph;
 }
 
@@ -254,6 +259,12 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
     cache.closures.try_emplace(role, closure);
   }
   return closure;
+}
+
+std::shared_ptr<const RoleClosure> SessionClosure(
+  duckdb::ClientContext& context) {
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  return connection ? ClosureFor(&context, connection->GetRoleId()) : nullptr;
 }
 
 bool RoleClosure::Can(duckdb::CatalogType type, const duckdb::Permissions& perm,

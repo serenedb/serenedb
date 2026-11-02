@@ -107,7 +107,22 @@ class StructColumnReader final : public ColumnReader {
     }
   }
 
-  IRS_COLUMN_READER_GATHER_SCATTER
+  void GatherScatter(ScanState& s, uint64_t anchor,
+                     const duckdb::SelectionVector& sel, duckdb::idx_t hits,
+                     duckdb::Vector& out, duckdb::idx_t at) const final {
+    if (at == 0) {
+      NewOutputVector(s);
+    }
+    if (_validity) {
+      _validity->ColumnReader::GatherScatter(s.child_states[0], anchor, sel,
+                                             hits, out, at);
+    }
+    auto& entries = duckdb::StructVector::GetEntries(out);
+    for (size_t fi = 0; fi < _children.size(); ++fi) {
+      _children[fi]->GatherScatter(s.child_states[fi + 1], anchor, sel, hits,
+                                   entries[fi], at);
+    }
+  }
 
   void GatherDense(ScanState& s, uint64_t anchor,
                    const duckdb::SelectionVector& sel, duckdb::idx_t hits,
@@ -121,10 +136,6 @@ class StructColumnReader final : public ColumnReader {
         Skip(s, anchor - cur);
       }
       Scan(s, out, span);
-      return;
-    }
-    if (hits * 32 < span) {
-      column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
       return;
     }
     if (_validity) {

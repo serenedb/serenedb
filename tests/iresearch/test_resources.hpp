@@ -34,4 +34,6 @@ inline duckdb::SharedObjectCache& Cache() {
   return Database().instance->GetSharedObjectCache();
 }
 
+duckdb::ClientContext& EngineContext();
+
 }  // namespace tests

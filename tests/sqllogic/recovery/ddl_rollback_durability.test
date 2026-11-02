@@ -596,7 +596,7 @@ WHERE pg_get_userbyid(defaclrole) IN ('rbd_owner', 'rbd_grantee')
 ORDER BY 1;
 ----
 role	objtype	acl
-rbd_owner	r	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
+rbd_owner	r	rbd_grantee=r/rbd_owner
 
 
 # ... and the committed ones all landed.

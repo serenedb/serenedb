@@ -24,7 +24,19 @@
 #include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
+#include "engine_context.h"
 #include "query/config.h"
+
+namespace sdb::test {
+namespace {
+
+constinit duckdb::Connection* gEngineConnection = nullptr;
+
+}  // namespace
+
+duckdb::ClientContext& EngineContext() { return *gEngineConnection->context; }
+
+}  // namespace sdb::test
 
 int main(int argc, char** argv) {
   irs::CheckCpuFeatures(argv[0]);
@@ -32,7 +44,11 @@ int main(int argc, char** argv) {
   irs::InitOptimizeRules();
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  sdb::test::gEngineConnection = connection.get();
   const int rc = RUN_ALL_TESTS();
+  sdb::test::gEngineConnection = nullptr;
+  connection.reset();
   irs::DuckDBEngine::Instance().CloseDatabases();
   irs::DuckDBEngine::Instance().Shutdown();
   return rc;

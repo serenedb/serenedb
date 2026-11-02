@@ -1,0 +1,184 @@
+control substitution on
+
+query
+SELECT '{[1.25,2.5), [3,4]}'::nummultirange AS a, nummultirange(numrange(1, 2), numrange(1.5, 3)) AS b,
+       '{[1.5,2]}'::nummultirange @> 1.75 AS c, range_agg(n) AS d
+FROM (VALUES (numrange(1.25, 2)), (numrange(2, 2.5))) t(n);
+----
+a	b	c	d
+{[1.250,2.500),[3.000,4.000]}	{[1.000,3.000)}	t	{[1.250,2.500)}
+
+
+query
+SELECT '{[1,3), [5,7)}'::int4multirange @> '{[2,3)}'::int4multirange AS a, '{[1,3), [5,7)}'::int4multirange @> '6' AS b,
+       '{[1,3), [5,7)}'::int4multirange @> '[1,2)'::int4range AS c;
+----
+a	b	c
+t	t	t
+
+
+statement error
+SELECT '{[1,3), [5,7)}'::int4multirange @> '{[2,3)}';
+----
+db error: ERROR: Could not convert string '{[2,3)}' to INT32
+
+
+query
+SELECT TRY_CAST('{[1,3)' AS int4multirange) IS NULL AS a, TRY_CAST('{[3,1)}' AS int4multirange) IS NULL AS b,
+       TRY_CAST('{[1,x)}' AS int4multirange) IS NULL AS c, TRY_CAST('{[5,7), [1,3)}' AS int4multirange) AS d;
+----
+a	b	c	d
+t	t	t	{[1,3),[5,7)}
+
+
+query
+SELECT unnest('{[1,3), [5,7)}'::int4multirange) AS r ORDER BY r;
+----
+r
+[1,3)
+[5,7)
+
+
+statement ok
+CREATE TABLE multirange_keys (m int4multirange);
+
+
+statement error
+CREATE INDEX multirange_keys_m ON multirange_keys (m);
+----
+db error: ERROR: Invalid Type [int4multirange]: Invalid type for index key.
+
+
+statement error
+CREATE TABLE multirange_unique (m datemultirange UNIQUE);
+----
+db error: ERROR: Invalid Type [datemultirange]: Invalid type for index key.
+
+
+statement ok
+CREATE TABLE multirange_copy (id INT, m int4multirange, d datemultirange, t tsmultirange, n nummultirange);
+
+
+statement count 3
+INSERT INTO multirange_copy VALUES
+  (1, '{[1,5), [7,9)}', '{[2020-01-01,2020-02-01)}', '{["2020-01-01 10:00","2020-01-02 10:00")}', '{[1.5,2.5]}'),
+  (2, '{}', NULL, '{(,)}', '{(,3], [4,)}'),
+  (3, '{(,0)}', '{}', '{}', '{}');
+
+
+statement count 3
+COPY multirange_copy TO '${__TEST_DIR__}/multirange_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement count 3
+COPY multirange_copy TO '${__TEST_DIR__}/multirange_copy.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE multirange_csv (id INT, m int4multirange, d datemultirange, t tsmultirange, n nummultirange);
+
+
+statement count 3
+COPY multirange_csv FROM '${__TEST_DIR__}/multirange_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement ok
+CREATE TABLE multirange_parquet (id INT, m int4multirange, d datemultirange, t tsmultirange, n nummultirange);
+
+
+statement count 3
+COPY multirange_parquet FROM '${__TEST_DIR__}/multirange_copy.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT c.id, c.m, c.d, c.t, c.n, c.m = p.m AND c.t = p.t AND c.n = p.n AS same
+FROM multirange_csv c JOIN multirange_parquet p ON c.id = p.id ORDER BY c.id;
+----
+id	m	d	t	n	same
+1	{[1,5),[7,9)}	{[2020-01-01,2020-02-01)}	{["2020-01-01 10:00:00","2020-01-02 10:00:00")}	{[1.500,2.500]}	t
+2	{}	NULL	{(,)}	{(,3.000],[4.000,)}	t
+3	{(,0)}	{}	{}	{}	t
+
+
+statement count 3
+INSERT INTO multirange_parquet SELECT * FROM read_parquet('${__TEST_DIR__}/multirange_copy.parquet');
+
+
+query
+SELECT id, m, d, t, n, count(*) AS copies FROM multirange_parquet GROUP BY ALL ORDER BY id;
+----
+id	m	d	t	n	copies
+1	{[1,5),[7,9)}	{[2020-01-01,2020-02-01)}	{["2020-01-01 10:00:00","2020-01-02 10:00:00")}	{[1.500,2.500]}	2
+2	{}	NULL	{(,)}	{(,3.000],[4.000,)}	2
+3	{(,0)}	{}	{}	{}	2
+
+
+query
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 7, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 5, 'upper_inclusive': true}] AS int4multirange) AS a;
+----
+a
+{[1,7)}
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 7000000000, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 8000000000, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 5000000000, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 7000000000, 'upper_inclusive': false}] AS int8multirange) AS a,
+       CAST([{'nonempty': true, 'lower_finite': false, 'lower': TIMESTAMPTZ '2020-01-01 10:00:00+00', 'lower_exclusive': false,
+              'upper_infinite': false, 'upper': TIMESTAMPTZ '2020-01-02 00:00:00+00', 'upper_inclusive': true}] AS tstzmultirange) AS b;
+----
+a	b
+{[5000000000,8000000000)}	{(,"2020-01-02 00:00:00+00"]}
+
+
+statement ok
+RESET TimeZone
+
+
+statement error
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 3, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 1, 'upper_inclusive': false}] AS int4multirange);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+query
+SELECT TRY_CAST([{'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': false, 'upper_infinite': false,
+                  'upper': 3, 'upper_inclusive': false},
+                 {'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+                  'upper': 1, 'upper_inclusive': false}] AS int4multirange) IS NULL AS a;
+----
+a
+t
+
+
+query
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 5::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 6::BIGINT, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 1::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 3::BIGINT, 'upper_inclusive': false},
+             {'nonempty': true, 'lower_finite': true, 'lower': 2::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 4::BIGINT, 'upper_inclusive': false}] AS int4multirange) AS a,
+       CAST(['[5,6)'::int4range, '[1,2)'::int4range]::int4range[2] AS int4multirange) AS b,
+       '[{"nonempty": true, "lower_finite": true, "lower": 7, "lower_exclusive": false, "upper_infinite": false, "upper": 8, "upper_inclusive": false},
+         {"nonempty": true, "lower_finite": true, "lower": 1, "lower_exclusive": false, "upper_infinite": false, "upper": 2, "upper_inclusive": false}]'::json::int4multirange AS c;
+----
+a	b	c
+{[1,4),[5,6)}	{[1,2),[5,6)}	{[1,2),[7,8)}
+
+
+statement error
+SELECT CAST([{'nonempty': true, 'lower_finite': true, 'lower': 9::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+              'upper': 5::BIGINT, 'upper_inclusive': false}] AS int4multirange);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound

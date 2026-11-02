@@ -118,6 +118,8 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
   score_t _boost;
 };
 
+extern template class QueryBuilderImpl<WildcardNGramQuery>;
+
 class ByWildcardNGram;
 
 // `grams` holds the n-grams of every `Literal` of `query`, in depth-first

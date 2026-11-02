@@ -85,7 +85,7 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
   static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
                                     .acquire = AnnAcquireAllWorkers,
                                     .release = AnnReleaseWorkers};
-  return _held ? &env : nullptr;
+  return &env;
 }
 
 void SearchEngine::start() {

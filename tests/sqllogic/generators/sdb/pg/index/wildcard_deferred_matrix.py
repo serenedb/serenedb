@@ -128,6 +128,7 @@ def run(idx, table, column, scope, contexts=CONTEXTS, sql_like=True):
 
 
 for name in ("wdm_kw3", "wdm_kw2", "wdm_kw4", "wdm_kw3_pos"):
+    t.part()
     t.section(f"Whole values, {DICTS[name]}.")
     run(f"{name}_idx", "wdm", "msg", whole)
     t.section(f"Whole values, {DICTS[name]}, under OR and NOT (checked inline).")
@@ -143,12 +144,15 @@ for name in ("wdm_kw3", "wdm_kw2", "wdm_kw4", "wdm_kw3_pos"):
                     f"SELECT id FROM wdm WHERE {t1} AND {t2}")
 
 for name in ("wdm_words", "wdm_words_pos"):
+    t.part()
     t.section(f"Words, {DICTS[name]}: a row matches when one of its words does.")
     run(f"{name}_idx", "wdm_w", "msg", any_word, sql_like=False)
 
+t.part()
 t.section("VARCHAR[]: a row matches when one of its elements does.")
 run("wdm_tags_idx", "wdm", "tags", any_element, CONTEXTS[:2], sql_like=False)
 
+t.part()
 t.section("Search table.")
 run("wdm_s_idx", "wdm", "msg", whole, CONTEXTS[:1])
 

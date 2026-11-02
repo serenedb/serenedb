@@ -107,9 +107,6 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   SDB_ASSERT(!_postgres_ctid || _dialect == Dialect::Postgres);
 
   BuildQuery(context, ref, select_names);
-
-  _sort_perm.resize(STANDARD_VECTOR_SIZE);
-  absl::c_iota(_sort_perm, 0);
 }
 
 void ExternalLookupIndexSource::BuildQuery(
@@ -281,17 +278,17 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
   PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
-// The value-addressed analogue of ViewIndexSourceBase::SortRows: request column
-// k is key column k. A ctid is one wire value, so the struct vector itself is
-// the only key column; any other key spreads its children across a column each.
-// The columns reference the pk's buffers, so nothing is copied.
+// Request column k is key column k. A ctid is one wire value, so the struct
+// vector itself is the only key column; any other key spreads its children
+// across a column each. The columns reference the pk's buffers, so nothing is
+// copied.
 void ExternalLookupIndexSource::BorrowKeyColumns(duckdb::Vector& pk,
                                                  duckdb::idx_t count) {
   const std::span<duckdb::Vector> sources =
     _postgres_ctid ? std::span{&pk, 1}
                    : std::span{duckdb::StructVector::GetEntries(pk)};
   // Refilled, not rebuilt: clear() keeps the column vector's capacity, so only
-  // the first batch allocates (the same reason SortRows resizes members).
+  // the first batch allocates.
   _key_chunk.data.clear();
   for (const auto& source : sources) {
     _key_chunk.data.emplace_back(duckdb::Vector::Ref(source));

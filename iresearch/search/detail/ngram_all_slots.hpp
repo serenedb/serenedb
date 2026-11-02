@@ -21,8 +21,8 @@
 #pragma once
 
 #include <span>
+#include <tuple>
 #include <type_traits>
-#include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
@@ -41,16 +41,16 @@ class NGramAllSlots {
   NGramAllSlots(std::span<const PostingMeta> metas, const IndexInput& doc_in,
                 IndexFeatures layout, const IndexInput& pos_in,
                 const IndexInput* pay_in, size_t total_terms)
-    : _leaves(metas.size()),
-      _matcher{metas.size(), total_terms, static_cast<uint32_t>(metas.size())} {
-    _leaves.Open(
-      metas,
-      [&](Leaf& leaf, const PostingMeta& meta) {
-        leaf.Prepare(meta, doc_in, layout, pos_in, pay_in);
-      },
-      [&](uint32_t j, typename Leaves::Slot& slot) {
-        _matcher.Slot(j) = {slot.leaf.ValueRef(), slot.leaf.Positions()};
-      });
+    : _matcher{metas.size(), total_terms, static_cast<uint32_t>(metas.size())},
+      _leaves{metas.size(), [&](uint32_t j) { return metas[j].docs_count; },
+              [&](uint32_t j) {
+                return std::forward_as_tuple(metas[j], doc_in, layout, pos_in,
+                                             pay_in);
+              },
+              [&](uint32_t j, Leaf& leaf) {
+                _matcher.Slot(j) = {leaf.ValueRef(), leaf.Positions()};
+              }} {
+    SDB_ASSERT(metas.size() > 1);
   }
 
   NGramAllSlots(NGramAllSlots&&) = delete;
@@ -89,8 +89,8 @@ class NGramAllSlots {
   using Base = std::conditional_t<Offs, ngram::NGramPosition, ngram::Dummy>;
   using Matcher = ngram::NGramMatcher<Base, Scored || Offs, N>;
 
-  Leaves _leaves;
   Matcher _matcher;
+  Leaves _leaves;
 };
 
 }  // namespace irs::detail

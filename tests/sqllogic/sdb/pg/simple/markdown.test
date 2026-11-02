@@ -3,7 +3,7 @@ hash-threshold 100
 control substitution on
 
 # The markdown extension over the pg wire. The extension's own suite runs at the
-# DuckDB level (tests/duckdb/run.sh --suite markdown); what it cannot see is the
+# DuckDB level (the duckdb suite's markdown part); what it cannot see is the
 # wire mapping of the MARKDOWN type, the readers reaching a real file through
 # serened, the .md replacement scan and COPY TO ... (FORMAT markdown).
 

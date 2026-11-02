@@ -1,0 +1,158 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict AS keyword() WITH (frequency);
+
+statement ok
+CREATE MACRO fallback(x) AS CASE WHEN len(x) = 0 THEN ['none'] ELSE x END;
+
+statement ok
+CREATE TABLE consts (id BIGINT, s VARCHAR, v VARCHAR[]) WITH (storage = 'search');
+
+statement ok
+CREATE INDEX consts_idx ON consts USING inverted (id,
+  (list_reverse(v)) verbatim_dict,
+  (fallback(v)) verbatim_dict,
+  (list_concat(v, ['x', 'y'])) verbatim_dict,
+  (s || '-' || (2 * 3)::VARCHAR) verbatim_dict,
+  (list_transform(v, e -> e || ['p', 'q'][1])) verbatim_dict);
+
+statement ok
+INSERT INTO consts VALUES (1, 'a', ['eng', 'data']), (2, 'b', []);
+
+statement ok
+VACUUM (REFRESH_TABLE) consts;
+
+query
+SELECT id FROM consts WHERE list_reverse(v) @@ ts_regexp('data') ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM consts WHERE list_reverse(v) @@ ts_regexp('data');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: consts              │
+│ Lookup: search             │
+│ Index Filter:              │
+│ ╭─ Term ─────────────────╮ │
+│ │ Field: list_reverse(v) │ │
+│ │ Value: data            │ │
+│ ╰────────────────────────╯ │
+│ Projections: id            │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+query
+SELECT id FROM consts WHERE fallback(v) @@ ts_regexp('none') ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM consts WHERE fallback(v) @@ ts_regexp('none');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: consts          │
+│ Lookup: search         │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: fallback(v) │ │
+│ │ Value: none        │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM consts WHERE CASE WHEN len(v) = 0 THEN ['none'] ELSE v END @@ ts_regexp('eng') ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM consts WHERE CASE WHEN len(v) = 0 THEN ['none'] ELSE v END @@ ts_regexp('eng');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: consts          │
+│ Lookup: search         │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: fallback(v) │ │
+│ │ Value: eng         │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM consts WHERE list_concat(v, ['x', 'y']) @@ ts_regexp('y') ORDER BY id;
+----
+id
+1
+2
+
+query
+EXPLAIN SELECT id FROM consts WHERE list_concat(v, ['x', 'y']) @@ ts_regexp('y');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: consts                            │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field:                               │ │
+│ │ list_concat(v, list_value('x', 'y')) │ │
+│ │ Value: y                             │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT id FROM consts WHERE s || '-' || (2 * 3)::VARCHAR @@ ts_regexp('b-6') ORDER BY id;
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM consts WHERE s || '-' || (2 * 3)::VARCHAR @@ ts_regexp('b-6');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: consts                                        │
+│ Lookup: search                                       │
+│ Index Filter:                                        │
+│ ╭─ Term ───────────────────────────────────────────╮ │
+│ │ Field:                                           │ │
+│ │ ((s || '-') || CAST((2 * 3) AS VARCHAR))(string) │ │
+│ │ Value: b-6                                       │ │
+│ ╰──────────────────────────────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
+
+query
+SELECT id FROM consts WHERE list_transform(v, e -> e || ['p', 'q'][1]) @@ ts_regexp('datap') ORDER BY id;
+----
+id
+1
+
+query
+EXPLAIN SELECT id FROM consts WHERE list_transform(v, e -> e || ['p', 'q'][1]) @@ ts_regexp('datap');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────╮
+│ Index: consts                                                │
+│ Lookup: search                                               │
+│ Index Filter:                                                │
+│ ╭─ Term ───────────────────────────────────────────────────╮ │
+│ │ Field:                                                   │ │
+│ │ list_transform(v, (e -> (e || list_value('p', 'q')[1]))) │ │
+│ │ Value: datap                                             │ │
+│ ╰──────────────────────────────────────────────────────────╯ │
+│ Projections: id                                              │
+│ ~1 row                                                       │
+╰──────────────────────────────────────────────────────────────╯

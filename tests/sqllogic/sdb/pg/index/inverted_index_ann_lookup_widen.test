@@ -202,7 +202,7 @@ statement ok
 RESET sdb_ann_force_exact;
 
 statement ok
-SET sdb_ann_oversample = 0;
+SET sdb_ann_rescore_width = 0;
 
 query
 SELECT id FROM lw_hnsw_idx WHERE extra = 7
@@ -227,4 +227,4 @@ id
 1477
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;

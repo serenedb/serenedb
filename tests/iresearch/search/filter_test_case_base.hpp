@@ -173,7 +173,7 @@ class QueryWrapper : public irs::QueryBuilder {
 
   irs::lead::Node::ptr PlanLead(const irs::detail::ScoredCtx& ctx) const final {
     auto it = _query->PlanLead(ctx);
-    if (!it || !_query->Scores()) {
+    if (!it || !_query->Scores() || !ctx.fetcher) {
       return it;
     }
     return irs::memory::make_managed<ScoredWrapper>(std::move(it), Segment(),

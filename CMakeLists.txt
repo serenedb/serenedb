@@ -291,6 +291,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CMAKE_POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
 
 # required for clang completion in editors - must be set after creating project
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -301,6 +302,7 @@ set(CMAKE_CXX_STANDARD 26 CACHE STRING "" FORCE)
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
@@ -412,6 +414,8 @@ if(SDB_COVERAGE)
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        "SHELL:-Xclang -fmcdc-max-conditions=8"
+        -Wno-pgo-coverage
         "SHELL:-mllvm -enable-single-byte-coverage=true"
         "SHELL:-mllvm -conditional-counter-update"
         -Wno-pass-failed
@@ -462,7 +466,7 @@ endif()
 # there is no need to repeat the base flags in the build-type specific flags!
 foreach(lang C CXX)
     set(CMAKE_${lang}_FLAGS_DEBUG
-        "-O0 ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
+        "-Og ${SDB_FRAME_POINTER_FLAGS} ${SDB_DEBUG_FLAGS}"
         CACHE INTERNAL
         ""
     )
@@ -477,6 +481,7 @@ foreach(lang C CXX)
         ""
     )
 endforeach()
+add_compile_options($<$<CONFIG:Debug>:-Wno-pass-failed>)
 
 ################################################################################
 ## Runtime
@@ -503,7 +508,6 @@ else()
     string(APPEND SDB_DEFAULT_LIBS " -lc -lm")
 endif()
 if(SDB_STATIC)
-    set(CMAKE_POSITION_INDEPENDENT_CODE OFF CACHE BOOL "" FORCE)
     set(SDB_DEFAULT_LIBS "-static ${SDB_DEFAULT_LIBS}")
 endif()
 set(CMAKE_CXX_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})

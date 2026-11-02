@@ -1,0 +1,50 @@
+statement ok
+DROP ROLE IF EXISTS sven_repo_cleave;
+
+
+statement ok
+CREATE ROLE sven_repo_cleave LOGIN PASSWORD 'sven_repo_cleave_pw';
+
+
+control substitution on
+
+statement ok
+SELECT pg_replication_origin_create('sven_repo_cleave_${__DATABASE__}');
+
+
+query
+SELECT roident = pg_replication_origin_oid('sven_repo_cleave_${__DATABASE__}') AS same_ident
+FROM pg_replication_origin WHERE roname = 'sven_repo_cleave_${__DATABASE__}';
+----
+same_ident
+t
+
+
+query
+SELECT roident FROM pg_replication_origin WHERE roname = 'sven_repo_cleave';
+----
+roident
+
+
+query
+SELECT roname FROM pg_replication_origin WHERE roident = 0;
+----
+roname
+
+
+connection sven_conn user=sven_repo_cleave password=sven_repo_cleave_pw
+query
+SELECT count(*) AS visible FROM pg_replication_origin WHERE roname = 'sven_repo_cleave_${__DATABASE__}';
+----
+visible
+1
+
+
+connection default
+statement ok
+SELECT pg_replication_origin_drop('sven_repo_cleave_${__DATABASE__}');
+
+
+connection default
+statement ok
+DROP ROLE sven_repo_cleave;

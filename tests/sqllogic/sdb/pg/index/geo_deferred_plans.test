@@ -338,10 +338,6 @@ EXPLAIN SELECT id, geo FROM gdm_score_idx
 WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}', geo)
 ----
 QUERY PLAN
-╭─ PROJECTION ─────────────╮
-│ Projections: id, geo     │
-│ ~1 row                   │
-╰─────────────┬────────────╯
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: gdm_score_idx     │
 │ Lookup: table            │
@@ -359,8 +355,8 @@ QUERY PLAN
 │ │ Shape: S2Polygon     │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: geo (i),    │
-│              id (l)      │
+│ Projections: id (l),     │
+│              geo (i)     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 

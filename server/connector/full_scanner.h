@@ -63,6 +63,10 @@ class FullScanner {
                      const duckdb::SelectionVector* live = nullptr,
                      duckdb::idx_t live_count = 0);
 
+  const duckdb::SelectionVector* Selection() const noexcept {
+    return _selection;
+  }
+
  private:
   struct Binding {
     const irs::ColumnReader* reader = nullptr;
@@ -77,6 +81,7 @@ class FullScanner {
   irs::ColFilterChain _filters;
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
+  const duckdb::SelectionVector* _selection = nullptr;
   uint64_t _scanned_end = 0;
 };
 

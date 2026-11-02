@@ -1,0 +1,72 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY keep_checkpointed AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false, keep_marks := ['U+0306']) | stem_words('ru_RU.UTF-8');
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY keep_logged AS
+    split_text(case := 'lower') | normalize_tokens('ru_RU.UTF-8', accent := false, keep_marks := ['U+0306', 'U+0308']);
+
+
+query
+SELECT ts_lexize('keep_checkpointed', 'чайный ёж') AS checkpointed,
+       ts_lexize('keep_logged', 'чайный ёж') AS logged;
+----
+checkpointed	logged
+{чайн,еж}	{чайный,ёж}
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT ts_lexize('keep_checkpointed', 'чайный ёж') AS checkpointed,
+       ts_lexize('keep_logged', 'чайный ёж') AS logged;
+----
+checkpointed	logged
+{чайн,еж}	{чайный,ёж}
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT ts_lexize('keep_checkpointed', 'чайный ёж') AS checkpointed,
+       ts_lexize('keep_logged', 'чайный ёж') AS logged;
+----
+checkpointed	logged
+{чайн,еж}	{чайный,ёж}

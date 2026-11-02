@@ -60,10 +60,10 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
+    const auto first =
+      irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
     duckdb::idx_t produced;
     if (l.has_mask) {
-      const auto first =
-        irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
       l.live_sel.Initialize(l.live_sel_data);
       const auto live =
         l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
@@ -75,6 +75,8 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     l.doc_cursor += take;
     if (produced != 0) {
+      WriteRowPositions(g, l.unit.seg, first, scanner.Selection(), produced,
+                        output);
       WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }

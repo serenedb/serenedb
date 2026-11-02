@@ -31,7 +31,7 @@
 
 #include <cerrno>
 #include <cstring>
-#include <iresearch/utils/debugging.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>

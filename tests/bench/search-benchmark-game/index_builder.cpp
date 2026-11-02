@@ -32,6 +32,8 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
 #include <optional>
+#include <thread>
+#include <vector>
 
 namespace bench {
 
@@ -87,8 +89,7 @@ void Batch::Seal() {
 }
 
 void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
-  irs::async_utils::ThreadPool<> thread_pool{_opts.indexer_threads +
-                                             _opts.compaction_threads + 1};
+  std::vector<std::jthread> threads;
 
   struct {
     absl::CondVar cond;
@@ -131,7 +132,8 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     }
   } batch_provider;
 
-  thread_pool.run([&batch_provider, &source, batch_size = _opts.batch_size] {
+  threads.emplace_back([&batch_provider, &source,
+                        batch_size = _opts.batch_size] {
     simdjson::ondemand::parser parser;
     std::string padded;
     Batch batch;
@@ -170,24 +172,25 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
 
   // commiter thread
   if (_opts.refresh_interval_ms) {
-    thread_pool.run([&compaction_cv, &compaction_mutex, &batch_provider, this] {
-      while (!batch_provider.done.load()) {
-        {
-          absl::PrintF("[COMMIT]\n");
-          std::fflush(stdout);
-          _writer->RefreshCommit();
-        }
+    threads.emplace_back(
+      [&compaction_cv, &compaction_mutex, &batch_provider, this] {
+        while (!batch_provider.done.load()) {
+          {
+            absl::PrintF("[COMMIT]\n");
+            std::fflush(stdout);
+            _writer->RefreshCommit();
+          }
 
-        // notify compaction threads
-        if (_opts.compaction_threads) {
-          absl::MutexLock lock{&compaction_mutex};
-          compaction_cv.notify_all();
-        }
+          // notify compaction threads
+          if (_opts.compaction_threads) {
+            absl::MutexLock lock{&compaction_mutex};
+            compaction_cv.notify_all();
+          }
 
-        std::this_thread::sleep_for(
-          std::chrono::milliseconds(_opts.refresh_interval_ms));
-      }
-    });
+          std::this_thread::sleep_for(
+            std::chrono::milliseconds(_opts.refresh_interval_ms));
+        }
+      });
   }
 
   // compaction threads
@@ -195,7 +198,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
   auto policy = irs::index_utils::MakePolicy(compaction_options);
 
   for (size_t i = _opts.compaction_threads; i; --i) {
-    thread_pool.run([&] {
+    threads.emplace_back([&] {
       while (!batch_provider.done.load()) {
         {
           absl::MutexLock lock{&compaction_mutex};
@@ -219,7 +222,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
 
   // indexer threads
   for (size_t i = _opts.indexer_threads; i; --i) {
-    thread_pool.run([&, factory] {
+    threads.emplace_back([&, factory] {
       SDB_ASSERT(factory, "BatchHandlerFactory must not be null");
       auto handler = factory();
       Batch batch;
@@ -234,7 +237,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     });
   }
 
-  thread_pool.stop();
+  threads.clear();
 
   absl::PrintF("[COMMIT]\n");
   std::fflush(stdout);

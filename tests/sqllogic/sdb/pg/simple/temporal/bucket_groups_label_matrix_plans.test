@@ -1,0 +1,157 @@
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+statement ok
+CREATE TABLE lab AS SELECT TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 173) MINUTE AS ts, (TIMESTAMP '2023-11-15 00:00:00' + INTERVAL (i * 173) MINUTE)::TIMESTAMPTZ AS tstz, (DATE '2023-11-15' + (i % 900)::INTEGER)::DATE AS d, i AS v FROM range(0, 6000) t(i);
+
+statement ok
+INSERT INTO lab VALUES (NULL, NULL, NULL, -1);
+
+statement ok
+CREATE TABLE lab_inf AS SELECT * FROM lab;
+
+statement ok
+INSERT INTO lab_inf VALUES (TIMESTAMP 'infinity', TIMESTAMPTZ 'infinity', DATE 'infinity', -2), (TIMESTAMP '-infinity', TIMESTAMPTZ '-infinity', DATE '-infinity', -3);
+
+statement ok
+CREATE TABLE old AS SELECT TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR AS ts, (TIMESTAMP '1890-01-01 00:00:00' + INTERVAL (i * 977) HOUR)::TIMESTAMPTZ AS tstz, (DATE '1890-01-01' + (i * 37)::INTEGER)::DATE AS d, i AS v FROM range(0, 4000) t(i);
+
+query
+EXPLAIN SELECT year(tstz) || '-Q' || quarter(tstz) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────╮
+│ Projections: q, #1                                │
+│ ~3,000 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴─────────────────────────╮
+│ Groups: #0                                        │
+│ Aggregates: count_star()                          │
+│ ~3,000 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ PROJECTION ────────────┴─────────────────────────╮
+│ Projections:                                      │
+│ __internal_icu_date_trunc_bucket('quarter', tstz) │
+│ ~6,001 rows                                       │
+╰─────────────────────────┬─────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴─────────────────────────╮
+│ Table: lab                                        │
+│ Type: Sequential Scan                             │
+│ Projections: tstz                                 │
+│ ~6,001 rows                                       │
+╰───────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts) || '-' || month(ts) || '-' || day(ts) AS d, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections: d, #1                               │
+│ ~3,000 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─┴────────────────────────╮
+│ Groups: #0                                       │
+│ Aggregates: count_star()                         │
+│ ~3,000 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ PROJECTION ────────────┴────────────────────────╮
+│ Projections:                                     │
+│ __internal_date_trunc_bucket(ts, 86400000000, 0) │
+│ ~6,001 rows                                      │
+╰─────────────────────────┬────────────────────────╯
+╭─ SEQ_SCAN ──────────────┴────────────────────────╮
+│ Table: lab                                       │
+│ Type: Sequential Scan                            │
+│ Projections: ts                                  │
+│ ~6,001 rows                                      │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT isoyear(d) || '-W' || week(d) AS w, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────────╮
+│ Projections: w, #1                                                              │
+│ ~3,000 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────┴────────────────────────────────────────╮
+│ Groups: #0                                                                      │
+│ Aggregates: count_star()                                                        │
+│ ~3,000 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────┴────────────────────────────────────────╮
+│ Projections:                                                                    │
+│ __internal_date_trunc_bucket(CAST(d AS TIMESTAMP), 604800000000, -259200000000) │
+│ ~6,001 rows                                                                     │
+╰────────────────────────────────────────┬────────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴────────────────────────────────────────╮
+│ Table: lab                                                                      │
+│ Type: Sequential Scan                                                           │
+│ Projections: d                                                                  │
+│ ~6,001 rows                                                                     │
+╰─────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT monthname(ts) || ' ' || year(ts) AS m, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections: m, #1                           │
+│ ~3,000 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────────────╮
+│ Groups: #0                                   │
+│ Aggregates: count_star()                     │
+│ ~3,000 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ PROJECTION ──────────┴──────────────────────╮
+│ Projections:                                 │
+│ __internal_date_trunc_month_bucket(ts, 1, 0) │
+│ ~6,001 rows                                  │
+╰───────────────────────┬──────────────────────╯
+╭─ SEQ_SCAN ────────────┴──────────────────────╮
+│ Table: lab                                   │
+│ Type: Sequential Scan                        │
+│ Projections: ts                              │
+│ ~6,001 rows                                  │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT year(ts) || quarter(ts) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~3,000 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: q           │
+│ ~6,001 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lab               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~6,001 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT 'Q' || quarter(ts) AS q, count(*) AS c FROM lab GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~3,000 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: q           │
+│ ~6,001 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: lab               │
+│ Type: Sequential Scan    │
+│ Projections: ts          │
+│ ~6,001 rows              │
+╰──────────────────────────╯

@@ -30,7 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iresearch/utils/debugging.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -274,12 +274,28 @@ class Transport : public TransportBase {
         InjectRecv(tmp.data(), have);  // no header: all bytes are protocol
         co_return true;
       }
-      // r.source_addr is proxy source here, can be saved if needed
+      _proxy_client = r.source_addr;
       if (have > r.length) {
         InjectRecv(tmp.data() + r.length, have - r.length);
       }
       co_return true;
     }
+  }
+
+  std::optional<asio_ns::ip::address> ClientAddress() {
+    asio_ns::error_code ec;
+    const auto address = _proxy_client
+                           ? asio_ns::ip::make_address(*_proxy_client, ec)
+                           : _socket.Lowest().remote_endpoint(ec).address();
+    if (ec) {
+      return std::nullopt;
+    }
+    if (address.is_v6()) {
+      if (const auto v6 = address.to_v6(); v6.is_v4_mapped()) {
+        return asio_ns::ip::make_address_v4(asio_ns::ip::v4_mapped, v6);
+      }
+    }
+    return address;
   }
 
   void InjectRecv(const uint8_t* data, size_t len) {
@@ -310,7 +326,7 @@ class Transport : public TransportBase {
       co_await _write_gate.Wait(*_ioexec);
       if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
         SDB_IF_FAILURE("send_writer_throw") {
-          irs::RemoveFailurePointDebugging("send_writer_throw");
+          duckdb::FaultPoints::Disarm("send_writer_throw");
           THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
         }
         auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
@@ -366,6 +382,7 @@ class Transport : public TransportBase {
 
   const duckdb::shared_ptr<CpuResumer> _task;
   bool _handed_off = false;
+  std::optional<std::string> _proxy_client;
 
  private:
   static duckdb::shared_ptr<CpuResumer> MakeResumer() {

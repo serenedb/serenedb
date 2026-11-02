@@ -49,32 +49,16 @@ namespace {
 // Converts the specified IOAdvice to corresponding posix fadvice
 inline int GetPosixFadvice(IOAdvice advice) noexcept {
   switch (advice) {
-    case IOAdvice::NORMAL:
-    case IOAdvice::DirectRead:
-      return IR_FADVICE_NORMAL;
     case IOAdvice::SEQUENTIAL:
       return IR_FADVICE_SEQUENTIAL;
     case IOAdvice::RANDOM:
       return IR_FADVICE_RANDOM;
-    case IOAdvice::READONCE:
-      return IR_FADVICE_DONTNEED;
-    case IOAdvice::ReadonceSequential:
-      return IR_FADVICE_SEQUENTIAL | IR_FADVICE_NOREUSE;
-    case IOAdvice::ReadonceRandom:
-      return IR_FADVICE_RANDOM | IR_FADVICE_NOREUSE;
   }
 
   SDB_ERROR(IRESEARCH, "fadvice '", static_cast<uint32_t>(advice),
-            "' is not valid (RANDOM|SEQUENTIAL), fallback to NORMAL");
+            "' is not valid (RANDOM|SEQUENTIAL), fallback to RANDOM");
 
-  return IR_FADVICE_NORMAL;
-}
-
-inline file_utils::OpenMode GetReadMode(IOAdvice advice) {
-  if (IOAdvice::DirectRead == (advice & IOAdvice::DirectRead)) {
-    return file_utils::OpenMode::Read | file_utils::OpenMode::Direct;
-  }
-  return file_utils::OpenMode::Read;
+  return IR_FADVICE_RANDOM;
 }
 
 }  // namespace
@@ -330,7 +314,7 @@ class FsIndexInput : public BufferedIndexInput {
 
     auto handle = FileHandle::make(rm);
     handle->io_advice = advice;
-    handle->handle = file_utils::Open(name, GetReadMode(handle->io_advice),
+    handle->handle = file_utils::Open(name, file_utils::OpenMode::Read,
                                       GetPosixFadvice(handle->io_advice));
 
     if (nullptr == handle->handle) {
@@ -415,7 +399,7 @@ class FsIndexInput : public BufferedIndexInput {
     file_utils::handle_t handle;  // native file handle
     uint64_t size{};              // file size
     uint64_t pos{};               // current file position
-    IOAdvice io_advice{IOAdvice::NORMAL};
+    IOAdvice io_advice{IOAdvice::RANDOM};
     const ResourceManagementOptions& resource_manager;
   };
 
@@ -523,7 +507,7 @@ FsIndexInput::FileHandle::ptr PooledFsIndexInput::Reopen(
     src.resource_manager.file_descriptors->Increase(1);
     descriptors = 1;
     handle->handle = irs::file_utils::Open(
-      src, GetReadMode(src.io_advice),
+      src, file_utils::OpenMode::Read,
       GetPosixFadvice(
         src.io_advice));  // same permission as in fs_index_input::open(...)
 

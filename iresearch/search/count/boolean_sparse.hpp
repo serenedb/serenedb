@@ -36,24 +36,31 @@
 
 namespace irs::count {
 
-template<lead::Type Lead, typename Probes, typename Excludes, typename Table>
+template<lead::Type Lead, typename Probes, typename Optional, typename Excludes,
+         typename Table>
 class BooleanSparse : public Root {
  public:
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
+  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
-  static constexpr bool kLeaves = !kProbes && !kTable && requires(Lead& lead) {
-    lead.Leaf();
-    lead.NextLeaf();
-  };
+  static constexpr bool kLeaves =
+    !kProbes && !kOptional && !kTable && requires(Lead& lead) {
+      lead.Leaf();
+      lead.NextLeaf();
+    };
   static constexpr uint32_t kRun = 2048;
-  static_assert(kProbes || kExcludes);
+  static_assert(kProbes || kOptional || kExcludes);
 
-  template<typename LeadArgs, typename ProbesArgs, typename ExcludesArgs>
+  template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
+           typename ExcludesArgs>
   BooleanSparse(Table table, std::piecewise_construct_t, LeadArgs&& lead,
-                ProbesArgs&& probes, ExcludesArgs&& excludes)
+                ProbesArgs&& probes, OptionalArgs&& optional,
+                ExcludesArgs&& excludes)
     : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
       _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
+      _optional{
+        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
       _excludes{
         std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
       _table{table} {}
@@ -80,6 +87,11 @@ class BooleanSparse : public Root {
       auto probe = doc;
       if constexpr (kProbes) {
         probe = _probes.Probe(doc);
+      }
+      if constexpr (kOptional) {
+        if (probe == doc) {
+          probe = _optional.Probe(doc);
+        }
       }
       if (probe == doc) {
         if (detail::SkipSpan(_excludes, _lead, doc)) {
@@ -132,6 +144,7 @@ class BooleanSparse : public Root {
 
   Lead _lead;
   [[no_unique_address]] Probes _probes;
+  [[no_unique_address]] Optional _optional;
   [[no_unique_address]] Excludes _excludes;
   [[no_unique_address]] utils::Need<kTable, std::array<doc_id_t, kRun>> _docs;
   [[no_unique_address]] detail::Narrowing<Table> _table;

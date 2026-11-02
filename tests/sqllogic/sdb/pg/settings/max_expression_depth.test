@@ -1,0 +1,54 @@
+control substitution on
+
+statement ok
+CREATE ROLE med_plain_${__DATABASE__};
+
+
+statement ok
+SET ROLE med_plain_${__DATABASE__};
+
+
+statement error
+SET max_expression_depth = 100000;
+----
+db error: ERROR: permission denied to set parameter "max_expression_depth"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+statement error
+SELECT set_config('max_expression_depth', '100000', false);
+----
+db error: ERROR: permission denied to set parameter "max_expression_depth"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+query
+SELECT current_setting('max_expression_depth') AS depth;
+----
+depth
+1000
+
+statement ok
+RESET max_expression_depth;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET max_expression_depth = 2000;
+
+
+query
+SELECT current_setting('max_expression_depth') AS depth;
+----
+depth
+2000
+
+statement ok
+RESET max_expression_depth;
+
+
+statement ok
+DROP ROLE med_plain_${__DATABASE__};

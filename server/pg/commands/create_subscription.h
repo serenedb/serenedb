@@ -28,11 +28,9 @@
 #include <vector>
 
 #include "pg/connection_context.h"
+#include "pg/types/pg_lsn.h"
 
 namespace sdb::pg {
-
-std::optional<uint64_t> ParseLsn(std::string_view text);
-std::string FormatLsn(uint64_t lsn);
 
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
                         std::string_view conninfo,

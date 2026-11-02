@@ -226,11 +226,6 @@ statement ok
 DROP TABLE t;
 
 
-# wait for drop
-system ok
-sleep 2
-
-
 connection new2
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT metric, value FROM sdb_metrics WHERE metric IN ('refresh_active', 'refresh_pending', 'compaction_active', 'compaction_pending', 'cleanup_active', 'cleanup_pending') ORDER BY metric;

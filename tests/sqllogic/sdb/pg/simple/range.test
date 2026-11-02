@@ -1,0 +1,188 @@
+control substitution on
+
+query
+SELECT numrange(1.25, 2.5) AS a, '[1.5,2]'::numrange AS b, numrange(1, 2) @> 1.5 AS c, lower(numrange(1.25, NULL)) AS d,
+       upper_inf(numrange(1.25, NULL)) AS e, numrange(1, 3) * numrange(2, 4) AS f, numrange(1, 2) -|- numrange(2, 3) AS g,
+       numrange(1, 2, '()') @> 1 AS h;
+----
+a	b	c	d	e	f	g	h
+[1.250,2.500)	[1.500,2.000]	t	1.250	t	[2.000,3.000)	t	f
+
+
+query
+SELECT int4range(1, 10) @> '[2,3)'::int4range AS a, '[2,3)'::int4range <@ int4range(1, 10) AS b, int4range(1, 10) @> '5' AS c;
+----
+a	b	c
+t	t	t
+
+
+statement error
+SELECT int4range(1, 10) @> '[2,3)';
+----
+db error: ERROR: Could not convert string '[2,3)' to INT32<slt:ignore>
+
+
+query
+SELECT TRY_CAST('[1,2' AS int4range) IS NULL AS a, TRY_CAST('[5,1)' AS int4range) IS NULL AS b,
+       TRY_CAST('[1,x)' AS int4range) IS NULL AS c, TRY_CAST('[1,2)' AS int4range) AS d;
+----
+a	b	c	d
+t	t	t	[1,2)
+
+
+statement ok
+CREATE TABLE range_keys (r int4range);
+
+
+statement error
+CREATE INDEX range_keys_r ON range_keys (r);
+----
+db error: ERROR: Invalid Type [int4range]: Invalid type for index key.
+
+
+statement error
+CREATE TABLE range_unique (r tstzrange UNIQUE);
+----
+db error: ERROR: Invalid Type [tstzrange]: Invalid type for index key.
+
+
+statement ok
+CREATE TABLE range_copy (id INT, r int4range, d daterange, t tsrange, n numrange);
+
+
+statement count 2
+INSERT INTO range_copy VALUES (1, '[1,5)', '[2020-01-01,2020-02-01)', '["2020-01-01 10:00","2020-01-02 10:00")', '[1.5,2.5]'),
+                              (2, 'empty', NULL, '(,)', '(,3]');
+
+
+statement count 2
+COPY range_copy TO '${__TEST_DIR__}/range_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement count 2
+COPY range_copy TO '${__TEST_DIR__}/range_copy.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE range_csv (id INT, r int4range, d daterange, t tsrange, n numrange);
+
+
+statement count 2
+COPY range_csv FROM '${__TEST_DIR__}/range_copy.csv' (FORMAT CSV, HEADER TRUE);
+
+
+statement ok
+CREATE TABLE range_parquet (id INT, r int4range, d daterange, t tsrange, n numrange);
+
+
+statement count 2
+COPY range_parquet FROM '${__TEST_DIR__}/range_copy.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT c.id, c.r, c.d, c.t, c.n, c.r = p.r AND c.t = p.t AND c.n = p.n AS same
+FROM range_csv c JOIN range_parquet p ON c.id = p.id ORDER BY c.id;
+----
+id	r	d	t	n	same
+1	[1,5)	[2020-01-01,2020-02-01)	["2020-01-01 10:00:00","2020-01-02 10:00:00")	[1.500,2.500]	t
+2	empty	NULL	(,)	(,3.000]	t
+
+
+statement ok
+CREATE TABLE range_read (id INT, r int4range, d daterange, t tsrange, n numrange);
+
+
+statement count 2
+INSERT INTO range_read SELECT * FROM read_parquet('${__TEST_DIR__}/range_copy.parquet');
+
+
+query
+SELECT id, r, d, t, n FROM range_read ORDER BY id;
+----
+id	r	d	t	n
+1	[1,5)	[2020-01-01,2020-02-01)	["2020-01-01 10:00:00","2020-01-02 10:00:00")	[1.500,2.500]
+2	empty	NULL	(,)	(,3.000]
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 1, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 5, 'upper_inclusive': true} AS int4range) AS a,
+       TRY_CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+                 'upper': 1, 'upper_inclusive': false} AS int4range) IS NULL AS b;
+----
+a	b
+[2,6)	t
+
+
+statement error
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5, 'lower_exclusive': false, 'upper_infinite': false,
+             'upper': 1, 'upper_inclusive': false} AS int4range);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5::BIGINT, 'lower_exclusive': false, 'upper_infinite': false,
+             'upper': 1::BIGINT, 'upper_inclusive': false} AS int4range);
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT ROW(true, true, 9, false, false, 5, false)::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT '{"nonempty": true, "lower_finite": true, "lower": 9, "lower_exclusive": false, "upper_infinite": false,
+         "upper": 5, "upper_inclusive": false}'::json::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+statement error
+SELECT ({'nonempty': true, 'lower_finite': true, 'lower': 9, 'lower_exclusive': false, 'upper_infinite': false,
+         'upper': 5, 'upper_inclusive': false}::VARIANT)::int4range;
+----
+db error: ERROR: range lower bound must be less than or equal to range upper bound
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 1::BIGINT, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 5::BIGINT, 'upper_inclusive': true} AS int4range) AS a,
+       ROW(true, true, 1, false, false, 5, false)::int4range AS b,
+       '[1,5)'::int4range::int8range AS c;
+----
+a	b	c
+[2,6)	[1,5)	[1,5)
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT CAST({'nonempty': true, 'lower_finite': true, 'lower': 5000000000, 'lower_exclusive': true, 'upper_infinite': false,
+             'upper': 6000000000, 'upper_inclusive': true} AS int8range) AS a,
+       CAST({'nonempty': true, 'lower_finite': true, 'lower': TIMESTAMPTZ '2020-01-01 10:00:00+00', 'lower_exclusive': false,
+             'upper_infinite': true, 'upper': TIMESTAMPTZ '2020-01-02 00:00:00+00', 'upper_inclusive': false} AS tstzrange) AS b;
+----
+a	b
+[5000000001,6000000001)	["2020-01-01 10:00:00+00",)
+
+
+statement ok
+RESET TimeZone
+
+
+statement error
+SELECT daterange('5881580-07-10', NULL, '(]');
+----
+db error: ERROR: date out of range
+
+
+statement error
+SELECT daterange('2020-01-01', '5881580-07-10', '[]');
+----
+db error: ERROR: date out of range

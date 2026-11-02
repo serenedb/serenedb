@@ -106,7 +106,7 @@ class Format10TestCase : public tests::FormatTestCase {
       state.dir = dir.get();
       state.meta = &meta;
 
-      auto in = dir->open("attributes", irs::IOAdvice::NORMAL);
+      auto in = dir->open("attributes", irs::IOAdvice::RANDOM);
       ASSERT_FALSE(!in);
       const auto tmp = irs::ReadString<std::string>(*in);
 
@@ -333,7 +333,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().open("attributes", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -471,7 +471,7 @@ TEST_P(Format10TestCase, postings_read_write) {
     state.dir = &dir();
     state.meta = &meta;
 
-    auto in = dir().open("attributes", irs::IOAdvice::NORMAL);
+    auto in = dir().open("attributes", irs::IOAdvice::RANDOM);
     ASSERT_FALSE(!in);
 
     // prepare reader
@@ -982,7 +982,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         state.dir = dir.get();
         state.meta = &meta;
 
-        auto in = dir->open("attributes", irs::IOAdvice::NORMAL);
+        auto in = dir->open("attributes", irs::IOAdvice::RANDOM);
         ASSERT_FALSE(!in);
         const auto tmp = irs::ReadString<std::string>(*in);
 

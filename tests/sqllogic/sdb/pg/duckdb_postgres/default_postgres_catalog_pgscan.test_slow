@@ -19,7 +19,7 @@ SELECT has_table_privilege(999999::oid, 'SELECT') AS t,
        pg_get_indexdef(999999::oid) AS i;
 ----
 t	s	i
-NULL	NULL	NULL
+NULL	t	NULL
 
 statement error
 SELECT pg_schema_size(999999::BIGINT);

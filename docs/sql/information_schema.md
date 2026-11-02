@@ -10,7 +10,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The views in the `information_schema` are SQL-standard views that describe the catalog entries of the database. These views can be filtered to obtain information about a specific column or table. SereneDB implements the complete [PostgreSQL `information_schema`](https://www.postgresql.org/docs/18/information-schema.html); the most commonly used views are documented below, and you can refer to the PostgreSQL documentation for the full set. Some standard views (such as `sequences`, `routines` and `parameters`) are present for compatibility but are not yet populated.
+The views in the `information_schema` are SQL-standard views that describe the catalog entries of the database. These views can be filtered to obtain information about a specific column or table. SereneDB implements the complete [PostgreSQL `information_schema`](https://www.postgresql.org/docs/18/information-schema.html); the most commonly used views are documented below, and you can refer to the PostgreSQL documentation for the full set. Views about features SereneDB does not have, such as domains or foreign tables, return no rows.
 
 The following `information_schema` views are documented here:
 

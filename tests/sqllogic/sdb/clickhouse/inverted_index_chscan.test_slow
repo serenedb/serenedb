@@ -85,7 +85,7 @@ SELECT count(*) FROM vedernikoff_native_idx WHERE val @@ ts_phrase('vedernikoff'
 count
 2
 
-# Native-table inverted index materialises matched rows (TableRowIdIndexSource).
+# Native-table inverted index materialises matched rows (NativeIndexSource).
 query
 SELECT id, val FROM vedernikoff_native_idx WHERE val @@ ts_phrase('vedernikoff') ORDER BY id;
 ----

@@ -35,6 +35,8 @@
 
 namespace irs {
 
+using UnalignedWord [[gnu::aligned(1)]] = uint64_t;
+
 template<typename T>
 consteval uint32_t BitsRequired() noexcept {
   return sizeof(T) * 8U;

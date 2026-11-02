@@ -1,0 +1,100 @@
+control substitution on
+
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rmc_gone VALUES (1, 'alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rmc_gone;
+
+
+statement ok
+CREATE TABLE rmc_kept (id BIGINT PRIMARY KEY, tag TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO rmc_kept VALUES (7, 'keep');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rmc_kept;
+
+
+statement ok
+CREATE TABLE rmc_oids AS
+  SELECT table_oid AS oid FROM duckdb_tables()
+  WHERE database_name = current_database() AND table_name = 'rmc_gone';
+
+
+statement ok
+SET sdb_faults = 'pause_removal_midway';
+
+
+statement ok
+DROP TABLE rmc_gone;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_removal_midway:parked';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_class WHERE relname = 'rmc_gone';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+WHERE file LIKE '%/' || (SELECT oid FROM rmc_oids) || '/%';
+----
+leftover
+0
+
+
+connection after_crash
+query
+SELECT id, tag FROM rmc_kept ORDER BY id;
+----
+id	tag
+7	keep
+
+
+connection after_crash
+statement ok
+CREATE TABLE rmc_gone (id BIGINT PRIMARY KEY, tag TEXT) WITH (storage = 'search');
+
+
+connection after_crash
+statement ok
+INSERT INTO rmc_gone VALUES (2, 'beta');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rmc_gone;
+
+
+connection after_crash
+query
+SELECT id, tag FROM rmc_gone ORDER BY id;
+----
+id	tag
+2	beta

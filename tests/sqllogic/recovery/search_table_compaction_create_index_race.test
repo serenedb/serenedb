@@ -1,0 +1,78 @@
+control substitution on
+
+# A background compaction that took the table's index definitions before a
+# CREATE INDEX must not merge the segments written for the new index: a merge
+# carries over only the fields of the indexes it knows, so it would drop the
+# new index's terms and the index would miss those rows.
+#
+# search_compaction_before_selection holds a compaction after it took the
+# definitions and before it picks the segments to merge.
+
+statement ok
+CREATE TABLE ccr (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ccr;
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+statement ok
+ALTER TABLE ccr SET (compaction_interval = 100);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+statement ok
+ALTER TABLE ccr SET (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX ccr_idx ON ccr USING inverted (body);
+
+
+statement ok
+INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ccr;
+
+
+statement ok
+INSERT INTO ccr SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ccr;
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+statement ok
+ALTER TABLE ccr SET (compaction_interval = 100);
+
+
+query ok retry 480 backoff 250ms
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('ccr') WHERE column_name = 'id';
+----
+segments
+1
+
+
+query
+SELECT count(*) AS n FROM ccr WHERE body @@ 'alpha';
+----
+n
+300

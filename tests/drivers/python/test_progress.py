@@ -155,16 +155,6 @@ def obs(own_server_module):
 
 
 @pytest.fixture(scope="module")
-def faults(obs) -> bool:
-    try:
-        obs.execute(f"SET sdb_faults = '{COPY_FROM_FAULT}'")
-        obs.execute(f"SET sdb_faults = '-{COPY_FROM_FAULT}'")
-        return True
-    except psycopg.Error:
-        return False
-
-
-@pytest.fixture(scope="module")
 def src(obs, faults) -> str:
     rows = FAULT_ROWS if faults else POLL_ROWS
     obs.execute(f"CREATE TABLE {SRC}(x BIGINT, label TEXT)")

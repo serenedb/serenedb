@@ -1,0 +1,524 @@
+# date_subtract, statement_timestamp, extract, overlaps and the OVERLAPS
+# predicate, and the timestamp and timestamptz function forms.
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+# date_subtract
+
+query
+SELECT date_subtract(TIMESTAMPTZ '2021-03-29 01:30:00+02', INTERVAL '1 day 1 hour') AS a,
+       date_subtract(TIMESTAMP '2020-01-01 00:00:00', INTERVAL '1 day') AS b,
+       date_subtract(DATE '2020-03-31', INTERVAL '1 month') AS c,
+       pg_typeof(date_subtract(TIMESTAMP '2020-01-01 00:00:00', INTERVAL '1 day')) AS t;
+----
+a	b	c	t
+2021-03-27 22:30:00+00	2019-12-31 00:00:00+00	2020-02-29 00:00:00+00	timestamp with time zone
+
+
+query
+SELECT date_subtract(TIMESTAMPTZ '2021-03-29 00:00:00+02', INTERVAL '1 day', 'Europe/Berlin') AS berlin,
+       date_subtract(TIMESTAMPTZ '2021-03-29 00:00:00+02', INTERVAL '1 day', 'UTC') AS utc,
+       date_subtract(TIMESTAMPTZ '2021-03-29 00:00:00+02', INTERVAL '24 hours', 'Europe/Berlin') AS hours,
+       date_subtract(TIMESTAMPTZ '2021-03-31 12:00:00+00', INTERVAL '1 month', 'Asia/Tokyo') AS month_end;
+----
+berlin	utc	hours	month_end
+2021-03-27 23:00:00+00	2021-03-27 22:00:00+00	2021-03-27 22:00:00+00	2021-02-28 12:00:00+00
+
+
+query
+SELECT date_subtract(NULL::timestamptz, INTERVAL '1 day') IS NULL AS a,
+       date_subtract(TIMESTAMPTZ '2020-01-01 00:00:00+00', NULL) IS NULL AS b,
+       date_subtract(TIMESTAMPTZ '2020-01-01 00:00:00+00', INTERVAL '1 day', NULL) IS NULL AS c,
+       date_subtract(TIMESTAMPTZ 'infinity', INTERVAL '1 day') AS d,
+       date_subtract(TIMESTAMPTZ '-infinity', INTERVAL '1 day', 'UTC') AS e;
+----
+a	b	c	d	e
+t	t	t	infinity	-infinity
+
+
+query
+SELECT date_subtract(ts, INTERVAL '1 day', zone) AS result
+FROM (VALUES (TIMESTAMPTZ '2021-03-29 00:00:00+02', 'Europe/Berlin'),
+             (TIMESTAMPTZ '2021-03-29 00:00:00+02', 'UTC'),
+             (TIMESTAMPTZ '2021-03-29 00:00:00+02', NULL)) AS t(ts, zone)
+ORDER BY result NULLS LAST;
+----
+result
+2021-03-27 22:00:00+00
+2021-03-27 23:00:00+00
+NULL
+
+
+statement ok
+SET TimeZone = 'Europe/Berlin'
+
+
+query
+SELECT date_subtract(TIMESTAMPTZ '2021-03-29 00:00:00', INTERVAL '1 day')::text AS day,
+       date_subtract(TIMESTAMPTZ '2021-03-29 00:00:00', INTERVAL '24 hours')::text AS hours,
+       date_subtract(TIMESTAMPTZ '2021-11-01 00:00:00', INTERVAL '1 month')::text AS month;
+----
+day	hours	month
+2021-03-28 00:00:00+01	2021-03-27 23:00:00+01	2021-10-01 00:00:00+02
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+statement error (time zone "Mars/Olympus_Mons" not recognized|Unknown TimeZone 'Mars/Olympus_Mons')
+SELECT date_subtract(TIMESTAMPTZ '2020-01-01 00:00:00+00', INTERVAL '1 day', 'Mars/Olympus_Mons');
+
+
+# statement_timestamp
+
+query
+SELECT statement_timestamp() >= now() AS after_transaction_start,
+       pg_typeof(statement_timestamp()) AS type;
+----
+after_transaction_start	type
+t	timestamp with time zone
+
+
+query
+SELECT count(DISTINCT statement_timestamp()) AS distinct_values FROM generate_series(1, 1000);
+----
+distinct_values
+1
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE datetime_functions_statement_start AS
+SELECT statement_timestamp() AS statement_start, now() AS transaction_start;
+
+
+statement ok
+SELECT pg_sleep(0.01);
+
+
+query
+SELECT statement_timestamp() > statement_start AS later_statement,
+       now() = transaction_start AS same_transaction,
+       statement_timestamp() > now() AS after_transaction_start
+FROM datetime_functions_statement_start;
+----
+later_statement	same_transaction	after_transaction_start
+t	t	t
+
+
+statement ok
+COMMIT
+
+
+statement ok
+DROP TABLE datetime_functions_statement_start
+
+
+# extract
+
+query
+SELECT pg_catalog.extract('year', TIMESTAMP '2020-05-06 10:11:12.345678') AS year,
+       pg_catalog.extract('second', TIMESTAMP '2020-05-06 10:11:12.345678') AS second,
+       pg_catalog.extract('millisecond', TIMESTAMP '2020-05-06 10:11:12.345678') AS millisecond,
+       pg_catalog.extract('microseconds', TIMESTAMP '2020-05-06 10:11:12.345678') AS microseconds,
+       pg_catalog.extract('epoch', TIMESTAMP '2020-05-06 10:11:12.345678') AS epoch,
+       pg_typeof(pg_catalog.extract('year', TIMESTAMP '2020-05-06 10:11:12.345678')) AS type;
+----
+year	second	millisecond	microseconds	epoch	type
+2020	12.345678	12345.678	12345678	1588759872.345678	numeric
+
+
+query
+SELECT pg_catalog.extract('century', TIMESTAMP '2021-01-03 04:05:06') AS century,
+       pg_catalog.extract('decade', TIMESTAMP '2021-01-03 04:05:06') AS decade,
+       pg_catalog.extract('millennium', TIMESTAMP '2021-01-03 04:05:06') AS millennium,
+       pg_catalog.extract('quarter', TIMESTAMP '2021-01-03 04:05:06') AS quarter,
+       pg_catalog.extract('month', TIMESTAMP '2021-01-03 04:05:06') AS month,
+       pg_catalog.extract('day', TIMESTAMP '2021-01-03 04:05:06') AS day,
+       pg_catalog.extract('hour', TIMESTAMP '2021-01-03 04:05:06') AS hour,
+       pg_catalog.extract('minute', TIMESTAMP '2021-01-03 04:05:06') AS minute;
+----
+century	decade	millennium	quarter	month	day	hour	minute
+21	202	3	1	1	3	4	5
+
+
+query
+SELECT pg_catalog.extract('week', TIMESTAMP '2021-01-03 04:05:06') AS week,
+       pg_catalog.extract('isoyear', TIMESTAMP '2021-01-03 04:05:06') AS isoyear,
+       pg_catalog.extract('dow', TIMESTAMP '2021-01-03 04:05:06') AS dow,
+       pg_catalog.extract('isodow', TIMESTAMP '2021-01-03 04:05:06') AS isodow,
+       pg_catalog.extract('doy', TIMESTAMP '2020-12-31 04:05:06') AS doy,
+       pg_catalog.extract('julian', TIMESTAMP '2020-01-01 12:00:00') AS julian,
+       pg_catalog.extract('julian', TIMESTAMP '2020-01-01 18:00:00.5') AS julian_fraction;
+----
+week	isoyear	dow	isodow	doy	julian	julian_fraction
+53	2020	0	7	366	2458850.50000000000000000000	2458850.75000578703703703704
+
+
+query
+SELECT pg_catalog.extract('Y', TIMESTAMP '2021-01-03 04:05:06') AS y,
+       pg_catalog.extract('MON', TIMESTAMP '2021-01-03 04:05:06') AS mon,
+       pg_catalog.extract('qtr', TIMESTAMP '2021-01-03 04:05:06') AS qtr,
+       pg_catalog.extract('w', TIMESTAMP '2021-01-03 04:05:06') AS w,
+       pg_catalog.extract('h', TIMESTAMP '2021-01-03 04:05:06') AS h,
+       pg_catalog.extract('m', TIMESTAMP '2021-01-03 04:05:06') AS m,
+       pg_catalog.extract('mm', TIMESTAMP '2021-01-03 04:05:06') AS mm,
+       pg_catalog.extract('s', TIMESTAMP '2021-01-03 04:05:06.5') AS s,
+       pg_catalog.extract('msecs', TIMESTAMP '2021-01-03 04:05:06.5') AS msecs,
+       pg_catalog.extract('Microseconds', TIMESTAMP '2021-01-03 04:05:06.5') AS microseconds,
+       pg_catalog.extract('jd', TIMESTAMP '2021-01-03 06:00:00') AS jd;
+----
+y	mon	qtr	w	h	m	mm	s	msecs	microseconds	jd
+2021	1	1	53	4	5	5	6.500000	6500.000	6500000	2459218.25000000000000000000
+
+
+query
+SELECT pg_catalog.extract('year', DATE '2021-01-03') AS year,
+       pg_catalog.extract('isoyear', DATE '2021-01-03') AS isoyear,
+       pg_catalog.extract('week', DATE '2021-01-03') AS week,
+       pg_catalog.extract('dow', DATE '2021-01-03') AS dow,
+       pg_catalog.extract('isodow', DATE '2021-01-03') AS isodow,
+       pg_catalog.extract('doy', DATE '2020-12-31') AS doy,
+       pg_catalog.extract('epoch', DATE '2021-01-03') AS epoch,
+       pg_catalog.extract('julian', DATE '2021-01-03') AS julian,
+       pg_catalog.extract('century', DATE '2000-12-31') AS century,
+       pg_catalog.extract('millennium', DATE '2001-01-01') AS millennium;
+----
+year	isoyear	week	dow	isodow	doy	epoch	julian	century	millennium
+2021	2020	53	0	7	366	1609632000	2459218	20	3
+
+
+query
+SELECT pg_catalog.extract('hour', TIME '10:11:12.5') AS hour,
+       pg_catalog.extract('minute', TIME '10:11:12.5') AS minute,
+       pg_catalog.extract('second', TIME '10:11:12.5') AS second,
+       pg_catalog.extract('millisecond', TIME '10:11:12.5') AS millisecond,
+       pg_catalog.extract('microsecond', TIME '10:11:12.5') AS microsecond,
+       pg_catalog.extract('epoch', TIME '10:11:12.5') AS epoch;
+----
+hour	minute	second	millisecond	microsecond	epoch
+10	11	12.500000	12500.000	12500000	36672.500000
+
+
+query
+SELECT pg_catalog.extract('hour', TIMETZ '10:11:12.5-03:30') AS hour,
+       pg_catalog.extract('second', TIMETZ '10:11:12.5-03:30') AS second,
+       pg_catalog.extract('epoch', TIMETZ '10:11:12.5-03:30') AS epoch,
+       pg_catalog.extract('timezone', TIMETZ '10:11:12.5-03:30') AS timezone,
+       pg_catalog.extract('timezone_hour', TIMETZ '10:11:12.5-03:30') AS timezone_hour,
+       pg_catalog.extract('timezone_minute', TIMETZ '10:11:12.5-03:30') AS timezone_minute;
+----
+hour	second	epoch	timezone	timezone_hour	timezone_minute
+10	12.500000	49272.500000	-12600	-3	-30
+
+
+statement ok
+SET TimeZone = 'Europe/Berlin'
+
+
+query
+SELECT pg_catalog.extract('hour', TIMESTAMPTZ '2021-07-01 12:00:00+00') AS summer_hour,
+       pg_catalog.extract('hour', TIMESTAMPTZ '2021-01-01 12:00:00+00') AS winter_hour,
+       pg_catalog.extract('day', TIMESTAMPTZ '2021-06-30 23:30:00+00') AS day,
+       pg_catalog.extract('timezone', TIMESTAMPTZ '2021-07-01 12:00:00+00') AS timezone,
+       pg_catalog.extract('timezone_hour', TIMESTAMPTZ '2021-07-01 12:00:00+00') AS timezone_hour,
+       pg_catalog.extract('timezone_minute', TIMESTAMPTZ '2021-07-01 12:00:00+00') AS timezone_minute,
+       pg_catalog.extract('epoch', TIMESTAMPTZ '2021-07-01 12:00:00.25+00') AS epoch,
+       pg_catalog.extract('julian', TIMESTAMPTZ '2021-07-01 10:00:00+00') AS julian;
+----
+summer_hour	winter_hour	day	timezone	timezone_hour	timezone_minute	epoch	julian
+14	13	1	7200	2	0	1625140800.250000	2459397.50000000000000000000
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT pg_catalog.extract('epoch', INTERVAL '1 year 2 months 3 days 04:05:06.789') AS epoch,
+       pg_catalog.extract('second', INTERVAL '1 year 2 months 3 days 04:05:06.789') AS second,
+       pg_catalog.extract('hour', INTERVAL '100 hours') AS hour,
+       pg_catalog.extract('day', INTERVAL '1 month 40 days') AS day,
+       pg_catalog.extract('week', INTERVAL '15 days') AS week,
+       pg_catalog.extract('month', INTERVAL '-14 months') AS month,
+       pg_catalog.extract('quarter', INTERVAL '-14 months') AS quarter,
+       pg_catalog.extract('quarter', INTERVAL '14 months') AS positive_quarter,
+       pg_catalog.extract('year', INTERVAL '-14 months') AS year,
+       pg_catalog.extract('century', INTERVAL '250 years') AS century,
+       pg_catalog.extract('microsecond', INTERVAL '-1.5 seconds') AS microsecond;
+----
+epoch	second	hour	day	week	month	quarter	positive_quarter	year	century	microsecond
+37015506.789000	6.789000	100	40	2	-2	-1	1	-1	2	-1500000
+
+
+query
+SELECT pg_catalog.extract('month', TIMESTAMP 'infinity') IS NULL AS timestamp_month,
+       pg_catalog.extract('timezone', TIMESTAMP '-infinity') IS NULL AS timestamp_timezone,
+       pg_catalog.extract('hour', TIMESTAMPTZ 'infinity') IS NULL AS timestamptz_hour,
+       pg_catalog.extract('dow', DATE 'infinity') IS NULL AS date_dow,
+       pg_catalog.extract(NULL, DATE '2021-01-03') IS NULL AS null_unit,
+       pg_catalog.extract('year', NULL::date) IS NULL AS null_date;
+----
+timestamp_month	timestamp_timezone	timestamptz_hour	date_dow	null_unit	null_date
+t	t	t	t	t	t
+
+
+statement error
+SELECT pg_catalog.extract('fortnight', DATE '2021-01-03');
+----
+db error: ERROR: unit "fortnight" not recognized for type date
+
+
+statement error
+SELECT pg_catalog.extract('FORTNIGHT', TIMESTAMP 'infinity');
+----
+db error: ERROR: unit "fortnight" not recognized for type timestamp without time zone
+
+
+statement error
+SELECT pg_catalog.extract('hour', DATE '2021-01-03');
+----
+db error: ERROR: unit "hour" not supported for type date
+
+
+statement error
+SELECT pg_catalog.extract('hour', DATE 'infinity');
+----
+db error: ERROR: unit "hour" not supported for type date
+
+
+statement error
+SELECT pg_catalog.extract('timezone', TIMESTAMP '2021-01-03 04:05:06');
+----
+db error: ERROR: unit "timezone" not supported for type timestamp without time zone
+
+
+statement error
+SELECT pg_catalog.extract('now', TIMESTAMP '2021-01-03 04:05:06');
+----
+db error: ERROR: unit "now" not supported for type timestamp without time zone
+
+
+statement error
+SELECT pg_catalog.extract('day', TIME '10:11:12');
+----
+db error: ERROR: unit "day" not supported for type time without time zone
+
+
+statement error
+SELECT pg_catalog.extract('now', TIME '10:11:12');
+----
+db error: ERROR: unit "now" not recognized for type time without time zone
+
+
+statement error
+SELECT pg_catalog.extract('julian', TIMETZ '10:11:12+01');
+----
+db error: ERROR: unit "julian" not supported for type time with time zone
+
+
+statement error
+SELECT pg_catalog.extract('dow', INTERVAL '1 day');
+----
+db error: ERROR: unit "dow" not supported for type interval
+
+
+statement error
+SELECT pg_catalog.extract('epochs', INTERVAL '1 day');
+----
+db error: ERROR: unit "epochs" not recognized for type interval
+
+
+# overlaps and OVERLAPS
+
+query
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15') AS crossing,
+       (DATE '2020-01-01', DATE '2020-01-05') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15') AS touching,
+       (DATE '2020-01-05', DATE '2020-01-01') OVERLAPS (DATE '2020-01-04', DATE '2020-01-15') AS reversed,
+       ROW(DATE '2020-01-01', DATE '2020-01-10') OVERLAPS ROW(DATE '2020-01-05', DATE '2020-01-15') AS row_constructor;
+----
+crossing	touching	reversed	row_constructor
+t	f	t	t
+
+
+query
+SELECT (TIMESTAMP '2020-01-01', NULL::timestamp) OVERLAPS (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-02') AS same_start,
+       (NULL::timestamp, NULL::timestamp) OVERLAPS (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-02') AS both_null,
+       (NULL::timestamp, TIMESTAMP '2020-01-05') OVERLAPS (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-10') AS null_start,
+       (TIMESTAMP '2020-01-05', NULL::timestamp) OVERLAPS (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-10') AS null_end,
+       (TIMESTAMP '2020-01-15', NULL::timestamp) OVERLAPS (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-10') AS null_end_after,
+       (TIMESTAMP '2020-01-15', TIMESTAMP '2020-01-20') OVERLAPS (TIMESTAMP '2020-01-01', NULL::timestamp) AS other_null_end;
+----
+same_start	both_null	null_start	null_end	null_end_after	other_null_end
+NULL	NULL	t	t	NULL	NULL
+
+
+query
+SELECT (TIME '10:00', TIME '12:00') OVERLAPS (TIME '11:00', TIME '13:00') AS time_overlap,
+       (TIME '23:00', INTERVAL '2 hours') OVERLAPS (TIME '00:30', INTERVAL '10 minutes') AS time_wrap,
+       (TIME '10:00', INTERVAL '1 hour') OVERLAPS (TIME '10:30', TIME '12:00') AS time_length,
+       (TIMETZ '10:00:00+02', TIMETZ '12:00:00+02') OVERLAPS (TIMETZ '11:30:00+03', TIMETZ '13:00:00+03') AS timetz_overlap,
+       (TIMETZ '10:00:00+02', TIMETZ '12:00:00+02') OVERLAPS (TIMETZ '13:00:00+03', TIMETZ '15:00:00+03') AS timetz_apart;
+----
+time_overlap	time_wrap	time_length	timetz_overlap	timetz_apart
+t	f	t	t	t
+
+
+query
+SELECT (TIMESTAMP '2020-01-01', INTERVAL '1 day') OVERLAPS (TIMESTAMP '2020-01-01 12:00', INTERVAL '1 hour') AS lengths,
+       (TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-02') OVERLAPS (TIMESTAMP '2020-01-02', INTERVAL '1 day') AS end_and_length,
+       (TIMESTAMP '2020-01-01', INTERVAL '1 month') OVERLAPS (TIMESTAMP '2020-01-31', TIMESTAMP '2020-02-01') AS month_length,
+       (TIMESTAMPTZ '2020-01-01 00:00:00+00', INTERVAL '1 day') OVERLAPS (TIMESTAMPTZ '2020-01-01 12:00:00+00', TIMESTAMPTZ '2020-01-03 00:00:00+00') AS timestamptz_length,
+       (TIMESTAMPTZ '2020-01-01 00:00:00+00', TIMESTAMPTZ '2020-01-02 00:00:00+00') OVERLAPS (TIMESTAMPTZ '2020-01-01 23:00:00-01', INTERVAL '1 hour') AS timestamptz_offset;
+----
+lengths	end_and_length	month_length	timestamptz_length	timestamptz_offset
+t	f	t	t	f
+
+
+query
+SELECT overlaps(TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-10', TIMESTAMP '2020-01-05', TIMESTAMP '2020-01-15') AS call,
+       pg_catalog.overlaps(TIME '10:00', INTERVAL '1 hour', TIME '10:59', NULL::time) AS qualified_call,
+       (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15') = true AS compared,
+       NOT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-11', DATE '2020-01-15') AS negated,
+       pg_typeof((DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15')) AS type;
+----
+call	qualified_call	compared	negated	type
+t	t	t	t	boolean
+
+
+query
+SELECT p.id, (p.s, p.e) OVERLAPS (q.s, q.e) AS overlaps
+FROM (VALUES (1, TIMESTAMP '2020-01-01', TIMESTAMP '2020-01-03'),
+             (2, TIMESTAMP '2020-01-05', NULL),
+             (3, NULL, TIMESTAMP '2020-01-02'),
+             (4, TIMESTAMP '2020-01-04', TIMESTAMP '2020-01-02')) AS p(id, s, e),
+     (VALUES (TIMESTAMP '2020-01-02', TIMESTAMP '2020-01-06')) AS q(s, e)
+ORDER BY p.id;
+----
+id	overlaps
+1	t
+2	t
+3	NULL
+4	t
+
+
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10', DATE '2020-01-11') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15');
+----
+db error: ERROR: wrong number of parameters on left side of OVERLAPS expression
+
+
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS ROW(DATE '2020-01-05');
+----
+db error: ERROR: wrong number of parameters on right side of OVERLAPS expression
+
+
+statement error
+SELECT ROW() OVERLAPS (DATE '2020-01-05', DATE '2020-01-15');
+----
+db error: ERROR: wrong number of parameters on left side of OVERLAPS expression
+
+
+statement error (function pg_catalog\.overlaps\(integer, integer, integer, integer\) does not exist|No function matches the given name and argument types 'overlaps\()
+SELECT (1, 2) OVERLAPS (3, 4);
+
+
+statement error
+SELECT (DATE '2020-01-01', DATE '2020-01-10') OVERLAPS (DATE '2020-01-05', DATE '2020-01-15') OVERLAPS (DATE '2020-01-11', DATE '2020-01-12');
+----
+db error: ERROR: syntax error at or near "OVERLAPS"
+
+
+# timestamp and timestamptz
+
+query
+SELECT pg_catalog.timestamp(DATE '2020-01-01') AS from_date,
+       pg_catalog.timestamp(DATE '2020-01-01', TIME '10:11:12.345678') AS from_date_time,
+       pg_catalog.timestamp(TIMESTAMPTZ '2020-01-01 10:00:00+03') AS from_timestamptz,
+       "timestamp"(DATE 'infinity') AS infinite;
+----
+from_date	from_date_time	from_timestamptz	infinite
+2020-01-01 00:00:00	2020-01-01 10:11:12.345678	2020-01-01 07:00:00	infinity
+
+
+query
+SELECT pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12.345678', 3) AS three,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12.995', 2) AS two_carry,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12.345678', 0) AS zero,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12.345678', 6) AS six,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12.345678', -1) AS unconstrained,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 00:00:00.5', 0) AS after_2000,
+       pg_catalog.timestamp(TIMESTAMP '1999-12-31 23:59:59.5', 0) AS before_2000,
+       pg_catalog.timestamp(TIMESTAMP '1970-01-01 00:00:00.5', 0) AS epoch_half,
+       pg_catalog.timestamp(TIMESTAMP 'infinity', 9) AS infinite;
+----
+three	two_carry	zero	six	unconstrained	after_2000	before_2000	epoch_half	infinite
+2020-01-01 10:11:12.346	2020-01-01 10:11:13	2020-01-01 10:11:12	2020-01-01 10:11:12.345678	2020-01-01 10:11:12.345678	2020-01-01 00:00:01	1999-12-31 23:59:59	1970-01-01 00:00:00	infinity
+
+
+query
+SELECT timestamptz(DATE '2020-01-01') AS from_date,
+       timestamptz(DATE '2020-01-01', TIME '10:11:12') AS from_date_time,
+       timestamptz(DATE '2020-01-01', TIMETZ '10:11:12+05') AS from_date_timetz,
+       timestamptz(TIMESTAMP '2020-01-01 10:11:12') AS from_timestamp,
+       timestamptz(TIMESTAMPTZ '2020-01-01 10:11:12.987654+00', 3) AS precision,
+       pg_typeof(timestamptz(DATE '2020-01-01')) AS type;
+----
+from_date	from_date_time	from_date_timetz	from_timestamp	precision	type
+2020-01-01 00:00:00+00	2020-01-01 10:11:12+00	2020-01-01 05:11:12+00	2020-01-01 10:11:12+00	2020-01-01 10:11:12.988+00	timestamp with time zone
+
+
+statement ok
+SET TimeZone = 'America/New_York'
+
+
+query
+SELECT timestamptz(DATE '2021-03-14', TIME '02:30')::text AS gap,
+       pg_catalog.timestamp(TIMESTAMPTZ '2021-07-01 12:00:00+00') AS local,
+       timestamptz(TIMESTAMP '2021-01-01 12:00:00')::text AS winter;
+----
+gap	local	winter
+2021-03-14 03:30:00-04	2021-07-01 08:00:00	2021-01-01 12:00:00-05
+
+
+statement ok
+SET TimeZone = 'UTC'
+
+
+query
+SELECT pg_catalog.timestamp(NULL::date) IS NULL AS a,
+       pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12', NULL) IS NULL AS b,
+       timestamptz(NULL::date, TIME '10:00') IS NULL AS c;
+----
+a	b	c
+t	t	t
+
+
+statement error
+SELECT pg_catalog.timestamp(TIMESTAMP '2020-01-01 10:11:12', 7);
+----
+db error: ERROR: timestamp(7) precision must be between 0 and 6
+
+
+statement error
+SELECT timestamptz(TIMESTAMPTZ '2020-01-01 10:11:12+00', -2);
+----
+db error: ERROR: timestamp(-2) precision must be between 0 and 6
+
+
+query
+SELECT date_trunc('day', TIMESTAMPTZ '2020-01-02 10:00+00', 'Europe/Berlin') AS day_berlin,
+       date_trunc('hour', TIMESTAMPTZ '2020-01-02 10:45+00', 'Asia/Kolkata') AS hour_kolkata,
+       date_trunc('month', TIMESTAMPTZ '2020-03-01 00:30+00', 'America/New_York') AS month_ny,
+       date_trunc('day', TIMESTAMPTZ 'infinity', 'UTC') AS inf,
+       date_trunc('day', TIMESTAMPTZ '2020-01-02 10:00+00', NULL) AS no_zone;
+----
+day_berlin	hour_kolkata	month_ny	inf	no_zone
+2020-01-01 23:00:00+00	2020-01-02 10:30:00+00	2020-02-01 05:00:00+00	infinity	NULL

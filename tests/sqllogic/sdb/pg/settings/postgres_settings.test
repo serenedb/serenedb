@@ -1,0 +1,238 @@
+query
+SELECT string_agg(name, ' ' ORDER BY lower(name)) AS settings
+FROM pg_settings
+WHERE category <> 'Customized Options'
+----
+settings
+NULL
+
+
+statement error
+SHOW shared_buffers
+----
+db error: ERROR: unrecognized configuration parameter "shared_buffers"<slt:ignore>
+
+
+query
+SELECT name, enumvals
+FROM pg_settings
+WHERE name IN ('transaction_isolation', 'default_transaction_isolation')
+ORDER BY name
+----
+name	enumvals
+default_transaction_isolation	NULL
+transaction_isolation	NULL
+
+
+query
+SELECT short_desc FROM pg_settings WHERE name = 'statement_timeout'
+----
+short_desc
+Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
+
+
+query error
+SHOW work_mem
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+query
+SELECT setting, unit, boot_val, reset_val FROM pg_settings WHERE name = 'work_mem'
+----
+setting	unit	boot_val	reset_val
+
+
+statement error
+SET work_mem = 262144
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+query error
+SHOW work_mem
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+query
+SELECT setting, source FROM pg_settings WHERE name = 'work_mem'
+----
+setting	source
+
+
+statement error
+RESET work_mem
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+statement error
+SET work_mem = 'banana'
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+statement error
+SET work_mem = '1kB'
+----
+db error: ERROR: unrecognized configuration parameter "work_mem"<slt:ignore>
+
+
+statement error
+SET synchronous_commit = 'banana'
+----
+db error: ERROR: unrecognized configuration parameter "synchronous_commit"<slt:ignore>
+
+
+statement error
+SET row_security = 'banana'
+----
+db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+
+
+statement error
+SET row_security = false
+----
+db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+
+
+query error
+SHOW row_security
+----
+db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+
+
+statement error
+RESET row_security
+----
+db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+
+
+statement error
+SET lock_timeout = 5000
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+
+
+query error
+SHOW lock_timeout
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+
+
+statement error
+RESET lock_timeout
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+
+
+statement ok
+SET statement_timeout = 0
+
+
+statement error
+SET lock_timeout = 0
+----
+db error: ERROR: unrecognized configuration parameter "lock_timeout"<slt:ignore>
+
+
+statement error
+SET idle_in_transaction_session_timeout = 0
+----
+db error: ERROR: unrecognized configuration parameter "idle_in_transaction_session_timeout"<slt:ignore>
+
+
+statement error
+SET transaction_timeout = 0
+----
+db error: ERROR: unrecognized configuration parameter "transaction_timeout"<slt:ignore>
+
+
+statement ok
+SET client_encoding = 'UTF8'
+
+
+statement ok
+SET standard_conforming_strings = on
+
+
+statement ok
+SELECT pg_catalog.set_config('search_path', '', false)
+
+
+statement error
+SET check_function_bodies = false
+----
+db error: ERROR: unrecognized configuration parameter "check_function_bodies"<slt:ignore>
+
+
+statement ok
+SET xmloption = content
+
+
+statement ok
+SET client_min_messages = warning
+
+
+statement error
+SET row_security = off
+----
+db error: ERROR: unrecognized configuration parameter "row_security"<slt:ignore>
+
+
+statement error
+SET default_tablespace = ''
+----
+db error: ERROR: unrecognized configuration parameter "default_tablespace"<slt:ignore>
+
+
+statement error
+SET default_table_access_method = heap
+----
+db error: ERROR: unrecognized configuration parameter "default_table_access_method"<slt:ignore>
+
+
+statement ok
+RESET ALL
+
+
+statement ok
+SET DateStyle = ISO
+
+
+query
+SHOW DateStyle
+----
+DateStyle
+iso
+
+
+statement ok
+SET DateStyle = 'sql, dmy'
+
+
+query
+SHOW DateStyle
+----
+DateStyle
+sql, dmy
+
+
+statement ok
+RESET DateStyle
+
+
+statement ok
+SET IntervalStyle = 'ISO_8601'
+
+
+query
+SHOW IntervalStyle
+----
+IntervalStyle
+ISO_8601
+
+
+statement ok
+RESET IntervalStyle

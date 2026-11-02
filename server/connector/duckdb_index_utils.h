@@ -22,11 +22,9 @@
 
 #include <duckdb.hpp>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "connector/duckdb_sink_writer_base.h"
-#include "server/utils/primary_key.h"
 namespace sdb::connector {
 
 // One indexed base column of a feed chunk: its position in the chunk and the
@@ -52,23 +50,5 @@ void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                std::span<const FeedColumn> columns,
                std::span<const ExpressionSlot> expressions = {},
                irs::CommitOnFlush* commit_on_flush = nullptr);
-
-// The single removal path shared by every caller that deletes rows from an
-// inverted index (live commit, recovery replay, the CREATE INDEX delete-log
-// drain). Postings are keyed by AppendSigned(rowid), so a removal needs the row
-// ids and nothing else. `row_at(i)` yields the i-th one, so a caller can pass a
-// span, duckdb's own rowid vector or a sorted log without copying it first;
-// `key` is the caller's scratch, reused across rows.
-template<typename RowAt>
-void FeedDeletes(DuckDBSinkIndexWriter& writer, std::string& key, size_t count,
-                 RowAt&& row_at) {
-  writer.Init(count, {});
-  for (size_t i = 0; i < count; ++i) {
-    key.clear();
-    primary_key::AppendSigned(key, row_at(i));
-    writer.DeleteRow(key);
-  }
-  writer.Finish();
-}
 
 }  // namespace sdb::connector

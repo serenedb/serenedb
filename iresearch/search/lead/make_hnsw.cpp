@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/search/lead/family.hpp"
 #include "iresearch/search/lead/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
@@ -81,7 +82,7 @@ class HnswHits : public Node {
 
 }  // namespace
 
-Node::ptr Make(const HnswQuery& query, const detail::ScoredCtx& ctx) {
+Node::ptr Family::Make(const HnswQuery& query, const detail::ScoredCtx& ctx) {
   const auto record = query.Stats(ctx);
   const detail::ScoreArgs args{.scorer = record.scorer,
                                .stats = record.stats,

@@ -23,22 +23,16 @@
 #include <absl/base/optimization.h>
 
 #include <span>
-#include <tuple>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/sparse_cursor.hpp"
 #include "iresearch/search/lead/concept.hpp"
-#include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/score_policy.hpp"
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -47,11 +41,7 @@ template<lead::Type Lead, typename Probes, typename Optional, typename Excludes,
          typename Table>
 class BooleanSparse : public Root {
  public:
-  static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr uint32_t kBatch = kScoreBlock;
-  static_assert(kProbes || kOptional || kExcludes);
 
   template<typename LeadArgs, typename ProbesArgs, typename OptionalArgs,
            typename ExcludesArgs>
@@ -60,14 +50,12 @@ class BooleanSparse : public Root {
                 LeadArgs&& lead, ProbesArgs&& probes, OptionalArgs&& optional,
                 ExcludesArgs&& excludes)
     : _fetcher{fetcher},
-      _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _probes{std::make_from_tuple<Probes>(std::forward<ProbesArgs>(probes))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+      _cursor{score, std::forward<LeadArgs>(lead),
+              std::forward<ProbesArgs>(probes),
+              std::forward<OptionalArgs>(optional),
+              std::forward<ExcludesArgs>(excludes)},
       _admit{table} {
-    _score = Compose(score);
+    _score = _cursor.PrepareScore();
   }
 
   BooleanSparse(BooleanSparse&&) = delete;
@@ -77,36 +65,14 @@ class BooleanSparse : public Root {
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     uint32_t batch = 0;
-    auto doc = _lead.Seek(min);
-    while (doc < max) {
-      if constexpr (kProbes) {
-        if (const auto probe = _probes.Probe(doc); probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
-      }
-      if constexpr (kOptional) {
-        if (const auto probe = _optional.Probe(doc); probe != doc) {
-          doc = _lead.Seek(probe);
-          continue;
-        }
-      }
-      if (irs::detail::SkipExcluded(_excludes, _lead, doc)) {
-        continue;
-      }
+    for (auto doc = _cursor.Seek(min, max); doc < max;
+         doc = _cursor.Next(max)) {
       docs[batch] = doc;
-      _lead.FetchScoreArgs(batch);
-      if constexpr (kProbes) {
-        _probes.FetchScoreArgs(batch);
-      }
-      if constexpr (kOptional) {
-        _optional.FetchScoreArgs(batch);
-      }
+      _cursor.FetchScoreArgs(batch);
       if (++batch == kBatch) {
         FlushBatch(docs, scores, collector);
         batch = 0;
       }
-      doc = _lead.Next();
     }
     if (batch != 0) {
       _fetcher.Fetch(std::span<const doc_id_t>{docs, batch});
@@ -126,33 +92,8 @@ class BooleanSparse : public Root {
   }
 
  private:
-  ScoreFunction Compose(irs::detail::Scored score) {
-    if constexpr (!kProbes && !kOptional) {
-      return _lead.PrepareScore();
-    } else {
-      std::vector<ScoreFunction> scorers;
-      irs::detail::AppendScorer(scorers, _lead.PrepareScore());
-      if constexpr (kProbes) {
-        _probes.CollectScorers(scorers);
-      }
-      if constexpr (kOptional) {
-        if constexpr (requires { _optional.PrepareScore(score.inner); }) {
-          irs::detail::AppendScorer(scorers,
-                                    _optional.PrepareScore(score.inner));
-        } else {
-          irs::detail::AppendScorer(scorers, _optional.PrepareScore());
-        }
-      }
-      return irs::detail::MakeConjunctionScore(score.inner, std::move(scorers),
-                                               score.absorbed);
-    }
-  }
-
   ColumnArgsFetcher& _fetcher;
-  Lead _lead;
-  [[no_unique_address]] Probes _probes;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
+  irs::detail::SparseCursor<Lead, Probes, Optional, Excludes> _cursor;
   ScoreFunction _score;
   [[no_unique_address]] Admit<Table> _admit;
 };

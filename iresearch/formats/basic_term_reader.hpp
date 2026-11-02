@@ -42,6 +42,8 @@ struct TermPayloadWriter {
   virtual void Finish(IndexOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
+
+  virtual uint32_t Alignment() const noexcept { return 1; }
 };
 
 struct BasicTermReader : public memory::Managed {

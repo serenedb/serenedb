@@ -78,7 +78,8 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
                                const SubReader& segment,
                                const PrepareContext& ctx) {
   const auto masked = MaskedCount(segment);
-  if (!query || masked == 0 || QueryBuilder::IsEmpty(*query)) {
+  if (!query || masked == 0 || QueryBuilder::IsEmpty(*query) ||
+      query->Kind() == QueryKind::Ann) {
     return query;
   }
 

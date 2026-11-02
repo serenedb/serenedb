@@ -109,10 +109,22 @@ if [[ -n "$LOG_TO" ]]; then
 	log_to_args=(--log-to="$LOG_TO")
 fi
 
+STATEMENT_TIMEOUT="${SDB_FUZZ_STATEMENT_TIMEOUT:-10s}"
+if command -v psql >/dev/null 2>&1; then
+	psql "$DSN" -q -c "SET GLOBAL statement_timeout = '$STATEMENT_TIMEOUT'" >>"$SEED_LOG" 2>&1 ||
+		echo "[sqlsmith] WARN: could not set statement_timeout=$STATEMENT_TIMEOUT" >&2
+fi
+
+budget=()
+if [[ -n "${SDB_FUZZ_SECONDS:-}" ]]; then
+	budget=(timeout --signal=TERM "$SDB_FUZZ_SECONDS")
+	echo "[sqlsmith] time budget ${SDB_FUZZ_SECONDS}s, statement_timeout $STATEMENT_TIMEOUT"
+fi
+
 start=$(date +%s)
 declare -a PIDS=()
 for ((i = 0; i < PARALLEL; i++)); do
-	sqlsmith \
+	"${budget[@]}" sqlsmith \
 		--target="$DSN" \
 		--max-queries="$MAX_QUERIES" \
 		--seed="${INSTANCE_SEEDS[$i]}" \
@@ -122,6 +134,32 @@ for ((i = 0; i < PARALLEL; i++)); do
 	PIDS+=($!)
 done
 
+server_reachable() {
+	timeout 5 bash -c "echo > /dev/tcp/${HOST}/${PORT}" 2>/dev/null
+}
+
+server_died=0
+unreachable=0
+while true; do
+	running=0
+	for pid in "${PIDS[@]}"; do
+		kill -0 "$pid" 2>/dev/null && running=1
+	done
+	[[ "$running" -eq 0 ]] && break
+	if server_reachable; then
+		unreachable=0
+	else
+		((unreachable++))
+		if [[ "$unreachable" -ge 3 ]]; then
+			server_died=1
+			echo "[sqlsmith] server unreachable at ${HOST}:${PORT}; stopping sqlsmith" >&2
+			kill "${PIDS[@]}" 2>/dev/null
+			break
+		fi
+	fi
+	sleep 2
+done
+
 declare -a INSTANCE_EXITS=()
 sqlsmith_exit=0
 n_signaled=0
@@ -129,6 +167,7 @@ n_nonzero=0
 for pid in "${PIDS[@]}"; do
 	wait "$pid"
 	rc=$?
+	[[ ${#budget[@]} -gt 0 && "$rc" -eq 124 ]] && rc=0
 	INSTANCE_EXITS+=("$rc")
 	if [[ "$rc" -ne 0 ]]; then
 		((n_nonzero++))
@@ -182,7 +221,7 @@ fi
 # authoritative crash signals are: the server log shows a sanitizer /
 # assertion hit, OR the server process no longer accepts new connections.
 server_alive=1
-if ! bash -c "echo > /dev/tcp/${HOST}/${PORT}" 2>/dev/null; then
+if [[ "$server_died" -ne 0 ]] || ! server_reachable; then
 	server_alive=0
 fi
 
@@ -191,7 +230,7 @@ total_queries=$((ok + errs + syntax + timeouts))
 # Decode sqlsmith exit statuses across instances. A signal-killed instance
 # (exit > 128) is a fuzzer-side crash, distinct from anything the server did.
 fuzzer_crashed=0
-if [[ "$n_signaled" -gt 0 ]]; then
+if [[ "$n_signaled" -gt 0 && "$server_died" -eq 0 ]]; then
 	fuzzer_crashed=1
 fi
 sqlsmith_status="$((PARALLEL - n_nonzero))/$PARALLEL ok"

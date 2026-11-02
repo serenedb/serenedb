@@ -14,7 +14,7 @@ Faceted navigation, distinct-value lists, autocomplete and min/max all ask one q
 For task-oriented walkthroughs see the [Faceted Search](../../../cookbook/search/faceted-search.md), [Autocomplete](../../../cookbook/search/autocomplete.md) and [Spell Correction](../../../cookbook/search/spell-correction.md) cookbook recipes.
 
 :::note Inverted index only
-The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they only work over an inverted index relation (`FROM my_index`). Point one at a base table or any other relation and the query fails with `ts_dict_agg() requires an inverted index scan in the same sub-query`.
+The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they only work over an inverted index relation (`FROM my_index`), optionally filtered by `WHERE`. Point one at a base table or any other relation, or at a subquery over the index that limits, orders, offsets, samples, joins, deduplicates or windows its documents (`FROM (SELECT body FROM my_index ORDER BY id LIMIT 10)`), and the query fails with `ts_dict_agg() requires an inverted index scan in the same sub-query`.
 :::
 
 ## Setup {#setup}
@@ -102,7 +102,7 @@ For keyword-analyzed columns on the index relation the optimizer rewrites ordina
 | `SELECT col ... GROUP BY col` | keyword column |
 | `GROUP BY GROUPING SETS ((a), (b), ...)` | distinct single-column sets over `NOT NULL` keyword columns |
 
-The whole aggregate node must be servable (mixing in `count(*)` without a `GROUP BY`, `sum(id)` or a second group key falls back to the document scan, with unchanged results) and any `WHERE` must reference the grouped column only. `EXPLAIN` shows `TsDict:` on the scan when the rewrite fired.
+The whole aggregate node must be servable (mixing in `count(*)` without a `GROUP BY`, `sum(id)` or a second group key leaves the dictionary, with unchanged results) and any `WHERE` must reference the grouped column only. `EXPLAIN` shows `TsDict:` on the scan when the rewrite fired.
 
 `GROUPING SETS` of single-column sets convert together, counting every dimension's marginal in one dictionary pass — the [faceted sidebar](../../../cookbook/search/faceted-search.md#count-every-dimension-in-one-query) shape. Combining columns inside one set (`GROUP BY a, b`) asks for the cross-product, which the per-column dictionaries cannot serve, so it stays a document scan.
 
@@ -114,7 +114,7 @@ Facets over a nullable column include the `NULL` group, synthesized from the col
 
 ## Consistency under writes {#consistency}
 
-The index relation reflects the last [refresh](../../indexes/inverted/maintenance.md) minus every deleted document: inserts become visible at the next refresh, deletes apply immediately. Terms whose documents are all deleted are never returned and `ts_dict_count` always counts live documents, even before the segment is compacted.
+The index relation is the snapshot taken at the last [refresh](../../indexes/inverted/maintenance.md): inserts and deletes become visible at the next refresh. A deleted document stays in its segment until compaction rewrites it, but from that refresh on no query sees it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
 
 <SqlLogicTest id="sql/functions/term_dictionary/deletes" />
 

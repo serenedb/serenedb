@@ -353,7 +353,7 @@ segments
 2
 
 statement ok
-SET sdb_ann_oversample = 4;
+SET sdb_ann_rescore_width = 100;
 
 query
 SELECT count(*) FROM (
@@ -372,7 +372,7 @@ count
 0
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;
 
 query
 SELECT count(*) FROM (
@@ -389,7 +389,7 @@ statement ok
 SET sdb_hnsw_ef_search = 32;
 
 statement ok
-SET sdb_ann_oversample = 4;
+SET sdb_ann_rescore_width = 100;
 
 query
 SELECT count(*) FROM (
@@ -408,7 +408,7 @@ count
 0
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;
 
 statement ok
 RESET sdb_hnsw_filter_mode;
@@ -427,7 +427,7 @@ statement ok
 VACUUM (COMPACT_TABLE) rot_sq8;
 
 statement ok
-SET sdb_ann_oversample = 2;
+SET sdb_ann_rescore_width = 100;
 
 query
 SELECT count(DISTINCT row_group_id) AS segments
@@ -448,4 +448,4 @@ statement ok
 RESET sdb_hnsw_ef_search;
 
 statement ok
-RESET sdb_ann_oversample;
+RESET sdb_ann_rescore_width;

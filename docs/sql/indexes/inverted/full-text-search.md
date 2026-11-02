@@ -204,6 +204,12 @@ A full-text search is a first-class part of the SQL query plan, not a black box 
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan" />
 
+When the query keeps only some of the matches — `ORDER BY … LIMIT k`, a plain `LIMIT`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) (2048 by default) — the columns it only returns are read for the rows it keeps, not for every match. The scan produces just what the sort and the filters need, plus an `iresearch_pk` that identifies each row in the index, and a `LOOKUP_JOIN` above the `TOP_N` or `LIMIT` reads the other columns of the kept rows by it (`Key: iresearch_pk`):
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/inspect_plan_lookup_join" />
+
+Columns the index stores (`INCLUDE`d columns) are read from the index, by a `LOOKUP_JOIN` with an `IRESEARCH_SCAN` on its right. Other columns are read from the indexed table or view. When the query also returns stored columns, or its sort or filters already read a column the index does not store, those columns are read by a `LOOKUP_JOIN` with an `INDEX_SOURCE` on its right, keyed by the row's [identity in the source](./views.md#row-identity), which `Key` names as the source does (`Key: rowid` for a table); otherwise the `LOOKUP_JOIN` into the index reads them as well. A query can therefore show two `LOOKUP_JOIN`s, one above the other.
+
 A predicate the index cannot serve shows up as a `Column Filter` instead, checked row by row after the scan. A condition the index can only narrow down — a [phrase without `position`](#phrases-without-positions), a [geo predicate](./geospatial-search.md#how-rows-are-checked) or a re-checked [`ts_like`](../../functions/search/tokenizers/generate_wildcard_ngrams.md) pattern — keeps its lookup in the `Index Filter` and lists the exact check under `Table Filter`, where it runs with the query's other filters.
 
 Because the search executes inside the scan, it composes with the rest of SQL: a `JOIN`, a `GROUP BY`, or an `ORDER BY <scorer>` over the same query is planned and run as one statement. See [Profiling](../../../cookbook/performance/profiling.md) for reading plans, and [Ranking](./ranking.md#top-k-queries-and-wand-pruning) for the WAND-optimized `Top: k, optimized` plan.

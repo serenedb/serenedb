@@ -755,4 +755,27 @@ void NormStringJsonFieldFactory(Document& doc, const std::string& name,
   return NormalizedStringJsonFieldFactory(doc, name, data);
 }
 
+std::shared_ptr<const irs::DocRemoval> RemovalOf(
+  const irs::DirectoryReader& reader, const Terms& terms) {
+  irs::DocRemovalBuilder removal;
+  for (uint32_t index = 0; index != reader.size(); ++index) {
+    const auto& segment = reader[index];
+    const auto* field = segment.field(terms.field);
+    if (!field) {
+      continue;
+    }
+    const auto masked = segment.MaskedDocs();
+    for (const auto& value : terms.values) {
+      field->ReadDocs(irs::ViewCast<irs::byte_type>(std::string_view{value}),
+                      [&](irs::doc_id_t doc) {
+                        if (!masked.Contains(doc)) {
+                          removal.Add(index, doc);
+                        }
+                        return true;
+                      });
+    }
+  }
+  return std::move(removal).Finish(reader);
+}
+
 }  // namespace tests

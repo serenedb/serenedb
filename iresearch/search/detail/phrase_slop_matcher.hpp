@@ -25,12 +25,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <compare>
 #include <cstdint>
-#include <cstring>
 #include <limits>
-#include <memory>
 #include <span>
-#include <tuple>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -53,7 +51,6 @@ struct MatchResult {
 };
 
 struct MatchScratch {
-  std::vector<int64_t> offsets;
   std::vector<int64_t> shift;
   std::vector<size_t> cursor;
   std::vector<PosAttr::value_t> snap;
@@ -67,12 +64,12 @@ struct GroupPair {
   uint32_t b;
 };
 
-inline void BuildGroupPairs(std::span<const uint32_t> groups, size_t n,
-                            std::vector<GroupPair>& out) {
+template<typename Group>
+void BuildGroupPairs(size_t n, Group&& group, std::vector<GroupPair>& out) {
   out.clear();
   for (size_t a = 0; a != n; ++a) {
     for (size_t b = a + 1; b != n; ++b) {
-      if (groups.empty() || groups[a] == groups[b]) {
+      if (group(a) == group(b)) {
         out.push_back({static_cast<uint32_t>(a), static_cast<uint32_t>(b)});
       }
     }
@@ -303,6 +300,8 @@ class SpanCursors {
 };
 
 struct MatchSpan {
+  auto operator<=>(const MatchSpan&) const noexcept = default;
+
   PosAttr::value_t leftmost;
   PosAttr::value_t rightmost;
   uint32_t leftmost_slot;
@@ -412,91 +411,14 @@ inline bool StaticArityDisabled() noexcept {
 #endif
 
 struct MatchRecord {
-  PosAttr::value_t leftmost;
-  PosAttr::value_t rightmost;
-  uint32_t leftmost_slot;
-  uint32_t rightmost_slot;
+  auto operator<=>(const MatchRecord&) const noexcept = default;
+
+  MatchSpan span;
   uint32_t start_offset;
   uint32_t end_offset;
 };
 
-inline void SortMatches(std::vector<MatchRecord>& matches) {
-  absl::c_sort(matches, [](const MatchRecord& a,
-                           const MatchRecord& b) noexcept {
-    return std::tie(a.leftmost, a.rightmost, a.leftmost_slot,
-                    a.rightmost_slot) <
-           std::tie(b.leftmost, b.rightmost, b.leftmost_slot, b.rightmost_slot);
-  });
-}
-
-inline std::span<const int64_t> BuildOffsets(
-  const std::vector<PosAttr::value_t>& expected_steps, MatchScratch& scratch) {
-  auto& offsets = scratch.offsets;
-  offsets.resize(expected_steps.size() + 1);
-  offsets[0] = 0;
-  for (size_t i = 0; i != expected_steps.size(); ++i) {
-    offsets[i + 1] = offsets[i] + expected_steps[i];
-  }
-  return offsets;
-}
-
-template<size_t N = 0>
-MatchResult Run(const std::vector<std::vector<PosAttr::value_t>>& slot_pos,
-                PosAttr::value_t slop,
-                const std::vector<PosAttr::value_t>& expected_steps,
-                MatchScratch& scratch, bool early_exit,
-                const std::vector<uint32_t>& groups = {},
-                std::vector<MatchSpan>* out = nullptr) {
-  if (out) {
-    out->clear();
-  }
-  const size_t n = slot_pos.size();
-  if (n < 2) {
-    return {};
-  }
-  SDB_ASSERT(expected_steps.size() == n - 1);
-  SDB_ASSERT(groups.empty() || groups.size() == n);
-
-  const auto offsets = BuildOffsets(expected_steps, scratch);
-  SpanCursors cur{slot_pos, scratch};
-  std::vector<GroupPair> pairs;
-  BuildGroupPairs(groups, n, pairs);
-  auto res = Sweep<N>(cur, offsets, slop, pairs, scratch, early_exit, [&] {
-    if (out) {
-      out->push_back(SpanOf(cur.Snapshot()));
-    }
-  });
-
-  if (early_exit) {
-    res.freq = res.any ? 1 : 0;
-  }
-  if (out) {
-    absl::c_sort(*out, [](const MatchSpan& a, const MatchSpan& b) noexcept {
-      return std::tie(a.leftmost, a.rightmost, a.leftmost_slot,
-                      a.rightmost_slot) < std::tie(b.leftmost, b.rightmost,
-                                                   b.leftmost_slot,
-                                                   b.rightmost_slot);
-    });
-  }
-  return res;
-}
-
 }  // namespace detail::slop
-
-template<typename PositionsT>
-inline std::vector<PosAttr::value_t> BuildExpectedSteps(
-  const PositionsT& positions) {
-  std::vector<PosAttr::value_t> steps;
-  if (positions.size() < 2) {
-    return steps;
-  }
-  steps.reserve(positions.size() - 1);
-  for (size_t i = 1; i < positions.size(); ++i) {
-    SDB_ASSERT(positions[i].lead_offset >= positions[i - 1].lead_offset);
-    steps.push_back(positions[i].lead_offset - positions[i - 1].lead_offset);
-  }
-  return steps;
-}
 
 template<typename TermPositionT, bool Offs, bool HasFreq, size_t N = 0,
          bool HasBoost = false>
@@ -507,21 +429,12 @@ class PhraseSlopMatcher {
   using Positions = containers::Fixed<TermPosition, N>;
 
   static constexpr bool kHasScale = HasFreq;
-  static constexpr bool kHasFreq = HasFreq;
   static constexpr bool kOffsets = Offs;
 
   static_assert(HasFreq || !HasBoost);
 
-  PhraseSlopMatcher(size_t size, PosAttr::value_t max_slop,
-                    std::vector<PosAttr::value_t>&& expected_steps)
-    : _pos{size},
-      _max_slop{max_slop},
-      _expected_steps{expected_steps.size(),
-                      [&](PosAttr::value_t& slot, size_t i) noexcept {
-                        slot = expected_steps[i];
-                      }},
-      _offsets{size},
-      _term_groups{size} {}
+  PhraseSlopMatcher(size_t size, PosAttr::value_t max_slop)
+    : _pos{size}, _max_slop{max_slop}, _offsets{size} {}
 
   TermPosition& Position(size_t i) noexcept {
     SDB_ASSERT(i < _pos.size());
@@ -531,18 +444,13 @@ class PhraseSlopMatcher {
   void Finish() {
     SDB_ASSERT(_pos.size() >= 2);
     SDB_ASSERT(_max_slop > 0);
-    SDB_ASSERT(_expected_steps.size() == _pos.size() - 1);
-
-    const size_t n = _pos.size();
-    _offsets[0] = 0;
-    for (size_t i = 1; i != n; ++i) {
-      _offsets[i] = _offsets[i - 1] + _expected_steps[i - 1];
+    const auto first = _pos.front().second.lead_offset;
+    for (size_t i = 0; i != _pos.size(); ++i) {
+      SDB_ASSERT(_pos[i].second.lead_offset >= first);
+      _offsets[i] = _pos[i].second.lead_offset - first;
     }
-    for (size_t i = 0; i != n; ++i) {
-      _term_groups[i] = _pos[i].second.term_group;
-    }
-    detail::slop::BuildGroupPairs({_term_groups.data(), _term_groups.size()}, n,
-                                  _pairs);
+    detail::slop::BuildGroupPairs(
+      _pos.size(), [&](size_t i) { return _pos[i].second.term_group; }, _pairs);
   }
 
   IRS_FORCE_INLINE bool Match() {
@@ -613,9 +521,7 @@ class PhraseSlopMatcher {
       _match_scratch, !HasFreq, [&] {
         if constexpr (Offs && HasFreq) {
           const auto span = detail::slop::SpanOf(cur.Snapshot());
-          _matches.push_back({span.leftmost, span.rightmost, span.leftmost_slot,
-                              span.rightmost_slot,
-                              cur.StartOffset(span.leftmost_slot),
+          _matches.push_back({span, cur.StartOffset(span.leftmost_slot),
                               cur.EndOffset(span.rightmost_slot)});
         }
       });
@@ -623,7 +529,7 @@ class PhraseSlopMatcher {
       return false;
     }
     if constexpr (Offs && HasFreq) {
-      detail::slop::SortMatches(_matches);
+      absl::c_sort(_matches);
     }
     Take(res);
     return true;
@@ -651,9 +557,7 @@ class PhraseSlopMatcher {
 
   Positions _pos;
   PosAttr::value_t _max_slop;
-  containers::Fixed<PosAttr::value_t> _expected_steps;
   containers::Fixed<int64_t, N> _offsets;
-  containers::Fixed<uint32_t, N> _term_groups;
   std::vector<detail::slop::GroupPair> _pairs;
   detail::slop::MatchScratch _match_scratch;
   std::vector<detail::slop::MatchRecord> _matches;

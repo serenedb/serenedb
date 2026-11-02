@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <bit>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
@@ -612,6 +614,13 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
       FlushTailPay();
     }
     FlushGroups();
+  }
+  if (_term_pay) {
+    const uint64_t alignment = _term_pay->Alignment();
+    SDB_ASSERT(std::has_single_bit(alignment));
+    for (auto pad = -_pay_out->Position() & (alignment - 1); pad != 0; --pad) {
+      _pay_out->WriteByte(0);
+    }
   }
 }
 

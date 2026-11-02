@@ -1,32 +1,11 @@
 name: serenedb | create infra
-
-run-name: "serenedb | create infra"
+run-name: "serenedb | create infra${{ inputs.TAG != '' && format(' [{0}]', inputs.TAG) || '' }}"
 
 on:
   workflow_dispatch:
     inputs:
-      LOCATION:
-        description: 'Where the build is executed'
-        type: choice
-        required: true
-        options:
-          - linux-amd64
-          - linux-arm64
-          - linux
-        default: 'linux-amd64'
-      PUSH_IMAGES_2_REGISTRY:
-        description: 'Push build images to Docker Hub'
-        required: true
-        type: boolean
-        default: false
-      TAG_LATEST:
-        description: 'Also tag the build image :latest, which every CI run uses by default'
-        required: true
-        type: boolean
-        default: false
       TAG:
-        description: 'Also tag the build image with this name (e.g. a branch, / becomes -)'
-        required: false
+        description: 'Also tag every image of this commit with this name, such as latest'
         type: string
         default: ''
 
@@ -34,10 +13,13 @@ permissions:
   contents: read
 
 jobs:
-  build-image:
-    name: Produce Build Image
+  build:
+    name: Build ${{ matrix.location }}
+    strategy:
+      matrix:
+        location: [linux-amd64, linux-arm64]
     runs-on:
-      - ${{ inputs.LOCATION }}
+      - ${{ matrix.location }}
     steps:
       - name: Reap containers left on this runner
         run: |
@@ -54,36 +36,33 @@ jobs:
           submodules: false
           clean: true
 
-      - name: Setup QEMU for multi-arch
-        run: docker run --rm --label "serenedb.owner=$SDB_DOCKER_OWNER" --privileged tonistiigi/binfmt --install all
-
-      - name: Build and push build images
+      - name: Build and push this architecture
         working-directory: ./scripts/ci
         env:
-          DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-          TAG_LATEST: ${{ inputs.TAG_LATEST }}
-          EXTRA_TAG: ${{ inputs.TAG }}
-        run: ./build_images.sh
-
-      - name: Send notification
-        if: always() && !cancelled()
-        env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID_MAIN: "51"
-          TG_THREAD_ID_BUILD: "53"
-          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: ${{ github.ref_name }}
-          JOB_STATUS: ${{ job.status }}
-          ACTOR: ${{ github.actor }}
-          RUN_NAME: "serenedb | create infra"
-          RUN_NUMBER: ${{ github.run_number }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/send_notification.bash
+        run: ./build_images.sh arch
 
       - name: Reap containers of this job
         if: always()
         run: ./scripts/ci/reap_owned_docker.sh "$SDB_DOCKER_OWNER"
+
+  tag:
+    name: Tag the images ${{ inputs.TAG }}
+    needs: build
+    if: inputs.TAG != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Tag every image
+        working-directory: ./scripts/ci
+        env:
+          DOCKER_USERNAME: serenedb
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+          TAG: ${{ inputs.TAG }}
+        run: ./build_images.sh tag "$TAG"

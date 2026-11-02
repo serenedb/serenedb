@@ -2,20 +2,10 @@
 
 # Driver-test runner.
 #
-# Runs against any reachable PG endpoint. Two modes:
-#
-#   * Local debug: developer starts serened by hand
+# Runs against any reachable PG endpoint, such as a serened started by hand:
 #       ninja serened
 #       ./build/bin/serened /tmp/datadir --listen postgres://0.0.0.0:5432
 #       tests/drivers/run.sh --lang python
-#
-#   * Docker (CI):
-#       tests/drivers/run_in_docker.sh
-#     which brings up serened in compose and execs this script with
-#     --host serenedb-single.
-#
-# Mirrors the shape of tests/sqllogic/run.sh on purpose so contributors
-# transfer their knowledge.
 
 set -u
 
@@ -410,10 +400,10 @@ for lang in "${langs[@]}"; do
 	# Every per-lang runner exits 0 when its toolchain is missing, so a driver
 	# dropping out of the build image would otherwise read as a pass. A lang we
 	# were asked to run that produced no test at all is a failure, not a skip.
-	# Only checked for an unfiltered run: --types / --driver can legitimately
-	# select nothing. sqlsmith has no junit glob, so it is never checked.
+	# Only checked for an unfiltered run: --types / --driver / SDB_DRV_PY_ONLY can
+	# legitimately select nothing. sqlsmith has no junit glob, so it is never checked.
 	if [[ -n "${lang_junit_glob[$lang]:-}" && "${tests:-0}" -eq 0 &&
-		"${args[types]}" == ".*" && -z "${args[driver]}" ]]; then
+		"${args[types]}" == ".*" && -z "${args[driver]}" && -z "${SDB_DRV_PY_ONLY:-}" ]]; then
 		echo "[drivers] ERROR: $lang ran no tests -- toolchain or driver missing?" >&2
 		status=FAIL
 		final_exit=1

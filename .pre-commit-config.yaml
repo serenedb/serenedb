@@ -33,7 +33,12 @@ repos:
       - id: end-of-file-fixer
       - id: mixed-line-ending
       - id: trailing-whitespace
-        exclude: \.test$
+        exclude: \.(test|recorded)$
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint-docker
 
   - repo: https://github.com/BlankSpruce/gersemi
     rev: 0.26.1
@@ -89,12 +94,12 @@ repos:
         language: python
         entry: python3 scripts/check_banned_calls.py
         files: ^(server|iresearch)/.*\.(cpp|cc|hpp|hh|h|ipp|tpp)$
-      - id: check-system-table-claims
-        name: Check system-table compatibility claims
+      - id: check-generated
+        name: Check the generated files are current
         language: python
-        entry: python3 scripts/generate_system_table_claims.py --check
+        entry: python3 scripts/check_generated.py
         pass_filenames: false
-        files: (system_table_claims\.test|generate_system_table_claims\.py)$
+        always_run: true
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python
@@ -109,12 +114,8 @@ repos:
         name: Check fault-injection points (tests <-> source)
         language: python
         entry: python3 scripts/check_fault_points.py
-        # Cross-references the whole tree (a source change must be validated
-        # against all tests and vice versa), so the script scans the trees
-        # itself instead of the staged files -- but only when a file that can
-        # affect the result changed.
-        files: \.(test|test_slow|cpp|cc|c|hpp|hh|h|ipp|tpp|py)$
         pass_filenames: false
+        always_run: true
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python
@@ -125,6 +126,12 @@ repos:
         language: python
         entry: python3 scripts/check_no_tmp_in_sqllogic.py
         files: ^tests/sqllogic/.*\.test
+      - id: check-sqllogic-layout
+        name: Check the sqllogic any/ symlinks
+        language: python
+        entry: python3 scripts/check_sqllogic_layout.py
+        always_run: true
+        pass_filenames: false
       - id: check-snake-case-filenames
         name: Check C++ filenames are snake_case
         language: python
@@ -158,15 +165,10 @@ repos:
         entry: scripts/duckdb_family.sh format --staged
         pass_filenames: false
         always_run: true
-      - id: check-submodule-pointers
-        name: Check submodule gitlinks (on a version branch or an open fork PR head, not older than main)
+      - id: ci-script-tests
+        name: Test the CI scripts
         language: python
-        entry: python3 scripts/check_submodule_pointers.py
-        args: [--allow-pending]
-        # pre-commit filters submodule gitlinks out of its file lists, so a
-        # files: pattern on third_party/duckdb never matches; the script
-        # no-ops instantly (two local git calls) when the gitlink equals
-        # origin/main's, so unconditional runs are cheap.
-        always_run: true
+        additional_dependencies: [pytest==9.1.1]
+        entry: python3 -m pytest -q -p no:cacheprovider scripts/ci/tests
+        files: ^(scripts/(ci/|coverage/|check_submodule_pointers\.py$|duckdb_family\.sh$)|tests/drivers/harness/|tests/sqllogic/(generated|sqllogic_gen)\.py$|\.github/workflows/simple\.yml$)
         pass_filenames: false
-        verbose: true

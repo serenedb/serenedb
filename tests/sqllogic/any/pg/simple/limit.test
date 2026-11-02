@@ -75,3 +75,21 @@ ORDER BY x
 OFFSET 0 LIMIT 0;
 ----
 x
+
+
+query
+SELECT * FROM (VALUES (3), (2), (1)) t(x)
+ORDER BY x
+OFFSET 1 ROWS FETCH FIRST 1 ROW ONLY;
+----
+x
+2
+
+
+query
+SELECT * FROM (VALUES (3), (2), (1)) t(x)
+ORDER BY x
+FETCH NEXT ROW ONLY;
+----
+x
+1

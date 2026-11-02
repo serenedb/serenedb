@@ -35,6 +35,11 @@ namespace irs {
 class DirectoryReaderImpl;
 struct DirectoryMeta;
 
+struct FieldTermRange {
+  bytes_view min;
+  bytes_view max;
+};
+
 // Interface for an index reader over a directory of segments
 class DirectoryReader final : public IndexReader {
  public:
@@ -78,6 +83,8 @@ class DirectoryReader final : public IndexReader {
   uint64_t live_docs_count() const final;
 
   const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
+
+  const FieldTermRange* GetTermRange(field_id field) const;
 
   size_t size() const final;
 

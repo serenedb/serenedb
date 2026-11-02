@@ -69,4 +69,4 @@ WHERE viewname = 'view1'
   AND schemaname = 'public';
 ----
 definition
-SELECT 42;
+SELECT 42 AS a;

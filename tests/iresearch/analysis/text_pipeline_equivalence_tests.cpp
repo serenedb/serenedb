@@ -56,7 +56,7 @@ Tokenizer::ptr MakeNorm(bool lower) {
   o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = lower ? Case::Lower : Case::None;
   o.accent = false;
-  return NormalizingTokenizer::Make(std::move(o));
+  return NormalizingTokenizer::Make(std::move(o), tests::Cache());
 }
 
 Tokenizer::ptr MakeStem() {

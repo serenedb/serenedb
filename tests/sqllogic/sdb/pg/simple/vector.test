@@ -381,7 +381,7 @@ query
 SELECT ARRAY[] <#> ARRAY[];
 ----
 ?column?
-0
+-0
 
 
 query

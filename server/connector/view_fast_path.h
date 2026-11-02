@@ -21,9 +21,12 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -169,13 +172,17 @@ std::optional<ViewFastPath> ResolveViewFastPath(
 
 std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp);
 
-duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp);
+duckdb::unique_ptr<duckdb::LogicalGet> BindTableScan(
+  duckdb::ClientContext& context, duckdb::TableCatalogEntry& table,
+  const duckdb::EntryLookupInfo& lookup);
 
-duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
+duckdb::unique_ptr<duckdb::LogicalGet> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp);
 
 void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept;
 
 std::string FormatLookupLabel(const ViewFastPath& fp);
+
+std::string FormatSourceRowId(const ViewFastPath& fp);
 
 }  // namespace sdb::connector

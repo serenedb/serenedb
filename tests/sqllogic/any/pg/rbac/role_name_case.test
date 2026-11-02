@@ -1,0 +1,61 @@
+statement ok
+DROP ROLE IF EXISTS "Rcase_Bob";
+
+
+statement ok
+DROP ROLE IF EXISTS rcase_bob;
+
+
+statement ok
+CREATE ROLE "Rcase_Bob";
+
+
+statement ok
+CREATE ROLE rcase_bob;
+
+
+query
+SELECT 'rcase_bob'::regrole::text AS lower_role, '"Rcase_Bob"'::regrole::text AS mixed_role;
+----
+lower_role	mixed_role
+rcase_bob	"Rcase_Bob"
+
+
+query
+SELECT 'rcase_bob'::regrole = (SELECT oid FROM pg_roles WHERE rolname = 'rcase_bob') AS lower_ok,
+       '"Rcase_Bob"'::regrole = (SELECT oid FROM pg_roles WHERE rolname = 'Rcase_Bob') AS mixed_ok;
+----
+lower_ok	mixed_ok
+t	t
+
+
+query
+SELECT pg_has_role('Rcase_Bob', 'rcase_bob', 'MEMBER') AS mixed_in_lower,
+       pg_has_role('rcase_bob', 'Rcase_Bob', 'MEMBER') AS lower_in_mixed;
+----
+mixed_in_lower	lower_in_mixed
+f	f
+
+
+statement ok
+GRANT rcase_bob TO "Rcase_Bob";
+
+
+query
+SELECT pg_has_role('Rcase_Bob', 'rcase_bob', 'MEMBER') AS mixed_in_lower,
+       pg_has_role('rcase_bob', 'Rcase_Bob', 'MEMBER') AS lower_in_mixed;
+----
+mixed_in_lower	lower_in_mixed
+t	f
+
+
+statement ok
+REVOKE rcase_bob FROM "Rcase_Bob";
+
+
+statement ok
+DROP ROLE "Rcase_Bob";
+
+
+statement ok
+DROP ROLE rcase_bob;

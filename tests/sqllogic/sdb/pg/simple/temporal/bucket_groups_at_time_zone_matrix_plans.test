@@ -1,0 +1,116 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE g AS SELECT tstz, (tstz AT TIME ZONE 'UTC')::TIMESTAMP AS ts, v FROM (SELECT TIMESTAMPTZ '2025-03-07 00:00:00+00' + INTERVAL (i * 53) MINUTE AS tstz, i AS v FROM range(0, 1500) t(i) UNION ALL SELECT TIMESTAMPTZ '2025-10-24 00:00:00+00' + INTERVAL (i * 53) MINUTE, 10000 + i FROM range(0, 1500) t(i) UNION ALL SELECT TIMESTAMPTZ '2024-12-30 12:00:00+00' + INTERVAL (i * 53) MINUTE, 20000 + i FROM range(0, 300) t(i) UNION ALL SELECT TIMESTAMPTZ '1969-12-25 00:00:00+00' + INTERVAL (i * 173) MINUTE, 30000 + i FROM range(0, 600) t(i));
+
+statement ok
+INSERT INTO g VALUES (NULL, NULL, -1), (TIMESTAMPTZ 'infinity', TIMESTAMP 'infinity', -2);
+
+statement ok
+CREATE TABLE gf AS SELECT * FROM g WHERE isfinite(tstz) OR tstz IS NULL;
+
+statement ok
+CREATE TABLE g25 AS SELECT * FROM gf WHERE v BETWEEN 0 AND 19999;
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT date_trunc('day', tstz AT TIME ZONE 'America/Havana') AS k, count(*) AS c FROM g25 GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                   │
+│ __internal_date_trunc_unbucket(#0, 86400000000, 0), #1                         │
+│ ~1,500 rows                                                                    │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────────┴───────────────────────────────────────╮
+│ Groups: #0                                                                     │
+│ Aggregates: count_star()                                                       │
+│ ~1,500 rows                                                                    │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────────┴───────────────────────────────────────╮
+│ Projections:                                                                   │
+│ __internal_date_trunc_bucket(timezone('America/Havana', tstz), 86400000000, 0) │
+│ ~3,000 rows                                                                    │
+╰────────────────────────────────────────┬───────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────────┴───────────────────────────────────────╮
+│ Table: g25                                                                     │
+│ Type: Sequential Scan                                                          │
+│ Projections: tstz                                                              │
+│ ~3,000 rows                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT (tstz AT TIME ZONE 'UTC')::DATE AS k, count(*) AS c FROM g25 GROUP BY 1;
+----
+QUERY PLAN
+╭─ PERFECT_HASH_GROUP_BY ──╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~1,500 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: k           │
+│ ~3,000 rows              │
+╰─────────────┬────────────╯
+╭─ SEQ_SCAN ──┴────────────╮
+│ Table: g25               │
+│ Type: Sequential Scan    │
+│ Projections: tstz        │
+│ ~3,000 rows              │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT strftime(tstz AT TIME ZONE 'Asia/Kolkata', '%Y-%m-%d %H') AS k, count(*) AS c FROM g25 GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                │
+│ strftime(__internal_date_trunc_unbucket(#0, 3600000000, 0), '%Y-%m-%d %H'), │
+│ #1                                                                          │
+│ ~1,500 rows                                                                 │
+╰──────────────────────────────────────┬──────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ──────────────┴──────────────────────────────────────╮
+│ Groups: #0                                                                  │
+│ Aggregates: count_star()                                                    │
+│ ~1,500 rows                                                                 │
+╰──────────────────────────────────────┬──────────────────────────────────────╯
+╭─ PROJECTION ─────────────────────────┴──────────────────────────────────────╮
+│ Projections:                                                                │
+│ __internal_date_trunc_bucket(timezone('Asia/Kolkata', tstz), 3600000000, 0) │
+│ ~3,000 rows                                                                 │
+╰──────────────────────────────────────┬──────────────────────────────────────╯
+╭─ SEQ_SCAN ───────────────────────────┴──────────────────────────────────────╮
+│ Table: g25                                                                  │
+│ Type: Sequential Scan                                                       │
+│ Projections: tstz                                                           │
+│ ~3,000 rows                                                                 │
+╰─────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('hour', ts AT TIME ZONE 'Europe/Berlin') AS k, count(*) AS c FROM g25 GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────────────────╮
+│ Projections:                                                            │
+│ __internal_icu_date_trunc_unbucket('hour', #0), #1                      │
+│ ~1,500 rows                                                             │
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ────────────┴────────────────────────────────────╮
+│ Groups: #0                                                              │
+│ Aggregates: count_star()                                                │
+│ ~1,500 rows                                                             │
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────┴────────────────────────────────────╮
+│ Projections:                                                            │
+│ __internal_icu_date_trunc_bucket('hour', timezone('Europe/Berlin', ts)) │
+│ ~3,000 rows                                                             │
+╰────────────────────────────────────┬────────────────────────────────────╯
+╭─ SEQ_SCAN ─────────────────────────┴────────────────────────────────────╮
+│ Table: g25                                                              │
+│ Type: Sequential Scan                                                   │
+│ Projections: ts                                                         │
+│ ~3,000 rows                                                             │
+╰─────────────────────────────────────────────────────────────────────────╯

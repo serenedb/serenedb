@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok
+COPY (SELECT range AS src, range + 1 AS dst FROM range(100000)) TO '${__TEST_DIR__}/edges.parquet' (FORMAT PARQUET);
+
+
+statement ok
+SET GLOBAL threads = 1;
+
+
+query
+WITH RECURSIVE reach(n) AS (SELECT 0 UNION SELECT e.dst FROM reach JOIN '${__TEST_DIR__}/edges.parquet' e ON e.src = reach.n WHERE reach.n < 5) SELECT count(*) FROM reach;
+----
+count
+6
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL async_threads = 0;
+
+
+query
+WITH RECURSIVE reach(n) AS (SELECT 0 UNION SELECT e.dst FROM reach JOIN '${__TEST_DIR__}/edges.parquet' e ON e.src = reach.n WHERE reach.n < 5) SELECT count(*) FROM reach;
+----
+count
+6
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET GLOBAL async_threads = 0;
+
+
+query
+WITH RECURSIVE reach(n) AS (SELECT 0 UNION SELECT e.dst FROM reach JOIN '${__TEST_DIR__}/edges.parquet' e ON e.src = reach.n WHERE reach.n < 5) SELECT count(*) FROM reach;
+----
+count
+6
+
+
+statement ok
+SET GLOBAL threads = 2;
+
+
+connection a
+query async
+WITH RECURSIVE reach(n) AS (SELECT 0 UNION SELECT e.dst FROM reach JOIN '${__TEST_DIR__}/edges.parquet' e ON e.src = reach.n WHERE reach.n < 5) SELECT count(*) FROM reach;
+----
+count
+6
+
+
+connection b
+query async
+WITH RECURSIVE reach(n) AS (SELECT 0 UNION SELECT e.dst FROM reach JOIN '${__TEST_DIR__}/edges.parquet' e ON e.src = reach.n WHERE reach.n < 5) SELECT count(*) FROM reach;
+----
+count
+6
+
+
+wait
+
+
+statement ok
+RESET GLOBAL async_threads;
+
+
+statement ok
+RESET GLOBAL threads;

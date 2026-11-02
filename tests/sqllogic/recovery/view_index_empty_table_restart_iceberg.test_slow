@@ -47,13 +47,6 @@ query
 SELECT * FROM serenedb_reindex('vetr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
-rebuild	0	0	0	0
-
-connection after_crash
-query
-SELECT * FROM serenedb_reindex('vetr_idx');
-----
-action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash

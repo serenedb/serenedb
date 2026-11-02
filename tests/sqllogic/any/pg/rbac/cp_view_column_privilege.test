@@ -1,0 +1,85 @@
+statement ok
+DROP VIEW IF EXISTS cpv_lane_view;
+
+
+statement ok
+DROP TABLE IF EXISTS cpv_lane;
+
+
+statement ok
+DROP ROLE IF EXISTS cpv_support;
+
+
+statement ok
+CREATE TABLE cpv_lane (id serial, hero text);
+
+
+statement ok
+CREATE VIEW cpv_lane_view AS SELECT id, hero FROM cpv_lane;
+
+
+statement ok
+CREATE ROLE cpv_support;
+
+
+statement ok
+GRANT SELECT ON cpv_lane_view TO cpv_support;
+
+
+query
+SELECT has_any_column_privilege('cpv_support', 'cpv_lane_view', 'SELECT') AS view_any,
+       has_any_column_privilege('cpv_support', 'cpv_lane', 'SELECT') AS table_any,
+       has_any_column_privilege('pg_catalog.pg_tables', 'SELECT') AS system_view_any,
+       has_any_column_privilege('cpv_lane_view'::regclass, 'SELECT') AS view_oid_any;
+----
+view_any	table_any	system_view_any	view_oid_any
+t	f	t	t
+
+
+query
+SELECT has_column_privilege('cpv_support', 'cpv_lane_view', 'hero', 'SELECT') AS by_name,
+       has_column_privilege('cpv_support', 'cpv_lane_view', 'hero', 'UPDATE') AS not_granted,
+       has_column_privilege('cpv_support', 'cpv_lane_view', 2::int2, 'SELECT') AS by_attnum,
+       has_column_privilege('cpv_lane_view'::regclass, 2::int2, 'SELECT') AS by_oid,
+       has_column_privilege('cpv_lane_view'::regclass, 3::int2, 'SELECT') AS past_last,
+       has_column_privilege('pg_catalog.pg_tables', 'tablename', 'SELECT') AS system_view;
+----
+by_name	not_granted	by_attnum	by_oid	past_last	system_view
+t	f	t	t	NULL	t
+
+
+query
+SELECT has_table_privilege(r.oid, 'cpv_lane_view', 'SELECT') AS view_by_role_oid,
+       has_table_privilege(r.oid, 'cpv_lane', 'SELECT') AS table_by_role_oid
+FROM pg_roles r WHERE r.rolname = 'cpv_support';
+----
+view_by_role_oid	table_by_role_oid
+t	f
+
+
+statement error column "nope" of relation "cpv_lane_view" does not exist
+SELECT has_column_privilege('cpv_lane_view', 'nope', 'SELECT');
+
+
+query
+SELECT pg_get_serial_sequence('cpv_lane_view', 'id') IS NULL AS view_has_none,
+       pg_get_serial_sequence('cpv_lane', 'id') AS table_sequence;
+----
+view_has_none	table_sequence
+t	public.cpv_lane_id_seq
+
+
+statement error column "nope" of relation "cpv_lane_view" does not exist
+SELECT pg_get_serial_sequence('cpv_lane_view', 'nope');
+
+
+statement ok
+DROP VIEW cpv_lane_view;
+
+
+statement ok
+DROP TABLE cpv_lane;
+
+
+statement ok
+DROP ROLE cpv_support;

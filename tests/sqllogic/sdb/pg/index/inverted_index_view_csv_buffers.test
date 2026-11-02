@@ -1,0 +1,52 @@
+control substitution on
+
+statement ok
+COPY (SELECT i AS id, 'title-' || i || '-long-enough-to-not-inline' AS title,
+             CASE WHEN i % 3 = 0 THEN 'red fox pad' ELSE 'blue cat pad' END || i AS body, i * 10 AS n
+      FROM generate_series(1, 3000) t(i))
+TO '${__TEST_DIR__}/vcsv_src.csv' (FORMAT csv, HEADER);
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, 'id,title,body,n'), (2, '1,title-one-long-enough-to-not-inline,red fox one,10'), (3, NULL),
+                               (4, '2,title-two-long-enough-to-not-inline,red fox two,20'), (5, NULL), (6, NULL),
+                               (7, '3,title-three-long-enough-to-not-inline,red fox three,30')) t(i, line) ORDER BY i)
+TO '${__TEST_DIR__}/vcsv_blank.csv' (FORMAT csv, HEADER false, DELIMITER '|');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vcsv_words AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE VIEW vcsv_v AS SELECT * FROM read_csv('${__TEST_DIR__}/vcsv_src.csv', buffer_size = 4096);
+
+statement ok
+CREATE INDEX vcsv_idx ON vcsv_v USING inverted (body vcsv_words, n) INCLUDE (n);
+
+statement ok
+CREATE VIEW vcsv_blank_v AS SELECT * FROM read_csv('${__TEST_DIR__}/vcsv_blank.csv');
+
+statement ok
+CREATE INDEX vcsv_blank_idx ON vcsv_blank_v USING inverted (body vcsv_words, n) INCLUDE (n);
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline' AND body = 'red fox pad' || n // 10)
+FROM (SELECT title, body, n FROM vcsv_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(vcsv_idx.tableoid) ASC, n LIMIT 1000);
+----
+count	count
+1000	1000
+
+query
+SELECT count(*), count(*) FILTER (WHERE title = 'title-' || n // 10 || '-long-enough-to-not-inline')
+FROM (SELECT title, n FROM vcsv_idx LIMIT 2000 OFFSET 7);
+----
+count	count
+2000	2000
+
+query
+SELECT title, n FROM vcsv_blank_idx WHERE body @@ ts_phrase('fox') ORDER BY n DESC LIMIT 3;
+----
+title	n
+title-three-long-enough-to-not-inline	30
+title-two-long-enough-to-not-inline	20
+title-one-long-enough-to-not-inline	10

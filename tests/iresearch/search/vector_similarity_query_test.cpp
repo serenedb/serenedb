@@ -18,14 +18,19 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <array>
+#include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <iresearch/search/detail/vector_filter_util.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
@@ -33,8 +38,9 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/search/top/make.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <limits>
+#include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "search/filter_test_case_base.hpp"
@@ -70,8 +76,8 @@ irs::IndexWriterOptions MakeWriterOptions(
     if (id == kVec) {
       col.compression = compression;
       col.ann_info = irs::AnnInfo{
-        .centroids_id = kVec,
-        .postings_id = kVec,
+        .index_id = kVec,
+        .column_id = kVec,
         .d = kDim,
         .metric = irs::VectorMetric::L2Sqr,
         .quant = {.kind = irs::VectorQuantization::SQ8},
@@ -83,6 +89,7 @@ irs::IndexWriterOptions MakeWriterOptions(
     }
     return col;
   };
+  opts.anns[kVec].push_back(kVec);
   return opts;
 }
 
@@ -134,8 +141,8 @@ irs::ByVectorSimilarity MakeKnnFilter() {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.nprobe = 1000;
@@ -149,7 +156,15 @@ void AssertQuantizedPath(const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
-  ASSERT_TRUE(ann->HasQuantStats());
+  ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
+  auto idx_in = segment.ReopenAnn();
+  ASSERT_NE(nullptr, idx_in);
+  const std::vector<float> query(kDim, 0.f);
+  ASSERT_NE(nullptr,
+            irs::ReadQuantizerCodebook(
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
+              query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
   ASSERT_NE(nullptr, postings);
   ASSERT_NE(irs::IndexFeatures::None,
@@ -217,8 +232,8 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   *filter.mutable_field_id() = kVec;
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
-  opts.centroids_id = kVec;
-  opts.postings_id = kVec;
+  opts.column_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
@@ -253,6 +268,61 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
       {.scorer = &scorer, .fetcher = &_fetcher}, _docs);
     ASSERT_NE(nullptr, probe);
     check_scores(*probe, [&](auto doc) { return probe->Probe(doc); });
+  }
+}
+
+TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
+  Build(300);
+  irs::VectorSimilarityScorer scorer;
+  tests::PreparedFilter prepared{_filter, *_reader, &scorer};
+  const auto* query = prepared.Query(0);
+  ASSERT_NE(nullptr, query);
+
+  std::map<irs::doc_id_t, irs::score_t> lead;
+  {
+    auto docs = prepared.ExecuteScored(0, _fetcher);
+    ASSERT_NE(nullptr, docs);
+    auto score = docs->PrepareScore();
+    while (!irs::doc_limits::eof(docs->Next())) {
+      docs->FetchScoreArgs(0);
+      _fetcher.Fetch(docs->Value());
+      irs::score_t value{};
+      score.Score(&value, 1);
+      lead.emplace(docs->Value(), value);
+    }
+  }
+  ASSERT_EQ(_docs, lead.size());
+  ASSERT_TRUE(absl::c_any_of(lead, [](const auto& hit) {
+    const auto x = static_cast<float>(hit.first);
+    return hit.second != -x * x;
+  }));
+
+  {
+    SCOPED_TRACE("hits");
+    auto hits = query->PlanScored({.scorer = scorer, .fetcher = _fetcher});
+    ASSERT_NE(nullptr, hits);
+    std::vector<irs::doc_id_t> docs(_docs + irs::doc_limits::kDocsSlack);
+    std::vector<irs::score_t> scores(_docs + irs::doc_limits::kScoresSlack);
+    const auto n = hits->Run(irs::doc_limits::min(), irs::doc_limits::eof(),
+                             docs.data(), scores.data());
+    ASSERT_EQ(_docs, n);
+    for (uint32_t i = 0; i != n; ++i) {
+      EXPECT_FLOAT_EQ(lead.at(docs[i]), scores[i]) << docs[i];
+    }
+  }
+  {
+    SCOPED_TRACE("ann");
+    auto ann =
+      query->PlanAnn({.scorer = scorer, .fetcher = _fetcher, .k = _docs});
+    ASSERT_NE(nullptr, ann);
+    irs::ann::SharedFloor floor{_docs};
+    irs::ann::Collector collector{floor, _docs};
+    ann->Run(collector);
+    const auto hits = collector.Flush();
+    ASSERT_EQ(_docs, hits.size());
+    for (const auto& hit : hits) {
+      EXPECT_FLOAT_EQ(lead.at(hit.doc), hit.score) << hit.doc;
+    }
   }
 }
 
@@ -328,7 +398,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
   auto& opts = *filter.mutable_options();
   opts.query.assign(kDim, 0.f);
   opts.query[0] = x;
-  opts.centroids_id = kVec;
+  opts.ann_id = kVec;
   opts.metric = irs::VectorMetric::L2Sqr;
   opts.radius = radius;
   opts.inclusive = inclusive;
@@ -375,15 +445,13 @@ TEST_F(VectorSimilarityQueryTest, ExactRadius) {
       EXPECT_EQ(-x * x, scores[i]);
     }
 
-    std::atomic<irs::score_t> threshold{
-      std::numeric_limits<irs::score_t>::lowest()};
-    std::vector<irs::ScoreDoc> top(_docs);
-    irs::LoserScoreCollector collector{threshold, top};
-    auto ranked = irs::top::MakeRoot(
+    irs::ann::SharedFloor floor{_docs};
+    irs::ann::Collector collector{floor, _docs};
+    auto ranked = irs::ann::MakeRoot(
       *query, {.scorer = scorer, .fetcher = _fetcher, .k = _docs});
     ASSERT_NE(nullptr, ranked);
-    ranked->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
-    EXPECT_EQ(want.size(), collector.AcceptedCount());
+    ranked->Run(collector);
+    EXPECT_EQ(want.size(), collector.Flush().size());
   }
 }
 

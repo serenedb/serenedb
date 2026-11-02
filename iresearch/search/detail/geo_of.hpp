@@ -24,19 +24,18 @@
 #include <type_traits>
 #include <utility>
 
-#include "iresearch/search/detail/node_of.hpp"
+#include "iresearch/search/detail/geo_slots.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/lead/geo_slots_docs.hpp"
-#include "iresearch/search/lead/impl.hpp"
-#include "iresearch/search/probe/geo_slots_docs.hpp"
-#include "iresearch/search/probe/impl.hpp"
+#include "iresearch/search/queries/geo_query.hpp"
 
 namespace irs::detail {
 
-template<template<typename> typename Impl, typename Result, typename Parser,
-         typename Acceptor, typename... Prefix>
-Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
-               Prefix&&... prefix) {
+template<typename Result, bool Scored, typename Parser, typename Acceptor,
+         typename F>
+Result Build(GeoKind, const GeoQuery<Parser, Acceptor>& query,
+             uint64_t interrogations, F&& f) {
+  static_assert(!Scored);
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
   SDB_ASSERT(query.Kind() != QueryKind::Empty);
   const auto& cells = query.Cells();
@@ -52,12 +51,9 @@ Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
     return {};
   }
   using Cells = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
-  using Slots =
-    std::conditional_t<kProbed, probe::GeoSlotsDocs<Parser, Acceptor, Cells>,
-                       lead::GeoSlotsDocs<Parser, Acceptor, Cells>>;
-  return memory::make_managed<Impl<TwoPhaseFor<Result, Slots>>>(
-    std::forward<Prefix>(prefix)..., std::piecewise_construct,
-    std::forward_as_tuple(std::move(node)), query.MakeRecipe());
+  return f.template operator()<GeoSlots<Parser, Acceptor, Cells>>(
+    std::piecewise_construct, std::forward_as_tuple(std::move(node)),
+    query.MakeRecipe());
 }
 
 }  // namespace irs::detail

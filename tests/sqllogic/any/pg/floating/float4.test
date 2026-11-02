@@ -43,6 +43,20 @@ float4
 
 
 query
+SELECT '-0'::float4, ARRAY['-0'::float4];
+----
+float4	array
+-0	{-0}
+
+
+query
+SELECT '-0'::float4;
+----
+float4
+-0
+
+
+query
 SELECT 'Infinity'::float4;
 ----
 float4
@@ -116,6 +130,13 @@ float4
 
 
 query
+SELECT '-0'::float4;
+----
+float4
+-0
+
+
+query
 SELECT 'Infinity'::float4;
 ----
 float4
@@ -178,6 +199,13 @@ SELECT (-0.0)::float4;
 ----
 float4
 0
+
+
+query
+SELECT '-0'::float4;
+----
+float4
+-0
 
 
 query

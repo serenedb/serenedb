@@ -1,6 +1,9 @@
 import pytest
 
+import config
+import ops
 import scenarios
+from model import Model, Outcome, Present
 from ops import NameGen
 from rng import derive
 
@@ -11,6 +14,7 @@ ENV = {
     "attach_root": "/tmp/attach",
 }
 ITERATIONS = 8000
+LOCAL_SCENARIOS = sorted(set(scenarios.SCENARIOS) - config.SCENARIOS_NEEDING_ICEBERG_REST)
 
 
 def drive(name, seed=31):
@@ -28,7 +32,7 @@ def drive(name, seed=31):
     return st, ops_seen
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_no_bucket_grows_without_bound(name):
     st, _ = drive(name)
     ceiling = max(st.table_cap, st.other_cap) + 8
@@ -44,7 +48,7 @@ def test_no_bucket_grows_without_bound(name):
         )
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_no_duplicate_keys_in_any_bucket(name):
     st, _ = drive(name)
     for label, bucket in (
@@ -55,7 +59,7 @@ def test_no_duplicate_keys_in_any_bucket(name):
         assert len(bucket) == len(set(bucket)), f"{name}: duplicate keys in {label}"
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_an_inverted_index_is_only_built_over_an_iceberg_view(name):
     st = scenarios.WorkerState(NameGen("ab", 0), env=ENV)
     pick = scenarios.resolve(name)
@@ -73,7 +77,7 @@ def test_an_inverted_index_is_only_built_over_an_iceberg_view(name):
         st.note_dropped(op)
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_a_search_only_targets_an_index_whose_column_is_known(name):
     st = scenarios.WorkerState(NameGen("ab", 0), env=ENV)
     pick = scenarios.resolve(name)
@@ -91,7 +95,7 @@ def test_a_search_only_targets_an_index_whose_column_is_known(name):
         st.note_dropped(op)
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_a_tokenizer_is_only_dropped_once_unreferenced(name):
     st = scenarios.WorkerState(NameGen("ab", 0), env=ENV)
     pick = scenarios.resolve(name)
@@ -109,7 +113,7 @@ def test_a_tokenizer_is_only_dropped_once_unreferenced(name):
         st.note_dropped(op)
 
 
-@pytest.mark.parametrize("name", sorted(scenarios.SCENARIOS))
+@pytest.mark.parametrize("name", LOCAL_SCENARIOS)
 def test_parent_links_never_dangle(name):
     st, _ = drive(name)
     live = set(st.tables) | set(st.views) | set(st.iceberg_views)
@@ -117,3 +121,22 @@ def test_parent_links_never_dangle(name):
         assert parent in live or child not in (set(st.indexes) | set(st.views)), (
             f"{name}: {child} still points at dropped parent {parent}"
         )
+
+
+@pytest.mark.parametrize("make", [ops.create_view, ops.create_index])
+def test_a_child_whose_create_was_ambiguous_drops_with_its_table(make):
+    st = scenarios.WorkerState(NameGen("ab", 0), env=ENV)
+    m = Model()
+    table = ops.create_table(st.names)
+    child = make(st.names, table.key)
+    m.declare_owned(table.key)
+    m.declare_owned(child.key)
+    m.apply_create(table.key, table.token, Outcome.COMMITTED)
+    st.note_created(table)
+    m.apply_create(child.key, child.token, Outcome.UNKNOWN_CRASH)
+    st.note_ambiguous(child)
+    assert child.key not in st.views + st.indexes
+    m.collapse({table.key: Present(table.token), child.key: Present(child.token)})
+    st.resync_from(m)
+    assert child.key in st.views + st.indexes
+    assert st.dependents_of(table.key) == [child.key]

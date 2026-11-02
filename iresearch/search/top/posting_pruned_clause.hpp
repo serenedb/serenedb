@@ -21,13 +21,13 @@
 #pragma once
 
 #include "iresearch/search/detail/masked_leaf.hpp"
-#include "iresearch/search/top/prune_leaf.hpp"
+#include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
 
 template<typename InputType>
-class PostingPrunedClause : public PruneLeafBase<InputType, false> {
-  using Base = PruneLeafBase<InputType, false>;
+class PostingPrunedClause : public PrunedLeafBase<InputType, false> {
+  using Base = PrunedLeafBase<InputType, false>;
 
   using Base::_base;
   using Base::_cursor;
@@ -118,7 +118,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
       if (leaf.IsBitset()) {
         std::memcpy(std::begin(_docs), leaf.bitset,
                     size_t{leaf.words} * sizeof(uint64_t));
-        bitset = reinterpret_cast<const uint64_t*>(std::begin(_docs));
+        bitset = reinterpret_cast<const UnalignedWord*>(std::begin(_docs));
       }
     }
     if constexpr (InputType::kVolatileAlways) {

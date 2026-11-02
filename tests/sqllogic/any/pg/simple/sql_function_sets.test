@@ -1,0 +1,125 @@
+statement ok
+DROP SCHEMA IF EXISTS fns CASCADE;
+
+
+statement ok
+CREATE SCHEMA fns;
+
+
+statement ok
+CREATE FUNCTION fns.three() RETURNS SETOF integer LANGUAGE sql AS 'SELECT * FROM generate_series(1, 3)';
+
+
+statement ok
+CREATE FUNCTION fns.wide() RETURNS SETOF bigint LANGUAGE sql AS 'SELECT * FROM generate_series(1, 2)';
+
+
+statement ok
+CREATE FUNCTION fns.pair() RETURNS TABLE(a bigint, b text) LANGUAGE sql AS 'SELECT 1, 42';
+
+
+statement ok
+CREATE FUNCTION fns.one() RETURNS bigint LANGUAGE sql RETURN 1;
+
+
+statement ok
+CREATE FUNCTION fns.col() RETURNS TABLE(c int) LANGUAGE sql AS 'SELECT 1 UNION ALL SELECT 2';
+
+
+query
+SELECT x, pg_typeof(x) AS t FROM fns.col() AS x ORDER BY 1;
+----
+x	t
+1	integer
+2	integer
+
+
+query
+SELECT * FROM fns.three() ORDER BY 1;
+----
+three
+1
+2
+3
+
+
+query
+SELECT n, pg_typeof(n) FROM fns.wide() AS n ORDER BY 1;
+----
+n	pg_typeof
+1	bigint
+2	bigint
+
+
+query
+SELECT a, pg_typeof(a) AS ta, b, pg_typeof(b) AS tb FROM fns.pair();
+----
+a	ta	b	tb
+1	bigint	42	text
+
+
+query
+SELECT x, pg_typeof(x) FROM fns.one() AS x;
+----
+x	pg_typeof
+1	bigint
+
+
+query
+SELECT * FROM fns.one();
+----
+one
+1
+
+
+query
+SELECT * FROM fns.three() WITH ORDINALITY ORDER BY 1;
+----
+three	ordinality
+1	1
+2	2
+3	3
+
+
+query
+SELECT count(*) AS n, sum(t) AS s FROM fns.three() AS t;
+----
+n	s
+3	6
+
+
+statement ok
+CREATE FUNCTION fns.doubled(x integer) RETURNS SETOF integer RETURN x * 2;
+
+
+statement ok
+CREATE FUNCTION fns.five() RETURNS TABLE(a integer) RETURN 5;
+
+
+statement ok
+CREATE FUNCTION fns.pair_row(OUT a integer, OUT b text) RETURNS SETOF record RETURN (1, 'x'::text);
+
+
+query
+SELECT d, f.a, p.a AS pa, p.b AS pb, fns.doubled(4) AS e FROM fns.doubled(21) AS d, fns.five() AS f, fns.pair_row() AS p;
+----
+d	a	pa	pb	e
+42	5	1	x	8
+
+
+query
+SELECT proname, proretset, prorettype::regtype::text AS prorettype, pg_get_function_result(oid) FROM pg_proc WHERE pronamespace = 'fns'::regnamespace ORDER BY 1;
+----
+proname	proretset	prorettype	pg_get_function_result
+col	t	integer	TABLE(c integer)
+doubled	t	integer	SETOF integer
+five	t	integer	TABLE(a integer)
+one	f	bigint	bigint
+pair	t	record	TABLE(a bigint, b text)
+pair_row	t	record	SETOF record
+three	t	integer	SETOF integer
+wide	t	bigint	SETOF bigint
+
+
+statement ok
+DROP SCHEMA fns CASCADE;

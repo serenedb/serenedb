@@ -46,7 +46,7 @@ VACUUM (RECOMPUTE_STATS_TABLE) my_logs;
 query
 SELECT index_name, table_name
 FROM sdb_indexes()
-WHERE table_name = 'my_logs';
+WHERE database_name = current_database() AND table_name = 'my_logs';
 ----
 index_name	table_name
 logs_idx	my_logs

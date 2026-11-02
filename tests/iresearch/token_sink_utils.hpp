@@ -145,7 +145,9 @@ void EmitCopy(irs::TokenSink& sink, irs::bytes_view term, Tags... tags) {
   sink.Emit<L>(
     term.size(),
     [&](irs::byte_type* mem) {
-      std::memcpy(mem, term.data(), term.size());
+      if (!term.empty()) {
+        std::memcpy(mem, term.data(), term.size());
+      }
       return static_cast<uint32_t>(term.size());
     },
     tags...);

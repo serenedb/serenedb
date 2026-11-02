@@ -108,13 +108,13 @@ t.index("pdm_s_text", "pdm_s", "id, body pdm_words")
 t.index("pdm_s_pos", "pdm_s", "id, body pdm_words_pos")
 t.refresh("pdm_s")
 
-t.section("Dense dictionary, every shape, alone and next to other conditions.")
-for q in grid():
-    for extra in CONTEXTS:
-        check("pdm_text", "pdm_pos", q, extra)
-    check("pdm_text", "pdm_pos", f"({q} || 'dog')")
-    check("pdm_text", "pdm_pos", f"({q})::score('constant(1)')")
+for shape in [*(f"{{}}{extra}" for extra in CONTEXTS), "({} || 'dog')", "({})::score('constant(1)')"]:
+    t.part()
+    t.section("Dense dictionary, every shape, alone and next to other conditions.")
+    for q in grid():
+        check("pdm_text", "pdm_pos", shape.format(q))
 
+t.part()
 t.section("Fuzzy parts deferred: with no Levenshtein term limit they defer too.")
 t.statement("SET sdb_levenshtein_max_terms = 0")
 for q in grid(fuzzy_only=True):
@@ -128,11 +128,13 @@ t.section("Ranked by BM25 (checked inline): same scores as positions. Fuzzy "
 for q in [q for q in grid() if "~1" not in q][::5]:
     check_scores("pdm_text", "pdm_pos", q)
 
+t.part()
 t.section("Synonyms put several tokens at one position: slop with patterns "
           "stays inline.")
 for q in grid():
     check("pdm_syn_text", "pdm_syn_pos", q)
 
+t.part()
 t.section("Search table keeps its text: same answers.")
 for q in grid()[::3]:
     check("pdm_s_text", "pdm_s_pos", q)

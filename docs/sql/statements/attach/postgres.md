@@ -43,3 +43,11 @@ The connection string is a list of `{key}={value}` arguments. The most common on
 | `password` | PostgreSQL password                  |                |
 | `dbname`   | Database name                        | [user]         |
 | `passfile` | Name of file passwords are stored in | `~/.pgpass`    |
+
+## Remote servers
+
+A query that keeps only some rows of a PostgreSQL table — `ORDER BY … LIMIT k`, a `LIMIT k` after a filter or an `OFFSET`, or `USING SAMPLE k ROWS`, with `k` up to [`late_materialization_lookup_max_rows`](../../../configuration/overview.md#query-execution-and-the-optimizer) — reads the columns it sorts and filters by for every row, and its other columns only for the rows it keeps, found by their `ctid` (a `LOOKUP_JOIN` with `Key: ctid` in the plan). This is done only for a remote server; a local server sends the whole rows in one pass.
+
+A server is local when the connection goes to a loopback address or through a unix socket. The `remote` option of `ATTACH` overrides that: `ATTACH '…' AS pg (TYPE postgres, remote true)` treats the server as remote, `remote false` as local.
+
+The rows are read again only from a plain table — not a view, a foreign table, or a partitioned or inherited table — on an attachment whose `isolation_level` is not `READ COMMITTED`, and they come from the same snapshot as the rest of the query.

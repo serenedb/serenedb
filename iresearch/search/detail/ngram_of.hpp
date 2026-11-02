@@ -20,60 +20,68 @@
 
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
+#include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/ngram_all_slots.hpp"
 #include "iresearch/search/detail/ngram_slots.hpp"
-#include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_pos.hpp"
-#include "iresearch/search/fill/set_leaves.hpp"
-#include "iresearch/search/fill/walk.hpp"
-#include "iresearch/search/lead/two_phase_docs.hpp"
-#include "iresearch/search/probe/two_phase_docs.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
 
 namespace irs::detail {
 
-template<bool Scored = false, typename F>
-auto Build(const NGramSimilarityQuery& query, F&& f) {
+template<typename Result, bool Scored, NGramMatch M, typename F>
+Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
-  const auto min_match = static_cast<uint32_t>(query.MinMatchCount());
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
-      using Leaf = detail::PostingPos<Input, Bounds>;
+      using Leaf = PostingPos<Input, Bounds>;
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
-        return f
-          .template operator()<detail::NGramSlots<Leaf, Scored, false, N>>(
+        if constexpr (M == NGramMatch::All) {
+          return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
+            metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
+        } else {
+          return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
             metas.size(),
             [&](Leaf& leaf, size_t i) {
               leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
             },
-            min_match, query.TotalTerms());
+            static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
+        }
       });
     });
   });
 }
 
-template<bool Scored = false, typename F>
-auto BuildAll(const NGramSimilarityQuery& query, F&& f) {
-  const auto& state = query.State();
-  const auto& h = state.handles;
-  const std::span metas{state.metas.data(), state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
-      using Leaf = detail::PostingPos<Input, Bounds>;
-      return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
-        return f.template operator()<detail::NGramAllSlots<Leaf, N, Scored>>(
-          metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
-      });
-    });
-  });
+template<NGramMatch M>
+std::optional<score_t> ConstantOf(NGramKind<M>,
+                                  const NGramSimilarityQuery& query,
+                                  const ScoreArgs& args) {
+  const auto& field = *query.State().reader;
+  if constexpr (M == NGramMatch::All) {
+    const auto value = ConstantOf(query.Segment(), field, args);
+    if (!value) {
+      return std::nullopt;
+    }
+    const auto scale = static_cast<score_t>(query.Present()) /
+                       static_cast<score_t>(query.TotalTerms());
+    return scale * *value;
+  } else {
+    return ConstantOf(query.Segment(), field, args, true);
+  }
+}
+
+template<NGramMatch M>
+const TermReader& FieldOf(NGramKind<M>, const NGramSimilarityQuery& query) {
+  return *query.State().reader;
 }
 
 }  // namespace irs::detail

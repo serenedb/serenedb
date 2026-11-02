@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE split_docs (id BIGINT, msg TEXT)
+  WITH (storage = 'search', refresh_interval = 20, compaction_interval = 0);
+
+
+statement ok
+SET sdb_faults = 'search_wal_transactions_registered';
+
+
+connection writer
+statement ok
+SET threads = 4;
+
+
+connection writer
+statement async ok
+INSERT INTO split_docs SELECT i, 'm' || (i % 7) FROM range(400000) t(i);
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_wal_transactions_registered:parked';
+
+
+sleep 1s
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_wal_transactions_registered:release';
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM split_docs;
+----
+n
+400000
+
+
+connection after_crash
+query
+SELECT count(*) AS three FROM split_docs WHERE msg = 'm3';
+----
+three
+57143

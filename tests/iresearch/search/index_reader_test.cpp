@@ -89,6 +89,51 @@ TEST(directory_reader_test, open_empty_index) {
   ASSERT_EQ(rdr.end(), rdr.begin());
 }
 
+TEST(directory_reader_test, term_ranges_span_segments) {
+  constexpr irs::field_id kBoth = 7;
+  constexpr irs::field_id kFirst = 8;
+  constexpr irs::field_id kAbsent = 9;
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  const auto add = [&](std::string_view both, std::string_view first) {
+    tests::Document doc;
+    auto both_field = std::make_shared<tests::StringField>("both", both);
+    both_field->id = kBoth;
+    doc.insert(both_field);
+    if (!first.empty()) {
+      auto first_field = std::make_shared<tests::StringField>("first", first);
+      first_field->id = kFirst;
+      doc.insert(first_field);
+    }
+    auto ctx = writer->GetBatch();
+    {
+      auto d = ctx.Insert();
+      ASSERT_TRUE(
+        tests::InsertFields(d, doc.indexed.begin(), doc.indexed.end()));
+    }
+    ctx.Commit();
+  };
+  add("m", "x");
+  add("b", "");
+  ASSERT_TRUE(writer->RefreshCommit());
+  add("a", "");
+  add("c", "");
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  ASSERT_EQ(2, reader.size());
+  const auto* both = reader.GetTermRange(kBoth);
+  ASSERT_TRUE(both);
+  EXPECT_EQ(irs::ViewCast<char>(both->min), "a");
+  EXPECT_EQ(irs::ViewCast<char>(both->max), "m");
+  const auto* first = reader.GetTermRange(kFirst);
+  ASSERT_TRUE(first);
+  EXPECT_EQ(irs::ViewCast<char>(first->min), "x");
+  EXPECT_EQ(irs::ViewCast<char>(first->max), "x");
+  EXPECT_FALSE(reader.GetTermRange(kAbsent));
+}
+
 TEST(directory_reader_test, open) {
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),

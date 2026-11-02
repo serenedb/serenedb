@@ -20,22 +20,12 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/hits/all.hpp"
-#include "iresearch/search/hits/make.hpp"
+#include "iresearch/search/hits/family.hpp"
 
 namespace irs::hits {
 
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx,
-                  const irs::detail::StatsRecord& record, score_t boost) {
-  auto root = memory::make_managed<All>(
-    ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()));
-  root->Prepare(segment, irs::detail::ScoreArgs{.scorer = record.scorer,
-                                                .stats = record.stats,
-                                                .fetcher = &ctx.fetcher,
-                                                .boost = boost});
-  return root;
-}
-
-Root::ptr MakeAll(const SubReader& segment, const Context& ctx, score_t score) {
+Root::ptr Family::MakeAll(const SubReader& segment, const Context& ctx,
+                          ScoreMergeType, score_t score) {
   return memory::make_managed<All>(
     ctx.fetcher, static_cast<doc_id_t>(segment.docs_count()), score);
 }

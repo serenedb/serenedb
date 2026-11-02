@@ -28,7 +28,7 @@ namespace irs {
 QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
-  const auto* ann = segment.Ann(opts.centroids_id);
+  const auto* ann = segment.Ann(opts.ann_id);
   if (!ann) {
     return QueryBuilder::Empty();
   }

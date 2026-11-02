@@ -196,22 +196,12 @@ IntervalStyle
 postgres
 
 
-# DESCRIBE / DESC accept the same aliases (mirrors the regular SHOW <name> branch).
-# PG has no DESCRIBE/DESC keyword, so this branch is serenedb-only.
-skipif postgres
-query
+statement error syntax error
 DESCRIBE TRANSACTION ISOLATION LEVEL;
-----
-transaction_isolation
-<slt:ignore>
 
 
-skipif postgres
-query
+statement error syntax error
 DESC TIME ZONE;
-----
-TimeZone
-Etc/UTC
 
 
 # Aliases survive case variation -- keywords are case-insensitive.

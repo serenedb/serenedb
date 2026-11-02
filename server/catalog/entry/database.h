@@ -44,7 +44,7 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
-  void OnDrop() final { _directory->MarkDropped(); }
+  void OnDrop() final;
 
   const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
     return _options;

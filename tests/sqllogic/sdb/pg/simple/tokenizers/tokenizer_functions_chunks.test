@@ -34,7 +34,7 @@ query
 SELECT count(*) AS mismatched FROM tfc_lists
 WHERE split_text(l) IS DISTINCT FROM
       CASE WHEN l IS NULL THEN NULL
-           ELSE flatten(list_transform(list_filter(l, x -> x IS NOT NULL), x -> string_split(x, ' '))) END;
+           ELSE flatten(list_transform(list_filter(l, lambda x: x IS NOT NULL), lambda x: string_split(x, ' '))) END;
 ----
 mismatched
 0
@@ -43,7 +43,7 @@ query
 SELECT count(*) AS mismatched FROM (SELECT * FROM tfc_lists WHERE i % 2 = 0)
 WHERE split_text(l) IS DISTINCT FROM
       CASE WHEN l IS NULL THEN NULL
-           ELSE flatten(list_transform(list_filter(l, x -> x IS NOT NULL), x -> string_split(x, ' '))) END;
+           ELSE flatten(list_transform(list_filter(l, lambda x: x IS NOT NULL), lambda x: string_split(x, ' '))) END;
 ----
 mismatched
 0

@@ -42,7 +42,7 @@ statement count 100
 INSERT INTO sg_pq
 SELECT i,
   list_transform(range(8),
-    x -> CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
+    lambda x: CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
 FROM range(1, 101) t(i)
 
 statement ok
@@ -51,7 +51,7 @@ VACUUM (REFRESH_TABLE) sg_pq
 # Nearest to the origin: the bottom of the ladder, in order.
 query
 SELECT pk FROM sg_pq_idx
-ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 8;
+ORDER BY emb <-> list_transform(range(8), lambda x: 0.0::FLOAT)::FLOAT[8] LIMIT 8;
 ----
 pk
 1
@@ -68,7 +68,7 @@ pk
 query
 SELECT pk FROM sg_pq_idx
 ORDER BY emb <-> list_transform(range(8),
-  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+  lambda x: CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
 ----
 pk
 50
@@ -82,7 +82,7 @@ pk
 query
 SELECT pk FROM sg_pq_idx
 ORDER BY emb <-> list_transform(range(8),
-  x -> CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
+  lambda x: CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
 ----
 pk
 100
@@ -113,7 +113,7 @@ statement count 100
 INSERT INTO sg_rq
 SELECT i,
   list_transform(range(8),
-    x -> CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
+    lambda x: CASE WHEN x = 0 THEN (i * 100)::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8]
 FROM range(1, 101) t(i)
 
 statement ok
@@ -121,7 +121,7 @@ VACUUM (REFRESH_TABLE) sg_rq
 
 query
 SELECT pk FROM sg_rq_idx
-ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 8;
+ORDER BY emb <-> list_transform(range(8), lambda x: 0.0::FLOAT)::FLOAT[8] LIMIT 8;
 ----
 pk
 1
@@ -136,7 +136,7 @@ pk
 query
 SELECT pk FROM sg_rq_idx
 ORDER BY emb <-> list_transform(range(8),
-  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+  lambda x: CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
 ----
 pk
 50
@@ -148,7 +148,7 @@ pk
 query
 SELECT pk FROM sg_rq_idx
 ORDER BY emb <-> list_transform(range(8),
-  x -> CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
+  lambda x: CASE WHEN x = 0 THEN 10000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 4;
 ----
 pk
 100
@@ -175,7 +175,7 @@ VACUUM (REFRESH_TABLE) sg_pq
 
 query
 SELECT pk FROM sg_pq_idx
-ORDER BY emb <-> list_transform(range(8), x -> 0.0::FLOAT)::FLOAT[8] LIMIT 4;
+ORDER BY emb <-> list_transform(range(8), lambda x: 0.0::FLOAT)::FLOAT[8] LIMIT 4;
 ----
 pk
 1
@@ -200,7 +200,7 @@ VACUUM (COMPACT_TABLE) sg_rq
 query
 SELECT pk FROM sg_rq_idx
 ORDER BY emb <-> list_transform(range(8),
-  x -> CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
+  lambda x: CASE WHEN x = 0 THEN 5000.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[8] LIMIT 5;
 ----
 pk
 50

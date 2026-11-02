@@ -80,7 +80,6 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   duckdb::DBConfig config;
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
-  config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
   config.SetOptionByName("explain_output_format", duckdb::Value{"PG"});
   config.SetOptionByName("table_function_identifier_conversion",
                          duckdb::Value{"DISABLE_IMPLICIT_STRING"});

@@ -13,7 +13,7 @@ CREATE INDEX ocsq_other_idx ON ocsq_other USING inverted (body);
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ocsq_upper AS split_text_csv(',') | (x -> upper(x));
+CREATE TEXT SEARCH DICTIONARY ocsq_upper AS split_text_csv(',') | (lambda x: upper(x));
 
 
 statement ok

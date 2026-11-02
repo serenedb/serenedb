@@ -18,10 +18,8 @@
 
 namespace duckdb {
 
-ClickHouseInsert::ClickHouseInsert(PhysicalPlan &physical_plan, LogicalOperator &op, TableCatalogEntry &table,
-                                   physical_index_vector_t<idx_t> column_index_map_p)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(&table), schema(nullptr),
-      column_index_map(std::move(column_index_map_p)) {
+ClickHouseInsert::ClickHouseInsert(PhysicalPlan &physical_plan, LogicalOperator &op, TableCatalogEntry &table)
+    : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, op.types, 1), table(&table), schema(nullptr) {
 }
 
 ClickHouseInsert::ClickHouseInsert(PhysicalPlan &physical_plan, LogicalOperator &op, SchemaCatalogEntry &schema,
@@ -48,34 +46,6 @@ public:
 	vector<LogicalType> expected_types;
 };
 
-// Mirrors PostgresInsert::GetInsertColumns: maps each chunk position to the table column logical index.
-static vector<idx_t> GetInsertColumnIndexes(const ClickHouseInsert &insert, ClickHouseTableEntry &entry) {
-	vector<idx_t> result;
-	auto &columns = entry.GetColumns();
-	if (insert.column_index_map.empty()) {
-		for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
-			result.push_back(i);
-		}
-		return result;
-	}
-	idx_t column_count = 0;
-	vector<PhysicalIndex> column_indexes;
-	column_indexes.resize(columns.LogicalColumnCount(), PhysicalIndex(DConstants::INVALID_INDEX));
-	for (idx_t c = 0; c < insert.column_index_map.size(); c++) {
-		auto column_index = PhysicalIndex(c);
-		auto mapped_index = insert.column_index_map[column_index];
-		if (mapped_index == DConstants::INVALID_INDEX) {
-			continue;
-		}
-		column_indexes[mapped_index] = column_index;
-		column_count++;
-	}
-	for (idx_t c = 0; c < column_count; c++) {
-		result.push_back(column_indexes[c].index);
-	}
-	return result;
-}
-
 unique_ptr<GlobalSinkState> ClickHouseInsert::GetGlobalSinkState(ClientContext &context) const {
 	optional_ptr<ClickHouseTableEntry> insert_table;
 	if (!table) {
@@ -89,9 +59,8 @@ unique_ptr<GlobalSinkState> ClickHouseInsert::GetGlobalSinkState(ClientContext &
 	result->qualified_table =
 	    ClickHouseQuoteIdentifier(insert_table->database) + "." + ClickHouseQuoteIdentifier(insert_table->table);
 
-	auto indexes = GetInsertColumnIndexes(*this, *insert_table);
 	auto &columns = insert_table->GetColumns();
-	for (auto col_index : indexes) {
+	for (idx_t col_index = 0; col_index < columns.LogicalColumnCount(); col_index++) {
 		result->column_names.push_back(columns.GetColumn(LogicalIndex(col_index)).GetName().GetIdentifierName());
 		if (col_index >= insert_table->clickhouse_types.size()) {
 			throw InternalException("ClickHouse INSERT: column index out of range for type metadata");
@@ -186,7 +155,7 @@ PhysicalOperator &ClickHouseCatalog::PlanInsert(ClientContext &context, Physical
 		throw BinderException("RETURNING clause not supported for insertion into ClickHouse table");
 	}
 	D_ASSERT(plan);
-	auto &insert = planner.Make<ClickHouseInsert>(op, op.table, op.column_index_map);
+	auto &insert = planner.Make<ClickHouseInsert>(op, op.table);
 	insert.children.push_back(*plan);
 	return insert;
 }

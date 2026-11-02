@@ -113,8 +113,6 @@ class HttpHandler {
  public:
   virtual ~HttpHandler() = default;
 
-  virtual bool AuthenticatesItself() const { return false; }
-
   virtual yaclib::Task<> Handle(RequestContext& context,
                                 const HttpRequest& request,
                                 http::HttpResponseWriter& writer) = 0;

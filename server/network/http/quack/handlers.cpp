@@ -30,8 +30,6 @@ namespace {
 
 class RpcHandler final : public HttpHandler {
  public:
-  bool AuthenticatesItself() const final { return true; }
-
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         HttpResponseWriter& writer) final {
     return Server::instance().Quack()->Handle(context, request, writer);
@@ -40,8 +38,6 @@ class RpcHandler final : public HttpHandler {
 
 class BannerHandler final : public HttpHandler {
  public:
-  bool AuthenticatesItself() const final { return true; }
-
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
                         HttpResponseWriter& writer) final {
     writer.Text(HttpStatus::Ok,
@@ -61,6 +57,11 @@ std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
       return std::make_unique<BannerHandler>();
   }
   SDB_UNREACHABLE();
+}
+
+bool IsEndpoint(const HttpRequest& request) {
+  const std::string_view target = request.target;
+  return target.substr(0, target.find_first_of("?#")) == "/quack";
 }
 
 }  // namespace sdb::network::http::quack

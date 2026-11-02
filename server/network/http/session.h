@@ -64,6 +64,7 @@
 #include "network/http/common.h"
 #include "network/http/h1_codec.h"
 #include "network/http/handler.h"
+#include "network/http/quack/handlers.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
 #include "network/http/sql_connection.h"
@@ -717,7 +718,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
 
         HttpHandler* handler = _router.Match(request);
         http::AuthResult auth;
-        if (!handler || !handler->AuthenticatesItself()) {
+        if (!handler || !http::quack::IsEndpoint(request)) {
           auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
                                     _peer, _database);
         }

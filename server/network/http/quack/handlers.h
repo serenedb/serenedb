@@ -34,4 +34,6 @@ enum class Endpoint : uint8_t {
 
 std::unique_ptr<HttpHandler> Make(Endpoint endpoint);
 
+bool IsEndpoint(const HttpRequest& request);
+
 }  // namespace sdb::network::http::quack

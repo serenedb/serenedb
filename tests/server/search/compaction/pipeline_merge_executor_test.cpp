@@ -29,7 +29,6 @@
 #include <chrono>
 #include <duckdb.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -85,25 +84,6 @@ catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
 }
 
 constexpr ColumnId kValueColumn{1};
-
-bool MergePart(irs::TermRangeMerge& range, size_t part) {
-  range.BeginPart(part);
-  const auto& merge = *range.KeyMerge();
-  const auto state = merge.BeginMerge(part);
-  duckdb::vector<duckdb::PresortedRun> runs;
-  while (!state->Done()) {
-    runs.clear();
-    duckdb::optional_idx unsorted;
-    if (!merge.Merge(
-          *state, runs, STANDARD_VECTOR_SIZE, [] { return true; }, unsorted)) {
-      return false;
-    }
-    if (!range.Consume(part, runs)) {
-      break;
-    }
-  }
-  return range.FinishPart(part);
-}
 
 const irs::CompactionPolicy& FullMerge() {
   static const auto kPolicy = irs::index_utils::MakePolicy(
@@ -685,13 +665,14 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   irs::MergePlan plan{out,      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare());
+  constexpr size_t kThreads = 8;
   irs::MergeSchedule schedule{plan};
+  const auto units = plan.Units();
   std::vector<size_t> ready;
-  for (auto unit = schedule.Claim(); unit != irs::MergeSchedule::kNoUnit;
-       unit = schedule.Claim()) {
+  for (auto unit = schedule.Claim(kThreads); unit < units.size();
+       unit = schedule.Claim(kThreads)) {
     ready.push_back(unit);
   }
-  const auto units = plan.Units();
   const auto column = absl::c_find_if(ready, [&](size_t unit) {
     return units[unit].kind == irs::MergeUnitKind::Column ||
            units[unit].kind == irs::MergeUnitKind::ColumnCopy;
@@ -712,52 +693,7 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   failed.Notify();
   unit.join();
   EXPECT_FALSE(finished);
-  EXPECT_FALSE(schedule.Ok());
-}
-
-TEST_F(PipelineMergeExecutorTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
-  const auto reader = _writer->GetSnapshot();
-  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
-  for (const auto& segment : reader) {
-    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
-  }
-  irs::MemoryDirectory out;
-  irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta, nullptr,
-                      TestDb(), nullptr, {},   nullptr};
-  ASSERT_TRUE(plan.Prepare(8));
-  ASSERT_EQ(1, plan.TermRanges().size());
-  auto& range = *plan.TermRanges().front();
-  const auto parts = range.PartCount();
-  ASSERT_LT(1, parts);
-  ASSERT_EQ(parts, range.PartsLeft());
-  irs::MergeSchedule schedule{plan};
-  EXPECT_TRUE(schedule.MayClaim(1));
-  EXPECT_TRUE(schedule.MayClaim(parts));
-  const auto unit = schedule.Claim();
-  ASSERT_NE(irs::MergeSchedule::kNoUnit, unit);
-  EXPECT_FALSE(schedule.MayClaim(parts));
-  EXPECT_FALSE(schedule.MayClaim(parts + 1));
-  EXPECT_TRUE(schedule.MayClaim(parts + 2));
-  ASSERT_TRUE(MergePart(range, 0));
-  EXPECT_EQ(parts - 1, range.PartsLeft());
-  EXPECT_FALSE(schedule.MayClaim(parts));
-  EXPECT_TRUE(schedule.MayClaim(parts + 1));
-  for (size_t part = 1; part < parts; ++part) {
-    ASSERT_TRUE(MergePart(range, part));
-  }
-  EXPECT_EQ(0, range.PartsLeft());
-  EXPECT_FALSE(schedule.MayClaim(1));
-  EXPECT_TRUE(schedule.MayClaim(2));
-  schedule.RangeDone();
-  EXPECT_TRUE(schedule.MayClaim(1));
-  schedule.Run(unit);
-  for (auto next = schedule.Claim(); next != irs::MergeSchedule::kNoUnit;
-       next = schedule.Claim()) {
-    schedule.Run(next);
-  }
-  EXPECT_TRUE(schedule.Done());
-  EXPECT_TRUE(schedule.Result());
+  EXPECT_THROW(schedule.Result(), irs::SqlException);
 }
 
 TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {

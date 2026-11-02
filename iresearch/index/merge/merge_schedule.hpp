@@ -37,27 +37,14 @@ namespace irs {
 class MergeSchedule {
  public:
   static constexpr size_t kNoUnit = std::numeric_limits<size_t>::max();
+  static constexpr size_t kFinished = kNoUnit - 1;
 
   explicit MergeSchedule(MergePlan& plan);
 
   MergeSchedule(const MergeSchedule&) = delete;
   MergeSchedule& operator=(const MergeSchedule&) = delete;
 
-  size_t Claim();
-
-  bool MayClaim(size_t threads) const;
-
-  void Hold(size_t unit);
-
-  void Release(size_t unit);
-
-  void Fail();
-
-  void Finish(size_t unit, bool ok);
-
-  bool Done() const;
-
-  bool Ok() const;
+  size_t Claim(size_t threads);
 
   bool Run(size_t unit);
 
@@ -70,11 +57,7 @@ class MergeSchedule {
   bool Result();
 
  private:
-  void ReleaseLocked(size_t unit) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-
   void FailLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-
-  void FinishLocked(size_t unit, bool ok) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   bool ReleasePostings(bool ok);
 
@@ -83,7 +66,7 @@ class MergeSchedule {
   MergePlan& _plan;
   std::vector<uint64_t> _rank;
   std::vector<std::vector<size_t>> _dependents;
-  mutable absl::Mutex _mutex;
+  absl::Mutex _mutex;
   std::vector<size_t> _waiting ABSL_GUARDED_BY(_mutex);
   std::vector<size_t> _ready ABSL_GUARDED_BY(_mutex);
   size_t _left ABSL_GUARDED_BY(_mutex) = 0;

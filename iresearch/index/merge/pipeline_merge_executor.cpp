@@ -275,11 +275,9 @@ class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
     auto unit = MergeSchedule::kNoUnit;
     {
       Guard guard{state.lock};
-      if (_schedule->Done()) {
+      unit = _schedule->Claim(_threads);
+      if (unit == MergeSchedule::kFinished) {
         return duckdb::SourceResultType::FINISHED;
-      }
-      if (_schedule->MayClaim(_threads)) {
-        unit = _schedule->Claim();
       }
       if (unit == MergeSchedule::kNoUnit) {
         return state.BlockSource(input.interrupt_state);

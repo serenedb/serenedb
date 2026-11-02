@@ -68,10 +68,22 @@ MergeSchedule::MergeSchedule(MergePlan& plan) : _plan{plan} {
   }
 }
 
-size_t MergeSchedule::Claim() {
+size_t MergeSchedule::Claim(size_t threads) {
   absl::MutexLock lock{&_mutex};
-  if (_failed || _ready.empty()) {
+  if (_failed ? _running == 0 : _left == 0) {
+    return kFinished;
+  }
+  if (_ready.empty()) {
     return kNoUnit;
+  }
+  if (_held != kNoUnit) {
+    size_t left = 0;
+    for (const auto& range : _plan.TermRanges()) {
+      left += range->PartsLeft();
+    }
+    if (_running + std::min(left, threads - 1) >= threads) {
+      return kNoUnit;
+    }
   }
   auto best = absl::c_max_element(_ready, [&](size_t lhs, size_t rhs) {
     return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
@@ -87,80 +99,9 @@ size_t MergeSchedule::Claim() {
   return unit;
 }
 
-bool MergeSchedule::MayClaim(size_t threads) const {
-  absl::MutexLock lock{&_mutex};
-  if (_held == kNoUnit) {
-    return true;
-  }
-  size_t left = 0;
-  for (const auto& range : _plan.TermRanges()) {
-    left += range->PartsLeft();
-  }
-  return _running + std::min(left, threads - 1) < threads;
-}
-
-void MergeSchedule::Hold(size_t unit) {
-  absl::MutexLock lock{&_mutex};
-  SDB_ASSERT(unit < _waiting.size());
-  if (_waiting[unit]++ == 0) {
-    std::erase(_ready, unit);
-  }
-}
-
-void MergeSchedule::Release(size_t unit) {
-  absl::MutexLock lock{&_mutex};
-  ReleaseLocked(unit);
-}
-
-void MergeSchedule::ReleaseLocked(size_t unit) {
-  SDB_ASSERT(unit < _waiting.size());
-  SDB_ASSERT(_waiting[unit] != 0);
-  if (--_waiting[unit] == 0 && !_failed) {
-    _ready.push_back(unit);
-  }
-}
-
-void MergeSchedule::Fail() {
-  absl::MutexLock lock{&_mutex};
-  FailLocked();
-}
-
 void MergeSchedule::FailLocked() {
   _failed = true;
   _ready.clear();
-}
-
-void MergeSchedule::Finish(size_t unit, bool ok) {
-  absl::MutexLock lock{&_mutex};
-  FinishLocked(unit, ok);
-}
-
-void MergeSchedule::FinishLocked(size_t unit, bool ok) {
-  SDB_ASSERT(_running != 0);
-  --_running;
-  --_left;
-  if (!ok) {
-    FailLocked();
-    return;
-  }
-  if (_failed) {
-    return;
-  }
-  for (const auto next : _dependents[unit]) {
-    if (--_waiting[next] == 0) {
-      _ready.push_back(next);
-    }
-  }
-}
-
-bool MergeSchedule::Done() const {
-  absl::MutexLock lock{&_mutex};
-  return _failed ? _running == 0 : _left == 0;
-}
-
-bool MergeSchedule::Ok() const {
-  absl::MutexLock lock{&_mutex};
-  return !_failed;
 }
 
 bool MergeSchedule::Run(size_t unit) {
@@ -178,8 +119,22 @@ bool MergeSchedule::Run(size_t unit) {
   if (failure && !_error) {
     _error = std::move(failure);
   }
-  FinishLocked(unit, ok);
-  return ok;
+  SDB_ASSERT(_running != 0);
+  --_running;
+  --_left;
+  if (!ok) {
+    FailLocked();
+    return false;
+  }
+  if (_failed) {
+    return true;
+  }
+  for (const auto next : _dependents[unit]) {
+    if (--_waiting[next] == 0) {
+      _ready.push_back(next);
+    }
+  }
+  return true;
 }
 
 void MergeSchedule::RangeDone() {
@@ -201,11 +156,14 @@ bool MergeSchedule::ReleasePostings(bool ok) {
     return false;
   }
   const auto unit = std::exchange(_held, kNoUnit);
-  if (ok) {
-    ReleaseLocked(unit);
-  } else {
+  if (!ok) {
     _plan.Abort();
     FailLocked();
+    return true;
+  }
+  SDB_ASSERT(_waiting[unit] != 0);
+  if (--_waiting[unit] == 0 && !_failed) {
+    _ready.push_back(unit);
   }
   return true;
 }

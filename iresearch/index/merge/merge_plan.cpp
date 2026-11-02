@@ -628,6 +628,7 @@ bool MergePlan::RunUnit(size_t unit) {
   SDB_IF_FAILURE("irs::MergeUnit") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
+  SDB_IF_FAILURE("irs::MergeUnit::Skip") { return true; }
   if (!_progress()) {
     return false;
   }

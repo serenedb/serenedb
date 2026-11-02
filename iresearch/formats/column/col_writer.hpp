@@ -176,8 +176,8 @@ class ColWriter final {
   HnswBases* _hnsw_bases = nullptr;
   std::unique_ptr<ColFileWriter> _file;
   std::unique_ptr<WriteContext> _write_ctx;
-  std::vector<std::unique_ptr<ColumnEntry>> _columns;
-  irs::containers::FlatHashMap<field_id, ColumnEntry*> _by_id;
+  std::vector<ColumnEntry> _columns;
+  irs::containers::FlatHashMap<field_id, size_t> _by_id;
   absl::btree_map<field_id, std::unique_ptr<ColumnParts>> _parts;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;

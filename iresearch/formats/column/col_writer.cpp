@@ -264,7 +264,7 @@ void ColWriter::SetFieldOptions(
 ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
   SDB_ASSERT(_stage_all);
   const auto it = _by_id.find(id);
-  return it == _by_id.end() ? nullptr : it->second->writer.get();
+  return it == _by_id.end() ? nullptr : _columns[it->second].writer.get();
 }
 
 uint64_t ColWriter::StagedBytes() const noexcept {
@@ -273,7 +273,7 @@ uint64_t ColWriter::StagedBytes() const noexcept {
   }
   uint64_t bytes = 0;
   for (const auto& column : _columns) {
-    bytes += column->writer->StagedBytes();
+    bytes += column.writer->StagedBytes();
   }
   for (const auto& norm : _norms) {
     bytes += norm->StagedBytes();
@@ -289,8 +289,8 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
   SDB_ASSERT(row_group_size != 0);
   SDB_ASSERT(!_parts.contains(id));
   if (auto it = _by_id.find(id); it != _by_id.end()) {
-    SDB_ASSERT(it->second->writer);
-    auto& existing = *it->second->writer;
+    SDB_ASSERT(_columns[it->second].writer);
+    auto& existing = *_columns[it->second].writer;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
@@ -300,13 +300,11 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
     return existing;
   }
   EnsureOut();
-  auto column = std::make_unique<ColumnEntry>();
-  column->writer = std::make_unique<ColumnWriter>(
+  _by_id.emplace(id, _columns.size());
+  auto& entry = _columns.emplace_back();
+  entry.writer = std::make_unique<ColumnWriter>(
     *_write_ctx, id, std::move(type), skip_validity, row_group_size, forced,
     hyperloglog, codec_params, _stage_all);
-  auto& entry = *column;
-  _by_id.emplace(id, &entry);
-  _columns.emplace_back(std::move(column));
   return *entry.writer;
 }
 
@@ -332,14 +330,14 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
 
 ColumnWriter& ColWriter::OpenedColumn(field_id id) noexcept {
   const auto it = _by_id.find(id);
-  SDB_ASSERT(it != _by_id.end() && it->second->writer);
-  return *it->second->writer;
+  SDB_ASSERT(it != _by_id.end() && _columns[it->second].writer);
+  return *_columns[it->second].writer;
 }
 
 void ColWriter::CloseColumn(field_id id) {
   const auto it = _by_id.find(id);
   SDB_ASSERT(it != _by_id.end());
-  Close(*it->second);
+  Close(_columns[it->second]);
 }
 
 void ColWriter::PlanParts(field_id id, uint32_t parts) {
@@ -612,17 +610,17 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   }
   EnsureOut();
   for (auto& column : _columns) {
-    if (!column->writer) {
+    if (!column.writer) {
       continue;
     }
     if (!progress()) {
       return false;
     }
     if (_stage_all) {
-      column->writer->PadNullsTo(target_row);
-      column->writer->Reorder(new2old);
+      column.writer->PadNullsTo(target_row);
+      column.writer->Reorder(new2old);
     }
-    column->writer->Finish();
+    column.writer->Finish();
   }
   std::vector<ColumnMeta> assembled;
   assembled.reserve(_parts.size());
@@ -632,8 +630,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   std::vector<const ColumnMeta*> metas;
   metas.reserve(_columns.size() + assembled.size());
   for (const auto& column : _columns) {
-    metas.emplace_back(column->writer ? &column->writer->Meta()
-                                      : &column->meta);
+    metas.emplace_back(column.writer ? &column.writer->Meta() : &column.meta);
   }
   for (const auto& meta : assembled) {
     metas.emplace_back(&meta);

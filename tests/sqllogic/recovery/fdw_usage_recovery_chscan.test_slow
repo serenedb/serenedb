@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS fo_reader;
+
+statement ok
+DROP ROLE IF EXISTS fo_other;
+
+statement ok
+CREATE ROLE fo_reader LOGIN PASSWORD 'reader_pw';
+
+statement ok
+CREATE ROLE fo_other LOGIN PASSWORD 'other_pw';
+
+statement ok
+CREATE SERVER fo_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER fo_srv TO fo_reader;
+
+connection c_reader user=fo_reader password=reader_pw
+query
+SELECT count(*) AS n FROM fo_srv.chtest.vedernikoff;
+----
+n
+6
+
+connection c_other user=fo_other password=other_pw
+statement error
+DROP SERVER fo_srv;
+----
+db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+
+
+connection default
+statement error
+DROP ROLE fo_reader;
+----
+db error: ERROR: Cannot drop entry "fo_reader" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
+WHERE s.srvname = 'fo_srv';
+----
+rolname
+postgres
+
+connection after_crash user=fo_reader password=reader_pw
+query
+SELECT count(*) AS n FROM fo_srv.chtest.vedernikoff;
+----
+n
+6
+
+connection after_crash user=fo_other password=other_pw
+statement error
+SELECT count(*) FROM fo_srv.chtest.vedernikoff;
+----
+db error: ERROR: permission denied for foreign server fo_srv<slt:ignore>
+
+
+connection after_crash user=fo_other password=other_pw
+statement error
+DROP SERVER fo_srv;
+----
+db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+
+
+connection after_crash
+statement error
+DROP ROLE fo_reader;
+----
+db error: ERROR: Cannot drop entry "fo_reader" because there are entries that depend on it.<slt:ignore>
+
+
+connection after_crash
+statement ok
+DROP SERVER fo_srv;
+
+connection after_crash
+statement ok
+DROP ROLE fo_reader;
+
+connection after_crash
+statement ok
+DROP ROLE fo_other;

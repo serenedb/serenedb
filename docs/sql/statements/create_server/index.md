@@ -247,7 +247,7 @@ WHERE s.srvname = 'analytics';
 
 </DocCallout>
 
-`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. Every role may use the wrappers: each grants `USAGE` to `PUBLIC`, and `CREATE SERVER` needs the `CREATE` privilege on the database instead. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
+`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. The wrappers grant `USAGE` to no role, so only superusers create servers. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
 
 ## Privileges
 
@@ -255,19 +255,13 @@ A foreign server is owned by the role that created it and carries a single privi
 
 | Action | Requirement |
 |---|---|
-| `CREATE SERVER` | `CREATE` on the current **database**; a superuser for `duckdb_fdw` and `serenedb_fdw`, whose `path` names a server file |
+| `CREATE SERVER` | `USAGE` on the foreign-data wrapper, which only superusers hold; `GRANT USAGE ON FOREIGN DATA WRAPPER` is not supported |
 | `DROP SERVER` | Ownership of the server, or superuser |
 | Querying through the server | `USAGE` on the server (owner and superusers exempt) |
 | `iceberg_snapshots`, `iceberg_metadata`, `iceberg_column_stats`, `iceberg_partition_stats`, `iceberg_table_properties`, `iceberg_schema_properties`, `iceberg_scan_plan` and `iceberg_view_metadata` on the server's tables, views and schemas | `USAGE` on the server |
 | `set_iceberg_table_properties`, `remove_iceberg_table_properties`, `iceberg_rollback_to_snapshot`, `iceberg_rewrite_data_files`, `set_iceberg_schema_properties` and `remove_iceberg_schema_properties` | Superuser: they change the table or schema as `ALTER` does, which needs its owner, and the server's tables and schemas have none |
 | `iceberg_load_table_response` | Superuser: it returns the storage credentials the catalog hands out |
 | `GRANT` / `REVOKE USAGE` | Ownership, `WITH GRANT OPTION`, or superuser |
-
-Because servers are database children, the create gate is a **database** grant — granting `CREATE` on a schema does not allow it:
-
-```sql
-GRANT CREATE ON DATABASE shop TO analyst;
-```
 
 `USAGE` is checked at query time, so granting and revoking it takes effect on the next statement:
 

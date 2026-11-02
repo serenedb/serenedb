@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <span>
+
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/acl.h"
 
@@ -28,7 +30,7 @@ constexpr auto kWrapper = Shape<kPgForeignDataWrapperSql, const SystemObject>(
   Col<"oid">(&SystemObject::oid), Col<"fdwname">(&SystemObject::name),
   Col<"fdwowner">([](const auto&) { return kRootUser; }),
   Col<"fdwacl">(
-    [](const auto&) -> const auto& { return kForeignDataWrapperAcl; }));
+    [](const auto&) { return std::span<const duckdb::AclItem>{}; }));
 
 }  // namespace
 

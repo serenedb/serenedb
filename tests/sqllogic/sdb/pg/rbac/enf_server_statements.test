@@ -83,14 +83,35 @@ connection c_ved user=ess_vedernikoff password=ess_pw
 statement error
 CREATE SERVER ess_files_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/ess_server.db');
 ----
-db error: ERROR: permission denied: superuser required
+db error: ERROR: permission denied for foreign-data wrapper duckdb_fdw
 
 
 connection c_ved user=ess_vedernikoff password=ess_pw
 statement error
 CREATE SERVER ess_snap_${__DATABASE__} FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/ess_snap');
 ----
-db error: ERROR: permission denied: superuser required
+db error: ERROR: permission denied for foreign-data wrapper serenedb_fdw
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CREATE SERVER ess_pg_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host '127.0.0.1', port '1', dbname 'ess');
+----
+db error: ERROR: permission denied for foreign-data wrapper postgres_fdw
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CREATE SERVER ess_ch_${__DATABASE__} FOREIGN DATA WRAPPER clickhouse_fdw OPTIONS (host '127.0.0.1', port '1');
+----
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+CREATE SERVER ess_ice_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (endpoint 'http://127.0.0.1:1', warehouse 'ess');
+----
+db error: ERROR: permission denied for foreign-data wrapper iceberg_fdw
 
 
 statement ok

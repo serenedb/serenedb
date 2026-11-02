@@ -2,8 +2,6 @@ control substitution on
 
 # RBAC on FDW in the ClickHouse-style model. A FOREIGN SERVER is owned by its
 # creator and carries USAGE (PG-style); there are no USER MAPPINGs. The gates:
-#   - CREATE SERVER is gated on CREATE on the DATABASE (servers are database
-#     children, not schema members);
 #   - DROP SERVER is owner-or-superuser;
 #   - querying through a server needs USAGE on it (owner/superuser exempt);
 #     GRANT/REVOKE USAGE ON FOREIGN SERVER toggles it at query time.
@@ -27,24 +25,18 @@ DROP ROLE IF EXISTS fp_owner;
 statement ok
 DROP ROLE IF EXISTS fp_other;
 
-# fp_owner will own a server; fp_other is an unrelated non-superuser. Both need
-# LOGIN + PASSWORD to open their own authenticated session.
 statement ok
 CREATE ROLE fp_owner LOGIN PASSWORD 'owner_pw';
 
 statement ok
 CREATE ROLE fp_other LOGIN PASSWORD 'other_pw';
 
-# ===== CREATE SERVER is gated on CREATE on the DATABASE =====
-
-# A plain non-superuser without CREATE on the database is denied -- with
-# REACHABLE credentials, so the denial must fire BEFORE the remote is attached.
 connection c_other user=fp_other password=other_pw
 statement error
 CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
 ----
-db error: ERROR: permission denied for database<slt:ignore>
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw<slt:ignore>
 
 
 # The denied CREATE left no orphaned attachment: the superuser can create the
@@ -57,25 +49,28 @@ CREATE SERVER fp_denied FOREIGN DATA WRAPPER clickhouse_fdw
 statement ok
 DROP SERVER fp_denied;
 
-# The superuser grants CREATE on the database to fp_owner (servers are
-# database children; a schema grant would not help).
 statement ok
 GRANT CREATE ON DATABASE ${__DATABASE__} TO fp_owner;
 
-# Now fp_owner may create its server (and it connects, proving attach ran).
 connection c_owner user=fp_owner password=owner_pw
+statement error
+CREATE SERVER fp_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
+----
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw<slt:ignore>
+
+
+connection default
 statement ok
 CREATE SERVER fp_srv FOREIGN DATA WRAPPER clickhouse_fdw
   OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest');
 
-# The server records fp_owner as its owner in pg_foreign_server.
-connection default
 query
 SELECT r.rolname FROM pg_foreign_server s JOIN pg_roles r ON s.srvowner = r.oid
 WHERE s.srvname = 'fp_srv';
 ----
 rolname
-fp_owner
+postgres
 
 # ===== DROP SERVER is owner-or-superuser =====
 
@@ -97,16 +92,7 @@ SELECT count(*) FROM fp_srv.chtest.vedernikoff;
 db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
 
 
-# The server owner can always query (no explicit USAGE needed).
-connection c_owner user=fp_owner password=owner_pw
-query
-SELECT count(*) AS n FROM fp_srv.chtest.vedernikoff;
-----
-n
-6
-
-# The owner grants USAGE to fp_other.
-connection c_owner user=fp_owner password=owner_pw
+connection default
 statement ok
 GRANT USAGE ON FOREIGN SERVER fp_srv TO fp_other;
 
@@ -119,7 +105,7 @@ n
 6
 
 # REVOKE takes USAGE away -- fp_other is denied again.
-connection c_owner user=fp_owner password=owner_pw
+connection default
 statement ok
 REVOKE USAGE ON FOREIGN SERVER fp_srv FROM fp_other;
 

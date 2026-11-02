@@ -12,9 +12,9 @@ FROM pg_foreign_data_wrapper
 ORDER BY fdwname;
 ----
 oid	fdwname	owner	fdwhandler	fdwvalidator	fdwacl	fdwoptions
-16884	clickhouse_fdw	postgres	0	0	{=U/postgres}	NULL
-16885	iceberg_fdw	postgres	0	0	{=U/postgres}	NULL
-16886	postgres_fdw	postgres	0	0	{=U/postgres}	NULL
+16884	clickhouse_fdw	postgres	0	0	NULL	NULL
+16885	iceberg_fdw	postgres	0	0	NULL	NULL
+16886	postgres_fdw	postgres	0	0	NULL	NULL
 
 
 query
@@ -35,7 +35,7 @@ SELECT has_foreign_data_wrapper_privilege('meepo_fdw_poof', 'postgres_fdw', 'USA
        has_foreign_data_wrapper_privilege('meepo_fdw_poof', 16884, 'USAGE') AS by_oid;
 ----
 by_name	by_oid
-t	t
+f	f
 
 
 query
@@ -56,9 +56,9 @@ query
 SELECT fdwname, fdwacl::text[] AS fdwacl, fdwoptions FROM pg_foreign_data_wrapper ORDER BY fdwname;
 ----
 fdwname	fdwacl	fdwoptions
-clickhouse_fdw	{=U/postgres}	NULL
-iceberg_fdw	{=U/postgres}	NULL
-postgres_fdw	{=U/postgres}	NULL
+clickhouse_fdw	NULL	NULL
+iceberg_fdw	NULL	NULL
+postgres_fdw	NULL	NULL
 
 
 connection default

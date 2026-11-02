@@ -59,12 +59,6 @@ inline constexpr std::array kAclPrivileges{
   AclPrivilege{duckdb::AclMode::Maintain, 'm', "MAINTAIN"},
 };
 
-inline constexpr std::array kForeignDataWrapperAcl{duckdb::AclItem{
-  .grantee = kPublicGrantee,
-  .grantor = kRootUser,
-  .privs = duckdb::AclMode::Usage,
-}};
-
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const auth::RoleGraph& roles);
 

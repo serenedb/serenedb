@@ -359,10 +359,6 @@ bool Holds(const auth::RoleClosure& closure, CatalogType type,
 
 const duckdb::Permissions kBuiltinPermissions{.owner = kRootUser};
 
-const duckdb::Permissions kForeignDataWrapperPermissions{
-  .owner = kRootUser,
-  .acl = {kForeignDataWrapperAcl.begin(), kForeignDataWrapperAcl.end()}};
-
 CatalogType RelationType(const Relation& relation) {
   return relation.entry ? relation.entry->type : CatalogType::INVALID;
 }
@@ -732,7 +728,7 @@ struct ForeignDataWrapperPrivileges
     if (!FindSystemObject(kForeignDataWrappers, oid)) {
       return std::nullopt;
     }
-    return ObjectTarget{&kForeignDataWrapperPermissions};
+    return ObjectTarget{&kBuiltinPermissions};
   }
 };
 

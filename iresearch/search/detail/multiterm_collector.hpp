@@ -32,6 +32,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -174,28 +175,26 @@ class MultiTermVisitor : util::Noncopyable {
     _collector->Field(_thread).Collect(field);
   }
 
-  void Prepare(TermIterator& terms) noexcept { _terms = &terms; }
-
-  bool Visit(score_t boost) {
-    SDB_ASSERT(_terms);
-    return Visit(_terms->value(), _terms->cookie(), boost);
-  }
-
-  bool Visit(bytes_view term, const PostingMeta& meta, score_t boost) {
+  void Visit(bytes_view term, const PostingMeta& meta, score_t boost) {
     const byte_type* stats = _stats;
     if (_collector != nullptr) {
       stats = _collector->Collect(_thread, term, meta);
     }
     _state.Push(meta, boost, stats);
-    return true;
   }
 
  private:
   MultiTermState& _state;
   MultiTermCollector* _collector = nullptr;
   const byte_type* _stats = nullptr;
-  TermIterator* _terms = nullptr;
   uint32_t _thread;
 };
+
+template<typename Terms>
+void VisitTerms(Terms& terms, MultiTermVisitor& visitor) {
+  do {
+    visitor.Visit(terms.value(), terms.cookie(), BoostOf(terms));
+  } while (terms.next());
+}
 
 }  // namespace irs

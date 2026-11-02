@@ -119,7 +119,6 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }

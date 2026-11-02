@@ -52,17 +52,13 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::shared_ptr<search::SearchTable> search_table;
 
-  // Guards the deduplicator and everything below, which the sink threads
-  // share. The transaction's search state is not under it: only Finalize
-  // touches that.
+  // Guards the fields below. The transaction's search state is not under it:
+  // only Finalize touches that.
   absl::Mutex mu;
   std::optional<duckdb::RowIdDeduplicator> deleted_rows;
   duckdb::idx_t delete_count = 0;
-  // RETURNING only: the rows this statement removed, merged out of the sink
-  // threads.
+  // RETURNING only: the rows this statement removed.
   std::optional<duckdb::ColumnDataCollection> returned;
-  // The rows to remove, merged out of the sink threads for Finalize to buffer
-  // on the transaction.
   irs::DocRemovalBuilder removed_rows;
 };
 

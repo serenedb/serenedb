@@ -68,20 +68,15 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
 
   std::atomic<bool> has_local_state = false;
 
-  // Guards the deduplicator and everything below, which the sink threads
-  // share. The transaction's search state is not under it: only the one inline
-  // sink thread and Finalize touch that, and never at the same time.
+  // Guards the fields below. The transaction's search state is not under it:
+  // only the one inline sink thread and Finalize touch that, and never at the
+  // same time.
   absl::Mutex mu;
   std::optional<duckdb::RowIdDeduplicator> updated_rows;
   duckdb::idx_t update_count = 0;
-  // RETURNING only: the rows as this statement left them, merged out of the
-  // sink threads.
+  // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
 
-  // What the bulk sink threads hand over on Combine, for Finalize to pass to
-  // the transaction: the rows their new versions replace, the iresearch
-  // transactions holding those versions, and the segments those flushed and
-  // fsynced, for the WAL to reference.
   irs::DocRemovalBuilder removed_rows;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   std::vector<std::string> flushed_segments;
@@ -95,7 +90,6 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   std::unique_ptr<SearchSinkInsertBaseImpl> sink;
   bool bulk = false;
-  // Bulk only: the rows this thread's new versions replace.
   irs::DocRemovalBuilder removed_rows;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -217,9 +211,6 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   new_row.ReferenceColumns(chunk, gstate.new_row_src);
 
   if (lstate->bulk) {
-    // The removals reach the transaction's buffer on Finalize, for commit to
-    // apply after every sink thread's segment; the rows they name are in the
-    // transaction's snapshot, so they never meet the new versions written here.
     WriteChunkToSearchSink(*lstate->sink, new_row, gstate.column_ids,
                            _table.oid, context.client);
     search::AppendRowPositions(lstate->removed_rows, old_rows);

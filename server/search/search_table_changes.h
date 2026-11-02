@@ -43,8 +43,6 @@ class Catalog;
 }  // namespace duckdb
 namespace sdb::search {
 
-// Adds the rows of a rowid vector to `out`, each run of consecutive positions
-// as one range.
 inline void AppendRowPositions(irs::DocRemovalBuilder& out,
                                const duckdb::Vector& rows) {
   auto places = rows.Values<int64_t>();

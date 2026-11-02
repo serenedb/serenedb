@@ -89,7 +89,7 @@ bool DrainGate::WaitOpen(absl::FunctionRef<bool()> cancelled) {
 void DrainGate::Leave() noexcept {
   const auto previous = _state.fetch_sub(kPass);
   SDB_ASSERT(previous >= kPass);
-  if (previous & kClosed) {
+  if (previous == (kClosed | kPass)) {
     absl::MutexLock lock{&_mutex};
   }
 }

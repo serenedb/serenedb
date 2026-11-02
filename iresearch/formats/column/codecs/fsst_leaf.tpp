@@ -21,9 +21,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -296,17 +298,53 @@ struct FsstFetch {
       }
       frame_offsets[frame_known] = off;
     }
-    std::string_view value;
-    WalkInPlace(*decoder, in, lengths, lcps, restart, entry + 1,
-                frame_offsets[group], h.data_size, chain,
-                [&](uint32_t, std::string_view v) {
-                  value = v;
-                  return true;
-                });
+    const auto value = DecodeEntry(in, lengths, restart, entry,
+                                   frame_offsets[group], h.data_size);
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
-    walked += entry + 1 - restart;
+  }
+
+  std::string_view DecodeEntry(const char* in, PackedReader& lengths,
+                               uint32_t restart, uint32_t entry,
+                               uint64_t enc_off, uint64_t enc_end) {
+    const uint32_t n = entry - restart + 1;
+    SDB_ASSERT(n <= kChainRestart);
+    std::array<uint64_t, kChainRestart + 1> off;
+    std::array<uint32_t, kChainRestart> lcp;
+    off[0] = enc_off;
+    for (uint32_t i = 0; i < n; ++i) {
+      lcp[i] = i == 0 ? 0 : lcps.At(restart + i);
+      off[i + 1] = off[i] + lengths.At(restart + i);
+    }
+    SDB_ENSURE(off[n] <= enc_end, "col codec: corrupted front coding");
+    std::array<uint32_t, kChainRestart> used;
+    uint32_t count = 0;
+    uint64_t need = std::numeric_limits<uint64_t>::max();
+    for (uint32_t i = n; need != 0 && i-- > 0;) {
+      if (lcp[i] < need) {
+        used[count++] = i;
+        need = lcp[i];
+      }
+    }
+    uint64_t len = 0;
+    while (count != 0) {
+      const auto i = used[--count];
+      const uint64_t enc = off[i + 1] - off[i];
+      SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
+      if (const auto want = lcp[i] + enc * kFsstMaxExpansion;
+          chain.size() < want) {
+        chain.resize(std::max<uint64_t>(want, chain.size() * 2));
+      }
+      const auto room = chain.size() - lcp[i];
+      const auto dec = enc == 0 ? 0
+                                : decoder->Decode(in + off[i], enc,
+                                                  chain.data() + lcp[i], room);
+      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+      len = lcp[i] + dec;
+      ++walked;
+    }
+    return {chain.data(), len};
   }
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {

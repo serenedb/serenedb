@@ -114,11 +114,6 @@ using CompactionPolicy =
 
 using MergeGroups = std::vector<Compaction>;
 
-enum class LoneSegment : uint8_t {
-  Skip,
-  Rewrite,
-};
-
 enum class CompactionError : uint32_t {
   Fail = 0,
 
@@ -471,12 +466,10 @@ class IndexWriter : private util::Noncopyable {
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
                     const MergeProgress& progress, const AnnBuildEnv* env,
-                    const PipelineMergeExecutor& executor,
-                    LoneSegment lone = LoneSegment::Skip)
+                    const PipelineMergeExecutor& executor)
     -> yaclib::Future<CompactionResult>;
 
-  std::vector<MergeTicket> ReserveMerges(auto&& planner, bool& busy,
-                                         LoneSegment lone = LoneSegment::Skip) {
+  std::vector<MergeTicket> ReserveMerges(auto&& planner, bool& busy) {
     absl::MutexLock lock{&_compacting.lock};
     if (_compacting.floor_requests != 0) {
       busy = true;
@@ -490,7 +483,7 @@ class IndexWriter : private util::Noncopyable {
     planner(*snapshot,
             CompactingSegments{_compacting.segments, _compacting.floor},
             groups);
-    return ReserveLocked(std::move(snapshot), groups, lone, busy);
+    return ReserveLocked(std::move(snapshot), groups, busy);
   }
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
@@ -586,7 +579,7 @@ class IndexWriter : private util::Noncopyable {
 
   std::vector<MergeTicket> ReserveLocked(
     std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
-    LoneSegment lone, bool& busy);
+    bool& busy);
   void ReleaseTicket(MergeTicket::State& state) noexcept;
   void RevokeTicketsLocked() noexcept;
 

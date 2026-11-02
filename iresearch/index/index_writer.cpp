@@ -1341,7 +1341,7 @@ bool CompactingSegments::contains(std::string_view name) const noexcept {
 
 std::vector<MergeTicket> IndexWriter::ReserveLocked(
   std::shared_ptr<const DirectoryReaderImpl> snapshot, MergeGroups& groups,
-  LoneSegment lone, bool& busy) {
+  bool& busy) {
   if (const auto floor = _compacting.floor; floor != 0) {
     for (auto& group : groups) {
       std::erase_if(group, [floor](const SubReader* candidate) {
@@ -1362,8 +1362,7 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
            });
   };
   for (auto& group : groups) {
-    if (group.empty() || (group.size() == 1 && lone == LoneSegment::Skip &&
-                          !HasRemovals(group.front()->Meta()))) {
+    if (group.empty()) {
       continue;
     }
     if (absl::c_any_of(group, taken)) {
@@ -1434,16 +1433,19 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeProgress& progress,
                                const AnnBuildEnv* env,
-                               const PipelineMergeExecutor& executor,
-                               LoneSegment lone)
+                               const PipelineMergeExecutor& executor)
   -> yaclib::Future<CompactionResult> {
   bool busy = false;
   auto tickets = ReserveMerges(
     [&policy](const IndexReader& index, const CompactingSegments& reserved,
               MergeGroups& groups) {
-      policy(groups.emplace_back(), index, reserved);
+      auto& group = groups.emplace_back();
+      policy(group, index, reserved);
+      if (group.size() == 1 && !HasRemovals(group.front()->Meta())) {
+        group.clear();
+      }
     },
-    busy, lone);
+    busy);
   if (tickets.empty()) {
     co_return CompactionResult{
       0, busy ? CompactionError::Busy : CompactionError::Ok};
@@ -1459,17 +1461,15 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                            const AnnBuildEnv* env,
                            const PipelineMergeExecutor& executor)
   -> yaclib::Future<CompactionResult> {
-  auto owned = std::move(ticket);
-  SDB_ASSERT(owned._state.get_deleter().writer == this);
-  auto& state = *owned._state;
+  SDB_ASSERT(ticket._state.get_deleter().writer == this);
+  auto& state = *ticket._state;
   auto& candidates = state.candidates;
-  const bool registered = [&] {
+  {
     absl::MutexLock lock{&_compacting.lock};
-    state.running = state.registered;
-    return state.registered;
-  }();
-  if (!registered) {
-    co_return CompactionResult{0, CompactionError::Cancelled};
+    if (!state.registered) {
+      co_return CompactionResult{0, CompactionError::Cancelled};
+    }
+    state.running = true;
   }
   const auto run_id = reinterpret_cast<uintptr_t>(&state);
 
@@ -1682,6 +1682,7 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
+    std::vector<SegmentReader> inputs;
   };
   std::vector<Adopted> adopted;
   adopted.reserve(replacements.size());
@@ -1740,12 +1741,12 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
     candidates.push_back(found);
   }
 
-  std::vector<std::vector<SegmentReader>> pins(adopted.size());
-  for (auto& pinned : pins) {
-    pinned.reserve(candidates.size());
-    for (const auto* candidate : candidates) {
-      pinned.emplace_back(static_cast<const SegmentReader&>(*candidate));
-    }
+  const auto inputs =
+    candidates | std::views::transform([](const SubReader* candidate) {
+      return static_cast<const SegmentReader&>(*candidate);
+    });
+  for (auto& entry : adopted) {
+    entry.inputs = inputs | std::ranges::to<std::vector>();
   }
 
   auto flush = GetFlushContext();
@@ -1766,11 +1767,10 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
   // Mutating tail
   // The replacements are already written, and the commit carries what reached
   // the replaced segments since through their doc maps.
-  for (size_t i = 0; i != adopted.size(); ++i) {
-    auto& entry = adopted[i];
-    flush->incoming.emplace_back(std::move(entry.segment),
-                                 std::move(entry.refs), Compaction{},
-                                 std::move(entry.reader), std::move(pins[i]));
+  for (auto& entry : adopted) {
+    flush->incoming.emplace_back(
+      std::move(entry.segment), std::move(entry.refs), Compaction{},
+      std::move(entry.reader), std::move(entry.inputs));
   }
   for (const auto name : masked) {
     segment_mask.emplace(name);
@@ -2104,16 +2104,12 @@ void IndexWriter::Finish() {
 
   // noexcept part!
   _pending_state.ctx->doc_maps.clear();
-  {
-    absl::MutexLock lock{&_compacting.lock};
-    Cleanup(*_pending_state.ctx);
-    SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_before_reader_swap");
-    // after this line transaction is successful (only noexcept operations
-    // below)
-    std::atomic_store_explicit(&_committed_reader,
-                               std::move(_pending_state.commit),
-                               std::memory_order_release);
-  }
+  // after this line transaction is successful (only noexcept operations below)
+  std::atomic_store_explicit(&_committed_reader,
+                             std::move(_pending_state.commit),
+                             std::memory_order_release);
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_reader_swap");
+  _pending_state.StartReset(*this);
   _pending_state.FinishReset();
 }
 

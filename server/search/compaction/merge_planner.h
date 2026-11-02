@@ -65,7 +65,6 @@ struct PlannedMerge {
   uint64_t largest_column_bytes = 0;
   uint64_t fields = 0;
   uint64_t ann_columns = 0;
-  irs::LoneSegment lone = irs::LoneSegment::Skip;
 
   uint64_t EstimatedOutputBytes() const noexcept;
 };

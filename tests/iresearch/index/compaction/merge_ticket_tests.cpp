@@ -18,12 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
@@ -233,17 +233,17 @@ TEST_F(MergeTicketTest, ReservesNothingWithoutWork) {
 
   AddSegments(1);
   bool busy = true;
-  auto none = Reserve({{}, {0}}, nullptr, nullptr, &busy);
+  auto none = Reserve({{}, {}}, nullptr, nullptr, &busy);
   EXPECT_TRUE(none.empty());
   EXPECT_FALSE(busy);
+  const auto compacted = _writer->Compact(MergeEverything);
+  EXPECT_EQ(CompactionError::Ok, compacted.error);
+  EXPECT_EQ(0, compacted.size);
   EXPECT_TRUE(ReservedNames().empty());
 
-  AddSegments(1, 0.5);
-  ASSERT_LT(_writer->GetSnapshot()[1].live_docs_count(),
-            _writer->GetSnapshot()[1].docs_count());
-  auto purge = Reserve({{1}});
-  ASSERT_EQ(1, purge.size());
-  EXPECT_EQ(Names({{1}}), NamesOf(purge[0]));
+  auto lone = Reserve({{}, {0}});
+  ASSERT_EQ(1, lone.size());
+  EXPECT_EQ(Names({{0}}), NamesOf(lone[0]));
 }
 
 TEST_F(MergeTicketTest, RunMergePublishesAndHandsTheReservationToTheCommit) {
@@ -525,52 +525,34 @@ TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
   EXPECT_EQ(1, Reserve({{0, 1}}).size());
 }
 
-TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
+TEST_F(MergeTicketTest, AReservationAfterTheReaderSwapSeesOnlyTheNewSegments) {
   AddSegments(3);
   auto merge = Reserve({{0, 1}});
   ASSERT_EQ(1, merge.size());
   ASSERT_EQ(CompactionError::Ok, Run(std::move(merge[0])).error);
-  if (!duckdb::FaultPoints::Arm("pause_irs_commit_before_reader_swap")) {
+  if (!duckdb::FaultPoints::Arm("pause_irs_commit_after_reader_swap")) {
     GTEST_SKIP() << "built without fault injection";
   }
-  std::thread committer{[&] { _writer->RefreshCommit(); }};
+  std::thread committer{[&] { EXPECT_TRUE(_writer->RefreshCommit()); }};
+  absl::Cleanup release = [&] {
+    duckdb::FaultPoints::Arm("pause_irs_commit_after_reader_swap:release");
+    committer.join();
+    duckdb::FaultPoints::Clear();
+  };
   while (
-    !duckdb::FaultPoints::Armed("pause_irs_commit_before_reader_swap:parked")) {
+    !duckdb::FaultPoints::Disarm("pause_irs_commit_after_reader_swap:parked")) {
     std::this_thread::yield();
   }
 
-  std::atomic_bool reserved{false};
-  std::vector<std::string> names;
-  std::thread planner{[&] {
-    bool blocked = false;
-    auto reservation = _writer->ReserveMerges(
-      [](const irs::IndexReader& index, const irs::CompactingSegments& busy,
-         irs::MergeGroups& groups) {
-        auto& group = groups.emplace_back();
-        for (const auto& segment : index) {
-          if (!busy.contains(segment.Meta().name)) {
-            group.emplace_back(&segment);
-          }
-        }
-      },
-      blocked);
-    for (const auto& ticket : reservation) {
-      for (const auto* candidate : ticket.Candidates()) {
-        names.emplace_back(candidate->Meta().name);
-      }
-    }
-    reserved = true;
-  }};
-  std::this_thread::sleep_for(std::chrono::milliseconds{50});
-  EXPECT_FALSE(reserved.load());
-  ASSERT_TRUE(
-    duckdb::FaultPoints::Arm("pause_irs_commit_before_reader_swap:release"));
-  committer.join();
-  planner.join();
-  EXPECT_TRUE(reserved.load());
-  std::ranges::sort(names);
-  EXPECT_EQ(2, names.size());
-  EXPECT_EQ(Names(), names);
+  ASSERT_EQ(2, _writer->GetSnapshot().size());
+  std::vector<std::string> seen{"stale"};
+  auto reservation = Reserve({{0, 1}}, &seen);
+  EXPECT_TRUE(seen.empty());
+  ASSERT_EQ(1, reservation.size());
+  EXPECT_EQ(Names(), NamesOf(reservation[0]));
+
+  std::move(release).Invoke();
+  EXPECT_EQ(Names(), ReservedNames());
 }
 
 TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {

@@ -31,6 +31,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -246,10 +247,14 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
       }
     }
     inputs = search::DescribeInputs(candidates);
+    if (candidates.size() == 1 && planned.inputs.size() != 1 &&
+        !irs::HasRemovals(candidates.front()->Meta())) {
+      candidates.clear();
+    }
   };
   bool busy = false;
-  auto tickets = _table ? _table->ReserveMerges(planner, busy, planned.lone)
-                        : _index->ReserveMerges(planner, busy, planned.lone);
+  auto tickets = _table ? _table->ReserveMerges(planner, busy)
+                        : _index->ReserveMerges(planner, busy);
   if (tickets.empty()) {
     merged.outcome.error =
       busy ? irs::CompactionError::Busy : irs::CompactionError::Ok;

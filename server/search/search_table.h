@@ -184,11 +184,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
                                RefreshResult& code);
-  std::vector<irs::MergeTicket> ReserveMerges(
-    auto&& planner, bool& busy,
-    irs::LoneSegment lone = irs::LoneSegment::Skip) {
+  std::vector<irs::MergeTicket> ReserveMerges(auto&& planner, bool& busy) {
     return _writer->ReserveMerges(std::forward<decltype(planner)>(planner),
-                                  busy, lone);
+                                  busy);
   }
   yaclib::Future<MergeResult> RunMergeAsync(
     irs::MergeTicket ticket, const irs::MergeProgress& progress,

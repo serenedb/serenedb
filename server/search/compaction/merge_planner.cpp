@@ -207,12 +207,11 @@ void PlaceAlone(const irs::SubReader& segment,
     return;
   }
   const irs::SubReader* inputs[] = {&segment};
-  auto& merge = plan.merges.emplace_back(DescribeMerge(
+  plan.merges.emplace_back(DescribeMerge(
     rewrite->codec_changed
       ? std::string{"a declared column codec changed"}
       : absl::StrCat("re-encoding saves ", SavedPercent(*rewrite), "%"),
     inputs));
-  merge.lone = irs::LoneSegment::Rewrite;
 }
 
 void PlaceInSteps(std::span<const irs::SubReader* const> group,

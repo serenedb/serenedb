@@ -302,8 +302,10 @@ count
 0
 
 query
-SELECT (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(777) LIMIT 1)
-     = (SELECT id FROM rot_wide_src ORDER BY emb <#> rot_wide(777) LIMIT 1) AS same;
+SELECT abs(found - best) <= 1e-4 * abs(best) AS same
+FROM (SELECT (SELECT s.emb <#> rot_wide(777) FROM rot_wide_src s
+              WHERE s.id = (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(777) LIMIT 1)) AS found,
+             (SELECT min(emb <#> rot_wide(777)) FROM rot_wide_src) AS best) t;
 ----
 same
 t

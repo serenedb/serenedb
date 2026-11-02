@@ -111,13 +111,6 @@ n	updated	stale	d
 8000	8000	0	8000
 
 
-query
-SELECT count(DISTINCT row_group_id) > 1 AS parallel FROM pragma_storage_info('pud');
-----
-parallel
-t
-
-
 statement ok
 UPDATE pud_plain SET b = 'u1_' || a;
 

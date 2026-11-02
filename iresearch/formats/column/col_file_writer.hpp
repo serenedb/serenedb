@@ -38,8 +38,8 @@ namespace irs {
 
 class ColFileWriter final {
  public:
-  static constexpr size_t kChunkSize = size_t{1} << 20;
-  static constexpr size_t kMaxQueued = 64 * kChunkSize;
+  static constexpr size_t kChunkSize = size_t{64} << 10;
+  static constexpr size_t kMaxQueued = size_t{64} << 20;
 
   explicit ColFileWriter(IndexOutput::ptr out);
 

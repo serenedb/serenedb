@@ -163,7 +163,7 @@ class BodyReader final : public duckdb::ReadStream {
 
 constexpr std::string_view kContentType = "application/vnd.duckdb";
 constexpr size_t kWriteSlice = size_t{1} << 20;
-constexpr auto kReapInterval = std::chrono::seconds{1};
+constexpr auto kSweepInterval = std::chrono::seconds{1};
 constexpr auto kPrepareWait = std::chrono::milliseconds{100};
 #ifdef SDB_DEV
 constexpr uint32_t kInlineSliceBudget = 0;
@@ -384,17 +384,17 @@ Service::~Service() {
     .SetServes(nullptr);
 }
 
-void Service::Start() { _tasks.Consume(Reap()); }
+void Service::Start() { _tasks.Consume(SweepLoop()); }
 
 void Service::RequestStop() noexcept {
   _stopping.store(true, std::memory_order_release);
   _core.DisconnectAll();
 }
 
-yaclib::Future<> Service::Reap() {
+yaclib::Future<> Service::SweepLoop() {
   auto& scheduler = BackgroundScheduler::instance();
   while (!Stopping() && !scheduler.IsStopping()) {
-    co_await scheduler.Delay(kReapInterval);
+    co_await scheduler.Delay(kSweepInterval);
     if (Stopping() || scheduler.IsStopping()) {
       break;
     }

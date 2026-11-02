@@ -60,7 +60,7 @@ class Service final {
   }
 
  private:
-  yaclib::Future<> Reap();
+  yaclib::Future<> SweepLoop();
 
   HttpAuthenticator _auth;
   CancelRegistry& _cancel;

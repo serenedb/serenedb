@@ -42,7 +42,6 @@ db error: ERROR: permission denied to create role
 DETAIL: Only roles with the SUPERUSER attribute may create roles with the SUPERUSER attribute.
 
 
-onlyif postgres
 connection c_ecrs user=ecrs_admin password=ecrs_pw
 statement error
 ALTER ROLE ecrs_admin SUPERUSER;
@@ -51,31 +50,12 @@ db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.
 
 
-skipif postgres
-connection c_ecrs user=ecrs_admin password=ecrs_pw
-statement error
-ALTER ROLE ecrs_admin SUPERUSER;
-----
-db error: ERROR: permission denied to alter role
-DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "ecrs_admin" may alter this role.
-
-
-onlyif postgres
 connection c_ecrs user=ecrs_admin password=ecrs_pw
 statement error
 GRANT ecrs_super TO ecrs_admin;
 ----
 db error: ERROR: permission denied to grant role "ecrs_super"
 DETAIL: Only roles with the SUPERUSER attribute may grant roles with the SUPERUSER attribute.
-
-
-skipif postgres
-connection c_ecrs user=ecrs_admin password=ecrs_pw
-statement error
-GRANT ecrs_super TO ecrs_admin;
-----
-db error: ERROR: permission denied to grant role "ecrs_super"
-DETAIL: Only roles with the ADMIN option on role "ecrs_super" may grant this role.
 
 
 connection c_ecrs user=ecrs_admin password=ecrs_pw

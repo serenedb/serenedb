@@ -39,18 +39,27 @@ CREATE ROLE erda_boss SUPERUSER;
 
 
 connection c_plain user=erda_plain password=erda_pw
-statement error permission denied
+statement error
 CREATE ROLE erda_made;
+----
+db error: ERROR: permission denied to create role
+DETAIL: Only roles with the CREATEROLE attribute may create roles.
 
 
 connection c_plain user=erda_plain password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_foreign PASSWORD 'stolen';
+----
+db error: ERROR: permission denied to alter role
+DETAIL: To change another role's password, the current user must have the CREATEROLE attribute and the ADMIN option on the role.
 
 
 connection c_plain user=erda_plain password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_plain CREATEDB;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "erda_plain" may alter this role.
 
 
 connection c_plain user=erda_plain password=erda_pw
@@ -59,13 +68,19 @@ ALTER ROLE erda_plain PASSWORD 'erda_pw';
 
 
 connection c_plain user=erda_plain password=erda_pw
-statement error permission denied
+statement error
 GRANT erda_foreign TO erda_plain;
+----
+db error: ERROR: permission denied to grant role "erda_foreign"
+DETAIL: Only roles with the ADMIN option on role "erda_foreign" may grant this role.
 
 
 connection c_plain user=erda_plain password=erda_pw
-statement error permission denied
+statement error
 DROP ROLE erda_foreign;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.
 
 
 connection c_creator user=erda_creator password=erda_pw
@@ -84,48 +99,75 @@ ALTER ROLE erda_child CONNECTION LIMIT 3;
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_child CREATEDB;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEDB attribute may change the CREATEDB attribute.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_child SUPERUSER;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 CREATE ROLE erda_made SUPERUSER;
+----
+db error: ERROR: permission denied to create role
+DETAIL: Only roles with the SUPERUSER attribute may create roles with the SUPERUSER attribute.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 CREATE ROLE erda_made IN ROLE erda_foreign;
+----
+db error: ERROR: permission denied to grant role "erda_foreign"
+DETAIL: Only roles with the ADMIN option on role "erda_foreign" may grant this role.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_foreign PASSWORD 'stolen';
+----
+db error: ERROR: permission denied to alter role
+DETAIL: To change another role's password, the current user must have the CREATEROLE attribute and the ADMIN option on the role.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_foreign RENAME TO erda_renamed;
+----
+db error: ERROR: permission denied to rename role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "erda_foreign" may rename this role.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 ALTER ROLE erda_boss NOLOGIN;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 DROP ROLE erda_foreign;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "erda_foreign" may drop this role.
 
 
 connection c_creator user=erda_creator password=erda_pw
-statement error permission denied
+statement error
 GRANT erda_foreign TO erda_plain;
+----
+db error: ERROR: permission denied to grant role "erda_foreign"
+DETAIL: Only roles with the ADMIN option on role "erda_foreign" may grant this role.
 
 
 connection c_creator user=erda_creator password=erda_pw

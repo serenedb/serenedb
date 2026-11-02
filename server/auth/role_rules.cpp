@@ -66,44 +66,50 @@ bool IsAdminOf(duckdb::ClientContext& context, duckdb::idx_t role) {
     .IsAdminOf(role);
 }
 
-void RequireAttributeGrant(const duckdb::RoleAccess& caller,
-                           std::string_view verb, RoleOption options) {
-  const auto deny = [&](std::string_view attribute) {
-    DenyRoleAction(
-      verb, absl::StrCat("Only roles with the ", attribute, " attribute may ",
-                         verb, " roles with the ", attribute, " attribute."));
-  };
-  if (HasOption(options, RoleOption::Superuser)) {
-    deny("SUPERUSER");
-  }
-  if (HasOption(options, RoleOption::CreateDb) &&
-      !caller.Has(RoleOption::CreateDb)) {
-    deny("CREATEDB");
-  }
-  if (HasOption(options, RoleOption::Replication) &&
-      !caller.Has(RoleOption::Replication)) {
-    deny("REPLICATION");
-  }
-  if (HasOption(options, RoleOption::BypassRls) &&
-      !caller.Has(RoleOption::BypassRls)) {
-    deny("BYPASSRLS");
+void RequireAttributes(const duckdb::RoleAccess& caller, std::string_view verb,
+                       std::string_view action, RoleOption options) {
+  for (const auto& [option, attribute] :
+       {std::pair{RoleOption::CreateDb, "CREATEDB"},
+        std::pair{RoleOption::Replication, "REPLICATION"},
+        std::pair{RoleOption::BypassRls, "BYPASSRLS"}}) {
+    if (HasOption(options, option) && !caller.Has(option)) {
+      DenyRoleAction(
+        verb, absl::StrCat("Only roles with the ", attribute, " attribute may ",
+                           action, attribute, " attribute."));
+    }
   }
 }
 
-void RequireRoleAdmin(duckdb::ClientContext& context,
-                      const duckdb::RoleAccess& caller,
-                      const duckdb::CatalogEntry& role, std::string_view verb) {
+void RequireNotSuperuser(const duckdb::CatalogEntry& role,
+                         std::string_view verb) {
   if (role.Cast<catalog::RoleCatalogEntry>().IsSuperuser()) {
     DenyRoleAction(
       verb, absl::StrCat("Only roles with the SUPERUSER attribute may ", verb,
                          " roles with the SUPERUSER attribute."));
   }
-  if (!caller.Has(RoleOption::CreateRole) || !IsAdminOf(context, role.oid)) {
-    DenyRoleAction(verb,
-                   absl::StrCat("Only roles with the CREATEROLE attribute and "
-                                "the ADMIN option on role \"",
-                                role.name.GetIdentifierName(), "\" may ", verb,
-                                " this role."));
+}
+
+bool AdministersRole(duckdb::ClientContext& context,
+                     const duckdb::RoleAccess& caller,
+                     const duckdb::CatalogEntry& role) {
+  return caller.Has(RoleOption::CreateRole) && IsAdminOf(context, role.oid);
+}
+
+[[noreturn]] void DenyRoleAdmin(const duckdb::CatalogEntry& role,
+                                std::string_view verb) {
+  DenyRoleAction(verb,
+                 absl::StrCat("Only roles with the CREATEROLE attribute and "
+                              "the ADMIN option on role \"",
+                              role.name.GetIdentifierName(), "\" may ", verb,
+                              " this role."));
+}
+
+void RequireRoleAdmin(duckdb::ClientContext& context,
+                      const duckdb::RoleAccess& caller,
+                      const duckdb::CatalogEntry& role, std::string_view verb) {
+  RequireNotSuperuser(role, verb);
+  if (!AdministersRole(context, caller, role)) {
+    DenyRoleAdmin(role, verb);
   }
 }
 
@@ -114,15 +120,26 @@ std::string_view CanonicalSetting(std::string_view name) {
 }
 
 void RequireGrantableRole(duckdb::CatalogTransaction transaction,
-                          std::string_view name) {
+                          std::string_view name, bool revoke) {
   auto role = FindRole(transaction, name);
-  if (role && !IsAdminOf(transaction.GetContext(), role->oid)) {
+  if (!role) {
+    return;
+  }
+  const std::string_view verb = revoke ? "revoke" : "grant";
+  const auto& role_name = role->name.GetIdentifierName();
+  if (role->Cast<catalog::RoleCatalogEntry>().IsSuperuser()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to grant role \"",
-              role->name.GetIdentifierName(), "\""),
-      ERR_DETAIL("Only roles with the ADMIN option on role \"",
-                 role->name.GetIdentifierName(), "\" may grant this role."));
+      ERR_MSG("permission denied to ", verb, " role \"", role_name, "\""),
+      ERR_DETAIL("Only roles with the SUPERUSER attribute may ", verb,
+                 " roles with the SUPERUSER attribute."));
+  }
+  if (!IsAdminOf(transaction.GetContext(), role->oid)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied to ", verb, " role \"", role_name, "\""),
+      ERR_DETAIL("Only roles with the ADMIN option on role \"", role_name,
+                 "\" may ", verb, " this role."));
   }
 }
 
@@ -138,9 +155,14 @@ void CheckCreateRole(duckdb::CatalogTransaction transaction,
     DenyRoleAction(
       "create", "Only roles with the CREATEROLE attribute may create roles.");
   }
-  RequireAttributeGrant(*caller, "create", info.options);
+  if (HasOption(info.options, RoleOption::Superuser)) {
+    DenyRoleAction("create",
+                   "Only roles with the SUPERUSER attribute may create roles "
+                   "with the SUPERUSER attribute.");
+  }
+  RequireAttributes(*caller, "create", "create roles with the ", info.options);
   for (const auto& name : info.in_roles) {
-    RequireGrantableRole(transaction, name.GetIdentifierName());
+    RequireGrantableRole(transaction, name.GetIdentifierName(), false);
   }
 }
 
@@ -156,7 +178,7 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
     return;
   }
   if (!info.grant_role.empty()) {
-    RequireGrantableRole(transaction, info.grant_role);
+    RequireGrantableRole(transaction, info.grant_role, info.revoke);
     return;
   }
   auto& context = transaction.GetContext();
@@ -164,12 +186,27 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
     RequireRoleAdmin(context, *caller, *role, "rename");
     return;
   }
-  const bool attributes = info.set_options != RoleOption::None ||
-                          info.clear_options != RoleOption::None ||
-                          info.set_conn_limit || info.set_valid_until;
-  if (role->oid != caller->role || attributes) {
-    RequireRoleAdmin(context, *caller, *role, "alter");
-    RequireAttributeGrant(*caller, "alter", info.set_options);
+  const auto changed = info.set_options | info.clear_options;
+  const bool attributes =
+    changed != RoleOption::None || info.set_conn_limit || info.set_valid_until;
+  const bool other = role->oid != caller->role;
+  RequireNotSuperuser(*role, "alter");
+  if (HasOption(changed, RoleOption::Superuser)) {
+    DenyRoleAction("alter",
+                   "Only roles with the SUPERUSER attribute may change the "
+                   "SUPERUSER attribute.");
+  }
+  if (AdministersRole(context, *caller, *role)) {
+    RequireAttributes(*caller, "alter", "change the ", changed);
+  } else if (attributes) {
+    DenyRoleAdmin(*role, "alter");
+  } else if (other && (info.set_password || info.null_password)) {
+    DenyRoleAction("alter",
+                   "To change another role's password, the current user must "
+                   "have the CREATEROLE attribute and the ADMIN option on the "
+                   "role.");
+  } else if (other) {
+    DenyRoleAdmin(*role, "alter");
   }
   for (const std::string_view entry : info.set_config) {
     RequireSuperuserToSet(context, CanonicalSetting(catalog::ConfigKey(entry)),

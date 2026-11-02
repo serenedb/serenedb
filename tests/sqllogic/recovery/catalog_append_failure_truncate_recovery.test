@@ -19,7 +19,7 @@ SET sdb_faults = 'catalog_append_fails';
 statement error
 CREATE TABLE cwt_refused (a INTEGER);
 ----
-db error: ERROR: Failed to commit: catalog log: could not append the transaction
+db error: ERROR: catalog log: could not append the transaction
 
 
 statement ok

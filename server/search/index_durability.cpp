@@ -358,11 +358,9 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
   return FinishPendingSave(writer);
 }
 
-void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
+bool IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
   std::unique_lock lock{_refresh_mutex, std::try_to_lock};
-  if (lock.owns_lock()) {
-    FinishPendingSave(writer);
-  }
+  return lock.owns_lock() && FinishPendingSave(writer);
 }
 
 bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {

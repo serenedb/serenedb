@@ -35,7 +35,8 @@ namespace {
 using irs::analysis::SqlTokenizer;
 
 irs::analysis::Tokenizer::ptr MakeBound(std::string expression) {
-  auto a = SqlTokenizer::Make({.expression = std::move(expression)});
+  auto a =
+    SqlTokenizer::Make({.expression = std::move(expression)}, tests::Cache());
   a->Bind(tests::EngineContext());
   return a;
 }
@@ -131,7 +132,8 @@ TEST(SqlTokenizerTest, pipelineNullDropKeepsStackedPositions) {
   stages.emplace_back(irs::analysis::NGramTokenizer::Make(
     {.min_gram = 2, .max_gram = 3, .preserve_original = false}));
   stages.emplace_back(SqlTokenizer::Make(
-    {.expression = "CASE WHEN length(input) >= 3 THEN input END"}));
+    {.expression = "CASE WHEN length(input) >= 3 THEN input END"},
+    tests::Cache()));
   irs::analysis::PipelineTokenizer pipe{std::move(stages)};
   pipe.Bind(tests::EngineContext());
   const auto tokens =
@@ -196,7 +198,7 @@ TEST(SqlTokenizerTest, matchesDelimitedTokenizer) {
 }
 
 TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
-  auto a = SqlTokenizer::Make({.expression = "upper(input)"});
+  auto a = SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache());
   a->Bind(tests::EngineContext());
   ASSERT_EQ(tests::AnalyzeTerms(*a, "x"), (std::vector<std::string>{"X"}));
   a->Unbind();
@@ -205,28 +207,35 @@ TEST(SqlTokenizerTest, rebindAcrossPoolCycles) {
 }
 
 TEST(SqlTokenizerTest, parseErrors) {
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "lower(("}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "input, input"}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "(SELECT 'x')"}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "upper($1)"}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "memory.main.upper(input)"}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_lexize('d', input)"}),
-               irs::SqlException);
-  ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_tokenize(input, 'd')"}),
+  ASSERT_THROW(SqlTokenizer::Make({.expression = "lower(("}, tests::Cache()),
                irs::SqlException);
   ASSERT_THROW(
-    SqlTokenizer::Make({.expression = "lower(ts_lexize('d', input)[1])"}),
+    SqlTokenizer::Make({.expression = "input, input"}, tests::Cache()),
+    irs::SqlException);
+  ASSERT_THROW(
+    SqlTokenizer::Make({.expression = "(SELECT 'x')"}, tests::Cache()),
+    irs::SqlException);
+  ASSERT_THROW(SqlTokenizer::Make({.expression = "upper($1)"}, tests::Cache()),
+               irs::SqlException);
+  ASSERT_THROW(SqlTokenizer::Make({.expression = "memory.main.upper(input)"},
+                                  tests::Cache()),
+               irs::SqlException);
+  ASSERT_THROW(
+    SqlTokenizer::Make({.expression = "ts_lexize('d', input)"}, tests::Cache()),
+    irs::SqlException);
+  ASSERT_THROW(SqlTokenizer::Make({.expression = "ts_tokenize(input, 'd')"},
+                                  tests::Cache()),
+               irs::SqlException);
+  ASSERT_THROW(
+    SqlTokenizer::Make({.expression = "lower(ts_lexize('d', input)[1])"},
+                       tests::Cache()),
     irs::SqlException);
 }
 
 TEST(SqlTokenizerTest, bindErrors) {
   const auto expect_bind_error = [&](std::string expression) {
-    auto a = SqlTokenizer::Make({.expression = std::move(expression)});
+    auto a =
+      SqlTokenizer::Make({.expression = std::move(expression)}, tests::Cache());
     ASSERT_THROW(a->Bind(tests::EngineContext()), irs::SqlException);
   };
   expect_bind_error("no_such_function_xyz(input)");
@@ -247,15 +256,17 @@ TEST(SqlTokenizerTest, userMacroRejected) {
 
   ASSERT_THROW(
     SqlTokenizer::Make({.expression = "sql_tok_userdb.main.sql_tok_test_up("
-                                      "input)"}),
+                                      "input)"},
+                       tests::Cache()),
     irs::SqlException);
 
-  auto a = SqlTokenizer::Make({.expression = "sql_tok_test_up(input)"});
+  auto a = SqlTokenizer::Make({.expression = "sql_tok_test_up(input)"},
+                              tests::Cache());
   ASSERT_THROW(a->Bind(*conn.context), irs::SqlException);
 }
 
 TEST(SqlTokenizerTest, traits) {
-  SqlTokenizer a{{.expression = "upper(input)"}};
+  SqlTokenizer a{{.expression = "upper(input)"}, tests::Cache()};
   const auto traits = a.Traits();
   ASSERT_FALSE(traits.explicit_pos);
   ASSERT_FALSE(traits.offsets);
@@ -265,7 +276,7 @@ TEST(SqlTokenizerTest, traits) {
 
 TEST(SqlTokenizerTest, traits_unique_by_mode) {
   {
-    SqlTokenizer a{{.expression = "upper(input)"}};
+    SqlTokenizer a{{.expression = "upper(input)"}, tests::Cache()};
     ASSERT_FALSE(a.Traits().unique);
     a.Bind(tests::EngineContext());
     ASSERT_TRUE(a.Traits().unique);
@@ -273,7 +284,7 @@ TEST(SqlTokenizerTest, traits_unique_by_mode) {
     ASSERT_TRUE(a.Traits().unique);
   }
   {
-    SqlTokenizer a{{.expression = "string_split(input, ',')"}};
+    SqlTokenizer a{{.expression = "string_split(input, ',')"}, tests::Cache()};
     a.Bind(tests::EngineContext());
     ASSERT_FALSE(a.Traits().unique);
   }

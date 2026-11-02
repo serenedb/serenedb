@@ -21,6 +21,7 @@
 #include "connector/duckdb_physical_search_delete.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/synchronization/mutex.h>
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -39,7 +40,8 @@
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table.h"
+#include "search/search_table_changes.h"
+#include "search/store.h"
 
 namespace sdb::connector {
 namespace {
@@ -47,9 +49,16 @@ namespace {
 struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   query::Transaction* sdb_txn = nullptr;
   std::optional<duckdb::RowIdDeduplicator> deleted_rows;
+  std::shared_ptr<search::Store> search_table;
+  absl::Mutex mutex;
   duckdb::idx_t delete_count = 0;
-  std::shared_ptr<search::SearchTable> search_table;
   // RETURNING only: the rows this statement removed.
+  std::optional<duckdb::ColumnDataCollection> returned;
+};
+
+struct SearchDeleteLocalState final : duckdb::LocalSinkState {
+  irs::DocRemovalBuilder positions;
+  duckdb::idx_t delete_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
 };
 
@@ -116,20 +125,30 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   return state;
 }
 
+duckdb::unique_ptr<duckdb::LocalSinkState>
+SereneDBSearchDelete::GetLocalSinkState(
+  duckdb::ExecutionContext& context) const {
+  auto lstate = duckdb::make_uniq<SearchDeleteLocalState>();
+  if (_return_chunk) {
+    lstate->returned.emplace(context.client, GetTypes());
+  }
+  return lstate;
+}
+
 duckdb::SinkResultType SereneDBSearchDelete::Sink(
   duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
+  auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   if (gstate.deleted_rows &&
       primary_key::KeepFirstRowIds(*gstate.deleted_rows, chunk, _rowid) == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
   const auto num_rows = chunk.size();
 
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(
-    gstate.search_table, chunk.data[_rowid.input_col_idx]);
+  search::AddRowPositions(lstate.positions, chunk.data[_rowid.input_col_idx]);
 
-  if (gstate.returned) {
+  if (lstate.returned) {
     duckdb::DataChunk row;
     row.InitializeEmpty(GetTypes());
     for (duckdb::idx_t i = 0; i < row.ColumnCount(); ++i) {
@@ -143,11 +162,28 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
       }
     }
     row.SetCardinality(num_rows);
-    gstate.returned->Append(row);
+    lstate.returned->Append(row);
   }
 
-  gstate.delete_count += num_rows;
+  lstate.delete_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
+}
+
+duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
+  duckdb::ExecutionContext& /*context*/,
+  duckdb::OperatorSinkCombineInput& input) const {
+  auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
+  auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
+  absl::MutexLock lock{&gstate.mutex};
+  if (!lstate.positions.Empty()) {
+    gstate.sdb_txn->SearchTxn().AddRemoval(gstate.search_table,
+                                           std::move(lstate.positions));
+  }
+  gstate.delete_count += lstate.delete_count;
+  if (lstate.returned && lstate.returned->Count() != 0) {
+    gstate.returned->Combine(*lstate.returned);
+  }
+  return duckdb::SinkCombineResultType::FINISHED;
 }
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>

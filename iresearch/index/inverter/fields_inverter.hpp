@@ -94,7 +94,6 @@ class FieldInverter : util::Noncopyable {
     _one_to_one = traits.unique;
     _dense_pos = !traits.explicit_pos;
   }
-  bool UniqueTerms() const noexcept { return _unique_terms; }
   TokenLayout Layout() const noexcept {
     return static_cast<TokenLayout>(_log.index());
   }
@@ -110,13 +109,6 @@ class FieldInverter : util::Noncopyable {
   size_t Memory() const noexcept {
     return _dict.Memory() + _inline_docs.capacity() * sizeof(doc_id_t) +
            VisitLog([](const auto& log) { return log.BookkeepingMemory(); });
-  }
-
-  bool InvertPrimaryKeyBlock(std::span<const duckdb::string_t> values,
-                             doc_id_t first_doc) {
-    MarkUniqueTerms();
-    InvertUniqueKeywords(values, first_doc);
-    return true;
   }
 
   bool InvertBoolBlock(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
@@ -423,18 +415,9 @@ class FieldInverter : util::Noncopyable {
 
   friend class FieldsInverter;
 
-  void ReserveTerms(size_t expected_terms, bool unique) {
+  void ReserveTerms(size_t expected_terms) {
     _dict.Reserve(expected_terms);
-    if (!unique) {
-      _dict.ReserveMap(expected_terms);
-    }
-  }
-
-  void MarkUniqueTerms() {
-    SDB_ASSERT(Layout() == TokenLayout::Terms);
-    SDB_ASSERT(!_col_writer);
-    SDB_ASSERT(!_dict.Size() || _unique_terms);
-    _unique_terms = true;
+    _dict.ReserveMap(expected_terms);
   }
 
   template<typename Log>
@@ -607,25 +590,6 @@ class FieldInverter : util::Noncopyable {
     return _term_ids.data();
   }
 
-  IRS_FORCE_INLINE void InvertUniqueKeywords(
-    std::span<const duckdb::string_t> values, doc_id_t first_doc) {
-    SDB_ASSERT(Layout() == TokenLayout::Terms);
-    SDB_ASSERT(!_col_writer);
-    for (size_t k = 0; k < values.size(); ++k) {
-      const auto doc = first_doc + static_cast<doc_id_t>(k);
-      SDB_ASSERT(doc < doc_limits::eof());
-      SDB_ASSERT(doc >= _state.last_doc);
-      const auto id = _dict.AppendUnique(values[k]);
-      SDB_ASSERT(id == _inline_docs.size());
-      _inline_docs.push_back(doc);
-    }
-    if (!values.empty()) {
-      Reset<TokenLayout::Terms>(first_doc +
-                                static_cast<doc_id_t>(values.size() - 1));
-      _state.AssumeKeywordTail();
-    }
-  }
-
   template<typename DocAt>
   bool InvertKeywordImpl(std::span<const duckdb::string_t> values,
                          DocAt doc_at) {
@@ -705,7 +669,6 @@ class FieldInverter : util::Noncopyable {
                                             size_t n, DocAt doc_at) {
     static_assert(Log::kLayout == TokenLayout::Terms);
     SDB_ASSERT(!_col_writer);
-    SDB_ASSERT(!_unique_terms);
     for (size_t j = 0; j < n; ++j) {
       const doc_id_t doc = doc_at(j);
       SDB_ASSERT(doc < doc_limits::eof());
@@ -720,7 +683,6 @@ class FieldInverter : util::Noncopyable {
   bool PushKeyword(Log& log, doc_id_t id, uint32_t value_size,
                    uint32_t term_id) {
     SDB_ASSERT(id < doc_limits::eof());
-    SDB_ASSERT(!_unique_terms);
 
     Reset<Log::kLayout>(id);
 
@@ -828,7 +790,6 @@ class FieldInverter : util::Noncopyable {
   uint32_t _fill_entry = kNoEntry;
   uint32_t _fill_last_start = 0;
   bool _one_to_one = false;
-  bool _unique_terms = false;
   bool _dense_pos = true;
   DocState _state;
 };
@@ -857,7 +818,7 @@ class FieldsInverter : util::Noncopyable {
                            _col_writer, _field_options);
     slot.field = &field;
     if (slot.last_terms) {
-      field.ReserveTerms(slot.last_terms, slot.unique);
+      field.ReserveTerms(slot.last_terms);
     }
     return slot.field;
   }
@@ -884,7 +845,6 @@ class FieldsInverter : util::Noncopyable {
       if (slot.field) {
         if (const auto n = slot.field->Dictionary().Size()) {
           slot.last_terms = static_cast<uint32_t>(n);
-          slot.unique = slot.field->UniqueTerms();
         }
         slot.field = nullptr;
       }
@@ -897,7 +857,6 @@ class FieldsInverter : util::Noncopyable {
   struct FieldSlot {
     FieldInverter* field = nullptr;
     uint32_t last_terms = 0;
-    bool unique = false;
   };
   using FieldsMap = irs::containers::FlatHashMap<field_id, FieldSlot>;
 

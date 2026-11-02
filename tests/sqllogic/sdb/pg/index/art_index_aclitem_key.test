@@ -13,7 +13,7 @@ INSERT INTO art_acl VALUES (1, 'postgres=r/postgres'), (2, '"postgres"=w/postgre
 statement error
 INSERT INTO art_acl VALUES (3, 'nobody_art_acl=r/postgres')
 ----
-db error: ERROR: Failed to commit: role "nobody_art_acl" does not exist
+db error: ERROR: role "nobody_art_acl" does not exist
 
 
 statement ok

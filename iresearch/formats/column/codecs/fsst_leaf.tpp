@@ -21,10 +21,12 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,6 +38,7 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -274,14 +277,70 @@ struct FsstFetch {
 
   void Emit(duckdb::ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
             PackedReader& lengths, uint32_t lo, const FrameMeta& f,
-            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
-            bool) {
+            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx) {
     if (group_base.empty()) {
       Open(h, base);
     }
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
     const uint32_t restart = f.first_entry + group * kChainRestart;
+    const auto* frame_offsets = GroupOffsets(lengths, lo, f, group);
+    std::string_view value;
+    WalkInPlace(*decoder, in, lengths, lcps, restart, entry + 1,
+                frame_offsets[group], h.data_size, chain,
+                [&](uint32_t, std::string_view v) {
+                  value = v;
+                  return true;
+                });
+    auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+    out[result_idx] =
+      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
+    walked += entry + 1 - restart;
+  }
+
+  void EmitFrame(duckdb::ColumnSegment&, const Header& h,
+                 duckdb::data_ptr_t base, PackedReader& lengths, uint32_t lo,
+                 const FrameMeta& f, uint32_t largest,
+                 std::span<const EntryAt> rows, duckdb::Vector& result) {
+    static_assert(kChainRestart <= 32);
+    if (group_base.empty()) {
+      Open(h, base);
+    }
+    const auto* in = reinterpret_cast<const char*>(base + h.off_data);
+    const uint32_t last = (largest - f.first_entry) / kChainRestart;
+    const auto* frame_offsets = GroupOffsets(lengths, lo, f, last);
+    masks.assign(last + 1, 0);
+    for (const auto& row : rows) {
+      const auto k = row.entry - f.first_entry;
+      masks[k / kChainRestart] |= uint32_t{1} << (k % kChainRestart);
+    }
+    values.resize(largest - f.first_entry + 1);
+    for (uint32_t g = 0; g <= last; ++g) {
+      const auto mask = masks[g];
+      if (mask == 0) {
+        continue;
+      }
+      const uint32_t restart = f.first_entry + g * kChainRestart;
+      const auto end = restart + static_cast<uint32_t>(std::bit_width(mask));
+      WalkInPlace(*decoder, in, lengths, lcps, restart, end, frame_offsets[g],
+                  h.data_size, chain, [&](uint32_t e, std::string_view v) {
+                    if ((mask >> (e - restart)) & 1) {
+                      values[e - f.first_entry] =
+                        duckdb::StringVector::AddStringOrBlob(result, v.data(),
+                                                              v.size());
+                    }
+                    return true;
+                  });
+      walked += end - restart;
+    }
+    auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+    for (const auto& row : rows) {
+      out[row.at] = values[row.entry - f.first_entry];
+    }
+  }
+
+  uint64_t* GroupOffsets(PackedReader& lengths, uint32_t lo, const FrameMeta& f,
+                         uint32_t group) {
     auto* frame_offsets = offsets.data() + group_base[lo];
     auto& frame_known = known[lo];
     if (frame_known == 0) {
@@ -296,17 +355,7 @@ struct FsstFetch {
       }
       frame_offsets[frame_known] = off;
     }
-    std::string_view value;
-    WalkInPlace(*decoder, in, lengths, lcps, restart, entry + 1,
-                frame_offsets[group], h.data_size, chain,
-                [&](uint32_t, std::string_view v) {
-                  value = v;
-                  return true;
-                });
-    auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-    out[result_idx] =
-      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
-    walked += entry + 1 - restart;
+    return frame_offsets;
   }
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
@@ -341,6 +390,8 @@ struct FsstFetch {
   std::vector<uint32_t> group_base;
   std::vector<uint32_t> known;
   std::vector<uint64_t> offsets;
+  ScratchVector<uint32_t> masks;
+  ScratchVector<duckdb::string_t> values;
   std::string chain;
   uint64_t walked = 0;
 };

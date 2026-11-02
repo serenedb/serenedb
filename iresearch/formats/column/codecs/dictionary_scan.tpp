@@ -182,20 +182,7 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
     return *code_frames;
   }
 
-  bool PlanBatch(const_data_ptr_t base) {
-    auto& order = frames.order;
-    absl::c_sort(order, [](const EntryAt& l, const EntryAt& r) {
-      return l.entry > r.entry;
-    });
-    return 2 * (frames.leaf.DecodedBytes() +
-                TouchedBytes(frames.header, base, order)) >=
-           frames.header.raw_bytes;
-  }
-
-  bool Whole() const noexcept {
-    return frames.leaf.Walked() >= frames.header.entry_count ||
-           frames.leaf.DecodedBytes() >= frames.header.raw_bytes;
-  }
+  bool Dense(uint64_t touched) const noexcept { return frames.Dense(touched); }
 
   static constexpr idx_t kNoGroup = std::numeric_limits<idx_t>::max();
 

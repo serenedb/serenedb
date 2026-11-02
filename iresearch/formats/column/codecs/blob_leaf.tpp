@@ -27,14 +27,15 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
+#include <span>
 #include <string_view>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -154,10 +155,9 @@ struct BlobFetch {
   IRS_FORCE_INLINE void Emit(duckdb::ColumnSegment& segment, const Header& h,
                              duckdb::data_ptr_t base, PackedReader& lengths,
                              uint32_t lo, const FrameMeta& f, uint32_t entry,
-                             duckdb::Vector& result, duckdb::idx_t result_idx,
-                             bool batched) {
-    if (frame != lo) {
-      Open(h, base, lengths, lo, f, batched);
+                             duckdb::Vector& result, duckdb::idx_t result_idx) {
+    if (frame != lo || entry - first_entry + 1 >= known) {
+      Open(h, base, lengths, lo, f);
     }
     ++hits;
     const auto k = entry - first_entry;
@@ -165,44 +165,88 @@ struct BlobFetch {
     const auto len = offsets[k + 1] - offset;
     const size_t want = offset + len;
     if (decoded < want) {
-      Inflate(segment, h, base, lo, f, want, batched);
+      Inflate(segment, h, base, lo, f, hits > 1 || dense ? f.raw_len : want);
     }
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
       duckdb::StringVector::AddStringOrBlob(result, frame_data + offset, len);
   }
 
+  void EmitFrame(duckdb::ColumnSegment& segment, const Header& h,
+                 duckdb::data_ptr_t base, PackedReader& lengths, uint32_t lo,
+                 const FrameMeta& f, uint32_t largest,
+                 std::span<const EntryAt> rows, duckdb::Vector& result) {
+    if (frame != lo) {
+      Enter(f);
+      frame = lo;
+    }
+    const auto need = largest - first_entry + 2;
+    if (known < need) {
+      Extend(lengths, f, need);
+    }
+    if (const size_t want = offsets[need - 1]; decoded < want) {
+      Inflate(segment, h, base, lo, f, want);
+    }
+    hits += static_cast<uint32_t>(rows.size());
+    auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
+    for (const auto& row : rows) {
+      const auto k = row.entry - first_entry;
+      out[row.at] = duckdb::StringVector::AddStringOrBlob(
+        result, frame_data + offsets[k], offsets[k + 1] - offsets[k]);
+    }
+  }
+
   void Open(const Header& h, duckdb::data_ptr_t base, PackedReader& lengths,
-            uint32_t lo, const FrameMeta& f, bool batched) {
+            uint32_t lo, const FrameMeta& f) {
     const auto end = lo + 1 < h.frame_count
                        ? duckdb::Load<FrameMeta>(base + h.off_frames +
                                                  (lo + 1) * kFrameMetaSize)
                            .first_entry
                        : h.entry_count;
     SDB_ENSURE(end > f.first_entry, "col codec: corrupted frame table");
-    offsets.resize(end - f.first_entry + 1);
-    uint64_t offset = 0;
-    for (uint32_t e = f.first_entry; e < end; ++e) {
-      offsets[e - f.first_entry] = static_cast<uint32_t>(offset);
-      offset += lengths.At(e);
-    }
-    SDB_ENSURE(offset == f.raw_len, "col codec: corrupted entry lengths");
-    offsets.back() = static_cast<uint32_t>(offset);
+    const bool repeated = hits > 1;
+    Enter(f);
+    Extend(lengths, f, end - f.first_entry + 1);
+    SDB_ENSURE(offsets[known - 1] == f.raw_len,
+               "col codec: corrupted entry lengths");
+    dense = repeated;
+    frame = lo;
+  }
+
+  void Enter(const FrameMeta& f) {
     if (capacity < f.raw_len) {
       capacity = std::max<size_t>(f.raw_len, 1);
       raw = duckdb::make_unsafe_uniq_array<char>(capacity);
     }
-    frame = lo;
+    frame = kNoFrame;
     first_entry = f.first_entry;
-    dense = !batched && hits > 1;
+    known = 0;
     hits = 0;
+    dense = false;
     decoded = 0;
+  }
+
+  void Extend(PackedReader& lengths, const FrameMeta& f, uint32_t need) {
+    if (offsets.size() < need) {
+      offsets.resize(need);
+    }
+    auto k = known;
+    if (k == 0) {
+      offsets[0] = 0;
+      k = 1;
+    }
+    uint64_t offset = offsets[k - 1];
+    for (; k < need; ++k) {
+      offset += lengths.At(first_entry + k - 1);
+      offsets[k] = static_cast<uint32_t>(offset);
+    }
+    SDB_ENSURE(offset <= f.raw_len, "col codec: corrupted entry lengths");
+    known = need;
   }
 
   void Inflate(duckdb::ColumnSegment& segment, const Header& h,
                duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
-               size_t want, bool batched) {
-    const size_t target = !batched && (hits > 1 || dense) ? f.raw_len : want;
+               size_t target) {
     const bool with_dictionary =
       h.flags == FrameDictionary::FirstFrame && lo != 0;
     const TrainedDictionary* trained = nullptr;
@@ -289,12 +333,13 @@ struct BlobFetch {
 
   uint32_t frame = kNoFrame;
   uint32_t first_entry = 0;
+  uint32_t known = 0;
   uint32_t hits = 0;
   bool dense = false;
   size_t decoded = 0;
   size_t capacity = 0;
   duckdb::unsafe_unique_array<char> raw;
-  std::vector<uint32_t> offsets;
+  ScratchVector<uint32_t> offsets;
   bool dictionary_ready = false;
   size_t dictionary_capacity = 0;
   uint32_t dictionary_size = 0;

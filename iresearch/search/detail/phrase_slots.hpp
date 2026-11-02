@@ -43,7 +43,12 @@ struct PhraseTerms {
     uint32_t rank;
   };
 
-  explicit PhraseTerms(std::span<const PostingMeta> metas) : metas{metas} {
+  PhraseTerms(std::span<const PostingMeta> metas,
+              std::span<const TermInterval> intervals)
+    : metas{metas} {
+    const bool distinct = absl::c_none_of(
+      intervals.subspan(1),
+      [](const TermInterval& interval) { return interval.offs_min == 0; });
     for (uint32_t slot = 0; slot != metas.size(); ++slot) {
       const auto first = static_cast<uint32_t>(
         std::find(metas.begin(), metas.begin() + slot, metas[slot]) -
@@ -51,8 +56,10 @@ struct PhraseTerms {
       if (first == slot) {
         leaves.push_back(slot);
       } else {
-        const auto rank = static_cast<uint32_t>(std::count(
-          metas.begin() + first + 1, metas.begin() + slot + 1, metas[slot]));
+        const auto rank = distinct ? static_cast<uint32_t>(std::count(
+                                       metas.begin() + first + 1,
+                                       metas.begin() + slot + 1, metas[slot]))
+                                   : 0;
         repeats.push_back({slot, first, rank});
       }
     }
@@ -85,10 +92,6 @@ class PhraseSlots {
               [&](uint32_t j, Leaf& leaf) {
                 _matcher.Position(j) = {&leaf.Positions(), intervals[j]};
                 if constexpr (kRepeats) {
-                  const bool distinct = absl::c_none_of(
-                    intervals.subspan(1), [](const TermInterval& interval) {
-                      return interval.offs_min == 0;
-                    });
                   for (size_t i = 0; i != terms.repeats.size(); ++i) {
                     const auto [slot, first, rank] = terms.repeats[i];
                     if (first != j) {
@@ -98,7 +101,7 @@ class PhraseSlots {
                     leaf.PreparePositions(repeat.pos, terms.metas[slot], pos_in,
                                           pay_in);
                     repeat.lead = &leaf.Positions();
-                    repeat.rank = distinct ? rank : 0;
+                    repeat.rank = rank;
                     _matcher.Position(slot) = {&repeat.pos, intervals[slot]};
                   }
                 }
@@ -179,19 +182,13 @@ class PhraseSlots {
 
   template<typename Gates>
   void Gate(Gates&& gates) {
-    uint64_t lead = 0;
-    for (const auto& leaf : LeavesOf(_leaves.Lead())) {
-      lead += leaf.Estimate();
-    }
+    const auto lead = EstimateOf(LeavesOf(_leaves.Lead()));
     for (size_t i = 1; i != _leaves.Size(); ++i) {
       const auto leaves = LeavesOf(_leaves.begin()[i]);
       if (!gates(lead, leaves)) {
         continue;
       }
-      uint64_t docs = 0;
-      for (const auto& leaf : leaves) {
-        docs += leaf.Estimate();
-      }
+      const auto docs = EstimateOf(leaves);
       _gates[i].share = static_cast<double>(lead) * doc_limits::kBlockSize /
                         static_cast<double>(std::max<uint64_t>(docs, 1));
       _gating = true;
@@ -303,6 +300,14 @@ class PhraseSlots {
     }
   }
 
+  static uint64_t EstimateOf(std::span<Leaf> leaves) {
+    uint64_t docs = 0;
+    for (const auto& leaf : leaves) {
+      docs += leaf.Estimate();
+    }
+    return docs;
+  }
+
   static uint32_t DocFreqOf(Slot& slot) {
     if constexpr (kVariadic) {
       slot.OnMatch();
@@ -344,8 +349,7 @@ class PhraseSlots {
     _repeats;
   Leaves _leaves;
   [[no_unique_address]] utils::Need<kVariadic, Leaf*> _bound{};
-  containers::Fixed<SlotGate, N> _gates{
-    _leaves.Size(), [](SlotGate& gate, size_t) noexcept { gate = {}; }};
+  containers::Fixed<SlotGate, N> _gates{_leaves.Size()};
   bool _gating = false;
 };
 

@@ -43,11 +43,7 @@ class BooleanWindow : public Root {
   static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
   static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
-  static constexpr bool kBatches = kLead && requires(Lead& lead, doc_id_t doc) {
-    { lead.Sparse() } -> std::same_as<bool>;
-    lead.Rest(doc);
-    lead.Seek(doc);
-  };
+  static constexpr bool kBatches = kLead && detail::kBatchLead<Lead>;
   static_assert(kLead != kOptional);
   static_assert(kLead || !kOthers);
 

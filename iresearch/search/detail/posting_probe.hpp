@@ -102,8 +102,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   uint32_t Drop(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
                 uint32_t n) {
     uint32_t blocks[kBlock];
-    const auto landings =
-      n != 0 ? this->template Landings<false>(docs, n, blocks) : 0;
+    const auto landings = n != 0 ? this->Landings(docs, n, blocks) : 0;
     uint32_t landed = 0;
     uint32_t kept = 0;
     for (uint32_t i = 0; i != n;) {

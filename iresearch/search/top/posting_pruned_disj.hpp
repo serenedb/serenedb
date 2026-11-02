@@ -29,7 +29,6 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   using Base = PrunedProbeBase<InputType>;
 
   using Base::_base;
-  using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
   using Base::_fetcher;
@@ -117,29 +116,6 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
           const size_t offset = docs[i] - min;
           SetBit(mask[offset / kBits], offset % kBits);
           window[offset] += scores[i];
-        };
-        if (len == doc_limits::kBlockSize) [[likely]] {
-          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
-        } else {
-          for (uint32_t i = 0; i != len; ++i) {
-            add(i);
-          }
-        }
-      });
-  }
-
-  void FillCounted(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-                   score_t* IRS_RESTRICT window,
-                   uint32_t* IRS_RESTRICT counts) {
-    ForEachScoredBlock(
-      max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
-               const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
-        static constexpr auto kBits = BitsRequired<uint64_t>();
-        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
-          const size_t offset = docs[i] - min;
-          SetBit(mask[offset / kBits], offset % kBits);
-          window[offset] += scores[i];
-          ++counts[offset];
         };
         if (len == doc_limits::kBlockSize) [[likely]] {
           VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);

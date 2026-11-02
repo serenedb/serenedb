@@ -257,7 +257,7 @@ Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
     }
     const uint64_t docs = CookieOf(term).docs_count;
     scanned += docs * kScoredScanValues;
-    probed += std::min(lead_docs, docs) * kProbeCost + lead_docs;
+    probed += std::min(lead_docs, docs) * kProbeSteps + lead_docs;
   }
   if (scanned >= probed) {
     return {};

@@ -97,12 +97,10 @@ class PrunedLeaves {
     }
   }
 
-  doc_id_t AdvanceTo(doc_id_t min) {
-    doc_id_t end = doc_limits::eof();
+  void AdvanceTo(doc_id_t min) {
     for (auto& leaf : _leaves) {
-      end = std::min(end, leaf.AdvanceBlock(min));
+      leaf.AdvanceBlock(min);
     }
-    return end;
   }
 
   score_t OpenWindow(doc_id_t min, doc_id_t last) {

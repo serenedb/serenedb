@@ -72,49 +72,40 @@ Root::ptr MakePrunedConjunction(
         joined.push_back(i);
       }
     }
-    const auto member = [&](irs::detail::PostingFill<Input>& leaf, size_t i) {
-      const auto& posting = terms[joined[i]];
-      const auto& own = *posting.state.reader;
-      const auto& meta = posting.state.cookie;
-      leaf.Prepare(meta, *doc, irs::detail::LayoutOf(own),
-                   meta.docs_count != 1 && irs::detail::BoundsOf(own),
-                   meta.docs_count != 1 && irs::detail::FreqOf(own));
+    const auto prepare_joined = [&](irs::detail::PostingFill<Input>& leaf,
+                                    size_t i) {
+      irs::detail::PreparePlain(leaf, terms[joined[i]], nullptr, *doc);
     };
-    const auto make =
-      [&]<typename Others, typename Members>(const auto& members) -> Root::ptr {
+    const auto make = [&]<typename Others, typename Joined>(
+                        const auto& joined_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
-        return MakeShape<PrunedConjunction, Lead, Others, Members,
-                         utils::Empty>(ctx, ctx.fetcher, !ctx.prune, size, init,
-                                       members, std::forward_as_tuple());
+        return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
+          ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
+          std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
       return irs::detail::BuildBlockExcludes<Root::ptr>(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
-          return MakeShape<PrunedConjunction, Lead, Others, Members, Exclude>(
-            ctx, ctx.fetcher, !ctx.prune, size, init, members,
+          return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
+            ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
             std::forward<decltype(negated)>(negated));
         });
     };
     using Fill = irs::detail::PostingFill<Input>;
     const bool windowed =
       !joined.empty() && irs::detail::DenseConjunction(terms, docs);
-    const size_t others = joined.size();
-    const auto members = std::forward_as_tuple(others, member);
-    if (size == 2) {
+    const auto shape = [&]<size_t N>() -> Root::ptr {
       if (windowed) {
         return make.template
-        operator()<PrunedLeaves<Clause, 1>, fill::AndLeaves<Fill, 1>>(members);
+        operator()<PrunedLeaves<Clause, N>, fill::AndLeaves<Fill, N>>(
+          std::forward_as_tuple(joined.size(), prepare_joined));
       }
-      return make.template operator()<PrunedLeaves<Clause, 1>, utils::Empty>(
+      return make.template operator()<PrunedLeaves<Clause, N>, utils::Empty>(
         std::tuple<>{});
-    }
-    if (windowed) {
-      return make.template
-      operator()<PrunedLeaves<Clause>, fill::AndLeaves<Fill>>(members);
-    }
-    return make.template operator()<PrunedLeaves<Clause>, utils::Empty>(
-      std::tuple<>{});
+    };
+    return size == 2 ? shape.template operator()<1>()
+                     : shape.template operator()<0>();
   });
 }
 

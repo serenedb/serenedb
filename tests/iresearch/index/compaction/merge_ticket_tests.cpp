@@ -352,6 +352,32 @@ TEST_F(MergeTicketTest, ArmingAFloorRevokesQueuedTickets) {
   EXPECT_EQ(2, Reserve({{0, 1}, {2, 3}}).size());
 }
 
+TEST_F(MergeTicketTest,
+       AGroupTheFloorShrinksToOneSegmentIsReservedOnlyWithRemovals) {
+  AddSegments(1);
+  auto floor = _writer->ArmCompactionFloor();
+  ASSERT_TRUE(floor.Held());
+  AddSegments(1);
+
+  bool busy = true;
+  auto clean = Reserve({{0, 1}}, nullptr, nullptr, &busy);
+  EXPECT_TRUE(clean.empty());
+  EXPECT_FALSE(busy);
+  EXPECT_EQ(Names({{0}}), ReservedNames());
+  EXPECT_EQ(1, Reserve({{1}}).size());
+
+  std::vector<std::string> removed;
+  for (auto id = _next_id - 10; id != _next_id; ++id) {
+    removed.emplace_back(absl::StrCat("doc-", id));
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  ASSERT_LT(_writer->GetSnapshot()[1].live_docs_count(),
+            _writer->GetSnapshot()[1].docs_count());
+  auto purge = Reserve({{0, 1}});
+  ASSERT_EQ(1, purge.size());
+  EXPECT_EQ(Names({{1}}), NamesOf(purge[0]));
+}
+
 TEST_F(MergeTicketTest, APendingFloorBlocksReservationsUntilReleased) {
   AddSegments(3);
   auto reservation = Reserve({{0, 1}});

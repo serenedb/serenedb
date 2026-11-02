@@ -1344,9 +1344,14 @@ std::vector<MergeTicket> IndexWriter::ReserveLocked(
   bool& busy) {
   if (const auto floor = _compacting.floor; floor != 0) {
     for (auto& group : groups) {
-      std::erase_if(group, [floor](const SubReader* candidate) {
-        return BelowFloor(candidate->Meta().name, floor);
-      });
+      const auto below =
+        std::erase_if(group, [floor](const SubReader* candidate) {
+          return BelowFloor(candidate->Meta().name, floor);
+        });
+      if (below != 0 && group.size() == 1 &&
+          !HasRemovals(group.front()->Meta())) {
+        group.clear();
+      }
     }
   }
   std::vector<std::unique_ptr<MergeTicket::State>> states;

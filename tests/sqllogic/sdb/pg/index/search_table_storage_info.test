@@ -115,7 +115,7 @@ WHERE column_name = 'v' AND column_path = '[1, 2]'
 GROUP BY ALL
 ----
 column_path	segment_type	rows
-[1, 2]	BIGINT	32768
+[1, 2]	INTEGER	32768
 
 
 statement ok

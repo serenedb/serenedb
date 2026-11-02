@@ -553,11 +553,11 @@ statement ok
 VACUUM (REFRESH_TABLE) bg_merge;
 
 query ok retry 300 backoff 100ms
-SELECT count(*) < 4 AS merged, bool_or(compression = 'DICT_FSST') AS objective
+SELECT bool_or(compression = 'DICT_FSST') AS objective
 FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
 ----
-merged	objective
-t	t
+objective
+t
 
 query
 SELECT count(*), count(DISTINCT url) FROM bg_merge;

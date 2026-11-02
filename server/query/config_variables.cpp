@@ -470,7 +470,7 @@ constexpr duckdb::SettingAccess kHiddenInternalSetting{
   duckdb::SettingContext::INTERNAL, false, true};
 constexpr duckdb::SettingAccess kSuperuserReadSetting{
   duckdb::SettingContext::SUPERUSER, true};
-constexpr duckdb::SettingAccess kHiddenSetting{
+[[maybe_unused]] constexpr duckdb::SettingAccess kHiddenSetting{
   duckdb::SettingContext::SUPERUSER, false, true};
 
 constexpr VariableEntry kVariableDescription[] = {

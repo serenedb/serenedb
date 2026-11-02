@@ -39,8 +39,6 @@
 
 namespace irs::detail {
 
-inline constexpr LeafShape kFillShape{.cursor = true, .holes = true};
-
 template<typename InputType>
 class PostingFill : public PostingLeaf<InputType, kFillShape> {
   using Base = PostingLeaf<InputType, kFillShape>;
@@ -198,7 +196,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
 
   IRS_FORCE_INLINE bool Sparse() const noexcept {
     return _kind == Kind::Docs &&
-           (_len < kWindowDocs / kSparseInverse ||
+           (_len < kSparseWindow ||
             uint64_t{_len} * kSparseInverse < _last - _cursor.base);
   }
 
@@ -454,8 +452,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   IRS_FORCE_INLINE uint32_t Sift(const doc_id_t* in, uint32_t n,
                                  doc_id_t* out) {
     uint32_t blocks[kBlock];
-    const auto landings =
-      n != 0 ? this->template Landings<false>(in, n, blocks) : 0;
+    const auto landings = n != 0 ? this->Landings(in, n, blocks) : 0;
     uint32_t landed = 0;
     uint32_t kept = 0;
     uint32_t i = 0;

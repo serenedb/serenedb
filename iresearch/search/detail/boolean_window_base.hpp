@@ -35,6 +35,13 @@
 
 namespace irs::detail {
 
+template<typename Lead>
+inline constexpr bool kBatchLead = requires(Lead& lead, doc_id_t doc) {
+  { lead.Sparse() } -> std::same_as<bool>;
+  lead.Rest(doc);
+  lead.Seek(doc);
+};
+
 template<typename Lead, typename Others, typename Optional, typename Excludes>
 IRS_FORCE_INLINE doc_id_t FillClauses(Lead& lead, Others& others,
                                       Optional& optional, Excludes& excludes,

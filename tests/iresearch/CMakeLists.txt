@@ -133,6 +133,7 @@ add_executable(
     search/indri_dirichlet_test.cpp
     search/levenshtein_filter_test.cpp
     search/lm_test.cpp
+    search/masked_leaf_test.cpp
     search/merge_consistency_test.cpp
     search/nested_filter_test.cpp
     search/ngram_similarity_filter_tests.cpp

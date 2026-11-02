@@ -47,10 +47,13 @@ class MaskedLeaf {
     _len = len;
     _at = kBlock - len;
     _words = leaf.words;
-    _prefix_word = 0;
-    _prefix_bits = 0;
     _run = leaf.IsRun();
     _packed = !leaf.Maskable();
+    auto rank = kBlock - len;
+    for (uint32_t w = 0; w != _words; ++w) {
+      _ranks[w] = static_cast<uint8_t>(rank);
+      rank += static_cast<uint32_t>(std::popcount(bitset[w]));
+    }
   }
 
   uint32_t Index() const noexcept { return _index; }
@@ -140,41 +143,36 @@ class MaskedLeaf {
 
   IRS_NO_INLINE doc_id_t FindMasked(doc_id_t base, doc_id_t target) noexcept {
     const auto first = base + 1;
-    if (target < first) {
-      target = first;
-    }
+    const auto bit = std::max(target, first) - first;
     if (_run) {
-      _index = kBlock - _len + (target - first);
-      return target;
+      _index = kBlock - _len + bit;
+      return first + bit;
     }
-    auto bit = static_cast<uint64_t>(target) - first;
-    for (auto w = bit / kBits; w != _words; ++w) {
-      const auto word = _bitset[w] & (~uint64_t{0} << (bit % kBits));
-      if (word != 0) {
-        const auto tz = static_cast<uint32_t>(std::countr_zero(word));
-        for (; _prefix_word != w; ++_prefix_word) {
-          _prefix_bits +=
-            static_cast<uint32_t>(std::popcount(_bitset[_prefix_word]));
-        }
-        _index = kBlock - _len + _prefix_bits +
-                 static_cast<uint32_t>(
-                   std::popcount(_bitset[w] & ((uint64_t{1} << tz) - 1)));
-        return static_cast<doc_id_t>(first + w * kBits + tz);
+    auto w = bit / kBits;
+    const uint64_t word = _bitset[w];
+    const auto shift = bit % kBits;
+    _index = _ranks[w] + static_cast<uint32_t>(
+                           std::popcount(word & ((uint64_t{1} << shift) - 1)));
+    if (const auto rest = word >> shift; rest != 0) [[likely]] {
+      return first + bit + static_cast<uint32_t>(std::countr_zero(rest));
+    }
+    while (++w != _words) {
+      if (const uint64_t next = _bitset[w]; next != 0) {
+        return static_cast<doc_id_t>(first + w * kBits +
+                                     std::countr_zero(next));
       }
-      bit = (w + 1) * kBits;
     }
     return doc_limits::eof();
   }
 
   const UnalignedWord* _bitset = nullptr;
-  uint64_t _prefix_word = 0;
   uint32_t _words = 0;
   uint32_t _len = 0;
   uint32_t _at = kBlock;
   uint32_t _index = kBlock - 1;
-  uint32_t _prefix_bits = 0;
   bool _run = false;
   bool _packed = true;
+  uint8_t _ranks[block_codec::kMaxBitsetWords];
 };
 
 }  // namespace irs::detail

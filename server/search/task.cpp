@@ -202,6 +202,9 @@ bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   const auto& relation = idx->MergeRelation();
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.StartRound(*relation);
+  if (wanted == 0) {
+    return !blocked.empty();
+  }
   const auto policy =
     MakeMergePolicy(idx->GetTasksSettings(), idx->MergeInputsMax());
   const auto planner = [&](const irs::IndexReader& index,
@@ -306,7 +309,6 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
       SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
 
-      co_await yaclib::On(s.executor());
       if (ShouldStop()) {
         break;
       }
@@ -395,14 +397,17 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
       const auto interval =
         ToDuration(idx->GetTasksSettings().compaction_interval_msec);
       const auto base_gen = idx->CompactionGeneration();
-      if (interval != last_interval) {
+      const bool changed = interval != last_interval;
+      if (changed) {
         last_interval = interval;
         backoff = Clock::duration::zero();
       }
 
       if (interval == Clock::duration::zero()) {
         idx.reset();
-        merges.CancelQueued(*relation);
+        if (changed) {
+          merges.CancelQueued(*relation);
+        }
         triggered = false;
         co_await s.Delay(kDisabledPoll);
         if (ShouldStop()) {
@@ -426,7 +431,6 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
       if (ShouldStop()) {
         break;
       }
-      co_await yaclib::On(s.executor());
       triggered = true;
     }
   } catch (const yaclib::ResultError<yaclib::StopError>&) {
@@ -437,6 +441,7 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
     SDB_ERROR(SEARCH, "compaction loop terminated by exception: ",
               duckdb::ErrorData{ex}.RawMessage());
   }
+  co_await yaclib::On(s.executor());
   merges.CancelQueued(*relation);
   merges.StopRunning(*relation);
   co_return {};

@@ -163,7 +163,6 @@ class Simulation {
   const MergeSimulation& _options;
   absl::Time _origin;
   absl::Time _now;
-  MergeRegistry _registry;
   std::map<uint64_t, Relation> _relations;
   std::unique_ptr<MergeScheduler> _scheduler;
   std::priority_queue<Pending, std::vector<Pending>, std::greater<>> _pending;
@@ -268,7 +267,6 @@ Simulation::Simulation(const MergeSimulation& options) : _options{options} {
   _scheduler = std::make_unique<MergeScheduler>(yaclib::MakeInline(),
                                                 MergeScheduler::Options{
                                                   .threads = options.threads,
-                                                  .registry = &_registry,
                                                   .gauges = false,
                                                 });
 }

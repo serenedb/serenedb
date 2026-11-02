@@ -43,12 +43,13 @@
 
 namespace {
 
+using sdb::search::DescribeInputs;
 using sdb::search::EstimateMerge;
 using sdb::search::MaintainedStore;
 using sdb::search::MergeJob;
 using sdb::search::MergeLane;
+using sdb::search::MergeOrigin;
 using sdb::search::MergeOutcome;
-using sdb::search::MergeRegistry;
 using sdb::search::MergeResult;
 using sdb::search::MergeScheduler;
 
@@ -155,7 +156,6 @@ class MergeSchedulerTest : public ::testing::Test {
     _threads = threads;
     MergeScheduler::Options options;
     options.threads = threads;
-    options.registry = &_registry;
     return std::make_unique<MergeScheduler>(executor, std::move(options));
   }
 
@@ -219,7 +219,6 @@ class MergeSchedulerTest : public ::testing::Test {
   }
 
   Board _board;
-  MergeRegistry _registry;
   size_t _threads = 0;
 };
 
@@ -328,21 +327,21 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   Enqueue(*scheduler, second, "cheap", 256 * kMiB, 8);
   EXPECT_FALSE(Started("huge"));
   EXPECT_FALSE(Started("cheap"));
-  const auto blocking = _registry.Active(1);
+  const auto blocking = scheduler->Active(1);
   ASSERT_EQ(1, blocking.size());
   EXPECT_FALSE(blocking[0].Queued());
-  const auto huge = _registry.Active(2);
+  const auto huge = scheduler->Active(2);
   ASSERT_EQ(1, huge.size());
   EXPECT_TRUE(huge[0].Queued());
   EXPECT_EQ(std::vector<std::string>({"huge.0", "huge.1"}),
             huge[0].stats.inputs);
   EXPECT_EQ(2, huge[0].relation_id);
-  EXPECT_EQ(1, _registry.Active(3).size());
+  EXPECT_EQ(1, scheduler->Active(3).size());
   EXPECT_EQ(2, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(1, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 
   Complete("blocker", MergeOutcome::Merged);
-  const auto history = _registry.History(1);
+  const auto history = scheduler->History(1);
   ASSERT_EQ(1, history.size());
   EXPECT_EQ(blocking[0].id, history[0].id);
   EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
@@ -578,7 +577,7 @@ TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
   Enqueue(*scheduler, relation, "late", 512 * kMiB);
   EXPECT_TRUE(Destroyed("late"));
   EXPECT_FALSE(Started("late"));
-  EXPECT_TRUE(_registry.Active(1).empty());
+  EXPECT_TRUE(scheduler->Active(1).empty());
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionPending));
   EXPECT_EQ(0, sdb::metrics::Get(sdb::metrics::Gauge::CompactionThreads));
 }
@@ -739,32 +738,71 @@ TEST_F(MergeSchedulerTest, AMergeKeepsOneIdFromTheQueueToTheHistory) {
   auto relation = Relation(1);
   Enqueue(*scheduler, relation, "running", 512 * kMiB);
   Enqueue(*scheduler, relation, "dropped", 512 * kMiB);
-  ASSERT_EQ(2, _registry.Active(1).size());
+  ASSERT_EQ(2, scheduler->Active(1).size());
   scheduler->CancelQueued(*relation);
-  const auto active = _registry.Active(1);
+  const auto active = scheduler->Active(1);
   ASSERT_EQ(1, active.size());
   EXPECT_FALSE(active[0].Queued());
 
   Complete("running", MergeOutcome::Merged);
-  EXPECT_TRUE(_registry.Active(1).empty());
-  auto history = _registry.History(1);
+  EXPECT_TRUE(scheduler->Active(1).empty());
+  auto history = scheduler->History(1);
   ASSERT_EQ(1, history.size());
   EXPECT_EQ(active[0].id, history[0].id);
   EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
   EXPECT_EQ(4, history[0].stats.inputs.size());
 
   Enqueue(*scheduler, relation, "revoked", 512 * kMiB);
-  EXPECT_EQ(1, _registry.Active(1).size());
+  EXPECT_EQ(1, scheduler->Active(1).size());
   Complete("revoked", MergeOutcome::Cancelled);
-  EXPECT_TRUE(_registry.Active(1).empty());
-  EXPECT_EQ(1, _registry.History(1).size());
+  EXPECT_TRUE(scheduler->Active(1).empty());
+  EXPECT_EQ(1, scheduler->History(1).size());
 
   _board.throw_on_run = true;
   Enqueue(*scheduler, relation, "thrown", 512 * kMiB, 1);
-  history = _registry.History(1);
+  history = scheduler->History(1);
   ASSERT_EQ(2, history.size());
   EXPECT_EQ(MergeOutcome::Failed, history[1].outcome);
   EXPECT_EQ("boom", history[1].error);
+}
+
+TEST_F(MergeSchedulerTest, ForegroundMergesAreRecordedBesideQueuedOnes) {
+  auto scheduler = Make(1);
+  auto relation = Relation(1);
+  const SegmentStub first{"_1", kMiB, 10, 10};
+  const SegmentStub second{"_2", kMiB, 30, 20};
+  const irs::SubReader* const segments[] = {&first, &second};
+  const auto vacuum = scheduler->StartForeground(1, MergeOrigin::Vacuum,
+                                                 DescribeInputs(segments));
+  Enqueue(*scheduler, relation, "background", 512 * kMiB);
+  const auto busy = scheduler->StartForeground(1, MergeOrigin::Sql, {});
+  const auto nothing = scheduler->StartForeground(1, MergeOrigin::Sql, {});
+  const auto active = scheduler->Active(1);
+  ASSERT_EQ(4, active.size());
+  EXPECT_EQ(vacuum, active[0].id);
+  EXPECT_EQ(MergeOrigin::Vacuum, active[0].origin);
+  EXPECT_FALSE(active[0].Queued());
+  EXPECT_EQ(0, active[0].queued_us);
+  EXPECT_EQ(40, active[0].stats.input_docs);
+  EXPECT_EQ(30, active[0].stats.input_live_docs);
+  EXPECT_EQ(MergeOrigin::Background, active[1].origin);
+  EXPECT_EQ(busy, active[2].id);
+  EXPECT_EQ(nothing, active[3].id);
+
+  scheduler->FinishForeground(vacuum, MergeOutcome::Merged, {}, {});
+  scheduler->FinishForeground(busy, MergeOutcome::Busy, {}, {});
+  scheduler->FinishForeground(nothing, MergeOutcome::Nothing, {}, {});
+  Complete("background", MergeOutcome::Merged);
+  EXPECT_TRUE(scheduler->Active(1).empty());
+  const auto history = scheduler->History(1);
+  ASSERT_EQ(3, history.size());
+  EXPECT_EQ(vacuum, history[0].id);
+  EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
+  EXPECT_EQ(std::vector<std::string>({"_1", "_2"}), history[0].stats.inputs);
+  EXPECT_EQ(busy, history[1].id);
+  EXPECT_EQ(MergeOutcome::Busy, history[1].outcome);
+  EXPECT_EQ(active[1].id, history[2].id);
+  EXPECT_EQ(MergeOutcome::Merged, history[2].outcome);
 }
 
 TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {

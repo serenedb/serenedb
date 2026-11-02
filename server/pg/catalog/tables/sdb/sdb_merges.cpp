@@ -31,6 +31,7 @@
 #include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
 #include "search/compaction/merge_registry.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::pg {
 namespace {
@@ -107,7 +108,7 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
  private:
   void Merges(duckdb::idx_t relation) {
     for (const auto& record :
-         search::MergeRegistry::Instance().Active(relation)) {
+         search::GetSearchEngine().Merges().Active(relation)) {
       Emit<kMerge>(record);
     }
   }

@@ -37,29 +37,6 @@ namespace {
 
 int64_t NowMicros() noexcept { return absl::ToUnixMicros(absl::Now()); }
 
-size_t HistorySize() {
-  return GetGlobalSetting("sdb_compact_history_size").GetValue<uint64_t>();
-}
-
-struct Inputs {
-  irs::MergeStats stats;
-  RowIdRange rowids;
-};
-
-Inputs InputsOf(irs::CompactionView candidates) {
-  Inputs inputs;
-  inputs.stats.inputs.reserve(candidates.size());
-  for (const auto* candidate : candidates) {
-    const auto segment = DescribeSegment(*candidate);
-    inputs.stats.inputs.emplace_back(segment.name);
-    inputs.stats.input_docs += segment.docs;
-    inputs.stats.input_live_docs += segment.live_docs;
-    inputs.stats.input_bytes += segment.bytes;
-    inputs.rowids = Union(inputs.rowids, segment.rowids);
-  }
-  return inputs;
-}
-
 }  // namespace
 
 MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept {
@@ -82,9 +59,22 @@ bool Produced(MergeOutcome outcome) noexcept {
   return outcome == MergeOutcome::Merged || outcome == MergeOutcome::Deferred;
 }
 
-MergeRegistry& MergeRegistry::Instance() {
-  static MergeRegistry gInstance;
-  return gInstance;
+MergeInputs DescribeInputs(irs::CompactionView candidates) {
+  MergeInputs inputs;
+  inputs.stats.inputs.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    auto segment = DescribeSegment(*candidate);
+    inputs.stats.inputs.emplace_back(std::move(segment.name));
+    inputs.stats.input_docs += segment.docs;
+    inputs.stats.input_live_docs += segment.live_docs;
+    inputs.stats.input_bytes += segment.bytes;
+    inputs.rowids = Union(inputs.rowids, segment.rowids);
+  }
+  return inputs;
+}
+
+size_t CompactHistorySize() {
+  return GetGlobalSetting("sdb_compact_history_size").GetValue<uint64_t>();
 }
 
 uint64_t MergeRecord::EstimatedBytes() const noexcept {
@@ -93,9 +83,7 @@ uint64_t MergeRecord::EstimatedBytes() const noexcept {
 }
 
 uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
-                              irs::CompactionView candidates) {
-  auto inputs = InputsOf(candidates);
-  absl::MutexLock lock{&_mutex};
+                              MergeInputs inputs) {
   const auto id = _next_id++;
   _active.emplace(
     id, MergeRecord{
@@ -110,21 +98,16 @@ uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
 }
 
 void MergeRegistry::Dispatch(uint64_t id) {
-  absl::MutexLock lock{&_mutex};
   if (auto it = _active.find(id); it != _active.end()) {
     it->second.started_us = NowMicros();
   }
 }
 
-void MergeRegistry::Drop(uint64_t id) {
-  absl::MutexLock lock{&_mutex};
-  _active.erase(id);
-}
+void MergeRegistry::Drop(uint64_t id) { _active.erase(id); }
 
 void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
-                           irs::MergeStats stats, std::string error) {
-  const auto size = HistorySize();
-  absl::MutexLock lock{&_mutex};
+                           irs::MergeStats stats, std::string error,
+                           size_t history_size) {
   auto it = _active.find(id);
   if (it == _active.end()) {
     return;
@@ -145,30 +128,23 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   }
   record.error = std::move(error);
   _history.emplace_back(std::move(record));
-  TrimHistory(size);
+  TrimHistory(history_size);
 }
 
 std::vector<MergeRecord> MergeRegistry::Active(uint64_t relation_id) const {
   std::vector<MergeRecord> records;
-  {
-    absl::MutexLock lock{&_mutex};
-    for (const auto& [_, record] : _active) {
-      if (record.relation_id == relation_id) {
-        records.emplace_back(record);
-      }
+  for (const auto& [_, record] : _active) {
+    if (record.relation_id == relation_id) {
+      records.emplace_back(record);
     }
   }
-  absl::c_sort(records, [](const MergeRecord& lhs, const MergeRecord& rhs) {
-    return lhs.id < rhs.id;
-  });
   return records;
 }
 
-std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id) {
-  const auto size = HistorySize();
+std::vector<MergeRecord> MergeRegistry::History(uint64_t relation_id,
+                                                size_t history_size) {
+  TrimHistory(history_size);
   std::vector<MergeRecord> records;
-  absl::MutexLock lock{&_mutex};
-  TrimHistory(size);
   absl::c_copy_if(_history, std::back_inserter(records),
                   [relation_id](const MergeRecord& record) {
                     return record.relation_id == relation_id;

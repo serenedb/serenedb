@@ -29,6 +29,7 @@
 #include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
 #include "search/compaction/merge_registry.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::pg {
 namespace {
@@ -120,7 +121,7 @@ class SdbCompactHistory final : public SystemTableScan<kSdbCompactHistorySql> {
  private:
   void Events(duckdb::idx_t relation) {
     for (const auto& record :
-         search::MergeRegistry::Instance().History(relation)) {
+         search::GetSearchEngine().Merges().History(relation)) {
       Emit<kMerge>(record);
     }
   }

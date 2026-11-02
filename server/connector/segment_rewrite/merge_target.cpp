@@ -229,13 +229,8 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
                           search::MergeOrigin origin,
                           const irs::PipelineMergeExecutor& executor,
                           search::MergeResult& merged) const {
-  auto& registry = search::MergeRegistry::Instance();
-  uint64_t id = 0;
   merged = {};
-  absl::Cleanup record = [&] {
-    registry.Finish(id, search::OutcomeOf(merged.outcome), merged.outcome.stats,
-                    merged.error);
-  };
+  search::MergeInputs inputs;
   const auto planner = [&](const irs::IndexReader& index,
                            const irs::CompactingSegments&,
                            irs::MergeGroups& groups) {
@@ -248,11 +243,7 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
         candidates.emplace_back(&segment);
       }
     }
-    if (candidates.empty()) {
-      return;
-    }
-    id = registry.Queue(_store->MergeRelation()->id, origin, candidates);
-    registry.Dispatch(id);
+    inputs = search::DescribeInputs(candidates);
   };
   bool busy = false;
   auto tickets = _table ? _table->ReserveMerges(planner, busy, planned.lone)
@@ -260,6 +251,18 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
   if (tickets.empty()) {
     merged.outcome.error =
       busy ? irs::CompactionError::Busy : irs::CompactionError::Ok;
+  }
+  if (inputs.stats.inputs.empty()) {
+    return;
+  }
+  auto& merges = search::GetSearchEngine().Merges();
+  const auto id = merges.StartForeground(_store->MergeRelation()->id, origin,
+                                         std::move(inputs));
+  absl::Cleanup record = [&] {
+    merges.FinishForeground(id, search::OutcomeOf(merged.outcome),
+                            merged.outcome.stats, merged.error);
+  };
+  if (tickets.empty()) {
     return;
   }
   auto& ticket = tickets.front();

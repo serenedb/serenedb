@@ -29,6 +29,7 @@
 #include <iresearch/index/compaction/merge_ticket.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -68,7 +69,6 @@ class MergeScheduler {
  public:
   struct Options {
     size_t threads = 1;
-    MergeRegistry* registry = nullptr;
     bool gauges = true;
   };
 
@@ -121,6 +121,14 @@ class MergeScheduler {
   [[nodiscard]] bool TryAcquireThread() noexcept;
   void ReleaseThread() noexcept;
 
+  uint64_t StartForeground(uint64_t relation_id, MergeOrigin origin,
+                           MergeInputs inputs);
+  void FinishForeground(uint64_t id, MergeOutcome outcome,
+                        irs::MergeStats stats, std::string error);
+
+  std::vector<MergeRecord> Active(uint64_t relation_id) const;
+  std::vector<MergeRecord> History(uint64_t relation_id);
+
  private:
   struct Entry;
 
@@ -139,14 +147,16 @@ class MergeScheduler {
   template<typename Pred>
   void StopIf(Pred pred) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void UpdateGauges() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  void Pump();
+  void Dispatch(std::vector<Entry*>& started, Queue& stale)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void Launch(std::span<Entry* const> started, const Queue& stale);
   yaclib::Future<> Execute(Entry& entry);
   void Finish(Entry& entry, MergeResult result) noexcept;
 
   yaclib::IExecutor& _executor;
   const Options _options;
-  MergeRegistry& _registry;
   mutable absl::Mutex _mutex;
+  MergeRegistry _registry ABSL_GUARDED_BY(_mutex);
   bool _stopping ABSL_GUARDED_BY(_mutex) = false;
   size_t _threads ABSL_GUARDED_BY(_mutex) = 0;
   size_t _big ABSL_GUARDED_BY(_mutex) = 0;

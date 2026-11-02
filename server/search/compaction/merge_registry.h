@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/synchronization/mutex.h>
+#include <absl/container/btree_map.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <string>
 #include <vector>
 
@@ -54,6 +53,15 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
 bool Produced(MergeOutcome outcome) noexcept;
 
+struct MergeInputs {
+  irs::MergeStats stats;
+  RowIdRange rowids;
+};
+
+MergeInputs DescribeInputs(irs::CompactionView candidates);
+
+size_t CompactHistorySize();
+
 struct MergeRecord {
   uint64_t id = 0;
   uint64_t relation_id = 0;
@@ -74,26 +82,21 @@ class MergeRegistry {
  public:
   static constexpr size_t kDefaultHistorySize = 256;
 
-  static MergeRegistry& Instance();
-
-  uint64_t Queue(uint64_t relation_id, MergeOrigin origin,
-                 irs::CompactionView candidates);
+  uint64_t Queue(uint64_t relation_id, MergeOrigin origin, MergeInputs inputs);
   void Dispatch(uint64_t id);
   void Drop(uint64_t id);
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,
-              std::string error);
+              std::string error, size_t history_size);
 
   std::vector<MergeRecord> Active(uint64_t relation_id) const;
-  std::vector<MergeRecord> History(uint64_t relation_id);
+  std::vector<MergeRecord> History(uint64_t relation_id, size_t history_size);
 
  private:
-  void TrimHistory(size_t size) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void TrimHistory(size_t size);
 
-  mutable absl::Mutex _mutex;
-  uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
-  irs::containers::NodeHashMap<uint64_t, MergeRecord> _active
-    ABSL_GUARDED_BY(_mutex);
-  std::deque<MergeRecord> _history ABSL_GUARDED_BY(_mutex);
+  uint64_t _next_id = 1;
+  absl::btree_map<uint64_t, MergeRecord> _active;
+  std::deque<MergeRecord> _history;
 };
 
 }  // namespace sdb::search

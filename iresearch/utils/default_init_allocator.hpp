@@ -23,31 +23,19 @@
 #include <memory>
 #include <new>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 namespace irs {
 
 template<typename T>
 struct DefaultInitAllocator : std::allocator<T> {
-  // NOLINTBEGIN
-  template<typename U>
-  struct rebind {
-    using other = DefaultInitAllocator<U>;
-  };
-
   using std::allocator<T>::allocator;
 
   template<typename U>
+  // NOLINTNEXTLINE(readability-identifier-naming)
   void construct(U* p) noexcept(std::is_nothrow_default_constructible_v<U>) {
     ::new (static_cast<void*>(p)) U;
   }
-
-  template<typename U, typename... Args>
-  void construct(U* p, Args&&... args) {
-    std::construct_at(p, std::forward<Args>(args)...);
-  }
-  // NOLINTEND
 };
 
 template<typename T>

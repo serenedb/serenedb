@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
@@ -32,6 +33,9 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
+#include <iresearch/search/ann/collector.hpp>
+#include <iresearch/search/ann/family.hpp>
+#include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -170,10 +174,26 @@ double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
     opts.quant = irs::VectorQuantization::None;
     opts.nprobe = ef;
     opts.ef_search = ef;
-    std::vector<irs::ScoreDoc> hits(kK);
-    const auto count =
-      irs::ExecuteTopK(reader, filter, scorer, kK, false, std::span{hits});
-    hits.resize(std::min<size_t>(count, kK));
+    irs::StatsArena stats_arena{duckdb::Allocator::DefaultAllocator()};
+    irs::PreparedCollector collector_tree{filter, scorer, stats_arena, 1};
+    auto prepared = irs::PrepareMasked(filter, reader[0],
+                                       {.collector = collector_tree.Get()});
+    collector_tree.Finish();
+    std::vector<irs::ScoreDoc> hits;
+    irs::ColumnArgsFetcher fetcher;
+    constexpr auto k = static_cast<uint32_t>(kK);
+    auto ann = prepared
+                 ? irs::ann::MakeRoot(
+                     *prepared, {.scorer = scorer, .fetcher = fetcher, .k = k})
+                 : nullptr;
+    EXPECT_TRUE(ann);
+    if (ann) {
+      irs::ann::SharedFloor floor{k};
+      irs::ann::Collector candidates{floor, k};
+      ann->Run(candidates);
+      const auto flushed = candidates.Flush();
+      hits.assign(flushed.begin(), flushed.end());
+    }
 
     std::vector<std::pair<float, size_t>> scored;
     for (size_t row = 0; row != vecs.size(); ++row) {

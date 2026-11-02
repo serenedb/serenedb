@@ -21,8 +21,6 @@
 #pragma once
 
 #include <cstddef>
-#include <duckdb/main/profiler/profiling_node.hpp>
-#include <vector>
 
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -43,13 +41,10 @@ namespace irs {
 
 class PipelineMergeExecutor {
  public:
-  using Profiles = std::vector<duckdb::unique_ptr<duckdb::ProfilingNode>>;
-
   explicit PipelineMergeExecutor(duckdb::DatabaseInstance& db,
                                  duckdb::TaskScheduler* scheduler,
-                                 size_t threads,
-                                 Profiles* profiles = nullptr) noexcept
-    : _db{db}, _scheduler{scheduler}, _threads{threads}, _profiles{profiles} {}
+                                 size_t threads) noexcept
+    : _db{db}, _scheduler{scheduler}, _threads{threads} {}
 
   size_t Threads() const noexcept { return _threads; }
 
@@ -61,7 +56,6 @@ class PipelineMergeExecutor {
   duckdb::DatabaseInstance& _db;
   duckdb::TaskScheduler* _scheduler;
   size_t _threads;
-  Profiles* _profiles;
 };
 
 [[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,

@@ -14,14 +14,10 @@ server/search/compaction/merge_policies.cpp:58 the index's database was detached
 server/search/compaction/merge_policies.cpp:66-68 the index was dropped while its compaction options were being pinned
 server/search/compaction/merge_policies.cpp:74 the database-detached race of line 58
 server/connector/functions/sdb_segments.cpp:113-114 every search-table and index segment carries the generated row key with its range
-server/connector/functions/sdb_maintenance.cpp:192-199 every search-table and index segment carries the generated row key with its range
-server/connector/functions/sdb_maintenance.cpp:221-225 every segment has the generated row key column, so a merge has columns
-server/connector/functions/sdb_maintenance.cpp:277 the return after an exhaustive switch over irs::MergeStep
-server/search/compaction/merge_registry.cpp:70 the implicit default of an exhaustive switch over MergeOrigin
-server/search/compaction/merge_registry.cpp:78 the return after an exhaustive switch over MergeOrigin
-server/search/compaction/merge_registry.cpp:82 the implicit default of an exhaustive switch over MergeOutcome
-server/search/compaction/merge_registry.cpp:98 the return after an exhaustive switch over MergeOutcome
-server/search/compaction/merge_registry.cpp:102 the implicit default of an exhaustive switch over irs::CompactionError
-server/search/compaction/merge_registry.cpp:114 the return after an exhaustive switch over irs::CompactionError
+server/connector/functions/sdb_maintenance.cpp:222-229 every search-table and index segment carries the generated row key with its range
+server/connector/functions/sdb_maintenance.cpp:251-255 every segment has the generated row key column, so a merge has columns
+server/connector/functions/sdb_maintenance.cpp:303 the return after an exhaustive switch over irs::MergeStep
+server/search/compaction/merge_registry.cpp:43 the implicit default of an exhaustive switch over irs::CompactionError
+server/search/compaction/merge_registry.cpp:55 the return after an exhaustive switch over irs::CompactionError
 server/pg/sdb_catalog/sdb_merges.cpp:200-203 every flushed segment carries the generated row key with its range, and a merge records its inputs before it can fail; only a merge whose policy never ran, which an allocation failure alone causes, has no range
 server/search/task.cpp:165-167 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX

@@ -82,6 +82,16 @@ uint64_t MergeRecord::EstimatedBytes() const noexcept {
     irs::LiveBytes(stats.input_bytes, stats.input_live_docs, stats.input_docs));
 }
 
+MergeStepMillis StepMillis(const irs::MergeProfile& profile) noexcept {
+  MergeStepMillis millis{};
+  for (size_t step = 0; step < millis.size(); ++step) {
+    millis[step] =
+      static_cast<double>(profile.Nanos(static_cast<irs::MergeStep>(step))) /
+      1e6;
+  }
+  return millis;
+}
+
 uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,
                               MergeInputs inputs) {
   const auto id = _next_id++;

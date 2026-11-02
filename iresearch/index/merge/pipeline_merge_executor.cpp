@@ -34,7 +34,6 @@
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/query_profiler.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -366,35 +365,11 @@ class LogicalMergeUnits final : public LogicalMergeStep {
   duckdb::idx_t _threads;
 };
 
-void TakeProfile(duckdb::ClientContext& context,
-                 PipelineMergeExecutor::Profiles& profiles) {
-  duckdb::QueryProfiler::Get(context).GetRootUnderLock(
-    [&](duckdb::optional_ptr<duckdb::ProfilingNode> node) {
-      while (node &&
-             node->GetOperatorMetrics().operator_type ==
-               duckdb::PhysicalOperatorType::RESULT_COLLECTOR &&
-             node->GetChildCount() == 1) {
-        node = node->GetChild(0);
-      }
-      if (!node) {
-        return;
-      }
-      auto& taken =
-        profiles.emplace_back(duckdb::make_uniq<duckdb::ProfilingNode>());
-      taken->GetOperatorMetrics() = node->GetOperatorMetrics();
-      taken->children = std::move(node->children);
-    });
-}
-
 bool Execute(duckdb::Connection& connection,
-             duckdb::unique_ptr<duckdb::LogicalOperator> root,
-             PipelineMergeExecutor::Profiles* profiles) {
+             duckdb::unique_ptr<duckdb::LogicalOperator> root) {
   root->ResolveOperatorTypes();
   const auto result = connection.Query(
     duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
-  if (profiles) {
-    TakeProfile(*connection.context, *profiles);
-  }
   if (result->HasError() &&
       result->GetErrorType() != duckdb::ExceptionType::INTERRUPT) {
     result->ThrowError();
@@ -447,13 +422,8 @@ bool PipelineMergeExecutor::Run(MergePlan& plan) const {
     context, duckdb::SetScope::SESSION, duckdb::Value::BIGINT(0));
   duckdb::Settings::Set<duckdb::PreserveInsertionOrderSetting>(
     context, duckdb::SetScope::SESSION, duckdb::Value::BOOLEAN(false));
-  if (_profiles) {
-    duckdb::EnableProfilingSetting::SetLocal(context,
-                                             duckdb::Value{"no_output"});
-  }
   if (plan.OrderPending()) {
-    if (!Execute(connection, duckdb::make_uniq<LogicalMergeOrder>(plan),
-                 _profiles)) {
+    if (!Execute(connection, duckdb::make_uniq<LogicalMergeOrder>(plan))) {
       return false;
     }
     plan.FinishOrder();
@@ -462,7 +432,7 @@ bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   auto units =
     duckdb::make_uniq<LogicalMergeUnits>(schedule, threads, plan.TermRanges());
   SDB_ASSERT(!duckdb::LogicalPlanVerifier::VerifyAlways(*units).HasError());
-  const bool completed = Execute(connection, std::move(units), _profiles);
+  const bool completed = Execute(connection, std::move(units));
   return schedule->Result() && completed;
 }
 

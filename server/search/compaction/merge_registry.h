@@ -22,16 +22,30 @@
 
 #include <absl/container/btree_map.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_profile.hpp>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "search/compaction/rowid_range.h"
 
 namespace sdb::search {
+
+inline constexpr std::string_view kMergeStepColumns[] = {
+  "prepare_ms", "norms_ms",    "columns_ms", "columns_commit_ms",
+  "ann_ms",     "postings_ms", "commit_ms",
+};
+static_assert(std::size(kMergeStepColumns) == irs::kMergeStepCount);
+
+using MergeStepMillis = std::array<double, irs::kMergeStepCount>;
+
+MergeStepMillis StepMillis(const irs::MergeProfile& profile) noexcept;
 
 enum class MergeOrigin : uint8_t {
   Background = 0,

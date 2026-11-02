@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <duckdb/main/connection.hpp>
+#include <iresearch/index/merge/merge_profile.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <span>
@@ -42,6 +43,7 @@ using sdb::search::MergeOrigin;
 using sdb::search::MergeOutcome;
 using sdb::search::MergeRecord;
 using sdb::search::MergeRegistry;
+using sdb::search::StepMillis;
 
 constexpr size_t kKept = MergeRegistry::kDefaultHistorySize;
 
@@ -330,6 +332,18 @@ TEST(MergeRegistry, StepTimesWithoutInputsAreKept) {
   const auto history = HistoryOf(registry, kRelation);
   ASSERT_EQ(1, history.size());
   EXPECT_EQ(5, history.front().stats.profile.Nanos(irs::MergeStep::Prepare));
+}
+
+TEST(MergeRegistry, StepMillisFollowTheMergeSteps) {
+  irs::MergeProfile profile;
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    profile.Add(static_cast<irs::MergeStep>(step), (step + 1) * 1'500'000);
+  }
+  profile.SetWallNanos(1'000'000);
+  const auto millis = StepMillis(profile);
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    EXPECT_DOUBLE_EQ(1.5 * static_cast<double>(step + 1), millis[step]);
+  }
 }
 
 }  // namespace

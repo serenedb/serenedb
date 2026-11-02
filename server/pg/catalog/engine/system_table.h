@@ -49,6 +49,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -108,6 +109,21 @@ struct SystemSqlColumn {
       ndims{ndims},
       key{key} {}
 
+  consteval SystemSqlColumn(std::string_view name,
+                            std::span<const std::string_view> fields,
+                            int32_t field_type)
+    : name{name},
+      type{kRecord},
+      physical{duckdb::PhysicalType::STRUCT},
+      element{StorageOf(field_type).physical},
+      not_null{false},
+      zero_default{false},
+      collation{0},
+      ndims{0},
+      key{SystemKey::None},
+      fields{fields},
+      field_type{field_type} {}
+
   std::string_view name;
   int32_t type;
   duckdb::PhysicalType physical;
@@ -117,6 +133,8 @@ struct SystemSqlColumn {
   int32_t collation;
   int16_t ndims;
   SystemKey key;
+  std::span<const std::string_view> fields;
+  int32_t field_type = 0;
 };
 
 enum class SystemLookup : uint8_t {
@@ -791,6 +809,8 @@ class SystemScan {
       }
       if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
         scan.PutList<kMeta.element, !kMeta.not_null>(target, value);
+      } else if constexpr (kMeta.physical == duckdb::PhysicalType::STRUCT) {
+        scan.PutStruct<kMeta.element>(target, value);
       } else {
         scan.Put<kMeta.physical>(target, scan._row, value);
       }
@@ -965,11 +985,27 @@ class SystemScan {
     duckdb::ListVector::SetListSize(vector, offset + length);
   }
 
+  template<duckdb::PhysicalType E, typename R>
+  void PutStruct(const SystemVector& target, const R& fields) {
+    auto& children = duckdb::StructVector::GetEntries(*target.vector);
+    SDB_ASSERT(children.size() == std::ranges::size(fields));
+    auto child = children.begin();
+    for (const auto& field : fields) {
+      auto& validity = duckdb::FlatVector::ValidityMutable(*child);
+      validity.SetValid(_row);
+      Put<E>({&*child, duckdb::FlatVector::GetDataMutable(*child), &validity},
+             _row, field);
+      ++child;
+    }
+  }
+
   template<const SystemSql& Sql, uint32_t C>
   void PutDefault() {
     constexpr auto& kMeta = Sql.columns[C];
     const auto& target = _vectors[_slots[C]];
-    if constexpr (!kMeta.zero_default) {
+    if constexpr (kMeta.physical == duckdb::PhysicalType::STRUCT) {
+      duckdb::FlatVector::SetNull(*target.vector, _row, true);
+    } else if constexpr (!kMeta.zero_default) {
       target.validity->SetInvalid(_row);
     } else if constexpr (kMeta.physical == duckdb::PhysicalType::VARCHAR) {
       Put<duckdb::PhysicalType::VARCHAR>(target, _row, SystemStableText{});

@@ -21,12 +21,11 @@ query
 EXPLAIN CALL sdb_compact('sts_compact', mode := 'compact');
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ SDB_COMPACT ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Table: public.sts_compact                                                                                                                          │
 │ Mode: compact                                                                                                                                      │
 │ Segments: 1172                                                                                                                                     │
 │ Merges: 1                                                                                                                                          │
-│ Pipeline: MERGE_ORDER, MERGE_UNITS                                                                                                                 │
 │ Merge 1:                                                                                                                                           │
 │ 149 segments -> 1, compact to 1 segment, first step                                                                                                │
 │ Merge 1 Inputs:                                                                                                                                    │
@@ -41,6 +40,7 @@ QUERY PLAN
 │ _1 (later step), _2 (later step), _3 (later step), _4 (later step), _5 (later step), _6 (later step), _7 (later step), _8 (later step), +1015 more │
 │ Notes:                                                                                                                                             │
 │ a merge in key order takes at most 1024 segments, so a larger group is merged in steps                                                             │
+│ ~1 row                                                                                                                                             │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 statement ok

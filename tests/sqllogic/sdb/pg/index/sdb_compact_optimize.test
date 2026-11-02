@@ -83,12 +83,11 @@ query
 EXPLAIN CALL sdb_compact('opt', mode := 'optimize', target_segments := 2)
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ───────────────────────╮
+╭─ SDB_COMPACT ───────────────────────────╮
 │ Table: public.opt                       │
 │ Mode: optimize                          │
 │ Segments: 8                             │
 │ Merges: 2                               │
-│ Pipeline: MERGE_UNITS                   │
 │ Merge 1:                                │
 │ 4 segments -> 1, optimize to 2 segments │
 │ Merge 1 Inputs: _1, _2, _3, _4          │
@@ -105,6 +104,7 @@ QUERY PLAN
 │ Merge 2 Columns:                        │
 │ 2, <slt:ignore>│
 │ Merge 2 Postings: 1 field               │
+│ ~2 rows                                 │
 ╰─────────────────────────────────────────╯
 
 

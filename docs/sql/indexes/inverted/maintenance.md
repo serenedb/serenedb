@@ -112,15 +112,15 @@ Each result row describes one merge:
 | `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
 | `output`, `output_docs`, `output_bytes` | The new segment |
 | `total_ms` | Wall-clock time of the merge |
+| `steps` | Time of each merge step in milliseconds, read as `(steps).columns_ms`: `prepare_ms` (planning the merge, and putting the rows of a relation with a sort key in key order), `norms_ms`, `columns_ms`, `columns_commit_ms` (finishing the stored columns), `ann_ms` (vector indexes), `postings_ms` and `commit_ms` (writing the new segment). `NULL` when the merge did not run, as for `nothing` |
 | `error` | Why a merge failed |
 
-`EXPLAIN` prints the plan in a `SEGMENT_REWRITE` box, with one group of lines per merge:
+`EXPLAIN` prints the plan in an `SDB_COMPACT` box, with one group of lines per merge and the number of merges planned as the estimated rows (`~N rows`):
 
 | Line | Meaning |
 |---|---|
 | `Table`, `Mode` | The relation and the mode of the call: `background`, `compact`, `optimize` or `segments` |
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Pipeline` | The operators each merge runs, in order: `MERGE_ORDER` (on a search table or an index with a sort key), then `MERGE_UNITS` |
 | `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
@@ -133,9 +133,9 @@ Each result row describes one merge:
 
 On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it merges them in the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes, one result row each: the first step merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and the next step merges what is left. In `segments` mode, the segment a step writes takes the place of its inputs in the list. `EXPLAIN` shows the first step and lists the segments it leaves for later as `later step`.
 
-`EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`. Below the `SEGMENT_REWRITE` box it draws one `MERGE N` box per merge, with its outcome, its number of inputs and its wall-clock time, and below it the operators the merge ran: `MERGE_ORDER` puts the rows of a sorted relation in key order, `MERGE_UNITS` merges the columns, norms, postings and vector indexes, and beside it, in a `UNION`, one `POSTINGS_MERGE` per indexed field with many terms merges that field's terms in ranges. `MERGE_ORDER` and `POSTINGS_MERGE` read their inputs through a `PRESORTED_MERGE`. The time of an operator adds up the threads that ran it.
+`EXPLAIN ANALYZE` runs the merges and shows the same lines in a `TABLE_SCAN` box, as for any table function, followed by `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step, summed over the merges, and `Actual Total`.
 
-`CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. With several threads the `Actual <step>` times of `EXPLAIN ANALYZE` add up to more than the merges took.
+`CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. A step time adds up the threads that ran the step, so with several threads the times in `steps` and the `Actual <step>` lines of `EXPLAIN ANALYZE` add up to more than the merges took.
 
 A merge copies a column's encoded blocks unchanged when re-encoding them would not save much (the `verdict` of `sdb_segments` below), and re-encodes them otherwise, so one merged column can mix copied and re-encoded rows. Copying costs little more than reading the blocks, so merges of segments that earlier merges already encoded well take a fraction of the time.
 

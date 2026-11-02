@@ -21,7 +21,6 @@
 #include "connector/functions/sdb_maintenance.h"
 
 #include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
@@ -34,17 +33,13 @@
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
-#include <duckdb/execution/physical_operator.hpp>
-#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_config.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/main/query_profiler.hpp>
+#include <duckdb/main/profiler/profiling_node.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <duckdb/parallel/thread_context.hpp>
-#include <duckdb/planner/binder.hpp>
-#include <duckdb/planner/operator/logical_extension_operator.hpp>
+#include <duckdb/storage/statistics/node_statistics.hpp>
 #include <iresearch/index/merge/merge_profile.hpp>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/enum_name.hpp>
@@ -54,7 +49,6 @@
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -71,10 +65,33 @@ namespace {
 
 constexpr size_t kListedNames = 8;
 
-struct SegmentRewriteJob {
+struct CompactJob {
   MergeTarget target;
   MergeRequest request;
   search::MergeRoundPlan plan;
+};
+
+struct CompactBindData final : duckdb::TableFunctionData {
+  explicit CompactBindData(CompactJob job) : job{std::move(job)} {}
+
+  bool SupportStatementCache() const final { return false; }
+
+  CompactJob job;
+};
+
+struct CompactState final : duckdb::GlobalTableFunctionState {
+  CompactState(duckdb::ClientContext& context, const CompactJob& job)
+    : scheduler{duckdb::TaskScheduler::GetScheduler(context)},
+      threads{duckdb::TaskScheduler::QueryThreads(context)},
+      compaction{job.target, job.request, scheduler} {}
+
+  duckdb::TaskScheduler& scheduler;
+  duckdb::idx_t threads;
+  ManualCompaction compaction;
+  size_t merges = 0;
+  std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
+  uint64_t written = 0;
+  irs::MergeProfile profile;
 };
 
 MergeTarget ResolveWritable(duckdb::ClientContext& context,
@@ -137,11 +154,19 @@ uint32_t ReadTargetSegments(const duckdb::TableFunctionBindInput& input) {
     std::min<int64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
+duckdb::LogicalType StepsType() {
+  duckdb::child_list_t<duckdb::LogicalType> fields;
+  for (const auto name : search::kMergeStepColumns) {
+    fields.emplace_back(duckdb::Identifier{name}, duckdb::LogicalType::DOUBLE);
+  }
+  return duckdb::LogicalType::STRUCT(std::move(fields));
+}
+
 std::vector<std::string> ResultNames() {
   return {
     "merge",           "outcome",     "inputs", "input_docs",
     "input_live_docs", "input_bytes", "output", "output_docs",
-    "output_bytes",    "total_ms",    "error",
+    "output_bytes",    "total_ms",    "steps",  "error",
   };
 }
 
@@ -157,6 +182,7 @@ duckdb::vector<duckdb::LogicalType> ResultTypes() {
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::BIGINT,
     duckdb::LogicalType::DOUBLE,
+    StepsType(),
     duckdb::LogicalType::VARCHAR,
   };
 }
@@ -231,17 +257,13 @@ void DescribeMerge(size_t number, const search::PlannedMerge& merge,
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
-  const SegmentRewriteJob& job) {
+  const CompactJob& job) {
   const auto& plan = job.plan;
   duckdb::InsertionOrderPreservingMap<std::string> params;
   params["Table"] = job.target.Name();
   params["Mode"] = std::string{irs::SnakeCaseName(plan.mode)};
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
-  if (!plan.merges.empty()) {
-    params["Pipeline"] =
-      job.target.Sorted() ? "MERGE_ORDER, MERGE_UNITS" : "MERGE_UNITS";
-  }
   for (size_t i = 0; i < plan.merges.size(); ++i) {
     DescribeMerge(i + 1, plan.merges[i], job.target, params);
   }
@@ -277,97 +299,13 @@ std::string_view StepLabel(irs::MergeStep step) {
   SDB_UNREACHABLE();
 }
 
-std::string OutcomeName(const search::MergeResult& merge) {
-  return std::string{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))};
-}
-
-void AppendActuals(std::span<const search::MergeResult> merges, bool zero_times,
-                   duckdb::InsertionOrderPreservingMap<std::string>& params) {
-  std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
-  irs::MergeProfile total;
-  uint64_t written = 0;
-  for (const auto& merge : merges) {
-    const auto& stats = merge.outcome.stats;
-    ++outcomes[static_cast<size_t>(search::OutcomeOf(merge.outcome))];
-    written += stats.output_bytes;
-    if (zero_times) {
-      continue;
-    }
-    for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-      const auto id = static_cast<irs::MergeStep>(step);
-      total.Add(id, stats.profile.Nanos(id));
-    }
+duckdb::Value StepsValue(const duckdb::LogicalType& type,
+                         const irs::MergeProfile& profile) {
+  duckdb::vector<duckdb::Value> fields;
+  for (const auto step : search::StepMillis(profile)) {
+    fields.emplace_back(duckdb::Value::DOUBLE(step));
   }
-  std::vector<std::string> summary;
-  for (size_t outcome = 0; outcome < outcomes.size(); ++outcome) {
-    if (outcomes[outcome] != 0) {
-      summary.emplace_back(absl::StrCat(
-        irs::SnakeCaseName(static_cast<search::MergeOutcome>(outcome)), " ",
-        outcomes[outcome]));
-    }
-  }
-  params["Actual Outcome"] =
-    summary.empty() ? std::string{"nothing ran"} : absl::StrJoin(summary, ", ");
-  params["Actual Written"] = Bytes(written);
-  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-    const auto id = static_cast<irs::MergeStep>(step);
-    params[absl::StrCat("Actual ", StepLabel(id))] = Duration(total.Nanos(id));
-  }
-  params["Actual Total"] = Duration(total.TotalNanos());
-}
-
-duckdb::unique_ptr<duckdb::ProfilingNode> MergeNode(
-  size_t number, const search::MergeResult& merge,
-  irs::PipelineMergeExecutor::Profiles queries) {
-  const auto& stats = merge.outcome.stats;
-  auto node = duckdb::make_uniq<duckdb::ProfilingNode>();
-  auto& metrics = node->GetOperatorMetrics();
-  metrics.name = absl::StrCat("MERGE ", number);
-  metrics.operator_type = duckdb::PhysicalOperatorType::EXTENSION;
-  metrics.time = static_cast<double>(stats.profile.TotalNanos()) / 1e9;
-  metrics.AddExtraInfo("Outcome", OutcomeName(merge));
-  metrics.AddExtraInfo("Inputs", std::to_string(stats.inputs.size()));
-  node->children = std::move(queries);
-  return node;
-}
-
-void Adopt(duckdb::ProfilingNode& node, duckdb::idx_t depth,
-           const MergeTarget& target) {
-  node.depth = depth;
-  auto& metrics = node.GetOperatorMetrics();
-  const auto& info = metrics.GetExtraInfo();
-  if (const auto field = info.find("Field");
-      field != info.end() && !field->second.IsStructured()) {
-    irs::field_id id = 0;
-    if (absl::SimpleAtoi(field->second.Scalar(), &id)) {
-      auto named = info;
-      named["Field"] = target.ColumnName(id);
-      metrics.SetExtraInfo(std::move(named));
-    }
-  }
-  for (auto& child : node.children) {
-    Adopt(*child, depth + 1, target);
-  }
-}
-
-void GraftPipelines(duckdb::ClientContext& context,
-                    const duckdb::PhysicalOperator& op,
-                    const MergeTarget& target,
-                    irs::PipelineMergeExecutor::Profiles& merges) {
-  auto& profiler = duckdb::QueryProfiler::Get(context);
-  profiler.GetRootUnderLock([&](duckdb::optional_ptr<duckdb::ProfilingNode>) {
-    const auto& tree = profiler.GetTreeMap();
-    const auto entry = tree.find(op);
-    if (entry == tree.end()) {
-      return;
-    }
-    auto& node = entry->second.get();
-    for (auto& merge : merges) {
-      Adopt(*merge, node.depth + 1, target);
-      node.AddChild(std::move(merge));
-    }
-  });
-  merges.clear();
+  return duckdb::Value::STRUCT(type, std::move(fields));
 }
 
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
@@ -384,7 +322,8 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
     chunk.data[column++].Append(std::move(value));
   };
   append(duckdb::Value::BIGINT(static_cast<int64_t>(number)));
-  append(duckdb::Value{OutcomeName(merge)});
+  append(duckdb::Value{
+    std::string{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))}});
   append(duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(inputs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_live_docs)));
@@ -394,8 +333,19 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_docs)));
   append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_bytes)));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
+  append(StepsValue(chunk.data[column].GetType(), stats.profile));
   append(error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                        : duckdb::Value{std::string{error}});
+}
+
+void Tally(CompactState& state, const search::MergeResult& merge) {
+  const auto& stats = merge.outcome.stats;
+  ++state.outcomes[static_cast<size_t>(search::OutcomeOf(merge.outcome))];
+  state.written += stats.output_bytes;
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    const auto id = static_cast<irs::MergeStep>(step);
+    state.profile.Add(id, stats.profile.Nanos(id));
+  }
 }
 
 bool DeterministicRendering(duckdb::ClientContext& context) {
@@ -409,132 +359,10 @@ bool DeterministicRendering(duckdb::ClientContext& context) {
   return false;
 }
 
-struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
-  explicit SegmentRewriteSourceState(duckdb::idx_t threads) noexcept
-    : threads{threads} {}
-
-  duckdb::idx_t threads;
-  std::unique_ptr<ManualCompaction> compaction;
-  std::vector<search::MergeResult> executed;
-  irs::PipelineMergeExecutor::Profiles pipelines;
-};
-
-class PhysicalSegmentRewrite final : public duckdb::PhysicalOperator {
- public:
-  PhysicalSegmentRewrite(duckdb::PhysicalPlan& physical_plan,
-                         std::shared_ptr<SegmentRewriteJob> job,
-                         duckdb::idx_t estimated_cardinality)
-    : duckdb::PhysicalOperator(physical_plan,
-                               duckdb::PhysicalOperatorType::EXTENSION,
-                               ResultTypes(), estimated_cardinality),
-      _job{std::move(job)} {}
-
-  bool IsSource() const final { return true; }
-  duckdb::OrderPreservationType SourceOrder() const final {
-    return duckdb::OrderPreservationType::NO_ORDER;
-  }
-
-  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const final {
-    return duckdb::make_uniq<SegmentRewriteSourceState>(
-      duckdb::TaskScheduler::QueryThreads(context));
-  }
-
-  duckdb::SourceResultType GetDataInternal(
-    duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const final {
-    auto& state = input.global_state.Cast<SegmentRewriteSourceState>();
-    auto& client = context.client;
-    client.InterruptCheck();
-    auto& scheduler = duckdb::TaskScheduler::GetScheduler(client);
-    if (!state.compaction) {
-      state.compaction = std::make_unique<ManualCompaction>(
-        _job->target, _job->request, scheduler);
-    }
-    const irs::MergeProgress progress = [&client] {
-      return StatementRunning(client);
-    };
-    const bool profiled = context.thread.profiler.IsEnabled();
-    irs::PipelineMergeExecutor::Profiles queries;
-    const irs::PipelineMergeExecutor executor{
-      *client.db, &scheduler, state.threads, profiled ? &queries : nullptr};
-    search::MergeResult executed;
-    if (state.compaction->Next(progress, search::MergeOrigin::Sql, executor,
-                               executed)) {
-      client.InterruptCheck();
-      const auto number = state.executed.size() + 1;
-      AppendRow(chunk, number, executed);
-      if (profiled) {
-        state.pipelines.emplace_back(
-          MergeNode(number, executed, std::move(queries)));
-      }
-      state.executed.emplace_back(std::move(executed));
-      SDB_PARK_ONCE_ON_FAILURE("pause_segment_rewrite_between_merges");
-      return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
-    }
-    auto& profiler = context.thread.profiler;
-    if (profiler.IsEnabled()) {
-      auto params = ParamsToString();
-      AppendActuals(state.executed, DeterministicRendering(client), params);
-      duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> info;
-      for (const auto& [key, value] : params) {
-        info[key] = value;
-      }
-      profiler.GetOperatorMetrics(*this).SetExtraInfo(info);
-      GraftPipelines(client, *this, _job->target, state.pipelines);
-    }
-    return duckdb::SourceResultType::FINISHED;
-  }
-
-  duckdb::string GetName() const final { return "SEGMENT_REWRITE"; }
-  duckdb::InsertionOrderPreservingMap<duckdb::string> ParamsToString()
-    const final {
-    return ExplainParams(*_job);
-  }
-
- private:
-  std::shared_ptr<SegmentRewriteJob> _job;
-};
-
-class LogicalSegmentRewrite final : public duckdb::LogicalExtensionOperator {
- public:
-  LogicalSegmentRewrite(duckdb::TableIndex bind_index,
-                        std::shared_ptr<SegmentRewriteJob> job)
-    : _bind_index{bind_index}, _job{std::move(job)} {
-    estimated_cardinality = _job->plan.merges.size();
-  }
-
-  duckdb::PhysicalOperator& CreatePlan(
-    duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) final {
-    return planner.Make<PhysicalSegmentRewrite>(_job, estimated_cardinality);
-  }
-  duckdb::vector<duckdb::ColumnBinding> GetColumnBindings() final {
-    return GenerateColumnBindings(_bind_index, ResultTypes().size());
-  }
-  duckdb::vector<duckdb::TableIndex> GetTableIndex() const final {
-    return {_bind_index};
-  }
-  duckdb::string GetName() const final { return "SEGMENT_REWRITE"; }
-  duckdb::InsertionOrderPreservingMap<duckdb::string> ParamsToString()
-    const final {
-    return ExplainParams(*_job);
-  }
-  bool RequireOptimizer() const final { return false; }
-  bool SupportSerialization() const final { return false; }
-
- protected:
-  void ResolveTypes() final { types = ResultTypes(); }
-
- private:
-  duckdb::TableIndex _bind_index;
-  std::shared_ptr<SegmentRewriteJob> _job;
-};
-
-duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
+duckdb::unique_ptr<duckdb::FunctionData> CompactBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
-  duckdb::TableIndex bind_index, duckdb::vector<duckdb::Identifier>& names) {
-  SDB_ASSERT(input.binder);
-  input.binder->SetAlwaysRequireRebind();
+  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::vector<duckdb::Identifier>& names) {
   const auto relation = ReadRelation(input, "sdb_compact");
   const auto mode = ReadMode(input);
   const auto segments = ReadSegments(input);
@@ -574,23 +402,90 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
   };
   auto plan = target.Plan(snapshot, request, target.FieldOptions(),
                           duckdb::TaskScheduler::GetScheduler(context));
-  auto job = std::make_shared<SegmentRewriteJob>(
-    SegmentRewriteJob{.target = std::move(target),
-                      .request = std::move(request),
-                      .plan = std::move(plan)});
 
   for (auto& name : ResultNames()) {
     names.emplace_back(duckdb::Identifier{std::move(name)});
   }
-  return duckdb::make_uniq<LogicalSegmentRewrite>(bind_index, std::move(job));
+  return_types = ResultTypes();
+  return duckdb::make_uniq<CompactBindData>(
+    CompactJob{.target = std::move(target),
+               .request = std::move(request),
+               .plan = std::move(plan)});
+}
+
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> CompactInit(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+  return duckdb::make_uniq<CompactState>(
+    context, input.bind_data->Cast<CompactBindData>().job);
+}
+
+void CompactExecute(duckdb::ClientContext& context,
+                    duckdb::TableFunctionInput& input,
+                    duckdb::DataChunk& output) {
+  auto& state = input.global_state->Cast<CompactState>();
+  context.InterruptCheck();
+  const irs::MergeProgress progress = [&context] {
+    return StatementRunning(context);
+  };
+  const irs::PipelineMergeExecutor executor{*context.db, &state.scheduler,
+                                            state.threads};
+  search::MergeResult merge;
+  if (!state.compaction.Next(progress, search::MergeOrigin::Sql, executor,
+                             merge)) {
+    return;
+  }
+  context.InterruptCheck();
+  AppendRow(output, ++state.merges, merge);
+  Tally(state, merge);
+  SDB_PARK_ONCE_ON_FAILURE("pause_segment_rewrite_between_merges");
+}
+
+duckdb::unique_ptr<duckdb::NodeStatistics> CompactCardinality(
+  duckdb::ClientContext&, const duckdb::FunctionData* bind_data) {
+  return duckdb::make_uniq<duckdb::NodeStatistics>(
+    bind_data->Cast<CompactBindData>().job.plan.merges.size());
+}
+
+duckdb::InsertionOrderPreservingMap<std::string> CompactToString(
+  duckdb::TableFunctionToStringInput& input) {
+  return ExplainParams(input.bind_data->Cast<CompactBindData>().job);
+}
+
+void CompactMetrics(duckdb::TableFunctionGetMetricsInput& input) {
+  const auto& state = input.global_state->Cast<CompactState>();
+  auto& metrics = input.operator_metrics;
+  std::vector<std::string> summary;
+  for (size_t outcome = 0; outcome < state.outcomes.size(); ++outcome) {
+    if (state.outcomes[outcome] != 0) {
+      summary.emplace_back(absl::StrCat(
+        irs::SnakeCaseName(static_cast<search::MergeOutcome>(outcome)), " ",
+        state.outcomes[outcome]));
+    }
+  }
+  metrics.AddExtraInfo("Actual Outcome", summary.empty()
+                                           ? std::string{"nothing ran"}
+                                           : absl::StrJoin(summary, ", "));
+  metrics.AddExtraInfo("Actual Written", Bytes(state.written));
+  const bool zero_times = DeterministicRendering(input.context);
+  const auto shown = [zero_times](uint64_t nanos) {
+    return Duration(zero_times ? 0 : nanos);
+  };
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    const auto id = static_cast<irs::MergeStep>(step);
+    metrics.AddExtraInfo(absl::StrCat("Actual ", StepLabel(id)),
+                         shown(state.profile.Nanos(id)));
+  }
+  metrics.AddExtraInfo("Actual Total", shown(state.profile.TotalNanos()));
 }
 
 duckdb::TableFunction CompactFunction() {
   duckdb::TableFunction function{"sdb_compact",
                                  duckdb::FunctionSignature().AddPositionalOnly(
                                    "relation", duckdb::LogicalType::VARCHAR),
-                                 nullptr};
-  function.bind_operator = CompactBindOperator;
+                                 CompactExecute, CompactBind, CompactInit};
+  function.cardinality = CompactCardinality;
+  function.to_string = CompactToString;
+  function.get_metrics = CompactMetrics;
   const auto segments_type =
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   function.GetSignature()

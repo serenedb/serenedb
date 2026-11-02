@@ -94,5 +94,16 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mrd')
 rounds
 t
 
+query
+SELECT bool_and((steps).prepare_ms > 0 AND (steps).prepare_ms <= total_ms
+                AND (steps).commit_ms <= total_ms) AS timed
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mrd')
+  AND origin = 'background'
+  AND outcome IN ('merged', 'deferred');
+----
+timed
+t
+
 statement ok
 DROP TABLE mrd;

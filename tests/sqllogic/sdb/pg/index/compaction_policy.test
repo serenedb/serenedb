@@ -23,7 +23,7 @@ query
 EXPLAIN CALL sdb_compact('cpt', mode := 'background')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────────────────────╮
+╭─ SDB_COMPACT ──────────────────────────────────────────────────────────────────────╮
 │ Table: public.cpt                                                                  │
 │ Mode: background                                                                   │
 │ Segments: 2                                                                        │
@@ -32,6 +32,7 @@ QUERY PLAN
 │ _1 (not selected by the adjacent policy), _2 (not selected by the adjacent policy) │
 │ Notes:                                                                             │
 │ background compaction is disabled (compaction_interval = 0)                        │
+│ ~0 rows                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────╯
 
 
@@ -93,12 +94,11 @@ query
 EXPLAIN CALL sdb_compact('cpt', mode := 'background')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ───────────────────────────────────────────╮
+╭─ SDB_COMPACT ───────────────────────────────────────────────╮
 │ Table: public.cpt                                           │
 │ Mode: background                                            │
 │ Segments: 8                                                 │
 │ Merges: 1                                                   │
-│ Pipeline: MERGE_UNITS                                       │
 │ Merge 1:                                                    │
 │ 8 segments -> 1, adjacent policy                            │
 │ Merge 1 Inputs:                                             │
@@ -110,6 +110,7 @@ QUERY PLAN
 │ Merge 1 Postings: 1 field                                   │
 │ Notes:                                                      │
 │ background compaction is disabled (compaction_interval = 0) │
+│ ~1 row                                                      │
 ╰─────────────────────────────────────────────────────────────╯
 
 

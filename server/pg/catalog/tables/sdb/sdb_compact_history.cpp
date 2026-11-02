@@ -52,6 +52,7 @@ constexpr SystemSqlColumn kSdbCompactHistoryColumns[] = {
   {"rowid_min", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"rowid_max", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"total_ms", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"steps", search::kMergeStepColumns, kFloat8},
   {"error", kText, 0, false, false, kCCollation, 0, SystemKey::None},
 };
 
@@ -91,6 +92,8 @@ constexpr std::tuple kMergeColumns{
   Col<"total_ms">([](const auto& r) {
     return static_cast<double>(r.stats.profile.TotalNanos()) / 1e6;
   }),
+  Col<"steps">(
+    [](const auto& r) { return search::StepMillis(r.stats.profile); }),
   Col<"error">(
     [](const auto& r) { return NonEmpty(std::string_view{r.error}); })};
 

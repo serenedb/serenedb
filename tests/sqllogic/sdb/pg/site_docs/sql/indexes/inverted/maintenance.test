@@ -175,12 +175,11 @@ query
 EXPLAIN CALL sdb_compact('my_metrics', mode := 'compact', target_segments := 1);
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ─────────────────────╮
+╭─ SDB_COMPACT ─────────────────────────╮
 │ Table: public.my_metrics              │
 │ Mode: compact                         │
 │ Segments: 2                           │
 │ Merges: 1                             │
-│ Pipeline: MERGE_UNITS                 │
 │ Merge 1:                              │
 │ 2 segments -> 1, compact to 1 segment │
 │ Merge 1 Inputs: _1, _2                │
@@ -190,6 +189,7 @@ QUERY PLAN
 │ Merge 1 Columns:                      │
 │ 3, <slt:ignore>│
 │ Merge 1 Postings: 1 field             │
+│ ~1 row                                │
 ╰───────────────────────────────────────╯
 
 query

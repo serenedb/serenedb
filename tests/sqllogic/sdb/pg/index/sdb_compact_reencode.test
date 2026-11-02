@@ -72,12 +72,11 @@ query
 EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ─────────────────────╮
+╭─ SDB_COMPACT ─────────────────────────╮
 │ Table: public.reenc                   │
 │ Mode: optimize                        │
 │ Segments: 1                           │
 │ Merges: 1                             │
-│ Pipeline: MERGE_UNITS                 │
 │ Merge 1:                              │
 │ 1 segment -> 1, re-encoding saves <slt:ignore>│
 │ Merge 1 Inputs: _1                    │
@@ -87,6 +86,7 @@ QUERY PLAN
 │ Merge 1 Columns:                      │
 │ 5, <slt:ignore>│
 │ Merge 1 Postings: 1 field             │
+│ ~1 row                                │
 ╰───────────────────────────────────────╯
 
 
@@ -117,13 +117,14 @@ query
 EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────╮
+╭─ SDB_COMPACT ──────────────────────────────────────────────────────╮
 │ Table: public.reenc                                                │
 │ Mode: optimize                                                     │
 │ Segments: 1                                                        │
 │ Merges: 0                                                          │
 │ Not Merged:                                                        │
 │ _2 (alone in its group without deletes, re-encoding would save <slt:ignore>│
+│ ~0 rows                                                            │
 ╰────────────────────────────────────────────────────────────────────╯
 
 
@@ -149,12 +150,11 @@ query
 EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ───────────────────────────────╮
+╭─ SDB_COMPACT ───────────────────────────────────╮
 │ Table: public.reenc                             │
 │ Mode: optimize                                  │
 │ Segments: 1                                     │
 │ Merges: 1                                       │
-│ Pipeline: MERGE_UNITS                           │
 │ Merge 1:                                        │
 │ 1 segment -> 1, a declared column codec changed │
 │ Merge 1 Inputs: _2                              │
@@ -163,6 +163,7 @@ QUERY PLAN
 │ Merge 1 Columns:                                │
 │ 5, <slt:ignore>│
 │ Merge 1 Postings: 1 field                       │
+│ ~1 row                                          │
 ╰─────────────────────────────────────────────────╯
 
 

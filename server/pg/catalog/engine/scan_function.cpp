@@ -202,11 +202,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::LogicalType>& types,
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
-  if (table.SuperuserOnly() && !context.CurrentRole().is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for function ", table.Sql().name));
-  }
   for (const auto& column : table.Columns().Logical()) {
     types.emplace_back(column.Type());
     names.emplace_back(column.Name());
@@ -246,6 +241,9 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
     function.bind = SystemFunctionBind;
     function.function_info =
       duckdb::make_shared_ptr<SystemFunctionInfo>(*table);
+    if (table->SuperuserOnly()) {
+      function.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+    }
     duckdb::CreateTableFunctionInfo info{std::move(function)};
     info.SetSchema(duckdb::Identifier{table->Sql().schema});
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;

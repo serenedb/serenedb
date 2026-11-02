@@ -28,8 +28,11 @@ SELECT current_setting('max_expression_depth') AS depth;
 depth
 1000
 
-statement ok
+statement error
 RESET max_expression_depth;
+----
+db error: ERROR: permission denied to set parameter "max_expression_depth"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
 statement ok

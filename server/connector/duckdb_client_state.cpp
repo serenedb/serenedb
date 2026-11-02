@@ -97,30 +97,15 @@ SereneDBClientState& SereneDBClientState::Register(
 
   client_ctx.setting_change_handler =
     [](duckdb::ClientContext& ctx, const std::string& name,
-       duckdb::SetScope scope, const duckdb::Value* new_value, bool reset_all) {
-      // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
-      // SetScope::GLOBAL return below, since some of these are global and would
-      // otherwise slip past it. DuckDB routes SET and RESET, for built-in
-      // settings and extension options alike, through this handler, and does so
-      // before invoking an option's own set_function -- so an entry here needs
-      // no callback of its own.
-      if (IsUnchangeableSetting(name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-                        ERR_MSG("parameter \"", name, "\" cannot be changed"));
-      }
-      // Resolve AUTOMATIC against the setting's target scope so the downstream
-      // check works uniformly regardless of how the user wrote the SET.
+       duckdb::SetScope scope, const duckdb::Value* new_value, bool) {
       const duckdb::Identifier setting{name};
-      std::string_view canonical = name;
       if (const auto option = duckdb::DBConfig::GetOptionByName(setting)) {
         scope = duckdb::PhysicalSet::GetSettingScope(*option, scope);
-        canonical = option->name;
       } else if (duckdb::ExtensionOption ext;
                  duckdb::DBConfig::GetConfig(ctx).TryGetExtensionOption(setting,
                                                                         ext)) {
         scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
       }
-      RequireSuperuserToSet(ctx, name, canonical, scope, reset_all);
       const bool global = scope == duckdb::SetScope::GLOBAL;
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the
@@ -144,17 +129,6 @@ SereneDBClientState& SereneDBClientState::Register(
                     std::move(old_value), new_value);
     };
 
-  client_ctx.setting_visibility = [](duckdb::ClientContext& ctx,
-                                     const std::string& name) {
-    static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-      "sdb_faults", "debug_verification", "is_superuser", "role",
-      "session_authorization"};
-    return !kHidden.contains(name) && IsReadableSetting(ctx, name);
-  };
-  client_ctx.setting_readable = [](duckdb::ClientContext& ctx,
-                                   const std::string& name) {
-    return IsReadableSetting(ctx, name);
-  };
   client_ctx.entry_visibility = auth::CanSee;
   client_ctx.database_visibility = auth::CanSeeDatabase;
   client_ctx.entry_reference_handler = auth::CheckEntryReference;

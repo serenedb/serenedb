@@ -25,71 +25,6 @@
 namespace sdb::auth {
 namespace {
 
-constexpr std::string_view kSuperuserFunctions[] = {
-  "add_parquet_key",
-  "clickhouse_clear_cache",
-  "clickhouse_configure_pool",
-  "clickhouse_execute",
-  "clickhouse_lookup",
-  "clickhouse_query",
-  "clickhouse_scan",
-  "clickhouse_scan_pushdown",
-  "create_external_resource",
-  "dbgen",
-  "deregister_external_resource",
-  "destroy_external_resource",
-  "disable_checkpoint_on_shutdown",
-  "disable_logging",
-  "dsdgen",
-  "duckdb_databases",
-  "duckdb_extensions",
-  "duckdb_external_file_cache",
-  "duckdb_external_resource_types",
-  "duckdb_external_resources",
-  "duckdb_log_contexts",
-  "duckdb_logs",
-  "duckdb_secrets",
-  "duckdb_table_sample",
-  "duckdb_temporary_files",
-  "enable_checkpoint_on_shutdown",
-  "enable_logging",
-  "iceberg_load_table_response",
-  "iceberg_to_ducklake",
-  "json_serialize_plan",
-  "pg_clear_cache",
-  "pg_show_replication_origin_status",
-  "postgres_attach",
-  "postgres_configure_pool",
-  "postgres_execute",
-  "postgres_lookup",
-  "postgres_query",
-  "postgres_scan",
-  "postgres_scan_pushdown",
-  "pragma_database_size",
-  "pragma_metadata_info",
-  "pragma_storage_info",
-  "register_external_resource",
-  "register_external_resource_type",
-  "sdb_databases",
-  "sdb_extensions",
-  "sdb_external_file_cache",
-  "sdb_external_resource_types",
-  "sdb_external_resources",
-  "sdb_log_contexts",
-  "sdb_logs",
-  "sdb_secrets",
-  "sdb_table_sample",
-  "sdb_temporary_files",
-  "truncate_duckdb_logs",
-  "truncate_sdb_logs",
-  "which_secret",
-};
-
-constexpr std::string_view kCheckpointFunctions[] = {
-  "checkpoint",
-  "force_checkpoint",
-};
-
 constexpr std::string_view kFileFreeFunctions[] = {
   "aclexplode",
   "check_peg_parser",
@@ -225,14 +160,6 @@ constexpr std::string_view kFileFreeFunctions[] = {
 }  // namespace
 
 void RegisterFunctionPrivileges(duckdb::DBConfig& config) {
-  for (const auto name : kSuperuserFunctions) {
-    config.superuser_functions.emplace(duckdb::Identifier{name},
-                                       duckdb::RoleCapability::None);
-  }
-  for (const auto name : kCheckpointFunctions) {
-    config.superuser_functions.emplace(duckdb::Identifier{name},
-                                       duckdb::RoleCapability::Checkpoint);
-  }
   for (const auto name : kFileFreeFunctions) {
     config.file_free_functions.emplace(duckdb::Identifier{name});
   }

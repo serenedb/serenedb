@@ -416,6 +416,7 @@ max_execution_time
 max_streaming_buffer_size
 merge_join_threshold
 nested_loop_join_threshold
+null_order
 operator_memory_limit
 order_by_non_integer_literal
 ordered_aggregate_threshold
@@ -470,11 +471,13 @@ segment_memory_max
 show_behavior
 standard_conforming_strings
 statement_timeout
+streaming_buffer_size
 table_function_identifier_conversion
 threads
 TimeZone
 tracked_metrics
 transaction_isolation
+worker_threads
 xmloption
 
 

@@ -293,12 +293,13 @@ void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader) {
   stats.in_out_function =
     RowsInOut<std::optional<SubscriptionStats>, &LoadStats, &WriteStats>;
   RegisterTable(loader, pg_catalog, std::move(stats));
-  RegisterTable(loader, pg_catalog,
-                duckdb::TableFunction{"pg_show_replication_origin_status",
+  duckdb::TableFunction origin_status{"pg_show_replication_origin_status",
                                       {},
                                       OriginStatusScan,
                                       OriginStatusBind,
-                                      OriginStatusInit});
+                                      OriginStatusInit};
+  origin_status.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  RegisterTable(loader, pg_catalog, std::move(origin_status));
 }
 
 }  // namespace sdb::pg

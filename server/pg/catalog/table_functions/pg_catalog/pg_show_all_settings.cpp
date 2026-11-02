@@ -166,7 +166,16 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
     Col<"category">(
       [](const auto&) { return std::string_view{"Customized Options"}; }),
     Col<"context">([](const auto& row) {
-      return SettingContext(row.name.GetIdentifierName());
+      switch (row.option ? row.option->access.context
+                         : row.extension.access.context) {
+        case duckdb::SettingContext::USER:
+          return std::string_view{"user"};
+        case duckdb::SettingContext::SUPERUSER:
+          return std::string_view{"superuser"};
+        case duckdb::SettingContext::INTERNAL:
+          return std::string_view{"internal"};
+      }
+      SDB_UNREACHABLE();
     }),
     Col<"vartype">([](const auto& row) {
       return VarType(row.option ? duckdb::DBConfig::ParseLogicalType(
@@ -184,8 +193,7 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
     }
     if ((option ? option->is_debug || option->is_deprecated
                 : extension.is_debug || extension.is_deprecated) ||
-        (context.setting_visibility &&
-         !context.setting_visibility(context, name.GetIdentifierName()))) {
+        !duckdb::Settings::IsVisible(context, name)) {
       return;
     }
     Emit<kSetting>({.context = context,

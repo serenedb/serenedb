@@ -139,9 +139,9 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
   // Sessions run as tasks on that pool, so it must never be left empty; the
-  // value is refused for the lifetime of the process (kUnchangeableSettings in
-  // connector/duckdb_client_state.cpp), which is what keeps `threads -
-  // external_threads` from ever resolving to zero internal workers.
+  // setting is declared internal, so no client can change it, which is what
+  // keeps `threads - external_threads` from ever resolving to zero internal
+  // workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
   // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
   // DuckDB's writer defaults it on.

@@ -25,6 +25,7 @@
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/settings.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <span>
@@ -115,10 +116,10 @@ void RequireRoleAdmin(duckdb::ClientContext& context,
   }
 }
 
-std::string_view CanonicalSetting(std::string_view name) {
-  const auto option =
-    duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name});
-  return option ? std::string_view{option->name} : name;
+duckdb::SettingAccess AccessOf(duckdb::ClientContext& context,
+                               std::string_view key) {
+  return duckdb::Settings::GetAccess(context, duckdb::Identifier{key})
+    .value_or(duckdb::SettingAccess{});
 }
 
 void CheckConfigChange(duckdb::ClientContext& context,
@@ -128,18 +129,20 @@ void CheckConfigChange(duckdb::ClientContext& context,
                        std::span<const std::string> current) {
   for (const std::string_view entry : set_config) {
     const auto key = catalog::ConfigKey(entry);
-    RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, false);
+    duckdb::Settings::CheckChange(context, duckdb::Identifier{key},
+                                  AccessOf(context, key),
+                                  duckdb::SetScope::SESSION);
   }
   for (const std::string_view key : reset_config) {
-    RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, false);
+    duckdb::Settings::CheckChange(context, duckdb::Identifier{key},
+                                  AccessOf(context, key),
+                                  duckdb::SetScope::SESSION);
   }
   if (reset_all_config) {
     reset_all_config = false;
     for (const std::string_view entry : current) {
       const auto key = catalog::ConfigKey(entry);
-      if (SettingContext(CanonicalSetting(key)) == "user") {
+      if (AccessOf(context, key).context == duckdb::SettingContext::USER) {
         reset_config.emplace_back(key);
       }
     }

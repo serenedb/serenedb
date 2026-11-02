@@ -78,16 +78,6 @@ std::string_view GetOriginalName(std::string_view name);
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms);
 
-bool IsUnchangeableSetting(std::string_view name);
-
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
-                           std::string_view setting, duckdb::SetScope scope,
-                           bool reset_all);
-
-std::string_view SettingContext(std::string_view name);
-
-bool IsReadableSetting(duckdb::ClientContext& ctx, std::string_view name);
-
 class Config {
  public:
   // Per-key tracking for a currently-open transaction. Populated only when

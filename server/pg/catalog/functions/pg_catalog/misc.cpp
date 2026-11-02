@@ -436,13 +436,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     const auto key = AsView(name.GetValue());
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
-      if (!IsReadableSetting(context, key)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("permission denied to examine \"", key, "\""),
-                        ERR_DETAIL("Only roles with privileges of the "
-                                   "\"pg_read_all_settings\" role may examine "
-                                   "this parameter."));
-      }
+      duckdb::Settings::CheckRead(context, duckdb::Identifier{key});
       value = duckdb::Settings::FormatDisplayValue(context, value);
       last_found = row;
       last_value = value.IsNull()

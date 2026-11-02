@@ -41,6 +41,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
+    duckdb::ClientContext& context, duckdb::AlterInfo& info) final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
@@ -49,12 +51,17 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
     return _options;
   }
+  const duckdb::vector<duckdb::DatabaseSetting>& Settings() const {
+    return _settings;
+  }
+  const duckdb::vector<std::string>* SettingsOf(duckdb::idx_t role) const;
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
 
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
+  duckdb::vector<duckdb::DatabaseSetting> _settings;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

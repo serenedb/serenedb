@@ -27,10 +27,12 @@
 #include <duckdb/main/config.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 #include <string_view>
 
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "query/config.h"
 
@@ -117,6 +119,31 @@ std::string_view CanonicalSetting(std::string_view name) {
   const auto option =
     duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name});
   return option ? std::string_view{option->name} : name;
+}
+
+void CheckConfigChange(duckdb::ClientContext& context,
+                       std::span<const std::string> set_config,
+                       duckdb::vector<std::string>& reset_config,
+                       bool& reset_all_config,
+                       std::span<const std::string> current) {
+  for (const std::string_view entry : set_config) {
+    const auto key = catalog::ConfigKey(entry);
+    RequireSuperuserToSet(context, key, CanonicalSetting(key),
+                          duckdb::SetScope::SESSION, false);
+  }
+  for (const std::string_view key : reset_config) {
+    RequireSuperuserToSet(context, key, CanonicalSetting(key),
+                          duckdb::SetScope::SESSION, false);
+  }
+  if (reset_all_config) {
+    reset_all_config = false;
+    for (const std::string_view entry : current) {
+      const auto key = catalog::ConfigKey(entry);
+      if (SettingContext(CanonicalSetting(key)) == "user") {
+        reset_config.emplace_back(key);
+      }
+    }
+  }
 }
 
 void RequireGrantableRole(duckdb::CatalogTransaction transaction,
@@ -217,25 +244,48 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
   } else if (other) {
     DenyRoleAdmin(*role, "alter");
   }
-  for (const std::string_view entry : info.set_config) {
-    const auto key = catalog::ConfigKey(entry);
-    RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, false);
+  CheckConfigChange(context, info.set_config, info.reset_config,
+                    info.reset_all_config,
+                    role->Cast<catalog::RoleCatalogEntry>().Config());
+}
+
+void CheckAlterDatabaseSettings(duckdb::CatalogTransaction transaction,
+                                duckdb::AlterDatabaseSettingsInfo& info) {
+  if (!transaction.HasContext() || !transaction.GetContext().principal) {
+    return;
   }
-  for (const std::string_view key : info.reset_config) {
-    RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, false);
+  auto& context = transaction.GetContext();
+  const auto& name = info.GetQualifiedName().Name();
+  const auto database = catalog::ClusterOf(context)
+                          .GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                          .GetEntry(transaction, name);
+  if (!database) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+      ERR_MSG("database \"", name.GetIdentifierName(), "\" does not exist"));
   }
-  if (info.reset_all_config) {
-    info.reset_all_config = false;
-    for (const std::string_view entry :
-         role->Cast<catalog::RoleCatalogEntry>().Config()) {
-      const auto key = catalog::ConfigKey(entry);
-      if (SettingContext(CanonicalSetting(key)) == "user") {
-        info.reset_config.emplace_back(key);
-      }
+  const auto* caller = Enforced(transaction);
+  if (!caller) {
+    return;
+  }
+  if (info.role_id == 0) {
+    if (!caller->MemberOf(database->permissions.owner)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("must be owner of database ", name.GetIdentifierName()));
+    }
+  } else if (info.role_id != caller->role) {
+    if (const auto role =
+          FindRole(transaction, RolesOf(&context)->NameOf(info.role_id))) {
+      RequireRoleAdmin(context, *caller, *role, "alter");
     }
   }
+  const auto* current =
+    database->Cast<catalog::DatabaseCatalogEntry>().SettingsOf(info.role_id);
+  CheckConfigChange(context, info.set_config, info.reset_config,
+                    info.reset_all_config,
+                    current ? std::span<const std::string>{*current}
+                            : std::span<const std::string>{});
 }
 
 void CheckDropRole(duckdb::CatalogTransaction transaction,

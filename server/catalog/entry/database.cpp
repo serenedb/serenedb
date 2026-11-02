@@ -20,10 +20,14 @@
 
 #include "catalog/entry/database.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <utility>
 
 #include "catalog/boot.h"
+#include "catalog/entry/role.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::catalog {
@@ -34,6 +38,7 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
+    _settings{info.settings},
     _directory{directory
                  ? std::move(directory)
                  : std::make_shared<DatabaseDirectory>(
@@ -49,7 +54,43 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->comment = comment;
   info->tags = tags;
   info->options = _options;
+  info->settings = _settings;
   return std::move(info);
+}
+
+const duckdb::vector<std::string>* DatabaseCatalogEntry::SettingsOf(
+  duckdb::idx_t role) const {
+  const auto row =
+    absl::c_find_if(_settings, [&](const duckdb::DatabaseSetting& setting) {
+      return setting.role == role;
+    });
+  return row == _settings.end() ? nullptr : &row->config;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::AlterEntry(
+  duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type != duckdb::AlterType::ALTER_DATABASE_SETTINGS) {
+    return duckdb::InCatalogEntry::AlterEntry(context, info);
+  }
+  auto& alter = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
+  auto copy = GetInfo();
+  auto& next = copy->Cast<duckdb::CreateDatabaseInfo>();
+  next.oid = oid;
+  next.permissions = permissions;
+  auto row =
+    absl::c_find_if(next.settings, [&](const duckdb::DatabaseSetting& setting) {
+      return setting.role == alter.role_id;
+    });
+  if (row == next.settings.end()) {
+    row = next.settings.insert(
+      row, duckdb::DatabaseSetting{.role = alter.role_id, .config = {}});
+  }
+  ApplyConfigChange(row->config, alter.set_config, alter.reset_config,
+                    alter.reset_all_config);
+  if (row->config.empty()) {
+    next.settings.erase(row);
+  }
+  return duckdb::make_uniq<DatabaseCatalogEntry>(catalog, next, _directory);
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(

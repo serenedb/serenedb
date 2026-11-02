@@ -31,6 +31,8 @@ void CheckCreateRole(duckdb::CatalogTransaction transaction,
                      const duckdb::CreateRoleInfo& info);
 void CheckAlterRole(duckdb::CatalogTransaction transaction,
                     duckdb::AlterRoleInfo& info);
+void CheckAlterDatabaseSettings(duckdb::CatalogTransaction transaction,
+                                duckdb::AlterDatabaseSettingsInfo& info);
 void CheckDropRole(duckdb::CatalogTransaction transaction,
                    const duckdb::DropInfo& info);
 

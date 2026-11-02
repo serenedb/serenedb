@@ -116,20 +116,34 @@ std::string ConnectionContext::SessionUserName() const {
 }
 
 void ConnectionContext::ApplyRoleSettings() {
-  duckdb::vector<std::string> config;
+  duckdb::vector<std::string> database_config;
+  duckdb::vector<std::string> database_role_config;
+  catalog::ReadDatabase(
+    GetDatabase(), [&](const catalog::DatabaseCatalogEntry& database) {
+      if (const auto* config = database.SettingsOf(0)) {
+        database_config = *config;
+      }
+      if (const auto* config = database.SettingsOf(_login_role_id)) {
+        database_role_config = *config;
+      }
+    });
+  duckdb::vector<std::string> role_config;
   catalog::ReadRole(_user, [&](const catalog::RoleCatalogEntry& role) {
-    config = role.Config();
+    role_config = role.Config();
   });
-  for (const std::string_view entry : config) {
-    const std::pair<std::string_view, std::string_view> setting =
-      absl::StrSplit(entry, absl::MaxSplits('=', 1));
-    if (setting.second.empty()) {
-      continue;
-    }
-    try {
-      SetSettingChecked(setting.first, std::string{setting.second});
-    } catch (const std::exception& exception) {
-      AddNotice(network::pg::ToSqlError(exception));
+  for (const auto* config :
+       {&database_config, &role_config, &database_role_config}) {
+    for (const std::string_view entry : *config) {
+      const std::pair<std::string_view, std::string_view> setting =
+        absl::StrSplit(entry, absl::MaxSplits('=', 1));
+      if (setting.second.empty()) {
+        continue;
+      }
+      try {
+        SetSettingChecked(setting.first, std::string{setting.second});
+      } catch (const std::exception& exception) {
+        AddNotice(network::pg::ToSqlError(exception));
+      }
     }
   }
 }

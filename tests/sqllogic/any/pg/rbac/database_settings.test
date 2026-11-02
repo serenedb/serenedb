@@ -1,0 +1,156 @@
+statement ok
+DROP DATABASE IF EXISTS dbs_db;
+
+
+statement ok
+DROP ROLE IF EXISTS dbs_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dbs_other;
+
+
+statement ok
+DROP ROLE IF EXISTS dbs_third;
+
+
+statement ok
+CREATE ROLE dbs_owner LOGIN PASSWORD 'dbs_pw';
+
+
+statement ok
+CREATE ROLE dbs_other LOGIN PASSWORD 'dbs_pw';
+
+
+statement ok
+CREATE ROLE dbs_third LOGIN PASSWORD 'dbs_pw';
+
+
+statement ok
+CREATE DATABASE dbs_db OWNER dbs_owner;
+
+
+connection c_owner user=dbs_owner password=dbs_pw
+statement ok
+ALTER DATABASE dbs_db SET search_path = dbs_s, public;
+
+
+connection c_other user=dbs_other password=dbs_pw
+statement error
+ALTER DATABASE dbs_db SET search_path = dbs_x;
+----
+db error: ERROR: must be owner of database dbs_db
+
+
+skipif postgres
+connection c_owner user=dbs_owner password=dbs_pw
+statement error
+ALTER DATABASE dbs_db SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+onlyif postgres
+connection c_owner user=dbs_owner password=dbs_pw
+statement error
+ALTER DATABASE dbs_db SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+connection c_other user=dbs_other password=dbs_pw
+statement ok
+ALTER ROLE CURRENT_USER IN DATABASE dbs_db SET search_path = dbs_t;
+
+
+connection c_other user=dbs_other password=dbs_pw
+statement ok
+ALTER ROLE dbs_other SET search_path = other_s;
+
+
+statement ok
+ALTER ROLE dbs_owner SET search_path = owner_s;
+
+
+query
+SELECT coalesce(r.rolname, '-') AS role, s.setconfig
+FROM pg_db_role_setting s
+JOIN pg_database d ON d.oid = s.setdatabase
+LEFT JOIN pg_roles r ON r.oid = s.setrole
+WHERE d.datname = 'dbs_db'
+ORDER BY role;
+----
+role	setconfig
+-	{"search_path=dbs_s, public"}
+dbs_other	{search_path=dbs_t}
+
+
+connection c_third_db user=dbs_third password=dbs_pw database=dbs_db
+query
+SHOW search_path;
+----
+search_path
+dbs_s, public
+
+
+connection c_owner_db user=dbs_owner password=dbs_pw database=dbs_db
+query
+SHOW search_path;
+----
+search_path
+owner_s
+
+
+connection c_other_db user=dbs_other password=dbs_pw database=dbs_db
+query
+SHOW search_path;
+----
+search_path
+dbs_t
+
+
+connection c_third user=dbs_third password=dbs_pw
+statement error
+ALTER ROLE dbs_other IN DATABASE dbs_db RESET search_path;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "dbs_other" may alter this role.
+
+
+connection c_owner user=dbs_owner password=dbs_pw
+statement ok
+ALTER ROLE ALL IN DATABASE dbs_db RESET search_path;
+
+
+statement ok
+DROP ROLE dbs_other;
+
+
+query
+SELECT count(*) AS settings
+FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
+WHERE d.datname = 'dbs_db';
+----
+settings
+0
+
+
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE CASE WHEN datname = 'dbs_db' THEN pg_terminate_backend(pid) ELSE false END;
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE dbs_db;
+
+
+statement ok
+DROP ROLE dbs_owner;
+
+
+statement ok
+DROP ROLE dbs_third;

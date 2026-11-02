@@ -402,12 +402,35 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
       alter.revoke = true;
       ApplyAlter(transaction, alter);
     }
+    std::vector<duckdb::Identifier> databases;
+    GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .Scan(transaction, [&](duckdb::CatalogEntry& database) {
+        if (database.Cast<DatabaseCatalogEntry>().SettingsOf(role->oid)) {
+          databases.emplace_back(database.name);
+        }
+      });
+    for (const auto& database : databases) {
+      duckdb::AlterDatabaseSettingsInfo alter{database};
+      alter.role_id = role->oid;
+      alter.reset_all_config = true;
+      ApplyAlter(transaction, alter);
+    }
   }
   duckdb::DuckCatalog::DropRole(transaction, info);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_DATABASE_SETTINGS) {
+    auto& alter = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
+    auth::CheckAlterDatabaseSettings(transaction, alter);
+    if (transaction.HasContext()) {
+      duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
+                                             alter.set_config);
+    }
+    ApplyAlter(transaction, info);
+    return;
+  }
   if (info.type != duckdb::AlterType::ALTER_ROLE) {
     ApplyAlter(transaction, info);
     return;

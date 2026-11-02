@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -78,5 +79,10 @@ class RoleCatalogEntry final : public duckdb::InCatalogEntry {
 };
 
 std::string_view ConfigKey(std::string_view entry);
+
+void ApplyConfigChange(duckdb::vector<std::string>& config,
+                       std::span<const std::string> set_config,
+                       std::span<const std::string> reset_config,
+                       bool reset_all_config);
 
 }  // namespace sdb::catalog

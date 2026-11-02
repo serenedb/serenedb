@@ -113,6 +113,29 @@ std::string_view ConfigKey(std::string_view entry) {
   return entry.substr(0, entry.find('='));
 }
 
+void ApplyConfigChange(duckdb::vector<std::string>& config,
+                       std::span<const std::string> set_config,
+                       std::span<const std::string> reset_config,
+                       bool reset_all_config) {
+  if (reset_all_config) {
+    config.clear();
+  }
+  for (const auto& key : reset_config) {
+    std::erase_if(
+      config, [&](std::string_view entry) { return ConfigKey(entry) == key; });
+  }
+  for (const auto& entry : set_config) {
+    const auto key = ConfigKey(entry);
+    auto it = absl::c_find_if(
+      config, [&](std::string_view e) { return ConfigKey(e) == key; });
+    if (it == config.end()) {
+      config.emplace_back(entry);
+    } else {
+      *it = entry;
+    }
+  }
+}
+
 duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
   if (info.type != duckdb::AlterType::ALTER_ROLE) {
@@ -177,24 +200,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   if (!alter.new_name.empty()) {
     next.SetName(alter.new_name);
   }
-  if (alter.reset_all_config) {
-    next.config.clear();
-  }
-  for (const auto& key : alter.reset_config) {
-    std::erase_if(next.config, [&](std::string_view entry) {
-      return ConfigKey(entry) == key;
-    });
-  }
-  for (const auto& entry : alter.set_config) {
-    const auto key = ConfigKey(entry);
-    auto it = absl::c_find_if(
-      next.config, [&](std::string_view e) { return ConfigKey(e) == key; });
-    if (it == next.config.end()) {
-      next.config.emplace_back(entry);
-    } else {
-      *it = entry;
-    }
-  }
+  ApplyConfigChange(next.config, alter.set_config, alter.reset_config,
+                    alter.reset_all_config);
   if (alter.grant_role_id != 0) {
     auto it =
       absl::c_find_if(next.member_of, [&](const duckdb::Membership& member) {

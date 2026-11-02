@@ -44,22 +44,15 @@ class MergeSchedule {
   MergeSchedule(const MergeSchedule&) = delete;
   MergeSchedule& operator=(const MergeSchedule&) = delete;
 
-  size_t Claim(size_t threads, const duckdb::InterruptState& interrupt);
+  size_t Claim(const duckdb::InterruptState& interrupt);
 
   bool Run(size_t unit);
-
-  void PartDone();
 
   void Stop();
 
   bool Result();
 
  private:
-  void FailLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_tasks.lock);
-
-  duckdb::vector<duckdb::InterruptState> TakeWoken()
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_tasks.lock);
-
   MergePlan& _plan;
   std::vector<uint64_t> _rank;
   std::vector<std::vector<size_t>> _dependents;
@@ -68,8 +61,6 @@ class MergeSchedule {
   std::vector<size_t> _ready ABSL_GUARDED_BY(_tasks.lock);
   size_t _left ABSL_GUARDED_BY(_tasks.lock) = 0;
   size_t _running ABSL_GUARDED_BY(_tasks.lock) = 0;
-  size_t _parts_left ABSL_GUARDED_BY(_tasks.lock) = 0;
-  size_t _held ABSL_GUARDED_BY(_tasks.lock) = kNoUnit;
   bool _failed ABSL_GUARDED_BY(_tasks.lock) = false;
   std::exception_ptr _error ABSL_GUARDED_BY(_tasks.lock);
 };

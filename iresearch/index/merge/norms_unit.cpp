@@ -222,11 +222,14 @@ LiveNormStats ComputeLiveNormStats(field_id id,
     stats.sum += column->Sum();
     stats.non_zero += column->NonZeroCount();
     if (const auto* removed = src.reader->docs_mask()) {
-      removed->ForEach([&](doc_id_t doc) {
-        uint32_t value = 0;
-        column->Decode(doc, 1, &value);
-        stats.sum -= value;
-        stats.non_zero -= value != 0;
+      removed->ForEachRun(nullptr, [&](doc_id_t first, doc_id_t end) {
+        for (auto doc = first; doc != end; ++doc) {
+          uint32_t value = 0;
+          column->Decode(doc, 1, &value);
+          stats.sum -= value;
+          stats.non_zero -= value != 0;
+        }
+        return true;
       });
     }
   }

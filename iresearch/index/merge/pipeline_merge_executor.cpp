@@ -20,16 +20,10 @@
 
 #include "iresearch/index/merge/pipeline_merge_executor.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
-#include <duckdb/common/arena_linked_list.hpp>
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/value.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/execution/operator/order/physical_presorted_merge.hpp>
-#include <duckdb/execution/operator/set/physical_union.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -39,29 +33,17 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <duckdb/planner/logical_plan_verifier.hpp>
+#include <duckdb/planner/operator/logical_extension_operator.hpp>
 #include <memory>
-#include <span>
 #include <string>
 #include <utility>
 
-#include "iresearch/index/merge/logical_presorted_merge.hpp"
 #include "iresearch/index/merge/merge_schedule.hpp"
-#include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {
-
-struct MergeOrderSinkState final : duckdb::LocalSinkState {
-  duckdb::vector<duckdb::PresortedRun> runs;
-};
-
-struct PostingsMergeSinkState final : duckdb::LocalSinkState {
-  bool open = false;
-  uint64_t partition = 0;
-  duckdb::vector<duckdb::PresortedRun> runs;
-};
 
 class MergeUnitsSourceState final : public duckdb::GlobalSourceState {
  public:
@@ -71,148 +53,6 @@ class MergeUnitsSourceState final : public duckdb::GlobalSourceState {
 
  private:
   duckdb::idx_t _threads;
-};
-
-void ReadRuns(duckdb::DataChunk& chunk,
-              duckdb::vector<duckdb::PresortedRun>& runs) {
-  const auto* inputs = duckdb::FlatVector::GetData<uint64_t>(chunk.data[1]);
-  const auto* begins = duckdb::FlatVector::GetData<uint64_t>(chunk.data[2]);
-  const auto* counts = duckdb::FlatVector::GetData<uint64_t>(chunk.data[3]);
-  runs.clear();
-  for (duckdb::idx_t i = 0; i != chunk.size(); ++i) {
-    runs.push_back(
-      {.input = inputs[i], .begin = begins[i], .count = counts[i]});
-  }
-}
-
-class PhysicalMergeOrder final : public duckdb::PhysicalOperator {
- public:
-  PhysicalMergeOrder(duckdb::PhysicalPlan& physical_plan, MergePlan& plan)
-    : duckdb::PhysicalOperator(physical_plan,
-                               duckdb::PhysicalOperatorType::EXTENSION,
-                               {duckdb::LogicalType::BIGINT}, 0),
-      _plan{plan} {}
-
-  bool IsSink() const final { return true; }
-  bool ParallelSink() const final { return true; }
-  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
-    duckdb::ExecutionContext&) const final {
-    return duckdb::make_uniq<MergeOrderSinkState>();
-  }
-  duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
-                              duckdb::DataChunk& chunk,
-                              duckdb::OperatorSinkInput& input) const final {
-    auto& state = input.local_state.Cast<MergeOrderSinkState>();
-    const auto* partitions =
-      duckdb::FlatVector::GetData<uint64_t>(chunk.data[0]);
-    ReadRuns(chunk, state.runs);
-    SDB_ASSERT(absl::c_all_of(
-      std::span{partitions, chunk.size()},
-      [&](uint64_t partition) { return partition == partitions[0]; }));
-    if (!_plan.ExpandOrder(partitions[0], state.runs)) {
-      context.client.Interrupt();
-    }
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-
-  bool IsSource() const final { return true; }
-  duckdb::SourceResultType GetDataInternal(
-    duckdb::ExecutionContext&, duckdb::DataChunk&,
-    duckdb::OperatorSourceInput&) const final {
-    return duckdb::SourceResultType::FINISHED;
-  }
-
-  duckdb::string GetName() const final { return "MERGE_ORDER"; }
-
- private:
-  MergePlan& _plan;
-};
-
-class PhysicalPostingsMerge final : public duckdb::PhysicalOperator {
- public:
-  PhysicalPostingsMerge(duckdb::PhysicalPlan& physical_plan,
-                        TermRangeMerge& merge,
-                        std::shared_ptr<MergeSchedule> schedule)
-    : duckdb::PhysicalOperator(physical_plan,
-                               duckdb::PhysicalOperatorType::EXTENSION,
-                               {duckdb::LogicalType::BIGINT}, 0),
-      _merge{merge},
-      _schedule{std::move(schedule)} {}
-
-  bool IsSink() const final { return true; }
-  bool ParallelSink() const final { return true; }
-  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
-    duckdb::ExecutionContext&) const final {
-    return duckdb::make_uniq<PostingsMergeSinkState>();
-  }
-  duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
-                              duckdb::DataChunk& chunk,
-                              duckdb::OperatorSinkInput& input) const final {
-    if (chunk.size() == 0) {
-      return duckdb::SinkResultType::NEED_MORE_INPUT;
-    }
-    auto& state = input.local_state.Cast<PostingsMergeSinkState>();
-    const auto* partitions =
-      duckdb::FlatVector::GetData<uint64_t>(chunk.data[0]);
-    if (state.open && state.partition != partitions[0]) {
-      FinishPartition(state);
-    }
-    if (!state.open) {
-      state.partition = partitions[0];
-      _merge.BeginPart(state.partition);
-      state.open = true;
-    }
-    ReadRuns(chunk, state.runs);
-    SDB_ASSERT(absl::c_all_of(
-      std::span{partitions, chunk.size()},
-      [&](uint64_t partition) { return partition == state.partition; }));
-    if (!_merge.Consume(state.partition, state.runs)) {
-      context.client.Interrupt();
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_sink");
-    return duckdb::SinkResultType::NEED_MORE_INPUT;
-  }
-  duckdb::SinkCombineResultType Combine(
-    duckdb::ExecutionContext&,
-    duckdb::OperatorSinkCombineInput& input) const final {
-    FinishPartition(input.local_state.Cast<PostingsMergeSinkState>());
-    return duckdb::SinkCombineResultType::FINISHED;
-  }
-  duckdb::SinkFinalizeType Finalize(
-    duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
-    duckdb::OperatorSinkFinalizeInput&) const final {
-    SDB_PARK_ONCE_ON_FAILURE("pause_postings_merge_finalize");
-    return duckdb::SinkFinalizeType::READY;
-  }
-
-  bool IsSource() const final { return true; }
-  duckdb::SourceResultType GetDataInternal(
-    duckdb::ExecutionContext&, duckdb::DataChunk&,
-    duckdb::OperatorSourceInput&) const final {
-    return duckdb::SourceResultType::FINISHED;
-  }
-
-  duckdb::string GetName() const final { return "POSTINGS_MERGE"; }
-  duckdb::InsertionOrderPreservingMap<duckdb::string> ParamsToString()
-    const final {
-    duckdb::InsertionOrderPreservingMap<duckdb::string> result;
-    result["Field"] = std::to_string(_merge.Field());
-    result["Parts"] = std::to_string(_merge.PartCount());
-    return result;
-  }
-
- private:
-  void FinishPartition(PostingsMergeSinkState& state) const {
-    if (!state.open) {
-      return;
-    }
-    _merge.FinishPart(state.partition);
-    state.open = false;
-    _schedule->PartDone();
-  }
-
-  TermRangeMerge& _merge;
-  std::shared_ptr<MergeSchedule> _schedule;
 };
 
 class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
@@ -238,7 +78,7 @@ class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk&,
     duckdb::OperatorSourceInput& input) const final {
-    const auto unit = _schedule->Claim(_threads, input.interrupt_state);
+    const auto unit = _schedule->Claim(input.interrupt_state);
     if (unit == MergeSchedule::kFinished) {
       return duckdb::SourceResultType::FINISHED;
     }
@@ -247,7 +87,6 @@ class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
     }
     if (!_schedule->Run(unit)) {
       context.client.Interrupt();
-      SDB_PARK_ONCE_ON_FAILURE("pause_merge_unit_failed");
     }
     return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
   }
@@ -263,102 +102,28 @@ class PhysicalMergeUnits final : public duckdb::PhysicalOperator {
   duckdb::idx_t _threads;
 };
 
-class LogicalMergeStep : public duckdb::LogicalExtensionOperator {
+class LogicalMergeUnits final : public duckdb::LogicalExtensionOperator {
  public:
-  explicit LogicalMergeStep(duckdb::TableIndex table_index)
-    : _table_index{table_index} {}
+  LogicalMergeUnits(std::shared_ptr<MergeSchedule> schedule,
+                    duckdb::idx_t threads)
+    : _schedule{std::move(schedule)}, _threads{threads} {}
 
+  duckdb::PhysicalOperator& CreatePlan(
+    duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) final {
+    return planner.Make<PhysicalMergeUnits>(_schedule, _threads);
+  }
   duckdb::vector<duckdb::ColumnBinding> GetColumnBindings() final {
-    return GenerateColumnBindings(_table_index, 1);
+    return GenerateColumnBindings(duckdb::TableIndex(0), 1);
   }
   duckdb::vector<duckdb::TableIndex> GetTableIndex() const final {
-    return {_table_index};
+    return {duckdb::TableIndex(0)};
   }
+  duckdb::string GetName() const final { return "MERGE_UNITS"; }
   bool RequireOptimizer() const final { return false; }
   bool SupportSerialization() const final { return false; }
 
  protected:
   void ResolveTypes() final { types = {duckdb::LogicalType::BIGINT}; }
-
- private:
-  duckdb::TableIndex _table_index;
-};
-
-class LogicalMergeOrder final : public LogicalMergeStep {
- public:
-  explicit LogicalMergeOrder(MergePlan& plan)
-    : LogicalMergeStep{duckdb::TableIndex(1)}, _plan{plan} {
-    children.push_back(
-      duckdb::make_uniq<LogicalPresortedMerge>(plan.KeyMerge()));
-  }
-
-  duckdb::PhysicalOperator& CreatePlan(
-    duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) final {
-    auto& runs = planner.CreatePlan(*children[0]);
-    auto& order = planner.Make<PhysicalMergeOrder>(_plan);
-    order.children.push_back(runs);
-    return order;
-  }
-  duckdb::string GetName() const final { return "MERGE_ORDER"; }
-
- private:
-  MergePlan& _plan;
-};
-
-class LogicalPostingsMerge final : public LogicalMergeStep {
- public:
-  LogicalPostingsMerge(TermRangeMerge& merge, duckdb::TableIndex table_index,
-                       std::shared_ptr<MergeSchedule> schedule)
-    : LogicalMergeStep{table_index},
-      _merge{merge},
-      _schedule{std::move(schedule)} {
-    children.push_back(duckdb::make_uniq<LogicalPresortedMerge>(
-      merge.KeyMerge(), duckdb::TableIndex(table_index.index + 1)));
-  }
-
-  duckdb::PhysicalOperator& CreatePlan(
-    duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) final {
-    auto& runs = planner.CreatePlan(*children[0]);
-    auto& merge = planner.Make<PhysicalPostingsMerge>(_merge, _schedule);
-    merge.children.push_back(runs);
-    return merge;
-  }
-  duckdb::string GetName() const final { return "POSTINGS_MERGE"; }
-
- private:
-  TermRangeMerge& _merge;
-  std::shared_ptr<MergeSchedule> _schedule;
-};
-
-class LogicalMergeUnits final : public LogicalMergeStep {
- public:
-  LogicalMergeUnits(std::shared_ptr<MergeSchedule> schedule,
-                    duckdb::idx_t threads,
-                    std::span<const std::unique_ptr<TermRangeMerge>> ranges)
-    : LogicalMergeStep{duckdb::TableIndex(0)},
-      _schedule{std::move(schedule)},
-      _threads{threads} {
-    for (size_t i = 0; i != ranges.size(); ++i) {
-      children.push_back(duckdb::make_uniq<LogicalPostingsMerge>(
-        *ranges[i], duckdb::TableIndex(1 + 2 * i), _schedule));
-    }
-  }
-
-  duckdb::PhysicalOperator& CreatePlan(
-    duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) final {
-    auto& units = planner.Make<PhysicalMergeUnits>(_schedule, _threads);
-    if (children.empty()) {
-      return units;
-    }
-    duckdb::ArenaLinkedList<duckdb::reference<duckdb::PhysicalOperator>> plans{
-      planner.ArenaRef()};
-    for (auto& child : children) {
-      plans.push_back(planner.CreatePlan(*child));
-    }
-    plans.push_back(units);
-    return planner.Make<duckdb::PhysicalUnion>(types, plans, 0, true);
-  }
-  duckdb::string GetName() const final { return "MERGE_UNITS"; }
 
  private:
   std::shared_ptr<MergeSchedule> _schedule;
@@ -379,35 +144,6 @@ bool Execute(duckdb::Connection& connection,
 
 }  // namespace
 
-LogicalPresortedMerge::LogicalPresortedMerge(
-  duckdb::shared_ptr<duckdb::PresortedMerge> merge,
-  duckdb::TableIndex table_index)
-  : _merge{std::move(merge)}, _table_index{table_index} {}
-
-void LogicalPresortedMerge::ResolveTypes() {
-  types = duckdb::PhysicalPresortedMerge::RunTypes();
-}
-
-duckdb::vector<duckdb::ColumnBinding>
-LogicalPresortedMerge::GetColumnBindings() {
-  return GenerateColumnBindings(
-    _table_index, duckdb::PhysicalPresortedMerge::RunTypes().size());
-}
-
-duckdb::vector<duckdb::TableIndex> LogicalPresortedMerge::GetTableIndex()
-  const {
-  return {_table_index};
-}
-
-duckdb::string LogicalPresortedMerge::GetName() const {
-  return "PRESORTED_MERGE";
-}
-
-duckdb::PhysicalOperator& LogicalPresortedMerge::CreatePlan(
-  duckdb::ClientContext&, duckdb::PhysicalPlanGenerator& planner) {
-  return planner.Make<duckdb::PhysicalPresortedMerge>(_merge, 0);
-}
-
 bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   SDB_IF_FAILURE("irs::PipelineMergeExecutor::Run") { return false; }
   const auto threads = std::max<size_t>(_threads, 1);
@@ -420,17 +156,8 @@ bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   context.config.threads = threads;
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     context, duckdb::SetScope::SESSION, duckdb::Value::BIGINT(0));
-  duckdb::Settings::Set<duckdb::PreserveInsertionOrderSetting>(
-    context, duckdb::SetScope::SESSION, duckdb::Value::BOOLEAN(false));
-  if (plan.OrderPending()) {
-    if (!Execute(connection, duckdb::make_uniq<LogicalMergeOrder>(plan))) {
-      return false;
-    }
-    plan.FinishOrder();
-  }
   const auto schedule = std::make_shared<MergeSchedule>(plan);
-  auto units =
-    duckdb::make_uniq<LogicalMergeUnits>(schedule, threads, plan.TermRanges());
+  auto units = duckdb::make_uniq<LogicalMergeUnits>(schedule, threads);
   SDB_ASSERT(!duckdb::LogicalPlanVerifier::VerifyAlways(*units).HasError());
   const bool completed = Execute(connection, std::move(units));
   return schedule->Result() && completed;

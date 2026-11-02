@@ -21,7 +21,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/notification.h>
-#include <absl/time/clock.h>
 
 #include <algorithm>
 #include <array>
@@ -30,10 +29,8 @@
 #include <duckdb.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <exception>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -45,7 +42,6 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
-#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -315,20 +311,6 @@ TEST_F(PipelineMergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
   EXPECT_EQ(before, Postings());
 }
 
-TEST_F(PipelineMergeExecutorTest, MergesKeepInsertionOrderOnOtherConnections) {
-  duckdb::Connection other{TestDb()};
-  ASSERT_TRUE(duckdb::Settings::Get<duckdb::PreserveInsertionOrderSetting>(
-    *other.context));
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, executor)));
-  EXPECT_TRUE(duckdb::Settings::Get<duckdb::PreserveInsertionOrderSetting>(
-    *other.context));
-  duckdb::Connection fresh{TestDb()};
-  EXPECT_TRUE(duckdb::Settings::Get<duckdb::PreserveInsertionOrderSetting>(
-    *fresh.context));
-}
-
 TEST_F(PipelineMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   const auto before = Rows();
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 1};
@@ -394,7 +376,9 @@ TEST_F(PipelineMergeExecutorTest, StopAtAnyPointFailsTheMerge) {
     if (!plan.Prepare(8)) {
       return false;
     }
-    EXPECT_TRUE(plan.PostingsPending());
+    EXPECT_TRUE(absl::c_any_of(plan.Units(), [](const irs::MergeUnit& unit) {
+      return unit.kind == irs::MergeUnitKind::TermRange;
+    }));
     irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
     return executor.Run(plan);
   };
@@ -475,10 +459,7 @@ TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
   irs::SegmentMeta meta;
   irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
                       nullptr, {},      nullptr, &spec};
-  ASSERT_TRUE(plan.Prepare(4));
-  ASSERT_TRUE(plan.OrderPending());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
-  EXPECT_THROW(executor.Run(plan), duckdb::InvalidInputException);
+  EXPECT_THROW(plan.Prepare(4), irs::SqlException);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -502,9 +483,7 @@ TEST_F(PipelineMergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
   irs::SegmentMeta meta;
   irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
                       nullptr, {},      nullptr, &spec};
-  ASSERT_TRUE(plan.Prepare(4));
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
-  EXPECT_THROW(executor.Run(plan), irs::SqlException);
+  EXPECT_THROW(plan.Prepare(4), irs::SqlException);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -519,122 +498,81 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
   irs::MergePlan plan{out,      doc_map, meta, nullptr,
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare(8));
-  ASSERT_TRUE(plan.PostingsPending());
-  ASSERT_FALSE(plan.TermRanges().empty());
-  EXPECT_LT(1, plan.TermRanges().front()->PartCount());
+  const auto units = plan.Units();
+  const auto part = absl::c_find_if(units, [](const irs::MergeUnit& unit) {
+    return unit.kind == irs::MergeUnitKind::TermRange;
+  });
+  ASSERT_NE(part, units.end());
+  EXPECT_LT(1, absl::c_count_if(units, [&](const irs::MergeUnit& unit) {
+              return unit.kind == irs::MergeUnitKind::TermRange &&
+                     unit.id == part->id;
+            }));
   irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
   ASSERT_TRUE(executor.Run(plan));
-  EXPECT_FALSE(plan.PostingsPending());
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
 }
 
-TEST_F(PipelineMergeExecutorTest, RangePartsAreFreedOnceTheirFieldIsWritten) {
-  const auto reader = _writer->GetSnapshot();
-  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
-  for (const auto& segment : reader) {
-    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
-  }
-  irs::MemoryDirectory out;
-  irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta, nullptr,
-                      TestDb(), nullptr, {},   nullptr};
-  ASSERT_TRUE(plan.Prepare(8));
-  ASSERT_FALSE(plan.TermRanges().empty());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  ASSERT_TRUE(executor.Run(plan));
-  for (const auto& range : plan.TermRanges()) {
-    for (const auto& part : range->Parts()) {
-      EXPECT_EQ(nullptr, part.doc);
-      EXPECT_EQ(nullptr, part.pos);
-      EXPECT_TRUE(part.terms.empty());
-    }
-    EXPECT_EQ(0, range->DocCount());
-  }
-}
-
-TEST_F(PipelineMergeExecutorTest, PostingsPieceIsReleasedByTheLastRangePart) {
-  if (!duckdb::FaultPoints::Arm("pause_postings_merge_finalize")) {
+TEST_F(PipelineMergeExecutorTest,
+       AFailedUnitStopsTheTermRangePartsStillRunning) {
+  if (!duckdb::FaultPoints::Arm("irs::MergeUnit")) {
     GTEST_SKIP() << "built without fault injection";
   }
+  duckdb::FaultPoints::Disarm("irs::MergeUnit");
   const absl::Cleanup remove = [] {
-    duckdb::FaultPoints::Disarm("pause_postings_merge_finalize");
-    duckdb::FaultPoints::Disarm("pause_postings_merge_finalize:release");
+    duckdb::FaultPoints::Disarm("irs::MergeUnit");
   };
   const auto reader = _writer->GetSnapshot();
   irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
   for (const auto& segment : reader) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
-  irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta, nullptr,
-                      TestDb(), nullptr, {},   nullptr};
-  ASSERT_TRUE(plan.Prepare(8));
-  ASSERT_FALSE(plan.TermRanges().empty());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  bool ok = false;
-  std::thread merge{[&] { ok = executor.Run(plan); }};
-  while (!duckdb::FaultPoints::Disarm("pause_postings_merge_finalize:parked")) {
-    absl::SleepFor(absl::Milliseconds(1));
-  }
-  EXPECT_FALSE(plan.PostingsPending());
-  duckdb::FaultPoints::Arm("pause_postings_merge_finalize:release");
-  merge.join();
-  EXPECT_TRUE(ok);
-}
-
-TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheTermRanges) {
-  if (!duckdb::FaultPoints::Arm("pause_merge_unit")) {
-    GTEST_SKIP() << "built without fault injection";
-  }
-  duckdb::FaultPoints::Arm("pause_postings_merge_sink");
-  const absl::Cleanup remove = [] {
-    for (const auto* point :
-         {"pause_merge_unit", "pause_postings_merge_sink",
-          "pause_postings_merge_sink:release", "pause_merge_unit_failed",
-          "pause_merge_unit_failed:release", "irs::MergeUnit"}) {
-      duckdb::FaultPoints::Disarm(point);
+  std::atomic<std::thread::id> watched;
+  size_t calls = 0;
+  absl::Notification inside;
+  absl::Notification failed;
+  const irs::MergeProgress progress = [&] {
+    if (std::this_thread::get_id() == watched.load() && ++calls == 1) {
+      inside.Notify();
+      failed.WaitForNotification();
     }
+    return true;
   };
-  const auto reader = _writer->GetSnapshot();
-  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
-  for (const auto& segment : reader) {
-    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
-  }
   irs::MemoryDirectory out;
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta, nullptr,
-                      TestDb(), nullptr, {},   nullptr};
+  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+                      TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare(8));
-  ASSERT_FALSE(plan.TermRanges().empty());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
-  std::exception_ptr failure;
-  std::thread merge{[&] {
-    try {
-      executor.Run(plan);
-    } catch (...) {
-      failure = std::current_exception();
-    }
+  irs::MergeSchedule schedule{plan};
+  const auto units = plan.Units();
+  const auto signal =
+    duckdb::make_shared_ptr<duckdb::InterruptDoneSignalState>();
+  const duckdb::InterruptState interrupt{
+    duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}};
+  std::vector<size_t> ready;
+  for (auto unit = schedule.Claim(interrupt); unit < units.size();
+       unit = schedule.Claim(interrupt)) {
+    ready.push_back(unit);
+  }
+  const auto part = absl::c_find_if(ready, [&](size_t unit) {
+    return units[unit].kind == irs::MergeUnitKind::TermRange;
+  });
+  ASSERT_NE(part, ready.end());
+  const auto running = *part;
+  ready.erase(part);
+  ASSERT_FALSE(ready.empty());
+  bool finished = true;
+  std::thread unit{[&] {
+    watched = std::this_thread::get_id();
+    finished = plan.RunUnit(running);
   }};
-  const auto await = [](const char* parked) {
-    while (!duckdb::FaultPoints::Disarm(parked)) {
-      absl::SleepFor(absl::Milliseconds(1));
-    }
-  };
-  await("pause_postings_merge_sink:parked");
+  inside.WaitForNotification();
   duckdb::FaultPoints::Arm("irs::MergeUnit");
-  duckdb::FaultPoints::Arm("pause_merge_unit_failed");
-  duckdb::FaultPoints::Disarm("pause_merge_unit");
-  await("pause_merge_unit_failed:parked");
-  duckdb::FaultPoints::Arm("pause_postings_merge_sink:release");
-  duckdb::FaultPoints::Arm("pause_merge_unit_failed:release");
-  merge.join();
-  EXPECT_TRUE(failure);
-  size_t left = 0;
-  for (const auto& range : plan.TermRanges()) {
-    left += range->PartsLeft();
-  }
-  EXPECT_LT(0, left);
+  schedule.Run(ready.front());
+  duckdb::FaultPoints::Disarm("irs::MergeUnit");
+  failed.Notify();
+  unit.join();
+  EXPECT_FALSE(finished);
+  EXPECT_THROW(schedule.Result(), irs::SqlException);
 }
 
 TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
@@ -666,7 +604,6 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   irs::MergePlan plan{out,      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare());
-  constexpr size_t kThreads = 8;
   irs::MergeSchedule schedule{plan};
   const auto units = plan.Units();
   const auto signal =
@@ -674,8 +611,8 @@ TEST_F(PipelineMergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
   const duckdb::InterruptState interrupt{
     duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}};
   std::vector<size_t> ready;
-  for (auto unit = schedule.Claim(kThreads, interrupt); unit < units.size();
-       unit = schedule.Claim(kThreads, interrupt)) {
+  for (auto unit = schedule.Claim(interrupt); unit < units.size();
+       unit = schedule.Claim(interrupt)) {
     ready.push_back(unit);
   }
   const auto column = absl::c_find_if(ready, [&](size_t unit) {

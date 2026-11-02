@@ -21,6 +21,7 @@
 #include "iresearch/index/merge/key_merge.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -28,6 +29,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <memory>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -145,22 +147,57 @@ class SegmentKeys final : public duckdb::PresortedMergeInput {
   std::span<const KeyColumn> _keys;
 };
 
-}  // namespace
+template<typename Work>
+class PartitionTask final : public duckdb::BaseExecutorTask {
+ public:
+  PartitionTask(duckdb::TaskExecutor& executor, std::atomic_size_t& next,
+                size_t count, const Work& work) noexcept
+    : BaseExecutorTask{executor}, _next{&next}, _count{count}, _work{&work} {}
 
-void KeyOrder::ThrowIncomplete() const {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("the order of a sorted merge of ", _doc_map.size(),
-                          " segments does not hold every live document once"));
+  void ExecuteTask() final {
+    for (auto partition = _next->fetch_add(1, std::memory_order_relaxed);
+         partition < _count && !executor.HasError();
+         partition = _next->fetch_add(1, std::memory_order_relaxed)) {
+      (*_work)(partition);
+    }
+  }
+
+ private:
+  std::atomic_size_t* _next;
+  size_t _count;
+  const Work* _work;
+};
+
+template<typename Work>
+void ForEachPartition(size_t count, duckdb::TaskScheduler* scheduler,
+                      size_t threads, const Work& work) {
+  const auto tasks = std::min(threads, count);
+  if (!scheduler || tasks < 2) {
+    for (size_t partition = 0; partition != count; ++partition) {
+      work(partition);
+    }
+    return;
+  }
+  std::atomic_size_t next{0};
+  duckdb::TaskExecutor executor{
+    *scheduler, scheduler->CreateAccount(duckdb::SchedulerClass::FOREGROUND)};
+  for (size_t task = 0; task != tasks; ++task) {
+    executor.ScheduleTask(
+      duckdb::make_uniq<PartitionTask<Work>>(executor, next, count, work));
+  }
+  executor.WorkOnTasks();
 }
 
-void KeyOrder::PlanParts() {
-  const auto count = static_cast<size_t>(_merge->PartitionCount());
+}  // namespace
+
+void KeyOrder::PlanParts(const duckdb::PresortedMerge& merge) {
+  const auto count = static_cast<size_t>(merge.PartitionCount());
   std::vector<uint64_t> live_in(count);
   for (size_t i = 0; i != _doc_map.size(); ++i) {
     const auto mask = MakeGenericDocsMask(Reader(i));
     for (size_t p = 0; p != count; ++p) {
-      const auto first = _merge->PartitionBegin(p, i);
-      const auto end = _merge->PartitionBegin(p + 1, i);
+      const auto first = merge.PartitionBegin(p, i);
+      const auto end = merge.PartitionBegin(p + 1, i);
       live_in[p] +=
         end - first -
         mask.CountIn(static_cast<doc_id_t>(first + doc_limits::min()),
@@ -196,8 +233,8 @@ void KeyOrder::ConcatOrder() {
   _order->Finish();
 }
 
-void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
-                       size_t threads) {
+bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
+                       duckdb::TaskScheduler* scheduler, size_t threads) {
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
   for (const auto& key : _spec.keys) {
@@ -227,70 +264,96 @@ void KeyOrder::Prepare(size_t partitions, duckdb::TaskScheduler* scheduler,
   _order.emplace(_doc_map.size(), rows, _doc_map.get_allocator().Manager());
   if (_keys.empty() || rows == 0) {
     ConcatOrder();
-    return;
+    return true;
   }
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
   for (const auto& input : _doc_map) {
     inputs.push_back(
       duckdb::make_shared_ptr<SegmentKeys>(*input.reader, _keys));
   }
-  _merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
-    std::move(types), std::move(modifiers), std::move(inputs));
-  _merge->Partition(partitions, false, scheduler, threads);
-  PlanParts();
+  duckdb::PresortedMerge merge{std::move(types), std::move(modifiers),
+                               std::move(inputs)};
+  merge.Partition(partitions, false, scheduler, threads);
+  PlanParts(merge);
+  std::atomic_bool stopped{false};
+  ForEachPartition(merge.PartitionCount(), scheduler, threads,
+                   [&](size_t partition) {
+                     if (!Expand(merge, partition, progress)) {
+                       stopped.store(true, std::memory_order_relaxed);
+                     }
+                   });
+  if (stopped.load(std::memory_order_relaxed)) {
+    return false;
+  }
+  Finish();
+  return true;
 }
 
-void KeyOrder::Expand(size_t partition,
-                      std::span<const duckdb::PresortedRun> runs) {
+bool KeyOrder::Expand(const duckdb::PresortedMerge& merge, size_t partition,
+                      const MergeProgress& progress) {
+  const auto state = merge.BeginMerge(partition);
+  duckdb::vector<duckdb::PresortedRun> runs;
+  while (!state->Done()) {
+    runs.clear();
+    duckdb::optional_idx unsorted;
+    if (!merge.Merge(*state, runs, STANDARD_VECTOR_SIZE, progress, unsorted)) {
+      if (unsorted.IsValid()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+          ERR_MSG("segment ", Reader(unsorted.GetIndex()).Meta().name,
+                  " is not sorted by the sort key of its merge"));
+      }
+      return false;
+    }
+    Place(merge, partition, runs);
+    if (!progress()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void KeyOrder::Place(const duckdb::PresortedMerge& merge, size_t partition,
+                     std::span<const duckdb::PresortedRun> runs) {
   SDB_ASSERT(partition < _parts.size());
   auto& part = _parts[partition];
   for (const auto& run : runs) {
-    if (run.input >= _doc_map.size()) {
-      part.failed = true;
-      return;
-    }
+    SDB_ASSERT(run.input < _doc_map.size());
     const auto input = static_cast<size_t>(run.input);
-    const auto first_row = _merge->PartitionBegin(partition, input);
-    const auto end_row = _merge->PartitionBegin(partition + 1, input);
-    if (run.begin < first_row || run.begin > end_row ||
-        run.count > end_row - run.begin) {
-      part.failed = true;
-      return;
-    }
+    SDB_ASSERT(merge.PartitionBegin(partition, input) <= run.begin);
+    SDB_ASSERT(run.begin + run.count <=
+               merge.PartitionBegin(partition + 1, input));
     auto& remap = _doc_map[input].remap;
     auto& span = part.spans[input];
     const auto begin = static_cast<doc_id_t>(run.begin + doc_limits::min());
     const auto end = static_cast<doc_id_t>(begin + run.count);
     auto mask = MakeGenericDocsMask(*_doc_map[input].reader);
-    const bool expanded = VisitLive(
-      mask, begin, end, [&](doc_id_t window, std::span<const uint32_t> live) {
-        for (const auto offset : live) {
-          const auto doc = static_cast<doc_id_t>(window + offset);
-          if (remap.id_map[doc] != doc_limits::eof()) {
-            return false;
-          }
-          _order->Set(part.next, input);
-          remap.id_map[doc] =
-            static_cast<doc_id_t>(part.next + doc_limits::min());
-          span.first = std::min(span.first, part.next);
-          span.last = part.next++;
-        }
-        return true;
-      });
-    if (!expanded) {
-      part.failed = true;
-      return;
-    }
+    VisitLive(mask, begin, end,
+              [&](doc_id_t window, std::span<const uint32_t> live) {
+                for (const auto offset : live) {
+                  const auto doc = static_cast<doc_id_t>(window + offset);
+                  SDB_ASSERT(remap.id_map[doc] == doc_limits::eof());
+                  _order->Set(part.next, input);
+                  remap.id_map[doc] =
+                    static_cast<doc_id_t>(part.next + doc_limits::min());
+                  span.first = std::min(span.first, part.next);
+                  span.last = part.next++;
+                }
+                return true;
+              });
   }
 }
 
 void KeyOrder::Finish() {
-  SDB_IF_FAILURE("irs::KeyOrder::Finish") { ThrowIncomplete(); }
+  SDB_IF_FAILURE("irs::KeyOrder::Finish") {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("the order of a sorted merge of ", _doc_map.size(),
+              " segments does not hold every live document once"));
+  }
   std::vector<Span> spans(_doc_map.size());
   for (const auto& part : _parts) {
-    if (part.failed || part.next != part.end) {
-      ThrowIncomplete();
-    }
+    SDB_ASSERT(part.next == part.end);
     for (size_t i = 0; i != spans.size(); ++i) {
       spans[i].first = std::min(spans[i].first, part.spans[i].first);
       spans[i].last = std::max(spans[i].last, part.spans[i].last);
@@ -302,7 +365,6 @@ void KeyOrder::Finish() {
       _isolated[i] = spans[i].first;
     }
   }
-  _merge.reset();
   _parts = {};
   _order->Finish();
 }

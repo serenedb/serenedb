@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/numeric/int128.h>
 
 #include <algorithm>
 #include <atomic>
@@ -75,6 +76,12 @@ constexpr uint64_t kPartsPerThread = 4;
 uint64_t EncodeCost(uint64_t bytes, uint64_t rows) {
   return bytes +
          static_cast<uint64_t>(static_cast<double>(rows) * kEncodeCostPerRow);
+}
+
+uint64_t Share(uint64_t total, uint64_t part, uint64_t whole) {
+  return whole == 0
+           ? 0
+           : static_cast<uint64_t>(absl::uint128{total} * part / whole);
 }
 
 void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
@@ -351,9 +358,26 @@ void MergePlan::PlanUnits() {
   for (const auto& input : _doc_map) {
     input_bytes += input.reader->Meta().byte_size;
   }
+  const uint64_t postings_bytes =
+    input_bytes > column_bytes ? input_bytes - column_bytes : 0;
+  uint64_t ranged_bytes = 0;
+  std::vector<size_t> parts;
+  for (const auto& range : _term_ranges) {
+    const auto bytes = Share(postings_bytes, range->Volume(), _term_volume);
+    ranged_bytes += bytes;
+    for (uint32_t part = 0; part != range->PartCount(); ++part) {
+      parts.push_back(AddUnit({
+        .kind = MergeUnitKind::TermRange,
+        .id = range->Field(),
+        .cost = bytes / range->PartCount(),
+        .part = part,
+      }));
+    }
+  }
   const auto postings = AddUnit({
     .kind = MergeUnitKind::Postings,
-    .cost = input_bytes > column_bytes ? input_bytes - column_bytes : 0,
+    .cost = postings_bytes - ranged_bytes + ranged_bytes / kCopyCostDivisor,
+    .deps = std::move(parts),
   });
   if (_ivf) {
     _units[postings].deps.push_back(last_ann);
@@ -384,6 +408,7 @@ void MergePlan::PlanTermRanges() {
         continue;
       }
       terms += reader->size();
+      _term_volume += reader->total_term_freq();
       inputs.push_back({.terms = reader, .remap = &input.remap});
     }
     const auto parts =
@@ -399,7 +424,6 @@ void MergePlan::PlanTermRanges() {
       {.norms = &*_norms, .scorer = _scorer, .doc_count = _segment.docs_count},
       _scheduler, _threads);
   }
-  _postings_pending = !_term_ranges.empty();
 }
 
 bool MergePlan::MergeColumn(const MergeUnit& unit) {
@@ -413,6 +437,13 @@ bool MergePlan::MergeColumn(const MergeUnit& unit) {
                                   *_col_writer, _progress)
            : _columns->CopyRange(unit.id, unit.part, range.input, range.begin,
                                  range.end, *_col_writer, _progress);
+}
+
+bool MergePlan::MergeTermRange(const MergeUnit& unit) {
+  const auto it = absl::c_find_if(
+    _term_ranges, [&](const auto& range) { return range->Field() == unit.id; });
+  SDB_ASSERT(it != _term_ranges.end());
+  return (*it)->MergePart(unit.part);
 }
 
 bool MergePlan::WriteColumnsFooter() {
@@ -512,7 +543,9 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
       threads > 1
         ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
         : 1;
-    _key_order->Prepare(partitions, _scheduler, threads);
+    if (!_key_order->Prepare(partitions, _progress, _scheduler, threads)) {
+      return false;
+    }
     _segment.docs_count = _key_order->Order().Rows();
   } else {
     doc_id_t base_id = doc_limits::min();
@@ -581,39 +614,8 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
     _norm_fields.push_back(id);
   }
   PlanTermRanges();
-  if (OrderPending()) {
-    _order_clock.emplace(_profile);
-  } else {
-    PlanUnits();
-  }
-  clock.Lap(MergeStep::Prepare);
-  return true;
-}
-
-bool MergePlan::ExpandOrder(size_t partition,
-                            std::span<const duckdb::PresortedRun> runs) {
-  SDB_ASSERT(OrderPending());
-  _key_order->Expand(partition, runs);
-  return _progress();
-}
-
-void MergePlan::FinishOrder() {
-  SDB_ASSERT(OrderPending());
-  _key_order->Finish();
   PlanUnits();
-  _order_clock->Lap(MergeStep::Prepare);
-}
-
-bool MergePlan::FinishPostings() {
-  _postings_pending = false;
-  uint64_t nanos = 0;
-  for (const auto& range : _term_ranges) {
-    if (!range->Done()) {
-      return false;
-    }
-    nanos += range->Nanos();
-  }
-  _profile.Add(MergeStep::Postings, nanos);
+  clock.Lap(MergeStep::Prepare);
   return true;
 }
 
@@ -658,6 +660,8 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::Ann:
       BuildAnn(work.id);
       return lap(MergeStep::Ann);
+    case MergeUnitKind::TermRange:
+      return MergeTermRange(work) && lap(MergeStep::Postings);
     case MergeUnitKind::Postings:
       return MergePostings(clock) && lap(MergeStep::Postings);
     case MergeUnitKind::Index:

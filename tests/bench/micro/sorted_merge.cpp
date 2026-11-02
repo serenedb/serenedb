@@ -612,53 +612,19 @@ BENCHMARK(BM_ReadKeys)
 void BM_KeyOrder(benchmark::State& state) {
   const auto& inputs = InputsOf(static_cast<Layout>(state.range(0)));
   const irs::SortSpec spec{{{.column = kKey}}};
-  uint64_t prepare_nanos = 0;
-  uint64_t merge_nanos = 0;
-  uint64_t finish_nanos = 0;
+  const irs::MergeProgress proceed = [] { return true; };
   for (auto _ : state) {
     irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
     for (const auto& segment : inputs.reader) {
       doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
     }
     irs::KeyOrder order{doc_map, spec};
-    const auto begin = std::chrono::steady_clock::now();
-    order.Prepare(1);
-    const auto prepared = std::chrono::steady_clock::now();
-    const auto merge = order.KeyMerge();
-    duckdb::vector<duckdb::PresortedRun> runs;
-    for (duckdb::idx_t part = 0; part != merge->PartitionCount(); ++part) {
-      const auto merge_state = merge->BeginMerge(part);
-      while (!merge_state->Done()) {
-        runs.clear();
-        duckdb::optional_idx unsorted;
-        if (!merge->Merge(
-              *merge_state, runs, STANDARD_VECTOR_SIZE, [] { return true; },
-              unsorted)) {
-          state.SkipWithError("merge failed");
-          return;
-        }
-        order.Expand(part, runs);
-      }
+    if (!order.Prepare(1, proceed)) {
+      state.SkipWithError("order failed");
+      return;
     }
-    const auto merged = std::chrono::steady_clock::now();
-    order.Finish();
-    const auto finished = std::chrono::steady_clock::now();
-    const auto nanos = [](auto from, auto to) {
-      return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(to - from)
-          .count());
-    };
-    prepare_nanos += nanos(begin, prepared);
-    merge_nanos += nanos(prepared, merged);
-    finish_nanos += nanos(merged, finished);
+    benchmark::DoNotOptimize(&order.Order());
   }
-  const auto per_iteration = [&](uint64_t nanos) {
-    return static_cast<double>(nanos) / 1e6 /
-           static_cast<double>(state.iterations());
-  };
-  state.counters["prepare"] = per_iteration(prepare_nanos);
-  state.counters["merge"] = per_iteration(merge_nanos);
-  state.counters["finish"] = per_iteration(finish_nanos);
 }
 
 BENCHMARK(BM_KeyOrder)

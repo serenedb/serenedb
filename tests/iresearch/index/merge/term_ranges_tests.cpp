@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -30,7 +31,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -131,6 +131,17 @@ class VectorPostings final : public irs::TermPostings {
   std::span<const irs::doc_id_t> _docs;
   size_t _at = 0;
 };
+
+absl::flat_hash_map<irs::field_id, size_t> TermRangeParts(
+  const irs::MergePlan& plan) {
+  absl::flat_hash_map<irs::field_id, size_t> parts;
+  for (const auto& unit : plan.Units()) {
+    if (unit.kind == irs::MergeUnitKind::TermRange) {
+      ++parts[unit.id];
+    }
+  }
+  return parts;
+}
 
 std::vector<irs::doc_id_t> Docs(size_t count, irs::doc_id_t step) {
   std::vector<irs::doc_id_t> docs;
@@ -438,14 +449,13 @@ TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
   const irs::BM25 bm25;
   auto plan = MakePlan(out, inputs, sorted ? &spec : nullptr, {}, &bm25);
   ASSERT_TRUE(plan.Prepare(threads));
-  ASSERT_TRUE(plan.PostingsPending());
-  ASSERT_FALSE(plan.TermRanges().empty());
-  for (const auto& range : plan.TermRanges()) {
-    EXPECT_LT(1, range->PartCount());
+  const auto parts = TermRangeParts(plan);
+  ASSERT_FALSE(parts.empty());
+  for (const auto& [field, count] : parts) {
+    EXPECT_LT(1, count) << field;
   }
   const ShuffledClaims shuffle{shuffled};
   ASSERT_TRUE(RunPlan(plan, threads));
-  EXPECT_FALSE(plan.PostingsPending());
   EXPECT_EQ("", MergedDifference(out, expected));
   const auto merged = irs::SegmentReaderImpl::Open(
     out, _meta, irs::tests::DefaultReaderOptions());
@@ -468,8 +478,7 @@ TEST_F(TermRangeMergeTest, OneThreadMergesTermsWithoutParts) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(1));
-  EXPECT_FALSE(plan.PostingsPending());
-  EXPECT_TRUE(plan.TermRanges().empty());
+  EXPECT_TRUE(TermRangeParts(plan).empty());
   ASSERT_TRUE(RunPlan(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
@@ -481,7 +490,7 @@ TEST_F(TermRangeMergeTest, SerialRunsMergeEveryPart) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(4));
-  ASSERT_TRUE(plan.PostingsPending());
+  ASSERT_FALSE(TermRangeParts(plan).empty());
   ASSERT_TRUE(RunPlan(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }

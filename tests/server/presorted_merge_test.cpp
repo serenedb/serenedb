@@ -27,12 +27,8 @@
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/appender.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <duckdb/parser/statement/logical_plan_statement.hpp>
-#include <iresearch/index/merge/logical_presorted_merge.hpp>
 #include <limits>
-#include <map>
 #include <random>
 #include <string>
 #include <string_view>
@@ -521,37 +517,6 @@ TEST_F(PresortedMergeTest, FailedReadStopsPartitionOnEveryThreadCount) {
         << e.what();
     }
   }
-}
-
-TEST_F(PresortedMergeTest, OperatorEmitsEveryPartitionOnSeveralThreads) {
-  const std::vector<Key> keys{{duckdb::LogicalType::VARCHAR},
-                              {duckdb::LogicalType::BIGINT}};
-  const auto inputs = SortEach(keys, RandomInputs(keys, 8, 3000, 40, 11));
-  const auto merge = MakeMerge(keys, inputs);
-  merge->Partition(8);
-  ASSERT_LT(1, merge->PartitionCount());
-  Exec("SET threads = 4");
-  auto root = duckdb::make_uniq<irs::LogicalPresortedMerge>(merge);
-  EXPECT_EQ("PRESORTED_MERGE", root->GetName());
-  EXPECT_FALSE(root->RequireOptimizer());
-  EXPECT_FALSE(root->SupportSerialization());
-  root->ResolveOperatorTypes();
-  const auto result = _con.Query(
-    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
-  ASSERT_FALSE(result->HasError()) << result->GetError();
-  std::map<idx_t, std::vector<duckdb::PresortedRun>> parts;
-  const auto rows = result->Collection().GetRows();
-  for (idx_t r = 0; r != rows.size(); ++r) {
-    parts[rows.GetValue(0, r).GetValue<uint64_t>()].push_back(
-      {rows.GetValue(1, r).GetValue<uint64_t>(),
-       rows.GetValue(2, r).GetValue<uint64_t>(),
-       rows.GetValue(3, r).GetValue<uint64_t>()});
-  }
-  std::vector<duckdb::PresortedRun> runs;
-  for (const auto& [partition, part] : parts) {
-    runs.insert(runs.end(), part.begin(), part.end());
-  }
-  EXPECT_EQ(Expected(keys, inputs), Expand(runs));
 }
 
 }  // namespace

@@ -31,6 +31,7 @@
 
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/types.hpp"
 
@@ -51,18 +52,9 @@ class KeyOrder {
   KeyOrder(const KeyOrder&) = delete;
   KeyOrder& operator=(const KeyOrder&) = delete;
 
-  void Prepare(size_t partitions, duckdb::TaskScheduler* scheduler = nullptr,
-               size_t threads = 1);
-
-  bool Pending() const noexcept { return static_cast<bool>(_merge); }
-
-  duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept {
-    return _merge;
-  }
-
-  void Expand(size_t partition, std::span<const duckdb::PresortedRun> runs);
-
-  void Finish();
+  [[nodiscard]] bool Prepare(size_t partitions, const MergeProgress& progress,
+                             duckdb::TaskScheduler* scheduler = nullptr,
+                             size_t threads = 1);
 
   uint64_t IsolatedBegin(size_t input) const noexcept {
     return _isolated[input];
@@ -80,18 +72,23 @@ class KeyOrder {
     uint64_t next = 0;
     uint64_t end = 0;
     std::vector<Span> spans;
-    bool failed = false;
   };
 
   const SubReader& Reader(size_t input) const {
     return *_doc_map[input].reader;
   }
 
-  [[noreturn]] void ThrowIncomplete() const;
-
-  void PlanParts();
+  void PlanParts(const duckdb::PresortedMerge& merge);
 
   void ConcatOrder();
+
+  bool Expand(const duckdb::PresortedMerge& merge, size_t partition,
+              const MergeProgress& progress);
+
+  void Place(const duckdb::PresortedMerge& merge, size_t partition,
+             std::span<const duckdb::PresortedRun> runs);
+
+  void Finish();
 
   MergeDocMap& _doc_map;
   const SortSpec& _spec;
@@ -99,7 +96,6 @@ class KeyOrder {
   std::vector<uint64_t> _live;
   std::vector<uint64_t> _isolated;
   std::optional<MergeOrder> _order;
-  duckdb::shared_ptr<duckdb::PresortedMerge> _merge;
   std::vector<Part> _parts;
 };
 

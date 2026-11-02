@@ -26,7 +26,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/common/sorting/presorted_merge.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -70,6 +69,7 @@ enum class MergeUnitKind : uint8_t {
   ColumnCopy,
   ColumnsFooter,
   Ann,
+  TermRange,
   Postings,
   Index,
 };
@@ -97,27 +97,6 @@ class MergePlan {
   MergePlan& operator=(const MergePlan&) = delete;
 
   bool Prepare(size_t threads = 1, duckdb::TaskScheduler* scheduler = nullptr);
-
-  bool OrderPending() const noexcept {
-    return _key_order && _key_order->Pending();
-  }
-
-  duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept {
-    return OrderPending() ? _key_order->KeyMerge() : nullptr;
-  }
-
-  bool ExpandOrder(size_t partition,
-                   std::span<const duckdb::PresortedRun> runs);
-
-  void FinishOrder();
-
-  bool PostingsPending() const noexcept { return _postings_pending; }
-
-  std::span<const std::unique_ptr<TermRangeMerge>> TermRanges() const noexcept {
-    return _term_ranges;
-  }
-
-  bool FinishPostings();
 
   std::span<const MergeUnit> Units() const noexcept { return _units; }
 
@@ -169,6 +148,8 @@ class MergePlan {
 
   bool MergeColumn(const MergeUnit& unit);
 
+  bool MergeTermRange(const MergeUnit& unit);
+
   bool WriteColumnsFooter();
 
   void BuildAnn(field_id column);
@@ -193,7 +174,6 @@ class MergePlan {
   std::chrono::steady_clock::time_point _started =
     std::chrono::steady_clock::now();
   MergeProfile _profile;
-  std::optional<MergeStepClock> _order_clock;
   IndexFeatures _index_features{IndexFeatures::None};
   absl::flat_hash_map<field_id, IndexFeatures> _field_meta_map;
   std::unique_ptr<KeyOrder> _key_order;
@@ -213,7 +193,7 @@ class MergePlan {
   std::optional<ReadContext> _ivf_ctx;
   std::vector<const BasicTermReader*> _cluster_readers;
   std::vector<std::unique_ptr<TermRangeMerge>> _term_ranges;
-  bool _postings_pending = false;
+  uint64_t _term_volume = 0;
 };
 
 }  // namespace irs

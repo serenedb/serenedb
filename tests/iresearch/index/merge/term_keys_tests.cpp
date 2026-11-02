@@ -415,6 +415,34 @@ TEST(ByteKeysTest, UnsortedBytesAreReported) {
   EXPECT_EQ(0, unsorted.GetIndex());
 }
 
+TEST(ByteKeysTest, TermRunsStopAtUnsortedTermsAndAtAStop) {
+  for (const bool sorted : {true, false}) {
+    SCOPED_TRACE(sorted);
+    duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> sources;
+    sources.emplace_back(duckdb::make_shared_ptr<ByteKeys>(
+      sorted ? std::vector<std::string>{"a", "b"}
+             : std::vector<std::string>{"b", "a"}));
+    sources.emplace_back(
+      duckdb::make_shared_ptr<ByteKeys>(std::vector<std::string>{"a"}));
+    duckdb::PresortedMerge merge{std::move(sources)};
+    merge.Partition(1);
+    duckdb::vector<duckdb::PresortedRun> runs{
+      {.input = 7, .begin = 7, .count = 7}};
+    const auto stopped = merge.BeginMerge(0);
+    EXPECT_FALSE(
+      irs::NextTermRuns(merge, *stopped, runs, [] { return false; }, kIdField));
+    const auto state = merge.BeginMerge(0);
+    EXPECT_EQ(sorted, irs::NextTermRuns(
+                        merge, *state, runs, [] { return true; }, kIdField));
+    if (sorted) {
+      EXPECT_EQ(3, absl::c_accumulate(runs, duckdb::idx_t{0},
+                                      [](duckdb::idx_t rows, const auto& run) {
+                                        return rows + run.count;
+                                      }));
+    }
+  }
+}
+
 class TermMergeTest : public TermKeysTest,
                       public ::testing::WithParamInterface<size_t> {};
 

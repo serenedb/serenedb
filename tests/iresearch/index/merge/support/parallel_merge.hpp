@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstddef>
-#include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
 
@@ -30,10 +29,6 @@ namespace tests::merge {
 irs::PipelineMergeExecutor MakeExecutor(size_t threads = 1);
 
 bool RunPlan(irs::MergePlan& plan, size_t threads = 1);
-
-bool RunOrder(irs::MergePlan& plan);
-
-bool ExpandOrder(irs::KeyOrder& order);
 
 class ShuffledClaims {
  public:

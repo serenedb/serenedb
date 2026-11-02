@@ -18,17 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/parallel/task.hpp>
 #include <functional>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_schedule.hpp>
-#include <iresearch/index/merge/term_ranges.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -49,7 +48,6 @@ using irs::MergeUnitKind;
 
 constexpr size_t kNoUnit = irs::MergeSchedule::kNoUnit;
 constexpr size_t kFinished = irs::MergeSchedule::kFinished;
-constexpr size_t kThreads = 64;
 constexpr size_t kRangeThreads = 2;
 constexpr irs::field_id kHnswColumn = kFirstColumn + 1;
 constexpr irs::field_id kIvfColumn = kFirstColumn + 2;
@@ -142,8 +140,8 @@ class MergeScheduleTest : public ::testing::Test {
     return FirstDifference(ExpectedMerge(_inputs), Dump(*merged));
   }
 
-  size_t Claim(irs::MergeSchedule& schedule, size_t threads = kThreads) {
-    return schedule.Claim(threads, _interrupt);
+  size_t Claim(irs::MergeSchedule& schedule) {
+    return schedule.Claim(_interrupt);
   }
 
   std::vector<size_t> ClaimAll(irs::MergeSchedule& schedule) {
@@ -189,38 +187,15 @@ size_t Find(const irs::MergePlan& plan, MergeUnitKind kind,
   return static_cast<size_t>(it - units.begin());
 }
 
-bool MergePart(irs::TermRangeMerge& range, size_t part) {
-  range.BeginPart(part);
-  const auto& merge = *range.KeyMerge();
-  const auto state = merge.BeginMerge(part);
-  duckdb::vector<duckdb::PresortedRun> runs;
-  while (!state->Done()) {
-    runs.clear();
-    duckdb::optional_idx unsorted;
-    if (!merge.Merge(
-          *state, runs, STANDARD_VECTOR_SIZE, [] { return true; }, unsorted)) {
-      return false;
-    }
-    if (!range.Consume(part, runs)) {
-      break;
+std::vector<size_t> TermRangeParts(const irs::MergePlan& plan) {
+  std::vector<size_t> parts;
+  const auto units = plan.Units();
+  for (size_t unit = 0; unit != units.size(); ++unit) {
+    if (units[unit].kind == MergeUnitKind::TermRange) {
+      parts.push_back(unit);
     }
   }
-  return range.FinishPart(part);
-}
-
-bool MergeRanges(const irs::MergePlan& plan, irs::MergeSchedule& schedule) {
-  for (const auto& range : plan.TermRanges()) {
-    for (size_t part = 0; part != range->PartCount(); ++part) {
-      const auto left = range->PartsLeft();
-      if (!MergePart(*range, part)) {
-        return false;
-      }
-      if (range->PartsLeft() != left) {
-        schedule.PartDone();
-      }
-    }
-  }
-  return true;
+  return parts;
 }
 
 TEST_F(MergeScheduleTest, NormsRunFirstThenColumnsBesidePostings) {
@@ -432,26 +407,34 @@ TEST_F(MergeScheduleTest, StopWakesTheBlockedClaimsAndEndsThem) {
   EXPECT_EQ(kFinished, Claim(schedule));
 }
 
-TEST_F(MergeScheduleRangesTest, HeldUnitWaitsForItsRelease) {
+TEST_F(MergeScheduleRangesTest, PostingsWaitForEveryTermRangePart) {
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, _plain, kRangeThreads);
-  ASSERT_TRUE(plan->PostingsPending());
   const auto units = plan->Units();
+  const auto parts = TermRangeParts(*plan);
+  ASSERT_LT(1, parts.size());
   const auto postings = Find(*plan, MergeUnitKind::Postings);
   const auto index = Find(*plan, MergeUnitKind::Index);
-  ASSERT_TRUE(units[postings].deps.empty());
+  EXPECT_EQ(parts, units[postings].deps);
+  for (const auto part : parts) {
+    EXPECT_TRUE(units[part].deps.empty());
+    EXPECT_LT(0, units[part].cost);
+  }
   irs::MergeSchedule schedule{*plan};
-  size_t finished = 0;
+  size_t held = kNoUnit;
   for (auto unit = Claim(schedule); unit < units.size();
        unit = Claim(schedule)) {
     ASSERT_NE(postings, unit);
     ASSERT_NE(index, unit);
+    if (held == kNoUnit && units[unit].kind == MergeUnitKind::TermRange) {
+      held = unit;
+      continue;
+    }
     ASSERT_TRUE(schedule.Run(unit));
-    ++finished;
   }
-  EXPECT_EQ(units.size() - 2, finished);
+  ASSERT_NE(kNoUnit, held);
   EXPECT_EQ(kNoUnit, Claim(schedule));
-  ASSERT_TRUE(MergeRanges(*plan, schedule));
+  ASSERT_TRUE(schedule.Run(held));
   ASSERT_EQ(postings, Claim(schedule));
   EXPECT_EQ(kNoUnit, Claim(schedule));
   ASSERT_TRUE(schedule.Run(postings));
@@ -459,17 +442,20 @@ TEST_F(MergeScheduleRangesTest, HeldUnitWaitsForItsRelease) {
   ASSERT_TRUE(schedule.Run(index));
   EXPECT_EQ(kFinished, Claim(schedule));
   EXPECT_TRUE(schedule.Result());
+  EXPECT_EQ("", MergedDifference(out));
 }
 
-TEST_F(MergeScheduleRangesTest, ReleasedUnitStillWaitsForItsDependencies) {
+TEST_F(MergeScheduleRangesTest, PostingsWaitForTheIvfBuildAfterTheirParts) {
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, _vectors, kRangeThreads);
-  ASSERT_TRUE(plan->PostingsPending());
   const auto units = plan->Units();
+  auto deps = TermRangeParts(*plan);
+  ASSERT_FALSE(deps.empty());
+  const auto parts = deps.size();
   const auto postings = Find(*plan, MergeUnitKind::Postings);
   const auto ivf = Find(*plan, MergeUnitKind::Ann, kIvfColumn);
-  ASSERT_TRUE(
-    std::ranges::equal(std::vector<size_t>{ivf}, units[postings].deps));
+  deps.push_back(ivf);
+  EXPECT_EQ(deps, units[postings].deps);
   if (!duckdb::FaultPoints::Arm("irs::MergeUnit::Skip")) {
     GTEST_SKIP() << "built without fault injection";
   }
@@ -477,20 +463,25 @@ TEST_F(MergeScheduleRangesTest, ReleasedUnitStillWaitsForItsDependencies) {
     duckdb::FaultPoints::Disarm("irs::MergeUnit::Skip");
   };
   irs::MergeSchedule schedule{*plan};
-  ASSERT_TRUE(MergeRanges(*plan, schedule));
-  while (true) {
-    const auto unit = Claim(schedule);
-    ASSERT_LT(unit, units.size());
+  bool ivf_claimed = false;
+  size_t parts_run = 0;
+  for (auto unit = Claim(schedule); unit < units.size();
+       unit = Claim(schedule)) {
     ASSERT_NE(postings, unit);
-    ASSERT_TRUE(schedule.Run(unit));
     if (unit == ivf) {
-      break;
+      ivf_claimed = true;
+      continue;
     }
+    parts_run += units[unit].kind == MergeUnitKind::TermRange;
+    ASSERT_TRUE(schedule.Run(unit));
   }
+  ASSERT_TRUE(ivf_claimed);
+  EXPECT_EQ(parts, parts_run);
+  ASSERT_TRUE(schedule.Run(ivf));
   EXPECT_EQ(postings, Claim(schedule));
 }
 
-TEST_F(MergeScheduleRangesTest, FailingTheScheduleStopsTheOthers) {
+TEST_F(MergeScheduleRangesTest, AFailedUnitStopsTheTermRangeParts) {
   if (!duckdb::FaultPoints::Arm("irs::MergeUnit")) {
     GTEST_SKIP() << "built without fault injection";
   }
@@ -500,142 +491,51 @@ TEST_F(MergeScheduleRangesTest, FailingTheScheduleStopsTheOthers) {
   };
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, _plain, kRangeThreads);
-  ASSERT_TRUE(plan->PostingsPending());
-  irs::MergeSchedule schedule{*plan};
   const auto units = plan->Units();
-  while (true) {
-    const auto unit = Claim(schedule);
-    ASSERT_LT(unit, units.size());
-    ASSERT_TRUE(schedule.Run(unit));
-    if (units[unit + 1].kind != MergeUnitKind::Norms) {
-      break;
-    }
-  }
-  const auto running = Claim(schedule);
-  const auto failing = Claim(schedule);
-  ASSERT_LT(running, units.size());
-  ASSERT_LT(failing, units.size());
-  size_t parts = 0;
-  for (const auto& range : plan->TermRanges()) {
-    parts += range->PartsLeft();
-    for (size_t part = 0; part != range->PartCount(); ++part) {
-      ASSERT_TRUE(MergePart(*range, part));
-    }
-  }
+  irs::MergeSchedule schedule{*plan};
+  auto claimed = ClaimAll(schedule);
+  const auto failing = absl::c_find_if(claimed, [&](size_t unit) {
+    return units[unit].kind != MergeUnitKind::TermRange;
+  });
+  ASSERT_NE(claimed.end(), failing);
   duckdb::FaultPoints::Arm("irs::MergeUnit");
-  EXPECT_FALSE(schedule.Run(failing));
+  EXPECT_FALSE(schedule.Run(*failing));
   duckdb::FaultPoints::Disarm("irs::MergeUnit");
+  claimed.erase(failing);
   EXPECT_THROW(schedule.Result(), irs::SqlException);
   EXPECT_EQ(kNoUnit, Claim(schedule));
-  for (size_t part = 0; part != parts; ++part) {
-    schedule.PartDone();
+  ASSERT_LT(0, absl::c_count_if(claimed, [&](size_t unit) {
+              return units[unit].kind == MergeUnitKind::TermRange;
+            }));
+  for (const auto unit : claimed) {
+    EXPECT_FALSE(schedule.Run(unit));
   }
-  EXPECT_EQ(kNoUnit, Claim(schedule));
-  EXPECT_FALSE(schedule.Run(running));
   EXPECT_EQ(kFinished, Claim(schedule));
   EXPECT_THROW(schedule.Result(), irs::SqlException);
-}
-
-TEST_F(MergeScheduleRangesTest, UnitsLeaveThreadsToUnfinishedTermRanges) {
-  irs::MemoryDirectory out;
-  const auto plan = MakePlan(out, _plain, kRangeThreads);
-  ASSERT_EQ(1, plan->TermRanges().size());
-  auto& range = *plan->TermRanges().front();
-  const auto parts = range.PartCount();
-  ASSERT_LT(1, parts);
-  ASSERT_EQ(parts, range.PartsLeft());
-  const auto units = plan->Units();
-  irs::MergeSchedule schedule{*plan};
-  const auto claims = [&](size_t threads) {
-    const auto unit = Claim(schedule, threads);
-    return unit < units.size() && schedule.Run(unit);
-  };
-  EXPECT_TRUE(claims(1));
-  EXPECT_TRUE(claims(parts));
-  const auto unit = Claim(schedule, 1);
-  ASSERT_LT(unit, units.size());
-  ASSERT_EQ(MergeUnitKind::Column, units[unit].kind);
-  EXPECT_EQ(kNoUnit, Claim(schedule, parts));
-  EXPECT_EQ(kNoUnit, Claim(schedule, parts + 1));
-  EXPECT_TRUE(claims(parts + 2));
-  EXPECT_TRUE(_waker->Woken());
-  EXPECT_EQ(kNoUnit, Claim(schedule, parts));
-  ASSERT_TRUE(MergePart(range, 0));
-  schedule.PartDone();
-  EXPECT_TRUE(_waker->Woken());
-  EXPECT_EQ(parts - 1, range.PartsLeft());
-  EXPECT_EQ(kNoUnit, Claim(schedule, parts));
-  EXPECT_TRUE(claims(parts + 1));
-  for (size_t part = 1; part + 1 < parts; ++part) {
-    ASSERT_TRUE(MergePart(range, part));
-    schedule.PartDone();
-  }
-  EXPECT_EQ(1, range.PartsLeft());
-  EXPECT_EQ(kNoUnit, Claim(schedule, 1));
-  EXPECT_EQ(kNoUnit, Claim(schedule, 2));
-  EXPECT_TRUE(claims(3));
-  ASSERT_TRUE(MergePart(range, parts - 1));
-  schedule.PartDone();
-  EXPECT_EQ(0, range.PartsLeft());
-  EXPECT_TRUE(claims(1));
-  ASSERT_TRUE(schedule.Run(unit));
-  for (auto next = Claim(schedule, 1); next < units.size();
-       next = Claim(schedule, 1)) {
-    ASSERT_TRUE(schedule.Run(next));
-  }
-  EXPECT_EQ(kFinished, Claim(schedule, 1));
-  EXPECT_TRUE(schedule.Result());
 }
 
 TEST_F(MergeScheduleRangesTest, TheLastPartWakesTheBlockedClaims) {
   irs::MemoryDirectory out;
   const auto plan = MakePlan(out, _plain, kRangeThreads);
-  ASSERT_EQ(1, plan->TermRanges().size());
-  auto& range = *plan->TermRanges().front();
-  const auto parts = range.PartCount();
-  ASSERT_LT(1, parts);
-  ASSERT_EQ(parts, range.PartsLeft());
   const auto units = plan->Units();
   irs::MergeSchedule schedule{*plan};
+  std::vector<size_t> parts;
   for (auto unit = Claim(schedule); unit < units.size();
        unit = Claim(schedule)) {
+    if (units[unit].kind == MergeUnitKind::TermRange) {
+      parts.push_back(unit);
+      continue;
+    }
     ASSERT_TRUE(schedule.Run(unit));
   }
-  for (size_t part = 0; part + 1 < parts; ++part) {
-    ASSERT_TRUE(MergePart(range, part));
-    schedule.PartDone();
+  ASSERT_LT(1, parts.size());
+  for (size_t i = 0; i + 1 < parts.size(); ++i) {
+    ASSERT_TRUE(schedule.Run(parts[i]));
     EXPECT_FALSE(_waker->Woken());
   }
-  ASSERT_TRUE(MergePart(range, parts - 1));
-  schedule.PartDone();
+  ASSERT_TRUE(schedule.Run(parts.back()));
   EXPECT_TRUE(_waker->Woken());
   EXPECT_EQ(Find(*plan, MergeUnitKind::Postings), Claim(schedule));
-}
-
-TEST_F(MergeScheduleRangesTest, AnUnfinishedPartFailsTheScheduleAtTheLastPart) {
-  irs::MemoryDirectory out;
-  const auto plan = MakePlan(out, _plain, kRangeThreads);
-  ASSERT_EQ(1, plan->TermRanges().size());
-  auto& range = *plan->TermRanges().front();
-  const auto parts = range.PartCount();
-  ASSERT_LT(1, parts);
-  ASSERT_EQ(parts, range.PartsLeft());
-  const auto units = plan->Units();
-  irs::MergeSchedule schedule{*plan};
-  for (auto unit = Claim(schedule); unit < units.size();
-       unit = Claim(schedule)) {
-    ASSERT_TRUE(schedule.Run(unit));
-  }
-  for (size_t part = 1; part < parts; ++part) {
-    ASSERT_TRUE(MergePart(range, part));
-    schedule.PartDone();
-  }
-  EXPECT_FALSE(_waker->Woken());
-  schedule.PartDone();
-  EXPECT_TRUE(_waker->Woken());
-  EXPECT_EQ(1, range.PartsLeft());
-  EXPECT_EQ(kFinished, Claim(schedule));
-  EXPECT_FALSE(schedule.Result());
 }
 
 TEST_F(MergeScheduleTest, ThreadedMergesMatchTheInputs) {

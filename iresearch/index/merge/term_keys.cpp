@@ -26,6 +26,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 
 #include "iresearch/formats/term_reader.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -131,6 +132,22 @@ void TermKeys::SeekBefore(SeekTermIterator& it, uint64_t row) const {
     SDB_ENSURE(more, "TermKeys: a term dictionary of ", Count(),
                " terms ends after ", next);
   }
+}
+
+bool NextTermRuns(const duckdb::PresortedMerge& merge,
+                  duckdb::PresortedMergeState& state,
+                  duckdb::vector<duckdb::PresortedRun>& runs,
+                  const MergeProgress& progress, field_id field) {
+  runs.clear();
+  duckdb::optional_idx unsorted;
+  if (merge.Merge(state, runs, STANDARD_VECTOR_SIZE, progress, unsorted)) {
+    return true;
+  }
+  if (unsorted.IsValid()) {
+    SDB_ERROR(IRESEARCH, "Terms of field ", field, " in merge input ",
+              unsorted.GetIndex(), " are not sorted");
+  }
+  return false;
 }
 
 }  // namespace irs

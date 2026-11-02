@@ -26,7 +26,6 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <memory>
-#include <span>
 #include <vector>
 
 #include "iresearch/formats/index/term_parts.hpp"
@@ -66,24 +65,16 @@ class TermRangeMerge {
 
   field_id Field() const noexcept { return _field; }
 
+  uint64_t Volume() const;
+
   void Partition(size_t parts, const Target& target,
                  duckdb::TaskScheduler* scheduler, size_t threads);
 
   size_t PartCount() const noexcept { return _parts.size(); }
 
-  const duckdb::shared_ptr<duckdb::PresortedMerge>& KeyMerge() const noexcept {
-    return _merge;
-  }
-
-  void BeginPart(size_t part);
-
-  bool Consume(size_t part, std::span<const duckdb::PresortedRun> runs);
-
-  bool FinishPart(size_t part);
+  bool MergePart(size_t part);
 
   bool Done() const noexcept;
-
-  size_t PartsLeft() const noexcept;
 
   std::vector<TermPart> Parts() const;
 
@@ -91,16 +82,17 @@ class TermRangeMerge {
 
   uint64_t DocCount() const noexcept;
 
-  uint64_t Nanos() const noexcept;
-
  private:
   struct Part;
+
+  template<typename Postings>
+  bool WritePart(Part& part, size_t index);
 
   field_id _field;
   FieldProperties _props;
   std::vector<Input> _inputs;
   std::vector<duckdb::shared_ptr<TermKeys>> _keys;
-  duckdb::shared_ptr<duckdb::PresortedMerge> _merge;
+  duckdb::PresortedMerge _merge;
   std::vector<std::unique_ptr<Part>> _parts;
   Target _target{};
   const MergeProgress* _progress;

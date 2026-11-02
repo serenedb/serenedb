@@ -27,6 +27,8 @@
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <limits>
 
+#include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -61,5 +63,10 @@ class TermKeys final : public duckdb::PresortedMergeInput {
   mutable absl::Mutex _mutex;
   mutable std::deque<bstring> _anchors;
 };
+
+bool NextTermRuns(const duckdb::PresortedMerge& merge,
+                  duckdb::PresortedMergeState& state,
+                  duckdb::vector<duckdb::PresortedRun>& runs,
+                  const MergeProgress& progress, field_id field);
 
 }  // namespace irs

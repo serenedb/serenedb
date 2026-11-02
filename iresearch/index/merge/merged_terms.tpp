@@ -24,7 +24,7 @@
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/merge/merged_terms.hpp"
-#include "iresearch/utils/log.hpp"
+#include "iresearch/index/merge/term_keys.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -56,15 +56,8 @@ bool CompoundTermIterator<Postings>::Refill() {
   if (_merge_state->Done()) {
     return false;
   }
-  _runs.clear();
   _run = 0;
-  duckdb::optional_idx unsorted;
-  if (!_merge->Merge(*_merge_state, _runs, STANDARD_VECTOR_SIZE, *_proceed,
-                     unsorted)) {
-    if (unsorted.IsValid()) {
-      SDB_ERROR(IRESEARCH, "Terms of field ", Meta().id, " in merge input ",
-                unsorted.GetIndex(), " are not sorted");
-    }
+  if (!NextTermRuns(*_merge, *_merge_state, _runs, *_proceed, Meta().id)) {
     _failed = true;
     return false;
   }

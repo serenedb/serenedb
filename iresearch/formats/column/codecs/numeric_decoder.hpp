@@ -232,11 +232,11 @@ class FrameDecoder {
       return false;
     }
     const auto f = FrameOf(row);
-    const auto m = Meta(f);
-    const auto at = static_cast<uint32_t>(row - m.frame.first_entry);
+    const auto at = static_cast<uint32_t>(
+      row - (f == _source_frame ? _source_first : FirstRow(f)));
     const size_t need = (size_t{at} + 1) * _h.stored;
     if (f != _source_frame || need > _source_len) {
-      OpenSource(f, m, need, false);
+      OpenSource(f, Meta(f), need, false);
     }
     if (_h.transform != NumericTransform::Delta) {
       out = Item(_source, at);
@@ -246,7 +246,7 @@ class FrameDecoder {
       _summed = 0;
     }
     if (_summed == 0) {
-      _sum = static_cast<U>(m.base);
+      _sum = _source_base;
     }
     _sum = numeric::WidenPrefixSum<false>(
       _source + size_t{_summed} * _h.stored, size_t{at} + 1 - _summed,
@@ -261,6 +261,8 @@ class FrameDecoder {
     const bool prefix =
       _lz4 && f != _source_frame && need < m.frame.raw_len;
     _summed = 0;
+    _source_first = m.frame.first_entry;
+    _source_base = static_cast<U>(m.base);
     _source_len = m.frame.raw_len;
     _source_held.reset();
     if (m.frame.comp_len == m.frame.raw_len) {
@@ -824,6 +826,8 @@ class FrameDecoder {
   size_t _source_len = 0;
   const uint8_t* _source = nullptr;
   duckdb::shared_ptr<DecodedFrame> _source_held;
+  uint64_t _source_first = 0;
+  U _source_base = 0;
   uint32_t _summed = 0;
   U _sum = 0;
   U _scale = 0;

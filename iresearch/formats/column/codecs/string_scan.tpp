@@ -201,12 +201,12 @@ struct EntryFrames {
            static_cast<uint64_t>(header.entry_count) * (sizeof(string_t) + 1);
   }
 
-  void ReferenceHeap(duckdb::Vector& result) const {
-    duckdb::StringVector::AddAuxiliaryData(
-      result, duckdb::ImmutableStrings::Reference(
-                dictionary->data.GetBufferRef()->GetAuxiliaryData()));
+  void ReferenceHeap(duckdb::Vector& result) {
+    ReferenceOnce(heap_reference,
+                  dictionary->data.GetBufferRef()->GetAuxiliaryData(), result);
   }
 
+  HeapReference heap_reference;
   duckdb::BufferHandle handle;
   data_ptr_t base;
   Header header;
@@ -266,6 +266,7 @@ struct FetchFrames {
   PackedReader lengths{nullptr, 0};
   ScratchVector<EntryAt> order;
   duckdb::shared_ptr<DecodedDictionary> decoded;
+  HeapReference heap_reference;
   typename Leaf::Fetch leaf;
 };
 
@@ -349,7 +350,8 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     }
     if (frames.decoded) {
       const EntryAt one{.entry = *entry, .at = at};
-      EmitDecoded(*frames.decoded, std::span<const EntryAt>{&one, 1}, result);
+      EmitDecoded(*frames.decoded, std::span<const EntryAt>{&one, 1}, result,
+                  frames.heap_reference);
       return;
     }
     frames.Emit(segment, base, *entry, result, at, false);
@@ -364,13 +366,13 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     frames.decoded = DecodeWhole<Scan>(segment);
   }
   if (frames.decoded) {
-    EmitDecoded(*frames.decoded, order, result);
+    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
     return;
   }
   const bool batched = order.size() > 1;
   if (batched && fetch.PlanBatch(base)) {
     frames.decoded = DecodeWhole<Scan>(segment);
-    EmitDecoded(*frames.decoded, order, result);
+    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
     return;
   }
   for (size_t i = 0; i < order.size(); ++i) {
@@ -378,7 +380,8 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     if (fetch.Whole()) {
       frames.decoded = DecodeWhole<Scan>(segment);
       EmitDecoded(*frames.decoded,
-                  std::span<const EntryAt>{order}.subspan(i + 1), result);
+                  std::span<const EntryAt>{order}.subspan(i + 1), result,
+                  frames.heap_reference);
       return;
     }
   }

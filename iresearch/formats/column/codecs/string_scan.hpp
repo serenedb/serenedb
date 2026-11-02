@@ -131,8 +131,18 @@ struct EntryAt {
 uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
                       std::span<const EntryAt> order);
 
+struct HeapReference {
+  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> source;
+  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> target;
+};
+
+void ReferenceOnce(HeapReference& reference,
+                   const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& source,
+                   duckdb::Vector& result);
+
 void EmitDecoded(const DecodedDictionary& decoded,
-                 std::span<const EntryAt> order, duckdb::Vector& result);
+                 std::span<const EntryAt> order, duckdb::Vector& result,
+                 HeapReference& reference);
 
 duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   duckdb::QueryContext, duckdb::ColumnSegment& segment);

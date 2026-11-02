@@ -170,12 +170,26 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
   return bytes;
 }
 
-void EmitDecoded(const DecodedDictionary& decoded,
-                 std::span<const EntryAt> order, duckdb::Vector& result) {
-  const auto& dictionary = decoded.Dictionary()->data;
+void ReferenceOnce(HeapReference& reference,
+                   const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& source,
+                   duckdb::Vector& result) {
+  const auto& target = result.GetBufferRef()->GetAuxiliaryData();
+  if (target && target.get() == reference.target.lock().get() &&
+      source.get() == reference.source.lock().get()) {
+    return;
+  }
   duckdb::StringVector::AddAuxiliaryData(
-    result, duckdb::ImmutableStrings::Reference(
-              dictionary.GetBufferRef()->GetAuxiliaryData()));
+    result, duckdb::ImmutableStrings::Reference(source));
+  reference.target = result.GetBufferRef()->GetAuxiliaryData();
+  reference.source = source;
+}
+
+void EmitDecoded(const DecodedDictionary& decoded,
+                 std::span<const EntryAt> order, duckdb::Vector& result,
+                 HeapReference& reference) {
+  const auto& dictionary = decoded.Dictionary()->data;
+  ReferenceOnce(reference, dictionary.GetBufferRef()->GetAuxiliaryData(),
+                result);
   const auto* values = duckdb::FlatVector::GetData<string_t>(dictionary);
   auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
   for (size_t i = 0; i < order.size(); ++i) {

@@ -561,10 +561,12 @@ class FrameDecoder {
       if (_codes.size() < numeric::kBlockValues) {
         _codes.resize(numeric::kBlockValues);
       }
-      numeric::kUnpack<uint32_t>[bits](
-        Words<uint32_t>(packed, bits), _codes.data(),
-        static_cast<uint32_t>(duckdb::Load<uint64_t>(meta)));
-      Gather(_codes.data(), rows, out);
+      const auto code_base = duckdb::Load<uint64_t>(meta);
+      numeric::kUnpack<uint32_t>[bits](Words<uint32_t>(packed, bits),
+                                       _codes.data(),
+                                       static_cast<uint32_t>(code_base));
+      const auto largest = code_base + (uint64_t{1} << bits) - 1;
+      Gather(_codes.data(), rows, out, largest >= _h.dict_count);
       return;
     }
     const auto base = static_cast<U>(duckdb::Load<uint64_t>(meta));
@@ -629,6 +631,14 @@ class FrameDecoder {
   }
 
   void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) {
+    if (_h.stored == sizeof(uint8_t)) {
+      GatherNarrow<uint8_t>(src, rows, out);
+      return;
+    }
+    if (_h.stored == sizeof(uint16_t)) {
+      GatherNarrow<uint16_t>(src, rows, out);
+      return;
+    }
     if (_codes.size() < rows) {
       _codes.resize(rows);
     }
@@ -636,12 +646,31 @@ class FrameDecoder {
     Gather(_codes.data(), rows, out);
   }
 
-  void Gather(const uint32_t* codes, uint64_t rows, U* out) const {
-    uint32_t worst = 0;
-    for (uint64_t i = 0; i < rows; ++i) {
-      worst = std::max(worst, codes[i]);
+  template<typename C>
+  void GatherNarrow(const uint8_t* src, uint32_t rows, U* out) const {
+    if (_h.dict_count <= std::numeric_limits<C>::max()) {
+      C worst = 0;
+      for (uint32_t i = 0; i < rows; ++i) {
+        worst = std::max(worst, duckdb::Load<C>(src + size_t{i} * sizeof(C)));
+      }
+      SDB_ENSURE(worst < _h.dict_count, "numeric codec: corrupted codes");
     }
-    SDB_ENSURE(worst < _h.dict_count, "numeric codec: corrupted codes");
+    const auto* dict = _base + _h.off_dict;
+    for (uint32_t i = 0; i < rows; ++i) {
+      const auto code = duckdb::Load<C>(src + size_t{i} * sizeof(C));
+      out[i] = duckdb::Load<U>(dict + size_t{code} * sizeof(U));
+    }
+  }
+
+  void Gather(const uint32_t* codes, uint64_t rows, U* out,
+              bool checked = true) const {
+    if (checked) {
+      uint32_t worst = 0;
+      for (uint64_t i = 0; i < rows; ++i) {
+        worst = std::max(worst, codes[i]);
+      }
+      SDB_ENSURE(worst < _h.dict_count, "numeric codec: corrupted codes");
+    }
     const auto* dict = _base + _h.off_dict;
     for (uint64_t i = 0; i < rows; ++i) {
       out[i] = duckdb::Load<U>(dict + size_t{codes[i]} * sizeof(U));

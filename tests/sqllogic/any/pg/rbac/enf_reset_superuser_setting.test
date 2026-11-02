@@ -1,0 +1,55 @@
+statement ok
+DROP ROLE IF EXISTS ers_plain;
+
+
+statement ok
+CREATE ROLE ers_plain;
+
+
+statement ok
+SET session_replication_role = replica;
+
+
+statement ok
+SET ROLE ers_plain;
+
+
+onlyif postgres
+statement error
+RESET session_replication_role;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+skipif postgres
+statement error
+RESET session_replication_role;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+query
+SELECT current_setting('session_replication_role') AS mode;
+----
+mode
+replica
+
+
+statement ok
+RESET ALL;
+
+
+query
+SELECT current_setting('session_replication_role') AS mode, current_user = 'ers_plain' AS still_plain;
+----
+mode	still_plain
+origin	t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE ers_plain;

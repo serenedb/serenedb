@@ -211,11 +211,11 @@ void CheckAlterRole(duckdb::CatalogTransaction transaction,
   for (const std::string_view entry : info.set_config) {
     const auto key = catalog::ConfigKey(entry);
     RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, true);
+                          duckdb::SetScope::SESSION, false);
   }
   for (const std::string_view key : info.reset_config) {
     RequireSuperuserToSet(context, key, CanonicalSetting(key),
-                          duckdb::SetScope::SESSION, true);
+                          duckdb::SetScope::SESSION, false);
   }
   if (info.reset_all_config) {
     info.reset_all_config = false;

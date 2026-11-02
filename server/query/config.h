@@ -82,7 +82,7 @@ bool IsUnchangeableSetting(std::string_view name);
 
 void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
                            std::string_view setting, duckdb::SetScope scope,
-                           bool is_set);
+                           bool reset_all);
 
 std::string_view SettingContext(std::string_view name);
 

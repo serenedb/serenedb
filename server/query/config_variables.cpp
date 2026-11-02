@@ -1729,12 +1729,12 @@ bool IsSuperuserReadSetting(duckdb::ClientContext& ctx, std::string_view name) {
 
 void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
                            std::string_view setting, duckdb::SetScope scope,
-                           bool is_set) {
+                           bool reset_all) {
   if (scope == duckdb::SetScope::GLOBAL) {
     RequireSuperuser(ctx, name,
                      "Only roles with the SUPERUSER attribute may change the "
                      "server-wide value of a parameter.");
-  } else if (is_set && !kUserSettings.contains(setting)) {
+  } else if (!reset_all && !kUserSettings.contains(setting)) {
     RequireSuperuser(
       ctx, name,
       "Only roles with the SUPERUSER attribute may change this parameter.");
@@ -1767,7 +1767,8 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name));
+    IsUnchangeableSetting(name) || name == "role" ||
+      name == "session_authorization");
 }
 
 }  // namespace

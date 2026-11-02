@@ -97,7 +97,7 @@ SereneDBClientState& SereneDBClientState::Register(
 
   client_ctx.setting_change_handler =
     [](duckdb::ClientContext& ctx, const std::string& name,
-       duckdb::SetScope scope, const duckdb::Value* new_value) {
+       duckdb::SetScope scope, const duckdb::Value* new_value, bool reset_all) {
       // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
       // SetScope::GLOBAL return below, since some of these are global and would
       // otherwise slip past it. DuckDB routes SET and RESET, for built-in
@@ -120,7 +120,7 @@ SereneDBClientState& SereneDBClientState::Register(
                                                                         ext)) {
         scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
       }
-      RequireSuperuserToSet(ctx, name, canonical, scope, new_value);
+      RequireSuperuserToSet(ctx, name, canonical, scope, reset_all);
       const bool global = scope == duckdb::SetScope::GLOBAL;
       // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
       // user_settings / custom session store) and is not rolled back with the

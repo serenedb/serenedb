@@ -93,12 +93,12 @@ bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
   const duckdb::string_t value{field.Value().data(),
                                static_cast<uint32_t>(field.Value().size())};
   const irs::doc_id_t doc_id = doc.DocId();
-  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
-                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
-                          fld.Configure(field.GetTokens().Traits());
-                          field.GetTokens().Fill(value, doc_id, w,
-                                                 {fld.Layout()});
-                        });
+  return doc.WithTokens(
+    field.Id(), irs::StringLayout::kStrings, field.GetIndexFeatures(), nullptr,
+    [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+      fld.Configure(field.GetTokens().Traits());
+      field.GetTokens().Fill(value, doc_id, w, {fld.Layout()});
+    });
 }
 
 // Append one BLOB row to a cs column. Wraps the per-row-at-a-time pattern
@@ -151,7 +151,8 @@ irs::Filter::ptr ParseQuery(std::string_view query_str,
                             irs::analysis::Tokenizer& tokenizer,
                             bool scored = false) {
   auto root = std::make_unique<irs::BooleanFilter>();
-  irs::ParserContext context{*root, default_field, tokenizer};
+  irs::ParserContext context{*root, default_field, irs::StringLayout::kStrings,
+                             tokenizer};
   if (!irs::ParseQuery(context, query_str)) {
     std::cerr << "Query parse error: " << context.error_message << "\n";
     return {};

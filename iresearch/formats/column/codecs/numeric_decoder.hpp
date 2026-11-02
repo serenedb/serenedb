@@ -81,8 +81,6 @@ class FrameDecoder {
       "numeric codec: corrupted frame table");
     if (_h.leaf == NumericLeaf::Lz4) {
       _lz4.emplace();
-    } else if (_h.leaf == NumericLeaf::Zstd) {
-      _zstd.emplace();
     }
     if constexpr (std::is_integral_v<T>) {
       _scale = static_cast<U>(_h.scale);
@@ -515,8 +513,9 @@ class FrameDecoder {
     auto* out = reinterpret_cast<char*>(dst);
     const bool ok =
       _lz4 ? _lz4->Decompress(in, m.frame.comp_len, out, m.frame.raw_len)
-           : _zstd &&
-               _zstd->Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
+           : _h.leaf == NumericLeaf::Zstd &&
+               (_zstd ? *_zstd : _zstd.emplace())
+                 .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
     if (!admitted.empty()) {
       held = duckdb::make_shared_ptr<DecodedFrame>(std::move(admitted));

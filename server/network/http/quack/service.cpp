@@ -41,7 +41,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
-#include <quack_statement.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,6 +52,7 @@
 #include "network/http/sql_connection.h"
 #include "network/pg/login.h"
 #include "pg/connection_context.h"
+#include "quack_statement.hpp"
 #include "quack_storage.hpp"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/asio_ns.h"
@@ -423,7 +423,7 @@ yaclib::Task<> Service::Handle(RequestContext& context,
     if (prepare_timer_enabled && !prepare_timer &&
         quack_request.Type() == duckdb::MessageType::PREPARE_REQUEST) {
       prepare_timer = std::make_shared<asio_ns::steady_timer>(
-        context.Io().Context(), kPrepareWait);
+        context.IoExecutor().Context(), kPrepareWait);
       prepare_timer->async_wait([timer = prepare_timer, waited_enough,
                                  task](const asio_ns::error_code& ec) {
         if (ec) {

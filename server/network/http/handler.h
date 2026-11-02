@@ -98,7 +98,7 @@ class RequestContext {
   virtual std::string_view Schema() const = 0;
   virtual http::AuthResult Authenticate(std::string_view credential) = 0;
   virtual const duckdb::shared_ptr<CpuResumer>& Resumer() = 0;
-  virtual IoExecutor& Io() = 0;
+  virtual network::IoExecutor& IoExecutor() = 0;
 };
 
 // Runs on the session's duckdb task (NOT an io thread): handlers may drive

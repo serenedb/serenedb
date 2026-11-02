@@ -30,7 +30,6 @@
 #include <duckdb/catalog/default/default_views.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <functional>
-#include <quack_storage.hpp>
 
 #include "auth/enforce.h"
 #include "catalog/boot.h"
@@ -66,6 +65,7 @@
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/types/register.h"
+#include "quack_storage.hpp"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"

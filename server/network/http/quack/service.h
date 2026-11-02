@@ -21,7 +21,6 @@
 #pragma once
 
 #include <atomic>
-#include <quack_server.hpp>
 #include <string>
 #include <vector>
 #include <yaclib/algo/wait_group.hpp>
@@ -30,6 +29,7 @@
 
 #include "network/cancel_registry.h"
 #include "network/http/handler.h"
+#include "quack_server.hpp"
 #include "server/utils/asio_ns.h"
 
 namespace sdb::network::http::quack {

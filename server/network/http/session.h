@@ -122,7 +122,7 @@ class HttpSession final
   using Deps = HttpServerContext;
   static constexpr SocketKind kSocketKind = Kind;
 
-  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
+  HttpSession(HttpServerContext& ctx, network::IoExecutor& exec)
     requires(Kind != SocketKind::Ssl)
     : Transport<Kind, HttpSession<Kind>>{exec},
       _io{exec.Context()},
@@ -139,7 +139,7 @@ class HttpSession final
       _proxy{ctx.proxy},
       _codec{H1Limits{.max_body_bytes = ctx.max_body_bytes}} {}
 
-  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
+  HttpSession(HttpServerContext& ctx, network::IoExecutor& exec)
     requires(Kind == SocketKind::Ssl)
     : Transport<Kind, HttpSession<Kind>>{exec, *ctx.ssl},
       _io{exec.Context()},
@@ -244,7 +244,7 @@ class HttpSession final
 
   const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
 
-  IoExecutor& Io() final { return *_ioexec; }
+  network::IoExecutor& IoExecutor() final { return *_ioexec; }
 
  private:
   static duckdb::QueryParameters MaterializedQuery() {

@@ -25,7 +25,7 @@
 #include <optional>
 #include <string>
 
-#include "auth/role_closure.h"
+#include "catalog/cluster.h"
 #include "connector/common.h"
 #include "pg/catalog/utils/acl.h"
 #include "pg/types/cast.h"
@@ -36,7 +36,7 @@ namespace {
 
 struct AclitemInputState final : InputState {
   explicit AclitemInputState(duckdb::ClientContext* context)
-    : roles{auth::RolesOf(context)} {}
+    : roles{catalog::RolesOf(context)} {}
 
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> roles;
 };

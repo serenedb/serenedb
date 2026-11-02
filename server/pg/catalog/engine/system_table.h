@@ -73,7 +73,6 @@
 #include <variant>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"

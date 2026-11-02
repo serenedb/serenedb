@@ -48,8 +48,8 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "connector/common.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
@@ -1577,7 +1577,7 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
   if (!name) {
     return std::nullopt;
   }
-  const auto graph = auth::RolesOf(session.context);
+  const auto graph = catalog::RolesOf(session.context);
   if (const auto role = graph->FindByName(*name); role.IsValid()) {
     return role.GetIndex();
   }
@@ -1588,7 +1588,7 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
 
 std::string RoleOut(const Session& session, uint64_t oid) {
   if (session.context) {
-    const auto graph = auth::RolesOf(session.context);
+    const auto graph = catalog::RolesOf(session.context);
     if (const auto name = graph->NameOf(oid); !name.empty()) {
       return QuoteIdentifier(name);
     }

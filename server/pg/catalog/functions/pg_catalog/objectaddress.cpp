@@ -39,8 +39,8 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
@@ -258,7 +258,7 @@ ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
-  const auto roles = auth::RolesOf(session.context);
+  const auto roles = catalog::RolesOf(session.context);
   const std::string name{roles->NameOf(oid)};
   if (name.empty()) {
     return Missing("role");
@@ -541,7 +541,7 @@ void PgIdentifyObjectFunction(duckdb::DataChunk& args,
 void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
       result, args.size());

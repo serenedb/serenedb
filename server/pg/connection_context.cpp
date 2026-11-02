@@ -30,7 +30,6 @@
 #include <string_view>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
@@ -63,7 +62,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
-  const auto roles = auth::RolesOf(nullptr);
+  const auto roles = catalog::RolesOf(nullptr);
   duckdb::RoleAccess missing;
   missing.role = role.oid;
   const auto access = roles->Access(role.oid);
@@ -111,11 +110,11 @@ std::string RoleName(const duckdb::SecuritySnapshot& roles, duckdb::idx_t role,
 }  // namespace
 
 std::string ConnectionContext::EffectiveUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), GetRoleId(), _user);
+  return RoleName(*catalog::RolesOf(&GetClientContext()), GetRoleId(), _user);
 }
 
 std::string ConnectionContext::SessionUserName() const {
-  return RoleName(*auth::RolesOf(&GetClientContext()), GetSessionRoleId(),
+  return RoleName(*catalog::RolesOf(&GetClientContext()), GetSessionRoleId(),
                   _user);
 }
 

@@ -36,8 +36,6 @@
 #include <ranges>
 #include <tuple>
 
-#include "auth/role_closure.h"
-
 namespace sdb::pg {
 namespace {
 

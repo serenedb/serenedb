@@ -31,7 +31,6 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/oids.h"
 
 namespace sdb::pg {

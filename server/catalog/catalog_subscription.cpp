@@ -38,8 +38,8 @@
 #include <span>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
@@ -321,7 +321,7 @@ replication::PublisherResult CallPublisher(
   auto& context = conn_ctx.GetClientContext();
   const auto owner = info.permissions.owner;
   if (conninfo.user.empty()) {
-    conninfo.user = auth::RolesOf(&context)->NameOf(owner);
+    conninfo.user = RolesOf(&context)->NameOf(owner);
   }
   const bool require_password =
     info.password_required && !context.AccessOf(owner).is_superuser;

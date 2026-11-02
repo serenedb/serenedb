@@ -43,7 +43,6 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
@@ -958,7 +957,8 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    return auth::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(group_oid);
+    return catalog::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(
+      group_oid);
   };
 
   hba::ClientInfo client;

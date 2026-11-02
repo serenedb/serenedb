@@ -21,7 +21,7 @@
 #include <memory>
 #include <string_view>
 
-#include "auth/role_closure.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/progress_registry.h"
@@ -155,7 +155,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   const duckdb::RoleAccess& _role = Context().CurrentRole();
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles =
     !_role.Has(duckdb::RoleCapability::ReadAllStats)
-      ? auth::RolesOf(&Context())
+      ? catalog::RolesOf(&Context())
       : duckdb::shared_ptr<const duckdb::SecuritySnapshot>{};
 };
 

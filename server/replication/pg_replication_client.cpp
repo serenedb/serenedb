@@ -65,7 +65,6 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/await_on.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"

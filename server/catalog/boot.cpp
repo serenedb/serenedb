@@ -52,7 +52,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
@@ -313,7 +312,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
                                      std::move(extension));
   config.cluster_catalog = duckdb::Identifier{ClusterCatalog::kDatabaseName};
   config.bootstrap_role = pg::kRootUser;
-  config.database_owner_role = auth::kPgDatabaseOwner;
+  config.database_owner_role = kPgDatabaseOwner;
 }
 
 void InitCatalog(std::string_view directory) {

@@ -70,8 +70,8 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
@@ -119,7 +119,7 @@ void IsVisibleFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void PgGetUserByIdFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(), [&](int64_t oid) {
       const auto name = roles->NameOf(static_cast<duckdb::idx_t>(oid));
@@ -462,7 +462,7 @@ void CurrentUserFunction(duckdb::DataChunk& args,
   if (const auto& bind_info =
         state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo()) {
     result.Reference(duckdb::Value{std::string{
-                       auth::RolesOf(&state.GetContext())
+                       catalog::RolesOf(&state.GetContext())
                          ->NameOf(bind_info->Cast<CallerRole>().role)}},
                      duckdb::count_t(args.size()));
     return;
@@ -514,7 +514,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
   auto* registry = conn_ctx.GetCancelRegistry();
-  const auto roles = auth::RolesOf(&context);
+  const auto roles = catalog::RolesOf(&context);
   const auto& caller = context.CurrentRole();
   const auto pids = args.data[0].Values<int32_t>();
   auto out = duckdb::FlatVector::Writer<bool>(result, args.size());

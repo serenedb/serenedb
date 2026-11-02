@@ -49,7 +49,6 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"

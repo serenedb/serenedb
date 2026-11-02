@@ -36,7 +36,6 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/utils/session.h"
 
 namespace sdb::pg {

@@ -32,6 +32,8 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -48,7 +50,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
@@ -293,7 +294,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
     }
     CreateRole(transaction, info);
   }
-  for (const auto& predefined : auth::kPredefinedRoles) {
+  for (const auto& predefined : kPredefinedRoles) {
     const duckdb::Identifier name{predefined.name};
     if (GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
           .GetEntry(transaction, name)) {
@@ -321,7 +322,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
   duckdb::CreateRoleInfo& info) {
-  if (!auth::IsPredefinedRole(info.oid)) {
+  if (!IsPredefinedRole(info.oid)) {
     RequireUnreservedRoleName(info.GetQualifiedName().Name());
   }
   if (!info.password.empty()) {
@@ -354,7 +355,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   if (const auto creator = GrantorOfMembership(context);
       creator != pg::kRootUser) {
     duckdb::AlterRoleInfo alter{
-      duckdb::Identifier{auth::RolesOf(&context)->NameOf(creator)}};
+      duckdb::Identifier{RolesOf(&context)->NameOf(creator)}};
     alter.grant_role = role->name.GetIdentifierName();
     alter.grantor_id = pg::kRootUser;
     alter.admin_option = true;
@@ -514,6 +515,20 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
 
 ClusterCatalog& ClusterOf() {
   return ClusterOf(irs::DuckDBEngine::Instance().instance());
+}
+
+duckdb::shared_ptr<const duckdb::SecuritySnapshot> RolesOf(
+  duckdb::ClientContext* context) {
+  if (context && context->security) {
+    return context->security;
+  }
+  auto& cluster = context ? ClusterOf(*context->db) : ClusterOf();
+  auto& db = cluster.GetDatabase();
+  if (auto roles = db.GetSecurity()) {
+    return roles;
+  }
+  cluster.PublishSecurity();
+  return db.GetSecurity();
 }
 
 }  // namespace sdb::catalog

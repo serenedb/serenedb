@@ -50,7 +50,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "connector/common.h"
@@ -111,7 +110,7 @@ const DefaultAcl kDefaultAcls[] = {
 
 void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   const auto count = args.size();
   const auto objtypes = args.data[0].Values<duckdb::string_t>();
   const auto owners = args.data[1].Values<int64_t>();
@@ -190,7 +189,7 @@ duckdb::unique_ptr<duckdb::FunctionData> AclExplodeBind(
 
 void LoadAcls(duckdb::ClientContext& context, duckdb::DataChunk& input,
               std::vector<ExplodedAcl>& rows) {
-  const auto roles = auth::RolesOf(&context);
+  const auto roles = catalog::RolesOf(&context);
   const auto lists =
     input.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
@@ -271,7 +270,7 @@ PrivilegeModes ParsePrivileges(std::string_view text, AclMode allowed) {
 void MakeAclItemFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   std::string text;
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int64_t,
                                     duckdb::string_t, bool>(
@@ -309,7 +308,7 @@ struct ObjectTarget {
   AclMode rights = ~AclMode::NoRights;
 };
 
-bool Holds(const auth::RoleClosure& closure, CatalogType type,
+bool Holds(const duckdb::RoleAccess& closure, CatalogType type,
            const ObjectTarget& target, const PrivilegeModes& requested) {
   const auto& permissions = *target.permissions;
   if (permissions.owner == kInvalidOid) {
@@ -394,7 +393,7 @@ struct ObjectPrivileges {
   using Scope = ObjectScope;
 
   static ObjectScope Begin(duckdb::ClientContext& context) {
-    return {MakeSession(&context), auth::RolesOf(&context)};
+    return {MakeSession(&context), catalog::RolesOf(&context)};
   }
 
   static duckdb::idx_t Role(const ObjectScope& scope, duckdb::string_t name) {
@@ -411,7 +410,7 @@ struct ObjectPrivileges {
     return ParsePrivileges(text, F::kModes);
   }
 
-  static bool Check(const ObjectScope&, const auth::RoleClosure& closure,
+  static bool Check(const ObjectScope&, const duckdb::RoleAccess& closure,
                     duckdb::idx_t, const ObjectTarget& target,
                     const PrivilegeModes& modes) {
     return Holds(closure, F::kType, target, modes);
@@ -847,8 +846,8 @@ struct LargeObjectPrivileges : ObjectPrivileges<LargeObjectPrivileges> {
     return std::nullopt;
   }
 
-  static bool Check(const ObjectScope&, const auth::RoleClosure&, duckdb::idx_t,
-                    const ObjectTarget&, const PrivilegeModes&) {
+  static bool Check(const ObjectScope&, const duckdb::RoleAccess&,
+                    duckdb::idx_t, const ObjectTarget&, const PrivilegeModes&) {
     SDB_UNREACHABLE();
   }
 };
@@ -871,7 +870,7 @@ struct RolePrivileges {
   };
 
   static Scope Begin(duckdb::ClientContext& context) {
-    return {.roles = auth::RolesOf(&context)};
+    return {.roles = catalog::RolesOf(&context)};
   }
 
   static const duckdb::RoleMemberships& MembershipsOf(const Scope& scope,
@@ -926,7 +925,7 @@ struct RolePrivileges {
     return mask;
   }
 
-  static bool Check(const Scope& scope, const auth::RoleClosure& closure,
+  static bool Check(const Scope& scope, const duckdb::RoleAccess& closure,
                     duckdb::idx_t member, duckdb::idx_t role,
                     const RolePrivMask& mask) {
     if (closure.is_superuser) {
@@ -1049,10 +1048,10 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return _modes->modes;
   }
 
-  const auth::RoleClosure& Closure(duckdb::idx_t role) {
+  const duckdb::RoleAccess& Closure(duckdb::idx_t role) {
     if (!_closure || role != _closure->role) {
       const auto access = _scope.roles->Access(role);
-      _closure = access ? *access : auth::RoleClosure{.role = role};
+      _closure = access ? *access : duckdb::RoleAccess{.role = role};
     }
     return *_closure;
   }
@@ -1060,7 +1059,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   typename F::Scope _scope;
   std::optional<NamedRole> _named;
   std::optional<ParsedModes> _modes;
-  std::optional<auth::RoleClosure> _closure;
+  std::optional<duckdb::RoleAccess> _closure;
 };
 
 template<typename F>

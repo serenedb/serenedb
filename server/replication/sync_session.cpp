@@ -38,8 +38,8 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/pg/wire_frames.h"
@@ -408,7 +408,7 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
     if (!context.AccessOf(role).CanSet(table_owner)) {
-      const auto roles = auth::RolesOf(&context);
+      const auto roles = catalog::RolesOf(&context);
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("role \"", roles->NameOf(role), "\" cannot SET ROLE to \"",

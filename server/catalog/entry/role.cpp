@@ -31,13 +31,20 @@
 #include <string_view>
 #include <utility>
 
-#include "auth/role_closure.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 
 namespace sdb::catalog {
+
+duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
+  const auto it = absl::c_find_if(
+    kPredefinedRoles, [&](const auto& role) { return role.oid == oid; });
+  return it == std::end(kPredefinedRoles) ? duckdb::RoleCapability::None
+                                          : it->capability;
+}
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name) {
   const auto& text = name.GetIdentifierName();
@@ -80,8 +87,8 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
                       info.oid,
                       info.options,
                       info.member_of,
-                      auth::PredefinedCapability(info.oid),
-                      auth::IsPredefinedRole(info.oid)},
+                      PredefinedCapability(info.oid),
+                      IsPredefinedRole(info.oid)},
     _conn_limit{info.conn_limit},
     _valid_until{info.valid_until},
     _password{info.password},
@@ -174,7 +181,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     }
     if (!alter.revoke &&
         (oid == target->oid ||
-         auth::RolesOf(&context)->MembershipsOf(target->oid).IsMember(oid))) {
+         RolesOf(&context)->MembershipsOf(target->oid).IsMember(oid))) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
         ERR_MSG("role \"", target->name.GetIdentifierName(),

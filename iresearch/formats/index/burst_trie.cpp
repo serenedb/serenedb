@@ -511,7 +511,7 @@ class FieldWriter::Impl {
  private:
   static constexpr size_t kDefaultSize = 8;
 
-  void BeginField(const FieldProperties& meta);
+  void BeginField(const FieldProperties& meta, TermPayloadWriter* term_pay);
 
   void EndField(field_id id, FieldProperties props, bytes_view min_term,
                 bytes_view max_term, uint64_t total_doc_freq,
@@ -750,8 +750,7 @@ void FieldWriter::Impl::prepare(const FlushState& state) {
 void FieldWriter::Impl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
-  _pw.SetTermPayloadWriter(reader.PayloadWriter());
-  BeginField(props);
+  BeginField(props, reader.PayloadWriter());
 
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
@@ -811,8 +810,7 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
 void FieldWriter::Impl::write(field_id id, const FieldProperties& props,
                               std::span<const TermPart> parts,
                               uint64_t doc_count) {
-  BeginField(props);
-  _pw.SetTermPayloadWriter(nullptr);
+  BeginField(props, nullptr);
   uint64_t term_count = 0;
   uint64_t sum_dfreq = 0;
   uint64_t sum_tfreq = 0;
@@ -845,13 +843,14 @@ void FieldWriter::Impl::write(field_id id, const FieldProperties& props,
            doc_count);
 }
 
-void FieldWriter::Impl::BeginField(const FieldProperties& meta) {
+void FieldWriter::Impl::BeginField(const FieldProperties& meta,
+                                   TermPayloadWriter* term_pay) {
   SDB_ASSERT(_blocks_out);
 
   // At the beginning of the field there should be no pending entries at all
   SDB_ASSERT(_stack.empty());
 
-  _pw.BeginField(meta);
+  _pw.BeginField(meta, term_pay);
 }
 
 void FieldWriter::Impl::EndField(field_id id, FieldProperties props,

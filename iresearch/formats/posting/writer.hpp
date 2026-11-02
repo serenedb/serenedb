@@ -178,11 +178,8 @@ class PostingsWriter final {
   };
 
   void Prepare(const FlushState& state);
-  void BeginField(const FieldProperties& meta);
-
-  void SetTermPayloadWriter(TermPayloadWriter* writer) noexcept {
-    _term_pay = writer;
-  }
+  void BeginField(const FieldProperties& meta,
+                  TermPayloadWriter* term_pay = nullptr);
 
   void Write(TermPostings& docs, PostingMeta& meta);
   void WritePostings(const PostingRows& postings, PostingMeta& meta);
@@ -600,7 +597,9 @@ inline void PostingsWriter::WritePayBlock() {
   _pay.size = 0;
 }
 
-inline void PostingsWriter::BeginField(const FieldProperties& meta) {
+inline void PostingsWriter::BeginField(const FieldProperties& meta,
+                                       TermPayloadWriter* term_pay) {
+  _term_pay = term_pay;
   _features.Reset(meta.index_features);
   PrepareWriters(meta);
   _docs.clear();

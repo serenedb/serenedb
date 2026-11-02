@@ -200,6 +200,42 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
   }
 }
 
+class TailPayloads final : public irs::TermPayloadWriter {
+ public:
+  void WriteTermPayload(irs::IndexOutput&,
+                        std::span<const irs::doc_id_t>) final {}
+
+  void Finish(irs::IndexOutput& out) final {
+    constexpr irs::byte_type kTail[3]{};
+    out.WriteData(kTail, std::size(kTail));
+  }
+
+  uint32_t Alignment() const noexcept final { return 8; }
+};
+
+TEST(PostingsAppendTest, AFieldWithoutPayloadWriterKeepsThePayStreamUnpadded) {
+  irs::MemoryDirectory dir;
+  irs::PostingsWriter writer;
+  const irs::FlushState state{
+    .dir = &dir,
+    .name = "final",
+    .doc_count = 16,
+    .index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Vec,
+  };
+  writer.Prepare(state);
+  TailPayloads payloads;
+  irs::FieldProperties vectors;
+  vectors.index_features = irs::IndexFeatures::Vec;
+  writer.BeginField(vectors, &payloads);
+  writer.EndField();
+  irs::FieldProperties terms;
+  terms.index_features = irs::IndexFeatures::Freq;
+  writer.BeginField(terms);
+  EXPECT_EQ(3, writer.Append(nullptr, nullptr, nullptr).pay);
+  writer.EndField();
+  writer.End();
+}
+
 class TermPartsTest : public ::testing::TestWithParam<irs::IndexFeatures> {};
 
 TEST_P(TermPartsTest, StreamsReadBackWhatTheyWrote) {

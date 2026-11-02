@@ -65,7 +65,8 @@ irs::analysis::PipelineTokenizer SplitThenFilter(Options opts) {
   std::vector<irs::analysis::Tokenizer::ptr> stages;
   stages.emplace_back(irs::analysis::DelimitedTokenizer::Make(
     irs::analysis::DelimitedTokenizer::Options{.delimiter = " "}));
-  stages.emplace_back(FilterTokensTokenizer::Make(std::move(opts)));
+  stages.emplace_back(
+    FilterTokensTokenizer::Make(std::move(opts), tests::Cache()));
   return irs::analysis::PipelineTokenizer{std::move(stages)};
 }
 
@@ -76,7 +77,7 @@ TEST(filter_tokens_tokenizer_test, consts) {
 }
 
 TEST(filter_tokens_tokenizer_test, traits) {
-  auto stream = FilterTokensTokenizer::Make({});
+  auto stream = FilterTokensTokenizer::Make({}, tests::Cache());
   ASSERT_NE(nullptr, stream);
   ASSERT_EQ(irs::Type<FilterTokensTokenizer>::id(), stream->type());
   ASSERT_TRUE(stream->Traits().unique);
@@ -161,7 +162,8 @@ TEST(filter_tokens_tokenizer_test, predicate_must_be_boolean) {
 }
 
 TEST(filter_tokens_tokenizer_test, predicate_rejects_subqueries) {
-  ASSERT_THROW(FilterTokensTokenizer({.predicate = "input IN (SELECT 'a')"}),
+  ASSERT_THROW(FilterTokensTokenizer({.predicate = "input IN (SELECT 'a')"},
+                                     tests::Cache()),
                irs::SqlException);
 }
 

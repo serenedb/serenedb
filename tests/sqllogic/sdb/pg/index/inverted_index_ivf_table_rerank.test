@@ -31,7 +31,7 @@ CREATE INDEX tr_wide_sq8 ON tr_wide USING inverted(pk, emb ivf (metric = 'l2', q
 
 statement count 400
 INSERT INTO tr_wide
-SELECT i, list_transform(range(1024), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[1024]
+SELECT i, list_transform(range(1024), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[1024]
 FROM range(1, 401) t(i)
 
 statement ok
@@ -39,7 +39,7 @@ VACUUM (REFRESH_TABLE) tr_wide
 
 # emb is (i, 0, ...), so the distance to the origin is exactly i.
 query
-SELECT pk, emb <-> list_transform(range(1024), x -> 0.0::FLOAT)::FLOAT[1024] AS d
+SELECT pk, emb <-> list_transform(range(1024), lambda x: 0.0::FLOAT)::FLOAT[1024] AS d
 FROM tr_wide_sq8 ORDER BY d LIMIT 5;
 ----
 pk	d
@@ -53,7 +53,7 @@ pk	d
 # 45150, so every chunk of the lookup contributed correct distances.
 query
 SELECT count(*) AS n, sum(d)::BIGINT AS s FROM (
-  SELECT emb <-> list_transform(range(1024), x -> 0.0::FLOAT)::FLOAT[1024] AS d
+  SELECT emb <-> list_transform(range(1024), lambda x: 0.0::FLOAT)::FLOAT[1024] AS d
   FROM tr_wide_sq8 ORDER BY d LIMIT 300
 ) q;
 ----

@@ -23,7 +23,7 @@ SET logging_level = 'debug';
 statement ok
 COPY (
   SELECT i AS id, i % 1000 AS k,
-         array_to_string(list_transform(range(16), x -> md5(i::VARCHAR || '-' || x::VARCHAR)), '') AS body
+         array_to_string(list_transform(range(16), lambda x: md5(i::VARCHAR || '-' || x::VARCHAR)), '') AS body
   FROM range(20000) t(i)
 ) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet' (FORMAT parquet);
 
@@ -50,7 +50,7 @@ QUERY PLAN
 ╰───────────────────────────────────╯
 
 query
-SELECT id, k, body = array_to_string(list_transform(range(16), x -> md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
+SELECT id, k, body = array_to_string(list_transform(range(16), lambda x: md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
 FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
 ----
 id	k	body_ok
@@ -63,7 +63,7 @@ CREATE TABLE http_mark AS
 SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
 
 query
-SELECT id, k, body = array_to_string(list_transform(range(16), x -> md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
+SELECT id, k, body = array_to_string(list_transform(range(16), lambda x: md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
 FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_pages.parquet') ORDER BY k, id LIMIT 3;
 ----
 id	k	body_ok

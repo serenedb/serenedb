@@ -269,7 +269,7 @@ class Loader {
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
-          "part -> lower(trim(part)))), term -> term <> '') FROM (",
+          "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
           Sql(kObjectsSql), ")")) ||
         !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
       return {};

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
@@ -28,14 +27,15 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "pg/progress_registry.h"
+#include "utils/drain_gate.h"
 
 namespace sdb::backup {
 
@@ -82,9 +82,8 @@ class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  std::optional<StartedBackup> Begin(BackupOwner owner, std::string_view label,
-                                     pg::ProgressMetrics& progress,
-                                     absl::FunctionRef<bool()> cancelled);
+  StartedBackup Begin(duckdb::ClientContext& context, BackupOwner owner,
+                      std::string_view label, pg::ProgressMetrics& progress);
   FinishedBackup Finish(const void* session);
   void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;
@@ -94,6 +93,8 @@ class BackupSession final {
 
   absl::Mutex _mutex;
   bool _active ABSL_GUARDED_BY(_mutex) = false;
+  utils::DrainGate::Closed _checkpoints ABSL_GUARDED_BY(_mutex);
+  utils::DrainGate::Closed _maintenance ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
     ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> _checkpoint_keys

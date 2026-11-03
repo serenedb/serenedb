@@ -15,7 +15,7 @@ CREATE TEXT SEARCH DICTIONARY mr_en AS
 statement ok
 CREATE MACRO mr_vec(i) AS
   list_transform(range(16),
-                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+                 lambda j: (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
 
 statement ok
 CREATE TABLE mr_ref (id INTEGER PRIMARY KEY, body TEXT, emb FLOAT[16]);

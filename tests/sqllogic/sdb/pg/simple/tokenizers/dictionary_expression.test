@@ -413,7 +413,7 @@ dropped	kept
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY expr_lambda AS split_text_csv(',') | (x -> upper(trim(x)));
+CREATE TEXT SEARCH DICTIONARY expr_lambda AS split_text_csv(',') | (lambda x: upper(trim(x)));
 
 query
 SELECT ts_lexize('expr_lambda', 'red, green ,blue');
@@ -423,7 +423,7 @@ ts_lexize
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY expr_lambda_head AS
-    (v -> string_split(lower(v), ','))
+    (lambda v: string_split(lower(v), ','))
     | stem_words('en_US.UTF-8');
 
 query
@@ -433,7 +433,7 @@ ts_lexize
 {cat,run}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY expr_lambda_identity AS (x -> x) WITH (frequency);
+CREATE TEXT SEARCH DICTIONARY expr_lambda_identity AS (lambda x: x) WITH (frequency);
 
 query
 SELECT ts_lexize('expr_lambda_identity', 'Hello World');
@@ -442,10 +442,38 @@ ts_lexize
 {"Hello World"}
 
 statement error a lambda stage takes exactly one parameter
-CREATE TEXT SEARCH DICTIONARY bad_lambda AS split_text_csv(',') | ((x, y) -> upper(x));
+CREATE TEXT SEARCH DICTIONARY bad_lambda AS split_text_csv(',') | (lambda x, y: upper(x));
 
-statement error a lambda stage takes exactly one parameter
-CREATE TEXT SEARCH DICTIONARY bad_lambda_precedence AS split_text_csv(',') | x -> upper(x);
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_lambda_last AS split_text_csv(',') | lambda x: upper(x);
+
+query
+SELECT ts_lexize('expr_lambda_last', 'red,green');
+----
+ts_lexize
+{RED,GREEN}
+
+statement error
+CREATE TEXT SEARCH DICTIONARY expr_lambda_arrow AS split_text_csv(',') | (x -> upper(x));
+----
+db error: ERROR: Deprecated lambda arrow (->) detected. Please transition to the new lambda syntax, i.e., lambda x, i: x + i.
+Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.
+
+
+statement ok
+SET lambda_syntax = 'ENABLE_SINGLE_ARROW';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_lambda_arrow AS split_text_csv(',') | (x -> upper(x));
+
+statement ok
+RESET lambda_syntax;
+
+query
+SELECT ts_lexize('expr_lambda_arrow', 'red,green');
+----
+ts_lexize
+{RED,GREEN}
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY opt_list AS remove_stopwords(['the', 'a']);

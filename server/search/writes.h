@@ -54,10 +54,8 @@ struct StoreWrites {
   std::vector<Slot> slots;
   LocalTableChangesEntry changes;
   irs::IndexWriter::Transaction* buffer_trx = nullptr;
-  // The writer-generation slot this transaction registered in on `store`,
-  // released when the transaction settles. -1 until it registers.
-  int writer_slot = -1;
-  bool truncate_claim = false;
+  WriterGenerations::Writer registration;
+  WriterGenerations::Truncate truncate_claim;
   duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
   irs::SourcePosition position;
 };

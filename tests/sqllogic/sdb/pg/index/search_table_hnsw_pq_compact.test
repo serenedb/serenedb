@@ -1,7 +1,7 @@
 statement ok
 CREATE MACRO pqc_vec(i) AS
   list_transform(range(16),
-                 j -> (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
+                 lambda j: (sin(i * 0.0137 * (j % 5 + 1) + j * 0.71))::FLOAT)::FLOAT[16];
 
 statement ok
 CREATE TABLE pqc_l2 (id INTEGER PRIMARY KEY, emb FLOAT[16])

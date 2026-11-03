@@ -75,28 +75,43 @@ DuckDBEngine& DuckDBEngine::Instance() {
   return gInstance;
 }
 
-void DuckDBEngine::Initialize(DBConfigMutator mutator) {
-  SDB_ASSERT(!_db);
-  duckdb::DBConfig config;
+void DuckDBEngine::Configure(duckdb::DBConfig& config) {
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
-  config.SetOptionByName("lambda_syntax", duckdb::Value{"ENABLE_SINGLE_ARROW"});
   config.SetOptionByName("explain_output_format", duckdb::Value{"PG"});
   config.SetOptionByName("table_function_identifier_conversion",
                          duckdb::Value{"DISABLE_IMPLICIT_STRING"});
+  // Dependency edges are built from what the binder resolved
+  // (CreateInfo::dependencies), so the collection must be on for every bind.
+  config.SetOptionByName("enable_view_dependencies",
+                         duckdb::Value::BOOLEAN(true));
+  config.SetOptionByName("enable_macro_dependencies",
+                         duckdb::Value::BOOLEAN(true));
+  // PostgreSQL's COPY ... TO writes no CSV header unless HEADER is given;
+  // DuckDB's writer defaults it on.
+  config.SetOptionByName("copy_csv_header_default",
+                         duckdb::Value::BOOLEAN(false));
+  // `/` between two integers truncates in PostgreSQL, where DuckDB produces a
+  // DOUBLE. A client that wants DuckDB's reading can still SET this back per
+  // session.
+  config.SetOptionByName("integer_division", duckdb::Value::BOOLEAN(true));
+  config.SetOptionByName("show_behavior", duckdb::Value("SETTING"));
+  config.SetOptionByName("autoinstall_known_extensions",
+                         duckdb::Value::BOOLEAN(false));
+  config.SetOptionByName("autoload_known_extensions",
+                         duckdb::Value::BOOLEAN(false));
+}
 
-  mutator(config);
-
-  _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
-
-  auto& db_config = duckdb::DBConfig::GetConfig(*_db->instance);
+void DuckDBEngine::ConfigureExtensions(duckdb::DatabaseInstance& db) {
+  auto& db_config = duckdb::DBConfig::GetConfig(db);
   // Extension settings register at load, and the pre-construct validation
   // rejects them as unrecognized
   if (duckdb::ExtensionOption caching;
       db_config.TryGetExtensionOption("httpfs_connection_caching", caching) &&
       caching.set_function) {
     auto enabled = duckdb::Value::BOOLEAN(true);
-    caching.set_function(*CreateConnection()->context, duckdb::SetScope::GLOBAL,
+    duckdb::Connection connection{db};
+    caching.set_function(*connection.context, duckdb::SetScope::GLOBAL,
                          enabled);
     db_config.SetOptionByName("httpfs_connection_caching", enabled);
   }
@@ -105,6 +120,16 @@ void DuckDBEngine::Initialize(DBConfigMutator mutator) {
   // created after the reader's transaction began.
   db_config.SetOptionByName("iceberg_use_metadata_log",
                             duckdb::Value::BOOLEAN(false));
+}
+
+void DuckDBEngine::Initialize(DBConfigMutator mutator) {
+  SDB_ASSERT(!_db);
+  duckdb::DBConfig config;
+  Configure(config);
+  mutator(config);
+
+  _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+  ConfigureExtensions(*_db->instance);
 
   auto& manager = _db->instance->GetLogManager();
 

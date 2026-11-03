@@ -24,7 +24,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/status/statusor.h>
 #include <absl/strings/str_cat.h>
-#include <absl/time/time.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
@@ -106,8 +105,6 @@
 
 namespace sdb::connector {
 namespace {
-
-constexpr absl::Duration kClaimPoll = absl::Milliseconds(100);
 
 [[noreturn]] void ThrowSourceMoved() {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
@@ -1008,12 +1005,7 @@ ReindexOutcome RunManualReindex(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->current_relid,
                              static_cast<int64_t>(target.index->oid));
   }
-  const auto claim = search::Store::ReindexClaim::Acquire(
-    *storage, [&] { return context.IsInterrupted(); }, kClaimPoll);
-  if (!claim.Claimed()) {
-    context.InterruptCheck();
-  }
-  SDB_ASSERT(claim.Claimed());
+  const auto claim = storage->ClaimReindex(context);
   if (progress) {
     progress->SetPhase(pg::progress_phase::Reindex::Refreshing);
   }
@@ -1165,8 +1157,8 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!storage) {
     return;
   }
-  const auto claim = search::Store::ReindexClaim::TryAcquire(*storage);
-  if (!claim.Claimed()) {
+  const auto claim = storage->TryClaimReindex();
+  if (!claim) {
     return;
   }
   auto& conn_ctx = GetSereneDBContext(context);

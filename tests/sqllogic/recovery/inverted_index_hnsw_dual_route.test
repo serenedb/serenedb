@@ -10,7 +10,7 @@ SET threads = 1;
 
 statement ok
 CREATE MACRO route_vec(i) AS
-  list_transform(range(16), j -> ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
+  list_transform(range(16), lambda j: ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
 
 
 statement ok
@@ -79,7 +79,7 @@ count
 
 statement error
 SELECT id FROM route_docs WHERE far = 1
-  ORDER BY emb <-> list_transform(range(16), j -> 0.0)::FLOAT[16] LIMIT 5;
+  ORDER BY emb <-> list_transform(range(16), lambda j: 0.0)::FLOAT[16] LIMIT 5;
 ----
 db error: ERROR: intentional debug error
 
@@ -91,7 +91,7 @@ SET sdb_faults = '-irs::HnswColumnsStalled';
 query
 SELECT count(*) FROM (
   SELECT id FROM route_docs WHERE far = 1
-    ORDER BY emb <-> list_transform(range(16), j -> 0.0)::FLOAT[16] LIMIT 5) t;
+    ORDER BY emb <-> list_transform(range(16), lambda j: 0.0)::FLOAT[16] LIMIT 5) t;
 ----
 count
 5

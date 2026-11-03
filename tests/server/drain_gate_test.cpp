@@ -18,12 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/synchronization/notification.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/optional_idx.hpp>
+#include <duckdb/common/time_point.hpp>
+#include <duckdb/main/connection.hpp>
 #include <future>
-#include <utility>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <thread>
+#include <tuple>
 
 #include "utils/drain_gate.h"
 
@@ -31,101 +36,118 @@ namespace sdb::utils {
 namespace {
 
 constexpr auto kJoin = std::chrono::seconds(10);
+constexpr auto kBlocked = std::chrono::milliseconds(50);
+
+void WaitClosed(const DrainGate& gate) {
+  while (!gate.IsClosed()) {
+    std::this_thread::yield();
+  }
+}
 
 TEST(DrainGateTest, CloseWaitsForPassesInFlight) {
   DrainGate gate;
-  auto pass = gate.Enter();
+  auto pass = gate.TryEnter();
   ASSERT_TRUE(pass);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
 
-  absl::Notification polled;
-  auto close = std::async(std::launch::async, [&] {
-    return gate.Close([&] {
-      if (!polled.HasBeenNotified()) {
-        polled.Notify();
-      }
-      return false;
-    });
-  });
-  polled.WaitForNotification();
-  EXPECT_TRUE(gate.IsClosed());
+  auto close = std::async(std::launch::async,
+                          [&] { return gate.Close(*connection->context); });
+  WaitClosed(gate);
   EXPECT_FALSE(gate.TryEnter());
+  EXPECT_NE(close.wait_for(kBlocked), std::future_status::ready);
 
-  pass.Release();
+  pass.reset();
   ASSERT_EQ(close.wait_for(kJoin), std::future_status::ready);
-  EXPECT_TRUE(close.get());
+  auto closed = close.get();
+  ASSERT_TRUE(closed);
+  EXPECT_FALSE(gate.TryEnter());
+  closed.reset();
+  EXPECT_TRUE(gate.TryEnter());
 }
 
 TEST(DrainGateTest, EnterWaitsWhileClosed) {
   DrainGate gate;
-  ASSERT_TRUE(gate.Close([] { return true; }));
+  auto closer = irs::DuckDBEngine::Instance().CreateConnection();
+  auto closed = gate.Close(*closer->context);
 
-  auto enter = std::async(std::launch::async, [&] { return gate.Enter(); });
-  EXPECT_NE(enter.wait_for(std::chrono::milliseconds(50)),
-            std::future_status::ready);
+  auto entrant = irs::DuckDBEngine::Instance().CreateConnection();
+  auto enter = std::async(std::launch::async,
+                          [&] { return gate.Enter(*entrant->context); });
+  EXPECT_NE(enter.wait_for(kBlocked), std::future_status::ready);
 
-  gate.Open();
+  closed.reset();
   ASSERT_EQ(enter.wait_for(kJoin), std::future_status::ready);
   EXPECT_TRUE(enter.get());
 }
 
-TEST(DrainGateTest, CancelledCloseReopens) {
+TEST(DrainGateTest, InterruptEndsEnter) {
+  DrainGate gate;
+  auto closer = irs::DuckDBEngine::Instance().CreateConnection();
+  const auto closed = gate.Close(*closer->context);
+
+  auto entrant = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *entrant->context;
+  auto enter =
+    std::async(std::launch::async, [&] { return gate.Enter(context); });
+  EXPECT_NE(enter.wait_for(kBlocked), std::future_status::ready);
+
+  context.Interrupt();
+  ASSERT_EQ(enter.wait_for(kJoin), std::future_status::ready);
+  EXPECT_THROW(std::ignore = enter.get(), duckdb::InterruptException);
+  EXPECT_TRUE(gate.IsClosed());
+}
+
+TEST(DrainGateTest, InterruptEndsCloseAndReopens) {
   DrainGate gate;
   auto pass = gate.TryEnter();
   ASSERT_TRUE(pass);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *connection->context;
 
-  int polls = 0;
-  EXPECT_FALSE(gate.Close([&] { return ++polls == 2; }));
-  EXPECT_EQ(polls, 2);
+  auto close =
+    std::async(std::launch::async, [&] { return gate.Close(context); });
+  WaitClosed(gate);
+  EXPECT_NE(close.wait_for(kBlocked), std::future_status::ready);
+
+  context.Interrupt();
+  ASSERT_EQ(close.wait_for(kJoin), std::future_status::ready);
+  EXPECT_THROW(std::ignore = close.get(), duckdb::InterruptException);
   EXPECT_FALSE(gate.IsClosed());
   EXPECT_TRUE(gate.TryEnter());
 }
 
-TEST(DrainGateTest, WaitOpenReturnsOnOpenAndStopsOnCancel) {
+TEST(DrainGateTest, CloseEndsAtTheStatementDeadline) {
   DrainGate gate;
-  int polls = 0;
-  EXPECT_TRUE(gate.WaitOpen([&] {
-    ++polls;
-    return true;
-  }));
-  EXPECT_EQ(polls, 0);
+  const auto pass = gate.TryEnter();
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *connection->context;
+  context.query_deadline = duckdb::optional_idx{static_cast<duckdb::idx_t>(
+    duckdb::TimePoint::Now() + duckdb::TimePoint::FromNanos(50'000'000))};
 
-  ASSERT_TRUE(gate.Close([] { return true; }));
-  EXPECT_FALSE(gate.WaitOpen([] { return true; }));
-
-  auto wait = std::async(std::launch::async,
-                         [&] { return gate.WaitOpen([] { return false; }); });
-  gate.Open();
-  ASSERT_EQ(wait.wait_for(kJoin), std::future_status::ready);
-  EXPECT_TRUE(wait.get());
+  EXPECT_THROW(std::ignore = gate.Close(context), duckdb::InterruptException);
+  EXPECT_FALSE(gate.IsClosed());
+  EXPECT_FALSE(context.IsInterrupted());
 }
 
-TEST(DrainGateTest, MovedPassLeavesOnce) {
+TEST(DrainGateTest, AnInterruptBeforeAWaitEndsIt) {
   DrainGate gate;
-  auto first = gate.Enter();
-  auto second = std::move(first);
-  EXPECT_FALSE(first);
-  ASSERT_TRUE(second);
-  first.Release();
-  second.Release();
-  second.Release();
+  const auto pass = gate.TryEnter();
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *connection->context;
+  context.Interrupt();
 
-  int polls = 0;
-  EXPECT_TRUE(gate.Close([&] {
-    ++polls;
-    return true;
-  }));
-  EXPECT_EQ(polls, 0);
+  EXPECT_THROW(std::ignore = gate.Close(context), duckdb::InterruptException);
+  EXPECT_FALSE(gate.IsClosed());
 }
 
-TEST(DrainGateTest, SelfMoveAssignedPassStaysInFlight) {
+TEST(DrainGateTest, AWaitThatNeedsNoBlockingIgnoresAnInterrupt) {
   DrainGate gate;
-  auto pass = gate.Enter();
-  auto& alias = pass;
-  pass = std::move(alias);
-  ASSERT_TRUE(pass);
-  EXPECT_FALSE(gate.Close([] { return true; }));
-  pass.Release();
-  EXPECT_TRUE(gate.Close([] { return true; }));
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *connection->context;
+  context.Interrupt();
+
+  EXPECT_TRUE(gate.Enter(context));
+  EXPECT_TRUE(gate.Close(context));
 }
 
 }  // namespace

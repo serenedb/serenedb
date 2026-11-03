@@ -32,6 +32,9 @@ class DuckDBEngine {
   using DBConfigMutator = void (*)(duckdb::DBConfig&);
   static void NoopMutator(duckdb::DBConfig&) noexcept {}
 
+  static void Configure(duckdb::DBConfig& config);
+  static void ConfigureExtensions(duckdb::DatabaseInstance& db);
+
   void Initialize(DBConfigMutator mutator = &NoopMutator);
 
   // Checkpoints and closes every attached database, ahead of Shutdown. The

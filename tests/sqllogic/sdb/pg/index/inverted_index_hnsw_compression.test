@@ -4,7 +4,7 @@
 
 statement ok
 CREATE MACRO hc_vec(i) AS
-  list_transform(range(64), j -> ((CASE WHEN j = 0 THEN i ELSE (i + j) % 16 END) * 0.25)::FLOAT)::FLOAT[64];
+  list_transform(range(64), lambda j: ((CASE WHEN j = 0 THEN i ELSE (i + j) % 16 END) * 0.25)::FLOAT)::FLOAT[64];
 
 statement ok
 CREATE TABLE hc_auto (id INTEGER PRIMARY KEY, emb FLOAT[64])

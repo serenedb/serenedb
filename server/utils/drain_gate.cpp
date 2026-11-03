@@ -20,78 +20,55 @@
 
 #include "drain_gate.h"
 
-#include <absl/time/time.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/mutex.h>
 
 #include <iresearch/utils/assert.hpp>
+#include <utility>
 
 namespace sdb::utils {
-namespace {
 
-constexpr absl::Duration kPoll = absl::Milliseconds(100);
-
-}  // namespace
-
-bool DrainGate::IsOpen(std::atomic<uint32_t>* state) noexcept {
-  return !(state->load() & kClosed);
-}
-
-bool DrainGate::IsDrained(std::atomic<uint32_t>* state) noexcept {
-  return state->load() == kClosed;
-}
-
-auto DrainGate::TryEnter() noexcept -> Pass {
-  if (!(_state.fetch_add(kPass) & kClosed)) {
-    return Pass{this};
-  }
-  Leave();
-  return {};
-}
-
-auto DrainGate::Enter() -> Pass {
+auto DrainGate::Enter(duckdb::ClientContext& context) -> Pass {
   if (auto pass = TryEnter()) {
     return pass;
   }
-  absl::MutexLock lock{&_mutex, absl::Condition{IsOpen, &_state}};
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  context.Await([this] { return !IsClosed(); });
   [[maybe_unused]] const auto previous = _state.fetch_add(kPass);
   SDB_ASSERT(!(previous & kClosed));
   return Pass{this};
 }
 
-bool DrainGate::Close(absl::FunctionRef<bool()> cancelled) noexcept {
-  absl::MutexLock lock{&_mutex};
+auto DrainGate::TryEnter() noexcept -> Pass {
+  if (_state.fetch_add(kPass) & kClosed) {
+    Leave();
+    return {};
+  }
+  return Pass{this};
+}
+
+auto DrainGate::Close(duckdb::ClientContext& context) -> Closed {
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
   [[maybe_unused]] const auto previous = _state.fetch_or(kClosed);
   SDB_ASSERT(!(previous & kClosed));
-  while (!_mutex.AwaitWithTimeout(absl::Condition{IsDrained, &_state}, kPoll)) {
-    if (cancelled()) {
-      _state.fetch_and(~kClosed);
-      return false;
-    }
-  }
-  return true;
-}
-
-void DrainGate::Open() noexcept {
-  absl::MutexLock lock{&_mutex};
-  [[maybe_unused]] const auto previous = _state.fetch_and(~kClosed);
-  SDB_ASSERT(previous & kClosed);
-}
-
-bool DrainGate::WaitOpen(absl::FunctionRef<bool()> cancelled) {
-  absl::MutexLock lock{&_mutex};
-  while (!_mutex.AwaitWithTimeout(absl::Condition{IsOpen, &_state}, kPoll)) {
-    if (cancelled()) {
-      return false;
-    }
-  }
-  return true;
+  absl::Cleanup reopen = [this] { _state.fetch_and(~kClosed); };
+  context.Await([this] { return _state.load() == kClosed; });
+  std::move(reopen).Cancel();
+  return Closed{this};
 }
 
 void DrainGate::Leave() noexcept {
   const auto previous = _state.fetch_sub(kPass);
   SDB_ASSERT(previous >= kPass);
   if (previous == (kClosed | kPass)) {
-    absl::MutexLock lock{&_mutex};
+    duckdb::ClientContext::Notify();
   }
+}
+
+void DrainGate::Open() noexcept {
+  [[maybe_unused]] const auto previous = _state.fetch_and(~kClosed);
+  SDB_ASSERT(previous & kClosed);
+  duckdb::ClientContext::Notify();
 }
 
 }  // namespace sdb::utils

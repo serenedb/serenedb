@@ -19,7 +19,7 @@ from ..scheduler import CRASHED, FAILED, PASSED, SKIPPED, STUCK, Fixture, Outcom
 from . import BELOW_RESOLUTION, Skip, plan, skipped
 
 SUITES = ("core", "cpp", "avro", "azure", "httpfs", "iceberg", "inet", "markdown",
-          "postgres_scanner", "spatial", "interop")
+          "postgres_scanner", "spatial", "quack", "interop")
 SUITE_DIRS = {
     "core": "third_party/duckdb", "cpp": "third_party/duckdb", "avro": "third_party/duckdb_avro",
     "azure": "third_party/duckdb_azure", "httpfs": "third_party/duckdb_httpfs",
@@ -145,11 +145,11 @@ def duckdb_units(ctx, args, skips):
     suites = args.duckdb_suites or SUITES
     units = []
     for suite in suites:
-        if suite == "interop":
-            uid = "duckdb:interop"
+        if suite in ("interop", "quack"):
+            uid = f"duckdb:{suite}"
             if not skipped(skips, uid):
                 cost, timeout = plan(ctx, uid, 120.0)
-                units.append(Unit(uid, "duckdb", _interop_run(ctx), cpus=4, mem_gb=4.0,
+                units.append(Unit(uid, "duckdb", _script_run(ctx, suite), cpus=4, mem_gb=4.0,
                                   cost=cost, timeout=timeout))
             continue
         names = list_tests(ctx, suite)
@@ -439,11 +439,11 @@ def _ordered_run(ctx, steps):
     return run
 
 
-def _interop_run(ctx):
+def _script_run(ctx, suite):
     def run(r):
         build_rel = os.path.relpath(ctx.build.dir, ctx.root)
-        res = r.exec([ctx.root / "tests" / "duckdb" / "interop" / "run.sh"],
-                     env={"BUILD_DIR": build_rel})
+        res = r.exec([ctx.root / "tests" / "duckdb" / suite / "run.sh"],
+                     env={"BUILD_DIR": build_rel, "DUCKDB_JOBS": "4"})
         return r.outcome(res)
 
     return run

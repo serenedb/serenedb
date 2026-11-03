@@ -27,6 +27,7 @@
 #include "network/http/es/handlers.h"
 #include "network/http/mcp/handlers.h"
 #include "network/http/otel/handlers.h"
+#include "network/http/quack/handlers.h"
 #include "network/http/test/handlers.h"
 
 namespace sdb::network::http {
@@ -40,6 +41,8 @@ std::unique_ptr<HttpHandler> Make() {
     return mcp::Make(E);
   } else if constexpr (std::is_same_v<decltype(E), test::Endpoint>) {
     return test::Make(E);
+  } else if constexpr (std::is_same_v<decltype(E), quack::Endpoint>) {
+    return quack::Make(E);
   } else {
     return otel::Make(E);
   }
@@ -130,6 +133,8 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpApi::Otel, HttpMethod::Post, "/v1/traces", Make<otel::Endpoint::Traces>},
   {HttpApi::Otel, HttpMethod::Post, "/v1/metrics",
    Make<otel::Endpoint::Metrics>},
+  {HttpApi::Quack, HttpMethod::Post, "/quack", Make<quack::Endpoint::Rpc>},
+  {HttpApi::Quack, HttpMethod::Get, "/quack", Make<quack::Endpoint::Banner>},
 });
 
 }  // namespace
@@ -159,6 +164,9 @@ uint64_t MaxBodyBytes(std::span<const HttpApi> apis) noexcept {
         break;
       case HttpApi::Mcp:
         bytes = std::max(bytes, kMcpMaxBodyBytes);
+        break;
+      case HttpApi::Quack:
+        bytes = std::max(bytes, kQuackMaxBodyBytes);
         break;
     }
   }

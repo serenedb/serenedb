@@ -38,6 +38,7 @@ namespace sdb::network {
 class TransportBase {
  public:
   virtual void Stop() = 0;
+  virtual void Wake() = 0;
 
   virtual ~TransportBase() = default;
 };
@@ -51,9 +52,16 @@ class TransportBase {
 // the registry and the session, so it outlives either.
 struct CancelToken {
   void Cancel() {
-    absl::MutexLock lock{&mu};
-    if (ctx) {
-      ctx->Interrupt();
+    duckdb::shared_ptr<TransportBase> locked;
+    {
+      absl::MutexLock lock{&mu};
+      if (ctx) {
+        ctx->Interrupt();
+      }
+      locked = session.lock();
+    }
+    if (locked) {
+      locked->Wake();
     }
   }
   // pg_terminate_backend / server shutdown: interrupt the in-flight query and

@@ -78,6 +78,7 @@ class BackgroundScheduler final {
   yaclib::Future<> Delay(clock::duration d);
 
   void RunAt(duckdb::timestamp_t at, std::function<void()> task);
+  void RunAfter(clock::duration delay, std::function<void()> task);
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().

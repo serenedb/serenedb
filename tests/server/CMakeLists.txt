@@ -43,6 +43,7 @@ add_executable(
     network_router_test.cpp
     number_of_cores_test.cpp
     pointer_union_test.cpp
+    quack_periodic_worker_test.cpp
     query_prepared_cache_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp

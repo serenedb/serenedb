@@ -91,6 +91,15 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
     assert all(s is sockets[0] for s in sockets)
 
 
+def test_a_role_that_cannot_log_in_is_refused(role, http_conn):
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"ALTER ROLE {ROLE} NOLOGIN")
+    unknown = "Basic " + base64.b64encode(b"drv_http_no_such_role:pw").decode()
+    statuses = [session_user(http_conn, auth)[0] for auth in (ROLE_AUTH, unknown)]
+    assert statuses == [401, 401]
+    assert session_user(http_conn, SUPERUSER_AUTH) == (200, SUPERUSER_NAME)
+
+
 @pytest.mark.skipif(not TOKEN, reason="the server has no bearer token")
 def test_the_bearer_token_is_masked_in_settings():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
@@ -101,7 +110,7 @@ def test_the_bearer_token_is_masked_in_settings():
 
 
 def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
-    wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
+    wrong = "Basic " + base64.b64encode(b"drv_http_no_such_role:pw").decode()
     answers = []
     for auth in (ROLE_AUTH, wrong, SUPERUSER_AUTH, ROLE_AUTH):
         status, body = session_user(http_conn, auth)

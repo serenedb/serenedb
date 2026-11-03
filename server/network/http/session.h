@@ -64,8 +64,10 @@
 #include "network/http/common.h"
 #include "network/http/h1_codec.h"
 #include "network/http/handler.h"
+#include "network/http/quack/handlers.h"
 #include "network/http/response_writer.h"
 #include "network/http/router.h"
+#include "network/http/sql_connection.h"
 #include "network/io_executor.h"
 #include "network/socket.h"
 #include "pg/connection_context.h"
@@ -120,7 +122,7 @@ class HttpSession final
   using Deps = HttpServerContext;
   static constexpr SocketKind kSocketKind = Kind;
 
-  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
+  HttpSession(HttpServerContext& ctx, network::IoExecutor& exec)
     requires(Kind != SocketKind::Ssl)
     : Transport<Kind, HttpSession<Kind>>{exec},
       _io{exec.Context()},
@@ -137,7 +139,7 @@ class HttpSession final
       _proxy{ctx.proxy},
       _codec{H1Limits{.max_body_bytes = ctx.max_body_bytes}} {}
 
-  HttpSession(HttpServerContext& ctx, IoExecutor& exec)
+  HttpSession(HttpServerContext& ctx, network::IoExecutor& exec)
     requires(Kind == SocketKind::Ssl)
     : Transport<Kind, HttpSession<Kind>>{exec, *ctx.ssl},
       _io{exec.Context()},
@@ -177,41 +179,17 @@ class HttpSession final
   // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
-      const std::string_view dbname =
-        _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      duckdb::idx_t database_id = 0;
-      duckdb::Permissions permissions;
-      if (!catalog::ReadDatabase(
-            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
-              database_id = database.oid;
-              permissions = database.permissions;
-            })) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                        ERR_MSG("database \"", dbname, "\" does not exist"));
-      }
-      const std::string_view user =
-        _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
-      if (!login.role) {
-        THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
-      }
-      const auto& role = login.role;
-
-      _conn = irs::DuckDBEngine::Instance().CreateConnection();
-      _conn->context->SetSchedulerAccount(_task->Account());
-      _connection_ctx = std::make_shared<ConnectionContext>(
-        *_conn->context, user, std::string_view{}, role, dbname, database_id,
-        nullptr, static_cast<int32_t>(_cancel_key >> 32), _cancel);
-      _cancel_token->role.store(role, std::memory_order_relaxed);
+      auto sql = http::OpenSqlConnection(_user, _database, _cancel_key, _cancel,
+                                         _task->Account());
+      _conn = std::move(sql.conn);
+      _connection_ctx = std::move(sql.context);
+      _progress = std::move(sql.progress);
+      _cancel_token->role.store(_connection_ctx->GetLoginRoleId(),
+                                std::memory_order_relaxed);
       {
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
       }
-      _progress =
-        sdb::pg::ProgressRegistration{connector::SereneDBClientState::Register(
-                                        *_conn->context, _connection_ctx, true)
-                                        .progress_source};
-      connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
     return *_conn;
@@ -254,11 +232,19 @@ class HttpSession final
     return _prepared[index];
   }
 
-  std::string_view User() const final { return _user; }
-
   std::string_view Schema() const final {
     return _schema.empty() ? std::string_view{"public"} : _schema;
   }
+
+  http::AuthResult Authenticate(std::string_view credential) final {
+    auto auth = _auth.AuthenticateCredential(credential, _peer, _database);
+    auth.context.database = _database;
+    return auth;
+  }
+
+  const duckdb::shared_ptr<CpuResumer>& Resumer() final { return _task; }
+
+  network::IoExecutor& IoExecutor() final { return *_ioexec; }
 
  private:
   static duckdb::QueryParameters MaterializedQuery() {
@@ -387,7 +373,7 @@ class HttpSession final
   std::chrono::steady_clock::time_point _last_read;
   std::chrono::steady_clock::time_point _busy_at;
   size_t _written_seen = 0;
-  bool _peer_is_loopback = false;
+  pg::LoginPeer _peer;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -450,7 +436,8 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
     const auto client = this->ClientAddress();
-    _peer_is_loopback = client && client->is_loopback();
+    _peer = {.address = client ? *client : asio_ns::ip::address{},
+             .is_ssl = _socket.IsTls()};
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -729,8 +716,12 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), _peer_is_loopback);
+        HttpHandler* handler = _router.Match(request);
+        http::AuthResult auth;
+        if (!handler || !http::quack::IsEndpoint(request)) {
+          auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                    _peer, _database);
+        }
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
@@ -739,7 +730,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
         } else if (const auto decoding = DecodeRequestBody(request);
                    decoding.status != http::HttpStatus::None) {
           writer.Error(decoding.status, decoding.error);
-        } else if (HttpHandler* handler = _router.Match(request)) {
+        } else if (handler) {
           if (_conn && _user != _conn_user) {
             ReleaseConnection();
           }

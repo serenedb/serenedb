@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/main/database.hpp>
 #include <string_view>
 
 namespace duckdb {
@@ -44,5 +45,7 @@ void RequireSuperuser(duckdb::ClientContext& context,
                       std::string_view function);
 
 bool Unowned(const duckdb::CatalogEntry& entry);
+
+void InstallQuackAccessCheck(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::auth

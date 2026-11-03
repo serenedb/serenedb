@@ -146,30 +146,9 @@ class PostingPos {
   IRS_FORCE_INLINE void Sync()
     requires(Deferrable)
   {
-    auto& deferral = _deferral;
-    const auto len = deferral.len;
-    if (!deferral.on || deferral.notified + _left_in_leaf >= len) {
-      return;
-    }
-    if (deferral.freqs != nullptr) [[unlikely]] {
-      DecodeDeferred();
-    }
-    const auto current = len - _left_in_leaf - 1;
-    const auto* const freq = std::cend(_freqs.data) - len;
-    uint32_t skipped = 0;
-    for (auto i = deferral.notified; i != current; ++i) {
-      skipped += freq[i];
-    }
-    _pos.Notify(freq[current], skipped + freq[current]);
-    _pos.Clear();
-    deferral.notified = current + 1;
-    const auto syncs = uint64_t{++deferral.syncs} * kEagerShare;
-    const uint64_t probes = deferral.probes;
-    if (probes >= kEagerProbes &&
-        (syncs > 3 * probes ||
-         (syncs > probes && deferral.landings * kEagerShare < probes)))
-      [[unlikely]] {
-      deferral.on = false;
+    const auto& deferral = _deferral;
+    if (deferral.on && deferral.notified + _left_in_leaf < deferral.len) {
+      SyncDeferred();
     }
   }
 
@@ -313,6 +292,31 @@ class PostingPos {
     }
     _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
     return _doc = *it;
+  }
+
+  IRS_NO_INLINE void SyncDeferred() {
+    auto& deferral = _deferral;
+    const auto len = deferral.len;
+    if (deferral.freqs != nullptr) [[unlikely]] {
+      DecodeDeferred();
+    }
+    const auto current = len - _left_in_leaf - 1;
+    const auto* const freq = std::cend(_freqs.data) - len;
+    uint32_t skipped = 0;
+    for (auto i = deferral.notified; i != current; ++i) {
+      skipped += freq[i];
+    }
+    _pos.Notify(freq[current], skipped + freq[current]);
+    _pos.Clear();
+    deferral.notified = current + 1;
+    const auto syncs = uint64_t{++deferral.syncs} * kEagerShare;
+    const uint64_t probes = deferral.probes;
+    if (probes >= kEagerProbes &&
+        (syncs > 2 * probes ||
+         (syncs > probes && deferral.landings * kEagerShare < probes)))
+      [[unlikely]] {
+      deferral.on = false;
+    }
   }
 
   IRS_NO_INLINE void DecodeDeferred() noexcept {

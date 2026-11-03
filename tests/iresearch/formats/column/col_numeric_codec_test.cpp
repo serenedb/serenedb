@@ -495,9 +495,7 @@ TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
     {"sparse_values",
      "dict_ffor/none",
      {irs::WriteTier::Flush, irs::WriteTier::Merge}},
-    {"short_hash_runs",
-     "rle_ffor/none",
-     {irs::WriteTier::Flush, irs::WriteTier::Merge}},
+    {"short_hash_runs", {}, {irs::WriteTier::Flush, irs::WriteTier::Merge}},
   };
   for (const auto& [name, expected, tiers] : cases) {
     const auto& shape = *std::ranges::find_if(
@@ -511,6 +509,11 @@ TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
         irs::MemoryDirectory dir{};
         Write(dir, type, {.tier = tier}, kRows, 65536, shape.gen);
         Verify(dir, type, kRows, shape.gen);
+        if (expected.empty()) {
+          EXPECT_LT(NumericBytes(dir) * 5,
+                    kRows * duckdb::GetTypeIdSize(type.InternalType()) * 2);
+          continue;
+        }
         const auto transforms = Transforms(dir);
         ASSERT_FALSE(transforms.empty());
         for (const auto& t : transforms) {

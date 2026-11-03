@@ -84,14 +84,10 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
     const auto ownership =
       context.registered_state->GetOrCreate<BackupOwnership>(kOwnershipKey);
     const auto start = backup::BackupSession::Instance().Begin(
-      {ownership.get(), conn.GetBackendPid()},
+      context, {ownership.get(), conn.GetBackendPid()},
       std::string_view{text.GetData(), text.GetSize()},
-      client_state->Progress(), [&] { return context.IsInterrupted(); });
-    if (!start) {
-      context.InterruptCheck();
-    }
-    SDB_ASSERT(start);
-    for (const auto& name : start->with_failed_checkpoint) {
+      client_state->Progress());
+    for (const auto& name : start.with_failed_checkpoint) {
       auto message =
         absl::StrCat("checkpoints of database \"", name,
                      "\" have failed; the backup holds its WAL as the failed "
@@ -103,7 +99,7 @@ void PgBackupStartFunction(duckdb::DataChunk& args,
                        ERR_HINT("Check the database before relying on the "
                                 "backup.")));
     }
-    out.WriteValue(start->lsn);
+    out.WriteValue(start.lsn);
   }
 }
 

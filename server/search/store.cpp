@@ -298,41 +298,29 @@ void Store::StartTasks() {
   GetSearchEngine().StartTasks(shared_from_this());
 }
 
-auto Store::ReindexClaim::TryAcquire(Store& store) -> ReindexClaim {
-  absl::MutexLock lock{&store._reindex_mutex};
-  if (store._reindex_in_flight || store._reindex_waiters != 0) {
-    return ReindexClaim{nullptr};
+auto Store::TryClaimReindex() noexcept -> ReindexClaim {
+  uint32_t idle = 0;
+  if (!_reindex_state.compare_exchange_strong(idle, kReindexing)) {
+    return {};
   }
-  store._reindex_in_flight = true;
-  return ReindexClaim{&store};
+  return ReindexClaim{this};
 }
 
-auto Store::ReindexClaim::Acquire(Store& store,
-                                  absl::FunctionRef<bool()> cancelled,
-                                  absl::Duration poll) -> ReindexClaim {
-  absl::MutexLock lock{&store._reindex_mutex};
-  ++store._reindex_waiters;
-  absl::Cleanup leave = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS noexcept {
-    --store._reindex_waiters;
-  };
-  const auto idle = [&]() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    return !store._reindex_in_flight;
-  };
-  while (!store._reindex_mutex.AwaitWithTimeout(absl::Condition{&idle}, poll)) {
-    if (cancelled()) {
-      return ReindexClaim{nullptr};
-    }
-  }
-  store._reindex_in_flight = true;
-  return ReindexClaim{&store};
+auto Store::ClaimReindex(duckdb::ClientContext& context) -> ReindexClaim {
+  _reindex_state.fetch_add(kReindexWaiter);
+  absl::Cleanup leave = [this] { _reindex_state.fetch_sub(kReindexWaiter); };
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  context.Await([this] { return !(_reindex_state.load() & kReindexing); });
+  [[maybe_unused]] const auto previous = _reindex_state.fetch_or(kReindexing);
+  SDB_ASSERT(!(previous & kReindexing));
+  return ReindexClaim{this};
 }
 
-Store::ReindexClaim::~ReindexClaim() {
-  if (!_store) {
-    return;
+void Store::ReindexReleaser::operator()(Store* store) const noexcept {
+  SDB_ASSERT(store);
+  if (store->_reindex_state.fetch_and(~kReindexing) >= kReindexWaiter) {
+    duckdb::ClientContext::Notify();
   }
-  absl::MutexLock lock{&_store->_reindex_mutex};
-  _store->_reindex_in_flight = false;
 }
 
 ResultWithTime Store::RefreshUnsafe(bool wait,
@@ -379,14 +367,14 @@ ResultWithTime Store::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-auto Store::CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
+                               const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options,
                                const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
   empty_compaction = false;
-  const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     co_return ResultWithTime{BackupInProgressError(), 0};
   }
@@ -471,10 +459,10 @@ absl::Status Store::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status Store::VacuumCompact(uint32_t target_segments,
-                                  absl::FunctionRef<bool()> cancelled) {
-  const irs::MergeWriter::FlushProgress progress = [&cancelled] {
-    return !cancelled();
+absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
+                                  uint32_t target_segments) {
+  const irs::MergeWriter::FlushProgress progress = [&context] {
+    return !context.IsInterrupted();
   };
   const auto target = std::max<uint32_t>(1, target_segments);
   RefreshResult code = RefreshResult::Undefined;
@@ -510,22 +498,16 @@ absl::Status Store::VacuumCompact(uint32_t target_segments,
           }
         };
       bool empty = false;
-      const auto compact = [&] {
+      absl::Status res;
+      do {
         const auto field_options = CompactionOptions();
-        return irs::GetBlocking(CompactUnsafeAsync(bucket, progress, empty,
-                                                   field_options.get(), env))
-          .res;
-      };
-      auto res = compact();
-      while (absl::IsUnavailable(res)) {
-        if (!GetSearchEngine().Maintenance().WaitOpen(cancelled)) {
-          return absl::CancelledError("compaction cancelled");
-        }
-        res = compact();
-      }
-      if (cancelled()) {
-        return absl::CancelledError("compaction cancelled");
-      }
+        res =
+          irs::GetBlocking(CompactUnsafeAsync(
+                             GetSearchEngine().Maintenance().Enter(context),
+                             bucket, progress, empty, field_options.get(), env))
+            .res;
+      } while (absl::IsUnavailable(res));
+      context.InterruptCheck();
       status.Update(res);
       merged = merged || !empty;
     }
@@ -628,15 +610,9 @@ std::vector<irs::KeyRemoval> Store::TakeDeleteLog() {
   return std::exchange(_delete_log, {});
 }
 
-void Store::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
+void Store::DrainPriorWriters(duckdb::ClientContext& context) {
   SDB_ASSERT(BuildInFlight());
-  if (!_writers.Drain(cancelled, kWriterWaitPoll)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_QUERY_CANCELED),
-      ERR_MSG("canceled while waiting for write transactions "
-              "on search table ",
-              _id, " that started before the index was declared"));
-  }
+  _writers.Drain(context);
 }
 
 void Store::WatchTruncates() {

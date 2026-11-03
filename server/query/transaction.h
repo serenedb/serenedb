@@ -68,8 +68,8 @@ class Transaction : public Config {
 
   void Rollback(duckdb::transaction_t owner);
 
-  void EnterCommitGate();
-  void LeaveCommitGate() noexcept { _commit_pass.Release(); }
+  void EnterCommitGate(duckdb::ClientContext& context);
+  void LeaveCommitGate() noexcept { _commit_pass.reset(); }
 
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));

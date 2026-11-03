@@ -161,7 +161,8 @@ auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
 
   bool empty_compaction = false;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    policy, progress, empty_compaction, options.get(), &AnnBuildEnv());
+    ClaimMaintenance(), policy, progress, empty_compaction, options.get(),
+    &AnnBuildEnv());
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");

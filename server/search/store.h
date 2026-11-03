@@ -21,15 +21,14 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
-#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
@@ -59,6 +58,7 @@
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
+#include "utils/drain_gate.h"
 
 namespace duckdb {
 
@@ -197,7 +197,8 @@ class Store final : public std::enable_shared_from_this<Store>,
                                RefreshResult& code);
   // `field_options` (nullable) is the per-merge per-column encoding config,
   // pinned by the caller for the whole merge.
-  auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
+  auto CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
+                          const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
@@ -213,8 +214,8 @@ class Store final : public std::enable_shared_from_this<Store>,
     const irs::ProgressReportCallback& progress = nullptr);
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments,
-                                           absl::FunctionRef<bool()> cancelled);
+  [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
+                                           uint32_t target_segments);
   void Publish();
 
   StoreStats GetStats() const;
@@ -273,13 +274,13 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
   bool BuildInFlight() const;
 
-  [[nodiscard]] std::optional<unsigned> RegisterWriter() {
+  [[nodiscard]] WriterGenerations::Writer RegisterWriter() noexcept {
     return _writers.Register();
   }
-  void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
-  [[nodiscard]] bool ClaimTruncate() { return _writers.ClaimTruncate(); }
-  void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
-  void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
+  [[nodiscard]] WriterGenerations::Truncate ClaimTruncate() noexcept {
+    return _writers.ClaimTruncate();
+  }
+  void DrainPriorWriters(duckdb::ClientContext& context);
 
   void WatchTruncates();
   void RecordTruncateForBuild(const irs::SourcePosition& position);
@@ -322,25 +323,18 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
-  class [[nodiscard]] ReindexClaim {
-   public:
-    static ReindexClaim TryAcquire(Store& store);
-    static ReindexClaim Acquire(Store& store,
-                                absl::FunctionRef<bool()> cancelled,
-                                absl::Duration poll);
-    ReindexClaim(ReindexClaim&& other) noexcept
-      : _store{std::exchange(other._store, nullptr)} {}
-    ReindexClaim& operator=(ReindexClaim&&) = delete;
-    ~ReindexClaim();
-    bool Claimed() const noexcept { return _store != nullptr; }
-
-   private:
-    explicit ReindexClaim(Store* store) noexcept : _store{store} {}
-
-    Store* _store;
+  struct ReindexReleaser {
+    void operator()(Store* store) const noexcept;
   };
+  using ReindexClaim = std::unique_ptr<Store, ReindexReleaser>;
+
+  [[nodiscard]] ReindexClaim TryClaimReindex() noexcept;
+  [[nodiscard]] ReindexClaim ClaimReindex(duckdb::ClientContext& context);
 
  private:
+  static constexpr uint32_t kReindexing = 1;
+  static constexpr uint32_t kReindexWaiter = 2;
+
   struct IndexConfig {
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
@@ -412,20 +406,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);
   std::unique_ptr<ReplaySession> _replay;
 
-  absl::Mutex _reindex_mutex;
-  bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
-  uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
+  std::atomic<uint32_t> _reindex_state{0};
 
   absl::Mutex _delete_log_mutex;
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
   std::vector<irs::KeyRemoval> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
-
-  // How often a waiting rebuild surfaces to check for cancellation. The
-  // CondVar does the blocking; this only bounds how long a cancelled statement
-  // keeps waiting.
-  static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
 
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't

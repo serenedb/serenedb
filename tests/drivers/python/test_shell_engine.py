@@ -51,15 +51,21 @@ def _rows(sql: str) -> list[list[str]]:
     return list(csv.reader(io.StringIO(result.stdout)))
 
 
-def _interactive(lines: list[str], *, timeout: float = 30.0) -> str:
+def _interactive(
+    lines: list[str],
+    *,
+    rows: int = 50,
+    env: dict[str, str] | None = None,
+    timeout: float = 30.0,
+) -> str:
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 200, 0, 0))
     process = subprocess.Popen(
-        [SERENED_BIN, "shell", ":memory:"],
+        [SERENED_BIN, "shell", "-dark-mode", ":memory:"],
         stdin=slave,
         stdout=slave,
         stderr=slave,
-        env={**os.environ, "TERM": "xterm", "PAGER": "cat"},
+        env={**os.environ, "TERM": "xterm", "PAGER": "cat", **(env or {})},
         close_fds=True,
     )
     os.close(slave)
@@ -118,6 +124,35 @@ def test_explain_in_a_terminal_prints_the_plan_and_one_analyze_hint() -> None:
     assert output.count("DUMMY_SCAN") >= 2, output
     assert output.count("open the query profile in a browser") + output.count(
         ".web to open it in a browser") == 1, output
+
+
+def test_explain_analyze_for_a_browser_prints_no_hint(tmp_path: Path) -> None:
+    opener = tmp_path / "bin" / "xdg-open"
+    opener.parent.mkdir()
+    opener.write_text("#!/bin/sh\nexit 0\n")
+    opener.chmod(0o755)
+    output = _interactive(
+        ["EXPLAIN ANALYZE (FORMAT WEB) SELECT 1;"],
+        env={"PATH": f"{opener.parent}:{os.environ['PATH']}", "TMP": str(tmp_path)},
+    )
+    assert "Opening query profile in browser" in output, output
+    assert "in a browser" not in output, output
+    assert list(tmp_path.glob("*.html")), output
+
+
+def test_explain_analyze_into_a_file_writes_no_hint(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.txt"
+    output = _interactive([f".output {plan}", "EXPLAIN ANALYZE SELECT 1;", ".output"])
+    assert "DUMMY_SCAN" in plan.read_text(), output
+    assert "in a browser" not in plan.read_text() + output, output
+
+
+@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+def test_only_a_plan_taller_than_the_terminal_goes_through_the_pager(shape: str) -> None:
+    lines = [f"SET explain_output_format = '{shape}';", "EXPLAIN SELECT 1;"]
+    pager = {"PAGER": "sed s/^/paged:/"}
+    assert "paged:" in _interactive(lines, rows=4, env=pager)
+    assert "paged:" not in _interactive(lines, env=pager)
 
 
 def test_a_view_keeps_its_table() -> None:

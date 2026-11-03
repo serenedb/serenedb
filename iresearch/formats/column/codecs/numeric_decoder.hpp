@@ -194,8 +194,7 @@ class FrameDecoder {
   }
 
   bool ReadsAlone() const noexcept {
-    return Blocked() || ((_h.transform == NumericTransform::For ||
-                          _h.transform == NumericTransform::Dict) &&
+    return Blocked() || (_h.transform == NumericTransform::Dict &&
                          _h.leaf == NumericLeaf::None && !_h.Shuffled());
   }
 
@@ -227,15 +226,10 @@ class FrameDecoder {
         numeric::UnpackValue<U>(packed, bits, index, static_cast<U>(base)));
     }
     const auto m = Meta(FrameOf(row));
-    const auto* src = Data(m) + (row - m.frame.first_entry) * _h.stored;
-    if (_h.transform == NumericTransform::Dict) {
-      uint32_t code;
-      numeric::Widen(src, 1, _h.stored, &code);
-      return Entry(code);
-    }
-    U v;
-    numeric::Widen(src, 1, _h.stored, &v);
-    return Scaled(static_cast<U>(v + static_cast<U>(_h.base)));
+    uint32_t code;
+    numeric::Widen(Data(m) + (row - m.frame.first_entry) * _h.stored, 1,
+                   _h.stored, &code);
+    return Entry(code);
   }
 
   bool ReadSource(uint64_t row, T& out) {

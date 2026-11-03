@@ -53,6 +53,8 @@ cleanup_active	Search cleanup tasks currently running
 cleanup_pending	Search cleanup tasks waiting to run
 compaction_active	Search compaction tasks currently running
 compaction_pending	Search compaction tasks waiting to run
+compaction_threads	Background threads that search compaction tasks hold
+compaction_written_bytes	Bytes written by search compaction tasks since start
 http_connections	Open HTTP client connections
 pg_connections	Open pg-wire client connections
 refresh_active	Search refresh tasks currently running

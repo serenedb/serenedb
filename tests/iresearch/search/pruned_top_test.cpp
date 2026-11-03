@@ -21,6 +21,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <atomic>
@@ -152,6 +153,11 @@ std::string PhrasesText(doc_id_t i) {
   repeat(40, 10, "brass brass brass");
   repeat(41, 2, "brass band");
   repeat(42, 500, "band");
+  repeat(43, 1, "zephyr alpha beta");
+  repeat(44, 8, "zephyr");
+  repeat(45, 200, "alpha");
+  repeat(46, 200, "beta");
+  repeat(47, 10, "omega alpha");
   if (Chance(37, i, 3)) {
     absl::StrAppend(&text, " visit port", Mix(uint64_t{i} * 13 + 5) % 40);
   }
@@ -162,6 +168,12 @@ std::string PhrasesText(doc_id_t i) {
     absl::StrAppend(&text, " pad");
   }
   return text;
+}
+
+bool HasPhrase(std::string_view text, std::span<const std::string_view> parts) {
+  const std::vector<std::string_view> tokens = absl::StrSplit(text, ' ');
+  return std::search(tokens.begin(), tokens.end(), parts.begin(),
+                     parts.end()) != tokens.end();
 }
 
 struct Shape {
@@ -597,6 +609,32 @@ TEST_P(PrunedTopTest, phrases_with_repeated_terms) {
   }
 }
 
+TEST_P(PrunedTopTest, phrases_defer_positions_of_terms_denser_than_the_lead) {
+  Build(PhrasesText);
+  for (const auto& parts : std::vector<std::vector<std::string_view>>{
+         {"zephyr", "alpha", "beta"},
+         {"zephyr", "alpha"},
+         {"beta", "zephyr"},
+         {"omega", "alpha"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(parts, " "));
+    const auto filter = PhraseOf(parts);
+    const auto matches = Matches(*filter);
+    size_t expected = 0;
+    for (doc_id_t i = 0; i != kDocs; ++i) {
+      if (HasPhrase(PhrasesText(i), parts)) {
+        ++expected;
+        ASSERT_TRUE(matches.contains(irs::doc_limits::min() + i)) << i;
+      }
+    }
+    ASSERT_EQ(expected, matches.size());
+    CheckRanking(*filter);
+  }
+  for (const auto occur : {irs::Occur::Should, irs::Occur::Must}) {
+    CheckMixed({{{"zephyr", "alpha", "beta"}}, {"town"}, {}}, occur);
+  }
+}
+
 TEST_P(PrunedTopTest, unions_with_phrases) {
   Build(PhrasesText);
   for (const auto& shape : std::vector<Mixed>{
@@ -667,7 +705,8 @@ TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
 
 INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
                          ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
+                           &tests::Directory<&tests::MemoryDirectory>,
+                           &tests::Directory<&tests::MmapDirectory>)),
                          PrunedTopTest::to_string);
 
 }  // namespace

@@ -73,25 +73,34 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
   const auto& state = query.state;
   const auto& h = state.handles;
   const std::span<const TermInterval> intervals{query.positions};
-  const PhraseTerms terms{{state.metas.data(), state.metas.size()}, intervals};
+  const PhraseTerms terms{{state.metas.data(), state.metas.size()},
+                          intervals,
+                          query.Segment().docs_count()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
     return ResolveInput(*h.doc, [&]<typename Input> {
-      using Leaf = PostingPos<Input, Bounds, Offs>;
-      const auto build = [&]<size_t N> {
-        return ResolveMatcherOf<M, N, HasFreq, Offs>(
-          query, [&]<typename Matcher>(auto&&... args) {
-            return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
-              terms, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
-              std::forward<decltype(args)>(args)...);
-          });
-      };
-      if constexpr (!Offs) {
-        if (terms.repeats.empty()) {
-          return ResolveArity<kSlotArity, kSlotFloor>(terms.metas.size(),
-                                                      build);
+      const auto leaves = [&]<bool Deferrable> {
+        using Leaf = PostingPos<Input, Bounds, Offs, Deferrable>;
+        const auto build = [&]<size_t N> {
+          return ResolveMatcherOf<M, N, HasFreq, Offs>(
+            query, [&]<typename Matcher>(auto&&... args) {
+              return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
+                terms, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
+                std::forward<decltype(args)>(args)...);
+            });
+        };
+        if constexpr (!Offs) {
+          if (terms.repeats.empty()) {
+            return ResolveArity<kSlotArity, kSlotFloor>(terms.metas.size(),
+                                                        build);
+          }
         }
+        return build.template operator()<0>();
+      };
+      if constexpr (Input::kVolatileAlways) {
+        return ResolveBool(terms.Defers(), leaves);
+      } else {
+        return leaves.template operator()<false>();
       }
-      return build.template operator()<0>();
     });
   });
 }

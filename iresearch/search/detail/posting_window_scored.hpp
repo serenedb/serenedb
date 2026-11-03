@@ -46,6 +46,7 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
   using Base::Behind;
   using Base::kBlock;
   using Base::ReadLeafBelow;
+  using Base::ScoresAt;
 
   static constexpr bool kCounts = Counts;
 
@@ -140,13 +141,13 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
       if (begin == end) {
         _left_in_leaf = 0;
       } else if (_last >= max) {
-        const auto* const it = this->template AddUntil<MergeType, kCounts>(
-          begin, end, min, max, counts, mask, window);
+        const auto* const it = AddUntil<MergeType, kCounts>(
+          begin, end, ScoresAt(begin), min, max, counts, mask, window);
         _left_in_leaf = static_cast<uint32_t>(end - it);
         return _doc = *it;
       } else {
-        this->template AddWhole<MergeType, kCounts>(begin, end, min, counts,
-                                                    mask, window);
+        AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min, counts,
+                                     mask, window);
         _left_in_leaf = 0;
       }
     }
@@ -163,12 +164,12 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
 
       const auto* const begin = Behind(end - len, end, min);
       if (_last < max) {
-        this->template AddWhole<MergeType, kCounts>(begin, end, min, counts,
-                                                    mask, window);
+        AddWhole<MergeType, kCounts>(begin, end, ScoresAt(begin), min, counts,
+                                     mask, window);
         continue;
       }
-      const auto* const it = this->template AddUntil<MergeType, kCounts>(
-        begin, end, min, max, counts, mask, window);
+      const auto* const it = AddUntil<MergeType, kCounts>(
+        begin, end, ScoresAt(begin), min, max, counts, mask, window);
       _left_in_leaf = static_cast<uint32_t>(end - it);
       return _doc = *it;
     }

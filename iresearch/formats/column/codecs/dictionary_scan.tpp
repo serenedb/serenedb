@@ -213,6 +213,10 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   static constexpr Shape kShape = Shape::Dedup;
   static constexpr auto kValidity =
     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  static constexpr uint8_t kUnjudged = 0;
+  static constexpr uint8_t kRejected = 1;
+  static constexpr uint8_t kAccepted = 2;
+  static constexpr uint8_t kPending = 3;
 
   DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
     : DictionaryScan{segment, std::move(handle), CachedDictionary(segment)} {}
@@ -621,13 +625,12 @@ struct DictionaryScan final : duckdb::SegmentScanState {
               duckdb::TableFilterState& filter_state) {
     SDB_ASSERT(!entries.Streams());
     const auto dict_count = entries.header.entry_count;
-    if (!filter_result && !lazy_filter) {
+    if (verdicts.empty()) {
       if (const auto ranges = ResolveFilter(filter)) {
-        filter_result = duckdb::make_unsafe_uniq_array<bool>(dict_count);
-        std::memset(filter_result.get(), 0, dict_count);
+        verdicts.assign(dict_count, kRejected);
         idx_t matched = 0;
         for (const auto& [lo, hi] : *ranges) {
-          std::memset(filter_result.get() + lo, 1, hi - lo);
+          std::memset(verdicts.data() + lo, kAccepted, hi - lo);
           matched += hi - lo;
         }
         filter_match_count = matched;
@@ -636,7 +639,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         JudgeAll(filter_state);
       } else {
         lazy_filter = true;
-        verdicts.assign(dict_count, 0);
+        verdicts.assign(dict_count, kUnjudged);
       }
     }
     if (!lazy_filter && filter_match_count == 0) {
@@ -647,15 +650,15 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (lazy_filter) {
       JudgeLazily(codes, sel, sel_count, filter_state);
     } else if (filter_match_count != dict_count) {
-      const auto* matches = filter_result.get();
+      const auto* matches = verdicts.data();
       idx_t kept = 0;
       while (kept < sel_count &&
-             matches[codes.get_index(sel.get_index(kept))]) {
+             matches[codes.get_index(sel.get_index(kept))] == kAccepted) {
         ++kept;
       }
       for (idx_t i = kept + 1; i < sel_count; ++i) {
         const auto row = sel.get_index(i);
-        if (matches[codes.get_index(row)]) {
+        if (matches[codes.get_index(row)] == kAccepted) {
           sel.set_index(kept++, row);
         }
       }
@@ -694,31 +697,26 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   void JudgeAll(duckdb::TableFilterState& filter_state) {
     const auto dict_count = entries.header.entry_count;
     EnsureDictionary();
-    filter_result = duckdb::make_unsafe_uniq_array<bool>(dict_count);
-    std::memset(filter_result.get(), 0, dict_count);
     duckdb::SelectionVector dict_sel;
     idx_t filter_count = dict_count;
     duckdb::ColumnSegment::FilterSelection(dict_sel, entries.dictionary->data,
                                            filter_state, dict_count,
                                            filter_count);
+    verdicts.assign(dict_count, kRejected);
     for (idx_t i = 0; i < filter_count; ++i) {
-      filter_result[dict_sel.get_index(i)] = true;
+      verdicts[dict_sel.get_index(i)] = kAccepted;
     }
     filter_match_count = filter_count;
     lazy_filter = false;
-    verdicts = {};
   }
 
   void JudgeLazily(const duckdb::SelectionVector& codes,
                    duckdb::SelectionVector& rows, idx_t& count,
                    duckdb::TableFilterState& filter_state) {
-    constexpr uint8_t kRejected = 1;
-    constexpr uint8_t kAccepted = 2;
-    constexpr uint8_t kPending = 3;
     pending.clear();
     for (idx_t i = 0; i < count; ++i) {
       const auto code = codes.get_index(rows.get_index(i));
-      if (verdicts[code] == 0) {
+      if (verdicts[code] == kUnjudged) {
         verdicts[code] = kPending;
         pending.emplace_back(static_cast<uint32_t>(code));
       }
@@ -837,7 +835,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   ScratchVector<uint32_t> run_values;
   ScratchVector<uint32_t> run_ends;
   std::optional<FrameDecoder<uint32_t>> code_frames;
-  duckdb::unsafe_unique_array<bool> filter_result;
   idx_t filter_match_count = 0;
   std::vector<uint8_t> verdicts;
   std::vector<uint32_t> pending;

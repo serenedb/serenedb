@@ -65,6 +65,28 @@ found	diff
 2	0
 
 
+query
+WITH keyed AS (SELECT oid, typname FROM pg_type WHERE typrelid = 0),
+     whole AS (SELECT oid, typname FROM (SELECT * FROM pg_type LIMIT 100000000) WHERE typrelid = 0)
+SELECT (SELECT string_agg(typname, ',' ORDER BY typname) FROM keyed WHERE typname IN ('pudgekey_mood', '_pudgekey_mood', '_pudgekey_hook')) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+_pudgekey_hook,_pudgekey_mood,pudgekey_mood	0
+
+
+query
+WITH keyed AS (SELECT oid, typname FROM pg_type WHERE typelem = 0),
+     whole AS (SELECT oid, typname FROM (SELECT * FROM pg_type LIMIT 100000000) WHERE typelem = 0)
+SELECT (SELECT string_agg(typname, ',' ORDER BY typname) FROM keyed WHERE typname IN ('pudgekey_heap', 'pudgekey_hook', 'pudgekey_mood')) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+pudgekey_heap,pudgekey_hook,pudgekey_mood	0
+
+
 statement ok
 DROP ROLE IF EXISTS pudgekey_butcher
 
@@ -515,6 +537,34 @@ SELECT (SELECT count(*) FROM pushed) > 0 AS found,
 ----
 found	diff
 t	0
+
+
+statement ok
+CREATE TABLE pudge_keyed.pudgekey_meat (r REAL, ti TINYINT, i INT)
+
+
+statement ok
+INSERT INTO pudge_keyed.pudgekey_meat VALUES (-1, 4, 4)
+
+
+query
+WITH pushed AS (SELECT c.oid FROM pg_class c JOIN pudge_keyed.pudgekey_meat m ON c.reltuples = m.r),
+     whole AS (SELECT c.oid FROM (SELECT * FROM pg_class LIMIT 100000000) c JOIN pudge_keyed.pudgekey_meat m ON c.reltuples = m.r)
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+SELECT count(*) AS leaked
+FROM pg_type t JOIN pudge_keyed.pudgekey_meat m ON t.typlen::TINYINT = m.ti AND t.typlen = m.i
+WHERE t.typlen <> 4;
+----
+leaked
+0
 
 
 statement ok

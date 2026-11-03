@@ -27,7 +27,6 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
-#include <yaclib/exe/submit.hpp>
 
 #include "network/io_context.h"
 #include "network/server.h"
@@ -87,7 +86,9 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
         absl::MutexLock lock{&_delays_mutex};
         _delays.erase(timer);
       }
-      Complete(std::move(p));
+      // Runs on an io thread: trivial promise-set only, no background work
+      // here.
+      std::move(p).Set();
     });
   _delays.insert(std::move(timer));
   return std::move(f);
@@ -111,14 +112,11 @@ void BackgroundScheduler::OpenDelays() {
     _delays_open = true;
     parked.swap(_parked);
   }
+  // Outside the lock: setting a promise resumes its coroutine inline, and that
+  // continuation calls straight back into Delay.
   for (auto& p : parked) {
-    Complete(std::move(p));
+    std::move(p).Set();
   }
-}
-
-void BackgroundScheduler::Complete(yaclib::Promise<> p) {
-  yaclib::Submit(*_executor,
-                 [p = std::move(p)]() mutable { std::move(p).Set(); });
 }
 
 void BackgroundScheduler::CancelDelays() {

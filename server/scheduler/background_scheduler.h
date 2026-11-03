@@ -97,8 +97,6 @@ class BackgroundScheduler final {
   }
 
  private:
-  void Complete(yaclib::Promise<> p);
-
   std::unique_ptr<DuckExecutor> _executor;
   std::atomic_bool _delays_cancelled = false;
   absl::Mutex _delays_mutex;

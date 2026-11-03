@@ -307,6 +307,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Store> weak, std::string_view name,
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
       SDB_PARK_ONCE_ON_FAILURE("pause_refresh_loop_before_tick");
 
+      co_await yaclib::On(s.executor());
       if (ShouldStop()) {
         break;
       }
@@ -425,6 +426,7 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak) {
       if (ShouldStop()) {
         break;
       }
+      co_await yaclib::On(s.executor());
       triggered = true;
     }
   } catch (const yaclib::ResultError<yaclib::StopError>&) {

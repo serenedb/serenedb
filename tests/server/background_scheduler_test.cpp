@@ -24,10 +24,7 @@
 #include <chrono>
 #include <thread>
 #include <vector>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
-#include "network/io_context.h"
 #include "network/server.h"
 #include "scheduler/background_scheduler.h"
 
@@ -43,31 +40,6 @@ TEST(BackgroundSchedulerTest, ADelayBeforeOpenDelaysParksUntilThen) {
   server.StartIoPool();
   scheduler.OpenDelays();
   EXPECT_TRUE(std::move(parked).Get());
-  scheduler.CancelDelays();
-  server.RequestStop();
-  server.stop();
-  scheduler.stop();
-}
-
-TEST(BackgroundSchedulerTest, ADelayResumesItsWaiterOnTheBackgroundPool) {
-  Server server;
-  BackgroundScheduler scheduler;
-  scheduler.start();
-  server.StartIoPool();
-  scheduler.OpenDelays();
-  auto* pool = server.IoPool();
-  std::atomic_bool on_io_thread = true;
-  auto waiter = [&]() -> yaclib::Future<> {
-    co_await scheduler.Delay(std::chrono::milliseconds{1});
-    bool io = false;
-    for (uint32_t i = 0; i < pool->Size(); ++i) {
-      io = io || pool->Next().Context().get_executor().running_in_this_thread();
-    }
-    on_io_thread = io;
-    co_return {};
-  };
-  EXPECT_TRUE(waiter().Get());
-  EXPECT_FALSE(on_io_thread.load());
   scheduler.CancelDelays();
   server.RequestStop();
   server.stop();

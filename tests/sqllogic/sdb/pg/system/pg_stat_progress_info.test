@@ -40,7 +40,6 @@ ORDER BY 1;
 ----
 viewname
 pg_stat_progress_analyze
-pg_stat_progress_basebackup
 pg_stat_progress_cluster
 pg_stat_progress_copy
 pg_stat_progress_vacuum

@@ -27,7 +27,7 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -82,8 +82,8 @@ class SegmentReaderImpl final : public SubReader {
 
   lead::Node::ptr docs_iterator() const final;
 
-  const TermReader* field(field_id id) const final {
-    return _field_reader->field(id);
+  std::span<const TermReader* const> fields(field_id id) const final {
+    return _field_reader->fields(id);
   }
 
   std::span<const field_id> field_ids() const final {
@@ -105,7 +105,7 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<IdxReader> idx_reader;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options);
+              const IndexReaderOptions& options, bool keep_terms);
   };
 
   FileRefs _refs;
@@ -114,7 +114,7 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _id = 0;
   std::shared_ptr<DocMapsSlot> _doc_maps;
   std::shared_ptr<ColumnData> _data;
-  std::shared_ptr<burst_trie::FieldReader> _field_reader;
+  std::shared_ptr<term_dict::FieldReader> _field_reader;
 };
 
 }  // namespace irs

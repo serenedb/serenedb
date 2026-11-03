@@ -50,8 +50,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
@@ -227,22 +226,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
   return *found;
 }
 
-// Every attached serenedb database. VACUUM maintains live storage, so the
-// attachments are the population an "all databases" run walks.
-std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
-  duckdb::ClientContext& context) {
-  std::vector<duckdb::reference<duckdb::Catalog>> out;
-  for (auto& attached :
-       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    auto& db_catalog = attached->GetCatalog();
-    if (db_catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      out.emplace_back(db_catalog);
-    }
-  }
-  return out;
-}
-
-void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
+void CompactInvertedStorage(search::Store& inverted,
                             const irs::IndexFieldOptions& field_options,
                             std::string_view index_name,
                             duckdb::ClientContext& context,
@@ -265,10 +249,16 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
-    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      kPolicy, tick, empty_compaction, &field_options, env_ptr));
+    absl::Status res;
+    do {
+      res = irs::GetBlocking(
+              inverted.CompactUnsafeAsync(
+                search::GetSearchEngine().Maintenance().Enter(context), kPolicy,
+                tick, empty_compaction, &field_options, env_ptr))
+              .res;
+    } while (absl::IsUnavailable(res));
+    context.InterruptCheck();
     if (!res.ok()) {
-      context.InterruptCheck();
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));
@@ -284,12 +274,12 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
 // or a Search-table commit, in the same per-table order the walk visits them.
 // Owning pointers: the steps run after the collection walk finished.
 struct InvertedStep {
-  std::shared_ptr<search::InvertedIndexStorage> storage;
+  std::shared_ptr<search::Store> storage;
   // Owned for the whole pass, not aliased into the index: a concurrent DROP
   // INDEX destroys the bound index, and a merge that started against this
   // encoding has to finish against it.
   std::shared_ptr<const irs::IndexFieldOptions> field_options;
-  std::shared_ptr<search::SearchTable> search_data;
+  std::shared_ptr<search::Store> search_data;
   std::string name;
 };
 
@@ -388,7 +378,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         duckdb::OnEntryNotFound::RETURN_NULL);
       duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
       const catalog::InvertedIndexEntry* inverted = nullptr;
-      std::shared_ptr<search::InvertedIndexStorage> storage;
+      std::shared_ptr<search::Store> storage;
       if (entry) {
         index = &entry->Cast<duckdb::IndexCatalogEntry>();
         inverted =
@@ -450,8 +440,9 @@ void DispatchInverted(duckdb::ClientContext& context,
     case Scope::All: {
       // Listed first: a walk scans the database it is for, and doing that from
       // inside the listing re-enters the very set the listing holds.
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }
@@ -498,11 +489,13 @@ void DispatchInverted(duckdb::ClientContext& context,
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      const auto status = action == Action::Refresh
-                            ? search->VacuumRefresh()
-                            : search->VacuumCompact(GetIntSetting(
-                                context, "sdb_compact_target_segments"));
+      const auto status =
+        action == Action::Refresh
+          ? search->VacuumRefresh()
+          : search->VacuumCompact(
+              context, GetIntSetting(context, "sdb_compact_target_segments"));
       if (!status.ok()) {
+        context.InterruptCheck();
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),
           ERR_MSG("failed to ",
@@ -570,8 +563,9 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       walk(LookupDatabase(context, target.database), {});
       break;
     case Scope::All: {
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }

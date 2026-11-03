@@ -17,7 +17,7 @@ SELECT i AS id,
        (i * 7919) % 1000003 AS n,
        'title-' || i || '-long-enough-to-not-inline' AS title,
        CASE WHEN i % 10 = 0 THEN 'red fox ' ELSE 'blue cat ' END ||
-       array_to_string(list_transform(range(16), x -> md5(i::VARCHAR || '-' || x::VARCHAR)), ' ') AS body
+       array_to_string(list_transform(range(16), lambda x: md5(i::VARCHAR || '-' || x::VARCHAR)), ' ') AS body
 FROM generate_series(1, 5000) t(i);
 
 statement ok

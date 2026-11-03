@@ -55,8 +55,7 @@ struct CreateIndexInfo;
 }  // namespace duckdb
 namespace sdb::search {
 
-class InvertedIndexStorage;
-class SearchTable;
+class Store;
 
 }  // namespace sdb::search
 namespace sdb::catalog {
@@ -65,7 +64,6 @@ using ScorerOptions = irs::ScorerOptions;
 
 using persistence::InvertedIndexSettings;
 using persistence::PkColumnKind;
-using persistence::PkPolicy;
 
 struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
@@ -75,9 +73,9 @@ struct ColumnTokenizer {
 
 struct InvertedIndexField : persistence::FieldRecord {
   bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
+  // For a JSON value: whether its leaves are indexed one by one.
   bool HasJsonLeafFields() const noexcept {
-    return irs::field_limits::valid(numeric_field_id) &&
-           irs::field_limits::valid(bool_field_id);
+    return HasTextDictionary() && !whole_value;
   }
   bool IsTermDict() const noexcept {
     return !column_options.ann_info && indexed_term_dict;
@@ -182,7 +180,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
 
   const std::vector<InvertedIndexKey> keys;
   const InvertedIndexFields fields;
-  PkPolicy pk;
+  PkColumnKind pk = PkColumnKind::Has;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
@@ -288,7 +286,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   // Handed over once the storage is opened, which happens after the entry is
   // created. Every later version of the entry inherits it through Copy.
-  void AdoptStorage(std::shared_ptr<search::InvertedIndexStorage> storage) {
+  void AdoptStorage(std::shared_ptr<search::Store> storage) {
     _storage = std::move(storage);
   }
 
@@ -313,8 +311,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   void AlterReindexJob(duckdb::CatalogTransaction transaction,
                        uint32_t interval_ms);
 
-  std::shared_ptr<search::InvertedIndexStorage> _storage;
-  std::shared_ptr<search::SearchTable> _search_table;
+  std::shared_ptr<search::Store> _storage;
+  std::shared_ptr<search::Store> _search_table;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
   bool _retired = false;

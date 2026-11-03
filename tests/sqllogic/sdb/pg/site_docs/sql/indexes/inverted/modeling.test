@@ -93,3 +93,45 @@ statement error
 CREATE INDEX metrics_idx2 ON metrics USING inverted (id, (n + random()));
 ----
 db error: ERROR: Index keys cannot contain expressions with side effects. Function "random" is not immutable.
+
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY attr_words AS keyword();
+
+statement ok
+CREATE TABLE products (
+    id INTEGER PRIMARY KEY,
+    attrs JSON[]
+);
+
+statement ok
+INSERT INTO products VALUES
+    (1, ['"red"', '42', 'true']::JSON[]),
+    (2, ['"green"', 'null']::JSON[]),
+    (3, NULL);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX products_idx ON products
+    USING inverted (id, attrs attr_words);
+
+query
+SELECT id
+FROM products_idx
+WHERE attrs @@ 'red'
+ORDER BY id;
+----
+id
+1
+
+query
+SELECT id
+FROM products_idx
+WHERE attrs IS NULL
+ORDER BY id;
+----
+id
+3

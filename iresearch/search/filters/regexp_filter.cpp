@@ -35,7 +35,7 @@ QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
     ERR_MSG("ByRegexp must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
+Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                         RegexpSyntax syntax, score_t boost) {
   bstring buf;
   return ExecuteRegexp(
@@ -43,6 +43,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = term;
       filter->SetBoost(boost);
       return filter;
@@ -50,6 +51,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
     [&](bytes_view prefix) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = prefix;
       filter->SetBoost(boost);
       return filter;
@@ -57,6 +59,7 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
     [&](bytes_view pattern) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       *filter->mutable_options() =
         AutomatonOptions{pattern, RegexpPattern(syntax)};
       filter->SetBoost(boost);
@@ -64,10 +67,11 @@ Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
     });
 }
 
-Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
+Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                            RegexpSyntax syntax, score_t boost) {
   auto filter = std::make_unique<ByRegexp>();
   *filter->mutable_field_id() = id;
+  *filter->mutable_dict() = dict;
   filter->mutable_options()->pattern = pattern;
   filter->mutable_options()->syntax = syntax;
   filter->SetBoost(boost);

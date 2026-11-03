@@ -84,11 +84,7 @@ bool IsMaxOnly(const Range& node) noexcept {
 template<typename Range>
 const bstring& RangeBound(const Range& node, bool min) noexcept {
   const auto& rng = node.options().range;
-  if constexpr (std::is_same_v<Range, ByRange>) {
-    return min ? rng.min : rng.max;
-  } else {
-    return min ? rng.min.front() : rng.max.front();
-  }
+  return min ? rng.min : rng.max;
 }
 
 template<typename Range>
@@ -99,6 +95,7 @@ Filter::ptr MergeSameBounds(const Range& lhs, const Range& rhs, bool min,
   const auto& looser = &tighter == &lhs ? rhs : lhs;
   auto merged = std::make_unique<Range>();
   *merged->mutable_field_id() = lhs.field_id();
+  *merged->mutable_dict() = lhs.dict();
   *merged->mutable_options() = tighter.options();
   if (RangeBound(lhs, min) == RangeBound(rhs, min)) {
     auto& rng = merged->mutable_options()->range;
@@ -127,6 +124,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
         hi.options().range.max_type == BoundType::Inclusive) {
       auto by_term = std::make_unique<ByTerm>();
       *by_term->mutable_field_id() = lo.field_id();
+      *by_term->mutable_dict() = lo.dict();
       by_term->mutable_options()->term = RangeBound(lo, true);
       by_term->SetBoost(boost);
       return by_term;
@@ -135,6 +133,7 @@ Filter::ptr MergeRangeBounds(const Range& lo, const Range& hi,
   }
   auto merged = std::make_unique<Range>();
   *merged->mutable_field_id() = lo.field_id();
+  *merged->mutable_dict() = lo.dict();
   auto& options = *merged->mutable_options();
   options = lo.options();
   options.range.max = hi.options().range.max;
@@ -168,7 +167,8 @@ bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
       auto& hi = irs::utils::downCast<Range>(*children[j]);
       const bool same = min_only ? IsMinOnly(hi) : IsMaxOnly(hi);
       const bool complementary = min_only ? IsMaxOnly(hi) : IsMinOnly(hi);
-      if ((!same && !complementary) || hi.field_id() != lo.field_id()) {
+      if ((!same && !complementary) || hi.field_id() != lo.field_id() ||
+          hi.dict() != lo.dict()) {
         continue;
       }
       if (scores && children[i]->GetScorer() != children[j]->GetScorer()) {
@@ -255,8 +255,18 @@ field_id FieldOf(const Filter& child) noexcept {
   return field_limits::invalid();
 }
 
+DictRef DictOf(const Filter& child) noexcept {
+  if (AsPrefix(child) != nullptr) {
+    return irs::utils::downCast<ByPrefix>(child).dict();
+  }
+  if (AsRange(child) != nullptr) {
+    return irs::utils::downCast<ByRange>(child).dict();
+  }
+  return {};
+}
+
 bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
-  if (FieldOf(child) != clause.field) {
+  if (FieldOf(child) != clause.field || DictOf(child) != clause.dict) {
     return false;
   }
   if (const auto* prefix = AsPrefix(child); prefix != nullptr) {
@@ -285,14 +295,14 @@ class PrefixIndex {
     _map.reserve(count);
     for (const auto& child : filters) {
       if (const auto* prefix = AsPrefix(*child); prefix != nullptr) {
-        _map.try_emplace(Key{FieldOf(*child), prefix->term},
+        _map.try_emplace(Key{FieldOf(*child), DictOf(*child), prefix->term},
                          Entry{child.get()});
       }
     }
     for (auto& [key, entry] : _map) {
-      const auto term = key.second;
+      const auto& [field, dict, term] = key;
       for (size_t size = 0; size < term.size(); ++size) {
-        const auto it = _map.find(Key{key.first, term.substr(0, size)});
+        const auto it = _map.find(Key{field, dict, term.substr(0, size)});
         if (it != _map.end()) {
           entry.has_wider = true;
           it->second.has_narrower = true;
@@ -307,7 +317,7 @@ class PrefixIndex {
     if (prefix == nullptr) {
       return false;
     }
-    const auto it = _map.find(Key{FieldOf(child), prefix->term});
+    const auto it = _map.find(Key{FieldOf(child), DictOf(child), prefix->term});
     SDB_ASSERT(it != _map.end());
     const auto& entry = it->second;
     return entry.first != &child ||
@@ -321,8 +331,9 @@ class PrefixIndex {
     }
     const bytes_view term{prefix->term};
     const auto field = FieldOf(child);
+    const auto dict = DictOf(child);
     for (size_t size = 0; size <= term.size(); ++size) {
-      if (_map.contains(Key{field, term.substr(0, size)})) {
+      if (_map.contains(Key{field, dict, term.substr(0, size)})) {
         return true;
       }
     }
@@ -335,7 +346,7 @@ class PrefixIndex {
     bool has_wider{false};
     bool has_narrower{false};
   };
-  using Key = std::pair<field_id, bytes_view>;
+  using Key = std::tuple<field_id, DictRef, bytes_view>;
 
   absl::flat_hash_map<Key, Entry> _map;
 };
@@ -413,10 +424,9 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
   return changed;
 }
 
-}  // namespace
-
-bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
-  auto& node = irs::utils::downCast<ByRange>(*slot);
+template<typename Range>
+bool Degenerate(Filter::ptr& slot) {
+  auto& node = irs::utils::downCast<Range>(*slot);
   const auto& rng = node.options().range;
   if (rng.min_type == BoundType::Unbounded ||
       rng.max_type == BoundType::Unbounded) {
@@ -433,6 +443,7 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
       rng.max_type == BoundType::Inclusive) {
     auto by_term = std::make_unique<ByTerm>();
     *by_term->mutable_field_id() = node.field_id();
+    *by_term->mutable_dict() = node.dict();
     by_term->mutable_options()->term = rng.min;
     by_term->SetBoost(node.GetBoost());
     by_term->SetScorer(node.GetScorer());
@@ -443,32 +454,15 @@ bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   return true;
 }
 
+}  // namespace
+
+bool RangeDegenerateRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+  return Degenerate<ByRange>(slot);
+}
+
 bool GranularRangeDegenerateRule::Apply(Filter::ptr& slot,
                                         const OptimizeContext&) {
-  auto& node = irs::utils::downCast<ByGranularRange>(*slot);
-  const auto& rng = node.options().range;
-  if (rng.min.empty() || rng.max.empty()) {
-    return false;
-  }
-  if (rng.min.front() > rng.max.front()) {
-    slot = std::make_unique<Empty>();
-    return true;
-  }
-  if (rng.min.front() != rng.max.front()) {
-    return false;
-  }
-  if (rng.min_type == BoundType::Inclusive &&
-      rng.max_type == BoundType::Inclusive) {
-    auto by_term = std::make_unique<ByTerm>();
-    *by_term->mutable_field_id() = node.field_id();
-    by_term->mutable_options()->term = rng.min.front();
-    by_term->SetBoost(node.GetBoost());
-    by_term->SetScorer(node.GetScorer());
-    slot = std::move(by_term);
-    return true;
-  }
-  slot = std::make_unique<Empty>();
-  return true;
+  return Degenerate<ByGranularRange>(slot);
 }
 
 bool AndRangeMergeRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {

@@ -56,6 +56,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
+#include "pg/version.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
@@ -495,100 +496,7 @@ void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
 }
 
 constexpr std::pair<std::string_view, VariableDescription>
-  kVariableDescription[] = {
-    // serenedb specific variables
-    {
-      "hba",
-      {
-        LogicalTypeId::VARCHAR,
-        "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
-        "string: one rule per line, first match wins, applied to connections "
-        "opened after the SET. An un-removable local + loopback trust rule is "
-        "force-prepended so a bad ruleset cannot lock you out; an empty value "
-        "restores the default (SCRAM for every role). Server-global.",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (auto err =
-                network::pg::hba::SetHbaFromTextString(value.ToString())) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid hba ruleset: ", *err));
-          }
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          // RESET => default
-          if (auto err = network::pg::hba::SetHbaFromTextString("")) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
-          }
-        },
-        duckdb::SetScope::GLOBAL,
-      },
-    },
-#ifdef SDB_FAULT_INJECTION
-    {
-      "sdb_faults",
-      {
-        LogicalTypeId::VARCHAR,
-        "Fault injection control. SET sdb_faults = 'name' to add a failure "
-        "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all and release parked threads. Superuser only: the "
-        "failure-point registry is "
-        "process-global, so an armed point fires for every session.",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
-          RequireFaultSuperuser(ctx);
-          auto s = value.ToString();
-          if (s.starts_with('-')) {
-            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
-              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                              ERR_MSG("failure point '", s, "' not set"));
-            }
-          } else {
-            if (!duckdb::FaultPoints::Arm(s)) {
-              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                              ERR_MSG("failure point '", s, "' already set"));
-            }
-            SDB_WARN(GENERAL, "activating intentional failure point '", s,
-                     "'. the server will misbehave!");
-          }
-          auto points = duckdb::FaultPoints::List();
-          value = duckdb::Value(absl::StrJoin(points, ","));
-        },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
-          RequireFaultSuperuser(ctx);
-          duckdb::FaultPoints::Clear();
-        },
-        // SESSION scope, though the registry behind it is process-global: it
-        // is the only scope that works. GLOBAL is refused inside a
-        // transaction, and every crash-recovery test arms its fault inside an
-        // uncommitted txn; LOCAL would promise a rollback the registry cannot
-        // give. PG's PGC_SUSET developer knobs are declared the same way --
-        // session-scoped and superuser-gated -- and the gate is what makes the
-        // mismatch safe: only a superuser can reach the global registry.
-        duckdb::SetScope::SESSION,
-      },
-    },
-#endif
-#ifdef D_ASSERT_IS_ENABLED
-    {
-      "debug_verification",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
-        "false to disable verification projections in EXPLAIN and speed "
-        "up tests in debug builds. Default: false.",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          duckdb::g_debug_verify_enabled.store(value.GetValue<bool>(),
-                                               std::memory_order_relaxed);
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          duckdb::g_debug_verify_enabled.store(false,
-                                               std::memory_order_relaxed);
-        },
-        duckdb::SetScope::GLOBAL,
-      },
-    },
-#endif
+  kEngineVariableDescription[] = {
     {
       "sdb_ai_text_default_secret",
       {
@@ -730,6 +638,148 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
     },
+    {
+      "extra_float_digits",
+      {
+        LogicalTypeId::INTEGER,
+        "Sets the number of digits displayed for floating-point values.",
+        [] { return duckdb::Value{"1"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (!(-15 <= n && n <= 3)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"extra_float_digits\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "bytea_output",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the output format for bytea.",
+        [] { return duckdb::Value{"hex"}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
+                                                  magic_enum::case_insensitive)
+                 .has_value()) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid value for parameter "
+                                    "\"bytea_output\": \"",
+                                    value.ToString(), "\""));
+          }
+        },
+      },
+    },
+    {
+      "xmloption",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets whether XML data in implicit parsing and serialization "
+        "operations is to be considered as documents or content fragments.",
+        [] { return duckdb::Value{"content"}; },
+        OneOfEnum<pg::XmlOption, "xmloption">,
+      },
+    },
+};
+
+constexpr std::pair<std::string_view, VariableDescription>
+  kVariableDescription[] = {
+    // serenedb specific variables
+    {
+      "hba",
+      {
+        LogicalTypeId::VARCHAR,
+        "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
+        "string: one rule per line, first match wins, applied to connections "
+        "opened after the SET. An un-removable local + loopback trust rule is "
+        "force-prepended so a bad ruleset cannot lock you out; an empty value "
+        "restores the default (SCRAM for every role). Server-global.",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          if (auto err =
+                network::pg::hba::SetHbaFromTextString(value.ToString())) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("invalid hba ruleset: ", *err));
+          }
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          // RESET => default
+          if (auto err = network::pg::hba::SetHbaFromTextString("")) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
+          }
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+#ifdef SDB_FAULT_INJECTION
+    {
+      "sdb_faults",
+      {
+        LogicalTypeId::VARCHAR,
+        "Fault injection control. SET sdb_faults = 'name' to add a failure "
+        "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
+        "clear all and release parked threads. Superuser only: the "
+        "failure-point registry is "
+        "process-global, so an armed point fires for every session.",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
+          RequireFaultSuperuser(ctx);
+          auto s = value.ToString();
+          if (s.starts_with('-')) {
+            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("failure point '", s, "' not set"));
+            }
+          } else {
+            if (!duckdb::FaultPoints::Arm(s)) {
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("failure point '", s, "' already set"));
+            }
+            SDB_WARN(GENERAL, "activating intentional failure point '", s,
+                     "'. the server will misbehave!");
+          }
+          auto points = duckdb::FaultPoints::List();
+          value = duckdb::Value(absl::StrJoin(points, ","));
+        },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
+          RequireFaultSuperuser(ctx);
+          duckdb::FaultPoints::Clear();
+        },
+        // SESSION scope, though the registry behind it is process-global: it
+        // is the only scope that works. GLOBAL is refused inside a
+        // transaction, and every crash-recovery test arms its fault inside an
+        // uncommitted txn; LOCAL would promise a rollback the registry cannot
+        // give. PG's PGC_SUSET developer knobs are declared the same way --
+        // session-scoped and superuser-gated -- and the gate is what makes the
+        // mismatch safe: only a superuser can reach the global registry.
+        duckdb::SetScope::SESSION,
+      },
+    },
+#endif
+#ifdef D_ASSERT_IS_ENABLED
+    {
+      "debug_verification",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+        "false to disable verification projections in EXPLAIN and speed "
+        "up tests in debug builds. Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          duckdb::g_debug_verify_enabled.store(value.GetValue<bool>(),
+                                               std::memory_order_relaxed);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          duckdb::g_debug_verify_enabled.store(false,
+                                               std::memory_order_relaxed);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+#endif
     // Logging knobs (level, type filters, storage, on/off) live in duckdb's
     // built-in settings: logging_level / enable_logging / enabled_log_types
     // / disabled_log_types / logging_storage / logging_mode. The previous
@@ -1264,41 +1314,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "extra_float_digits",
-      {
-        LogicalTypeId::INTEGER,
-        "Sets the number of digits displayed for floating-point values.",
-        [] { return duckdb::Value{"1"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (!(-15 <= n && n <= 3)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"extra_float_digits\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      "bytea_output",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the output format for bytea.",
-        [] { return duckdb::Value{"hex"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
-                                                  magic_enum::case_insensitive)
-                 .has_value()) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"bytea_output\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
       "client_encoding",
       {
         LogicalTypeId::VARCHAR,
@@ -1368,6 +1383,41 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Shows the server version as an integer.",
         [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
         nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "archive_mode",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"off"}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "archive_command",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{""}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "checkpoint_timeout",
+      {
+        LogicalTypeId::INTEGER,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value::INTEGER(300); },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "max_parallel_workers_per_gather",
+      {
+        LogicalTypeId::INTEGER,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value::INTEGER(2); },
       },
     },
     {
@@ -1533,21 +1583,15 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value::INTEGER(32); },
       },
     },
-    {
-      "xmloption",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets whether XML data in implicit parsing and serialization "
-        "operations is to be considered as documents or content fragments.",
-        [] { return duckdb::Value{"content"}; },
-        OneOfEnum<pg::XmlOption, "xmloption">,
-      },
-    },
 };
 
 const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
   duckdb::case_insensitive_set_view_t m;
-  m.reserve(std::size(kVariableDescription));
+  m.reserve(std::size(kEngineVariableDescription) +
+            std::size(kVariableDescription));
+  for (const auto& entry : kEngineVariableDescription) {
+    m.emplace(entry.first);
+  }
   for (const auto& entry : kVariableDescription) {
     m.emplace(entry.first);
   }
@@ -1573,6 +1617,10 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "external_threads",
   // Read-only in PostgreSQL, where reporting the value is the whole point of
   // the GUC.
+  "archive_command",
+  "archive_mode",
+  "checkpoint_timeout",
+  "data_directory",
   "in_hot_standby",
   "is_superuser",
   "max_identifier_length",
@@ -1584,6 +1632,14 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
 
 bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
+}
+
+const duckdb::case_insensitive_set_view_t kNonTransactionalSettings = {
+  "sdb_faults",
+};
+
+bool IsNonTransactionalSetting(std::string_view name) {
+  return kNonTransactionalSettings.contains(name);
 }
 
 const duckdb::case_insensitive_set_view_t kSuperuserSettings = {
@@ -1622,7 +1678,14 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
 }  // namespace
 namespace connector {
 
+void RegisterEngineConfigVariables(duckdb::DBConfig& config) {
+  for (const auto& [name, desc] : kEngineVariableDescription) {
+    TryRegister(config, name, desc);
+  }
+}
+
 void RegisterConfigVariables(duckdb::DBConfig& config) {
+  RegisterEngineConfigVariables(config);
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
   }

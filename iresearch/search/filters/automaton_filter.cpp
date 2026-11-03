@@ -52,7 +52,7 @@ field_visitor AutomatonFilter::visitor(TermAcceptorSource::ptr source) {
 QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(options().source);
-  const auto* reader = segment.field(field_id());
+  const auto* reader = segment.field(field_id(), dict());
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -64,7 +64,6 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   auto terms = options().source->Iterator(*reader);
   SDB_ASSERT(terms);
   if (terms->next()) {
-    mtv.Prepare(segment, *reader, *terms);
     VisitTerms(*terms, mtv);
   }
   return MultiTermQuery::Finish(std::move(query), ctx);

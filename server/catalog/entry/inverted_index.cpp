@@ -65,9 +65,8 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
-#include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 namespace {
@@ -298,11 +297,12 @@ irs::field_id InvertedIndexConfig::GetNormColumnId(irs::field_id id) const {
 }
 
 irs::FieldKind InvertedIndexConfig::GetFieldKind(irs::field_id id) const {
-  if (id == connector::term_dict::kPKFieldId || LookupField(id).entry) {
+  if (LookupField(id).entry) {
     return irs::FieldKind::Index;
   }
-  return table_columns.contains(id) ? irs::FieldKind::Column
-                                    : irs::FieldKind::None;
+  return id == connector::term_dict::kPKFieldId || table_columns.contains(id)
+           ? irs::FieldKind::Column
+           : irs::FieldKind::None;
 }
 
 const irs::AnnInfo* InvertedIndexConfig::FindAnn(
@@ -335,8 +335,7 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
         resolved.tokenizer_column = field.synthetic_column;
       }
     }
-    for (const auto id : {field_id, field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
+    for (const auto id : {field_id, field.synthetic_column}) {
       if (irs::field_limits::valid(id)) {
         _fields.try_emplace(id, resolved);
       }
@@ -415,11 +414,8 @@ InvertedIndexConfig::InvertedIndexConfig(
     }
   }
   for (const auto& [owner, field] : fields) {
-    for (const auto id : {field.numeric_field_id, field.bool_field_id,
-                          field.null_field_id, field.synthetic_column}) {
-      if (irs::field_limits::valid(id)) {
-        _owners.try_emplace(id, owner);
-      }
+    if (irs::field_limits::valid(field.synthetic_column)) {
+      _owners.try_emplace(field.synthetic_column, owner);
     }
   }
 }
@@ -772,7 +768,7 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   if (state.position++ != 0 || !_storage) {
     return false;
   }
-  const auto snapshot = _storage->GetInvertedIndexSnapshot();
+  const auto snapshot = _storage->Snapshot();
   const auto keys = connector::primary_key::KeyColumns(table);
   const auto key_column =
     keys.empty() ? duckdb::COLUMN_IDENTIFIER_ROW_ID

@@ -1020,15 +1020,17 @@ Tokenizer::ptr MakeStopwords() {
 Tokenizer::ptr MakeDelimiter() { return DelimitedTokenizer::Make({","}); }
 
 Tokenizer::ptr MakeSqlUpper() {
-  return SqlTokenizer::Make({.expression = "upper(input)"});
+  return SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache());
 }
 
 Tokenizer::ptr MakeSqlSplit() {
-  return SqlTokenizer::Make({.expression = "string_split(input, ',')"});
+  return SqlTokenizer::Make({.expression = "string_split(input, ',')"},
+                            tests::Cache());
 }
 
 Tokenizer::ptr MakeSqlSplitLower() {
-  return SqlTokenizer::Make({.expression = "string_split(lower(input), ',')"});
+  return SqlTokenizer::Make({.expression = "string_split(lower(input), ',')"},
+                            tests::Cache());
 }
 
 Tokenizer::ptr MakeUnion2() {
@@ -1480,23 +1482,24 @@ Tokenizer::ptr MakePipelineSegThen(Tokenizer::ptr stage) {
 }
 
 Tokenizer::ptr MakePipelineSegLength() {
-  return MakePipelineSegThen(
-    FilterTokensTokenizer::Make({.min_length = 2, .max_length = 6}));
+  return MakePipelineSegThen(FilterTokensTokenizer::Make(
+    {.min_length = 2, .max_length = 6}, tests::Cache()));
 }
 
 Tokenizer::ptr MakePipelineSegLengthLambda() {
   return MakePipelineSegThen(FilterTokensTokenizer::Make(
-    {.predicate = "length(input) BETWEEN 2 AND 6"}));
+    {.predicate = "length(input) BETWEEN 2 AND 6"}, tests::Cache()));
 }
 
 Tokenizer::ptr MakePipelineSegLengthSql() {
   return MakePipelineSegThen(SqlTokenizer::Make(
-    {.expression = "CASE WHEN length(input) BETWEEN 2 AND 6 THEN input END"}));
+    {.expression = "CASE WHEN length(input) BETWEEN 2 AND 6 THEN input END"},
+    tests::Cache()));
 }
 
 Tokenizer::ptr MakePipelineSegStopLambda() {
   return MakePipelineSegThen(FilterTokensTokenizer::Make(
-    {.predicate = "input NOT IN ('the', 'and', 'of', 'a')"}));
+    {.predicate = "input NOT IN ('the', 'and', 'of', 'a')"}, tests::Cache()));
 }
 
 Tokenizer::ptr MakeHtmlStrip() { return HtmlStripTokenizer::Make({}); }
@@ -1525,14 +1528,15 @@ Tokenizer::ptr MakePipelineT2Stem() { return MakePipelineT2RewriteImpl(true); }
 Tokenizer::ptr MakePipelineT2Sql() {
   std::vector<Tokenizer::ptr> subs;
   subs.push_back(DelimitedTokenizer::Make({","}));
-  subs.push_back(SqlTokenizer::Make({.expression = "upper(input)"}));
+  subs.push_back(
+    SqlTokenizer::Make({.expression = "upper(input)"}, tests::Cache()));
   return std::make_unique<PipelineTokenizer>(std::move(subs));
 }
 
 Tokenizer::ptr MakePipelineSqlSplitNorm() {
   std::vector<Tokenizer::ptr> subs;
-  subs.push_back(
-    SqlTokenizer::Make({.expression = "string_split(input, ',')"}));
+  subs.push_back(SqlTokenizer::Make({.expression = "string_split(input, ',')"},
+                                    tests::Cache()));
   NormalizingTokenizer::Options o;
   o.locale = duckdb::text::Locale::FromName("en");
   o.case_convert = Case::Lower;

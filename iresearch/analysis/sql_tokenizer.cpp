@@ -20,6 +20,8 @@
 
 #include "sql_tokenizer.hpp"
 
+#include <absl/strings/str_cat.h>
+
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -346,27 +348,41 @@ struct SqlCall {
   Node root;
 };
 
-SqlTokenizer::SqlTokenizer(Options opts)
-  : _parsed{ParseInputExpression(type_name(), opts.expression)} {}
+duckdb::shared_ptr<SqlExpression> SqlExpression::Get(
+  duckdb::SharedObjectCache& cache, std::string_view owner,
+  std::string_view text) {
+  return cache.GetOrBuild<SqlExpression>(absl::StrCat(owner, ":", text), [&] {
+    return duckdb::make_uniq<SqlExpression>(owner, text);
+  });
+}
+
+SqlExpression::SqlExpression(std::string_view owner, std::string_view text)
+  : _owner{owner}, _parsed{ParseInputExpression(owner, text)} {}
+
+SqlExpression::~SqlExpression() = default;
+
+const duckdb::Expression& SqlExpression::Bind(duckdb::ClientContext& ctx) {
+  const absl::MutexLock lock{&_mutex};
+  if (!_expr) {
+    const auto& parsed = *_parsed;
+    std::unique_ptr<duckdb::Expression> bound;
+    RunInTransaction(ctx,
+                     [&] { bound = BindInputExpression(ctx, _owner, parsed); });
+    _expr = std::move(bound);
+    _parsed.reset();
+  }
+  return *_expr;
+}
+
+SqlTokenizer::SqlTokenizer(const Options& opts,
+                           duckdb::SharedObjectCache& cache)
+  : _expression{SqlExpression::Get(cache, type_name(), opts.expression)} {}
 
 SqlTokenizer::~SqlTokenizer() = default;
 
-Tokenizer::ptr SqlTokenizer::Make(Options opts) {
-  return std::make_unique<SqlTokenizer>(std::move(opts));
-}
-
-void SqlTokenizer::BindExpression(duckdb::ClientContext& ctx) {
-  auto bound = BindInputExpression(ctx, type_name(), *_parsed);
-  const auto& type = bound->GetReturnType();
-  const auto element = ElementType(type);
-  if (element != duckdb::LogicalTypeId::VARCHAR &&
-      element != duckdb::LogicalTypeId::BLOB) {
-    THROW_SQL_ERROR(ERR_MSG(
-      "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
-      type.ToString()));
-  }
-  _expr = std::move(bound);
-  _parsed.reset();
+Tokenizer::ptr SqlTokenizer::Make(Options opts,
+                                  duckdb::SharedObjectCache& cache) {
+  return std::make_unique<SqlTokenizer>(opts, cache);
 }
 
 TokenTraits SqlTokenizer::Traits() const noexcept {
@@ -379,11 +395,18 @@ TokenTraits SqlTokenizer::Traits() const noexcept {
 }
 
 void SqlTokenizer::Bind(duckdb::ClientContext& ctx) {
-  if (!_expr) {
-    RunInTransaction(ctx, [&] { BindExpression(ctx); });
+  const auto& expr = _expression->Bind(ctx);
+  const auto& type = expr.GetReturnType();
+  const auto element = ElementType(type);
+  if (element != duckdb::LogicalTypeId::VARCHAR &&
+      element != duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(ERR_MSG(
+      "sql: expression must return VARCHAR, BLOB, or a list of them, got ",
+      type.ToString()));
   }
+  _expr = &expr;
   try {
-    _call = std::make_unique<SqlCall>(ctx, *_expr);
+    _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(ERR_MSG("sql: ", e.what()));
   }
@@ -455,27 +478,20 @@ bool Accepted(const duckdb::UnifiedVectorFormat& verdicts, uint32_t row) {
 
 }  // namespace
 
-SqlPredicate::SqlPredicate(std::string_view owner, std::string_view expression)
-  : _owner{owner}, _parsed{ParseInputExpression(owner, expression)} {}
+SqlPredicate::SqlPredicate(std::string_view owner, std::string_view expression,
+                           duckdb::SharedObjectCache& cache)
+  : _owner{owner}, _expression{SqlExpression::Get(cache, owner, expression)} {}
 
 SqlPredicate::~SqlPredicate() = default;
 
-void SqlPredicate::BindExpression(duckdb::ClientContext& ctx) {
-  auto bound = BindInputExpression(ctx, _owner, *_parsed);
-  if (bound->GetReturnType() != duckdb::LogicalType::BOOLEAN) {
-    THROW_SQL_ERROR(ERR_MSG(_owner, ": the lambda must return BOOLEAN, got ",
-                            bound->GetReturnType().ToString()));
-  }
-  _expr = std::move(bound);
-  _parsed.reset();
-}
-
 void SqlPredicate::Bind(duckdb::ClientContext& ctx) {
-  if (!_expr) {
-    RunInTransaction(ctx, [&] { BindExpression(ctx); });
+  const auto& expr = _expression->Bind(ctx);
+  if (expr.GetReturnType() != duckdb::LogicalType::BOOLEAN) {
+    THROW_SQL_ERROR(ERR_MSG(_owner, ": the lambda must return BOOLEAN, got ",
+                            expr.GetReturnType().ToString()));
   }
   try {
-    _call = std::make_unique<SqlCall>(ctx, *_expr);
+    _call = std::make_unique<SqlCall>(ctx, expr);
   } catch (const std::exception& e) {
     THROW_SQL_ERROR(ERR_MSG(_owner, ": ", e.what()));
   }

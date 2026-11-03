@@ -28,7 +28,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::connector {
 

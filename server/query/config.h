@@ -80,6 +80,8 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
 
 bool IsUnchangeableSetting(std::string_view name);
 
+bool IsNonTransactionalSetting(std::string_view name);
+
 void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
                            bool global);
 
@@ -183,6 +185,8 @@ class Config {
 };
 
 namespace connector {
+
+void RegisterEngineConfigVariables(duckdb::DBConfig& config);
 
 void RegisterConfigVariables(duckdb::DBConfig& config);
 

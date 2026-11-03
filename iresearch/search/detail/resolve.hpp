@@ -104,12 +104,10 @@ struct PhraseHandles {
 
 inline const IndexInput* SegmentDoc(const SubReader& segment) {
   for (const auto id : segment.field_ids()) {
-    const auto* reader = segment.field(id);
-    if (reader == nullptr) {
-      continue;
-    }
-    if (const auto* doc = reader->Handles().doc; doc != nullptr) {
-      return doc;
+    for (const auto* reader : segment.fields(id)) {
+      if (const auto* doc = reader->Handles().doc) {
+        return doc;
+      }
     }
   }
   return nullptr;

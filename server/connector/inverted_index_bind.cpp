@@ -74,7 +74,6 @@ using catalog::InvertedIndexConfig;
 using catalog::InvertedIndexFields;
 using catalog::InvertedIndexKey;
 using catalog::PkColumnKind;
-using catalog::PkPolicy;
 using catalog::TokenizerCatalogEntry;
 
 constexpr std::string_view kMetricField = "metric";
@@ -787,7 +786,6 @@ void EnsureId(irs::field_id& id, FieldIdSource next_id) {
 
 void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
                             const irs::analysis::Tokenizer& analyzer,
-                            const duckdb::LogicalType& value_type,
                             FieldIdSource next_id,
                             catalog::InvertedIndexField& entry) {
   entry.features = dict.GetFeatures();
@@ -800,13 +798,9 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
   if (wants_store || wants_norm) {
     EnsureId(entry.synthetic_column, next_id);
   }
-  // A geo analyzer consumes the GeoJSON object itself, so it gets no leaf
-  // ids -- which is what keeps it out of the JSON leaf splitter.
+  // A geo analyzer consumes the GeoJSON object itself, which is what keeps it
+  // out of the JSON leaf splitter.
   entry.whole_value = IsGeoAnalyzer(analyzer);
-  if (value_type.IsJSONType() && !entry.whole_value) {
-    EnsureId(entry.bool_field_id, next_id);
-    EnsureId(entry.numeric_field_id, next_id);
-  }
 }
 
 void ValidateTermDictKey(std::string_view label,
@@ -826,13 +820,13 @@ void ValidateTermDictKey(std::string_view label,
                           : duckdb::ArrayType::GetChildType(type))
                          .id();
     if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsSupported(term_dict::Classify(child))) {
+        !term_dict::IsIndexable(child)) {
       unsupported();
     }
     return;
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(kind))) {
+  if (!term_dict::IsIndexable(kind)) {
     unsupported();
   }
   if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
@@ -970,7 +964,7 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
     const auto& child_type = col_id == duckdb::LogicalTypeId::LIST
                                ? duckdb::ListType::GetChildType(col_type)
                                : duckdb::ArrayType::GetChildType(col_type);
-    if (is_string_leaf(child_type.id()) && !child_type.IsJSONType()) {
+    if (is_string_leaf(child_type.id())) {
       return;
     }
   }
@@ -1098,7 +1092,7 @@ void ApplyOpclassToEntry(
   }
   auto analyzer = dict->Acquire(context);
   ValidateTokenizerVsColumn(label, value_type, *analyzer);
-  FillEntryFromTokenizer(*dict, *analyzer, value_type, next_id, entry);
+  FillEntryFromTokenizer(*dict, *analyzer, next_id, entry);
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query
     // re-parses the column -- which only works if it is in the columnstore.
@@ -1110,8 +1104,8 @@ void ApplyOpclassToEntry(
 // Field ids of the keys that are not bare columns. A bare column indexes under
 // its own column id; an expression has none, so it takes a slot from the
 // synthetic range, which no relation column can ever collide with. Stride 8
-// covers the per-kind JSON leaves and the synthetic geo column allocated with
-// it -- allocated together, so either all valid or all invalid.
+// leaves room for the ids allocated with the key, such as its synthetic
+// column.
 constexpr irs::field_id kExpressionFieldStride = 8;
 
 constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
@@ -1119,7 +1113,7 @@ constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
 }
 
 // `store_pk` is checked against the key shape the index will actually have.
-PkPolicy ResolvePkPolicy(
+PkColumnKind ResolvePkColumn(
   const duckdb::case_insensitive_map_t<duckdb::Value>& with, bool table_backed,
   bool has_pk, bool single_key, bool file_row) {
   std::string store_pk = "auto";
@@ -1132,13 +1126,13 @@ PkPolicy ResolvePkPolicy(
       store_pk = "none";
     }
   }
-  PkPolicy policy{.index_term = table_backed, .column = PkColumnKind::Has};
   if (store_pk == "none") {
-    policy.index_term = false;
-    policy.column = PkColumnKind::None;
-  } else if (store_pk == "auto") {
-    policy.column = has_pk ? PkColumnKind::Has : PkColumnKind::Unable;
-  } else if (store_pk == "i64") {
+    return PkColumnKind::None;
+  }
+  if (store_pk == "auto") {
+    return has_pk ? PkColumnKind::Has : PkColumnKind::Unable;
+  }
+  if (store_pk == "i64") {
     if (!has_pk || !single_key) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1148,7 +1142,9 @@ PkPolicy ResolvePkPolicy(
                 : file_row ? "(file_index, row)"
                            : "a user key_columns struct"));
     }
-  } else if (store_pk == "i64i64") {
+    return PkColumnKind::Has;
+  }
+  if (store_pk == "i64i64") {
     if (!file_row) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1156,13 +1152,12 @@ PkPolicy ResolvePkPolicy(
                 "key; this index's key is ",
                 table_backed ? "the table rowid" : "single-part"));
     }
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("store_pk must be one of none/auto/i64/i64i64 (or "
-                            "true/false), got '",
-                            store_pk, "'"));
+    return PkColumnKind::Has;
   }
-  return policy;
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                  ERR_MSG("store_pk must be one of none/auto/i64/i64i64 (or "
+                          "true/false), got '",
+                          store_pk, "'"));
 }
 
 // A key that is a bare column indexes under that column's own id, which
@@ -1299,11 +1294,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
     auto& field = slot->second;
-    if (fresh) {
-      // Every field carries a null leaf; only the typed leaves are
-      // conditional on what the analyzer reads.
-      field.null_field_id = next_id();
-    }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
         const std::string_view title = bare_column ? "Column" : "Expression";
@@ -1360,7 +1350,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::LogicalType& generated_pk_type) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto top_k_scorer = catalog::TopKScorer(context, entry.options);
-  const auto pk = ResolvePkPolicy(
+  const auto pk = ResolvePkColumn(
     entry.options, table_backed,
     table_backed || generated_pk_type.id() != duckdb::LogicalTypeId::INVALID,
     generated_pk_type.id() != duckdb::LogicalTypeId::STRUCT,

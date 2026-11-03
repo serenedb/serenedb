@@ -134,7 +134,7 @@ SereneDBClientState& SereneDBClientState::Register(
       sdb_ctx.MarkSettingsChanged();
       // Outside an explicit transaction there's nothing to roll back --
       // the map stays empty.
-      if (!sdb_ctx.IsExplicitTransaction()) {
+      if (!sdb_ctx.IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
         return;
       }
       duckdb::Value old_value;
@@ -249,14 +249,20 @@ void SereneDBClientState::TransactionPreCommit(
         }
         for (auto entry :
              table.get().GetDataTableInfo()->GetIndexes().IndexEntries()) {
-          if (entry->GetBindState() == duckdb::IndexBindState::BOUND &&
-              entry->GetIndexType() == InvertedStoreIndex::kTypeName) {
-            auto index = entry->GetWriteHandle<InvertedStoreIndex>();
-            index->PrepareFeed(*_connection_ctx, context, rows);
+          if (entry->GetIndexType() != InvertedStoreIndex::kTypeName) {
+            continue;
           }
+          SDB_ASSERT(entry->GetBindState() == duckdb::IndexBindState::BOUND);
+          auto index = entry->GetWriteHandle<InvertedStoreIndex>();
+          index->PrepareFeed(*_connection_ctx, context, rows);
         }
+        SDB_PARK_ONCE_ON_FAILURE("commit_feed_prepared");
       }
     }
+  }
+  if (transaction.ModifiedDatabase() || !written.empty()) {
+    _connection_ctx->EnterCommitGate(context);
+    SDB_PARK_ONCE_ON_FAILURE("pause_commit_in_gate");
   }
   tls_committing_ctx = _connection_ctx.get();
 }
@@ -344,6 +350,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_done = false;
   progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
+  _connection_ctx->LeaveCommitGate();
 }
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,

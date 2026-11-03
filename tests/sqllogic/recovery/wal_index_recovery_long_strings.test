@@ -28,7 +28,7 @@ statement ok
 INSERT INTO ls_t SELECT
   i,
   'tag_' || i || ' ' ||
-  list_aggregate(list_transform(range(0, 500), j -> 'word' || j), 'string_agg', ' ')
+  list_aggregate(list_transform(range(0, 500), lambda j: 'word' || j), 'string_agg', ' ')
   || ' marker_' || i
 FROM range(0, 200) AS t(i);
 

@@ -739,6 +739,7 @@ sdb_update_module(
 # INTERFACE), so expose simdutf's header to the whole duckdb subtree here. The duckdb_static PUBLIC link
 # to simdutf (added below) is what pulls the compiled simdutf object code into the final binary.
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/duckdb_versions/include)
 
 sdb_add_module(duckdb COVERAGE)
 target_compile_options(duckdb_storage PRIVATE -Wno-thread-safety-analysis)
@@ -772,6 +773,7 @@ target_include_directories(
     duckdb_static
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_versions/include
         ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/utf8proc/include
 )
 

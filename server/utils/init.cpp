@@ -43,10 +43,6 @@
 #define ZLIB_COMPAT
 #include <functable.h>
 
-#ifdef SDB_COVERAGE
-extern "C" int __llvm_profile_write_file(void);
-#endif
-
 namespace sdb::app {
 namespace {
 
@@ -111,9 +107,6 @@ void InitProcess(const char* argv0) {
   }();
   SDB_VERIFY(status == 0);
   absl::InitializeSymbolizer(argv0);
-#ifdef SDB_COVERAGE
-  std::at_quick_exit([] { __llvm_profile_write_file(); });
-#endif
   YACLIB_INIT_DEBUG([](std::string_view file, std::size_t line,
                        std::string_view func, std::string_view condition,
                        std::string_view message) noexcept {

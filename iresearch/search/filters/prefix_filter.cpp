@@ -44,7 +44,8 @@ namespace {
 class ByPrefixIterator : public WrappedTermIterator {
  public:
   ByPrefixIterator(const TermReader& reader, bytes_view prefix)
-    : WrappedTermIterator{reader.iterator()}, _prefix{prefix} {}
+    : WrappedTermIterator{reader.IteratorUntil(UpperBoundOf(prefix))},
+      _prefix{prefix} {}
 
   bool next() final {
     if (_started) {
@@ -137,14 +138,14 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().term);
+  return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
+                        options().term);
 }
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx,
-                                           const irs::field_id field,
+                                           const TermReader* reader,
                                            const bytes_view term) {
-  const auto* reader = segment.field(field);
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -155,7 +156,6 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(segment, *reader, terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
@@ -190,7 +190,7 @@ TermIterator::ptr ByPrefix::CompileTermIterator(
 
 QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
                                              const PrepareContext& ctx) const {
-  const auto* reader = segment.field(field_id());
+  const auto* reader = segment.field(field_id(), dict());
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -204,7 +204,6 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(segment, *reader, terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), sub_ctx);
 }

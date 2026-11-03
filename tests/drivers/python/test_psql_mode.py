@@ -1010,6 +1010,32 @@ def test_shell_accepts_psql_tuples_only() -> None:
     assert "hdr" not in r.stdout
 
 
+def _run_shell_as_agent(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [SERENED_BIN, "shell", *args, "-c", "SELECT 1 AS id;"],
+        capture_output=True, text=True, timeout=20.0,
+        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb", "AI_AGENT": "1"},
+    )
+
+
+def test_shell_turns_agent_mode_on_for_an_agent() -> None:
+    r = _run_shell_as_agent([])
+    assert r.returncode == 0, r.stderr
+    assert "agent mode on" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("flags", [
+    ["-P", "format=csv"], ["--pset=format=csv"], ["-A"], ["--no-align"],
+    ["--csv"], ["-H"], ["-t"], ["-x"], ["-F", ";"], ["-R", "~"], ["-z"],
+    ["-0"],
+])
+def test_shell_psql_output_options_turn_agent_mode_off(
+        flags: list[str]) -> None:
+    r = _run_shell_as_agent(flags)
+    assert r.returncode == 0, r.stderr
+    assert "agent mode on" not in r.stderr, r.stderr
+
+
 def test_shell_does_not_auto_attach() -> None:
     # shell mode should NOT try to attach to a pg-wire endpoint.
     # passing a fake host should still error -- but on the SQL side
@@ -1408,7 +1434,7 @@ def test_docs_backspace_widens_a_narrowed_menu(docs_terminal) -> None:
 
 
 def test_docs_arrows_move_through_the_menu_grid(narrow_docs_terminal) -> None:
-    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    out = narrow_docs_terminal.send(".docs\r", until="12. sql (")
     assert "1. benchmarks (" in out
     for key, buffer in [("\x1b[B", ".docs 3"), ("\x1b[C", ".docs 4"),
                         ("\x1b[A", ".docs 2"), ("\x1b[D", ".docs 1")]:
@@ -1417,7 +1443,7 @@ def test_docs_arrows_move_through_the_menu_grid(narrow_docs_terminal) -> None:
 
 
 def test_docs_contents_fit_a_narrow_terminal(narrow_docs_terminal) -> None:
-    out = narrow_docs_terminal.send(".docs\r", until="11. sql (")
+    out = narrow_docs_terminal.send(".docs\r", until="12. sql (")
     assert "PAGER_USED" not in out
     lines = out.splitlines()
     start = lines.index("SereneDB documentation")

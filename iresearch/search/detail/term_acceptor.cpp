@@ -241,7 +241,8 @@ class ConjunctionSource final : public TermAcceptorSource {
   bool ok() const noexcept final { return true; }
 
   SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
-    auto it = _driver ? _driver->Iterator(reader) : reader.iterator();
+    auto it =
+      _driver ? _driver->Iterator(reader) : reader.IteratorUntil(_bounds.upper);
     if (!_residual && _bounds.lower.empty() && _bounds.upper.empty()) {
       return it;
     }

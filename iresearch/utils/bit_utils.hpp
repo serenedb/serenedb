@@ -53,6 +53,22 @@ IRS_FORCE_INLINE constexpr T PopBit(T v) noexcept {
   return v & (v - 1);
 }
 
+IRS_FORCE_INLINE constexpr uint64_t SelectInWord(uint64_t bits,
+                                                 uint64_t rank) noexcept {
+  SDB_ASSERT(rank < static_cast<uint64_t>(std::popcount(bits)));
+  uint64_t at = 0;
+  for (uint64_t width = 32; width != 0; width /= 2) {
+    const auto low =
+      static_cast<uint64_t>(std::popcount(bits & ((uint64_t{1} << width) - 1)));
+    if (rank >= low) {
+      rank -= low;
+      bits >>= width;
+      at += width;
+    }
+  }
+  return at;
+}
+
 #ifdef __AVX2__
 using BitsetByteEntry = std::array<uint8_t, 8>;
 

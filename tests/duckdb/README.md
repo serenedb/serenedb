@@ -46,7 +46,9 @@ entries are reported as skipped results with their reason.
 
 In CI the suites a diff opens come from `scripts/ci/classify-changes.sh`:
 duckdb itself or any dependency it shares selects every suite, while an
-extension-only dependency selects just that extension.
+extension-only dependency selects just that extension, and the storage version
+list in `third_party/duckdb_versions` selects none: a new SereneDB storage
+version changes neither DuckDB nor iresearch.
 
 ## Branches
 

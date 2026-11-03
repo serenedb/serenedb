@@ -14,6 +14,7 @@ import type { ConnState } from "./types";
 export interface DeployProps {
     config: SereneSearchConfig;
     token: string;
+    dbPassword: string;
     backendUrl: string;
     setBackendUrl: (v: string) => void;
     tokenInput: string;
@@ -24,10 +25,11 @@ export interface DeployProps {
 }
 
 export function Deploy(props: DeployProps): React.ReactElement {
-    const { config, token, backendUrl, setBackendUrl, tokenInput, setTokenInput, conn, setConn, toast } = props;
+    const { config, token, dbPassword, backendUrl, setBackendUrl, tokenInput, setTokenInput, conn, setConn, toast } =
+        props;
     const [copied, setCopied] = useState(false);
     const spin = useSpinner(conn.kind === "testing");
-    const compose = generateCompose({ config, token });
+    const compose = generateCompose({ config, token, dbPassword });
 
     const copyCompose = async () => {
         try {

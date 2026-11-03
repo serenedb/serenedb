@@ -148,13 +148,16 @@ Two containers; the widget only ever talks to the backend:
 services:
   serenedb:
     image: serenedb/serenedb:latest
+    environment:
+      POSTGRES_PASSWORD: "3f9c..."             # applied when serene-data is first created
     volumes: [serene-data:/var/lib/serenedb]
 
   search-backend:
-    image: serenedb/docs-search-backend:latest
+    image: serenedb/docs-search-backend:0.10.0
     ports: ["7700:7700"]
     environment:
       SERENE_SEARCH_TOKEN: sk-local-...        # admin auth (setup & manual sync)
+      SERENEDB_PASSWORD: "3f9c..."             # same as POSTGRES_PASSWORD
     volumes:
       - ./serene-search.config.json:/etc/serene/config.json:ro
     depends_on: [serenedb]
@@ -163,7 +166,15 @@ volumes:
   serene-data: {}
 ```
 
-The wizard generates both files, or write `serene-search.config.json` by hand:
+The wizard generates both files, with a random admin token and a random
+password for SereneDB's `postgres` role, and tags the backend (and MCP) image
+with its own version. SereneDB sets the password only when `serene-data` is
+first created: to change it later, run `ALTER ROLE postgres PASSWORD '...'`
+and update `SERENEDB_PASSWORD` to match. The backend also reads
+`SERENEDB_HOST` (default `serenedb`), `SERENEDB_PORT` (`7890`),
+`SERENEDB_USER` and `SERENEDB_DATABASE` (both `postgres`).
+
+Or write `serene-search.config.json` by hand:
 
 ```jsonc
 {
@@ -342,3 +353,28 @@ behaves differently.
   then by how many docs pages link to it.
 
 Backend image: `docker build -f packages/backend/Dockerfile -t serenedb/docs-search-backend:latest .`
+
+### Releasing
+
+All five packages share one version: `VERSION` in `packages/core/src/defaults.ts`,
+every `package.json` and their `@serenedb/docs-search-*` dependencies
+(`core/test/version.test.ts` checks they agree). The generated compose pulls
+the backend and MCP images tagged with that version, so push the images before
+publishing the npm packages. After the version bump is merged, from a clean
+checkout of `main` in this directory:
+
+```bash
+npm install && npm run build && npm test
+docker buildx build --platform linux/amd64,linux/arm64 -f packages/backend/Dockerfile \
+  -t serenedb/docs-search-backend:X.Y.Z -t serenedb/docs-search-backend:X.Y \
+  -t serenedb/docs-search-backend:latest --push .
+docker buildx build --platform linux/amd64,linux/arm64 -f packages/mcp/Dockerfile \
+  -t serenedb/docs-search-mcp:X.Y.Z -t serenedb/docs-search-mcp:X.Y \
+  -t serenedb/docs-search-mcp:latest --push .
+npm publish -w @serenedb/docs-search-core
+npm publish -w @serenedb/docs-search-react
+npm publish -w @serenedb/docs-search-embed
+npm publish -w @serenedb/docs-search-mcp
+```
+
+The backend is private: it ships only as an image.

@@ -93,6 +93,7 @@ export function SetupScreen({ flow, onClose, toast }: SetupScreenProps): React.R
                     <Deploy
                         config={config}
                         token={flow.token}
+                        dbPassword={flow.dbPassword}
                         backendUrl={flow.backendUrl}
                         setBackendUrl={flow.setBackendUrl}
                         tokenInput={flow.tokenInput}

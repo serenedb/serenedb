@@ -39,15 +39,19 @@ using KeyTerms = std::vector<irs::bstring>;
 // its transaction -- a commit handing its unflushed rows to the pending delta
 // -- must carry the same bytes a later probe looks for, which is why this and
 // the walk below share one encoder rather than each having its own.
-std::vector<KeyTerms> EncodeRowKeys(
-  duckdb::ColumnDataCollection& rows,
-  std::span<const primary_key::KeySlot> slots);
+// Appends, and resumes at `first_row`, so a caller that keeps its keys between
+// probes extends them with what arrived since instead of encoding the whole
+// buffer again. The buffer only ever grows between the points that drop it
+// whole, which is what makes a row count enough to resume from.
+void AppendRowKeys(duckdb::ColumnDataCollection& rows,
+                   std::span<const primary_key::KeySlot> slots,
+                   duckdb::idx_t first_row, std::vector<KeyTerms>& keys);
 
 // The same, for a caller holding one chunk rather than a collection -- a WAL
 // record's rows arrive that way.
 void EncodeChunkKeys(duckdb::DataChunk& chunk,
                      std::span<const primary_key::KeySlot> slots,
-                     std::vector<KeyTerms>& keys);
+                     std::vector<KeyTerms>& keys, duckdb::idx_t first_row = 0);
 
 // The key that two live positions of this transaction share, if any: either two
 // positions among `segments` and `keys` -- the transaction contradicting itself

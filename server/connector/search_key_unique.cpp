@@ -393,8 +393,8 @@ std::unique_ptr<KeySource> MakeSegmentKeySource(
 
 void EncodeChunkKeys(duckdb::DataChunk& chunk,
                      std::span<const primary_key::KeySlot> slots,
-                     std::vector<KeyTerms>& keys) {
-  for (duckdb::idx_t row = 0; row != chunk.size(); ++row) {
+                     std::vector<KeyTerms>& keys, duckdb::idx_t first_row) {
+  for (duckdb::idx_t row = first_row; row != chunk.size(); ++row) {
     KeyTerms key(slots.size());
     for (size_t i = 0; i != slots.size(); ++i) {
       const SearchColumnInfo info{.field_id = slots[i].column,
@@ -412,15 +412,26 @@ void EncodeChunkKeys(duckdb::DataChunk& chunk,
   }
 }
 
-std::vector<KeyTerms> EncodeRowKeys(
-  duckdb::ColumnDataCollection& rows,
-  std::span<const primary_key::KeySlot> slots) {
-  std::vector<KeyTerms> keys;
-  keys.reserve(rows.Count());
-  for (auto& chunk : rows.Chunks()) {
-    EncodeChunkKeys(chunk, slots, keys);
+void AppendRowKeys(duckdb::ColumnDataCollection& rows,
+                   std::span<const primary_key::KeySlot> slots,
+                   duckdb::idx_t first_row, std::vector<KeyTerms>& keys) {
+  const auto count = rows.Count();
+  if (first_row >= count) {
+    return;
   }
-  return keys;
+  keys.reserve(keys.size() + (count - first_row));
+  // An append tops up the last chunk rather than starting a new one, so a
+  // chunk already walked can have grown since. Counting rows is what survives
+  // that; the one chunk the resume point falls inside is entered partway.
+  duckdb::idx_t seen = 0;
+  for (auto& chunk : rows.Chunks()) {
+    const auto next = seen + chunk.size();
+    if (next > first_row) {
+      EncodeChunkKeys(chunk, slots, keys,
+                      first_row > seen ? first_row - seen : 0);
+    }
+    seen = next;
+  }
 }
 
 std::optional<KeyTerms> FindDuplicateKey(

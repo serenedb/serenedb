@@ -78,6 +78,16 @@ struct SearchShardWrites {
   // values is emptied there. Rows that reached a segment are not among them:
   // the delta carries those segments and reads their dictionaries instead.
   std::vector<connector::KeyTerms> pending_keys;
+  // The keys of the rows currently in this table's buffer. A statement-end
+  // probe asks for everything still buffered, so without keeping them a
+  // transaction of many statements re-encodes what the statements before it
+  // left behind -- and the buffer is the one place those values can still be
+  // read, so the commit takes its own set from here rather than encoding again.
+  std::vector<connector::KeyTerms> buffered_keys;
+  // How much of the buffer `buffered_keys` already covers. The buffer only
+  // grows between the points that drop it whole, so a row count is enough to
+  // resume from.
+  duckdb::idx_t encoded_rows = 0;
   // Readers over the segments this transaction flushed. Opened at
   // PrepareCommit, outside every lock, where the flushed set is already final:
   // Stage only registers the transactions on the flush context, which never

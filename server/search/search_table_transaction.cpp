@@ -61,6 +61,13 @@ bool CertifyFromWal(duckdb::ClientContext& context) {
   return sdb::GetBoolSetting(context, "sdb_search_pk_certify_from_wal");
 }
 
+// Both together, wherever the buffer they mirror is dropped: kept apart they
+// would have a resume point into rows that are no longer there.
+void DropBufferedKeys(SearchShardWrites& w) noexcept {
+  w.buffered_keys.clear();
+  w.encoded_rows = 0;
+}
+
 void RefuseUncertifiableTail(const WalTail& tail, duckdb::idx_t table_id) {
   if (!tail.error.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -312,6 +319,9 @@ void SearchTableTransaction::FlushBuffer(
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.
   it->second.ClearBufferedRows();
+  // Their keys stop travelling with it: the segment this flush produces is
+  // named in the record, and a probe reads its dictionary instead.
+  DropBufferedKeys(EnsureShardWrites(shard));
 }
 
 void SearchTableTransaction::RefuseResurrection(
@@ -466,9 +476,13 @@ void SearchTableTransaction::CertifyKeys(
     segments.push_back(&reader);
   }
 
-  const auto keys = rows == nullptr ? std::vector<connector::KeyTerms>{}
-                                    : connector::EncodeRowKeys(*rows, slots);
-  if (connector::FindDuplicateKey(segments, keys, slots, probe)) {
+  // Only what arrived since this transaction's last probe: the keys before it
+  // are still valid, and the rows they came from are still buffered.
+  if (rows != nullptr) {
+    connector::AppendRowKeys(*rows, slots, w.encoded_rows, w.buffered_keys);
+    w.encoded_rows = rows->Count();
+  }
+  if (connector::FindDuplicateKey(segments, w.buffered_keys, slots, probe)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
                     ERR_MSG("Duplicate key on column \"", slots[0].name,
                             "\" violates primary key constraint."));
@@ -645,6 +659,7 @@ void SearchTableTransaction::AddSearchTruncate(
   const bool clears = clears_shard && !shard->BuildInFlight();
   auto& changes = _changes[shard->GetTableId()];
   changes.AppendTruncate(clears);
+  DropBufferedKeys(w);
   changes.applied_ops = changes.ops.size();
   if (!clears) {
     auto& trx = *w.transactions.emplace_back(
@@ -685,6 +700,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
         // record from carrying both.
         ReplayBuffer(*w.shard, entry, *w.buffer_trx, context);
         entry.ClearBufferedRows();
+        DropBufferedKeys(w);
       } else {
         // No exclusive segment to join: the tail goes to a pooled one, which
         // may hold other transactions' documents and so can never be named.
@@ -699,8 +715,12 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
         // and nothing between the two can name them. A pooled segment cannot
         // be opened the way a flushed one can, so the keys have to travel.
         if (entry.HasBufferedRows() && !w.pk_slots.empty()) {
-          w.pending_keys =
-            connector::EncodeRowKeys(*entry.collection, w.pk_slots);
+          // Whatever no probe has covered yet: a statement that wrote after
+          // the last one, or a transaction that reached no probe at all.
+          connector::AppendRowKeys(*entry.collection, w.pk_slots,
+                                   w.encoded_rows, w.buffered_keys);
+          w.pending_keys = std::move(w.buffered_keys);
+          DropBufferedKeys(w);
         }
         ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
       }
@@ -714,6 +734,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
       .log_writers.push_back(
         duckdb::make_shared_ptr<SearchTableLogWriter>(*w.table, entry));
     entry.ClearBufferedRows();
+    DropBufferedKeys(w);
     if (entry.ClearsShard()) {
       w.checkpoint_lock =
         duckdb::DuckTransactionManager::Get(w.table->catalog.GetAttached())

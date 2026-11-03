@@ -68,7 +68,7 @@ constexpr uint64_t OwnOf(uint64_t claims) noexcept {
 
 uint64_t NewColFileId() {
   absl::BitGen gen;
-  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, 1,
+  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, uint64_t{1} << 63,
                                  std::numeric_limits<uint64_t>::max());
 }
 

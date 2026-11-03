@@ -713,24 +713,24 @@ query
 EXPLAIN CALL sdb_compact('sdbc_live', mode := 'compact', target_segments := 2)
 ----
 QUERY PLAN
-╭─ SDB_COMPACT ───────────────────────────╮
-│ Table: public.sdbc_live                 │
-│ Mode: compact                           │
-│ Segments: 3                             │
-│ Merges: 2                               │
-│ Merge 1:                                │
-│ 1 segment -> 1, compact to 2 segments   │
-│ Merge 1 Inputs: _1                      │
-│ Merge 1 Docs: 30 (25 live)              │
-│ Merge 1 Bytes:                          │
+╭─ SDB_COMPACT ──────────────────────────╮
+│ Table: public.sdbc_live                │
+│ Mode: compact                          │
+│ Segments: 3                            │
+│ Merges: 2                              │
+│ Merge 1:                               │
+│ 1 segment -> 1, compact to 2 segments  │
+│ Merge 1 Inputs: _1                     │
+│ Merge 1 Docs: 30 (25 live)             │
+│ Merge 1 Bytes:                         │
 │ <slt:ignore> -> est <slt:ignore>│
-│ Merge 2:                                │
-│ 2 segments -> 1, compact to 2 segments  │
-│ Merge 2 Inputs: _2, _3                  │
-│ Merge 2 Docs: 60 (50 live)              │
+│ Merge 2:                               │
+│ 2 segments -> 1, compact to 2 segments │
+│ Merge 2 Inputs: _2, _3                 │
+│ Merge 2 Docs: 60 (50 live)             │
 │ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
-│ ~2 rows                                 │
-╰─────────────────────────────────────────╯
+│ ~2 rows                                │
+╰────────────────────────────────────────╯
 
 
 query
@@ -865,7 +865,7 @@ SELECT outcome, inputs, output_docs
 FROM sdb_compact('sdbc_runs', mode := 'compact', target_segments := 3)
 ----
 outcome	inputs	output_docs
-merged	{_3,_4,_5}	400
+merged	{_5,_3,_4}	400
 
 
 query

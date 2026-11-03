@@ -1405,6 +1405,34 @@ TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
   EXPECT_TRUE(absl::c_all_of(col.DictionaryMetas(), prefetched_whole));
 }
 
+TEST_F(ColumnReaderTest, SameColumnsGiveTheSameFileSize) {
+  constexpr irs::field_id kS = 1;
+  constexpr uint64_t kRows = 1000;
+  irs::MemoryDirectory mem;
+  std::vector<uint64_t> lengths;
+  for (int file = 0; file != 16; ++file) {
+    const auto name = absl::StrCat("seg", file);
+    {
+      irs::ColWriter w{mem, name, Db()};
+      auto& cw = w.OpenColumn(kS, duckdb::LogicalType::BIGINT, false, 2048,
+                              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                              false, {});
+      duckdb::Vector values{duckdb::LogicalType::BIGINT, kRows};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+      for (uint64_t row = 0; row != kRows; ++row) {
+        data[row] = static_cast<int64_t>(row * 7);
+      }
+      duckdb::FlatVector::SetSize(values, kRows);
+      cw.Append(values, kRows);
+      ASSERT_TRUE(w.Commit(0));
+    }
+    uint64_t length = 0;
+    ASSERT_TRUE(mem.length(length, irs::FileName(name)));
+    lengths.push_back(length);
+  }
+  EXPECT_EQ(lengths.size(), absl::c_count(lengths, lengths.front()));
+}
+
 TEST_F(ColumnReaderTest, ConcurrentPartsClaimEachDictionarySlotOnce) {
   constexpr irs::field_id kS = 1;
   constexpr uint32_t kOwners = 4;

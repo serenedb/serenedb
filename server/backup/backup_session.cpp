@@ -200,7 +200,7 @@ std::optional<StartedBackup> BackupSession::Begin(
   }
   const auto& layout =
     catalog::ClusterLayout(catalog::ClusterOf().GetAttached());
-  auto backup_dir = layout.EngineDir() / kBackupDir;
+  auto backup_dir = std::filesystem::path{layout.EngineDir()} / kBackupDir;
   std::error_code ec;
   std::filesystem::remove_all(backup_dir, ec);
   if (ec) {

@@ -56,6 +56,14 @@ class StructColumnReader final : public ColumnReader {
     return row;
   }
 
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<ByteExtent>& out) const final {
+    ColumnReader::CollectBlocks(first, last, out);
+    for (const auto& child : _children) {
+      child->CollectBlocks(first, last, out);
+    }
+  }
+
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,
                      duckdb::idx_t count) const final {
     NewOutputVector(s);

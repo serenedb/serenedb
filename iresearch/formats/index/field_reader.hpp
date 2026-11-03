@@ -53,7 +53,6 @@ class FieldReader final {
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
 
-  uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
   std::span<const TermReader* const> fields(field_id id) const;
@@ -61,7 +60,7 @@ class FieldReader final {
   size_t size() const noexcept { return _dicts.size(); }
 
   const PostingsReader& Postings() const noexcept { return _pr; }
-  const IndexInput& Input() const noexcept { return *_in; }
+  const InputFile& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
   void Account(uint64_t bytes) {
     if (bytes != 0) {
@@ -92,7 +91,7 @@ class FieldReader final {
   }
   uint64_t RangesBegin() const noexcept { return InlineEnd(); }
   uint64_t RangesSize() const noexcept { return _ranges_size; }
-  bytes_view Load(IndexInput& in, uint64_t offset, uint64_t size);
+  bytes_view Load(uint64_t offset, uint64_t size);
   bytes_view Copy(uint64_t offset, uint64_t size);
   const byte_type* CopyBlock(uint32_t block, uint64_t length);
   const byte_type* KeepInline(bytes_view bytes);
@@ -118,7 +117,7 @@ class FieldReader final {
   containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
-  IndexInput::ptr _in;
+  std::shared_ptr<const InputFile> _in;
   const byte_type* _base = nullptr;
   IResourceManager* _rm;
   std::vector<SpanningBlock> _spans;

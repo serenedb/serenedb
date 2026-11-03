@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -40,6 +41,7 @@
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/slurp.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iterator>
 #include <memory>
@@ -423,13 +425,17 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       return;
     }
     const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
+    auto& fs = duckdb::FileSystem::GetFileSystem(context);
+    std::vector<std::string> names;
+    fs.ListFiles(store, [&](const std::string& name, bool is_directory) {
+      if (!is_directory) {
+        names.push_back(name);
       }
+    });
+    for (const auto& name : names) {
+      image.push_back({.name = absl::StrCat(table_name, "/", name),
+                       .bytes = irs::file_utils::Slurp(
+                         context, fs, fs.JoinPath(store, name))});
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
                      .bytes = DescribeLayout(*table)});

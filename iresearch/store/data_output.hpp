@@ -22,163 +22,106 @@
 
 #pragma once
 
-#include <duckdb/common/serializer/write_stream.hpp>
+#include <absl/base/internal/endian.h>
+
+#include <cstring>
+#include <memory>
+#include <utility>
 
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/io_utils.hpp"
-#include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class DataOutput : public duckdb::WriteStream {
+class DataOutput {
  public:
-  // According to C++ standard it's safe to convert signed to unsigned
-  // But not opposite!
-  // So we should read signed but write unsigned or duplicate code.
-  // Duplicate code potentially worse for perfomance:
-  //  more virtual functions in vtable, symbols, etc -- code colder
+  DataOutput(const DataOutput&) = delete;
+  DataOutput& operator=(const DataOutput&) = delete;
 
-  virtual void WriteByte(byte_type b) = 0;
-
-  virtual void WriteU16(uint16_t n) { WriteNumU(n); }
-  virtual void WriteU32(uint32_t n) { WriteNumU(n); }
-  virtual void WriteU64(uint64_t n) { WriteNumU(n); }
-  virtual void WriteV32(uint32_t n) { WriteNumV(n); }
-  virtual void WriteV64(uint64_t n) { WriteNumV(n); }
-
- protected:
-  IRS_FORCE_INLINE void WriteNumU(auto n) {
-    // TODO(mbkkt) change to little endian!
-    n = absl::little_endian::FromHost(n);
-    WriteData(reinterpret_cast<byte_type*>(&n), sizeof(n));
-  }
-
-  IRS_FORCE_INLINE void WriteNumV(auto n) {
-    WriteVarint(n, [&](byte_type b) { WriteByte(b); });
-  }
-};
-
-class BufferedOutput : public DataOutput {
- public:
-  void WriteByte(byte_type b) final {
-    // We can make separate flush virtual function
-    // But I think better if buffer is not enough append with flush combined
-    if (Remain() == 0) [[unlikely]] {
-      return WriteDirect(&b, 1);
+  IRS_FORCE_INLINE void WriteByte(byte_type b) {
+    if (_pos == _end) [[unlikely]] {
+      return Overflow(&b, 1);
     }
     *_pos++ = b;
   }
 
-  void WriteData(const byte_type* b, uint64_t len) final {
-    // We need to use <= instead of < to avoid double buffering
-    if (Remain() <= len) [[unlikely]] {
-      return WriteDirect(b, len);
+  IRS_FORCE_INLINE void WriteData(const byte_type* b, size_t size) {
+    if (size >= Remain()) [[unlikely]] {
+      return Overflow(b, size);
     }
-    WriteBuffer(b, len);
+    std::memcpy(_pos, b, size);
+    _pos += size;
   }
 
-  void WriteU16(uint16_t n) final { WriteNumU(n); }
-  void WriteU32(uint32_t n) final { WriteNumU(n); }
-  void WriteU64(uint64_t n) final { WriteNumU(n); }
-  void WriteV32(uint32_t n) final { WriteNumV(n); }
-  void WriteV64(uint64_t n) final { WriteNumV(n); }
+  IRS_FORCE_INLINE void WriteU16(uint16_t n) { WriteFixed(n); }
+  IRS_FORCE_INLINE void WriteU32(uint32_t n) { WriteFixed(n); }
+  IRS_FORCE_INLINE void WriteU64(uint64_t n) { WriteFixed(n); }
+  IRS_FORCE_INLINE void WriteV32(uint32_t n) { WriteVarint(n); }
+  IRS_FORCE_INLINE void WriteV64(uint64_t n) { WriteVarint(n); }
 
-  byte_type* Reserve(size_t len) noexcept {
-    if (Remain() < len) {
+  uint64_t Position() const noexcept {
+    return _offset + static_cast<uint64_t>(_pos - _begin);
+  }
+
+  byte_type* Reserve(size_t size) noexcept {
+    if (Remain() < size) {
       return nullptr;
     }
-    auto* buf = _pos;
-    _pos += len;
-    return buf;
+    auto* reserved = _pos;
+    _pos += size;
+    return reserved;
   }
 
  protected:
-  explicit BufferedOutput(byte_type* pos, byte_type* end) noexcept
-    : _buf{pos}, _pos{pos}, _end{end} {}
-
-  IRS_FORCE_INLINE size_t Length() const noexcept {
-    SDB_ASSERT(_buf <= _pos);
-    SDB_ASSERT(_pos <= _end);
-    return _pos - _buf;
-  }
+  DataOutput() noexcept = default;
+  ~DataOutput() = default;
 
   IRS_FORCE_INLINE size_t Remain() const noexcept {
-    SDB_ASSERT(_buf <= _pos);
     SDB_ASSERT(_pos <= _end);
-    return _end - _pos;
+    return static_cast<size_t>(_end - _pos);
   }
 
-  virtual void WriteDirect(const byte_type* b, size_t len) = 0;
-
-  IRS_FORCE_INLINE void WriteBuffer(const byte_type* b, size_t len) {
-    SDB_ASSERT(_pos);
-    SDB_ASSERT(b);
-    SDB_ASSERT(len <= Remain());
-    std::memcpy(_pos, b, len);
-    _pos += len;
-  }
-
-  template<typename Output>
-  static void Write(Output& output, const byte_type* b, size_t len) {
-    auto remain = output.Remain();
-    SDB_ASSERT(len >= remain);
-    while (len != 0) {
-      if (remain == 0) {
-        output.FlushBuffer();
-        SDB_ASSERT(output.Remain() != 0);
-        remain = std::min(len, output.Remain());
-      }
-      output.WriteBuffer(b, remain);
-      b += remain;
-      len -= remain;
-      SDB_ASSERT(len == 0 || output.Remain() == 0);
-      remain = 0;
-    }
-  }
-
-  // TODO(mbkkt) for some implementation _buf is unneeded,
-  //  so maybe better to move this field to implementation
-  byte_type* _buf;
-  byte_type* _pos;
-  byte_type* _end;
+  byte_type* _begin = nullptr;
+  byte_type* _pos = nullptr;
+  byte_type* _end = nullptr;
+  uint64_t _offset = 0;
 
  private:
-  IRS_NO_INLINE void WriteDirectNumV(auto n) { DataOutput::WriteNumV(n); }
-
-  IRS_FORCE_INLINE void WriteNumU(auto n) {
-    static constexpr size_t kNeeded = sizeof(n);
-    // TODO(mbkkt) change to little endian!
+  template<typename N>
+  IRS_FORCE_INLINE void WriteFixed(N n) {
     n = absl::little_endian::FromHost(n);
     const auto* b = reinterpret_cast<const byte_type*>(&n);
-    // We assume buffer size > kNeeded, so double buffering is impossible
-    // and we can use < instead of <=
-    if (Remain() < kNeeded) [[unlikely]] {
-      return WriteDirect(b, kNeeded);
+    if (Remain() < sizeof(n)) [[unlikely]] {
+      return Overflow(b, sizeof(n));
     }
-    WriteBuffer(b, kNeeded);
+    std::memcpy(_pos, b, sizeof(n));
+    _pos += sizeof(n);
   }
 
-  IRS_FORCE_INLINE void WriteNumV(auto n) {
-    static constexpr size_t kNeeded = (sizeof(n) * 8 + 6) / 7;
-    if (Remain() < kNeeded) [[unlikely]] {
-      return WriteDirectNumV(n);
+  template<typename N>
+  IRS_FORCE_INLINE void WriteVarint(N n) {
+    if (Remain() < bytes_io<N>::kMaxVSize) [[unlikely]] {
+      return WriteVarintSlow(n);
     }
-    WriteVarint(n, _pos);
+    irs::WriteVarint(n, _pos);
   }
+
+  template<typename N>
+  IRS_NO_INLINE void WriteVarintSlow(N n) {
+    byte_type buf[bytes_io<N>::kMaxVSize];
+    auto* end = buf;
+    irs::WriteVarint(n, end);
+    WriteData(buf, static_cast<size_t>(end - buf));
+  }
+
+  virtual void Overflow(const byte_type* data, size_t size) = 0;
 };
 
-class IndexOutput : public BufferedOutput {
+class IndexOutput : public DataOutput {
  public:
-  using OnClose = absl::FunctionRef<void(uint64_t)>;
+  using ptr = std::unique_ptr<IndexOutput>;
 
-  using BufferedOutput::BufferedOutput;
-
-  void SetOnClose(OnClose on_close) noexcept { _on_close = on_close; }
-
-  IRS_USING_IO_PTR(IndexOutput, Close);
-
-  uint64_t Position() const noexcept { return _offset + Length(); }
+  virtual ~IndexOutput() = default;
 
   // Flush output
   virtual void Flush() = 0;
@@ -189,17 +132,16 @@ class IndexOutput : public BufferedOutput {
 
   // Flush and close output
   void Close() {
-    const auto size = CloseImpl();
-    _on_close(size);
+    if (std::exchange(_closed, true)) {
+      return;
+    }
+    CloseImpl();
   }
 
- protected:
-  uint64_t _offset = 0;
-
  private:
-  virtual uint64_t CloseImpl() = 0;
+  virtual void CloseImpl() = 0;
 
-  OnClose _on_close{absl::FunctionValue{}, [](uint64_t) noexcept {}};
+  bool _closed = false;
 };
 
 }  // namespace irs

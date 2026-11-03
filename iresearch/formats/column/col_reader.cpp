@@ -42,18 +42,14 @@
 namespace irs {
 namespace {
 
-IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
-                            IOAdvice advice) {
-  const std::string filename = FileName(segment_name);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("col reader: cannot stat .col file: ", filename));
-  }
-  if (!exists) {
+std::unique_ptr<InputFile> OpenColFile(const Directory& dir,
+                                       std::string_view segment_name,
+                                       bool present,
+                                       duckdb::MappedFileAccess access) {
+  if (!present) {
     return nullptr;
   }
-  return dir.open(filename, advice);
+  return dir.Open(FileName(segment_name), access);
 }
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
@@ -152,14 +148,19 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 }  // namespace
 
 ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, IOAdvice advice)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
-  if (!_ctx.HasIn()) {
+                     bool present, duckdb::MappedFileAccess access)
+  : ColReader{dir.Db(), segment_name,
+              OpenColFile(dir, segment_name, present, access)} {}
+
+ColReader::ColReader(duckdb::DatabaseInstance& db,
+                     std::string_view segment_name,
+                     std::unique_ptr<InputFile> file)
+  : _db{&db}, _file{std::move(file)}, _ctx{db, _file.get()} {
+  if (!_file) {
     return;
   }
-  auto fin = _ctx.In().Dup();
   format_utils::ReadFooter(
-    *fin, FileName(segment_name),
+    *_file, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
       footer.Set<duckdb::DatabaseInstance&>(db);
       footer.ReadOptionalList(
@@ -182,7 +183,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto column = std::make_unique<NormColumnReader>(
-              id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
+              id, DeserializeNormMeta(obj, id, data_size), *_file);
             const bool ok = _norm_by_id.emplace(id, column.get()).second;
             SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
             _norm_columns.push_back(std::move(column));

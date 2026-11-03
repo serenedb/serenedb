@@ -49,7 +49,7 @@ class BoostTerm {
   BoostTerm(BoostTerm&&) = delete;
   BoostTerm& operator=(BoostTerm&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args) {
     _leaf.Prepare(meta, doc_in, segment, field, args);
@@ -142,7 +142,7 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
   Posting(Posting&&) = delete;
   Posting& operator=(Posting&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {

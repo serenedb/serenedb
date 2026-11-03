@@ -37,7 +37,6 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -162,15 +161,13 @@ class PostingBatch {
   }
 
  protected:
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
+  void OpenInput(const PostingMeta& meta, const InputFile& doc_in,
                  bool bounds) {
-    _in = OpenDocInput(meta, doc_in);
+    _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();
     if (const auto extent = DocExtent(meta); extent != 0) {
       _hint.Arm(meta.doc_start, meta.doc_start + extent);
@@ -242,14 +239,14 @@ class PostingBatch {
 
   [[no_unique_address]] NeedEnc<InputType> _enc;
   [[no_unique_address]] utils::Need<Scored, FreqBuf> _freqs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   doc_id_t _last = 0;
   uint32_t _left_in_list = 0;
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
   GrowingHint _hint;
-  BlockCursor _walk;
+  BlockCursor<InputType> _walk;
 };
 
 }  // namespace irs::detail

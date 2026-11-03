@@ -656,8 +656,9 @@ PublishedInvertedIndex PublishInvertedIndex(
   }
   const auto options = catalog::ResolveSettings(entry.options);
   auto storage = std::make_shared<search::Store>(
-    entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
-    entry.catalog.InMemory(), false, entry.catalog.GetOid(), entry.oid, options,
+    entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(
+      entry.catalog.GetCatalogTransaction(context), entry.Tablespace()),
+    entry.catalog.GetAttached(), entry.oid, options,
     entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);

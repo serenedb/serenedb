@@ -92,7 +92,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
         if (detail::ScoresPerDocTerm(posting)) {
           const auto& own = *posting.state.reader;
           const auto& doc = *detail::DocOf(own);
-          return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+          return ResolveInput(doc, [&]<typename Input> -> Node::ptr {
             return make.template operator()<detail::PostingProbeScored<Input>>(
               std::forward_as_tuple(
                 posting.state.cookie, doc, segment, own,

@@ -29,6 +29,8 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parallel/task_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
@@ -47,6 +49,7 @@
 #include <system_error>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "backup/commit_gate.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
@@ -77,13 +80,35 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
+  const auto oid = catalog::OidFromName(path.filename().string());
+  if (!oid) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("\"", path.string(),
+                            "\" is not a SereneDB database directory: its "
+                            "name is not a database oid"));
+  }
+  auto directory =
+    std::make_shared<catalog::DatabaseDirectory>(*oid, nullptr, path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
     std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});
   catalog::RequestSereneDBStorageVersion(options);
   return duckdb::make_uniq<catalog::SereneDBCatalog>(db, std::move(directory));
+}
+
+duckdb::idx_t PlaceDatabase(duckdb::ClientContext& context,
+                            std::string_view name,
+                            duckdb::LogicalDependencyList& dependencies) {
+  auto& tablespace = catalog::RequireTablespace(context, name);
+  if (tablespace.oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("pg_global cannot be used as default tablespace"));
+  }
+  if (tablespace.oid == pg::kPgDefaultTablespace) {
+    return 0;
+  }
+  return auth::UseTablespace(context, tablespace, dependencies);
 }
 
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
@@ -120,6 +145,12 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   if (!entry) {
     duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
+    if (const auto option = options.options.find("tablespace");
+        option != options.options.end()) {
+      database.tablespace_oid = PlaceDatabase(
+        context, option->second.ToString(), database.dependencies);
+      options.options.erase(option);
+    }
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);
           option != options.options.end()) {
@@ -175,15 +206,26 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
     return duckdb::make_uniq<CheckpointPass>(std::move(pass));
   }
 
+  void OnLoadStorage(duckdb::AttachedDatabase& db) final {
+    db.GetCatalog().Cast<catalog::SereneDBCatalog>().OpenStorages();
+  }
+
   void OnCheckpointBeforeHeader(duckdb::AttachedDatabase& db,
                                 duckdb::CheckpointOptions) final {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
-    std::vector<std::weak_ptr<search::Store>> saves;
-    for (auto& storage : InvertedStorages(db)) {
-      storage->PrepareCheckpoint(iteration);
-      saves.push_back(storage);
+    const auto storages = InvertedStorages(db);
+    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
+    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+    for (const auto& storage : storages) {
+      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        executor,
+        [&storage, iteration] { storage->PrepareCheckpoint(iteration); },
+        "SearchPrepareCheckpoint"));
     }
+    executor.WorkOnTasks();
+    std::vector<std::weak_ptr<search::Store>> saves{storages.begin(),
+                                                    storages.end()};
     duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
     if (saves.empty()) {
       _saves.erase(db.oid);
@@ -203,15 +245,24 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
         _saves.erase(it);
       }
     }
+    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
+    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
     for (const auto& save : saves) {
-      if (const auto storage = save.lock()) {
-        storage->FinishCheckpoint();
+      if (auto storage = save.lock()) {
+        executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+          executor,
+          [storage = std::move(storage)] { storage->FinishCheckpoint(); },
+          "SearchFinishCheckpoint"));
       }
     }
     for (auto& table : catalog::SearchTableStorages(
            db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
-      table->FinishCheckpointIfIdle();
+      executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
+        executor,
+        [table = std::move(table)] { table->FinishCheckpointIfIdle(); },
+        "SearchFinishCheckpoint"));
     }
+    executor.WorkOnTasks();
   }
 
   duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {
@@ -273,6 +324,7 @@ void RegisterSereneDBStorage(
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);
   duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
+  config.create_temporary_catalog = &catalog::MakeTemporaryCatalog;
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {

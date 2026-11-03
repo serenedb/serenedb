@@ -32,7 +32,9 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <map>
 #include <mutex>
@@ -289,7 +291,7 @@ class StoreCollector final : public StoreSink {
 
 class IndexUnderTest {
  public:
-  MemoryDirectory& dir() noexcept { return _dir; }
+  Directory& dir() noexcept { return _dir; }
 
   std::shared_ptr<IndexWriter> Open() {
     auto options = irs::tests::DefaultWriterOptions();
@@ -304,7 +306,7 @@ class IndexUnderTest {
   }
 
  private:
-  MemoryDirectory _dir;
+  Directory _dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
 };
 
 void WriteBlock(IndexWriter::Transaction& trx,

@@ -103,7 +103,7 @@ You may also view the current number from the sequence. `currval` returns the va
 
 `CREATE SEQUENCE` creates a new sequence number generator.
 
-If a schema name is given then the sequence is created in the specified schema. Otherwise it is created in the current schema. Temporary sequences exist in a special schema, so a schema name may not be given when creating a temporary sequence. The sequence name must be distinct from the name of any other sequence in the same schema.
+If a schema name is given then the sequence is created in the specified schema. Otherwise it is created in the current schema. Temporary sequences exist in a special schema, so a schema name may not be given when creating a temporary sequence. The sequence name must be distinct from the name of any other sequence, table, view or index in the same schema.
 
 After a sequence is created, you use the function `nextval` to operate on the sequence.
 

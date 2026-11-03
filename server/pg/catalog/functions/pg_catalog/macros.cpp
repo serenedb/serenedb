@@ -346,7 +346,6 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
   {"pg_catalog", "pg_get_expr",
    "(node_text, rel_oid, pretty_bool) AS CAST(node_text AS TEXT)"},
-  {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST('' AS TEXT)"},
 
   {"pg_catalog", "oidvectortypes",
    R"((v) AS array_to_string(

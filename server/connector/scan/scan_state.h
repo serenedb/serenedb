@@ -37,11 +37,13 @@
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/ann/collector.hpp>
+#include <iresearch/search/ann/root.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/blocking_once.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -113,16 +115,12 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kWhole = 1;
   static constexpr uint8_t kSplit = 2;
 
-  static constexpr uint8_t kUnprepared = 0;
-  static constexpr uint8_t kPreparing = 1;
-  static constexpr uint8_t kReady = 2;
-
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   std::atomic_uint32_t next_rg{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
-  std::atomic_uint8_t prepare{kUnprepared};
+  irs::BlockingOnce prepare;
   std::unique_ptr<OrderedUnits> ordered;
 };
 
@@ -163,6 +161,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const irs::IndexReader* reader = nullptr;
   search::StoreSnapshotPtr snapshot;
   size_t total_segments = 0;
+  bool remote = false;
   const VectorScorerOptions* vector_scorer = nullptr;
   std::optional<size_t> top_k;
   size_t top_offset = 0;
@@ -233,6 +232,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::atomic_uint32_t thread_slots{0};
 
   bool stats_stage = false;
+  uint32_t head_prefetch_min = 0;
   std::atomic_uint32_t prepare_next{0};
   ScanBarrier stats_barrier;
 
@@ -370,9 +370,6 @@ struct CountLocalState final : public ScanLocalState {
   uint64_t local_count = 0;
   uint64_t local_emitted = 0;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_end = 0;
 };
 
 struct ColScanLocalState final : public ScanLocalState {
@@ -388,7 +385,6 @@ struct ColScanLocalState final : public ScanLocalState {
 
 struct StreamLocalState final : public ScanLocalState, FetchLocalState {
   irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
   bool scored = false;
   irs::ColumnArgsFetcher score_fetcher;
   uint64_t next_row = 0;
@@ -400,9 +396,6 @@ struct StreamLocalState final : public ScanLocalState, FetchLocalState {
 struct RankedLocalState : public ScanLocalState, FetchLocalState {
   irs::ColumnArgsFetcher score_fetcher;
   ColFilterVerify col_verify;
-  irs::memory::managed_ptr<irs::memory::Managed> root;
-  uint32_t root_seg = std::numeric_limits<uint32_t>::max();
-  irs::doc_id_t root_end = 0;
   bool published = false;
   bool emitter = false;
   duckdb::idx_t emitted = 0;
@@ -421,6 +414,7 @@ struct TopKLocalState final : public RankedLocalState {
 struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
+  irs::ann::Root::ptr root;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
   std::vector<irs::ScoreDoc> pending;
   std::vector<irs::ScoreDoc> rescored;
@@ -517,7 +511,11 @@ struct FetchedHits {
 void SortByAddress(std::span<irs::ScoreDoc> hits);
 std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   std::span<const irs::ScoreDoc> hits, uint64_t rg_size);
-void PlanFetch(ScanGlobalState& g);
+void PrefetchColumns(
+  const ScanGlobalState& g, FetchLocalState& l,
+  std::span<const irs::ScoreDoc> hits,
+  std::span<const ScanGlobalState::TopKState::FetchUnit> units);
+void PlanFetch(ScanGlobalState& g, FetchLocalState& l);
 FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
                       RankedLocalState& l, uint32_t seg,
                       std::span<const irs::ScoreDoc> hits, bool rebind);

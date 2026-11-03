@@ -52,19 +52,20 @@ struct TermInterval {
 template<bool Offs>
 using FixedTermTraits = IteratorTraitsImpl<true, true, Offs>;
 
-template<bool Offs>
-using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>>;
+template<bool Offs, typename Input>
+using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>, Input>;
 
-template<bool Offs>
-using FixedTermPosition = std::pair<FixedTermPositionImpl<Offs>*, TermInterval>;
+template<bool Offs, typename Input>
+using FixedTermPosition =
+  std::pair<FixedTermPositionImpl<Offs, Input>*, TermInterval>;
 
 template<typename T>
 struct TermPositionTraits;
 
-template<bool Offs>
-struct TermPositionTraits<FixedTermPosition<Offs>> {
-  using T = FixedTermPosition<Offs>;
-  using PositionImpl = FixedTermPositionImpl<Offs>;
+template<bool Offs, typename Input>
+struct TermPositionTraits<FixedTermPosition<Offs, Input>> {
+  using T = FixedTermPosition<Offs, Input>;
+  using PositionImpl = FixedTermPositionImpl<Offs, Input>;
 
   static PosAttr::value_t Position(T& pos) noexcept {
     return pos.first->value();
@@ -719,8 +720,9 @@ class PhraseMatcher {
   bool _reversed = false;
 };
 
-template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>
-using FixedPhraseMatcher =
-  PhraseMatcher<FixedTermPosition<Offs>, Offs, HasFreq, HasIntervals, false, N>;
+template<typename Input, bool Offs, bool HasFreq, bool HasIntervals,
+         size_t N = 0>
+using FixedPhraseMatcher = PhraseMatcher<FixedTermPosition<Offs, Input>, Offs,
+                                         HasFreq, HasIntervals, false, N>;
 
 }  // namespace irs

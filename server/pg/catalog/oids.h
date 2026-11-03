@@ -82,11 +82,6 @@ inline constexpr std::array kSystemNamespaces{
   SystemObject{kPgInformationSchema, irs::StaticStrings::kInformationSchema},
 };
 
-inline constexpr std::array kSystemTablespaces{
-  SystemObject{kPgDefaultTablespace, "pg_default"},
-  SystemObject{kPgGlobalTablespace, "pg_global"},
-};
-
 struct SystemLanguage {
   duckdb::idx_t oid;
   std::string_view name;

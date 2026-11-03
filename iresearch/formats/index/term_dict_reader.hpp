@@ -43,8 +43,7 @@ namespace irs::term_dict {
 class FieldReader;
 
 struct BlockBuffer {
-  IndexInput::ptr in;
-  bstring copy;
+  PinnedBytes pinned;
 };
 
 struct RangeLevel {
@@ -80,7 +79,7 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 IndexInput& in, const Separators& separators);
+                 const InputFile& in, const Separators& separators);
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -97,7 +96,7 @@ class TermReaderImpl final : public TermReader {
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const final;
+  bool Prefetch(bytes_view term) const final;
   PostingsHandles Handles() const noexcept final;
 
   const FieldMeta& meta() const noexcept final { return _meta; }
@@ -150,6 +149,7 @@ class TermReaderImpl final : public TermReader {
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
+  bool HintBlock(uint32_t block) const;
   bool Gates(bytes_view head) const noexcept {
     return _prefixes && head.size() < kTermPrefix;
   }
@@ -168,7 +168,7 @@ class TermReaderImpl final : public TermReader {
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadRanges(FieldReader& owner, IndexInput& in,
+  uint64_t ReadRanges(FieldReader& owner, const InputFile& in,
                       const RangesHead& ranges);
 
   const FieldReader* _owner;

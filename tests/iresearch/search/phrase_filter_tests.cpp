@@ -7472,7 +7472,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

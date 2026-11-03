@@ -34,15 +34,7 @@ namespace irs::term_dict {
 
 FieldReader::~FieldReader() { _rm->DecreaseChecked(_bytes); }
 
-uint64_t FieldReader::CountMappedMemory() const {
-  uint64_t bytes = _pr.CountMappedMemory();
-  if (_in) {
-    bytes += _in->CountMappedMemory();
-  }
-  return bytes;
-}
-
-bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
+bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   if (_base) {
     return {_base + offset, size};
   }
@@ -51,7 +43,7 @@ bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
   if (inserted) {
     Account(size);
     copy.resize(size);
-    in.ReadData(offset, copy.data(), size);
+    IndexInput{*_in}.ReadData(offset, copy.data(), size);
   }
   SDB_ASSERT(copy.size() == size);
   return copy;
@@ -85,8 +77,9 @@ void FieldReader::FillCopies() {
     }
     _in->Prefetch(begin, end - begin);
   }
+  IndexInput in{*_in};
   for (const auto& copy : _pending) {
-    _in->ReadData(copy.offset, copy.data, copy.size);
+    in.ReadData(copy.offset, copy.data, copy.size);
   }
   _pending.clear();
   _pending.shrink_to_fit();
@@ -157,14 +150,14 @@ void FieldReader::Bind(const TermsMeta& terms) {
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
   auto terms = state.idx->TakeTerms();
-  _in = state.idx->ReopenIn();
+  _in = state.idx->File();
   if (!_in) {
     SDB_ENSURE(terms.fields.empty(),
                "term dictionary: fields but no `.idx` stream");
     return;
   }
 
-  _base = _in->ReadStable(0, _in->Length());
+  _base = _in->Contiguous() ? _in->Span().data() : nullptr;
   const auto& heads = terms.fields;
   if (!heads.empty()) {
     Bind(terms);

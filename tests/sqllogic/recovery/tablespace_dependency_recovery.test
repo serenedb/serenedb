@@ -1,0 +1,180 @@
+control substitution on
+
+# Every object placed in a tablespace keeps the tablespace from being dropped,
+# across a restart, a search table rebuilt by ALTER TABLE and a rewrite of the
+# catalog log; a DROP TABLESPACE cut off before its commit leaves it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dep_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
+
+statement ok
+CREATE TABLESPACE for_table LOCATION '${__TEST_DIR__}/for_table';
+
+statement ok
+CREATE TABLESPACE for_index LOCATION '${__TEST_DIR__}/for_index';
+
+statement ok
+CREATE TABLESPACE for_database LOCATION '${__TEST_DIR__}/for_database';
+
+statement ok
+CREATE TABLE dep_docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE for_table;
+
+statement ok
+INSERT INTO dep_docs VALUES (1, 'kept');
+
+statement ok
+CREATE TABLE dep_notes (id INT, body TEXT);
+
+statement ok
+INSERT INTO dep_notes VALUES (1, 'red fox');
+
+statement ok
+CREATE INDEX dep_notes_idx ON dep_notes USING inverted(body dep_english) TABLESPACE for_index;
+
+statement ok
+CREATE DATABASE dep_db TABLESPACE for_database;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS tablespaces FROM pg_tablespace
+WHERE spcname IN ('for_table', 'for_index', 'for_database');
+----
+tablespaces
+3
+
+connection after_restart
+statement error
+DROP TABLESPACE for_table;
+----
+db error: ERROR: tablespace "for_table" is not empty
+
+
+connection after_restart
+statement error
+DROP TABLESPACE for_index;
+----
+db error: ERROR: tablespace "for_index" is not empty
+
+
+connection after_restart
+statement error
+DROP TABLESPACE for_database;
+----
+db error: ERROR: tablespace "for_database" is not empty
+
+
+connection after_restart
+statement ok
+ALTER TABLE dep_docs ALTER COLUMN body SET DEFAULT 'none';
+
+connection after_restart
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection after_restart
+statement ok
+CREATE TABLE dep_rewrite (i INT);
+
+connection after_restart
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_restart
+statement error connection closed
+SELECT 1;
+
+
+connection after_rewrite
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM dep_docs ORDER BY id;
+----
+id	body
+1	kept
+
+connection after_rewrite
+statement error
+DROP TABLESPACE for_table;
+----
+db error: ERROR: tablespace "for_table" is not empty
+
+
+connection after_rewrite
+statement error
+DROP TABLESPACE for_index;
+----
+db error: ERROR: tablespace "for_index" is not empty
+
+
+connection after_rewrite
+statement error
+DROP TABLESPACE for_database;
+----
+db error: ERROR: tablespace "for_database" is not empty
+
+
+connection after_rewrite
+statement ok
+DROP TABLE dep_docs;
+
+connection after_rewrite
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+connection after_rewrite
+statement error connection closed
+DROP TABLESPACE for_table;
+
+
+connection after_cut_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS tablespaces FROM pg_tablespace WHERE spcname = 'for_table';
+----
+tablespaces
+1
+
+connection after_cut_drop
+statement ok
+DROP TABLESPACE for_table;
+
+connection after_cut_drop
+statement ok
+DROP INDEX dep_notes_idx;
+
+connection after_cut_drop
+statement ok
+DROP TABLESPACE for_index;
+
+connection after_cut_drop
+statement ok
+DROP DATABASE dep_db;
+
+connection after_cut_drop
+statement ok
+DROP TABLESPACE for_database;
+
+connection after_cut_drop
+query ok retry 240 backoff 250ms
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/for_*/**');
+----
+files_left
+0
+
+connection after_cut_drop
+statement ok
+DROP TABLE dep_notes;
+
+connection after_cut_drop
+statement ok
+DROP TABLE dep_rewrite;
+
+connection after_cut_drop
+statement ok
+DROP TEXT SEARCH DICTIONARY dep_english;

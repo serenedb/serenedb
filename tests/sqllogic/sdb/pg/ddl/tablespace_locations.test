@@ -1,0 +1,265 @@
+control substitution on
+
+# How a location is checked and stored, and which names a tablespace takes.
+
+statement error
+CREATE TABLESPACE loc_rel_${__DATABASE__} LOCATION 'relative/dir';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE loc_dot_${__DATABASE__} LOCATION './dir';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE loc_empty_${__DATABASE__} LOCATION '';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE loc_memory_${__DATABASE__} LOCATION 'memory://bucket/loc_memory_${__DATABASE__}';
+----
+db error: ERROR: tablespace location cannot be in memory
+DETAIL: Files under memory:// are lost when the server stops.
+
+
+statement ok
+CREATE TABLESPACE loc_norm_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc//base/./skip/..///';
+
+query
+SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/loc/base' AS normalized
+FROM pg_tablespace WHERE spcname = 'loc_norm_${__DATABASE__}';
+----
+normalized
+t
+
+statement error
+CREATE TABLESPACE loc_same_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/./base/';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+
+
+statement error
+CREATE TABLESPACE loc_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/x/../engine_v1/deeper';
+----
+db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+
+
+statement error
+CREATE TABLESPACE loc_files_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_files/engine_v1/deeper';
+----
+db error: ERROR: tablespace location "<slt:ignore>" is inside the files of a tablespace
+
+
+statement ok
+CREATE TABLESPACE loc_child_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/child';
+
+statement ok
+CREATE TABLESPACE loc_parent_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc';
+
+statement ok
+CREATE TABLESPACE loc_beside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/engine_v1x';
+
+statement ok
+CREATE TABLESPACE loc_a_${__DATABASE__} LOCATION '${__TEST_DIR__}/prefix/a';
+
+statement ok
+CREATE TABLESPACE loc_ab_${__DATABASE__} LOCATION '${__TEST_DIR__}/prefix/ab';
+
+query
+SELECT replace(spcname, '_${__DATABASE__}', '') AS tablespace,
+       replace(pg_tablespace_location(oid), '${__TEST_DIR__}', '<dir>') AS location
+FROM pg_tablespace
+WHERE spcname IN ('loc_norm_${__DATABASE__}', 'loc_child_${__DATABASE__}', 'loc_parent_${__DATABASE__}',
+                  'loc_beside_${__DATABASE__}', 'loc_a_${__DATABASE__}', 'loc_ab_${__DATABASE__}')
+ORDER BY spcname;
+----
+tablespace	location
+loc_a	<dir>/prefix/a
+loc_ab	<dir>/prefix/ab
+loc_beside	<dir>/loc/base/engine_v1x
+loc_child	<dir>/loc/base/child
+loc_norm	<dir>/loc/base
+loc_parent	<dir>/loc
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY loc_words AS split_text(case := 'lower');
+
+statement ok
+CREATE TABLE in_parent (id INT, body TEXT) WITH (storage = 'search') TABLESPACE loc_parent_${__DATABASE__};
+
+statement ok
+CREATE TABLE in_child (id INT, body TEXT) WITH (storage = 'search') TABLESPACE loc_child_${__DATABASE__};
+
+statement ok
+INSERT INTO in_parent VALUES (1, 'parent row');
+
+statement ok
+INSERT INTO in_child VALUES (2, 'child row');
+
+statement ok
+VACUUM (REFRESH_TABLE) in_parent;
+
+statement ok
+VACUUM (REFRESH_TABLE) in_child;
+
+query
+SELECT id, body FROM in_parent UNION ALL SELECT id, body FROM in_child ORDER BY id;
+----
+id	body
+1	parent row
+2	child row
+
+query
+SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/engine_v1/*/*/*')) AS parent_files,
+       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/engine_v1/*/*/*')) AS child_files,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/engine_v1/**')) AS base_files;
+----
+parent_files	child_files	base_files
+t	t	0
+
+statement ok
+COPY (SELECT 1 AS x) TO '${__TEST_DIR__}/loc_file.csv';
+
+statement error
+CREATE TABLESPACE loc_file_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_file.csv';
+----
+db error: ERROR: Failed to create directory "<slt:ignore>": File exists
+
+
+statement error
+CREATE TABLESPACE loc_under_file_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_file.csv/sub';
+----
+db error: ERROR: Failed to create directory "<slt:ignore>": File exists
+
+
+system ok
+mkdir -p $__TEST_DIR__/stray/engine_v1
+
+statement error
+CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
+----
+db error: ERROR: directory "<slt:ignore>/stray/engine_v1" already in use as a tablespace
+HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
+
+
+system ok
+rmdir $__TEST_DIR__/stray/engine_v1
+
+statement ok
+CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
+
+statement error
+CREATE TABLESPACE pg_ LOCATION '${__TEST_DIR__}/names/pg';
+----
+db error: ERROR: unacceptable tablespace name "pg_"
+DETAIL: The prefix "pg_" is reserved for system tablespaces.
+
+
+statement ok
+CREATE TABLESPACE "PG_upper_${__DATABASE__}" LOCATION '${__TEST_DIR__}/names/upper';
+
+statement ok
+CREATE TABLESPACE "with space and ünïcode ${__DATABASE__}" LOCATION '${__TEST_DIR__}/names/with space/ünïcode';
+
+statement ok
+CREATE TABLESPACE "quote""inside_${__DATABASE__}" LOCATION '${__TEST_DIR__}/names/quote';
+
+query
+SELECT replace(spcname, '${__DATABASE__}', '<db>') AS name,
+       replace(pg_tablespace_location(oid), '${__TEST_DIR__}', '<dir>') AS location
+FROM pg_tablespace
+WHERE spcname IN ('PG_upper_${__DATABASE__}', 'with space and ünïcode ${__DATABASE__}', 'quote"inside_${__DATABASE__}')
+ORDER BY spcname;
+----
+name	location
+PG_upper_<db>	<dir>/names/upper
+quote"inside_<db>	<dir>/names/quote
+with space and ünïcode <db>	<dir>/names/with space/ünïcode
+
+statement ok
+CREATE TABLE in_unicode (id INT, body TEXT) WITH (storage = 'search')
+  TABLESPACE "with space and ünïcode ${__DATABASE__}";
+
+statement ok
+INSERT INTO in_unicode VALUES (1, 'stored under a unicode path');
+
+statement ok
+VACUUM (REFRESH_TABLE) in_unicode;
+
+query
+SELECT body FROM in_unicode;
+----
+body
+stored under a unicode path
+
+query
+SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/engine_v1/*/*/*');
+----
+stored
+t
+
+statement error
+ALTER TABLESPACE "PG_upper_${__DATABASE__}" RENAME TO "quote""inside_${__DATABASE__}";
+----
+db error: ERROR: Could not rename "<slt:ignore>" to "<slt:ignore>": another entry with this name already exists!
+
+
+statement ok
+DROP TABLESPACE "PG_upper_${__DATABASE__}";
+
+statement ok retry 240 backoff 250ms
+CREATE TABLESPACE reuse_${__DATABASE__} LOCATION '${__TEST_DIR__}/names/upper';
+
+query
+SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/names/upper' AS reused
+FROM pg_tablespace WHERE spcname = 'reuse_${__DATABASE__}';
+----
+reused
+t
+
+statement ok
+DROP TABLE in_unicode;
+
+statement ok
+DROP TABLE in_child;
+
+statement ok
+DROP TABLE in_parent;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY loc_words;
+
+statement ok
+DROP TABLESPACE reuse_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE "with space and ünïcode ${__DATABASE__}";
+
+statement ok
+DROP TABLESPACE "quote""inside_${__DATABASE__}";
+
+statement ok
+DROP TABLESPACE loc_stray_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_ab_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_a_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_beside_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_parent_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_child_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_norm_${__DATABASE__};

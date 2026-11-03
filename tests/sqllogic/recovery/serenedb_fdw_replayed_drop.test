@@ -1,0 +1,84 @@
+control substitution on
+
+# A read-only attach replays the catalog log of the directory it opens, drops
+# included. A drop replayed there leaves the files of the dropped search table
+# and inverted index where they are: the attach changes nothing it reads.
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.frd_docs(id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search');
+
+statement ok
+INSERT INTO postgres.public.frd_docs VALUES (1, 'alpha');
+
+statement ok
+CREATE TABLE postgres.public.frd_plain(id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO postgres.public.frd_plain VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+CREATE INDEX frd_plain_idx ON postgres.public.frd_plain USING inverted (body);
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.frd_docs;
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.frd_plain;
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/frd && mkdir $__TEST_DIR__/frd && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/frd/5
+
+statement ok
+DROP TABLE postgres.public.frd_docs;
+
+statement ok
+DROP INDEX postgres.public.frd_plain_idx;
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -f $__TEST_DIR__/frd/5/data.db* && cp ${SDB_DATADIR}/engine_v1/5/data.db* $__TEST_DIR__/frd/5/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/frd/catalog.wal
+
+statement ok
+CREATE TABLE frd_files AS
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/frd/**');
+
+query
+SELECT count(*) > 2 AS stored FROM frd_files;
+----
+stored
+t
+
+statement ok
+CREATE SERVER frd FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/frd/5');
+
+query
+SELECT id, body FROM frd.public.frd_plain ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'frd' AND table_name = 'frd_docs';
+----
+n
+0
+
+statement ok
+DROP SERVER frd;
+
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/frd/**')
+   EXCEPT SELECT * FROM frd_files)
+  UNION ALL
+  (SELECT * FROM frd_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/frd/**')));
+----
+changed
+0

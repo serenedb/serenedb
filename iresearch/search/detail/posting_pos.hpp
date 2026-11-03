@@ -31,7 +31,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -42,16 +41,16 @@ template<typename InputType, bool Bounds, bool Offs = false>
 class PostingPos {
  public:
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
-  using Position = PositionImpl<PosTraits>;
+  using Position = PositionImpl<PosTraits, InputType>;
 
   static constexpr bool kOffsets = Offs;
   static constexpr bool kDefaultInit = true;
 
   PostingPos() = default;
 
-  explicit PostingPos(const PostingMeta& meta, const IndexInput& doc_in,
-                      IndexFeatures layout, const IndexInput& pos_in,
-                      const IndexInput* pay_in) {
+  explicit PostingPos(const PostingMeta& meta, const InputFile& doc_in,
+                      IndexFeatures layout, const InputFile& pos_in,
+                      const InputFile* pay_in) {
     Prepare(meta, doc_in, layout, pos_in, pay_in);
   }
 
@@ -60,9 +59,9 @@ class PostingPos {
   PostingPos(PostingPos&&) = delete;
   PostingPos& operator=(PostingPos&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, const IndexInput& pos_in,
-               const IndexInput* pay_in) {
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
+               IndexFeatures layout, const InputFile& pos_in,
+               const InputFile* pay_in) {
     SDB_ASSERT(meta.docs_count != 0);
     SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
     SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));
@@ -75,7 +74,7 @@ class PostingPos {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _in = OpenDocInput(meta, doc_in);
+      _in = OpenDocInput<InputType>(meta, doc_in);
       auto& in = In();
       if (const auto extent = DocExtent(meta); extent != 0) {
         _hint.Arm(meta.doc_start, meta.doc_start + extent);
@@ -96,7 +95,7 @@ class PostingPos {
       .term_state = &meta,
       .enc_buf = Enc(),
     };
-    _pos.template Prepare<InputType>(state);
+    _pos.Prepare(state);
   }
 
   doc_id_t Value() const noexcept { return _doc; }
@@ -216,9 +215,7 @@ class PostingPos {
  private:
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -261,9 +258,9 @@ class PostingPos {
   [[no_unique_address]] NeedEnc<InputType> _enc;
   FreqBuf _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   Position _pos;
-  BlockCursor _cursor;
+  BlockCursor<InputType> _cursor;
   GrowingHint _hint;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _max_in_leaf = doc_limits::invalid();

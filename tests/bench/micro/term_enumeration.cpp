@@ -33,7 +33,7 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -81,7 +81,6 @@ std::string TermAt(size_t i) {
 
 struct CachedIndex {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
   irs::DirectoryReader reader;
   std::vector<std::string> terms;
 };
@@ -98,14 +97,14 @@ const CachedIndex& IndexOf(size_t num_terms) {
                 absl::StrFormat("serenedb-bench-term-enum-%d", num_terms);
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
-  cached.dir = std::make_unique<irs::MMapDirectory>(cached.path);
+  auto* db = &irs::DuckDBEngine::Instance().instance();
+  const irs::Directory dir{*db, cached.path.string()};
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {
     cached.terms.push_back(TermAt(i));
   }
 
-  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
@@ -113,7 +112,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     return {};
   };
   auto writer =
-    irs::IndexWriter::Make(*cached.dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -127,8 +126,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
   writer->RefreshCommit();
 
-  cached.reader =
-    irs::DirectoryReader{*cached.dir, irs::IndexReaderOptions{.db = db}};
+  cached.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
   return cached;
 }
 

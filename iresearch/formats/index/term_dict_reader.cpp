@@ -71,23 +71,6 @@ uint32_t Find(const BlockView& view, Probe key,
   return entry;
 }
 
-const byte_type* MapAt(IndexInput& in, uint64_t offset, uint64_t size,
-                       bstring& copy) {
-  if (const auto* p = in.ReadStable(offset, size)) {
-    return p;
-  }
-  copy.resize(size);
-  in.ReadData(offset, copy.data(), size);
-  return copy.data();
-}
-
-IndexInput& Reopened(BlockBuffer& buffer, const IndexInput& in) {
-  if (!buffer.in) {
-    buffer.in = in.Reopen();
-  }
-  return *buffer.in;
-}
-
 PostingMeta DecodeRecord(const TermReaderImpl& field, const BlockView& view,
                          uint32_t block, uint32_t entry) {
   uint32_t count = 0;
@@ -178,7 +161,7 @@ class TermIteratorImpl : public SeekTermIterator {
 }  // namespace
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               bytes_view prefix, IndexInput& in,
+                               bytes_view prefix, const InputFile& in,
                                const Separators& separators)
   : _owner{&owner},
     _meta{head.id, head.features},
@@ -254,7 +237,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   owner.Account(bytes);
 }
 
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
+uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, const InputFile& in,
                                     const RangesHead& ranges) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = ranges.offset;
@@ -267,7 +250,7 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
       min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
     corrupted();
   }
-  const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
+  const auto* p = owner.Load(owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
   const uint64_t stride = key_width - _range_prefix;
   _levels.reserve(height);
@@ -347,25 +330,30 @@ const byte_type* TermReaderImpl::Block(size_t block,
   if (const auto* base = _owner->Base()) {
     return base + offset;
   }
-  auto& in = Reopened(buffer, _owner->Input());
-  return MapAt(in, offset,
-               std::min(BlockOffset(block + 1), in.Length()) - offset,
-               buffer.copy);
+  const auto& in = _owner->Input();
+  buffer.pinned =
+    in.Pin(offset, std::min(BlockOffset(block + 1), in.Length()) - offset);
+  return buffer.pinned.bytes.data();
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
   if (Small() || !_owner->Base()) {
     return;
   }
-  const auto span = InlineSpan(block);
-  if (span.from == span.to) {
-    return;
+  if (const auto span = InlineSpan(block); span.from != span.to) {
+    HintBlock(block);
   }
-  const std::array ranges{
-    FileRange{BlockOffset(block), BlockOffset(block + 1)},
-    FileRange{span.from, span.to},
-  };
-  HintRanges(_owner->Input(), ranges);
+}
+
+bool TermReaderImpl::HintBlock(uint32_t block) const {
+  const auto& in = _owner->Input();
+  const uint64_t offset = BlockOffset(block);
+  bool hinted =
+    in.Hint(offset, std::min(BlockOffset(block + 1), in.Length()) - offset);
+  if (const auto span = InlineSpan(block); span.from != span.to) {
+    hinted |= in.Hint(span.from, span.to - span.from);
+  }
+  return hinted;
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
@@ -499,8 +487,12 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   }
 }
 
-std::unique_ptr<IndexInput> TermReaderImpl::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
+bool TermReaderImpl::Prefetch(bytes_view term) const {
+  if (Excludes(term)) {
+    return false;
+  }
+  PaddedKey padded;
+  return HintBlock(BlockOf(padded.Assign(KeyPrefix(), term)));
 }
 
 PostingsHandles TermReaderImpl::Handles() const noexcept {

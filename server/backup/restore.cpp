@@ -56,8 +56,9 @@ constexpr std::string_view kRetiredLabelFile = "backup_label.old";
 constexpr std::string_view kSubscriptionHoldFile = "subscriptions.hold";
 
 std::filesystem::path SubscriptionHoldPath() {
-  return catalog::ClusterLayout(catalog::ClusterOf().GetAttached())
-           .EngineDir() /
+  return std::filesystem::path{
+           catalog::ClusterLayout(catalog::ClusterOf().GetAttached())
+             .EngineDir()} /
          kSubscriptionHoldFile;
 }
 
@@ -139,18 +140,10 @@ void PruneStore(const std::filesystem::path& directory, uint64_t generation,
               });
 }
 
-void RemoveStaleLocks(const std::filesystem::path& engine_dir) {
-  for (const auto& [_, database] : catalog::OidDirectories(engine_dir)) {
-    for (const auto& [_, store] : catalog::OidDirectories(database)) {
-      Remove(store / irs::IndexWriter::kWriteLockName);
-    }
-  }
-}
-
 void Restore(const catalog::DataDirectory& layout,
              const std::filesystem::path& label_path) {
   const std::filesystem::path data_dir{layout.directory};
-  const auto engine_dir = layout.EngineDir();
+  const std::filesystem::path engine_dir{layout.EngineDir()};
   auto label = ParseBackupLabel(utils::file_utils::Slurp(label_path.string()));
   if (!label.ok()) {
     Fail("cannot use", label_path, label.status().message());
@@ -230,7 +223,6 @@ void Restore(const catalog::DataDirectory& layout,
   }
   SDB_IF_FAILURE("crash_in_restore_after_stores") { SDB_IMMEDIATE_ABORT(); }
 
-  RemoveStaleLocks(engine_dir);
   Remove(data_dir / "recovery.signal");
   Remove(data_dir / "standby.signal");
   Remove(engine_dir / kBackupDir);
@@ -268,7 +260,7 @@ void PrepareDataDirectory(const catalog::DataDirectory& layout) {
     if (Exists(label_path)) {
       Restore(layout, label_path);
     } else {
-      Remove(layout.EngineDir() / kBackupDir);
+      Remove(std::filesystem::path{layout.EngineDir()} / kBackupDir);
     }
     PositionSource::Instance().Open(data_dir);
     EnsurePgVersion(data_dir);

@@ -24,9 +24,10 @@
 
 #include <string_view>
 
+#include "iresearch/store/directory.hpp"
+
 namespace irs {
 
-struct Directory;
 struct SegmentMeta;
 
 namespace segment_meta {

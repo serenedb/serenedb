@@ -797,7 +797,7 @@ TEST_P(PrefixFilterTestCase, seek_ge_after_seek_ge_lands_on_the_lower_bound) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

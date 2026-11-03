@@ -31,6 +31,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -81,7 +82,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
-  virtual void Read(DataInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };

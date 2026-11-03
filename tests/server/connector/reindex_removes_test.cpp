@@ -18,8 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <roaring/roaring64.h>
 
+#include <atomic>
 #include <cstdint>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -30,7 +32,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
@@ -50,6 +52,11 @@ namespace {
 using namespace sdb;
 using namespace sdb::connector;
 using test::EngineDb;
+
+uint64_t NextRoot() {
+  static std::atomic<uint64_t> gNext{0};
+  return gNext.fetch_add(1, std::memory_order_relaxed);
+}
 using test::IdOf;
 using test::IndexOf;
 
@@ -192,7 +199,8 @@ class ReindexRemovesTest : public ::testing::Test {
     return static_cast<irs::doc_id_t>(irs::doc_limits::min() + index);
   }
 
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{EngineDb(),
+                      absl::StrCat("memory://reindex_removes/", NextRoot())};
   irs::IndexWriter::ptr _writer;
 };
 

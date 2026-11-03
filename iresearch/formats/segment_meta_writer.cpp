@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/document_mask.hpp"
@@ -54,7 +55,7 @@ std::string FileName(const SegmentMeta& meta) {
   return irs::FileName(meta.name, meta.version, kExt);
 }
 
-void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta) {
+void Write(const Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   SDB_ASSERT(meta.live_docs_count <= meta.docs_count);
   SDB_ASSERT(meta.docs_count - meta.live_docs_count == RemovalCount(meta));
   SDB_ASSERT(RemovalCount(meta) < doc_limits::eof());
@@ -66,7 +67,7 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta) {
   const uint64_t mask_size = has_mask ? docs_mask->FrozenSize() : 0;
 
   meta_file = FileName(meta);
-  auto out = dir.create(meta_file);
+  auto out = dir.CreateWhole(meta_file);
 
   if (has_mask) {
     WriteDocumentMask(*out, *docs_mask, mask_size);
@@ -83,6 +84,7 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta) {
     meta_out.WriteProperty<uint64_t>(kFieldByteSize, "byte_size",
                                      size_without_mask);
   });
+  out->Close();
 
   meta.docs_mask_size = mask_size;
   meta.byte_size = size_without_mask + mask_size;

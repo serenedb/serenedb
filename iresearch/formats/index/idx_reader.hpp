@@ -32,16 +32,15 @@
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_input.hpp"  // IndexInput
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
 
-struct Directory;
+class Directory;
 struct AnnIndex;
-struct IResourceManager;
 
 struct IvfCentroidMeta {
   uint64_t tree_offset = 0;
@@ -75,7 +74,7 @@ inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
+  IdxReader(const Directory& dir, std::string_view segment_name, bool present,
             HnswBases* hnsw_bases, bool keep_terms = true);
   ~IdxReader();
 
@@ -89,7 +88,7 @@ class IdxReader final {
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 
-  IndexInput::ptr ReopenIn() const;
+  const std::shared_ptr<const InputFile>& File() const noexcept;
 
  private:
   struct Impl;

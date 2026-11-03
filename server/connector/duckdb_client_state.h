@@ -155,8 +155,9 @@ struct SystemConnection {
   pg::ProgressRegistration progress;
 };
 
-SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
-                                      std::string_view database,
-                                      duckdb::idx_t database_id);
+SystemConnection MakeSystemConnection(
+  std::string_view user, duckdb::idx_t role, std::string_view database,
+  duckdb::idx_t database_id,
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary = nullptr);
 
 }  // namespace sdb::connector

@@ -32,3 +32,18 @@ CREATE TYPE x_index AS INTEGER;
 
 statement ok
 CREATE TYPE point_pair AS TUPLE(INTEGER, INTEGER);
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEMPORARY TYPE session_mood AS ENUM ('calm', 'busy');
+
+query
+SELECT database_name, schema_name
+FROM sdb_types()
+WHERE type_name = 'session_mood';
+----
+database_name	schema_name
+temp	main

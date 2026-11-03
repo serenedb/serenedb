@@ -52,13 +52,13 @@ class PostingWindowScored : public PostingLeaf<InputType, kWindowScoredShape> {
  public:
   PostingWindowScored() = default;
 
-  PostingWindowScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingWindowScored(const PostingMeta& meta, const InputFile& doc_in,
                       bool has_score_bounds, const SubReader& segment,
                       const TermReader& field, const ScoreArgs& args) {
     Prepare(meta, doc_in, has_score_bounds, segment, field, args);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const InputFile& doc_in,
                bool has_score_bounds, const SubReader& segment,
                const TermReader& field, const ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);

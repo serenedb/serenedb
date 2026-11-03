@@ -163,7 +163,7 @@ TEST_P(AllFilterTestCase, all_order) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(all_filter_test, AllFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

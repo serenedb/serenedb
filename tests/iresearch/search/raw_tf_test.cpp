@@ -137,7 +137,7 @@ TEST_P(RawTfIndexTest, scores_match_freq) {
   ASSERT_FLOAT_EQ(1.f, values[2]);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(raw_tf_test, RawTfIndexTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -307,7 +307,7 @@ void RangeWriter::Write(bstring& region, size_t prefix,
   if (_height == 0) {
     return;
   }
-  BytesOutput out{region};
+  BytesOutput out;
   for (size_t level = 0; level != _height; ++level) {
     const auto& range = _levels[level];
     const size_t width = range.starts.size() / range.count;
@@ -325,6 +325,7 @@ void RangeWriter::Write(bstring& region, size_t prefix,
     out.WriteData(range.records.data(), range.records.size());
   }
   out.WriteData(kZeros, kSlack);
+  region.append(out.Bytes());
 }
 
 void RangeWriter::Clear() noexcept {

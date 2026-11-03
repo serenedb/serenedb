@@ -35,9 +35,12 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -49,6 +52,23 @@
 
 namespace sdb::connector {
 namespace {
+
+void PrefetchTerms(const irs::Filter& filter, const irs::IndexReader& reader) {
+  const auto count = reader.size();
+  if (count == 0) {
+    return;
+  }
+  bool fetching = filter.Prefetch(reader[0]);
+  if (count > 1) {
+    fetching = filter.Prefetch(reader[count - 1]) || fetching;
+  }
+  if (!fetching) {
+    return;
+  }
+  for (size_t i = 1; i + 1 < count; ++i) {
+    filter.Prefetch(reader[i]);
+  }
+}
 
 bool HasNested(const irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::ByNestedFilter>::id()) {
@@ -218,11 +238,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
-  state->scan = &ss;
-  state->snapshot = ss.Snapshot(context);
-  const auto& snapshot = *state->snapshot;
-  state->reader = &snapshot.reader;
-  state->total_segments = snapshot.reader.size();
+  UseSnapshot(*state, context, ss);
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }
@@ -306,6 +322,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();
   }
+  if (state->remote) {
+    PrefetchTerms(*state->filter, *state->reader);
+  }
   state->queries.resize(state->total_segments);
 
   ClassifySegments(*state);
@@ -313,6 +332,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
+    if (state->remote) {
+      state->head_prefetch_min = 2;
+    }
     BuildClaimPlan(*state, context);
     return state;
   }
@@ -328,6 +350,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     state->stats_stage =
       state->scorer_obj && state->total_segments != 0 && !ss.score.vector;
+  }
+  if (state->remote && state->stats_stage) {
+    state->head_prefetch_min = 1;
   }
 
   if (state->shape == ScanShape::TopK) {

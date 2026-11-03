@@ -29,10 +29,10 @@ namespace tests {
 
 void WriteZvfloat(irs::DataOutput& out, float_t v);
 
-float_t ReadZvfloat(irs::DataInput& in);
+float_t ReadZvfloat(irs::IndexInput& in);
 
 void WriteZvdouble(irs::DataOutput& out, double_t v);
 
-double_t ReadZvdouble(irs::DataInput& in);
+double_t ReadZvdouble(irs::IndexInput& in);
 
 }  // namespace tests

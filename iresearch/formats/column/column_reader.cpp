@@ -347,6 +347,23 @@ BlockWindow ColumnReader::Locate(uint64_t row,
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 
+void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                 std::vector<ByteExtent>& out) const {
+  if (!_segments.empty() && first < _row_count) {
+    const auto from = Locate(first).block;
+    const auto to = Locate(std::min(last, _row_count - 1)).block;
+    for (auto block = from; block <= to; ++block) {
+      const auto& m = _segments[block];
+      if (m.byte_size != 0) {
+        out.push_back({.offset = m.file_offset, .size = m.byte_size});
+      }
+    }
+  }
+  if (_validity) {
+    _validity->CollectBlocks(first, last, out);
+  }
+}
+
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   const auto next = w.block + 1;
   if (next >= _segments.size()) {
@@ -393,13 +410,13 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  if (ctx.RandomAccess()) {
+  const auto* file = ctx.File();
+  if (ctx.RandomAccess() || file == nullptr) {
     return;
   }
-  auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    in.Prefetch(first.file_offset, first.byte_size);
+    file->Prefetch(first.file_offset, first.byte_size);
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
@@ -407,7 +424,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end) {
     return;
   }
-  if (in.Resident(first.file_offset, first.byte_size)) {
+  if (file->Resident(first.file_offset, first.byte_size)) {
     s->advised_end = block + 1;
     return;
   }
@@ -415,7 +432,7 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   auto b = block;
   do {
     const auto& m = _segments[b++];
-    in.Prefetch(m.file_offset, m.byte_size);
+    file->Prefetch(m.file_offset, m.byte_size);
     const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
     if (budget <= cost) {
       break;

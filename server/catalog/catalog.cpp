@@ -21,8 +21,7 @@
 #include "catalog/catalog.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -44,6 +43,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
@@ -70,6 +70,7 @@
 #include <utility>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
@@ -78,6 +79,7 @@
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
+#include "catalog/entry/tablespace.h"
 #include "catalog/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -95,8 +97,29 @@
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
 #include "search/store.h"
+#include "search/wal_recovery.h"
 
 namespace sdb::catalog {
+namespace {
+
+std::string_view StorageKind(const duckdb::CatalogEntry& entry) {
+  return entry.type == duckdb::CatalogType::TABLE_ENTRY ? "search table"
+                                                        : "inverted index";
+}
+
+void RefuseTablespace(const std::filesystem::path& directory,
+                      const duckdb::CatalogEntry& entry,
+                      duckdb::idx_t tablespace) {
+  if (tablespace != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", directory.string(),
+              "\" read-only: ", StorageKind(entry), " \"",
+              entry.name.GetIdentifierName(), "\" is placed in a tablespace"));
+  }
+}
+
+}  // namespace
 
 void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
@@ -133,6 +156,61 @@ bool IsSereneDB(duckdb::Catalog& catalog) {
          type == SereneDBCatalog::kReadOnlyStorageType;
 }
 
+duckdb::unique_ptr<duckdb::Catalog> MakeTemporaryCatalog(
+  duckdb::AttachedDatabase& db) {
+  return duckdb::make_uniq<SereneDBCatalog>(db, nullptr);
+}
+
+void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
+                            duckdb::CreateInfo& info,
+                            std::string_view refusal) {
+  const auto requested = std::exchange(info.tablespace, duckdb::Identifier{});
+  if (info.oid != 0 || !transaction.HasContext()) {
+    return;
+  }
+  info.tablespace_oid = 0;
+  auto& context = transaction.GetContext();
+  const bool named = !requested.empty();
+  duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
+  if (named) {
+    tablespace = RequireTablespace(context, requested.GetIdentifierName());
+  } else if (const auto* connection =
+               connector::GetSereneDBContextPtr(context)) {
+    const auto name = connection->Get(kDefaultTablespaceSetting).value_or("");
+    if (!name.empty()) {
+      tablespace =
+        ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+    }
+  }
+  if (!tablespace) {
+    return;
+  }
+  if (tablespace->oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+  }
+  duckdb::idx_t own = pg::kPgDefaultTablespace;
+  if (GetAttached().IsTemporary()) {
+    refusal = "temporary objects cannot be placed in a tablespace";
+  } else if (const auto database =
+               ClusterEntryById(context, duckdb::CatalogType::DATABASE_ENTRY,
+                                GetAttached().oid)) {
+    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
+  }
+  if (tablespace->oid == own) {
+    return;
+  }
+  if (!refusal.empty()) {
+    if (!named) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
+  }
+  info.tablespace_oid =
+    auth::UseTablespace(context, *tablespace, info.dependencies);
+}
+
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::BoundCreateTableInfo& info) {
@@ -140,7 +218,12 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
   auto& options = info.Base().options;
-  if (ReadStorageEngine(options) == TableEngine::Search) {
+  const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  Place(transaction, info.Base(),
+        search ? std::string_view{}
+               : "only a table created WITH (storage = 'search') can be "
+                 "placed in a tablespace");
+  if (search) {
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
     if (info.Base().oid == 0) {
@@ -153,14 +236,25 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
 }
 
 duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
-  duckdb::DuckSchemaEntry& schema, duckdb::CreateIndexInfo& info,
-  duckdb::CatalogEntry& relation) {
-  if (info.index_type != kInvertedIndexTypeName) {
-    return duckdb::DuckCatalog::MakeIndexEntry(schema, info, relation);
-  }
+  duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+  duckdb::CreateIndexInfo& info, duckdb::CatalogEntry& relation) {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table;
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
     table = &relation.Cast<duckdb::TableCatalogEntry>();
+  }
+  std::string_view refusal;
+  if (info.index_type != kInvertedIndexTypeName) {
+    refusal =
+      "only a search index (USING inverted) can be placed in a tablespace";
+  } else if (table && !table->IsDuckTable()) {
+    refusal =
+      "an index on a search-backed table is stored with the table and cannot "
+      "be placed in a tablespace";
+  }
+  Place(transaction, info, refusal);
+  if (info.index_type != kInvertedIndexTypeName) {
+    return duckdb::DuckCatalog::MakeIndexEntry(transaction, schema, info,
+                                               relation);
   }
   auto entry =
     duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, table);
@@ -171,7 +265,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(std::make_shared<search::Store>(
-      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
+      Directory(transaction, entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
@@ -202,8 +296,21 @@ duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeJobEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateJobInfo& info) {
   VerifySchedule(info.schedule);
-  auto job = duckdb::make_uniq<JobCatalogEntry>(*this, schema, info,
-                                                std::make_shared<JobState>());
+  auto state = std::make_shared<JobState>();
+  if (info.temporary) {
+    auto& context = transaction.GetContext();
+    state->session = {
+      .database =
+        duckdb::Catalog::GetCatalog(
+          context, duckdb::DatabaseManager::GetDefaultDatabase(context))
+          .GetAttached()
+          .shared_from_this(),
+      .temporary = GetAttached().shared_from_this()};
+  } else {
+    state->session.database = GetAttached().shared_from_this();
+  }
+  auto job =
+    duckdb::make_uniq<JobCatalogEntry>(*this, schema, info, std::move(state));
   if (transaction.context) {
     job->ScheduleAtCommit(*transaction.context);
   }
@@ -405,6 +512,11 @@ SereneDBCatalog::BindCreateViewIndex(
   if (view.internal) {
     RefuseSystemCatalog(view);
   }
+  if (GetAttached().IsTemporary()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot create an index on temporary view \"",
+                            view.name.GetIdentifierName(), "\""));
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
@@ -430,8 +542,19 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
-  const auto& options = info.Base().options;
+  const auto& base = info.Base().Cast<duckdb::CreateTableInfo>();
+  if (!base.partition_keys.empty() || !base.sort_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::ExceptionType::NOT_IMPLEMENTED,
+      absl::StrCat(base.partition_keys.empty() ? "SORTED BY" : "PARTITIONED BY",
+                   " is not supported")};
+  }
+  const auto& options = base.options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (search && GetAttached().IsTemporary()) {
+    return duckdb::ErrorData{duckdb::ExceptionType::NOT_IMPLEMENTED,
+                             "a temporary table cannot be a search table"};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));
@@ -483,7 +606,8 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || GetAttached().IsTemporary() ||
+      _detached.load(std::memory_order_acquire)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -496,15 +620,6 @@ void SereneDBCatalog::FinalizeLoad(
   }
   SDB_ASSERT(context);
   const auto& path = _directory->Path();
-  const auto name = path.filename().string();
-  duckdb::idx_t oid = 0;
-  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
-      !absl::SimpleAtoi(name, &oid)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("\"", path.string(),
-                            "\" is not a SereneDB database directory: its "
-                            "name is not a database oid"));
-  }
   const auto log_path = (path.parent_path() / kCatalogLog).string();
   _catalog_log_lock =
     duckdb::FileSystem::Get(GetAttached())
@@ -518,20 +633,41 @@ void SereneDBCatalog::FinalizeLoad(
               "\" in read-only mode: catalog log does not exist"));
   }
   auto& storage = GetAttached().GetStorageManager();
-  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path, oid);
-  for (auto& table : SearchTableStorages(*this)) {
-    table->Open();
-    table->OpenReader();
-  }
-  for (auto& index : InvertedIndexEntries(*this)) {
-    if (const auto& index_storage = index.get().Storage()) {
-      index_storage->Open();
-      index_storage->OpenReader();
-    }
-  }
+  duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path,
+                                       _directory->Oid());
+  ForEachSearchStorage(
+    *this,
+    [&](SearchTableEntry& table) {
+      RefuseTablespace(path, table, table.Tablespace());
+    },
+    [&](InvertedIndexEntry& index) {
+      RefuseTablespace(path, index, index.Tablespace());
+    });
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);
   storage.FinishLoad(*context);
+}
+
+void SereneDBCatalog::OpenStorages() {
+  const duckdb::reference<SereneDBCatalog> catalogs[] = {*this};
+  const auto missing = search::OpenSearchStorages(catalogs);
+  if (!missing) {
+    return;
+  }
+  const auto& [entry, path] = *missing;
+  const auto& name = entry.get().name.GetIdentifierName();
+  if (GetAttached().IsReadOnly()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FILE),
+      ERR_MSG("cannot attach \"", _directory->Path().string(),
+              "\" read-only: the files of ", StorageKind(entry), " \"", name,
+              "\" are missing"),
+      ERR_HINT("A database created in a tablespace on an object store keeps "
+               "them in the tablespace."));
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                  ERR_MSG("the storage '", path, "' of ", name, " (oid ",
+                          entry.get().oid, ") is missing"));
 }
 
 bool SereneDBCatalog::AppendLocalIndexes(
@@ -545,6 +681,9 @@ bool SereneDBCatalog::AppendLocalIndexes(
 
 void SereneDBCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
+  if (GetAttached().IsTemporary()) {
+    return;
+  }
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(duckdb::QualifiedName(
@@ -557,6 +696,9 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
 }
 
 duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
+  if (GetAttached().IsTemporary()) {
+    return duckdb::DuckCatalog::DefaultSchemaOid();
+  }
   return pg::kPgMainSchema;
 }
 

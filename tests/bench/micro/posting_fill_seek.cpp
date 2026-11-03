@@ -77,7 +77,7 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/lead/node.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
@@ -224,7 +224,6 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
   irs::DirectoryReader reader;
 };
 
@@ -243,15 +242,14 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
                 std::to_string(docs));
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
-  index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  const irs::Directory dir{*db, index.path.string()};
+
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
-  auto writer =
-    irs::IndexWriter::Make(*index.dir, irs::kOmCreate, std::move(opts));
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
 
   {
     auto trx = writer->GetBatch();
@@ -265,8 +263,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   }
   writer->RefreshCommit();
 
-  index.reader =
-    irs::DirectoryReader{*index.dir, irs::IndexReaderOptions{.db = db}};
+  index.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
   SDB_ASSERT(index.reader.size() == 1,
              "corpus must be one segment or the encodings get mixed");
   return index;

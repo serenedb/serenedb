@@ -1,0 +1,195 @@
+control substitution on
+
+# Object-store and local tablespaces together through crashes: a renamed S3
+# tablespace keeps its files and takes new writes, and dropping one S3
+# tablespace removes its own objects and no other's.
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET trm (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/recovery${__TEST_DIR__}'
+);
+
+statement ok
+CREATE TABLESPACE s3_one LOCATION 's3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/one';
+
+statement ok
+CREATE TABLESPACE s3_two LOCATION 's3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/two';
+
+statement ok
+CREATE TABLESPACE local_one LOCATION '${__TEST_DIR__}/local_one';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY trm_words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE remote_docs (id INT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+  TABLESPACE s3_one;
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+statement ok
+CREATE INDEX notes_two ON notes USING inverted(body trm_words)
+  WITH (refresh_interval = 0, compaction_interval = 0) TABLESPACE s3_two;
+
+statement ok
+CREATE INDEX notes_local ON notes USING inverted(body trm_words) TABLESPACE local_one;
+
+statement ok
+INSERT INTO remote_docs SELECT i, 'remote fox ' || i FROM range(1, 101) t(i);
+
+statement ok
+INSERT INTO notes SELECT i, CASE WHEN i % 10 = 0 THEN 'rare fox' ELSE 'common whale' END FROM range(1, 501) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) remote_docs;
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+ALTER TABLESPACE s3_one RENAME TO s3_renamed;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname,
+       replace(replace(pg_tablespace_location(oid), '${__TEST_DIR__}', '<dir>'), '${MINIO_BUCKET}', '<bucket>') AS location
+FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname;
+----
+spcname	location
+local_one	<dir>/local_one
+s3_renamed	s3://<bucket>/recovery<dir>/one
+s3_two	s3://<bucket>/recovery<dir>/two
+
+connection after_crash
+query
+SELECT c.relname, t.spcname FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace ORDER BY c.relname;
+----
+relname	spcname
+notes_local	local_one
+notes_two	s3_two
+remote_docs	s3_renamed
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM remote_docs) AS remote_rows,
+       (SELECT count(*) FROM notes_two WHERE body @@ ts_phrase('rare fox')) AS two_foxes,
+       (SELECT count(*) FROM notes_local WHERE body @@ ts_phrase('rare fox')) AS local_foxes;
+----
+remote_rows	two_foxes	local_foxes
+100	50	50
+
+connection after_crash
+statement ok
+INSERT INTO remote_docs VALUES (500, 'remote fox after the crash');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) remote_docs;
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_TABLE) remote_docs;
+
+connection after_crash
+query
+SELECT count(*) AS remote_rows, max(id) AS last FROM remote_docs;
+----
+remote_rows	last
+101	500
+
+connection after_crash
+statement ok
+DROP INDEX notes_two;
+
+connection after_crash
+statement ok
+DROP TABLESPACE s3_two;
+
+connection after_crash
+query ok retry 240 backoff 250ms
+SELECT count(*) AS left_in_two FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/two/engine_v1/**');
+----
+left_in_two
+0
+
+connection after_crash
+query
+SELECT count(*) > 0 AS one_kept FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/one/engine_v1/*/*/*');
+----
+one_kept
+t
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname;
+----
+spcname
+local_one
+s3_renamed
+
+connection after_second_crash
+query
+SELECT (SELECT count(*) FROM remote_docs) AS remote_rows,
+       (SELECT count(*) FROM notes_local WHERE body @@ ts_phrase('fox')) AS local_foxes;
+----
+remote_rows	local_foxes
+101	50
+
+connection after_second_crash
+statement ok
+DROP TABLE remote_docs;
+
+connection after_second_crash
+statement ok
+DROP TABLESPACE s3_renamed;
+
+connection after_second_crash
+query ok retry 240 backoff 250ms
+SELECT count(*) AS left_in_one FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/one/engine_v1/**');
+----
+left_in_one
+0
+
+connection after_second_crash
+statement ok
+DROP INDEX notes_local;
+
+connection after_second_crash
+statement ok
+DROP TABLE notes;
+
+connection after_second_crash
+statement ok
+DROP TABLESPACE local_one;
+
+connection after_second_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY trm_words;
+
+connection after_second_crash
+statement ok
+DROP PERSISTENT SECRET trm;

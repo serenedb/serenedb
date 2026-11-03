@@ -32,8 +32,9 @@
 #include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/formats/index/term_dict_root.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/conjunction_acceptor.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
@@ -170,7 +171,7 @@ struct Data {
   std::vector<bstring> batches[std::size(kBatchKinds)][std::size(kBatchSizes)];
   std::vector<bytes_view> separators;
   irs::term_dict::Separators decoded;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::Directory> dir;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::TermReader* field = nullptr;
@@ -187,7 +188,8 @@ void Write(Data& data) {
     std::filesystem::temp_directory_path() / "serenedb-bench-term-dict-root";
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  data.dir = std::make_unique<irs::MMapDirectory>(path);
+  data.dir = std::make_unique<irs::Directory>(
+    irs::DuckDBEngine::Instance().instance(), path.string());
   const irs::FlushState state{
     .dir = data.dir.get(),
     .name = "segment",
@@ -208,7 +210,8 @@ void Open(Data& data) {
     meta.name = "segment";
     return meta;
   }()};
-  data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
+  data.idx =
+    std::make_unique<irs::IdxReader>(*data.dir, "segment", true, nullptr);
   data.fields =
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{

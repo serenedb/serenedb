@@ -80,7 +80,7 @@ inline IndexReaderOptions DefaultReaderOptions() {
 // Convenience: construct a new-cs Writer over `dir`/`segment_name`, wired
 // to the process-wide DuckDBEngine instance. Matches the production
 // constructor.
-std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
+std::unique_ptr<ColWriter> MakeCsWriter(const Directory& dir,
                                         std::string_view segment_name);
 
 // Convenience: construct a new-cs Reader. Returns nullptr if the `.col`
@@ -88,6 +88,8 @@ std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
 // SegmentReader does the same check via `Has*` on the result).
 std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                         std::string_view segment_name);
+
+ColReader OpenColReader(const Directory& dir, std::string_view segment_name);
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per
@@ -110,12 +112,12 @@ class BstringDataOutput final : public DataOutput {
  public:
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
-  void WriteByte(byte_type b) final { _buf->push_back(b); }
-  void WriteData(const byte_type* b, uint64_t len) final {
-    _buf->append(b, len);
+ private:
+  void Overflow(const byte_type* data, size_t size) final {
+    _buf->append(data, size);
+    _offset += size;
   }
 
- private:
   bstring* _buf;
 };
 

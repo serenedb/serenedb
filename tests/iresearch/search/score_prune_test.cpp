@@ -513,7 +513,7 @@ TEST_P(ScorePruneTestCase, TermFilterBM04) {
   AssertWithNewSegmentsDense(scorer);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));

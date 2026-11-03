@@ -31,7 +31,8 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -52,7 +53,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
  public:
   static std::unique_ptr<SegmentWriter> make(
-    Directory& dir, const SegmentWriterOptions& options);
+    const Directory& dir, const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
   doc_id_t begin(uint64_t tick, doc_id_t batch_size = 1);
@@ -145,7 +146,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return _batch_first_doc_id;
   }
 
-  SegmentWriter(ConstructToken, Directory& dir,
+  SegmentWriter(ConstructToken, const Directory& dir,
                 const SegmentWriterOptions& options) noexcept;
 
   NormReader::ptr norms(field_id id) const final {
@@ -259,7 +260,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
-  TrackingDirectory _dir;
+  FileTracker _tracker;
+  Directory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   DocContexts _docs_context;

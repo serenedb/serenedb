@@ -1082,8 +1082,8 @@ class Cursor {
       Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
     if (span.from < span.to) {
       const uint64_t offset = _field->BlockOffset(span.from);
-      file_utils::Hint(_field->Owner().Input(), offset,
-                       _field->BlockOffset(span.to) - offset);
+      _field->Owner().Input().Hint(offset,
+                                   _field->BlockOffset(span.to) - offset);
     }
   }
 
@@ -1098,7 +1098,7 @@ class Cursor {
     const auto span =
       Slide(_inline_ahead, at, _field->InlineEnd(), file_utils::kMaxReadahead);
     if (span.from < span.to) {
-      file_utils::Hint(_field->Owner().Input(), span.from, span.to - span.from);
+      _field->Owner().Input().Hint(span.from, span.to - span.from);
     }
   }
 

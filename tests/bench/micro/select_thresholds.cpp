@@ -43,6 +43,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -52,7 +53,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
@@ -92,7 +93,9 @@ constexpr Shape kShapes[] = {
 
 // One opened block of ~W rows plus everything keeping it alive.
 struct Blk {
-  irs::MemoryDirectory dir{};
+  std::unique_ptr<duckdb::MemoryFileSystem> fs =
+    std::make_unique<duckdb::MemoryFileSystem>();
+  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   std::unique_ptr<duckdb::ColumnSegment> block;
@@ -128,7 +131,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     writer.Commit(w);
   }
   blk->reader = std::make_unique<irs::ColReader>(
-    blk->dir, std::string{kSegName}, CsDb(), irs::IOAdvice::SEQUENTIAL);
+    blk->dir, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
   const auto* col = blk->reader->Column(kField);
   if (col == nullptr) {
     std::fprintf(stderr, "BuildBlk(%s): column missing\n", shape.name);
@@ -159,8 +162,9 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
 
 constexpr uint64_t kWindows[] = {1, 10, 100, 2048, 4096, 8192, 16384};
 
+std::unique_ptr<Blk> gBlks[std::size(kShapes)][std::size(kWindows)];
+
 const Blk& GetBlk(size_t shape_idx, uint64_t w) {
-  static std::unique_ptr<Blk> gBlks[std::size(kShapes)][std::size(kWindows)];
   size_t wi = 0;
   while (kWindows[wi] != w) {
     ++wi;
@@ -362,6 +366,11 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  for (auto& blks : gBlks) {
+    for (auto& blk : blks) {
+      blk.reset();
+    }
+  }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

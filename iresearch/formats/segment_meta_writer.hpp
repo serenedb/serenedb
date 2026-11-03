@@ -26,9 +26,10 @@
 #include <string>
 #include <string_view>
 
+#include "iresearch/store/directory.hpp"
+
 namespace irs {
 
-struct Directory;
 struct SegmentMeta;
 
 namespace segment_meta {
@@ -41,7 +42,7 @@ inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 
 std::string FileName(const SegmentMeta& meta);
 
-void Write(Directory& dir, std::string& filename, SegmentMeta& meta);
+void Write(const Directory& dir, std::string& filename, SegmentMeta& meta);
 
 }  // namespace segment_meta
 }  // namespace irs

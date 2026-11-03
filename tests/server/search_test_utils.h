@@ -20,10 +20,12 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -32,7 +34,7 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <span>
@@ -108,9 +110,14 @@ inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   return docs;
 }
 
-inline const irs::DirectoryReader& OneRowSegments() {
-  static irs::MemoryDirectory dir;
-  static const irs::DirectoryReader reader = [] {
+struct OneRowIndex {
+  irs::Directory dir{EngineDb(), [] {
+                       static constinit std::atomic<uint64_t> gCount{0};
+                       return absl::StrCat(
+                         "memory://one_row_segments/",
+                         gCount.fetch_add(1, std::memory_order_relaxed));
+                     }()};
+  irs::DirectoryReader reader = [this] {
     irs::IndexWriterOptions options;
     options.db = &EngineDb();
     options.reader_options.db = &EngineDb();
@@ -124,7 +131,20 @@ inline const irs::DirectoryReader& OneRowSegments() {
     }
     return writer->GetSnapshot();
   }();
-  return reader;
+};
+
+inline std::unique_ptr<OneRowIndex> gOneRowIndex;
+
+inline const irs::DirectoryReader& OneRowSegments() {
+  return gOneRowIndex->reader;
 }
+
+class OneRowSegmentsTest : public ::testing::Test {
+ protected:
+  static void SetUpTestSuite() {
+    gOneRowIndex = std::make_unique<OneRowIndex>();
+  }
+  static void TearDownTestSuite() { gOneRowIndex.reset(); }
+};
 
 }  // namespace sdb::test

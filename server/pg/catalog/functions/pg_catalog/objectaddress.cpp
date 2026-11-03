@@ -41,6 +41,7 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
@@ -383,6 +384,14 @@ ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
            : Missing("database");
 }
 
+ObjectIdentity IdentifyTablespace(const Session& session, uint64_t oid) {
+  const auto tablespace = catalog::ClusterEntryById(
+    *session.context, duckdb::CatalogType::TABLESPACE_ENTRY, oid);
+  return tablespace
+           ? IdentifyNamed("tablespace", tablespace->name.GetIdentifierName())
+           : Missing("tablespace");
+}
+
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
                                              const ObjectAddress& address) {
   const auto [classid, objid, objsubid] = address;
@@ -430,7 +439,7 @@ std::optional<ObjectIdentity> IdentifyObject(const Session& session,
     return IdentifyNamed("access method", kSystemAccessMethods, objid);
   }
   if (classid == kPgTablespaceTable) {
-    return IdentifyNamed("tablespace", kSystemTablespaces, objid);
+    return IdentifyTablespace(session, objid);
   }
   return std::nullopt;
 }

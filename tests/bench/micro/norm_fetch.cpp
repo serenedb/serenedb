@@ -39,11 +39,12 @@
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/store/directory.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "memory_output.hpp"
 
 namespace {
 
@@ -78,10 +79,9 @@ const std::vector<uint32_t>& IndexNorms() {
       return out;
     }
     const char* field = std::getenv("NORM_FIELD");
-    irs::MMapDirectory dir{path};
-    irs::DirectoryReader reader{
-      dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()}};
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    irs::Directory dir{db, path};
+    irs::DirectoryReader reader{dir, irs::IndexReaderOptions{.db = &db}};
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -253,7 +253,8 @@ struct MainColumn {
 
 struct PackedColumn {
   irs::MemoryFile file{irs::IResourceManager::gNoop};
-  std::unique_ptr<irs::MemoryIndexInput> in;
+  irs::bstring data;
+  std::unique_ptr<irs::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
@@ -270,7 +271,8 @@ struct PackedColumn {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = std::make_unique<irs::MemoryIndexInput>(file);
+    data = tests::Bytes(file);
+    in = tests::OpenBytes(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

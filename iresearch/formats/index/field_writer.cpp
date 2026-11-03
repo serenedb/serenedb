@@ -246,10 +246,14 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
 
 }  // namespace
 
-void RecordOutput::WriteDirect(const byte_type*, size_t) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("term dictionary: posting record exceeds ",
-                          kMaxRecordBytes, " bytes"));
+void RecordOutput::Overflow(const byte_type* data, size_t size) {
+  if (size > Remain()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term dictionary: posting record exceeds ",
+                            kMaxRecordBytes, " bytes"));
+  }
+  std::memcpy(_pos, data, size);
+  _pos += size;
 }
 
 void FsstEncoderDelete::operator()(
@@ -636,13 +640,16 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    StringOutput out{_separators};
+    BytesOutput out;
     out.WriteV32(static_cast<uint32_t>(shared));
     WriteStr(out, separator.substr(shared));
+    _separators.append(ViewCast<char>(out.Bytes()));
     _separator.assign(separator);
   }
   WriteBlock();
-  StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+  BytesOutput starts;
+  starts.WriteV64(_inline_start - _inline_last);
+  _inline_starts.append(ViewCast<char>(starts.Bytes()));
   _inline_last = _inline_start;
   _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));

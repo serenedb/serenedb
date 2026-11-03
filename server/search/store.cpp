@@ -38,9 +38,6 @@
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -109,43 +106,41 @@ struct Store::ReplaySession {
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
 };
 
-Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
+Store::Store(std::optional<catalog::StorageDirectory> parent,
+             duckdb::AttachedDatabase& database, duckdb::idx_t id,
+             const catalog::InvertedIndexSettings& options,
              const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _id{id},
-    _db_id{db_id},
-    _directory{std::move(directory)},
-    _in_memory{in_memory},
-    _read_only{read_only},
-    _is_new{is_new},
+    _db_id{database.oid},
+    _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
     _topk_options{top_k_scorer},
-    _durability{db_id, absl::StrCat("inverted index ", id)} {
+    _durability{database, absl::StrCat("inverted index ", id), _parent, id,
+                is_new} {
   SDB_ASSERT(id != 0);
   SetTasksSettings(options);
   if (_topk_options) {
     _topk_scorer = MakeScorer(*_topk_options);
   }
+  _delete_log_open = is_new;
   if (is_new) {
-    Open();
+    OpenWriter(true);
   }
 }
 
-Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, bool is_new,
+Store::Store(std::optional<catalog::StorageDirectory> parent,
+             duckdb::AttachedDatabase& database, duckdb::idx_t id, bool is_new,
              const catalog::SearchTableOptions& options,
              const duckdb::ColumnList& columns)
   : _id{id},
-    _db_id{db_id},
-    _directory{std::move(directory)},
-    _in_memory{in_memory},
-    _read_only{read_only},
-    _is_new{is_new},
+    _db_id{database.oid},
+    _parent{std::move(parent)},
+    _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
-    _durability{db_id, absl::StrCat("search table ", id)},
+    _durability{database, absl::StrCat("search table ", id), _parent, id,
+                is_new},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)} {
@@ -155,35 +150,18 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
   }
   SetTasksSettings(options);
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
+  _delete_log_open = is_new;
   if (is_new) {
-    Open();
+    OpenWriter(true);
   }
 }
 
 Store::~Store() {
   _replay.reset();
   _writer.reset();
-  _dir.reset();
-  if (_dropped.load(std::memory_order_acquire)) {
-    catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _id);
+  if (_parent && _dropped.load(std::memory_order_acquire)) {
+    _parent->RemoveStorage(_id);
   }
-}
-
-StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources) {
-  std::optional<std::filesystem::path> path;
-  if (!in_memory) {
-    path = is_new ? database.CreateStorage(oid) : database.OpenStorage(oid);
-  }
-  if (!path) {
-    return {.directory = std::make_unique<irs::MemoryDirectory>(
-              irs::DirectoryAttributes{}, resources),
-            .absent = !in_memory};
-  }
-  return {.directory = std::make_unique<irs::MMapDirectory>(
-            *path, irs::DirectoryAttributes{}, resources),
-          .on_disk = true};
 }
 
 irs::IndexReaderOptions Store::ReaderOptions() const {
@@ -193,16 +171,20 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
   return options;
 }
 
-void Store::Open() {
-  _delete_log_open = _is_new;
-  auto opened = OpenStorageDirectory(*_directory, _id, _is_new, _in_memory,
-                                     irs::ResourceManagementOptions{});
-  _dir = std::move(opened.directory);
-  _absent = opened.absent;
-  if (_read_only) {
-    return;
+bool Store::Open() {
+  if (!_parent->OpenStorage(_id)) {
+    return false;
   }
+  if (_read_only) {
+    OpenReader();
+  } else {
+    OpenWriter(false);
+  }
+  return true;
+}
 
+void Store::OpenWriter(bool is_new) {
+  SDB_ASSERT(!_writer);
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
@@ -211,7 +193,7 @@ void Store::Open() {
   writer_options.db = writer_options.reader_options.db;
   IndexDurability::ManifestSource manifest;
   if (IsSearchTable()) {
-    writer_options.cleanup_on_open = _is_new;
+    writer_options.cleanup_on_open = is_new;
     writer_options.lock_repository = false;
   } else {
 #ifdef SDB_DEV
@@ -232,9 +214,8 @@ void Store::Open() {
     manifest = [this] { return GetFileManifest(); };
   }
 
-  auto [writer, stamp] =
-    _durability.OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
-                           std::move(writer_options), std::move(manifest));
+  auto [writer, stamp] = _durability.OpenWriter(
+    is_new, std::move(writer_options), std::move(manifest));
   _writer = std::move(writer);
   SetFileManifest(std::move(stamp.manifest));
 
@@ -261,7 +242,7 @@ void Store::Open() {
 }
 
 void Store::OpenReader() {
-  auto [reader, stamp] = IndexDurability::OpenReader(*_dir, ReaderOptions());
+  auto [reader, stamp] = _durability.OpenReader(ReaderOptions());
   SetFileManifest(stamp.manifest);
   std::atomic_store(&_snapshot,
                     std::make_shared<StoreSnapshot>(std::move(reader),
@@ -357,6 +338,17 @@ absl::Status Store::Refresh(const irs::ProgressReportCallback& progress) {
   return RefreshUnsafe(/*wait=*/true, progress, code).res;
 }
 
+absl::Status Store::OptimizeInMemory() {
+  SDB_ASSERT(_writer);
+  if (auto status = Refresh(); !status.ok()) {
+    return status;
+  }
+  if (auto status = _durability.CompactFiles(*_writer); !status.ok()) {
+    return status;
+  }
+  return Refresh();
+}
+
 void Store::Publish() {
   RefreshResult code = RefreshResult::Undefined;
   const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
@@ -373,7 +365,7 @@ ResultWithTime Store::CleanupUnsafe() {
     return {absl::OkStatus(), 0};
   }
   const auto begin = std::chrono::steady_clock::now();
-  auto result = _durability.Cleanup(*_dir);
+  auto result = _durability.Cleanup();
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
@@ -450,17 +442,16 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
   // Cloned for this merge: the merge encodes against what it took for its
   // whole length, and an ALTER writes a new configuration rather than mutating
   // this one, while a DROP destroys the bound index but not this clone.
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    if (attached->oid != _db_id) {
-      continue;
-    }
-    const auto entry = attached->GetCatalog()
-                         .Cast<catalog::SereneDBCatalog>()
-                         .FindIn<catalog::InvertedIndexEntry>(nullptr, _id);
-    return entry ? entry->Config() : nullptr;
+  const auto attached = duckdb::AttachedDatabase::TryGetReference(Database());
+  if (!attached) {
+    return nullptr;
   }
-  return nullptr;
+  auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
+  if (catalog.IsDropped()) {
+    return nullptr;
+  }
+  const auto entry = catalog.FindIn<catalog::InvertedIndexEntry>(nullptr, _id);
+  return entry ? entry->Config() : nullptr;
 }
 
 absl::Status Store::VacuumRefresh() {

@@ -89,8 +89,6 @@ class SubReaderMock final : public irs::SubReader {
  public:
   explicit SubReaderMock(const irs::SegmentInfo meta) : _meta{meta} {}
 
-  uint64_t CountMappedMemory() const final { return 0; }
-
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
   const SubReaderMock& operator*() const noexcept { return *this; }

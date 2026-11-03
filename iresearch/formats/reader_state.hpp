@@ -22,9 +22,10 @@
 
 #pragma once
 
+#include "iresearch/store/directory.hpp"
+
 namespace irs {
 
-struct Directory;
 class IdxReader;
 struct SegmentMeta;
 

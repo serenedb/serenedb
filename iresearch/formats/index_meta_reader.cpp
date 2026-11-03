@@ -48,30 +48,27 @@ uint64_t ParseGeneration(std::string_view file,
   return index_gen_limits::invalid();
 }
 
-bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
+std::optional<std::string> LastFile(const Directory& dir,
+                                    std::string_view prefix) {
   uint64_t max_gen = index_gen_limits::invalid();
-  Directory::visitor_f visitor = [&](std::string_view name) {
-    const uint64_t gen = ParseGeneration(name, prefix);
-
-    if (gen > max_gen) {
-      out = name;
+  std::optional<std::string> last;
+  dir.Visit([&](std::string_view name) {
+    if (const uint64_t gen = ParseGeneration(name, prefix); gen > max_gen) {
+      last = name;
       max_gen = gen;
     }
-    return true;  // continue iteration
-  };
-
-  dir.visit(visitor);
-  return index_gen_limits::valid(max_gen);
+  });
+  return last;
 }
 
 uint64_t ReadFile(const Directory& dir, std::string_view filename,
                   MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  auto in = dir.open(filename, IOAdvice::RANDOM);
+  const auto bytes = dir.ReadWhole(filename);
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+    bytes, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
       const auto version =
         meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
       if (const auto error = duckdb::StorageVersionError(version);
@@ -116,12 +113,12 @@ uint64_t ParsePendingGeneration(std::string_view file) noexcept {
   return ParseGeneration(file, kPendingPrefix);
 }
 
-bool LastFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPrefix, out);
+std::optional<std::string> LastFile(const Directory& dir) {
+  return LastFile(dir, kPrefix);
 }
 
-bool LastPendingFile(const Directory& dir, std::string& out) {
-  return LastFile(dir, kPendingPrefix, out);
+std::optional<std::string> LastPendingFile(const Directory& dir) {
+  return LastFile(dir, kPendingPrefix);
 }
 
 void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
@@ -135,9 +132,9 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
   std::vector<IndexSegment> segments;
   const auto cnt = ReadFile(dir, filename, payload, &segments);
 
-  for (auto& segment : segments) {
-    segment_meta::Read(dir, segment.meta, segment.filename);
-  }
+  ForEach(dir, segments.size(), [&](size_t i) {
+    segment_meta::Read(dir, segments[i].meta, segments[i].filename);
+  });
 
   meta.gen = gen;
   meta.seg_counter = cnt;

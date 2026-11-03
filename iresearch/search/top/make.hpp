@@ -145,7 +145,7 @@ Root::ptr MakePrunedDisjunction(
   }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(terms.front(), field));
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Leaf = PostingPrunedDisj<Input>;
     const auto init = [&](Leaf& leaf, size_t i) {
       const auto posting =

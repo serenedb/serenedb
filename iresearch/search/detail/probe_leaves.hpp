@@ -67,7 +67,7 @@ template<typename Term, typename Scoring>
 bool ConcreteClauses(std::span<const Term> terms,
                      std::span<const QueryBuilder::ptr> filters,
                      const TermReader* field, const Scoring& scoring,
-                     const IndexInput*& doc) {
+                     const InputFile*& doc) {
   if (!filters.empty() || terms.empty()) {
     return false;
   }
@@ -96,7 +96,7 @@ Result BuildProbeLeaves(std::span<const Term> terms,
                         Make&& make) {
   constexpr bool kScored = kScores<Scoring>;
   SDB_ASSERT(!terms.empty() || !filters.empty());
-  const IndexInput* doc = nullptr;
+  const InputFile* doc = nullptr;
   if (ConcreteClauses(terms, filters, field, scoring, doc)) {
     return ResolveInput(*doc, [&]<typename Input> -> Result {
       if constexpr (kScored) {

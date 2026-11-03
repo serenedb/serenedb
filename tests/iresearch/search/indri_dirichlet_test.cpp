@@ -152,7 +152,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(indri_dirichlet_test, IndriDirichletIndexTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

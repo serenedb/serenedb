@@ -20,7 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
@@ -128,12 +127,13 @@ void AssertDescription(
 void AssertReadWrite(const irs::ParametricDescription& description) {
   irs::bstring buf;
   {
-    irs::BytesOutput out(buf);
+    irs::BytesOutput out;
     description.Write(out);
+    buf = out.Bytes();
     ASSERT_FALSE(buf.empty());
   }
   {
-    irs::BytesViewInput in(buf);
+    irs::IndexInput in(buf);
     ASSERT_EQ(description, irs::ParametricDescription::Read(in));
   }
 }

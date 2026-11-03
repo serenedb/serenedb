@@ -39,7 +39,6 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -172,13 +171,11 @@ class PostingLeaf {
   }
 
  protected:
-  static constexpr bool kEnc = Shape.enc || !InputType::kVolatileAlways;
+  static constexpr bool kEnc = Shape.enc || !InputType::kContiguous;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
-  IRS_FORCE_INLINE InputType& In() const noexcept {
-    return irs::utils::downCast<InputType>(*_in);
-  }
+  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept {
     if constexpr (kEnc) {
@@ -217,7 +214,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE const UnalignedWord* StableBitset(
     const block_io::FillLeaf& leaf) noexcept {
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::kContiguous) {
       return leaf.bitset;
     } else {
       if (!leaf.IsBitset()) {
@@ -231,9 +228,9 @@ class PostingLeaf {
     }
   }
 
-  void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
+  void OpenInput(const PostingMeta& meta, const InputFile& doc_in,
                  bool bounds) {
-    _in = OpenDocInput(meta, doc_in);
+    _in = OpenDocInput<InputType>(meta, doc_in);
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(in, meta);
@@ -256,11 +253,11 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE bool Armed() const noexcept { return _walk.Armed(); }
 
-  IRS_FORCE_INLINE BlockCursor& Walk() noexcept { return _walk; }
+  IRS_FORCE_INLINE BlockCursor<InputType>& Walk() noexcept { return _walk; }
 
   IRS_NO_INLINE void Land(doc_id_t min) {
     auto& walk = Walk();
-    const auto left = walk.Seek(min, *_in);
+    const auto left = walk.Seek(min, _in);
     _left_in_leaf = 0;
     _left_in_list = left;
     if (left == 0) [[unlikely]] {
@@ -489,7 +486,7 @@ class PostingLeaf {
       }
     }
 
-    _left_in_list = _walk.Seek(target, *_in);
+    _left_in_list = _walk.Seek(target, _in);
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
@@ -530,7 +527,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
   DocsBuf _docs;
-  IndexInput::ptr _in;
+  mutable InputType _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
@@ -543,7 +540,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
   [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Grows,
                                     GrowingHint> _hint;
-  BlockCursor _walk;
+  BlockCursor<InputType> _walk;
 };
 
 }  // namespace irs::detail

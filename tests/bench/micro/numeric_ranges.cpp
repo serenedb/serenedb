@@ -25,6 +25,7 @@
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cstdlib>
 #include <cstring>
@@ -36,8 +37,8 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/search/detail/bitset_of.hpp>
 #include <iresearch/search/queries/multiterm_state.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <memory>
 #include <random>
@@ -258,7 +259,7 @@ class TermsReader final : public irs::BasicTermReader {
   const Terms* _terms;
 };
 
-void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
+void Write(const irs::Directory& dir, const Terms& terms, Ladder ladder,
            uint64_t rows) {
   const irs::FlushState state{
     .dir = &dir,
@@ -274,14 +275,16 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
   idx.Commit();
 }
 
+std::string MemoryRoot() {
+  static std::atomic<uint64_t> gNext{0};
+  return absl::StrCat("memory://bench/numeric_ranges/",
+                      gNext.fetch_add(1, std::memory_order_relaxed));
+}
+
 uint64_t DirectoryBytes(const irs::Directory& dir) {
   uint64_t total = 0;
-  dir.visit([&](std::string_view name) {
-    uint64_t size = 0;
-    if (dir.length(size, name)) {
-      total += size;
-    }
-    return true;
+  dir.Visit([&](std::string_view name) {
+    total += dir.Open(name, duckdb::MappedFileAccess::NORMAL)->Length();
   });
   return total;
 }
@@ -366,7 +369,7 @@ struct Data {
   uint64_t rows = 0;
   std::vector<uint32_t> shifts;
   Terms terms;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::unique_ptr<irs::Directory> dir;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::TermReader* field = nullptr;
@@ -474,14 +477,16 @@ void Prepare(Data& data, const Shape& shape,
   const auto path = std::filesystem::temp_directory_path() / dir_name;
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  data.dir = std::make_unique<irs::MMapDirectory>(path);
+  data.dir = std::make_unique<irs::Directory>(
+    irs::DuckDBEngine::Instance().instance(), path.string());
   Write(*data.dir, data.terms, data.ladder, data.rows);
   static const irs::SegmentMeta kMeta{[] {
     irs::SegmentMeta meta;
     meta.name = "segment";
     return meta;
   }()};
-  data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
+  data.idx =
+    std::make_unique<irs::IdxReader>(*data.dir, "segment", true, nullptr);
   data.fields =
     std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
   data.fields->prepare(irs::ReaderState{
@@ -578,11 +583,13 @@ void Build(benchmark::State& state, const Shape& shape, Ladder ladder) {
     return;
   }
   for (auto _ : state) {
-    irs::MemoryDirectory dir;
+    const irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                             MemoryRoot()};
     Write(dir, data.terms, ladder, data.rows);
     benchmark::DoNotOptimize(dir);
   }
-  irs::MemoryDirectory dir;
+  const irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                           MemoryRoot()};
   Write(dir, data.terms, ladder, data.rows);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * data.rows));
   state.counters["terms"] = static_cast<double>(data.terms.keys.size());

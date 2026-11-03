@@ -19,11 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #ifdef __linux__
 #include <dirent.h>
 #include <sched.h>
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -213,12 +215,22 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db.instance);
   auto producer = scheduler.CreateProducer();
   std::atomic<bool> done{false};
+  std::atomic<pid_t> relauncher{0};
   scheduler.ScheduleTask(*producer, duckdb::make_shared_ptr<FunctionTask>([&] {
+    relauncher = ::gettid();
     scheduler.SetThreads(3, 0);
     scheduler.RelaunchThreads();
     done = true;
   }));
   while (!done) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  const auto relauncher_task =
+    absl::StrCat("/proc/self/task/", relauncher.load());
+  const auto deadline =
+    std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (::access(relauncher_task.c_str(), F_OK) == 0 &&
+         std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   EXPECT_EQ(scheduler.NumberOfThreads(), 3U);

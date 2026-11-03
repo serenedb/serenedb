@@ -42,7 +42,7 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+    return ResolveInput(*h.doc, *h.pos, h.pay, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds>;
       return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
         if constexpr (M == NGramMatch::All) {

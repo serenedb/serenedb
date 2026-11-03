@@ -38,7 +38,7 @@ Root::ptr Family::MakePosting(const detail::PostingClause& posting,
   }
   const auto& own = *posting.state.reader;
   const auto& in = *detail::DocOf(own);
-  return detail::ResolveInput(in, [&]<typename Input> -> Root::ptr {
+  return ResolveInput(in, [&]<typename Input> -> Root::ptr {
     auto root = memory::make_managed<Posting<Input>>();
     root->Prepare(meta, in, detail::LayoutOf(own), detail::BoundsOf(own),
                   detail::FreqOf(own));

@@ -38,6 +38,7 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/file_utils_ext.hpp"
@@ -96,6 +97,17 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
 
 inline constexpr uint64_t kMaxPrefetch = uint64_t{16} << 20;
 
+inline bool Hint(const InputFile& file, uint64_t offset,
+                 uint64_t size) noexcept {
+  return file.Hint(offset, size);
+}
+
+template<typename Input>
+bool Hint(const Input& in, uint64_t offset, uint64_t size) noexcept {
+  SDB_ASSERT(in.File());
+  return in.File()->Hint(offset, size);
+}
+
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
   if (meta.inline_size != 0 || meta.docs_count <= 1) {
     return 0;
@@ -119,7 +131,7 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
-    file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
+    Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
   }
 }
 
@@ -147,7 +159,7 @@ uint64_t HintRanges(const Input& in, std::span<const FileRange> ranges,
       break;
     }
     const auto size = std::min(to - from, budget);
-    file_utils::Hint(in, from, size);
+    Hint(in, from, size);
     budget -= size;
   }
   return budget;
@@ -187,7 +199,7 @@ class GrowingHint {
       return;
     }
     const auto len = std::min(_window, _stop - from);
-    file_utils::Hint(in, from, len);
+    Hint(in, from, len);
     _end = from + len;
     _window = std::min(2 * _window, kLast);
   }

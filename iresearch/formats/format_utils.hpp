@@ -47,9 +47,12 @@ void WriteFooter(IndexOutput& out);
 
 void WriteFooter(IndexOutput& out, FooterWriter write);
 
-Footer ReadFooter(IndexInput& in, std::string_view name);
+Footer ReadFooter(const InputFile& file, std::string_view name);
 
-Footer ReadFooter(IndexInput& in, std::string_view name, FooterReader read);
+Footer ReadFooter(const InputFile& file, std::string_view name,
+                  FooterReader read);
+
+Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read);
 
 void PrepareOutput(std::string& str, IndexOutput::ptr& out,
                    const FlushState& state, std::string_view ext);

@@ -61,6 +61,15 @@ class ArrayColumnReader final : public ColumnReader {
     return _children.front()->RowGroupEnd(row * _array_size) / _array_size;
   }
 
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<ByteExtent>& out) const final {
+    ColumnReader::CollectBlocks(first, last, out);
+    if (_array_size != 0 && !_children.empty()) {
+      _children.front()->CollectBlocks(first * _array_size,
+                                       (last + 1) * _array_size - 1, out);
+    }
+  }
+
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,
                      duckdb::idx_t count) const final {
     NewOutputVector(s);

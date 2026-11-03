@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/index/idx_writer.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types.hpp>
 #include <utility>
@@ -29,6 +27,7 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -46,7 +45,7 @@ struct IvfCentroidEntry {
 };
 
 struct IdxWriter::Impl {
-  Directory* dir;
+  Directory dir;
   std::string filename;
   IndexOutput::ptr out;
   std::vector<IvfCentroidEntry> ivf_entries;
@@ -54,11 +53,9 @@ struct IdxWriter::Impl {
   term_dict::TermsMeta terms;
 };
 
-IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
-  : _impl{std::make_unique<Impl>()} {
-  _impl->dir = &dir;
-  _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
-}
+IdxWriter::IdxWriter(const Directory& dir, std::string_view segment_name)
+  : _impl{std::make_unique<Impl>(
+      Impl{.dir = dir, .filename = FileName(segment_name, kIdxFormatExt)})} {}
 
 IdxWriter::~IdxWriter() = default;
 
@@ -66,7 +63,7 @@ void IdxWriter::EnsureOut() {
   if (_impl->out) {
     return;
   }
-  _impl->out = _impl->dir->create(_impl->filename);
+  _impl->out = _impl->dir.Create(_impl->filename);
 }
 
 IndexOutput& IdxWriter::BlocksOut() {
@@ -148,6 +145,7 @@ void IdxWriter::Commit() {
                          });
     }
   });
+  _impl->out->Close();
   _impl->out.reset();
 }
 

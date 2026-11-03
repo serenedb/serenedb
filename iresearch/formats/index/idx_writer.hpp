@@ -29,16 +29,14 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
-struct Directory;
-class IndexOutput;
-
 class IdxWriter final {
  public:
-  IdxWriter(Directory& dir, std::string_view segment_name);
+  IdxWriter(const Directory& dir, std::string_view segment_name);
   ~IdxWriter();
 
   IdxWriter(const IdxWriter&) = delete;

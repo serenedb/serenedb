@@ -29,8 +29,9 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -49,9 +50,10 @@ namespace {
 
 constexpr uint32_t kSegments = 8;
 
-const irs::DirectoryReader& Segments() {
-  static irs::MemoryDirectory dir;
-  static const irs::DirectoryReader reader = [] {
+struct IndexOfSegments {
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
+  irs::DirectoryReader reader = [this] {
     auto writer = irs::IndexWriter::Make(
       dir, irs::kOmCreate,
       tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
@@ -65,8 +67,22 @@ const irs::DirectoryReader& Segments() {
     }
     return writer->GetSnapshot();
   }();
-  return reader;
-}
+};
+
+std::unique_ptr<IndexOfSegments> gSegments;
+
+const irs::DirectoryReader& Segments() { return gSegments->reader; }
+
+class SegmentsTest : public testing::Test {
+ protected:
+  static void SetUpTestSuite() {
+    gSegments = std::make_unique<IndexOfSegments>();
+  }
+  static void TearDownTestSuite() { gSegments.reset(); }
+};
+
+class DocRemovalTest : public SegmentsTest {};
+class DocRemovalBuilderTest : public SegmentsTest {};
 
 uint64_t IdOf(uint32_t index) {
   uint64_t id = 0;
@@ -194,7 +210,7 @@ TEST(ParseSegmentIdTest, RejectsOtherNames) {
   }
 }
 
-TEST(DocRemovalTest, BuildGroupsTheDocsOfEachSegment) {
+TEST_F(DocRemovalTest, BuildGroupsTheDocsOfEachSegment) {
   const std::vector<Row> rows{{5, 9}, {2, 3}, {5, 1}, {2, 3}, {5, 4}};
   const auto removal = Build(rows);
   EXPECT_EQ(IdsOf({2, 5}), SegmentsOf(removal));
@@ -204,12 +220,12 @@ TEST(DocRemovalTest, BuildGroupsTheDocsOfEachSegment) {
             DocsOf(&removal->groups[1].docs));
 }
 
-TEST(DocRemovalTest, BuildOfNothingIsEmpty) {
+TEST_F(DocRemovalTest, BuildOfNothingIsEmpty) {
   const auto removal = Build({});
   EXPECT_TRUE(removal->groups.empty());
 }
 
-TEST(DocRemovalTest, BuildOfOneSegmentSortsItsDocs) {
+TEST_F(DocRemovalTest, BuildOfOneSegmentSortsItsDocs) {
   std::vector<Row> rows;
   for (irs::doc_id_t doc = 1000; doc > 0; --doc) {
     rows.push_back({7, doc});
@@ -223,7 +239,7 @@ TEST(DocRemovalTest, BuildOfOneSegmentSortsItsDocs) {
   }
 }
 
-TEST(DocRemovalTest, BuildSeparatesInterleavedSegments) {
+TEST_F(DocRemovalTest, BuildSeparatesInterleavedSegments) {
   std::vector<Row> rows;
   for (irs::doc_id_t doc = 1; doc <= 300; ++doc) {
     rows.push_back({doc % 3 == 0 ? 6u : doc % 3 == 1 ? 2u : 4u, doc});
@@ -240,7 +256,7 @@ TEST(DocRemovalTest, BuildSeparatesInterleavedSegments) {
   }
 }
 
-TEST(DocRemovalTest, BuildMatchesAModelOnRandomRows) {
+TEST_F(DocRemovalTest, BuildMatchesAModelOnRandomRows) {
   std::mt19937_64 rng{7};
   for (int round = 0; round < 50; ++round) {
     std::vector<Row> rows(rng() % 5000);
@@ -262,7 +278,7 @@ TEST(DocRemovalTest, BuildMatchesAModelOnRandomRows) {
   }
 }
 
-TEST(DocRemovalBuilderTest, MergesDocsAndRangesIntoTheirSegments) {
+TEST_F(DocRemovalBuilderTest, MergesDocsAndRangesIntoTheirSegments) {
   irs::DocRemovalBuilder builder;
   EXPECT_TRUE(builder.Empty());
   builder.Add(4, 7);
@@ -277,7 +293,7 @@ TEST(DocRemovalBuilderTest, MergesDocsAndRangesIntoTheirSegments) {
             DocsOf(&removal->groups[1].docs));
 }
 
-TEST(DocRemovalBuilderTest, FinishLeavesItEmpty) {
+TEST_F(DocRemovalBuilderTest, FinishLeavesItEmpty) {
   irs::DocRemovalBuilder builder;
   builder.Add(3, 1);
   const auto first = std::move(builder).Finish(Segments());
@@ -289,7 +305,7 @@ TEST(DocRemovalBuilderTest, FinishLeavesItEmpty) {
   EXPECT_EQ((std::vector<irs::doc_id_t>{2}), DocsOf(&second->groups[0].docs));
 }
 
-TEST(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
+TEST_F(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
   irs::DocRemovalBuilder builder;
   builder.AddRange(4, 5, 5);
   builder.Add(6, 3);
@@ -298,7 +314,7 @@ TEST(DocRemovalBuilderTest, SegmentsLeftWithoutDocsAreDropped) {
   EXPECT_EQ((std::vector<irs::doc_id_t>{3}), DocsOf(&removal->groups[0].docs));
 }
 
-TEST(DocRemovalBuilderTest, AGroupHoldsTheDocMapsOfItsSegment) {
+TEST_F(DocRemovalBuilderTest, AGroupHoldsTheDocMapsOfItsSegment) {
   irs::DocRemovalBuilder builder;
   builder.Add(1, 1);
   builder.Add(6, 1);
@@ -311,7 +327,7 @@ TEST(DocRemovalBuilderTest, AGroupHoldsTheDocMapsOfItsSegment) {
   }
 }
 
-TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
+TEST_F(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
   irs::DocRemovalBuilder builder;
   for (irs::doc_id_t doc = 1; doc <= 1000000; ++doc) {
     builder.Add(3, doc);
@@ -321,7 +337,7 @@ TEST(DocRemovalBuilderTest, ARunOfRowsTakesAFewBytes) {
   EXPECT_GT(1024, removal->groups[0].docs.FrozenSize());
 }
 
-TEST(DocRemovalBuilderTest, ScatteredDocsStayCompact) {
+TEST_F(DocRemovalBuilderTest, ScatteredDocsStayCompact) {
   irs::DocRemovalBuilder builder;
   for (irs::doc_id_t doc = 1; doc < 1000000; doc += 1000) {
     builder.Add(3, doc);

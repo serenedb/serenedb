@@ -71,7 +71,7 @@ class LiveTermCount : public Root,
   using Base::SkipFreqs;
 
  public:
-  LiveTermCount(Mask mask, const PostingMeta& meta, const IndexInput& doc,
+  LiveTermCount(Mask mask, const PostingMeta& meta, const InputFile& doc,
                 IndexFeatures layout, bool bounds, bool freq)
     : _mask{std::move(mask)}, _docs_count{meta.docs_count} {
     if (_docs_count == 1) {

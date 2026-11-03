@@ -38,9 +38,9 @@ class NGramAllSlots {
   static constexpr bool kOffsets = Offs;
   static_assert(!Offs || Leaf::kOffsets);
 
-  NGramAllSlots(std::span<const PostingMeta> metas, const IndexInput& doc_in,
-                IndexFeatures layout, const IndexInput& pos_in,
-                const IndexInput* pay_in, size_t total_terms)
+  NGramAllSlots(std::span<const PostingMeta> metas, const InputFile& doc_in,
+                IndexFeatures layout, const InputFile& pos_in,
+                const InputFile* pay_in, size_t total_terms)
     : _matcher{metas.size(), total_terms, static_cast<uint32_t>(metas.size())},
       _leaves{metas.size(), [&](uint32_t j) { return metas[j].docs_count; },
               [&](uint32_t j) {

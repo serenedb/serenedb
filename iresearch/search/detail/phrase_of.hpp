@@ -54,16 +54,16 @@ auto ResolveSlotMatcherOf(const Query& query, F&& f) {
   }
 }
 
-template<PhraseMatch M, size_t N, bool HasFreq = false, bool Offs = false,
-         typename Query, typename F>
+template<PhraseMatch M, size_t N, typename Input, bool HasFreq = false,
+         bool Offs = false, typename Query, typename F>
 auto ResolveMatcherOf(const Query& query, F&& f) {
   if constexpr (M == PhraseMatch::Slop) {
-    return f.template operator()<FixedPhraseSlopMatcher<Offs, HasFreq, N>>(
-      query.slop);
+    return f.template
+    operator()<FixedPhraseSlopMatcher<Input, Offs, HasFreq, N>>(query.slop);
   } else {
     static constexpr bool kIntervals = M == PhraseMatch::Intervals;
-    return f
-      .template operator()<FixedPhraseMatcher<Offs, HasFreq, kIntervals, N>>();
+    return f.template
+    operator()<FixedPhraseMatcher<Input, Offs, HasFreq, kIntervals, N>>();
   }
 }
 
@@ -76,10 +76,10 @@ auto BuildPhrase(const FixedPhraseQuery& query, F&& f) {
                                            state.metas.size()};
   const std::span<const TermInterval> intervals{query.positions};
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+    return ResolveInput(*h.doc, *h.pos, h.pay, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds, Offs>;
       const auto build = [&]<size_t N> {
-        return ResolveMatcherOf<M, N, HasFreq, Offs>(
+        return ResolveMatcherOf<M, N, Input, HasFreq, Offs>(
           query, [&]<typename Matcher>(auto&&... args) {
             return f.template operator()<PhraseSlots<Matcher, Leaf, N>>(
               metas, intervals, *h.doc, h.Layout(), *h.pos, h.pay,
@@ -106,7 +106,7 @@ auto BuildPhrase(const VariadicPhraseQuery& query, F&& f) {
   const std::span<const TermInterval> intervals{query.positions};
   SDB_ASSERT(!state.Fixed());
   return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+    return ResolveInput(*h.doc, *h.pos, h.pay, [&]<typename Input> {
       const auto build = [&]<bool HasBoost> {
         return ResolveSlotMatcherOf<M, Bounds, Input, HasFreq, Offs, HasBoost>(
           query, [&]<typename Matcher, typename Leaf>(auto&&... args) {

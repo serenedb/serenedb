@@ -54,7 +54,10 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/entries_of.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
@@ -213,17 +216,21 @@ SearchTableEntry::SearchTableEntry(
   : duckdb::TableCatalogEntry{catalog, schema, info.Base(),
                               std::move(inherited_triggers)},
     _columns{std::move(info.Base().columns)},
-    _storage{std::move(inherited_storage)} {
+    _storage{std::move(inherited_storage)},
+    _tablespace{info.Base().tablespace_oid} {
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  if (_tablespace != 0) {
+    dependencies.AddDependency(
+      ClusterOf(transaction).Tablespace(transaction, _tablespace));
+  }
   if (!_storage) {
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, GetColumns());
+      catalog.Cast<SereneDBCatalog>().Directory(transaction, _tablespace),
+      catalog.GetAttached(), oid, base.oid == 0, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -480,6 +487,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       options.insert_or_assign(name, OptionConstant(value));
     }
   }
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -555,11 +563,12 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Rebuilt(
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound =
     binder->BindCreateTableInfo(std::move(create), schema, info.bind_mode);
-  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    bound->Base().dependencies);
-  return duckdb::make_uniq<SearchTableEntry>(
+  auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, schema, *bound, catalog.GetCatalogTransaction(context), _storage,
     triggers);
+  info.new_dependencies =
+    duckdb::make_uniq<duckdb::LogicalDependencyList>(result->dependencies);
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(

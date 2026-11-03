@@ -192,6 +192,8 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
+  bool Prefetch(const SubReader& segment) const final;
+
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;

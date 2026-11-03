@@ -296,7 +296,7 @@ template<typename Leaf>
 inline constexpr size_t kWindowLeafBytes =
   sizeof(Leaf) + sizeof(Leaf*) + sizeof(doc_id_t);
 
-inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
+inline bool FoldIsSmaller(size_t terms, const InputFile& doc,
                           doc_id_t docs_count) noexcept {
   const uint64_t leaf = ResolveInput(doc, []<typename Input> -> uint64_t {
     return kWindowLeafBytes<PostingFill<Input>>;
@@ -304,7 +304,7 @@ inline bool FoldIsSmaller(size_t terms, const IndexInput& doc,
   return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;
 }
 
-inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
+inline bool TakeFold(bool faster, size_t terms, const InputFile& doc,
                      doc_id_t docs_count) noexcept {
   if (!faster || !FoldReachesSegment(docs_count)) {
     return false;
@@ -316,7 +316,7 @@ inline bool TakeFold(bool faster, size_t terms, const IndexInput& doc,
 }
 
 template<typename Result, typename Terms>
-bool TakeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count) {
+bool TakeBitset(Terms terms, const InputFile& doc, doc_id_t docs_count) {
   static_assert(kFoldPostings<Result> != 0,
                 "this position has not said what a window costs it; a probed "
                 "one is decided by TakeProbeBitset");
@@ -335,7 +335,7 @@ inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,
 }
 
 template<typename Terms>
-bool TakeProbeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
+bool TakeProbeBitset(Terms terms, const InputFile& doc, doc_id_t docs_count,
                      uint64_t interrogations) noexcept {
   if (terms.size() < 2) {
     return false;
@@ -375,7 +375,7 @@ inline uint64_t WalkConjunctionCost(
 }
 
 inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
-                                const IndexInput& doc, doc_id_t docs_count,
+                                const InputFile& doc, doc_id_t docs_count,
                                 uint64_t candidates) noexcept {
   if (!buckets.NeedsSet()) {
     return false;
@@ -393,12 +393,12 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
 }
 
 template<typename Result>
-Result MakeBitsetNode(BitsetBuckets&& buckets, const IndexInput& doc,
+Result MakeBitsetNode(BitsetBuckets&& buckets, const InputFile& doc,
                       doc_id_t docs_count, TableFilter* table);
 
 template<>
 inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
-                                                   const IndexInput& doc,
+                                                   const InputFile& doc,
                                                    doc_id_t docs_count,
                                                    TableFilter*) {
   return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
@@ -407,7 +407,7 @@ inline FillNode::ptr MakeBitsetNode<FillNode::ptr>(BitsetBuckets&& buckets,
 
 template<>
 inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
-                                                     const IndexInput& doc,
+                                                     const InputFile& doc,
                                                      doc_id_t docs_count,
                                                      TableFilter*) {
   return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
@@ -416,7 +416,7 @@ inline ProbeNode::ptr MakeBitsetNode<ProbeNode::ptr>(BitsetBuckets&& buckets,
 
 template<>
 inline LeadNode::ptr MakeBitsetNode<LeadNode::ptr>(BitsetBuckets&& buckets,
-                                                   const IndexInput& doc,
+                                                   const InputFile& doc,
                                                    doc_id_t docs_count,
                                                    TableFilter*) {
   return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
@@ -437,7 +437,7 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 
 template<typename Result, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
-                    const IndexInput& doc, doc_id_t docs_count,
+                    const InputFile& doc, doc_id_t docs_count,
                     TableFilter* table) {
   if (!TakeBitset<Result>(terms, doc, docs_count)) {
     return {};

@@ -133,13 +133,7 @@ std::string FrozenBlob(const irs::DocumentMask& mask) {
 }
 
 irs::DocumentMask ReadFrozen(std::string_view blob) {
-  static constexpr std::align_val_t kAlignment{32};
-  std::shared_ptr<irs::byte_type> frozen{
-    static_cast<irs::byte_type*>(
-      ::operator new(std::max<size_t>(blob.size(), 1), kAlignment)),
-    [](irs::byte_type* bytes) { ::operator delete(bytes, kAlignment); }};
-  std::memcpy(frozen.get(), blob.data(), blob.size());
-  return irs::DocumentMask{std::move(frozen), blob.size()};
+  return irs::DocumentMask::ReadFrozen(irs::ViewCast<irs::byte_type>(blob));
 }
 
 irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {

@@ -179,6 +179,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   void ReplayAdoptSegments(duckdb::vector<std::string> segments) final;
 
   const auto& Storage() const noexcept { return _storage; }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
 
  private:
   duckdb::unique_ptr<SearchTableEntry> Rebuilt(
@@ -190,6 +191,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
   SearchTableOptions _options;
+  duckdb::idx_t _tablespace;
 };
 
 }  // namespace sdb::catalog

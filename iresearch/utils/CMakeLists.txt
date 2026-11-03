@@ -4,10 +4,10 @@ target_sources(
         application_exit.cpp
         attributes.cpp
         bit_packing.cpp
+        bytes_output.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp
-        directory_utils.cpp
         duckdb_engine.cpp
         file_utils_ext.cpp
         huge_page_allocator.cpp
@@ -16,7 +16,6 @@ target_sources(
         levenshtein_utils.cpp
         log.cpp
         log_flags.cpp
-        mmap_utils.cpp
         network_utils.cpp
         numeric_utils.cpp
         regexp_acceptor.cpp

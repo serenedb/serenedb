@@ -31,8 +31,8 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -339,6 +339,7 @@ class BlockIndex {
   bool _narrow_bounds = false;
 };
 
+template<typename InputType>
 class BlockCursor {
  public:
   static constexpr uint64_t kPrefetchBytes = 4 * file_utils::kPage;
@@ -396,16 +397,14 @@ class BlockCursor {
 
   const BlockIndex& Index() const noexcept { return _index; }
 
-  template<typename Input>
-  const BlockIndex& Loaded(Input& in) {
+  const BlockIndex& Loaded(const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
     return _index;
   }
 
-  template<typename Input>
-  uint32_t Seek(doc_id_t target, Input& in) {
+  uint32_t Seek(doc_id_t target, const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
@@ -424,40 +423,29 @@ class BlockCursor {
     return _docs_count - b * doc_limits::kBlockSize;
   }
 
-  template<typename Input>
-  void Load(Input& in) {
+  void Load(const InputType& in) {
     _pending = false;
     const auto blocks = BlockIndex::Blocks(_docs_count);
-    const auto pad = BlockIndex::Pad(_offs + 1);
-    if (in.GetType() == DataInput::Type::BytesViewInput) {
-      const auto& view = static_cast<const BytesViewInput&>(in);
-      const auto* const p = view.At(_offs);
-      const auto flags = p[0];
-      const auto extent = 1 + pad + BlockIndex::Bytes(blocks, _shape, flags);
-      if (extent > kPrefetchBytes && !view.Resident(_offs + extent - 1, 1)) {
-        view.Prefetch(_offs, extent);
-      }
-      const auto* const data = p + 1 + pad;
-      if (reinterpret_cast<uintptr_t>(data) % sizeof(uint32_t) == 0)
-        [[likely]] {
-        _index.Reset(data, blocks, _shape, flags);
-        return;
+    const auto flags = in.Pin(_offs, 1).bytes[0];
+    const auto data = _offs + 1 + BlockIndex::Pad(_offs + 1);
+    const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
+    if constexpr (InputType::kContiguous) {
+      SDB_ASSERT(in.File());
+      const auto& file = *in.File();
+      if (const auto extent = data + bytes - _offs;
+          extent > kPrefetchBytes && !file.Resident(_offs + extent - 1, 1)) {
+        file.Prefetch(_offs, extent);
       }
     }
-    auto dup = in.Dup();
-    dup->Seek(_offs);
-    const auto flags = dup->ReadByte();
-    dup->Skip(pad);
-    const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
-    _owned = std::make_unique_for_overwrite<uint32_t[]>((bytes + 3) / 4);
-    auto* const data = reinterpret_cast<byte_type*>(_owned.get());
-    dup->ReadData(data, bytes);
-    _index.Reset(data, blocks, _shape, flags);
+    _bytes = in.Pin(data, bytes);
+    SDB_ASSERT(
+      reinterpret_cast<uintptr_t>(_bytes.bytes.data()) % sizeof(uint32_t) == 0);
+    _index.Reset(_bytes.bytes.data(), blocks, _shape, flags);
   }
 
  private:
   BlockIndex _index;
-  std::unique_ptr<uint32_t[]> _owned;
+  typename InputType::Pinned _bytes;
   uint64_t _doc_start = 0;
   uint64_t _pos_start = 0;
   uint64_t _pay_start = 0;

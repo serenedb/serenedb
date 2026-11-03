@@ -41,7 +41,7 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
     irs::detail::DocOf(irs::detail::FieldOf(required, nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = optional.size() + 1;
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return irs::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;
     using Clause = PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {

@@ -41,7 +41,7 @@ void WriteZvfloat(irs::DataOutput& out, float_t v) {
   }
 };
 
-float_t ReadZvfloat(irs::DataInput& in) {
+float_t ReadZvfloat(irs::IndexInput& in) {
   const uint32_t b = in.ReadByte();
 
   if (0xFF == b) {
@@ -82,7 +82,7 @@ void WriteZvdouble(irs::DataOutput& out, double_t v) {
   }
 }
 
-double_t ReadZvdouble(irs::DataInput& in) {
+double_t ReadZvdouble(irs::IndexInput& in) {
   const uint64_t b = in.ReadByte();
 
   if (0xFF == b) {

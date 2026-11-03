@@ -19,15 +19,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_format.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/remap_executable.hpp>
 #include <string>
+#include <vector>
 
 #include "executor.h"
 #include "line_source.h"
@@ -66,9 +71,78 @@ size_t ExecuteCommand(bench::Executor& executor, const bench::Command& cmd,
   return 0;
 }
 
+int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
+                    std::string_view query, size_t repeat,
+                    std::vector<int64_t>& samples) {
+  samples.clear();
+  for (size_t i = 0; i != repeat; ++i) {
+    const auto start = std::chrono::steady_clock::now();
+    ExecuteCommand(executor, cmd, query);
+    samples.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count());
+  }
+  const auto middle = samples.begin() + samples.size() / 2;
+  std::nth_element(samples.begin(), middle, samples.end());
+  return *middle;
+}
+
+// The index at `path`, or a copy of it in memory: in cache blocks, or with
+// every file compacted into one span.
+irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  irs::Directory local{db, path};
+  if (memory.empty()) {
+    return local;
+  }
+  irs::Directory copy{db, "memory://search-benchmark-game"};
+  std::vector<std::string> names;
+  local.Visit([&](std::string_view name) { names.emplace_back(name); });
+  std::vector<irs::byte_type> buffer(1 << 20);
+  for (const auto& name : names) {
+    const auto file = local.Open(name, duckdb::MappedFileAccess::SEQUENTIAL);
+    irs::IndexInput in{*file};
+    auto out = copy.Create(name);
+    for (auto left = in.Length(); left != 0;) {
+      const auto chunk = std::min<uint64_t>(left, buffer.size());
+      in.ReadData(buffer.data(), chunk);
+      out->WriteData(buffer.data(), chunk);
+      left -= chunk;
+    }
+    out->Close();
+    if (memory == "compacted") {
+      copy.Compact(name);
+    }
+  }
+  return copy;
+}
+
 }  // namespace
 
 int main(int argc, const char* argv[]) {
+  size_t repeat = 0;
+  std::string_view memory;
+  bool usage = argc < 2;
+  for (int i = 2; i < argc && !usage; i += 2) {
+    const std::string_view flag{argv[i]};
+    if (i + 1 == argc) {
+      usage = true;
+    } else if (flag == "--repeat") {
+      usage = !absl::SimpleAtoi(argv[i + 1], &repeat) || repeat == 0;
+    } else if (flag == "--memory") {
+      memory = argv[i + 1];
+      usage = memory != "blocks" && memory != "compacted";
+    } else {
+      usage = true;
+    }
+  }
+  if (usage) {
+    absl::FPrintF(stderr,
+                  "usage: %s <index dir> [--memory blocks|compacted] "
+                  "[--repeat N] < queries\n",
+                  argv[0]);
+    return 1;
+  }
   irs::RemapExecutable(SDB_REMAP_EXECUTABLE);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / reader use.
   // Bracket the executor lifetime so the DuckDB instance is destroyed
@@ -83,12 +157,14 @@ int main(int argc, const char* argv[]) {
     irs::DefaultPDP(2, false);
     irs::DefaultPDP(2, true);
 
-    bench::Executor executor{argv[1]};
+    bench::Executor executor{OpenIndex(argv[1], memory)};
 
     bench::LineSource input{STDIN_FILENO};
     std::string_view line;
+    std::vector<int64_t> samples;
     while (input.Next(line)) {
       size_t count = 0;
+      int64_t median_ns = 0;
       const auto tab = line.find('\t');
       const auto cmd =
         tab == std::string_view::npos
@@ -99,12 +175,19 @@ int main(int argc, const char* argv[]) {
       } else {
         try {
           count = ExecuteCommand(executor, cmd, line.substr(tab + 1));
+          if (count && repeat) {
+            median_ns =
+              MedianRunNs(executor, cmd, line.substr(tab + 1), repeat, samples);
+          }
         } catch (const std::exception& ex) {
           absl::FPrintF(stderr, "unsupported: %s\n", ex.what());
+          count = 0;
         }
       }
       if (!count) {
         absl::PrintF("UNSUPPORTED\n");
+      } else if (repeat) {
+        absl::PrintF("%d\t%d\n", count, median_ns);
       } else {
         absl::PrintF("%d\n", count);
       }

@@ -31,8 +31,9 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -64,8 +65,6 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
     const Directory& dir, const SegmentMeta& meta) const;
 
-  uint64_t CountMappedMemory() const final;
-
   const SegmentInfo& Meta() const final { return _info; }
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
@@ -94,7 +93,7 @@ class SegmentReaderImpl final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
+  const InputFile* AnnFile() const final;
   const ColReader* GetColReader() const final {
     return _data ? _data->col_reader.get() : nullptr;
   }

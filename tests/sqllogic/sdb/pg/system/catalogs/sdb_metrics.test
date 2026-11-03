@@ -47,6 +47,15 @@ WHERE relation_id IS NULL
 ORDER BY metric;
 ----
 metric	description
+block_cache_capacity_bytes	memory the cache of remote and in-memory index files may use, in bytes
+block_cache_evictions	blocks evicted from memory since start
+block_cache_fetched_bytes	bytes read from storage into the cache since start
+block_cache_fetches	storage reads that filled the cache since start
+block_cache_hits	block reads served from the cache since start
+block_cache_misses	block reads that went to storage since start
+block_cache_spill_reads	blocks read back from the spill file since start
+block_cache_spilled_blocks	evicted blocks kept in the spill file since start
+block_cache_used_bytes	memory the cache of remote and in-memory index files uses, in bytes
 catalog_wal_appended_bytes	bytes appended to the catalog wal since start
 catalog_wal_size_on_disk	current catalog wal file size in bytes
 cleanup_active	Search cleanup tasks currently running
@@ -54,6 +63,8 @@ cleanup_pending	Search cleanup tasks waiting to run
 compaction_active	Search compaction tasks currently running
 compaction_pending	Search compaction tasks waiting to run
 http_connections	Open HTTP client connections
+index_upload_pending_bytes	bytes written to index files on an object store whose upload has not completed
+index_uploads_pending	index files being written to an object store whose upload has not completed
 pg_connections	Open pg-wire client connections
 refresh_active	Search refresh tasks currently running
 refresh_pending	Search refresh tasks waiting to run

@@ -31,6 +31,7 @@
 #include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -85,8 +86,14 @@ struct JobDefinition {
     body;
 };
 
+struct JobSession {
+  duckdb::weak_ptr<duckdb::AttachedDatabase> database;
+  duckdb::weak_ptr<duckdb::AttachedDatabase> temporary;
+};
+
 struct JobState {
   absl::Mutex mutex;
+  JobSession session;
   JobDefinition definition;
   JobStatus status;
   uint64_t timer = 0;

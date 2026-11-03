@@ -20,6 +20,7 @@
 
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/utils/assert.hpp>
 
 #include "connector/scan/scan_state.h"
@@ -29,14 +30,7 @@ namespace sdb::connector {
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState& l,
                                             uint32_t seg_idx) {
-  auto& work = g.Segment(seg_idx);
-  auto state = work.prepare.load(std::memory_order_acquire);
-  if (state == SegmentWork::kReady) {
-    return *g.queries[seg_idx];
-  }
-  if (state == SegmentWork::kUnprepared &&
-      work.prepare.compare_exchange_strong(state, SegmentWork::kPreparing,
-                                           std::memory_order_acq_rel)) {
+  g.Segment(seg_idx).prepare.Call([&] {
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
       if (l.thread_slot == std::numeric_limits<uint32_t>::max()) {
@@ -53,14 +47,10 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     g.queries[seg_idx] = g.vector_scorer == nullptr
                            ? irs::PrepareMasked(*g.filter, segment, ctx)
                            : g.filter->PrepareSegment(segment, ctx);
-    work.prepare.store(SegmentWork::kReady, std::memory_order_release);
-    work.prepare.notify_all();
-    return *g.queries[seg_idx];
-  }
-  while (state != SegmentWork::kReady) {
-    work.prepare.wait(state, std::memory_order_acquire);
-    state = work.prepare.load(std::memory_order_acquire);
-  }
+    if (g.head_prefetch_min != 0) {
+      irs::PrefetchPostingHeads(*g.queries[seg_idx], g.head_prefetch_min);
+    }
+  });
   return *g.queries[seg_idx];
 }
 

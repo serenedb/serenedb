@@ -1,0 +1,188 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE PERSISTENT SECRET trs (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/recovery${__TEST_DIR__}'
+);
+
+statement ok
+CREATE TABLESPACE ts_s3 LOCATION 's3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY trs_english AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false);
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+  TABLESPACE ts_s3;
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick brown fox'), (2, 'lazy dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT);
+
+statement ok
+INSERT INTO notes SELECT i, 'saved' FROM range(0, 1000) r(i);
+
+statement ok
+CREATE INDEX notes_idx ON notes USING inverted(body trs_english)
+  WITH (refresh_interval = 0, compaction_interval = 0)
+  TABLESPACE ts_s3;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick brown fox
+2	lazy dog
+
+connection after_restart
+query
+SELECT count(*) AS saved FROM notes_idx WHERE body @@ 'saved';
+----
+saved
+1000
+
+connection after_restart
+query
+SELECT count(*) > 0 AS stored_on_s3
+FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/engine_v1/*/*/*');
+----
+stored_on_s3
+t
+
+connection after_restart
+statement ok
+INSERT INTO notes SELECT i, 'finished' FROM range(1000, 1100) r(i);
+
+connection after_restart
+statement ok
+SET sdb_faults = 'crash_before_index_checkpoint_finish';
+
+connection after_restart
+statement error connection closed
+CHECKPOINT;
+
+
+connection after_finish
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM notes;
+----
+n
+1100
+
+connection after_finish
+query
+SELECT (SELECT count(*) FROM notes_idx WHERE body @@ 'saved') AS saved,
+       (SELECT count(*) FROM notes_idx WHERE body @@ 'finished') AS finished;
+----
+saved	finished
+1000	100
+
+connection after_finish
+statement ok
+INSERT INTO notes SELECT i, 'discarded' FROM range(1100, 1150) r(i);
+
+connection after_finish
+statement ok
+SET sdb_faults = 'crash_after_index_checkpoint_prepare';
+
+connection after_finish
+statement error connection closed
+CHECKPOINT;
+
+
+connection after_discard
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM notes;
+----
+n
+1150
+
+connection after_discard
+query
+SELECT (SELECT count(*) FROM notes_idx WHERE body @@ 'finished') AS finished,
+       (SELECT count(*) FROM notes_idx WHERE body @@ 'discarded') AS discarded;
+----
+finished	discarded
+100	50
+
+connection after_discard
+statement ok
+INSERT INTO notes SELECT i, 'committed' FROM range(1150, 1160) r(i);
+
+connection after_discard
+statement ok
+SET sdb_faults = 'Search::CrashAfterCommit';
+
+connection after_discard
+statement error connection closed
+VACUUM (REFRESH_TABLE) notes;
+
+
+connection after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM notes) AS n,
+       (SELECT count(*) FROM notes_idx WHERE body @@ 'committed') AS committed;
+----
+n	committed
+1160	10
+
+connection after_commit
+query
+SELECT id FROM docs ORDER BY id;
+----
+id
+1
+2
+
+connection after_commit
+statement ok
+DROP TABLE docs;
+
+connection after_commit
+statement ok
+DROP INDEX notes_idx;
+
+connection after_commit
+statement ok
+DROP TABLESPACE ts_s3;
+
+connection after_commit
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left_on_s3
+FROM glob('s3://${MINIO_BUCKET}/recovery${__TEST_DIR__}/ts/engine_v1/**');
+----
+left_on_s3
+0
+
+connection after_commit
+statement ok
+DROP TABLE notes;
+
+connection after_commit
+statement ok
+DROP TEXT SEARCH DICTIONARY trs_english;
+
+connection after_commit
+statement ok
+DROP PERSISTENT SECRET trs;

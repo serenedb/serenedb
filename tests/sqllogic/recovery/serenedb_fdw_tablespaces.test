@@ -1,0 +1,103 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLESPACE sft_space LOCATION '${__TEST_DIR__}/sft_space';
+
+statement ok
+CREATE DATABASE sft_tables;
+
+statement ok
+CREATE TABLE sft_tables.public.notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0) TABLESPACE sft_space;
+
+statement ok
+INSERT INTO sft_tables.public.notes VALUES (1, 'placed');
+
+statement ok
+VACUUM (REFRESH_TABLE) sft_tables.public.notes;
+
+statement ok
+CREATE DATABASE sft_indexes;
+
+statement ok
+CREATE TABLE sft_indexes.public.docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX docs_idx ON sft_indexes.public.docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0) TABLESPACE sft_space;
+
+statement ok
+INSERT INTO sft_indexes.public.docs VALUES (1, 'placed');
+
+statement ok
+VACUUM (REFRESH_INDEX) sft_indexes.public.docs_idx;
+
+statement ok
+CREATE DATABASE sft_placed TABLESPACE sft_space;
+
+statement ok
+CREATE TABLE sft_placed.public.notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sft_placed.public.notes VALUES (1, 'beside');
+
+statement ok
+VACUUM (REFRESH_TABLE) sft_placed.public.notes;
+
+statement ok
+CHECKPOINT sft_tables;
+
+statement ok
+CHECKPOINT sft_indexes;
+
+statement ok
+CHECKPOINT sft_placed;
+
+statement ok
+COPY (SELECT oid FROM pg_database WHERE datname = 'sft_tables') TO '${__TEST_DIR__}/sft_tables.oid' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (SELECT oid FROM pg_database WHERE datname = 'sft_indexes') TO '${__TEST_DIR__}/sft_indexes.oid' (FORMAT csv, HEADER false);
+
+statement ok
+COPY (SELECT oid FROM pg_database WHERE datname = 'sft_placed') TO '${__TEST_DIR__}/sft_placed.oid' (FORMAT csv, HEADER false);
+
+system ok
+rm -rf $__TEST_DIR__/sft_tables_copy $__TEST_DIR__/sft_tables_snap && mkdir $__TEST_DIR__/sft_tables_copy && cp -r ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sft_tables.oid) $__TEST_DIR__/sft_tables_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sft_tables_copy/ && ln -s $__TEST_DIR__/sft_tables_copy/$(cat $__TEST_DIR__/sft_tables.oid) $__TEST_DIR__/sft_tables_snap
+
+statement error
+CREATE SERVER sft_tables_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sft_tables_snap');
+----
+db error: ERROR: cannot attach "<slt:ignore>" read-only: search table "notes" is placed in a tablespace
+
+
+system ok
+rm -rf $__TEST_DIR__/sft_indexes_copy $__TEST_DIR__/sft_indexes_snap && mkdir $__TEST_DIR__/sft_indexes_copy && cp -r ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sft_indexes.oid) $__TEST_DIR__/sft_indexes_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sft_indexes_copy/ && ln -s $__TEST_DIR__/sft_indexes_copy/$(cat $__TEST_DIR__/sft_indexes.oid) $__TEST_DIR__/sft_indexes_snap
+
+statement error
+CREATE SERVER sft_indexes_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sft_indexes_snap');
+----
+db error: ERROR: cannot attach "<slt:ignore>" read-only: inverted index "docs_idx" is placed in a tablespace
+
+
+system ok
+rm -rf $__TEST_DIR__/sft_placed_copy $__TEST_DIR__/sft_placed_snap && mkdir $__TEST_DIR__/sft_placed_copy && cp -r $__TEST_DIR__/sft_space/engine_v1/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sft_placed_copy/ && ln -s $__TEST_DIR__/sft_placed_copy/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_snap
+
+statement ok
+CREATE SERVER sft_placed_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sft_placed_snap');
+
+query
+SELECT id, body FROM sft_placed_snap.public.notes;
+----
+id	body
+1	beside
+
+statement ok
+DROP SERVER sft_placed_snap;
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name IN ('sft_tables_snap', 'sft_indexes_snap', 'sft_placed_snap');
+----
+n
+0

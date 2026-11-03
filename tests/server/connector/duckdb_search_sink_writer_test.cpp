@@ -34,7 +34,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/bytes_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
@@ -199,7 +199,7 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
   void TearDown() final { _data_writer.reset(); }
 
  protected:
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{TestDb(), "memory://sink_writer"};
   irs::IndexWriter::ptr _data_writer;
 };
 

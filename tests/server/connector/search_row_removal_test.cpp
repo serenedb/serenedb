@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -37,7 +38,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iterator>
@@ -67,6 +68,11 @@ namespace {
 using namespace sdb;
 using namespace sdb::connector;
 using test::EngineDb;
+
+uint64_t NextRoot() {
+  static std::atomic<uint64_t> gNext{0};
+  return gNext.fetch_add(1, std::memory_order_relaxed);
+}
 using test::IdOf;
 using test::OneRowSegments;
 
@@ -338,7 +344,8 @@ class SearchRowRemovalTest : public ::testing::Test {
     EXPECT_TRUE(std::ranges::equal(_model, live));
   }
 
-  irs::MemoryDirectory _dir;
+  irs::Directory _dir{EngineDb(),
+                      absl::StrCat("memory://search_row_removal/", NextRoot())};
   irs::IndexWriter::ptr _writer;
   std::set<int64_t> _model;
 };
@@ -483,7 +490,9 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
 constexpr uint64_t kGone = 1000000;
 constexpr uint64_t kAlsoGone = 1000001;
 
-TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
+class ReplayRemovalTest : public test::OneRowSegmentsTest {};
+
+TEST_F(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
   const auto live = IdOf(OneRowSegments()[2]);
   const auto removal =
     search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), {});
@@ -496,7 +505,7 @@ TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
             removal->groups[0].maps);
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
+TEST_F(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   const auto live = IdOf(OneRowSegments()[3]);
   MapsBySource maps;
   maps.emplace(
@@ -515,12 +524,12 @@ TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   EXPECT_TRUE(removal->groups[0].docs.Contains(6));
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
+TEST_F(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
   EXPECT_TRUE(search::ReplayRemoval(Rows({{kGone, 1}}), OneRowSegments(), {})
                 ->groups.empty());
 }
 
-TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
+TEST_F(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   const auto live = IdOf(OneRowSegments()[2]);
   MapsBySource maps;
   maps.emplace(
@@ -533,7 +542,7 @@ TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   EXPECT_EQ(live, removal->groups[0].segment);
 }
 
-TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
+TEST_F(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -556,7 +565,7 @@ TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   EXPECT_TRUE(removal->groups[1].docs.Contains(5));
 }
 
-TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
+TEST_F(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -737,8 +746,9 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
 TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   _writer.reset();
   {
-    auto out = _dir.create("_4294967294");
+    auto out = _dir.Create("_4294967294");
     ASSERT_TRUE(out);
+    out->Close();
   }
   auto options = WriterOptions();
   options.cleanup_on_open = false;
@@ -863,7 +873,7 @@ TEST_F(SearchRowRemovalTest, RowIdKeysPassACopyTheirCommitCarriesOut) {
     resume.set_value();
     merge.join();
     EXPECT_EQ(irs::CompactionError::Pending, merged.error);
-    _writer->RefreshFinish();
+    _writer->RefreshFinishRetryable();
     _model.insert(base + 6);
     Commit(irs::KeyRemoval{keys}, keys);
     ExpectModel();

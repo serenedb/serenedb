@@ -42,7 +42,7 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -141,7 +141,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
 
   void TearDown(const ::benchmark::State&) override {
     _reader = irs::DirectoryReader{};
-    _dir.reset();
     if (!_dir_path.empty()) {
       std::error_code ec;
       std::filesystem::remove_all(_dir_path, ec);
@@ -152,7 +151,6 @@ class FilterPrepareFixture : public benchmark::Fixture {
  protected:
   void BuildIndex(size_t num_segments);
 
-  std::unique_ptr<irs::MMapDirectory> _dir;
   std::filesystem::path _dir_path;
   irs::DirectoryReader _reader;
 
@@ -183,7 +181,6 @@ class FilterPrepareFixtureT : public FilterPrepareFixture {
 
 void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   _reader = irs::DirectoryReader{};
-  _dir.reset();
 
   if (_dir_path.empty()) {
     _dir_path =
@@ -191,9 +188,9 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   }
   std::filesystem::remove_all(_dir_path);
   std::filesystem::create_directories(_dir_path);
-  _dir = std::make_unique<irs::MMapDirectory>(_dir_path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  const irs::Directory dir{*db, _dir_path.string()};
+
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
@@ -206,7 +203,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
-    irs::IndexWriter::Make(*_dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -228,7 +225,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = irs::DirectoryReader{*_dir, irs::IndexReaderOptions{.db = db}};
+  _reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {

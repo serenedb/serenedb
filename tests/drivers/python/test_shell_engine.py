@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import csv
 import fcntl
+import http.server
 import io
+import json
 import os
 import pty
 import select
 import struct
 import subprocess
 import termios
+import threading
 import time
 from pathlib import Path
 
@@ -141,6 +144,59 @@ def test_serenedb_functions_and_types() -> None:
         "SELECT to_char(TIMESTAMP '2024-01-02 03:04:05', 'YYYY-MM-DD HH24:MI') AS formatted,"
         " '12.5'::money AS amount;"
     ) == [["formatted", "amount"], ["2024-01-02 03:04", "$12.50"]]
+
+
+def test_floats_and_bytea_follow_their_settings() -> None:
+    assert _rows(
+        "SELECT 0.1::DOUBLE + 0.2::DOUBLE AS f, '\\x0102'::BYTEA AS b;\n"
+        "SET extra_float_digits = 0;\n"
+        "SET bytea_output = 'escape';\n"
+        "SELECT 0.1::DOUBLE + 0.2::DOUBLE AS f, '\\x0102'::BYTEA AS b;\n"
+    ) == [
+        ["f", "b"],
+        ["0.30000000000000004", "\\x0102"],
+        ["f", "b"],
+        ["0.3", "\\001\\002"],
+    ]
+
+
+def test_xml_follows_xmloption() -> None:
+    result = _shell("SET xmloption = document;\nSELECT 'a<b/>'::xml AS x;\n")
+    assert "invalid XML document" in result.stderr, result.stderr
+
+
+class _Provider(http.server.BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers["Content-Length"]))
+        body = json.dumps({
+            "choices": [{
+                "message": {"role": "assistant", "content": "done"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+def test_ai_functions_call_the_provider() -> None:
+    provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Provider)
+    threading.Thread(target=provider.serve_forever, daemon=True).start()
+    try:
+        rows = _rows(
+            "CREATE SECRET chat (TYPE openai, base_url"
+            f" 'http://127.0.0.1:{provider.server_address[1]}', model 'm');\n"
+            "SELECT ai_generate('hi', secret_name := 'chat') AS answer;\n"
+        )
+    finally:
+        provider.shutdown()
+    assert rows[-2:] == [["answer"], ["done"]]
 
 
 def test_a_database_opened_after_a_failed_open_is_serenedb_too(tmp_path: Path) -> None:

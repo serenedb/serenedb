@@ -48,6 +48,7 @@
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
+#include "query/config.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -216,6 +217,11 @@ int RunServer(int argc, char** argv) {
   return EXIT_FAILURE;
 }
 
+void ConfigureShellEngine(duckdb::DBConfig& config) {
+  irs::DuckDBEngine::Configure(config);
+  connector::RegisterEngineConfigVariables(config);
+}
+
 void LoadShellEngine(duckdb::DatabaseInstance& db) {
   irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
   irs::DuckDBEngine::ConfigureExtensions(db);
@@ -230,7 +236,7 @@ int RunSubcommand(int argc, char* argv[],
   docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(
     argc - 1, argv + 1, subcommand,
-    {.configure = &irs::DuckDBEngine::Configure, .load = &LoadShellEngine});
+    {.configure = &ConfigureShellEngine, .load = &LoadShellEngine});
 }
 
 }  // namespace

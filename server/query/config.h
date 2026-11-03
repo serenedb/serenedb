@@ -186,6 +186,8 @@ class Config {
 
 namespace connector {
 
+void RegisterEngineConfigVariables(duckdb::DBConfig& config);
+
 void RegisterConfigVariables(duckdb::DBConfig& config);
 
 duckdb::Value ValidateSetting(duckdb::ClientContext& context,

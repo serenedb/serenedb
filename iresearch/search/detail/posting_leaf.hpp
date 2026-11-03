@@ -112,6 +112,53 @@ struct LeafCursor {
   doc_id_t base = 0;
 };
 
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE void AddDoc(doc_id_t doc, score_t score, doc_id_t min,
+                             uint32_t* IRS_RESTRICT counts,
+                             uint64_t* IRS_RESTRICT mask,
+                             score_t* IRS_RESTRICT window) noexcept {
+  static constexpr auto kBits = BitsRequired<uint64_t>();
+  const size_t offset = doc - min;
+  if constexpr (Counts) {
+    ++counts[offset];
+  }
+  SetBit(mask[offset / kBits], offset % kBits);
+  irs::Merge<MergeType>(window[offset], score);
+}
+
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE void AddWhole(const doc_id_t* begin, const doc_id_t* end,
+                               const score_t* IRS_RESTRICT scores, doc_id_t min,
+                               uint32_t* IRS_RESTRICT counts,
+                               uint64_t* IRS_RESTRICT mask,
+                               score_t* IRS_RESTRICT window) noexcept {
+  const auto len = static_cast<uint32_t>(end - begin);
+  if (len == doc_limits::kBlockSize) [[likely]] {
+    VisitDocs<doc_limits::kBlockSize>(
+      doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
+        AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
+                                  window);
+      });
+  } else {
+    for (uint32_t i = 0; i != len; ++i) {
+      AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask, window);
+    }
+  }
+}
+
+template<ScoreMergeType MergeType, bool Counts>
+IRS_FORCE_INLINE const doc_id_t* AddUntil(
+  const doc_id_t* begin, const doc_id_t* end,
+  const score_t* IRS_RESTRICT scores, doc_id_t min, doc_id_t max,
+  uint32_t* IRS_RESTRICT counts, uint64_t* IRS_RESTRICT mask,
+  score_t* IRS_RESTRICT window) noexcept {
+  for (; begin != end && *begin < max; ++begin, ++scores) {
+    AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
+  }
+  SDB_ASSERT(begin != end);
+  return begin;
+}
+
 template<typename InputType, LeafShape Shape>
 class PostingLeaf {
  public:
@@ -204,6 +251,10 @@ class PostingLeaf {
   IRS_FORCE_INLINE const score_t* Scores() const noexcept {
     static_assert(Shape.enc && sizeof(score_t) == sizeof(uint32_t));
     return reinterpret_cast<const score_t*>(_enc.data);
+  }
+
+  IRS_FORCE_INLINE const score_t* ScoresAt(const doc_id_t* doc) const noexcept {
+    return Scores() + (doc - std::cbegin(_docs));
   }
 
   IRS_FORCE_INLINE static const doc_id_t* Behind(const doc_id_t* begin,
@@ -409,53 +460,6 @@ class PostingLeaf {
     _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(Scores() + offset, static_cast<scores_size_t>(len));
     _provider.freq.value = _freqs.data;
-  }
-
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE static void AddDoc(doc_id_t doc, score_t score, doc_id_t min,
-                                      uint32_t* IRS_RESTRICT counts,
-                                      uint64_t* IRS_RESTRICT mask,
-                                      score_t* IRS_RESTRICT window) noexcept {
-    const size_t offset = doc - min;
-    if constexpr (Counts) {
-      ++counts[offset];
-    }
-    SetBit(mask[offset / kBits], offset % kBits);
-    irs::Merge<MergeType>(window[offset], score);
-  }
-
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE void AddWhole(const doc_id_t* begin, const doc_id_t* end,
-                                 doc_id_t min, uint32_t* IRS_RESTRICT counts,
-                                 uint64_t* IRS_RESTRICT mask,
-                                 score_t* IRS_RESTRICT window) const noexcept {
-    const auto* const scores = Scores() + (begin - std::cbegin(_docs));
-    const auto len = static_cast<uint32_t>(end - begin);
-    if (len == kBlock) [[likely]] {
-      VisitDocs<doc_limits::kBlockSize>(
-        doc_limits::kBlockSize, [&](uint32_t i) IRS_FORCE_INLINE {
-          AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
-                                    window);
-        });
-    } else {
-      for (uint32_t i = 0; i != len; ++i) {
-        AddDoc<MergeType, Counts>(begin[i], scores[i], min, counts, mask,
-                                  window);
-      }
-    }
-  }
-
-  template<ScoreMergeType MergeType, bool Counts>
-  IRS_FORCE_INLINE const doc_id_t* AddUntil(
-    const doc_id_t* begin, const doc_id_t* end, doc_id_t min, doc_id_t max,
-    uint32_t* IRS_RESTRICT counts, uint64_t* IRS_RESTRICT mask,
-    score_t* IRS_RESTRICT window) const noexcept {
-    const auto* scores = Scores() + (begin - std::cbegin(_docs));
-    for (; begin != end && *begin < max; ++begin, ++scores) {
-      AddDoc<MergeType, Counts>(*begin, *scores, min, counts, mask, window);
-    }
-    SDB_ASSERT(begin != end);
-    return begin;
   }
 
   template<ScoreMergeType MergeType>

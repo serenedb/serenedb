@@ -65,7 +65,8 @@ std::string ReadAll(irs::Directory& dir) {
 irs::format_utils::Footer ReadFooter(irs::Directory& dir) {
   auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
   EXPECT_NE(in, nullptr);
-  return irs::format_utils::ReadFooter(*in, kFile);
+  return irs::format_utils::ReadFooter(
+    *in, kFile, [](duckdb::BinaryDeserializer&, uint64_t) {});
 }
 
 std::string ReadData(irs::Directory& dir) {

@@ -70,7 +70,6 @@ class FieldReader final {
   FieldReader& operator=(const FieldReader&) = delete;
 
   uint64_t CountMappedMemory() const;
-  void ReleaseMappedMemory() const noexcept;
   void prepare(const ReaderState& state);
 
   const TermReader* field(field_id id) const;

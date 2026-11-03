@@ -167,7 +167,6 @@ struct SubReader : public IndexReader, public NormProvider {
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
   virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
-  virtual void ReleaseMappedMemory() const noexcept {}
 };
 
 template<typename Visitor, typename FilterVisitor>

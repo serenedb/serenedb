@@ -65,7 +65,6 @@ class SegmentReaderImpl final : public SubReader {
     const Directory& dir, const SegmentMeta& meta) const;
 
   uint64_t CountMappedMemory() const final;
-  void ReleaseMappedMemory() const noexcept final;
 
   const SegmentInfo& Meta() const final { return _info; }
 

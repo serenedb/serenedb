@@ -79,11 +79,6 @@ class ColReader final {
   IndexInput::ptr ReopenIn() const {
     return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
   }
-  void ReleaseMappedMemory() const noexcept {
-    if (_ctx.HasIn()) {
-      _ctx.In().Unmap(0, _ctx.In().Length());
-    }
-  }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
   ReencodeCache& Reencodes() const noexcept { return _reencodes; }
 

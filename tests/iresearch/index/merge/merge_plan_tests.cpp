@@ -595,7 +595,8 @@ std::filesystem::path SegmentFile(const std::filesystem::path& dir,
 
 uint64_t LeftPages(size_t fields, size_t parts) {
   constexpr uint64_t kPerField = 4;
-  return (fields * kPerField + parts) * PageSize();
+  constexpr uint64_t kFaultAroundPages = 16;
+  return (fields * kPerField + parts * kFaultAroundPages) * PageSize();
 }
 
 constexpr irs::field_id kPairField = kMixedField + 1;
@@ -634,12 +635,13 @@ class MergePlanMappingTest : public ::testing::Test {
     }
   }
 
-  void ExpectNothingLeftMapped() {
+  void ExpectIndexFilesLeft(size_t parts) {
     for (const auto* input : _inputs) {
-      EXPECT_EQ(0, MappedBytes(SegmentFile(_path, *input, "col")));
       for (const auto extension : kIndexFiles) {
         const auto file = SegmentFile(_path, *input, extension);
-        EXPECT_EQ(0, MappedBytes(file)) << file;
+        EXPECT_GE(LeftPages(kFields, extension == "idx" ? parts : 0),
+                  MappedBytes(file))
+          << file;
       }
     }
   }
@@ -707,11 +709,15 @@ TEST_F(MergePlanMappingTest, MergeLeavesNoInputMappedBehindIt) {
   const auto units = Merge(1);
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kTextColumn).empty());
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::TermRange, kIdField).empty());
-  ExpectNothingLeftMapped();
+  for (const auto* input : _inputs) {
+    EXPECT_EQ(0, MappedInsideBlocks(SegmentFile(_path, *input, "col"),
+                                    *input->GetColReader()));
+  }
+  ExpectIndexFilesLeft(0);
   ExpectMerged();
 }
 
-TEST_F(MergePlanMappingTest, TermRangePartsLeaveNoInputMapped) {
+TEST_F(MergePlanMappingTest, TermRangePartsLeaveOnlyTheirBoundariesMapped) {
   const auto units = Merge(4);
   const auto id_parts =
     UnitsOf(units, MergeUnitKind::TermRange, kIdField).size();
@@ -720,7 +726,7 @@ TEST_F(MergePlanMappingTest, TermRangePartsLeaveNoInputMapped) {
   EXPECT_LT(1, id_parts);
   EXPECT_LT(1, pair_parts);
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::TermRange, kTextField).empty());
-  ExpectNothingLeftMapped();
+  ExpectIndexFilesLeft(id_parts + pair_parts);
   ExpectMerged();
 }
 
@@ -1455,8 +1461,10 @@ TEST_F(ColumnCopyTest, CopiesLeaveNoInputMappedBehindThem) {
     EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, id).size()) << id;
   }
   for (size_t i = 0; i != inputs.size(); ++i) {
-    EXPECT_EQ(0, MappedBytes(SegmentFile(paths[i], *inputs[i], "col")));
-    EXPECT_EQ(0, MappedBytes(SegmentFile(paths[i], *inputs[i], "idx")));
+    EXPECT_EQ(0, MappedInsideBlocks(SegmentFile(paths[i], *inputs[i], "col"),
+                                    *inputs[i]->GetColReader()));
+    EXPECT_GE(LeftPages(1, 0),
+              MappedBytes(SegmentFile(paths[i], *inputs[i], "idx")));
   }
   EXPECT_EQ("", FirstDifference(expected, Dump(*merged)));
 }

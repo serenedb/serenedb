@@ -148,7 +148,6 @@ bool Execute(duckdb::Connection& connection,
 
 bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   SDB_IF_FAILURE("irs::PipelineMergeExecutor::Run") { return false; }
-  const absl::Cleanup release = [&plan]() noexcept { plan.ReleaseInputs(); };
   const auto threads = std::max<size_t>(_threads, 1);
   duckdb::Connection connection{_db};
   auto& context = *connection.context;

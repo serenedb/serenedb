@@ -124,6 +124,13 @@ PERF_PK_COLUMNS="${PERF_PK_COLUMNS:-watchid}"
 # separately in the summary because it does NOT isolate certification: without
 # a PK the key column is not term-indexed either, so the gap includes indexing.
 PERF_PK_CONTROL="${PERF_PK_CONTROL:-1}"
+# Also load the same rows into an ordinary transactional table, with the key
+# and without it. That pair is the yardstick the search-table pair has none of
+# on its own: it says what enforcing a primary key costs an engine that does it
+# with an ART index over local storage, against a search table that certifies
+# against published segments and an unpublished tier. Same columns, same
+# statements, same shapes, so only the storage differs.
+PERF_PK_REFERENCE="${PERF_PK_REFERENCE:-1}"
 PERF_PK_THREADS="${PERF_PK_THREADS:-$(nproc)}"
 PERF_EXPLAIN="${PERF_EXPLAIN:-0}"
 
@@ -366,6 +373,20 @@ CREATE TABLE nopk_single (${COL_DEFS}) WITH ($(table_opts));"
 	run_sql "single_txn_nopk_refresh" "VACUUM (REFRESH_TABLE) nopk_single;"
 fi
 
+# Last in the shape, so the search-table pair above is measured under the
+# conditions it always was. No refresh: a transactional table publishes as it
+# commits, so there is nothing to wait for and no counterpart to time.
+if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
+	run_setup "create txn_pk_single" "
+CREATE TABLE txn_pk_single (${COL_DEFS}, PRIMARY KEY (${PERF_PK_COLUMNS}));"
+	run_sql "single_txn_txnpk_insert" \
+		"INSERT INTO txn_pk_single SELECT ${COL_LIST} FROM src;"
+	run_setup "create txn_nopk_single" "
+CREATE TABLE txn_nopk_single (${COL_DEFS});"
+	run_sql "single_txn_txnnopk_insert" \
+		"INSERT INTO txn_nopk_single SELECT ${COL_LIST} FROM src;"
+fi
+
 # ---------------------------------------------------------------------------
 # Shape 2: many transactions. One autocommit INSERT per batch, so the commit
 # passes run PERF_PK_BATCHES times. Timed as a whole -- per-statement psql
@@ -437,12 +458,29 @@ CREATE TABLE nopk_batched (${COL_DEFS}) WITH ($(table_opts));"
 	run_sql "many_txn_nopk_refresh" "VACUUM (REFRESH_TABLE) nopk_batched;"
 fi
 
+if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
+	run_setup "create txn_pk_batched" "
+CREATE TABLE txn_pk_batched (${COL_DEFS}, PRIMARY KEY (${PERF_PK_COLUMNS}));"
+	batched_run many_txn_txnpk_insert \
+		"INSERT INTO txn_pk_batched SELECT ${COL_LIST} FROM src"
+	run_setup "create txn_nopk_batched" "
+CREATE TABLE txn_nopk_batched (${COL_DEFS});"
+	batched_run many_txn_txnnopk_insert \
+		"INSERT INTO txn_nopk_batched SELECT ${COL_LIST} FROM src"
+fi
+
 # ---------------------------------------------------------------------------
 # Correctness, not speed: a load that silently dropped or duplicated rows would
 # make every number above meaningless.
 # ---------------------------------------------------------------------------
 PK_SINGLE_ROWS=$(scalar 'SELECT count(*) FROM pk_single;')
 PK_BATCHED_ROWS=$(scalar 'SELECT count(*) FROM pk_batched;')
+TXN_PK_SINGLE_ROWS="${SRC_ROWS}"
+TXN_PK_BATCHED_ROWS="${SRC_ROWS}"
+if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
+	TXN_PK_SINGLE_ROWS=$(scalar 'SELECT count(*) FROM txn_pk_single;')
+	TXN_PK_BATCHED_ROWS=$(scalar 'SELECT count(*) FROM txn_pk_batched;')
+fi
 
 fmt_ms() {
 	[[ -n "${1:-}" ]] && awk -v v="$1" 'BEGIN{printf "%.0f ms", v}' || printf 'n/a'
@@ -498,6 +536,29 @@ sub() {
 	echo "The floor is the same statements reading the source and writing"
 	echo "nothing: scan and per-statement overhead, which the batched inserts"
 	echo "also pay. Read the batched comparison off the minus-floor row."
+	if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
+		echo
+		printf "%-28s %13s %13s   %7s\n" "reference: plain table" "pk" "no pk" \
+			"pk/no"
+		printf "%-28s %13s %13s   %7s\n" "----------------------------" \
+			"-------------" "-------------" "-------"
+		printf "%-28s %13s %13s   %7s\n" "one transaction: insert" \
+			"$(fmt_ms "${TIMINGS[single_txn_txnpk_insert]:-}")" \
+			"$(fmt_ms "${TIMINGS[single_txn_txnnopk_insert]:-}")" \
+			"$(ratio "${TIMINGS[single_txn_txnpk_insert]:-}" "${TIMINGS[single_txn_txnnopk_insert]:-}")"
+		printf "%-28s %13s %13s   %7s\n" "${PERF_PK_BATCHES} transactions: insert" \
+			"$(fmt_ms "${TIMINGS[many_txn_txnpk_insert]:-}")" \
+			"$(fmt_ms "${TIMINGS[many_txn_txnnopk_insert]:-}")" \
+			"$(ratio "${TIMINGS[many_txn_txnpk_insert]:-}" "${TIMINGS[many_txn_txnnopk_insert]:-}")"
+		printf "%-28s %13s %13s\n" "  minus floor" \
+			"$(fmt_ms "$(sub "${TIMINGS[many_txn_txnpk_insert]:-}" "${floor}")")" \
+			"$(fmt_ms "$(sub "${TIMINGS[many_txn_txnnopk_insert]:-}" "${floor}")")"
+		echo "The same rows and statements in an ordinary table, where the key"
+		echo "is an ART index over local storage. Its pk/no is the whole cost of"
+		echo "enforcing a key there and carries no term-indexing, which is what"
+		echo "the search table's own pk/no conflates. A yardstick, not a target:"
+		echo "the two storages answer different questions."
+	fi
 	echo
 	printf "%-28s %13s %13s\n" "memory (RSS)" "pk" "no pk"
 	printf "%-28s %13s %13s\n" "----------------------------" \
@@ -524,7 +585,11 @@ sub() {
 	echo "include whatever jemalloc has not yet returned to the OS."
 	echo
 	echo "rows loaded: pk_single=${PK_SINGLE_ROWS} pk_batched=${PK_BATCHED_ROWS}"
-	echo "(both must equal ${SRC_ROWS})"
+	if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
+		echo "             txn_pk_single=${TXN_PK_SINGLE_ROWS}" \
+			"txn_pk_batched=${TXN_PK_BATCHED_ROWS}"
+	fi
+	echo "(each must equal ${SRC_ROWS})"
 	echo
 	echo "The pk/no column conflates certification with term-indexing the key"
 	echo "column, which a table without a PK does not do. For certification"
@@ -540,7 +605,9 @@ echo "server log: ${LOG}"
 # A load that dropped rows makes every timing above a measurement of nothing,
 # so it fails the run rather than printing a number somebody might read.
 if [[ "${PK_SINGLE_ROWS}" != "${SRC_ROWS}" ||
-	"${PK_BATCHED_ROWS}" != "${SRC_ROWS}" ]]; then
+	"${PK_BATCHED_ROWS}" != "${SRC_ROWS}" ||
+	"${TXN_PK_SINGLE_ROWS}" != "${SRC_ROWS}" ||
+	"${TXN_PK_BATCHED_ROWS}" != "${SRC_ROWS}" ]]; then
 	echo "FAILED: expected ${SRC_ROWS} rows in each PK table" >&2
 	exit 1
 fi

@@ -33,8 +33,8 @@ statement ok
 VACUUM (REFRESH_TABLE) beast_t
 
 query
-SELECT list_transform(generate_wildcard_ngrams('6' || chr(31) || '7', 3), x -> hex(x)) AS control,
-       list_transform(generate_wildcard_ngrams('ÿ7', 3), x -> hex(x)) AS latin
+SELECT list_transform(generate_wildcard_ngrams('6' || chr(31) || '7', 3), lambda x: hex(x)) AS control,
+       list_transform(generate_wildcard_ngrams('ÿ7', 3), lambda x: hex(x)) AS latin
 ----
 control	latin
 {FF361F,361F37,1F37FF,37FF}	{FFC3BF37,C3BF37FF,37FF}

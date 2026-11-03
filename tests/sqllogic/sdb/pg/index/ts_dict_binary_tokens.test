@@ -39,7 +39,7 @@ HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
 
 
 query
-SELECT list_sort(list_transform(ts_dict_raw_agg(w), x -> hex(x))) AS grams,
+SELECT list_sort(list_transform(ts_dict_raw_agg(w), lambda x: hex(x))) AS grams,
        ts_dict_count(w) AS counts
 FROM beast_idx
 ----

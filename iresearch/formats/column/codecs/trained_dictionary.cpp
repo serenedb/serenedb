@@ -36,16 +36,28 @@ namespace {
 
 std::atomic<uint64_t> gNextDictionaryId{1};
 
+ZSTD_DDict* LoadDictionary(std::string_view bytes) {
+  auto* ddict =
+    ZSTD_createDDict_advanced(bytes.data(), bytes.size(), ZSTD_dlm_byRef,
+                              ZSTD_dct_auto, ZSTD_defaultCMem);
+  SDB_ENSURE(ddict, "zstd: cannot load a trained dictionary");
+  return ddict;
+}
+
 }  // namespace
 
 TrainedDictionary::TrainedDictionary(std::string bytes)
-  : _bytes{std::move(bytes)},
-    _ddict{ZSTD_createDDict_advanced(_bytes.data(), _bytes.size(),
-                                     ZSTD_dlm_byRef, ZSTD_dct_auto,
-                                     ZSTD_defaultCMem)},
-    _id{gNextDictionaryId.fetch_add(1, std::memory_order_relaxed)} {
-  SDB_ENSURE(_ddict, "zstd: cannot load a trained dictionary");
-}
+  : _owned{std::move(bytes)},
+    _bytes{_owned},
+    _ddict{LoadDictionary(_bytes)},
+    _id{gNextDictionaryId.fetch_add(1, std::memory_order_relaxed)} {}
+
+TrainedDictionary::TrainedDictionary(std::string_view mapped,
+                                     IndexInput::ptr mapping)
+  : _mapping{std::move(mapping)},
+    _bytes{mapped},
+    _ddict{LoadDictionary(_bytes)},
+    _id{gNextDictionaryId.fetch_add(1, std::memory_order_relaxed)} {}
 
 void DictionarySampler::Add(std::span<const std::string_view> entries) {
   uint64_t total = 0;

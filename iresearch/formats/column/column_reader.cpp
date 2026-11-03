@@ -372,6 +372,12 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
     codecs::TrainedDictionaries loaded;
     loaded.reserve(_dictionary_metas.size());
     for (const auto& d : _dictionary_metas) {
+      if (const auto* mapped = ctx.TryReadStable(d.file_offset, d.byte_size)) {
+        loaded.push_back(std::make_shared<const codecs::TrainedDictionary>(
+          std::string_view{reinterpret_cast<const char*>(mapped), d.byte_size},
+          in.Dup()));
+        continue;
+      }
       std::string bytes(d.byte_size, '\0');
       ctx.Read(d.file_offset,
                reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), d.byte_size);

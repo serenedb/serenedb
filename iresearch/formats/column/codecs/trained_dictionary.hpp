@@ -30,6 +30,8 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/store/data_input.hpp"
+
 namespace irs::codecs {
 
 inline constexpr size_t kTrainedDictionaryBytes = 64 * 1024;
@@ -48,6 +50,7 @@ struct ZstdFree {
 class TrainedDictionary {
  public:
   explicit TrainedDictionary(std::string bytes);
+  TrainedDictionary(std::string_view mapped, IndexInput::ptr mapping);
 
   TrainedDictionary(const TrainedDictionary&) = delete;
   TrainedDictionary& operator=(const TrainedDictionary&) = delete;
@@ -57,7 +60,9 @@ class TrainedDictionary {
   uint64_t Id() const noexcept { return _id; }
 
  private:
-  std::string _bytes;
+  std::string _owned;
+  IndexInput::ptr _mapping;
+  std::string_view _bytes;
   std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
   uint64_t _id;
 };

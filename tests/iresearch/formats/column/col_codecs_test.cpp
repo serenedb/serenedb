@@ -53,6 +53,7 @@
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_scan.hpp>
 #include <iresearch/formats/column/codecs/string_writer.hpp>
+#include <iresearch/formats/column/codecs/trained_dictionary.hpp>
 #include <iresearch/formats/column/codecs/zstd.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -1913,6 +1914,57 @@ TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
     Verify(dir, arm.codec, 5000, *arm.value);
     dir.remove(irs::FileName(kSeg));
   }
+}
+
+TEST_F(ColCodecsTest, MappedTrainedDictionariesStayInTheirFile) {
+  constexpr uint64_t kRows = 120000;
+  const auto path = test_dir() / "col_codecs_mmap_trained";
+  std::filesystem::create_directories(path);
+  std::shared_ptr<const irs::codecs::TrainedDictionary> kept;
+  std::string expected;
+  {
+    irs::MMapDirectory dir{path};
+    {
+      irs::ColWriter w{dir, std::string{kSeg}, Db()};
+      auto& cw =
+        w.OpenColumn(kField, duckdb::LogicalType::VARCHAR, false, 16384,
+                     duckdb::CompressionType::COMPRESSION_DICT_LZ4, false,
+                     {.compression_level = 3});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        const auto take =
+          std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+        for (duckdb::idx_t k = 0; k < take; ++k) {
+          const auto g = pos + k;
+          ds[k] = duckdb::StringVector::AddString(
+            vs,
+            absl::StrCat("https://shop", g % 997, ".example.org/catalog/",
+                         (g * 7919) % 100003, "/item?id=", g, "&ref=", g % 13));
+        }
+        duckdb::FlatVector::SetSize(vs, take);
+        cw.Append(vs, take);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    ASSERT_FALSE(col->DictionaryMetas().empty());
+    irs::ReadContext ctx{r};
+    const auto* dictionaries = col->Dictionaries(ctx);
+    ASSERT_NE(dictionaries, nullptr);
+    ASSERT_EQ(col->DictionaryMetas().size(), dictionaries->size());
+    for (size_t i = 0; i != dictionaries->size(); ++i) {
+      const auto& meta = col->DictionaryMetas()[i];
+      EXPECT_EQ(reinterpret_cast<const char*>(
+                  ctx.TryReadStable(meta.file_offset, meta.byte_size)),
+                (*dictionaries)[i]->Bytes().data());
+    }
+    kept = dictionaries->front();
+    expected = std::string{kept->Bytes()};
+  }
+  EXPECT_EQ(expected, kept->Bytes());
 }
 
 TEST_F(ColCodecsTest, MappedFileNumericCodecs) {

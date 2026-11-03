@@ -22,6 +22,15 @@ from testlib.suites import duckdb, gtest, sqllogic  # noqa: E402
 from testlib.timing import Timing  # noqa: E402
 
 
+@pytest.mark.parametrize("kind", ["statement error", "query error"])
+@pytest.mark.parametrize("condition", ["", "onlyif serenedb\n"])
+def test_generated_exact_errors_keep_their_terminator(kind, condition):
+    text = (f"{condition}{kind}\nSELECT 1 / 0\n----\n"
+            "db error: ERROR: division by zero\n\n\n"
+            "statement ok\nSELECT 1\n")
+    assert generated.fill(text, {}) == (text, 0)
+
+
 def unit(uid, members=(), fixtures=(), cost=1.0, cpus=1):
     return Unit(uid, uid.split(":")[0], None, members=members, fixtures=fixtures, cost=cost,
                 cpus=cpus)

@@ -287,10 +287,14 @@ void VariantColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
     _validity->ColumnReader::Skip(s.child_states[0], count);
   }
   auto& vs = VariantState(s);
-  ForEachVariantRun(
-    vs.cursor, count,
-    [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
-        duckdb::idx_t /*done*/) { SeekVariantRg(s, rg, local_start + run); });
+  ForEachVariantRun(vs.cursor, count,
+                    [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
+                        duckdb::idx_t /*done*/) {
+                      if (_variant_offsets[rg] + local_start + run !=
+                          _variant_offsets[rg + 1]) {
+                        SeekVariantRg(s, rg, local_start + run);
+                      }
+                    });
   vs.cursor += count;
 }
 

@@ -58,7 +58,7 @@
       ]
     },
     {
-      "reason": "The files below attach the quack server QUACK_SERVER names, which the quack suite (tests/duckdb/quack/run.sh) starts as a serened for each file.",
+      "reason": "Not skipped, run in another suite: the quack suite (tests/duckdb/quack/run.sh) runs the files below, each against a serened of its own that QUACK_SERVER names. The core suite has no quack server for them to attach.",
       "paths": [
         "test/sql/attach/attach_to_external_resource.test",
         "test/sql/attach/external_resource_lifecycle.test",

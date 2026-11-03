@@ -93,7 +93,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : snapshot->reader) {
-        if (const auto* field = segment.field(req.field_id)) {
+        if (const auto* field = segment.field(
+              req.field_id,
+              {.layout = req.layout, .member = irs::DictMember::Strings})) {
           terms += field->size();
         }
       }
@@ -719,11 +721,6 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                            .scorer = scorer.get()};
   ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
                              claim.analyzed_fields.end());
-  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
-  for (const auto& [marker, field] : claim.null_markers) {
-    null_markers[marker] = field;
-  }
-  ctx.null_markers = &null_markers;
   irs::Deferral deferral{.reader = snapshot.reader};
   if (scan.DefersChecks()) {
     ctx.deferral = &deferral;
@@ -740,9 +737,8 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     SDB_ENSURE(rest_status.ok(), rest_status.message());
     irs::Filter::ptr rest_filter = std::move(rest);
     EnsureIncludeSides(*rest_filter);
-    irs::Optimize(rest_filter, {.scored = false,
-                                .analyzed_fields = ctx.analyzed_fields,
-                                .null_markers = &null_markers});
+    irs::Optimize(rest_filter,
+                  {.scored = false, .analyzed_fields = ctx.analyzed_fields});
     out.index_only = std::move(rest_filter);
   }
   return out;

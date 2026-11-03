@@ -90,8 +90,6 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   TermOnlyIterator::ptr iterator() const final;
   field_id id() const final { return _meta.id; }
   FieldProperties properties() const final { return _meta; }
-  bytes_view min() const final { return _min; }
-  bytes_view max() const final { return _max; }
 
   TermPayloadWriter* PayloadWriter() const final {
     SDB_ASSERT(_qw);
@@ -124,10 +122,6 @@ class IvfTermReader final : public BasicTermReader, public TermPayloadWriter {
   size_t _count;
   size_t _term_idx = 0;
   FieldMeta _meta;
-  std::array<byte_type, 4> _min_buf;
-  std::array<byte_type, 4> _max_buf;
-  bytes_view _min;
-  bytes_view _max;
   mutable std::unique_ptr<IvfTermIterator> _it;
 };
 

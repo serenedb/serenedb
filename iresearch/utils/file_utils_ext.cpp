@@ -397,12 +397,17 @@ void SyncResidency() noexcept {
 #endif
 }
 
-void PollResidency() noexcept {
-  constexpr uint32_t kPollEvery = 64;
-  thread_local uint32_t polls = 0;
-  if (++polls % kPollEvery == 0) {
-    SyncResidency();
+bool PollResidency(uint64_t bytes) noexcept {
+  constexpr uint64_t kPollBytes = 128 * 1024;
+  thread_local uint64_t trusted = 0;
+  trusted += bytes;
+  if (trusted < kPollBytes) {
+    return false;
   }
+  trusted = 0;
+  const auto epoch = ResidencyEpoch();
+  SyncResidency();
+  return ResidencyEpoch() != epoch;
 }
 
 void ResidencyMap::Reset(size_t pages) {

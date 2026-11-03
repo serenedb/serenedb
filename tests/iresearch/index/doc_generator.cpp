@@ -33,13 +33,13 @@
 #include <iresearch/analysis/numeric_terms.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <numeric>
 #include <sstream>
 
+#include "typed_terms.hpp"
 #include "utf8proc_wrapper.hpp"
 #include "utils/write_helpers.hpp"
 
@@ -164,18 +164,22 @@ Document::Document(Document&& rhs) noexcept
     stored(std::move(rhs.stored)),
     sorted(std::move(rhs.sorted)) {}
 
+template<typename T>
+std::vector<irs::bstring> NumericBlockTerms(T value) {
+  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
+  return {irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)}};
+}
+
 std::optional<std::vector<irs::bstring>> LongField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<int64_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::NumericLayout::kNumbers, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<int64_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool LongField::Write(irs::DataOutput& out) const {
@@ -184,17 +188,15 @@ bool LongField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> IntField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<int32_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::NumericLayout::kNumbers, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<int32_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool IntField::Write(irs::DataOutput& out) const {
@@ -203,17 +205,15 @@ bool IntField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> DoubleField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<double_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::NumericLayout::kNumbers, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<double_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool DoubleField::Write(irs::DataOutput& out) const {
@@ -222,17 +222,15 @@ bool DoubleField::Write(irs::DataOutput& out) const {
 }
 
 std::optional<std::vector<irs::bstring>> FloatField::BlockTerms() const {
-  std::vector<irs::bstring> terms;
-  irs::numeric_utils::ForEachNumericTerm(
-    _value, [&](irs::bytes_view term) { terms.emplace_back(term); });
-  return terms;
+  return NumericBlockTerms(_value);
 }
 
 bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
-  return doc.WithField(id, index_features, [&](irs::FieldInverter& fld) {
-    return fld.InvertNumerics<float_t>(
-      [&](auto&& emit) { emit(_value, doc.DocId()); });
-  });
+  return doc.WithField(id, irs::NumericLayout::kNumbers, index_features,
+                       [&](irs::FieldInverter& fld) {
+                         return fld.InvertNumerics<float_t>(
+                           [&](auto&& emit) { emit(_value, doc.DocId()); });
+                       });
 }
 
 bool FloatField::Write(irs::DataOutput& out) const {
@@ -671,19 +669,19 @@ void GenericJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = id;
-    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kFalseTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();
@@ -716,19 +714,19 @@ void PayloadedJsonFieldFactory(Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = tests::FieldIdForRuntime(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kFalseTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kFalseTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();

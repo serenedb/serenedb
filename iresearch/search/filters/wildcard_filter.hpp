@@ -84,10 +84,11 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
-Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
+Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
                              score_t boost = kNoBoost);
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost);
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
+                          score_t boost);
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:

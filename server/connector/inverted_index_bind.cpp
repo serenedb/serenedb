@@ -786,7 +786,6 @@ void EnsureId(irs::field_id& id, FieldIdSource next_id) {
 
 void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
                             const irs::analysis::Tokenizer& analyzer,
-                            const duckdb::LogicalType& value_type,
                             FieldIdSource next_id,
                             catalog::InvertedIndexField& entry) {
   entry.features = dict.GetFeatures();
@@ -799,13 +798,9 @@ void FillEntryFromTokenizer(const catalog::TokenizerCatalogEntry& dict,
   if (wants_store || wants_norm) {
     EnsureId(entry.synthetic_column, next_id);
   }
-  // A geo analyzer consumes the GeoJSON object itself, so it gets no leaf
-  // ids -- which is what keeps it out of the JSON leaf splitter.
+  // A geo analyzer consumes the GeoJSON object itself, which is what keeps it
+  // out of the JSON leaf splitter.
   entry.whole_value = IsGeoAnalyzer(analyzer);
-  if (value_type.IsJSONType() && !entry.whole_value) {
-    EnsureId(entry.bool_field_id, next_id);
-    EnsureId(entry.numeric_field_id, next_id);
-  }
 }
 
 void ValidateTermDictKey(std::string_view label,
@@ -825,13 +820,13 @@ void ValidateTermDictKey(std::string_view label,
                           : duckdb::ArrayType::GetChildType(type))
                          .id();
     if (child == duckdb::LogicalTypeId::GEOMETRY ||
-        !term_dict::IsSupported(term_dict::Classify(child))) {
+        !term_dict::IsIndexable(child)) {
       unsupported();
     }
     return;
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(kind))) {
+  if (!term_dict::IsIndexable(kind)) {
     unsupported();
   }
   if (kind == duckdb::LogicalTypeId::GEOMETRY && opclass.empty()) {
@@ -969,7 +964,7 @@ void ValidateTokenizerVsColumn(std::string_view column_name,
     const auto& child_type = col_id == duckdb::LogicalTypeId::LIST
                                ? duckdb::ListType::GetChildType(col_type)
                                : duckdb::ArrayType::GetChildType(col_type);
-    if (is_string_leaf(child_type.id()) && !child_type.IsJSONType()) {
+    if (is_string_leaf(child_type.id())) {
       return;
     }
   }
@@ -1097,7 +1092,7 @@ void ApplyOpclassToEntry(
   }
   auto analyzer = dict->Acquire(context);
   ValidateTokenizerVsColumn(label, value_type, *analyzer);
-  FillEntryFromTokenizer(*dict, *analyzer, value_type, next_id, entry);
+  FillEntryFromTokenizer(*dict, *analyzer, next_id, entry);
   if (IsGeoSourceAnalyzer(*analyzer)) {
     // Nothing of the analyzer's own reaches the segment, so the query
     // re-parses the column -- which only works if it is in the columnstore.
@@ -1109,8 +1104,8 @@ void ApplyOpclassToEntry(
 // Field ids of the keys that are not bare columns. A bare column indexes under
 // its own column id; an expression has none, so it takes a slot from the
 // synthetic range, which no relation column can ever collide with. Stride 8
-// covers the per-kind JSON leaves and the synthetic geo column allocated with
-// it -- allocated together, so either all valid or all invalid.
+// leaves room for the ids allocated with the key, such as its synthetic
+// column.
 constexpr irs::field_id kExpressionFieldStride = 8;
 
 constexpr irs::field_id ExpressionFieldId(size_t key) noexcept {
@@ -1299,11 +1294,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
 
     const auto [slot, fresh] = entries.try_emplace(record.field_id);
     auto& field = slot->second;
-    if (fresh) {
-      // Every field carries a null leaf; only the typed leaves are
-      // conditional on what the analyzer reads.
-      field.null_field_id = next_id();
-    }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
         const std::string_view title = bare_column ? "Column" : "Expression";

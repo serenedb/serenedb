@@ -90,12 +90,12 @@ bool InsertTokens(const irs::IndexWriter::Document& doc, const auto& field) {
   const duckdb::string_t value{field.Value().data(),
                                static_cast<uint32_t>(field.Value().size())};
   const irs::doc_id_t doc_id = doc.DocId();
-  return doc.WithTokens(field.Id(), field.GetIndexFeatures(), nullptr,
-                        [&](irs::FieldInverter& fld, irs::TokenSink& w) {
-                          fld.Configure(field.GetTokens().Traits());
-                          field.GetTokens().Fill(value, doc_id, w,
-                                                 {fld.Layout()});
-                        });
+  return doc.WithTokens(
+    field.Id(), irs::StringLayout::kStrings, field.GetIndexFeatures(), nullptr,
+    [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+      fld.Configure(field.GetTokens().Traits());
+      field.GetTokens().Fill(value, doc_id, w, {fld.Layout()});
+    });
 }
 
 // Append one BLOB row (the GeoJSON source text of the shape) to the cs column.

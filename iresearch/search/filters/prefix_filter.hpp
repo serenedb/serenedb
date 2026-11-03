@@ -70,7 +70,7 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
                                    const PrepareContext& ctx) const final;
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const irs::field_id field,
+                                          const TermReader* reader,
                                           const bytes_view term);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,

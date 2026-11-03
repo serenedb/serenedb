@@ -29,7 +29,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/columnar_readers.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <string>
@@ -41,6 +40,7 @@
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 
@@ -353,9 +353,6 @@ struct ExpectedPosting {
 };
 
 uint32_t RowDoc(const ScatteredField& scattered, uint64_t k) {
-  if (scattered.AllInline()) {
-    return scattered.RankedInlineDocs()[k];
-  }
   return BlockAt(scattered.DocBlocks(), k);
 }
 
@@ -432,7 +429,7 @@ TEST(InverterPipelineTest, KernelToPostings) {
   FieldsInverter inv{mem};
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
-  auto* field = inv.Emplace(42, features);
+  auto* field = inv.Emplace(42, StringLayout::kStrings, features);
   ASSERT_NE(nullptr, field);
 
   auto batch = std::make_unique<TokenBatch>();
@@ -469,7 +466,7 @@ TEST(InverterPipelineTest, KeywordMultiValue) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
-  auto* field = inv.Emplace(7, features);
+  auto* field = inv.Emplace(7, StringLayout::kStrings, features);
 
   const auto d = doc_limits::min();
   ASSERT_TRUE(InvertKeyword(*field, d, ToBytesView("red")));
@@ -507,7 +504,7 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
   ASSERT_NE(duckdb::FlatVector::IncrementalSelectionVector(), fmt.sel);
 
   const doc_id_t d = 10;
-  auto* field = inv.Emplace(7, features);
+  auto* field = inv.Emplace(7, StringLayout::kStrings, features);
   ASSERT_NE(nullptr, field);
   ASSERT_TRUE(field->InvertKeywordBlock(fmt, 6, d));
 
@@ -517,7 +514,7 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
   };
   AssertField(*field, mem, {"green", "red"}, expected);
 
-  auto* oracle = inv.Emplace(8, features);
+  auto* oracle = inv.Emplace(8, StringLayout::kStrings, features);
   ASSERT_NE(nullptr, oracle);
   const duckdb::string_t terms[] = {
     {"red", 3}, {"green", 5}, {"green", 5}, {"red", 3}};
@@ -529,10 +526,11 @@ TEST(InverterPipelineTest, KeywordBlockUvfDictionary) {
   }));
   AssertField(*oracle, mem, {"green", "red"}, expected);
 
-  auto* nulls = inv.Emplace(9, IndexFeatures::None);
-  ASSERT_NE(nullptr, nulls);
-  ASSERT_TRUE(nulls->InvertNullBlock(fmt, 6, d));
-  AssertField(*nulls, mem, {""}, {{{d + 2, 1, {}, {}}, {d + 5, 1, {}, {}}}});
+  auto nulls = inv.Docs(9, DictLayout::String);
+  nulls.PushNulls(fmt, 6, d);
+  const auto null_docs = nulls.Of(DictMember::Nulls);
+  EXPECT_EQ((std::vector<doc_id_t>{d + 2, d + 5}),
+            std::vector<doc_id_t>(null_docs.begin(), null_docs.end()));
 }
 
 void AssertSameScatter(const FieldInverter& a, const FieldInverter& b,
@@ -588,8 +586,8 @@ TEST(InverterColumnKeywordTest, MatchesPerValue) {
     auto mem = DefaultMemory();
     FieldsInverter inv_ref{mem};
     FieldsInverter inv_col{mem};
-    auto* ref = inv_ref.Emplace(1, features);
-    auto* col = inv_col.Emplace(1, features);
+    auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
+    auto* col = inv_col.Emplace(1, StringLayout::kStrings, features);
 
     for (size_t i = 0; i < kDocs; ++i) {
       ASSERT_TRUE(InvertKeyword(
@@ -630,8 +628,8 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
       auto mem = DefaultMemory();
       FieldsInverter inv_fast{mem};
       FieldsInverter inv_gen{mem};
-      auto* fast = inv_fast.Emplace(1, features);
-      auto* gen = inv_gen.Emplace(1, features);
+      auto* fast = inv_fast.Emplace(1, StringLayout::kStrings, features);
+      auto* gen = inv_gen.Emplace(1, StringLayout::kStrings, features);
       fast->Configure({.unique = true, .explicit_pos = !dense});
       gen->Configure({.explicit_pos = !dense});
 
@@ -667,7 +665,7 @@ TEST(InverterOneToOneTest, MatchesGeneralPath) {
 TEST(InverterScatterTest, PresortedKeysTieBreak) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, IndexFeatures::Freq);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 4> vals{"aaaaaaaa2", "aaaaaaaa10",
                                              "aaaaaaaa1", "aaaaaaab"};
@@ -689,7 +687,7 @@ TEST(InverterScatterTest, PresortedKeysTieBreak) {
 TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, IndexFeatures::Freq);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 6> vals{
     "http://example.com/products/42", "http://example.com/about",
@@ -718,7 +716,7 @@ TEST(InverterScatterTest, SharedPrefixRekeyOrder) {
 TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, IndexFeatures::Freq);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 3> vals{
     "aaaaaaaabbbbbbbbY", "aaaaaaaabbbbbbbb", "aaaaaaaabbbbbbbbX"};
@@ -739,7 +737,7 @@ TEST(InverterScatterTest, RekeyPrefixTermRanksFirst) {
 TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, IndexFeatures::Freq);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
 
   const std::array<std::string_view, 3> vals{"za_anchor", "zz_abcdefgh_2",
                                              "zz_abcdefgh_1"};
@@ -755,6 +753,42 @@ TEST(InverterScatterTest, SortedEqualKeyOutOfOrderResorts) {
   ASSERT_EQ(ToBytesView("za_anchor"), TermBytes(scattered, 0));
   ASSERT_EQ(ToBytesView("zz_abcdefgh_1"), TermBytes(scattered, 1));
   ASSERT_EQ(ToBytesView("zz_abcdefgh_2"), TermBytes(scattered, 2));
+}
+
+TEST(InverterScatterTest, KeyWidthAndBytesOfLiveTerms) {
+  auto mem = DefaultMemory();
+  FieldsInverter inv{mem};
+  ScatterScratch scratch{mem.rm};
+  ScatteredField scattered{mem, scratch};
+  ColumnarTermReader reader;
+  const auto check = [&](const FieldInverter& field, uint32_t width,
+                         uint64_t bytes) {
+    scattered.Reset(field);
+    reader.Reset(scattered);
+    EXPECT_EQ(width, scattered.KeyWidth());
+    EXPECT_EQ(bytes, scattered.TermBytes());
+    EXPECT_EQ(width, reader.key_width);
+  };
+  const auto keywords = [&](field_id id,
+                            std::span<const std::string_view> vals) {
+    auto* field = inv.Emplace(id, StringLayout::kStrings,
+                              IndexFeatures::Freq | IndexFeatures::Pos);
+    for (const auto v : vals) {
+      EXPECT_TRUE(InvertKeyword(*field, doc_limits::min(), ToBytesView(v)));
+    }
+    EXPECT_TRUE(field->Log().Size() != 0);
+    return field;
+  };
+
+  const std::string_view sorted[]{"pk_00000001", "pk_00000002", "pk_00000010"};
+  check(*keywords(1, sorted), 11, 33);
+  const std::string_view mixed[]{"red", "green", "red"};
+  check(*keywords(2, mixed), 0, 8);
+  const std::string_view descending[]{"pk_00000010", "pk_00000002",
+                                      "pk_00000001"};
+  check(*keywords(3, descending), 11, 33);
+  const std::string_view fixed[]{"abc", "xyz", "abc"};
+  check(*keywords(4, fixed), 3, 6);
 }
 
 struct RejectFill {
@@ -791,8 +825,8 @@ TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
   auto mem = DefaultMemory();
   FieldsInverter inv_a{mem};
   FieldsInverter inv_b{mem};
-  auto* a = inv_a.Emplace(1, features);
-  auto* b = inv_b.Emplace(1, features);
+  auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
+  auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
   a->Configure({.explicit_pos = true});
   b->Configure({.explicit_pos = true});
 
@@ -827,8 +861,8 @@ TEST(InverterRejectTest, ZeroPosLeavesLogUntouched) {
   auto mem = DefaultMemory();
   FieldsInverter inv_a{mem};
   FieldsInverter inv_b{mem};
-  auto* a = inv_a.Emplace(1, features);
-  auto* b = inv_b.Emplace(1, features);
+  auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
+  auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
   a->Configure({.explicit_pos = true});
   b->Configure({.explicit_pos = true});
 
@@ -864,8 +898,8 @@ TEST(InverterRejectTest, OffsetRegressionLeavesLogUntouched) {
   auto mem = DefaultMemory();
   FieldsInverter inv_a{mem};
   FieldsInverter inv_b{mem};
-  auto* a = inv_a.Emplace(1, features);
-  auto* b = inv_b.Emplace(1, features);
+  auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
+  auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
 
   auto batch = std::make_unique<TokenBatch>();
   std::vector<DocRun> runs;
@@ -899,8 +933,8 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
   auto mem = DefaultMemory();
   FieldsInverter inv_a{mem};
   FieldsInverter inv_b{mem};
-  auto* a = inv_a.Emplace(1, features);
-  auto* b = inv_b.Emplace(1, features);
+  auto* a = inv_a.Emplace(1, StringLayout::kStrings, features);
+  auto* b = inv_b.Emplace(1, StringLayout::kStrings, features);
 
   auto batch = std::make_unique<TokenBatch>();
   std::vector<DocRun> runs;
@@ -931,7 +965,7 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
 TEST(InverterPipelineTest, TermsLayoutKeywordPostings) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(3, IndexFeatures::Freq);
+  auto* field = inv.Emplace(3, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
   ASSERT_TRUE(InvertKeyword(*field, d, ToBytesView("red")));
@@ -954,7 +988,7 @@ TEST(InverterPipelineTest, TermsLayoutKeywordPostings) {
 TEST(InverterPipelineTest, TermsLayoutRepeatedKeywords) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(5, IndexFeatures::Freq);
+  auto* field = inv.Emplace(5, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
   for (uint32_t k = 0; k < 5; ++k) {
@@ -987,7 +1021,7 @@ TEST(InverterPipelineTest, TermsLayoutRepeatedKeywords) {
 TEST(InverterPipelineTest, TermsLayoutDistinctKeywords) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(4, IndexFeatures::Freq);
+  auto* field = inv.Emplace(4, StringLayout::kStrings, IndexFeatures::Freq);
 
   const auto d = doc_limits::min();
   ASSERT_TRUE(InvertKeyword(*field, d, ToBytesView("pk_b")));
@@ -1008,7 +1042,8 @@ TEST(InverterPipelineTest, TermsLayoutDistinctKeywords) {
 TEST(InverterPipelineTest, MultiBatchLongValue) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, IndexFeatures::Freq | IndexFeatures::Pos);
+  auto* field = inv.Emplace(1, StringLayout::kStrings,
+                            IndexFeatures::Freq | IndexFeatures::Pos);
 
   auto batch = std::make_unique<TokenBatch>();
   std::string text;
@@ -1045,7 +1080,7 @@ TEST(InverterPipelineTest, MultiBatchOffsets) {
   FieldsInverter inv{mem};
   const auto features =
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
-  auto* field = inv.Emplace(1, features);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, features);
 
   constexpr size_t kOccurrences = 1500;
   std::string text;
@@ -1086,7 +1121,7 @@ TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
   const auto features = IndexFeatures::Freq | IndexFeatures::Pos;
-  auto* field = inv.Emplace(1, features);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   field->Configure({.explicit_pos = true});
 
   const auto d = doc_limits::min();
@@ -1138,26 +1173,28 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
       const auto d = doc.DocId();
       const duckdb::string_t kw{keyword.data(),
                                 static_cast<uint32_t>(keyword.size())};
-      ASSERT_TRUE(
-        doc.WithField(kKeyword, kKeywordFeatures, [&](FieldInverter& fld) {
-          return fld.InvertKeywords([&](auto&& emit) { emit(kw, d); });
-        }));
+      ASSERT_TRUE(doc.WithField(kKeyword, StringLayout::kStrings,
+                                kKeywordFeatures, [&](FieldInverter& fld) {
+                                  return fld.InvertKeywords(
+                                    [&](auto&& emit) { emit(kw, d); });
+                                }));
       bool more;
       size_t cursor = 0;
       std::vector<DocRun> runs;
-      ASSERT_TRUE(doc.WithField(kText, kTextFeatures, [&](FieldInverter& fld) {
-        do {
-          batch->count = 0;
-          runs.clear();
-          more =
-            FillSplitBatch(text, cursor, TokenLayout::TermsPosOffs, *batch);
-          runs.push_back({d, batch->count});
-          if (!fld.InvertBlock(*batch, DocRuns{{runs}, more})) {
-            return false;
-          }
-        } while (more);
-        return true;
-      }));
+      ASSERT_TRUE(doc.WithField(
+        kText, StringLayout::kStrings, kTextFeatures, [&](FieldInverter& fld) {
+          do {
+            batch->count = 0;
+            runs.clear();
+            more =
+              FillSplitBatch(text, cursor, TokenLayout::TermsPosOffs, *batch);
+            runs.push_back({d, batch->count});
+            if (!fld.InvertBlock(*batch, DocRuns{{runs}, more})) {
+              return false;
+            }
+          } while (more);
+          return true;
+        }));
     }
     ASSERT_TRUE(trx.Commit());
   }
@@ -1238,27 +1275,29 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
       auto doc = trx.Insert();
       const auto d = doc.DocId();
       if (i < kFreq3Docs) {
-        ASSERT_TRUE(doc.WithField(kFreq3, kFeatures, [&](FieldInverter& fld) {
-          batch->count = 3;
-          for (uint32_t k = 0; k < 3; ++k) {
-            batch->terms[k] = term;
-            batch->pos[k] = 1 + k;
-            batch->offs_start[k] = 2 * k;
-            batch->offs_end[k] = 2 * k + 1;
-          }
-          const DocRun run{d, 3};
+        ASSERT_TRUE(doc.WithField(
+          kFreq3, StringLayout::kStrings, kFeatures, [&](FieldInverter& fld) {
+            batch->count = 3;
+            for (uint32_t k = 0; k < 3; ++k) {
+              batch->terms[k] = term;
+              batch->pos[k] = 1 + k;
+              batch->offs_start[k] = 2 * k;
+              batch->offs_end[k] = 2 * k + 1;
+            }
+            const DocRun run{d, 3};
+            return fld.InvertBlock(*batch, DocRuns{{&run, 1}, false});
+          }));
+      }
+      ASSERT_TRUE(doc.WithField(
+        kFreq1, StringLayout::kStrings, kFeatures, [&](FieldInverter& fld) {
+          batch->count = 1;
+          batch->terms[0] = term;
+          batch->pos[0] = 1;
+          batch->offs_start[0] = 0;
+          batch->offs_end[0] = 1;
+          const DocRun run{d, 1};
           return fld.InvertBlock(*batch, DocRuns{{&run, 1}, false});
         }));
-      }
-      ASSERT_TRUE(doc.WithField(kFreq1, kFeatures, [&](FieldInverter& fld) {
-        batch->count = 1;
-        batch->terms[0] = term;
-        batch->pos[0] = 1;
-        batch->offs_start[0] = 0;
-        batch->offs_end[0] = 1;
-        const DocRun run{d, 1};
-        return fld.InvertBlock(*batch, DocRuns{{&run, 1}, false});
-      }));
     }
     ASSERT_TRUE(trx.Commit());
   }
@@ -1315,8 +1354,8 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
                      const duckdb::UnifiedVectorFormat& fmt, uint32_t n,
                      doc_id_t first_doc) {
   return !analysis::HasInvalidRows(fmt, n) ||
-         doc.WithField(id, IndexFeatures::None, [&](FieldInverter& fld) {
-           return fld.InvertNullBlock(fmt, n, first_doc);
+         doc.WithMemberDocs(id, DictLayout::String, [&](MemberDocs& docs) {
+           docs.PushNulls(fmt, n, first_doc);
          });
 }
 
@@ -1348,7 +1387,7 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
     ASSERT_FALSE(fmt.validity.AllValid());
 
     ASSERT_TRUE(doc.WithField(
-      kKeyword, IndexFeatures::None,
+      kKeyword, StringLayout::kStrings, IndexFeatures::None,
       [&](FieldInverter& fld) { return fld.InvertKeywordBlock(fmt, 3, d); }));
     ASSERT_TRUE(InsertNullIfAny(doc, kNull, fmt, 3, d));
     ASSERT_TRUE(trx.Commit());
@@ -1359,7 +1398,7 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
   ASSERT_TRUE(reader);
   const auto& segment = (*reader)[0];
   ASSERT_NE(nullptr, segment.field(kKeyword));
-  ASSERT_EQ(nullptr, segment.field(kNull));
+  ASSERT_EQ(nullptr, segment.field(kNull, StringLayout::kNulls));
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
@@ -1388,7 +1427,7 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
       vec.ToUnifiedFormat(3, fmt);
 
       ASSERT_TRUE(doc.WithField(
-        kKeyword, IndexFeatures::None,
+        kKeyword, StringLayout::kStrings, IndexFeatures::None,
         [&](FieldInverter& fld) { return fld.InvertKeywordBlock(fmt, 3, d); }));
       ASSERT_TRUE(InsertNullIfAny(doc, kNull, fmt, 3, d));
     }
@@ -1412,10 +1451,10 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
       vec.ToUnifiedFormat(3, fmt);
       ASSERT_NE(duckdb::FlatVector::IncrementalSelectionVector(), fmt.sel);
 
-      ASSERT_TRUE(
-        doc.WithField(kKeyword, IndexFeatures::None, [&](FieldInverter& fld) {
-          return fld.InvertKeywordBlock(fmt, 3, d2);
-        }));
+      ASSERT_TRUE(doc.WithField(kKeyword, StringLayout::kStrings,
+                                IndexFeatures::None, [&](FieldInverter& fld) {
+                                  return fld.InvertKeywordBlock(fmt, 3, d2);
+                                }));
       ASSERT_TRUE(InsertNullIfAny(doc, kNull, fmt, 3, d2));
     }
     ASSERT_TRUE(trx.Commit());
@@ -1445,7 +1484,7 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
     ASSERT_FALSE(terms->next());
   }
 
-  const auto* null_reader = segment.field(kNull);
+  const auto* null_reader = segment.field(kNull, StringLayout::kNulls);
   ASSERT_NE(nullptr, null_reader);
   {
     auto terms = null_reader->iterator();
@@ -1552,7 +1591,7 @@ TEST(InverterDriverTest, SynonymOverlapsExactPostings) {
 
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, features);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, features);
 
   WhitespaceSyn analyzer;
   field->Configure(analyzer.Traits());
@@ -1612,8 +1651,8 @@ TEST(InverterColumnFillTest, MatchesPerValue) {
 
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* by_value = inv.Emplace(1, features);
-  auto* by_column = inv.Emplace(2, features);
+  auto* by_value = inv.Emplace(1, StringLayout::kStrings, features);
+  auto* by_column = inv.Emplace(2, StringLayout::kStrings, features);
 
   {
     auto analyzer = analysis::CreateTokenizer(make_config(), ::tests::Cache());
@@ -1675,8 +1714,8 @@ TEST(InverterBlockTextTest, MatchesPerValueTokens) {
 
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* per_value = inv.Emplace(1, features);
-  auto* block = inv.Emplace(2, features);
+  auto* per_value = inv.Emplace(1, StringLayout::kStrings, features);
+  auto* block = inv.Emplace(2, StringLayout::kStrings, features);
 
   {
     auto analyzer = analysis::CreateTokenizer(make_config(), ::tests::Cache());
@@ -1812,8 +1851,8 @@ void AssertDictionaryMatchesFlat(MakeAnalyzer make, IndexFeatures features) {
 
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* flat = inv.Emplace(1, features);
-  auto* dict = inv.Emplace(2, features);
+  auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
+  auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
   auto flat_analyzer = make();
   auto dict_analyzer = make();
 
@@ -1873,8 +1912,8 @@ TEST(InverterDictionaryTest, KeywordMatchesFlat) {
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     auto mem = DefaultMemory();
     FieldsInverter inv{mem};
-    auto* flat = inv.Emplace(1, features);
-    auto* dict = inv.Emplace(2, features);
+    auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
+    auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
 
     doc_id_t first_doc = doc_limits::min();
     for (const auto& rows : c.chunks) {
@@ -1906,8 +1945,8 @@ TEST(InverterDictionaryTest, ConstantMatchesFlat) {
         IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs}) {
     auto mem = DefaultMemory();
     FieldsInverter inv{mem};
-    auto* flat = inv.Emplace(1, features);
-    auto* dict = inv.Emplace(2, features);
+    auto* flat = inv.Emplace(1, StringLayout::kStrings, features);
+    auto* dict = inv.Emplace(2, StringLayout::kStrings, features);
     auto flat_analyzer = MakeSpaceDelimited();
     auto dict_analyzer = MakeSpaceDelimited();
 
@@ -1935,8 +1974,8 @@ void NumericBlockMatchesPerValue(const std::vector<T>& vals) {
   auto mem = DefaultMemory();
   FieldsInverter inv_ref{mem};
   FieldsInverter inv_blk{mem};
-  auto* ref = inv_ref.Emplace(1, features);
-  auto* blk = inv_blk.Emplace(1, features);
+  auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
+  auto* blk = inv_blk.Emplace(1, StringLayout::kStrings, features);
 
   {
     auto batch = std::make_unique<TokenBatch>();
@@ -1961,11 +2000,11 @@ void NumericBlockMatchesPerValue(const std::vector<T>& vals) {
     };
     doc_id_t d = doc_limits::min();
     for (const auto v : vals) {
-      if (batch->count + 4 >= TokenBatch::kCapacity) {
+      if (batch->count + 1 >= TokenBatch::kCapacity) {
         flush();
       }
       AppendNumericTermsBlock(*batch, std::span<const T>{&v, 1});
-      runs.push_back({d, NumericTermCount<T>()});
+      runs.push_back({d, 1});
       ++d;
     }
     flush();
@@ -2024,15 +2063,15 @@ TEST(InverterNumericBlockTest, BooleanMatchesPerValueStream) {
   auto mem = DefaultMemory();
   FieldsInverter inv_ref{mem};
   FieldsInverter inv_blk{mem};
-  auto* ref = inv_ref.Emplace(1, features);
-  auto* blk = inv_blk.Emplace(1, features);
+  auto* ref = inv_ref.Emplace(1, StringLayout::kStrings, features);
+  auto* blk = inv_blk.Emplace(1, StringLayout::kStrings, features);
 
   {
     auto batch = std::make_unique<TokenBatch>();
     doc_id_t d = doc_limits::min();
     for (const bool v : vals) {
       batch->count = 0;
-      const auto term = BooleanTerm(v);
+      const auto term = ::tests::BooleanTerm(v);
       batch->terms[batch->count++] =
         duckdb::string_t{term.data(), static_cast<uint32_t>(term.size())};
       ASSERT_TRUE(::tests::InvertTokens(*ref, d, *batch, true));
@@ -2045,7 +2084,7 @@ TEST(InverterNumericBlockTest, BooleanMatchesPerValueStream) {
     std::vector<doc_id_t> docs;
     doc_id_t d = doc_limits::min();
     for (const bool v : vals) {
-      const auto term = BooleanTerm(v);
+      const auto term = ::tests::BooleanTerm(v);
       terms.push_back(
         duckdb::string_t{term.data(), static_cast<uint32_t>(term.size())});
       docs.push_back(d++);
@@ -2080,13 +2119,13 @@ TEST(InverterNumericTest, UvfBlockMatchesStagedPairs) {
   vec.ToUnifiedFormat(kN, fmt);
 
   const auto first = doc_limits::min();
-  auto* uvf = inv.Emplace(1, IndexFeatures::None);
+  auto* uvf = inv.Emplace(1, NumericLayout::kNumbers, IndexFeatures::None);
   ASSERT_NE(nullptr, uvf);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<int64_t>(fmt);
   ASSERT_TRUE(
     uvf->InvertNumericBlock(fmt, kN, first, [&](size_t j) { return data[j]; }));
 
-  auto* ref = inv.Emplace(2, IndexFeatures::None);
+  auto* ref = inv.Emplace(2, NumericLayout::kNumbers, IndexFeatures::None);
   ASSERT_NE(nullptr, ref);
   std::vector<int64_t> valid_vals;
   std::vector<doc_id_t> docs;
@@ -2122,14 +2161,15 @@ TEST(InverterNumericTest, UvfBlockMatchesStagedPairs) {
   base.ToUnifiedFormat(6, dict_fmt);
   ASSERT_NE(duckdb::FlatVector::IncrementalSelectionVector(), dict_fmt.sel);
 
-  auto* dict_field = inv.Emplace(3, IndexFeatures::None);
+  auto* dict_field =
+    inv.Emplace(3, NumericLayout::kNumbers, IndexFeatures::None);
   ASSERT_NE(nullptr, dict_field);
   const auto* dict_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(dict_fmt);
   ASSERT_TRUE(dict_field->InvertNumericBlock(
     dict_fmt, 6, first, [&](size_t j) { return dict_data[j]; }));
 
-  auto* dict_ref = inv.Emplace(4, IndexFeatures::None);
+  auto* dict_ref = inv.Emplace(4, NumericLayout::kNumbers, IndexFeatures::None);
   ASSERT_NE(nullptr, dict_ref);
   std::vector<int64_t> dict_vals;
   std::vector<doc_id_t> dict_docs;
@@ -2148,25 +2188,71 @@ TEST(InverterNumericTest, UvfBlockMatchesStagedPairs) {
   AssertSameScatter(*dict_field, *dict_ref, mem);
 }
 
-TEST(InverterNullBlockTest, RampMatchesPerValueKeyword) {
-  constexpr uint32_t kDocs = 3000;
-  const doc_id_t first = doc_limits::min();
-  const auto term = ViewCast<byte_type>(kNullTerm);
-
+TEST(MemberDocsTest, PushesFollowValidityAndDropRepeats) {
   auto mem = DefaultMemory();
-  FieldsInverter inv_ref{mem};
-  FieldsInverter inv_ramp{mem};
-  auto* ref = inv_ref.Emplace(1, IndexFeatures::None);
-  auto* ramp = inv_ramp.Emplace(1, IndexFeatures::None);
+  FieldsInverter inv{mem};
+  auto docs_of = inv.Docs(1, DictLayout::Json);
 
-  for (uint32_t i = 0; i < kDocs; ++i) {
-    ASSERT_TRUE(InvertKeyword(*ref, first + i, term));
+  duckdb::Vector vec{duckdb::LogicalType::BOOLEAN};
+  auto* values = duckdb::FlatVector::GetDataMutable<bool>(vec);
+  values[0] = true;
+  values[1] = false;
+  values[3] = true;
+  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(2);
+  duckdb::SelectionVector sel{5};
+  sel.set_index(0, 0);
+  sel.set_index(1, 2);
+  sel.set_index(2, 1);
+  sel.set_index(3, 3);
+  sel.set_index(4, 2);
+  vec.Slice(sel, 5);
+  duckdb::UnifiedVectorFormat fmt;
+  vec.ToUnifiedFormat(5, fmt);
+
+  const doc_id_t d = 10;
+  docs_of.PushBools(fmt, 5, d);
+  docs_of.PushNulls(fmt, 5, d);
+  docs_of.Push(DictMember::JsonNulls, d + 7);
+  docs_of.Push(DictMember::JsonNulls, d + 7);
+  docs_of.PushAll(DictMember::Nulls, 2, d + 8);
+
+  const auto docs = [&](DictMember member) {
+    const auto span = inv.Docs(1, DictLayout::Json).Of(member);
+    return std::vector<doc_id_t>(span.begin(), span.end());
+  };
+  EXPECT_EQ((std::vector<doc_id_t>{d + 2}), docs(DictMember::False));
+  EXPECT_EQ((std::vector<doc_id_t>{d, d + 3}), docs(DictMember::True));
+  EXPECT_EQ((std::vector<doc_id_t>{d + 1, d + 4, d + 8, d + 9}),
+            docs(DictMember::Nulls));
+  EXPECT_EQ((std::vector<doc_id_t>{d + 7}), docs(DictMember::JsonNulls));
+  EXPECT_LT(0, inv.MemoryActive());
+  inv.Reset();
+  EXPECT_TRUE(docs(DictMember::Nulls).empty());
+}
+
+TEST(MemberDocsTest, FieldsHoldTheirLayoutsMembers) {
+  auto mem = DefaultMemory();
+  FieldsInverter inv{mem};
+  for (size_t layout = 0; layout != kDictLayouts; ++layout) {
+    const auto dict_layout = static_cast<DictLayout>(layout);
+    auto docs = inv.Docs(layout + 1, dict_layout);
+    const auto value = [](DictMember member) {
+      return doc_limits::min() + static_cast<doc_id_t>(member);
+    };
+    for (const auto member : LayoutMembers(dict_layout)) {
+      if (!IsTermMember(member)) {
+        docs.Push(member, value(member));
+      }
+    }
+    for (const auto member : LayoutMembers(dict_layout)) {
+      if (IsTermMember(member)) {
+        continue;
+      }
+      const auto span = inv.Docs(layout + 1, dict_layout).Of(member);
+      ASSERT_EQ((std::vector<doc_id_t>{value(member)}),
+                std::vector<doc_id_t>(span.begin(), span.end()));
+    }
   }
-  ASSERT_TRUE(ramp->InvertNullBlock(kDocs, first));
-
-  ASSERT_EQ(ref->Dictionary().Size(), ramp->Dictionary().Size());
-  ASSERT_EQ(ref->Log().Size(), ramp->Log().Size());
-  AssertSameScatter(*ref, *ramp, mem);
 }
 
 TEST(InverterFieldTest, MetaCarriesRequestedFeatures) {
@@ -2174,10 +2260,12 @@ TEST(InverterFieldTest, MetaCarriesRequestedFeatures) {
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, kFeatures);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
   EXPECT_EQ(kFeatures, field->Meta().index_features);
   EXPECT_EQ(IndexFeatures::None,
-            inv.Emplace(2, IndexFeatures::None)->Meta().index_features);
+            inv.Emplace(2, StringLayout::kStrings, IndexFeatures::None)
+              ->Meta()
+              .index_features);
 
   auto batch = std::make_unique<TokenBatch>();
   batch->count = 1;
@@ -2207,21 +2295,23 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
         const auto d = doc.DocId();
         const duckdb::string_t kw{keyword.data(),
                                   static_cast<uint32_t>(keyword.size())};
+        ASSERT_TRUE(doc.WithField(kKeyword, StringLayout::kStrings,
+                                  IndexFeatures::Freq, [&](FieldInverter& fld) {
+                                    return fld.InvertKeywords(
+                                      [&](auto&& emit) { emit(kw, d); });
+                                  }));
         ASSERT_TRUE(
-          doc.WithField(kKeyword, IndexFeatures::Freq, [&](FieldInverter& fld) {
-            return fld.InvertKeywords([&](auto&& emit) { emit(kw, d); });
-          }));
-        ASSERT_TRUE(
-          doc.WithField(kText, kTextFeatures, [&](FieldInverter& fld) {
-            batch->count = 0;
-            if (text_tokens && keyword == "beta") {
-              size_t cursor = 0;
-              FillSplitBatch("quick fox", cursor, TokenLayout::TermsPosOffs,
-                             *batch);
-            }
-            const DocRun run{d, batch->count};
-            return fld.InvertBlock(*batch, DocRuns{{&run, 1}});
-          }));
+          doc.WithField(kText, StringLayout::kStrings, kTextFeatures,
+                        [&](FieldInverter& fld) {
+                          batch->count = 0;
+                          if (text_tokens && keyword == "beta") {
+                            size_t cursor = 0;
+                            FillSplitBatch("quick fox", cursor,
+                                           TokenLayout::TermsPosOffs, *batch);
+                          }
+                          const DocRun run{d, batch->count};
+                          return fld.InvertBlock(*batch, DocRuns{{&run, 1}});
+                        }));
       }
       ASSERT_TRUE(trx.Commit());
     }

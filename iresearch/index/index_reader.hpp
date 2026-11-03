@@ -158,7 +158,18 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual std::span<const field_id> field_ids() const = 0;
 
-  virtual const TermReader* field(field_id id) const = 0;
+  virtual std::span<const TermReader* const> fields(field_id id) const = 0;
+
+  const TermReader* field(field_id id, DictRef dict) const {
+    for (const auto* reader : fields(id)) {
+      if (reader->meta().dict == dict) {
+        return reader;
+      }
+    }
+    return nullptr;
+  }
+
+  const TermReader* field(field_id id) const { return field(id, DictRef{}); }
 
   virtual const ColReader* GetColReader() const { return nullptr; }
 
@@ -168,17 +179,5 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
   virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
 };
-
-template<typename Visitor, typename FilterVisitor>
-void Visit(const IndexReader& index, field_id id,
-           const FilterVisitor& field_visitor, Visitor& visitor) {
-  for (auto& segment : index) {
-    const auto* reader = segment.field(id);
-
-    if (reader) [[likely]] {
-      field_visitor(segment, *reader, visitor);
-    }
-  }
-}
 
 }  // namespace irs

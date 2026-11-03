@@ -94,16 +94,18 @@ Filter MakeFilter(std::string_view field, std::string_view value,
 }
 
 irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value) {
-  auto filter = irs::CreateByRegexp(tests::FieldIdFor(field),
-                                    irs::ViewCast<irs::byte_type>(value));
+  auto filter =
+    irs::CreateByRegexp(tests::FieldIdFor(field), irs::StringLayout::kStrings,
+                        irs::ViewCast<irs::byte_type>(value));
   irs::Optimize(filter);
   return filter;
 }
 
 irs::Filter::ptr MakeRegexp(std::string_view field, std::string_view value,
                             const irs::Scorer* scorer) {
-  auto filter = irs::CreateByRegexp(tests::FieldIdFor(field),
-                                    irs::ViewCast<irs::byte_type>(value));
+  auto filter =
+    irs::CreateByRegexp(tests::FieldIdFor(field), irs::StringLayout::kStrings,
+                        irs::ViewCast<irs::byte_type>(value));
   filter->SetScorer(scorer);
   irs::Optimize(filter, {.scored = true});
   return filter;

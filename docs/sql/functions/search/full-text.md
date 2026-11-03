@@ -865,7 +865,7 @@ There is no dedicated TSQUERY constructor for nullness — the plain SQL operato
 
 Match rows by the nullness of an indexed column.
 
-**How it works.** Every indexed column carries a null-marker term in the index; `IS NULL` compiles to a lookup of that term and `IS NOT NULL` to its negation, so both run as posting-list reads — no `INCLUDE` storage or table probe needed. On columns the index does not cover, the same predicates simply run row-level; the syntax is identical either way. In the [setup](#setup), `dual` has one `NULL` row.
+The index answers `IS NULL` and `IS NOT NULL` on an indexed column by itself, with no `INCLUDE` storage or table probe. On columns the index does not cover, the same predicates run row by row; the syntax is identical either way. In the [setup](#setup), `dual` has one `NULL` row.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

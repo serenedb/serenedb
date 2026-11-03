@@ -65,6 +65,7 @@ enum class Modifier {
 struct ParserContext {
   struct Field {
     irs::field_id id{irs::field_limits::invalid()};
+    irs::DictRef dict;
     irs::analysis::Tokenizer* tokenizer{nullptr};
   };
 
@@ -76,6 +77,7 @@ struct ParserContext {
   };
 
   irs::field_id default_field_id{irs::field_limits::invalid()};
+  irs::DictRef default_dict;
   const FieldProvider* fields{nullptr};
   irs::BooleanFilter* current_root;
   irs::analysis::Tokenizer* tokenizer;
@@ -93,8 +95,11 @@ struct ParserContext {
   size_t offs_max{0};
 
   ParserContext(irs::BooleanFilter& root, irs::field_id field_id,
-                irs::analysis::Tokenizer& tokenizer)
-    : default_field_id(field_id), current_root{&root}, tokenizer{&tokenizer} {}
+                irs::DictRef dict, irs::analysis::Tokenizer& tokenizer)
+    : default_field_id(field_id),
+      default_dict(dict),
+      current_root{&root},
+      tokenizer{&tokenizer} {}
 
   // A clause is held back until the connector after it has been read, which
   // is what decides where it goes: `AND` makes both of the clauses it joins
@@ -157,6 +162,7 @@ struct ParserContext {
     }
     auto& f = Build<irs::ByTerm>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     f.mutable_options()->term =
       tokens.empty() ? irs::bytes_view{text} : irs::AsBytesView(tokens.front());
     return f;
@@ -165,6 +171,7 @@ struct ParserContext {
   irs::ByRegexp& AddRegex(std::string_view value) {
     auto& f = Build<irs::ByRegexp>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     f.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
@@ -227,6 +234,11 @@ struct ParserContext {
     return default_field_id;
   }
 
+  irs::DictRef Dict() const noexcept {
+    const auto field = CurrentField();
+    return irs::field_limits::valid(field.id) ? field.dict : default_dict;
+  }
+
   irs::analysis::Tokenizer* FieldTokenizer() const noexcept {
     const auto field = CurrentField();
     return irs::field_limits::valid(field.id) ? field.tokenizer : tokenizer;
@@ -235,6 +247,7 @@ struct ParserContext {
   void BeginPhrase() {
     auto& f = Build<irs::ByPhrase>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     phrase = &f;
     offs_min = 0;
     offs_max = 0;
@@ -351,6 +364,7 @@ struct ParserContext {
   void BeginNGram(float threshold) {
     auto& f = Build<irs::ByNGramSimilarity>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     f.mutable_options()->threshold = threshold;
     ngram = &f;
   }
@@ -370,6 +384,7 @@ struct ParserContext {
   irs::ByPrefix& AddPrefix(std::string_view value) {
     auto& f = Build<irs::ByPrefix>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     SDB_ASSERT(!value.empty() && value.back() == '*');
     value.remove_suffix(1);
     f.mutable_options()->term = Normalize(value);
@@ -379,6 +394,7 @@ struct ParserContext {
   irs::ByWildcard& AddWildcard(std::string_view value) {
     auto& f = Build<irs::ByWildcard>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     const auto wildcard = FindPattern(value);
     *f.mutable_options() = irs::ByWildcardOptions{
       Pattern(Normalize(value.substr(0, wildcard)), value.substr(wildcard))};
@@ -389,6 +405,7 @@ struct ParserContext {
                          bool inc_min, bool inc_max) {
     auto& f = Build<irs::ByRange>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     auto& range = f.mutable_options()->range;
     if (min_val == "*") {
       range.min_type = irs::BoundType::Unbounded;
@@ -527,8 +544,10 @@ struct ParserContext {
 
   void AddTermTo(irs::BooleanFilter& node, irs::Occur occur,
                  irs::bytes_view word) {
-    node.Add(irs::TermClause{.field = FieldId(), .term = irs::bstring{word}},
-             occur);
+    node.Add(
+      irs::TermClause{
+        .field = FieldId(), .dict = Dict(), .term = irs::bstring{word}},
+      occur);
   }
 
   void RequirePair(std::string_view name) {
@@ -693,6 +712,7 @@ struct ParserContext {
   irs::ByEditDistance& AddFuzzyTerm(irs::bstring value, int distance) {
     auto& f = Build<irs::ByEditDistance>();
     *f.mutable_field_id() = FieldId();
+    *f.mutable_dict() = Dict();
     f.mutable_options()->term = std::move(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);
     f.mutable_options()->max_terms = fuzzy_max_terms;

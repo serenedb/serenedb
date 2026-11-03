@@ -62,9 +62,6 @@ struct KeyRecord {
 };
 
 struct FieldRecord {
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id synthetic_column = irs::field_limits::invalid();
   search::Features features;
   bool store_values = false;

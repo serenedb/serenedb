@@ -231,6 +231,11 @@ class IndexWriter : private util::Noncopyable {
     }
 
     template<typename... Args>
+    bool WithMemberDocs(Args&&... args) const {
+      return _writer.WithMemberDocs(std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
     bool WithTokens(Args&&... args) const {
       return _writer.WithTokens(std::forward<Args>(args)...);
     }

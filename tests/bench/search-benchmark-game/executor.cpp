@@ -329,7 +329,8 @@ void Executor::PrintResults() const {
 
 irs::Filter::ptr Executor::ParseFilter(std::string_view str, bool scored) {
   auto root = std::make_unique<irs::BooleanFilter>();
-  irs::ParserContext context{*root, kTextFieldId, *_tokenizer};
+  irs::ParserContext context{*root, kTextFieldId, irs::StringLayout::kStrings,
+                             *_tokenizer};
   if (!irs::ParseQuery(context, str)) {
     absl::FPrintF(stderr, "parse error: %s: %s\n", context.error_message, str);
     return {};

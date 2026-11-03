@@ -378,6 +378,56 @@ id
 6
 7
 
+query
+SELECT id FROM prim_types WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM prim_types_idx WHERE (content->'val') IS NULL ORDER BY id;
+----
+id
+7
+
+query
+EXPLAIN SELECT id FROM prim_types_idx WHERE (content->'val') IS NULL;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: prim_types_idx                 │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Term ────────────────────────────╮ │
+│ │ Field: ("content" -> 'val')(null) │ │
+│ │ Value:                            │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+SELECT id FROM prim_types WHERE (content->'val') IS NOT NULL ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+
+query
+SELECT id FROM prim_types_idx WHERE (content->'val') IS NOT NULL ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+
 # String leaves whose content starts with `{` or `[` must still index --
 # the rejection only fires on actual object/array leaves.
 

@@ -20,16 +20,19 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
@@ -118,6 +121,36 @@ void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {
     file_utils::Hint(in, meta.doc_start, std::min(extent, kMaxPrefetch));
   }
+}
+
+using FileRange = std::pair<uint64_t, uint64_t>;
+
+template<typename Ranges>
+void AppendRange(Ranges& ranges, uint64_t from, uint64_t to) {
+  SDB_ASSERT(from <= to);
+  if (!ranges.empty()) {
+    auto& last = ranges.back();
+    SDB_ASSERT(last.first <= from);
+    if (from <= last.second + file_utils::kPage) {
+      last.second = std::max(last.second, to);
+      return;
+    }
+  }
+  ranges.emplace_back(from, to);
+}
+
+template<typename Input>
+uint64_t HintRanges(const Input& in, std::span<const FileRange> ranges,
+                    uint64_t budget = kMaxPrefetch) {
+  for (const auto& [from, to] : ranges) {
+    if (budget == 0) {
+      break;
+    }
+    const auto size = std::min(to - from, budget);
+    file_utils::Hint(in, from, size);
+    budget -= size;
+  }
+  return budget;
 }
 
 class GrowingHint {

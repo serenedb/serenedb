@@ -25,7 +25,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -63,12 +63,23 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // WithField runs `func(slot)` against the resolved slot; WithTokens
   // serves streamed fills against the pooled TokenSink.
   template<typename Func>
-  bool WithField(field_id id, IndexFeatures index_features, Func&& func) {
-    auto* slot = Field(id, index_features);
+  bool WithField(field_id id, DictRef dict, IndexFeatures index_features,
+                 Func&& func) {
+    auto* slot = Field(id, dict, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }
     return WithSlot(*slot, std::forward<Func>(func));
+  }
+
+  template<typename Func>
+  bool WithMemberDocs(field_id id, DictLayout layout, Func&& func) {
+    if (!_valid) [[unlikely]] {
+      return false;
+    }
+    auto docs = _fields.Docs(id, layout);
+    func(docs);
+    return true;
   }
 
   // Streamed sibling of WithField: `func(slot, sink)` runs against the
@@ -78,15 +89,16 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // (Configure with the producer's traits) belongs at the top of `func`,
   // before the first emit. Per-value stored blobs, if any, go to `store`.
   template<typename Func>
-  bool WithTokens(field_id id, IndexFeatures index_features, StoreSink* store,
-                  Func&& func) {
-    return WithTarget<TokensTarget>(id, index_features, store,
+  bool WithTokens(field_id id, DictRef dict, IndexFeatures index_features,
+                  StoreSink* store, Func&& func) {
+    return WithTarget<TokensTarget>(id, dict, index_features, store,
                                     std::forward<Func>(func));
   }
 
   template<typename Func>
-  bool WithEntryTokens(field_id id, IndexFeatures index_features, Func&& func) {
-    return WithTarget<EntriesTarget>(id, index_features, nullptr,
+  bool WithEntryTokens(field_id id, DictRef dict, IndexFeatures index_features,
+                       Func&& func) {
+    return WithTarget<EntriesTarget>(id, dict, index_features, nullptr,
                                      std::forward<Func>(func));
   }
 
@@ -163,8 +175,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Per-column slot acquisition: resolves (creating on first sight) and
   // validates the requested features once; a feature mismatch poisons the
   // writer and returns null.
-  FieldInverter* Field(field_id id, IndexFeatures index_features) {
-    auto* slot = _fields.Emplace(id, index_features);
+  FieldInverter* Field(field_id id, DictRef dict,
+                       IndexFeatures index_features) {
+    auto* slot = _fields.Emplace(id, dict, index_features);
     if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
       _valid = false;
       _error = "the field was created with other index features";
@@ -189,9 +202,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
 
   template<typename Target, typename Func>
-  bool WithTarget(field_id id, IndexFeatures index_features, StoreSink* store,
-                  Func&& func) {
-    auto* slot = Field(id, index_features);
+  bool WithTarget(field_id id, DictRef dict, IndexFeatures index_features,
+                  StoreSink* store, Func&& func) {
+    auto* slot = Field(id, dict, index_features);
     if (!slot) [[unlikely]] {
       return false;
     }
@@ -255,7 +268,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;
   std::string _error;
-  std::unique_ptr<burst_trie::FieldWriter> _field_writer;
+  std::unique_ptr<term_dict::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;
   // Non-owning fallback, owned by the IndexWriter; used when no override is
   // set.

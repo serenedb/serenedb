@@ -137,23 +137,24 @@ SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::bool = true;
 pk
 3
 
-# Expression source: null leaf
+# Expression source: a JSON null leaf is the JSON value null, not SQL NULL
 query
 SELECT pk FROM m_jv_expr_kw WHERE (j->'val') IS NULL;
 ----
 pk
-4
+
+query
+SELECT pk FROM m_jv WHERE (j->'val') IS NULL;
+----
+pk
 
 
 # ============================================================================
 # JSON list / array
 # ----------------------------------------------------------------------------
-# Nested JSON is rejected with any tokenizer. Scalar JSON has per-leaf
-# decomposition in the sink, but JSON[] / JSON[N] would silently route
-# through WriteListBatch<VARCHAR> (JSON's LogicalTypeId is VARCHAR), so it
-# would index each element as raw text rather than per-leaf primitives.
-# INCLUDE-only (just-store) is fine -- doesn't go through the term_dict
-# dispatch.
+# JSON[] / JSON[N] with a tokenizer is indexed element by element, each
+# element by its JSON leaf; a geo analyzer still needs a JSON or GEOMETRY
+# value. INCLUDE-only (just-store) keeps any element, objects included.
 # ============================================================================
 
 statement ok
@@ -166,30 +167,42 @@ CREATE TABLE m_jl(pk INTEGER PRIMARY KEY,
 statement ok
 CREATE INDEX m_jl_inc ON m_jl USING inverted(pk) INCLUDE (js, ja);
 
-# Indexed JSON[] with keyword/ngram/geo: rejected.
-statement error
-CREATE INDEX m_jl_kw_list ON m_jl USING inverted(pk, js kw_dict);
+statement ok
+CREATE TABLE m_jl_leaf(pk INTEGER PRIMARY KEY, js JSON[], ja JSON[2]);
+
+statement ok
+CREATE INDEX m_jl_kw_list ON m_jl_leaf USING inverted(pk, js kw_dict);
+
+statement ok
+CREATE INDEX m_jl_ng_list ON m_jl_leaf USING inverted(pk, js ng_dict);
+
+statement ok
+CREATE INDEX m_jl_kw_array ON m_jl_leaf USING inverted(pk, ja kw_dict);
+
+statement ok
+INSERT INTO m_jl_leaf VALUES
+    (1, ['"red"', '1']::JSON[], ['"blue"', 'true']::JSON[2]),
+    (2, ['"green"']::JSON[], ['"red"', 'null']::JSON[2]);
+
+statement ok
+VACUUM (REFRESH_TABLE) m_jl_leaf;
+
+query
+SELECT pk FROM m_jl_kw_list WHERE js @@ ts_like('red') ORDER BY pk;
 ----
-db error: ERROR: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
+pk
+1
 
-
-statement error
-CREATE INDEX m_jl_ng_list ON m_jl USING inverted(pk, js ng_dict);
+query
+SELECT pk FROM m_jl_kw_array WHERE ja @@ ts_like('red') ORDER BY pk;
 ----
-db error: ERROR: Column 'js' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[])
-
+pk
+2
 
 statement error
 CREATE INDEX m_jl_geo_list ON m_jl USING inverted(pk, js geo_s2_dict);
 ----
 db error: ERROR: Column 'js' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY
-
-
-# Indexed JSON[N] same.
-statement error
-CREATE INDEX m_jl_kw_array ON m_jl USING inverted(pk, ja kw_dict);
-----
-db error: ERROR: Column 'ja' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got JSON[2])
 
 
 statement error
@@ -265,6 +278,9 @@ DROP TABLE m_jv;
 
 statement ok
 DROP TABLE m_jl;
+
+statement ok
+DROP TABLE m_jl_leaf;
 
 statement ok
 DROP TABLE m_jg;

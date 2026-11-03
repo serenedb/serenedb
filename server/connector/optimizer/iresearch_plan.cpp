@@ -413,8 +413,7 @@ bool TryClaimIResearchConjunctImpl(
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers,
-  DeferredClaimBuilder* deferred,
-  std::optional<connector::WideRanges> range_mode = std::nullopt) {
+  DeferredClaimBuilder* deferred, connector::WideRanges range_mode) {
   if (conjunct->HasParameter()) {
     if (!deferred) {
       return false;
@@ -431,8 +430,10 @@ bool TryClaimIResearchConjunctImpl(
       const auto expression_getter = deferred->Recording(expr_getter);
       if (!connector::MakeConjunctFilter(
             shaped, column_getter, context, expression_getter, &shaped_scorers,
-            ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
-                                         : connector::WideRanges::Build) ||
+            ColumnFilterCanTake(*shaped) &&
+                range_mode != connector::WideRanges::Build
+              ? connector::WideRanges::DeclineAll
+              : connector::WideRanges::Build) ||
           deferred->used_expr_getter) {
         if (ClaimDeferredRange(conjunct, shaped, column_getter,
                                expression_getter, context, *deferred)) {
@@ -464,9 +465,7 @@ bool TryClaimIResearchConjunctImpl(
   }
   auto node = connector::MakeConjunctFilter(
     conjunct, *column_getter, context, *expression_getter, scorers,
-    ColumnFilterCanTake(*conjunct)
-      ? range_mode.value_or(connector::WideRanges::DeclineWide)
-      : connector::WideRanges::Build);
+    ColumnFilterCanTake(*conjunct) ? range_mode : connector::WideRanges::Build);
   if (!node) {
     return false;
   }
@@ -487,7 +486,8 @@ bool TryClaimIResearchConjunct(
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers) {
   return TryClaimIResearchConjunctImpl(root, conjunct, getter, expr_getter,
-                                       context, scorers, nullptr);
+                                       context, scorers, nullptr,
+                                       connector::WideRanges::Build);
 }
 
 namespace {
@@ -555,7 +555,6 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   const auto snapshot = bind_data.Snapshot(context);
 
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
-  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
   irs::containers::FlatHashMap<connector::ColumnId, bool> not_null_cache;
 
   const auto column_not_null = [&](connector::ColumnId col_id) {
@@ -577,10 +576,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
         column_info->stats = snapshot->reader.GetColumnStats(*column);
       }
       if (column && table_backed && column_not_null(*column)) {
-        column_info->null_field_id = irs::field_limits::invalid();
-      }
-      if (irs::field_limits::valid(column_info->null_field_id)) {
-        null_markers[column_info->null_field_id] = column_info->field_id;
+        column_info->nullable = false;
       }
       if (column_info->tokenizer.analyzer->type() !=
           irs::Type<irs::KeywordTokenizer>::id()) {
@@ -610,6 +606,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (PrimaryColumn(ref.Binding(), get) ==
         connector::kColumnIdentifierTableOid) {
       return connector::SearchColumnInfo{
+        .layout = irs::DictLayout::Numeric,
         .logical_type = duckdb::LogicalType::BIGINT,
         .index_fields = &field_set};
     }
@@ -636,8 +633,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     return ResolveColumnId(ref.Binding(), bind_data, get);
   };
 
-  return fn(SearchGetters{getter, expr_getter, analyzed_fields, null_markers,
-                          column_id});
+  return fn(SearchGetters{getter, expr_getter, analyzed_fields, column_id});
 }
 
 namespace {
@@ -1499,8 +1495,7 @@ bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   connector::ScanBindData& scan, const SearchGetters& getters,
   duckdb::ClientContext& context) {
-  auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
-    getters;
+  auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
@@ -1509,7 +1504,13 @@ bool ClaimSearchConjuncts(
   deferred.column_id = &column_id;
   DeferredClaimBuilder* const deferred_ptr =
     scan.ts_dict.Active() || scan.offsets.Active() ? nullptr : &deferred;
-  const auto range_modes = DecideColumnRanges(filters, getter, context);
+  std::map<const duckdb::Expression*, connector::WideRanges> range_modes;
+  if (scan.score.vector) {
+    range_modes = DecideColumnRanges(filters, getter, context);
+  }
+  const auto default_mode = scan.score.vector
+                              ? connector::WideRanges::DeclineWide
+                              : connector::WideRanges::Build;
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
   const bool keeps_columns = scan.KeepsColumnForms();
   const auto stored_column = [&](const duckdb::Expression& conjunct)
@@ -1523,15 +1524,13 @@ bool ClaimSearchConjuncts(
   };
   struct IndexOnly {
     duckdb::unique_ptr<duckdb::Expression> conjunct;
-    std::optional<connector::WideRanges> mode;
+    connector::WideRanges mode;
   };
   std::vector<connector::RowFilter> duals;
   std::vector<IndexOnly> index_only;
   for (size_t i = 0; i < filters.size();) {
     const auto found = range_modes.find(filters[i].get());
-    const auto mode = found != range_modes.end()
-                        ? std::optional<connector::WideRanges>{found->second}
-                        : std::nullopt;
+    const auto mode = found != range_modes.end() ? found->second : default_mode;
     if (TryClaimIResearchConjunctImpl(*root_and, filters[i], getter,
                                       expr_getter, context, &filter_scorers,
                                       deferred_ptr, mode)) {
@@ -1571,9 +1570,6 @@ bool ClaimSearchConjuncts(
       std::move(deferred.columns));
     deferred.claim.analyzed_fields.insert(analyzed_fields.begin(),
                                           analyzed_fields.end());
-    for (const auto& [marker, field] : null_markers) {
-      deferred.claim.null_markers.emplace(marker, field);
-    }
     scan.plan_cache.deferred = std::move(deferred.claim);
   }
   if (!deferring && !duals.empty()) {
@@ -1588,9 +1584,8 @@ bool ClaimSearchConjuncts(
     if (!rest->Empty()) {
       irs::Filter::ptr filter = std::move(rest);
       connector::EnsureIncludeSides(*filter);
-      irs::Optimize(filter, {.scored = false,
-                             .analyzed_fields = analyzed_fields,
-                             .null_markers = &null_markers});
+      irs::Optimize(filter,
+                    {.scored = false, .analyzed_fields = analyzed_fields});
       scan.search.index_only = std::move(filter);
     }
     scan.search.duals = std::move(duals);
@@ -1603,7 +1598,6 @@ bool ClaimSearchConjuncts(
     scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
   irs::OptimizeContext optimize{.scored = static_cast<bool>(scan.score.text),
                                 .analyzed_fields = std::move(analyzed_fields),
-                                .null_markers = &null_markers,
                                 .scorer = scorer.get()};
   const auto snapshot = scan.Snapshot(context);
   irs::Deferral deferral{.reader = snapshot->reader};
@@ -1723,9 +1717,8 @@ std::shared_ptr<const irs::Filter> BuildIndexLeaf(
   }
   irs::Filter::ptr root = std::move(node);
   connector::EnsureIncludeSides(*root);
-  irs::Optimize(root, {.scored = false,
-                       .analyzed_fields = getters.analyzed_fields,
-                       .null_markers = &getters.null_markers});
+  irs::Optimize(root,
+                {.scored = false, .analyzed_fields = getters.analyzed_fields});
   return root;
 }
 
@@ -2127,7 +2120,7 @@ std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   }
   if (!scan.relation.StoresExpression(col_id) && !scan.IsViewBacked() &&
       scan.IsColumnNotNull(col_id)) {
-    column_info->null_field_id = irs::field_limits::invalid();
+    column_info->nullable = false;
   }
   column_info->column_stored = column_stored;
   return column_info;

@@ -15,9 +15,19 @@ def member_array(name):
     return f'k{camel(name)}MemberOf'
 
 
+def predefined(gen):
+    return {row['rolname']: row for row in gen.rows['pg_authid']
+            if row['rolsuper'] == 'f'}
+
+
+def constants(gen):
+    return [f'inline constexpr duckdb::idx_t k{camel(name)}Role = '
+            f'{row["oid"]};'
+            for name, row in predefined(gen).items()]
+
+
 def generate(gen):
-    roles = {row['rolname']: row for row in gen.rows['pg_authid']
-             if row['rolsuper'] == 'f'}
+    roles = predefined(gen)
     member_of = {}
     for granted, member in gen.initdb.role_grants:
         member_of.setdefault(member, []).append(granted)

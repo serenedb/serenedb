@@ -1,6 +1,6 @@
 import os
 
-from . import config, source
+from . import config, roles, source
 from .builtins import TypeRow
 from .common import (CATALOG_DIR, GENERATED_DIR, PG_CATALOG, array, camel,
                      cpp_bool, cpp_char, cpp_str, generated, oid)
@@ -259,9 +259,7 @@ def generate(gen, constants, all_types):
             named_oids(config.COLLATIONS,
                        lambda name: gen.one('pg_collation', collname=name,
                                             collnamespace=PG_CATALOG)['oid']) +
-            named_oids(config.ROLES,
-                       lambda name: gen.one('pg_authid',
-                                            rolname=name)['oid']))
+            roles.constants(gen))
     coded = table_files()
     tables, all_tables, known = [], [], set()
     for (relation_oid, schema, name, relkind, shared, row_type,

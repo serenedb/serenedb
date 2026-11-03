@@ -148,7 +148,7 @@ QUERY PLAN
 │ ╭─ Terms ──────────────────────────────────┴──────────────────────────────────────────╮ │
 │ │ Field: g(string)                                                                    │ │
 │ │ Values:                                                                             │ │
-│ │ '\\x1fan', 'al\\x1f', 'aly', 'ana', 'cal', 'ica', 'l\\x1f', 'lyt', 'nal', 'tic', 'yti' │ │
+│ │ 'aly', 'al\\xff', 'ana', 'cal', 'ica', 'lyt', 'l\\xff', 'nal', 'tic', 'yti', '\\xffan' │ │
 │ ╰─────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: id                                                                         │
 │ ~1 row                                                                                  │
@@ -165,7 +165,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
+│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
 │ │ Threshold: 0.01                           │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                   │
@@ -184,7 +184,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
+│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
 │ │ Threshold: 1                              │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Projections: id                               │
@@ -202,7 +202,7 @@ QUERY PLAN
 │ ╭─ NGram Similarity ────────────────────────╮ │
 │ │ Field: g(string)                          │ │
 │ │ NGrams:                                   │ │
-│ │ \\x1fanananalalylytytiticicacalal\\x1fl\\x1f │ │
+│ │ \\xffanananalalylytytiticicacalal\\xffl\\xff │ │
 │ │ Threshold: 1                              │ │
 │ ╰───────────────────────────────────────────╯ │
 │ Score: bm25(k1=1.2, b=0.75)                   │

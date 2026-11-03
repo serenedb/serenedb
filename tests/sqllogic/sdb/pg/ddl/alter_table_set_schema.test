@@ -1,0 +1,234 @@
+statement ok
+CREATE SCHEMA mrbeast;
+
+
+statement ok
+CREATE SCHEMA feastables;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY beast_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE mrbeast.videos (id INTEGER PRIMARY KEY, title TEXT);
+
+
+statement ok
+CREATE INDEX videos_idx ON mrbeast.videos USING inverted (title beast_dict);
+
+
+statement ok
+INSERT INTO mrbeast.videos VALUES (6, 'mrbeast squid game'), (7, 'feastables chocolate');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mrbeast.videos;
+
+
+statement ok
+ALTER TABLE mrbeast.videos SET SCHEMA feastables;
+
+
+query
+SELECT schemaname, tablename, indexname FROM pg_indexes WHERE indexname = 'videos_idx';
+----
+schemaname	tablename	indexname
+feastables	videos	videos_idx
+
+
+query
+SELECT id FROM feastables.videos_idx WHERE title @@ ts_phrase('feastables');
+----
+id
+7
+
+
+statement ok
+INSERT INTO feastables.videos VALUES (67, 'feastables six seven');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) feastables.videos;
+
+
+query
+SELECT id FROM feastables.videos_idx WHERE title @@ ts_phrase('feastables') ORDER BY id;
+----
+id
+7
+67
+
+
+statement ok
+CREATE TABLE mrbeast.subscribers (id INTEGER);
+
+
+statement ok
+CREATE VIEW mrbeast.subscriber_count AS SELECT id FROM mrbeast.subscribers;
+
+
+statement error
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
+----
+db error: ERROR: Cannot alter entry "subscribers" because there are entries that depend on it.
+view "subscriber_count" depends on table "subscribers".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+DROP VIEW mrbeast.subscriber_count;
+
+
+statement ok
+ALTER TABLE mrbeast.subscribers SET SCHEMA feastables;
+
+
+statement ok
+CREATE TABLE mrbeast.beast_games (id INTEGER PRIMARY KEY, title TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO mrbeast.beast_games VALUES (1, 'squid game'), (2, 'last to leave');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mrbeast.beast_games;
+
+
+statement ok
+ALTER TABLE mrbeast.beast_games SET SCHEMA feastables;
+
+
+query
+SELECT id, title FROM feastables.beast_games ORDER BY id;
+----
+id	title
+1	squid game
+2	last to leave
+
+
+statement ok
+INSERT INTO feastables.beast_games VALUES (67, 'six seven');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) feastables.beast_games;
+
+
+query
+SELECT id FROM feastables.beast_games WHERE title = 'six seven';
+----
+id
+67
+
+
+statement ok
+CREATE SEQUENCE mrbeast.six_seven_seq START 67;
+
+
+statement ok
+CREATE TABLE mrbeast.tickets (id BIGINT DEFAULT nextval('mrbeast.six_seven_seq'));
+
+
+statement ok
+CREATE TABLE mrbeast.more_tickets (id BIGINT DEFAULT nextval('mrbeast.six_seven_seq'));
+
+
+statement ok
+ALTER TABLE mrbeast.tickets SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.tickets DEFAULT VALUES;
+
+
+query
+SELECT id FROM feastables.tickets;
+----
+id
+67
+
+
+statement error
+ALTER TEXT SEARCH DICTIONARY beast_dict SET SCHEMA mrbeast;
+----
+db error: ERROR: Cannot alter entry "beast_dict" because there are entries that depend on it.
+index "videos_idx" depends on tokenizer "beast_dict".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mrbeast.chocolate_dict AS split_text();
+
+
+statement ok
+ALTER TEXT SEARCH DICTIONARY mrbeast.chocolate_dict SET SCHEMA feastables;
+
+
+statement ok
+CREATE TABLE feastables.bars (id INTEGER PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE INDEX bars_idx ON feastables.bars USING inverted (name feastables.chocolate_dict);
+
+
+statement ok
+INSERT INTO feastables.bars VALUES (67, 'feastables bar');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) feastables.bars;
+
+
+query
+SELECT id FROM feastables.bars_idx WHERE name @@ ts_phrase('bar');
+----
+id
+67
+
+
+statement ok
+CREATE MACRO mrbeast.top_videos() AS TABLE SELECT 67 AS id;
+
+
+statement ok
+ALTER FUNCTION mrbeast.top_videos SET SCHEMA feastables;
+
+
+query
+SELECT id FROM feastables.top_videos();
+----
+id
+67
+
+
+statement ok
+CREATE TYPE mrbeast.tier AS ENUM ('gold', 'diamond');
+
+
+statement ok
+CREATE TABLE mrbeast.fans (tier mrbeast.tier);
+
+
+statement error
+ALTER TYPE mrbeast.tier SET SCHEMA feastables;
+----
+db error: ERROR: Cannot alter entry "tier" because there are entries that depend on it.
+table "fans" depends on type "tier".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+DROP SCHEMA feastables CASCADE;
+
+
+statement ok
+DROP SCHEMA mrbeast CASCADE;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY beast_dict;

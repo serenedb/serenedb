@@ -127,7 +127,7 @@ TEST(WildcardNGramFilterOptionsTest, like_is_a_regexp) {
               MakeRegexpOptions(R"((?s)\Aa%b.*c.\z)", analyzer));
 
   const irs::ByWildcardNGramOptions prefix{"abc%", analyzer, false};
-  EXPECT_EQ(R"("\x1fabc")", irs::ToString(prefix.query));
+  EXPECT_EQ(R"("\xffabc")", irs::ToString(prefix.query));
   EXPECT_NE(nullptr, prefix.matcher);
   EXPECT_EQ(prefix.query, MakeRegexpOptions("abc.*", analyzer, false).query);
 }
@@ -145,12 +145,12 @@ TEST(WildcardNGramFilterOptionsTest, short_pieces) {
   EXPECT_EQ(
     irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
       {.term =
-         irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"\x1F"
+         irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"\xFF"
                                                                      "a"})}}}},
     part("a%"));
   EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByTermOptions{
               .term = irs::bstring{irs::ViewCast<irs::byte_type>(
-                std::string_view{"a\x1F"})}}},
+                std::string_view{"a\xFF"})}}},
             part("%a"));
   EXPECT_EQ(
     irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
@@ -161,7 +161,7 @@ TEST(WildcardNGramFilterOptionsTest, short_pieces) {
             part("%"));
   EXPECT_EQ(irs::ByPhraseOptions::PhrasePart{irs::ByTermOptions{
               .term = irs::bstring{irs::ViewCast<irs::byte_type>(
-                std::string_view{"\x1F\x1F"})}}},
+                std::string_view{"\xFF\xFF"})}}},
             part(""));
 
   const irs::ByWildcardNGramOptions any{"_%", analyzer, true};
@@ -522,7 +522,7 @@ TEST(WildcardNGramFilterOptionsTest, grams_follow_literals) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
   const auto opts = MakeRegexpOptions("foo.*bar", analyzer);
-  EXPECT_EQ(R"(And("\x1ffoo", "bar\x1f"))", irs::ToString(opts.query));
+  EXPECT_EQ(R"(And("\xfffoo", "bar\xff"))", irs::ToString(opts.query));
   ASSERT_EQ(2U, opts.grams.size());
   EXPECT_EQ(2U, opts.grams[0].size());
   EXPECT_EQ(2U, opts.grams[1].size());
@@ -531,7 +531,7 @@ TEST(WildcardNGramFilterOptionsTest, grams_follow_literals) {
   EXPECT_FALSE(re2::RE2::FullMatch("foo", *opts.matcher));
 
   const auto exact = MakeRegexpOptions("(?s)foo.*", analyzer);
-  EXPECT_EQ(R"("\x1ffoo")", irs::ToString(exact.query));
+  EXPECT_EQ(R"("\xfffoo")", irs::ToString(exact.query));
   EXPECT_EQ(nullptr, exact.matcher);
   EXPECT_NE(nullptr, MakeRegexpOptions("(?s)foo.*", analyzer, false).matcher);
 }
@@ -604,6 +604,10 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
     "KELVIN",
     "\xC5\xBFky",
     "SKY",
+    "a\x1F"
+    "bcd",
+    "\xC3\xBF"
+    "bc",
   };
   static constexpr std::string_view kPatterns[]{
     "abc",
@@ -654,6 +658,10 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
     "\\bfoo\\w+",
     ".*\xD1\x81\xD0\xBE\xD0\xB1\xD0\xB0\xD0\xBA.*",
     "a\\x1fb",
+    "(?s)b.*",
+    "(?s).*d",
+    "(?s)\\x{ff}.*",
+    "(?s).*\\x{ff}bc",
     "[\\s\\S]*abc",
     "\\C*abc",
     "\\C\\C\\Cabc",
@@ -714,25 +722,17 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
     const auto check = [&](std::string_view pattern, irs::RegexpSyntax syntax) {
       const re2::RE2 re{pattern, irs::RegexpOptions(syntax)};
-      const auto marked = [&](irs::doc_id_t doc) {
-        return kValues[doc - kBase].find('\x1F') != std::string_view::npos;
-      };
       for (const bool has_pos : {true, false}) {
         const auto q =
           MakeRegexpFilter(kField, pattern, analyzer, has_pos, syntax);
-        const bool decided = !q.options().matcher;
         std::vector<irs::doc_id_t> expected;
         for (size_t i = 0; i != std::size(kValues); ++i) {
           const auto doc = kBase + static_cast<irs::doc_id_t>(i);
-          if (re.ok() && !(decided && marked(doc)) &&
-              re2::RE2::FullMatch(kValues[i], re)) {
+          if (re.ok() && re2::RE2::FullMatch(kValues[i], re)) {
             expected.push_back(doc);
           }
         }
-        auto actual = execute(q, nullptr);
-        if (decided) {
-          std::erase_if(actual, marked);
-        }
+        const auto actual = execute(q, nullptr);
         EXPECT_EQ(expected, actual)
           << "pattern: " << pattern << ", n: " << n << ", pos: " << has_pos
           << ", query: " << irs::ToString(q.options().query);

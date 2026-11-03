@@ -82,8 +82,8 @@ bool IsUnchangeableSetting(std::string_view name);
 
 bool IsNonTransactionalSetting(std::string_view name);
 
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
-                           bool global);
+void RequireSuperuserToSetGlobal(duckdb::ClientContext& ctx,
+                                 std::string_view name);
 
 class Config {
  public:

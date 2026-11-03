@@ -797,3 +797,119 @@ id
 6
 7
 8
+
+
+statement ok
+CREATE TABLE like_bytea (id INT, v BYTEA, p BYTEA)
+
+
+statement ok
+INSERT INTO like_bytea VALUES
+    (1, 'beast', 'b%'),
+    (2, '\x6d72ff6265617374', 'mr_beast'),
+    (3, '\xc3bf', '_'),
+    (4, '\xc3bf', '__'),
+    (5, '\xff6265617374', '%beast'),
+    (6, 'b%st', 'b\\%%'),
+    (7, 'bxst', 'b\\%%'),
+    (8, NULL, 'b%'),
+    (9, 'beast', NULL)
+
+
+query
+SELECT id,
+       v LIKE 'b%' AS prefix,
+       v LIKE '%beast' AS suffix,
+       v LIKE '%eas%' AS infix,
+       v LIKE 'beast' AS exact,
+       v NOT LIKE 'b%' AS not_prefix
+FROM like_bytea ORDER BY id
+----
+id	prefix	suffix	infix	exact	not_prefix
+1	t	t	t	t	f
+2	f	t	t	f	t
+3	f	f	f	f	t
+4	f	f	f	f	t
+5	f	t	t	f	t
+6	t	f	f	f	f
+7	t	f	f	f	f
+8	NULL	NULL	NULL	NULL	NULL
+9	t	t	t	t	f
+
+
+query
+SELECT id,
+       v LIKE '_' AS one,
+       v LIKE '__' AS two,
+       v LIKE 'mr_beast' AS mr,
+       v LIKE '_beast' AS lead
+FROM like_bytea WHERE id IN (2, 3, 5) ORDER BY id
+----
+id	one	two	mr	lead
+2	f	f	t	f
+3	f	t	f	f
+5	f	f	f	t
+
+
+query
+SELECT id, v LIKE p AS matched, v NOT LIKE p AS unmatched FROM like_bytea ORDER BY id
+----
+id	matched	unmatched
+1	t	f
+2	t	f
+3	f	t
+4	t	f
+5	t	f
+6	t	f
+7	f	t
+8	NULL	NULL
+9	NULL	NULL
+
+
+query
+SELECT id FROM like_bytea WHERE v LIKE 'b%' ORDER BY id
+----
+id
+1
+6
+7
+9
+
+
+query
+SELECT id FROM like_bytea WHERE v LIKE 'beast' ORDER BY id
+----
+id
+1
+9
+
+
+query
+SELECT like('beast'::bytea, 'b%') AS l,
+       notlike('beast'::bytea, 'b%') AS n,
+       like('\x6d72ff6265617374'::bytea, '%beast') AS f
+----
+l	n	f
+t	f	t
+
+
+skipif serenedb
+statement error
+SELECT 'b%st'::bytea LIKE 'b!%%' ESCAPE '!'
+----
+db error: ERROR: operator does not exist: bytea ~~ text
+HINT: No operator matches the given name and argument types. You might need to add explicit type casts.
+
+
+onlyif serenedb
+query
+SELECT 'b%st'::bytea LIKE 'b!%%' ESCAPE '!' AS a,
+       'bxst'::bytea LIKE 'b!%%' ESCAPE '!' AS b,
+       'bxst'::bytea NOT LIKE 'b!%%' ESCAPE '!' AS c
+----
+a	b	c
+t	f	t
+
+
+statement ok
+DROP TABLE like_bytea

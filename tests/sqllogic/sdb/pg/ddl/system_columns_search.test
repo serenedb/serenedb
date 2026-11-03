@@ -1,0 +1,53 @@
+statement ok
+CREATE TABLE beast_search (id int PRIMARY KEY, name text) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO beast_search VALUES (6, 'karl'), (7, 'chandler'), (67, 'nolan');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) beast_search;
+
+
+query
+SELECT pg_typeof(ctid)::text AS ctid, xmin::text AS xmin, xmax::text AS xmax, cmin::text AS cmin, cmax::text AS cmax
+FROM beast_search
+WHERE id = 6;
+----
+ctid	xmin	xmax	cmin	cmax
+tid	0	0	0	0
+
+
+query
+SELECT count(DISTINCT ctid) AS rows FROM beast_search;
+----
+rows
+3
+
+
+query
+SELECT id FROM beast_search WHERE ctid = (SELECT ctid FROM beast_search WHERE name = 'chandler');
+----
+id
+7
+
+
+statement ok
+DELETE FROM beast_search WHERE ctid = (SELECT ctid FROM beast_search WHERE name = 'nolan');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) beast_search;
+
+
+query
+SELECT id, name FROM beast_search ORDER BY id;
+----
+id	name
+6	karl
+7	chandler
+
+
+statement ok
+DROP TABLE beast_search;

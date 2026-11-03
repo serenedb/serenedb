@@ -45,6 +45,8 @@ using RuneSet = std::vector<Runes>;
 
 constexpr size_t kMaxDepth = 256;
 constexpr size_t kMaxVisits = 100000;
+constexpr char32_t kEdge = re2::Runemax + 1;
+constexpr re2::Rune kReservedByte = 0xF8;
 
 struct TreeDeleter {
   void operator()(re2::Regexp* re) const noexcept { re->Decref(); }
@@ -52,11 +54,11 @@ struct TreeDeleter {
 
 using Tree = std::unique_ptr<re2::Regexp, TreeDeleter>;
 
-Tree ParseTree(bytes_view pattern, RegexpSyntax syntax) {
+Tree ParseTree(bytes_view pattern, RegexpSyntax syntax, bool bytes) {
   const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
                              pattern.size()};
-  const auto flags =
-    static_cast<re2::Regexp::ParseFlags>(RegexpOptions(syntax).ParseFlags());
+  const auto flags = static_cast<re2::Regexp::ParseFlags>(
+    RegexpOptions(syntax, bytes).ParseFlags());
   re2::RegexpStatus status;
   const Tree parsed{re2::Regexp::Parse(sv, flags, &status)};
   if (!parsed) {
@@ -179,9 +181,17 @@ bool MayFold(re2::Rune rune) noexcept {
   return rune >= 0x80 || absl::ascii_isalpha(static_cast<unsigned char>(rune));
 }
 
-bstring Utf8(const Runes& runes) {
+bstring Encode(const Runes& runes, byte_type boundary, bool bytes) {
   bstring out;
   for (const auto r : runes) {
+    if (r == kEdge) {
+      out += boundary;
+      continue;
+    }
+    if (bytes) {
+      out += static_cast<byte_type>(r);
+      continue;
+    }
     char utf8[re2::UTFmax];
     const auto rune = static_cast<re2::Rune>(r);
     const int n = re2::runetochar(utf8, &rune);
@@ -194,6 +204,10 @@ bstring Utf8(const Runes& runes) {
 size_t RuneLength(bytes_view utf8) noexcept {
   return static_cast<size_t>(
     absl::c_count_if(utf8, [](byte_type b) { return (b & 0xC0) != 0x80; }));
+}
+
+bool Latin1(re2::Regexp* re) noexcept {
+  return (re->parse_flags() & re2::Regexp::Latin1) != 0;
 }
 
 size_t Shortest(const GramQuery& query) noexcept {
@@ -281,8 +295,9 @@ void Append(std::string& out, const GramQuery& query) {
 // whole strings as leaves and both ends of the term spelled by the boundary.
 class Extractor {
  public:
-  Extractor(size_t gram_size, byte_type boundary, const GramQueryLimits& limits)
-    : _n{gram_size}, _boundary{boundary}, _limits{limits} {}
+  Extractor(size_t gram_size, byte_type boundary, const GramQueryLimits& limits,
+            bool bytes)
+    : _n{gram_size}, _boundary{boundary}, _limits{limits}, _bytes{bytes} {}
 
   GramQuery Extract(re2::Regexp* root) {
     std::vector<Info> pieces;
@@ -298,9 +313,7 @@ class Extractor {
   }
 
  private:
-  Info Edge() const {
-    return {.has_exact = true, .exact = {Runes(1, _boundary)}};
-  }
+  Info Edge() const { return {.has_exact = true, .exact = {Runes(1, kEdge)}}; }
 
   Info Exact(RuneSet set) {
     Info info{.has_exact = true, .exact = std::move(set)};
@@ -317,8 +330,7 @@ class Extractor {
   // Nested concatenations and literal runs are flattened into one list of
   // pieces, so that `ConcatAll` sees every exact neighbour.
   void Pieces(re2::Regexp* re, size_t depth, std::vector<Info>& pieces) {
-    if (depth == kMaxDepth || ++_visits > kMaxVisits ||
-        (re->parse_flags() & re2::Regexp::Latin1) != 0) {
+    if (depth == kMaxDepth || ++_visits > kMaxVisits || Latin1(re) != _bytes) {
       _poisoned = true;
     }
     if (_poisoned) {
@@ -409,8 +421,7 @@ class Extractor {
       }
     };
     for (const auto rune : runes) {
-      _poisoned = _poisoned || IsSurrogate(rune) ||
-                  static_cast<char32_t>(rune) == _boundary;
+      _poisoned = _poisoned || IsSurrogate(rune) || Reserved(rune);
       if (fold && MayFold(rune)) {
         flush();
         pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
@@ -446,8 +457,7 @@ class Extractor {
     set.reserve(size);
     for (const auto& range : cc) {
       for (auto rune = range.lo; rune <= range.hi; ++rune) {
-        _poisoned = _poisoned || IsSurrogate(rune) ||
-                    static_cast<char32_t>(rune) == _boundary;
+        _poisoned = _poisoned || IsSurrogate(rune) || Reserved(rune);
         set.emplace_back(1, static_cast<char32_t>(rune));
       }
     }
@@ -595,7 +605,8 @@ class Extractor {
     GramQuery any{.kind = Kind::None};
     for (const auto& s : set) {
       any = Combine(Kind::Or, std::move(any),
-                    GramQuery{.kind = Kind::Literal, .literal = Utf8(s)});
+                    GramQuery{.kind = Kind::Literal,
+                              .literal = Encode(s, _boundary, _bytes)});
     }
     match = Combine(Kind::And, std::move(match), std::move(any));
   }
@@ -606,22 +617,28 @@ class Extractor {
     }
   }
 
+  bool Reserved(re2::Rune rune) const noexcept {
+    return _bytes && rune >= kReservedByte;
+  }
+
   size_t _n;
-  char32_t _boundary;
+  byte_type _boundary;
   GramQueryLimits _limits;
+  bool _bytes;
   size_t _visits{0};
   bool _poisoned{false};
 };
 
 bool AnyButNewline(re2::Regexp* re) {
   return re->op() == re2::kRegexpCharClass &&
-         re->cc()->size() == re2::Runemax && !re->cc()->Contains('\n');
+         re->cc()->size() == (Latin1(re) ? 0xFF : re2::Runemax) &&
+         !re->cc()->Contains('\n');
 }
 
 class LikeShape {
  public:
-  LikeShape(size_t gram_size, byte_type boundary)
-    : _n{gram_size}, _boundary{boundary} {}
+  LikeShape(size_t gram_size, byte_type boundary, bool bytes)
+    : _n{gram_size}, _boundary{boundary}, _bytes{bytes} {}
 
   std::optional<GramPlan> Extract(re2::Regexp* root,
                                   const GramQueryLimits& limits) {
@@ -631,7 +648,7 @@ class LikeShape {
     std::vector<bstring> parts;
     bstring best;
     const auto flush = [&](bytes_view piece) {
-      if (RuneLength(piece) >= _n) {
+      if ((_bytes ? piece.size() : RuneLength(piece)) >= _n) {
         parts.emplace_back(piece);
       } else if (best.size() <= piece.size()) {
         best = piece;
@@ -683,7 +700,7 @@ class LikeShape {
   };
 
   bool Collect(re2::Regexp* re, size_t depth) {
-    if (depth == kMaxDepth || (re->parse_flags() & re2::Regexp::Latin1) != 0) {
+    if (depth == kMaxDepth || Latin1(re) != _bytes) {
       return false;
     }
     switch (re->op()) {
@@ -739,8 +756,12 @@ class LikeShape {
     }
     auto& bytes = _tokens.back().bytes;
     for (auto rune : runes) {
-      if (IsSurrogate(rune) || rune == _boundary) {
+      if (IsSurrogate(rune) || (_bytes && rune >= kReservedByte)) {
         return false;
+      }
+      if (_bytes) {
+        bytes += static_cast<byte_type>(rune);
+        continue;
       }
       char utf8[re2::UTFmax];
       const int n = re2::runetochar(utf8, &rune);
@@ -760,13 +781,14 @@ class LikeShape {
 
   size_t _n;
   byte_type _boundary;
+  bool _bytes;
   std::vector<Token> _tokens;
   bool _end{false};
 };
 
 }  // namespace
 
-re2::RE2::Options RegexpOptions(RegexpSyntax syntax) {
+re2::RE2::Options RegexpOptions(RegexpSyntax syntax, bool bytes) {
   re2::RE2::Options options;
   options.set_log_errors(false);
   options.set_max_mem(int64_t{256} << 20);
@@ -774,22 +796,27 @@ re2::RE2::Options RegexpOptions(RegexpSyntax syntax) {
     options.set_posix_syntax(true);
     options.set_one_line(true);
   }
+  if (bytes) {
+    options.set_encoding(re2::RE2::Options::EncodingLatin1);
+  }
   return options;
 }
 
 GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
                           size_t gram_size, byte_type boundary,
-                          const GramQueryLimits& limits) {
+                          const GramQueryLimits& limits, bool bytes) {
   SDB_ASSERT(gram_size != 0);
-  SDB_ASSERT(boundary < 0x80);
-  const auto tree = ParseTree(pattern, syntax);
+  SDB_ASSERT(boundary >= kReservedByte);
+  const auto tree = ParseTree(pattern, syntax, bytes);
   if (!tree) {
     return {.query = {.kind = Kind::None}};
   }
-  if (auto plan = LikeShape{gram_size, boundary}.Extract(tree.get(), limits)) {
+  if (auto plan =
+        LikeShape{gram_size, boundary, bytes}.Extract(tree.get(), limits)) {
     return *std::move(plan);
   }
-  return {.query = Extractor{gram_size, boundary, limits}.Extract(tree.get())};
+  return {.query =
+            Extractor{gram_size, boundary, limits, bytes}.Extract(tree.get())};
 }
 
 size_t LeafCount(const GramQuery& query) noexcept {

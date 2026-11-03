@@ -128,11 +128,16 @@ ByPhraseOptions SplitGrams(analysis::Tokenizer& ngram,
   return part;
 }
 
+size_t SymbolCount(bytes_view literal, bool bytes) {
+  return bytes ? literal.size() : utf8_utils::Length(literal);
+}
+
 ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
                              ValueAnalyzer& value_analyzer,
-                             ValueTokens<>& tokens, bytes_view literal) {
+                             ValueTokens<>& tokens, bytes_view literal,
+                             bool bytes) {
   SDB_ASSERT(!literal.empty());
-  if (utf8_utils::Length(literal) >= ngram.min_gram()) {
+  if (SymbolCount(literal, bytes) >= ngram.min_gram()) {
     return SplitGrams(ngram, value_analyzer, tokens, ViewCast<char>(literal));
   }
   ByPhraseOptions part;
@@ -149,17 +154,18 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
-                   bool has_pos, std::vector<ByPhraseOptions>& grams) {
+                   bool has_pos, bool bytes,
+                   std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
     const auto& leaf = grams.emplace_back(
-      LiteralGrams(ngram, value_analyzer, tokens, query.literal));
-    return utf8_utils::Length(query.literal) < ngram.min_gram() ||
+      LiteralGrams(ngram, value_analyzer, tokens, query.literal, bytes));
+    return SymbolCount(query.literal, bytes) < ngram.min_gram() ||
            (has_pos && !leaf.empty());
   }
   bool exact = true;
   for (const auto& child : query.children) {
-    exact &=
-      SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, grams);
+    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, bytes,
+                           grams);
   }
   return exact;
 }
@@ -295,29 +301,45 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view like, analysis::WildcardTokenizer& analyzer,
-  bool has_positions)
+  bool has_positions, bool bytes)
   : ByWildcardNGramOptions{
       ViewCast<byte_type>(std::string_view{LikeRegexp(like)}),
-      RegexpSyntax::Perl, analyzer, has_positions} {}
+      RegexpSyntax::Perl, analyzer, has_positions, bytes} {}
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   bytes_view regexp, RegexpSyntax regexp_syntax,
-  analysis::WildcardTokenizer& analyzer, bool has_positions)
-  : pattern{regexp}, syntax{regexp_syntax}, has_pos{has_positions} {
+  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes)
+  : pattern{regexp},
+    syntax{regexp_syntax},
+    has_pos{has_positions},
+    bytes{bytes} {
   auto& ngram = analyzer.ngram();
-  auto plan = ExtractGramQuery(regexp, syntax, ngram.min_gram(), kBoundary);
+  auto plan =
+    ExtractGramQuery(regexp, syntax, ngram.min_gram(), kBoundary, {}, bytes);
   query = std::move(plan.query);
   if (query.kind == GramQuery::Kind::None) {
     return;
   }
+  std::optional<analysis::NGramTokenizer> byte_ngram;
+  if (bytes) {
+    byte_ngram.emplace(analysis::NGramTokenizer::Options{
+      ngram.min_gram(),
+      ngram.max_gram(),
+      false,
+      analysis::NGramTokenizer::InputType::Binary,
+      {},
+      {},
+    });
+  }
   ValueAnalyzer value_analyzer;
   ValueTokens tokens;
-  if (SplitLiterals(query, ngram, value_analyzer, tokens, has_pos, grams) &&
+  if (SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
+                    tokens, has_pos, bytes, grams) &&
       plan.exact) {
     return;
   }
   auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),
-                                             RegexpOptions(syntax));
+                                             RegexpOptions(syntax, bytes));
   if (!re->ok()) {
     if (re->error_code() == re2::RE2::ErrorPatternTooLarge) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),

@@ -30,7 +30,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/main/settings.hpp>
+#include <duckdb/parser/parser_options.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -187,13 +187,11 @@ duckdb::unique_ptr<duckdb::FunctionData> ArrayFillBind(
   const auto element = input.GetArguments()[0]->GetReturnType();
   CheckPolymorphicType(element);
   const auto ndims = BoundDimensionCount(input);
-  const auto max_dims =
-    duckdb::Settings::Get<duckdb::MaxExpressionDepthSetting>(
-      input.GetClientContext());
-  if (ndims > max_dims) {
+  constexpr auto kMaxDims = duckdb::ParserOptions::DEFAULT_MAX_EXPRESSION_DEPTH;
+  if (ndims > kMaxDims) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
                     ERR_MSG("number of array dimensions (", ndims,
-                            ") exceeds the maximum allowed (", max_dims, ")"));
+                            ") exceeds the maximum allowed (", kMaxDims, ")"));
   }
   auto type = element;
   for (size_t i = 0; i < ndims; ++i) {

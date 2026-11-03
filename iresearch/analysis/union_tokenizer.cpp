@@ -34,6 +34,20 @@ namespace irs::analysis {
 UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   : _subs{std::move(options)} {
   SDB_ASSERT(absl::c_none_of(_subs, std::logical_not{}));
+  for (size_t i = 0; i < _subs.size(); ++i) {
+    const auto traits = _subs[i]->Traits();
+    if (traits.store) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("union: child ", i,
+                              " produces a per-document store blob, which a "
+                              "union cannot deliver"));
+    }
+    if (i == 0) {
+      _output = traits.output;
+    } else if (traits.output != _output) {
+      _output = duckdb::LogicalTypeId::BLOB;
+    }
+  }
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

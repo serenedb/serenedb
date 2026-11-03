@@ -36,7 +36,7 @@ QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
 }
 
 Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                        RegexpSyntax syntax, score_t boost) {
+                        RegexpSyntax syntax, score_t boost, bool bytes) {
   bstring buf;
   return ExecuteRegexp(
     buf, pattern,
@@ -61,19 +61,20 @@ Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
       *filter->mutable_field_id() = id;
       *filter->mutable_dict() = dict;
       *filter->mutable_options() =
-        AutomatonOptions{pattern, RegexpPattern(syntax)};
+        AutomatonOptions{pattern, RegexpPattern(syntax, bytes)};
       filter->SetBoost(boost);
       return filter;
     });
 }
 
 Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                           RegexpSyntax syntax, score_t boost) {
+                           RegexpSyntax syntax, score_t boost, bool bytes) {
   auto filter = std::make_unique<ByRegexp>();
   *filter->mutable_field_id() = id;
   *filter->mutable_dict() = dict;
   filter->mutable_options()->pattern = pattern;
   filter->mutable_options()->syntax = syntax;
+  filter->mutable_options()->bytes = bytes;
   filter->SetBoost(boost);
   return filter;
 }
@@ -92,8 +93,8 @@ TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
       });
     },
     [&](bytes_view pattern) -> TermPredicate::ptr {
-      const auto source =
-        MakePatternSource(pattern, RegexpPattern(options().syntax));
+      const auto source = MakePatternSource(
+        pattern, RegexpPattern(options().syntax, options().bytes));
       return source->ok() ? source->Predicate() : nullptr;
     });
 }

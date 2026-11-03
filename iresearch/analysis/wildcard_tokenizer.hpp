@@ -53,7 +53,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
     return "generate_wildcard_ngrams";
   }
 
-  static constexpr byte_type kBoundary{0x1F};
+  static constexpr byte_type kBoundary{0xFF};
 
   explicit WildcardTokenizer(Tokenizer::ptr base_analyzer, size_t ngram_size);
   ~WildcardTokenizer() override;
@@ -68,7 +68,9 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
                uint32_t count, doc_id_t doc, TokenSink& sink,
                FillCtx ctx) final;
 
-  TokenTraits Traits() const noexcept final { return {.store = true}; }
+  TokenTraits Traits() const noexcept final {
+    return {.output = duckdb::LogicalTypeId::BLOB, .store = true};
+  }
 
   BlockTraits WantedBlockTraits() const noexcept final {
     return {.ascii = true};
@@ -78,7 +80,12 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
 
-  void Unbind() noexcept final { _analyzer->Unbind(); }
+  void Unbind() noexcept final {
+    _analyzer->Unbind();
+    SetByteInput(false);
+  }
+
+  void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
 
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _terms.capacity() +
@@ -89,15 +96,21 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   auto& ngram() noexcept { return _ngram; }
 
  private:
+  enum class Symbols : uint8_t {
+    Ascii,
+    Bytes,
+    Utf8,
+  };
+
   template<TokenLayout Layout, bool KnownAscii>
   bool AppendValue(duckdb::string_t value, TokenSink& sink);
 
   template<TokenLayout Layout>
   void EmitEncoded(TokenSink& sink, size_t from, bool ascii);
-  template<bool Identity, TokenLayout Layout>
+  template<Symbols S, TokenLayout Layout>
   void EmitTerms(TokenSink& sink, size_t from);
   void StoreTerms(TokenSink& sink);
-  template<bool Identity, TokenLayout Layout>
+  template<Symbols S, TokenLayout Layout>
   void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 
   struct SubSink;
@@ -108,6 +121,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   std::vector<uint32_t> _fill_bounds;
   std::unique_ptr<SubSink> _sub_sink;
   bool _base_stable = false;
+  bool _bytes = false;
 };
 
 extern template class TypedTokenizer<WildcardTokenizer>;

@@ -102,6 +102,8 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
+Uniform scalar quantization accepts constant vectors, including all-zero vectors and segments containing a single row. Such segments remain searchable with re-scoring enabled.
+
 Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
 ### Re-scoring {#rescoring}

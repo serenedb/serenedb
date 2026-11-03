@@ -33,7 +33,7 @@ class UnmapBehind {
  public:
   void Advance(const IndexInput& in, uint64_t at, uint64_t end) noexcept {
     if (at < _from) {
-      _from = at;
+      _from = Behind(at);
       _end = end;
       return;
     }
@@ -41,18 +41,23 @@ class UnmapBehind {
     const auto page = at / file_utils::kPage * file_utils::kPage;
     if (page >= _from + kChunk) {
       in.Unmap(_from, page - _from);
-      _from = page;
+      _from = Behind(page);
     }
   }
 
   void Finish(const IndexInput& in) const noexcept {
     if (_from < _end) {
-      in.Unmap(_from, _end - _from);
+      in.Unmap(_from, _end + kFaultAround - _from);
     }
   }
 
  private:
   static constexpr uint64_t kChunk = file_utils::kPrefetchChunk;
+  static constexpr uint64_t kFaultAround = 16 * file_utils::kPage;
+
+  static uint64_t Behind(uint64_t at) noexcept {
+    return at > kFaultAround ? at - kFaultAround : 0;
+  }
 
   uint64_t _from = std::numeric_limits<uint64_t>::max();
   uint64_t _end = 0;

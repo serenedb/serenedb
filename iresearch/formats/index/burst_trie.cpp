@@ -1654,12 +1654,10 @@ class ReadOnceTrail : util::Noncopyable {
       _doc.Advance(*_postings.doc, meta.doc_start, meta.doc_start + extent);
     }
     if (_postings.pos) {
-      _pos.Advance(*_postings.pos, meta.pos_start,
-                   meta.pos_start + PosExtent(meta));
+      _pos.Advance(*_postings.pos, meta.pos_start, PosEnd(meta));
     }
     if (_postings.pay) {
-      _pay.Advance(*_postings.pay, meta.pay_start,
-                   meta.pay_start + PayExtent(meta));
+      _pay.Advance(*_postings.pay, meta.pay_start, PayEnd(meta));
     }
   }
 

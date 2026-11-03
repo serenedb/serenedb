@@ -32,12 +32,6 @@
 
 namespace irs::codecs {
 
-enum class CodesEncoding : uint8_t {
-  Bitpack = 0,
-  Rle = 1,
-  Numeric = 2,
-};
-
 enum class FrameDictionary : uint8_t {
   None = 0,
   FirstFrame = 1,
@@ -121,17 +115,9 @@ kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                      Row codes                       |
 |   +----------------------------------------------+   |
-|   |   bitpacked code[row_count]                  |   |
-|   |   or bitpacked run value[run_count]          |   |
-|   |   or a numeric codec segment                 |   |
+|   |   numeric codec segment of code[row_count]   |   |
 |   +----------------------------------------------+   |
 |   row -> entry, code 0 is NULL                       |
-+------------------------------------------------------+
-|                       Run ends                       |
-|   +----------------------------------------------+   |
-|   |   bitpacked run_end[run_count]               |   |
-|   +----------------------------------------------+   |
-|   run-length row codes only                          |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -147,19 +133,18 @@ struct Header {
   Shape shape = Shape::Dedup;
   ByteCodec codec = ByteCodec::Lz4;
   uint8_t level = 0;
-  uint8_t code_width = 0;
+  uint8_t reserved0 = 0;
   uint8_t length_width = 0;
-  CodesEncoding codes_encoding = CodesEncoding::Bitpack;
-  uint8_t run_width = 0;
+  uint8_t reserved1[2] = {};
   uint32_t row_count = 0;
   uint32_t entry_count = 0;
   uint32_t frame_count = 0;
-  uint32_t run_count = 0;
+  uint32_t reserved2 = 0;
   uint32_t off_frames = 0;
   uint32_t off_lengths = 0;
   uint32_t off_lcps = 0;
   uint32_t off_codes = 0;
-  uint32_t off_runs = 0;
+  uint32_t reserved3 = 0;
   uint32_t off_symtab = 0;
   uint32_t symtab_size = 0;
   uint32_t off_data = 0;
@@ -176,19 +161,10 @@ struct Header {
     const auto h = duckdb::Load<Header>(p);
     SDB_ENSURE(h.version == kSegmentVersion,
                "col codec: unsupported segment version ", h.version);
-    const bool rle = h.codes_encoding == CodesEncoding::Rle;
-    const bool numeric = h.codes_encoding == CodesEncoding::Numeric;
-    const uint64_t codes_count = h.shape != Shape::Dedup || numeric ? 0
-                                 : rle ? h.run_count
-                                       : h.row_count;
     SDB_ENSURE(
       h.shape <= Shape::Plain &&
         static_cast<uint8_t>(h.codec) < kByteCodecCount &&
-        h.codes_encoding <= CodesEncoding::Numeric &&
-        (!numeric || (h.shape == Shape::Dedup && h.run_count == 0 &&
-                      h.off_runs > h.off_codes)) &&
-        h.code_width <= 32 && h.length_width <= 32 && h.run_width <= 32 &&
-        h.lcp_width <= 32 &&
+        h.length_width <= 32 && h.lcp_width <= 32 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
           h.codec != ByteCodec::Fsst) ||
@@ -205,12 +181,7 @@ struct Header {
         h.off_lcps +
             BitpackingPrimitives::GetRequiredSize(h.entry_count, h.lcp_width) <=
           h.off_codes &&
-        h.off_codes +
-            BitpackingPrimitives::GetRequiredSize(codes_count, h.code_width) <=
-          h.off_runs &&
-        h.off_runs +
-            BitpackingPrimitives::GetRequiredSize(h.run_count, h.run_width) <=
-          h.off_symtab &&
+        h.off_codes <= h.off_symtab &&
         h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data,
       "col codec: corrupted segment header");
     return h;
@@ -222,19 +193,18 @@ static_assert(offsetof(Header, version) == 0);
 static_assert(offsetof(Header, shape) == 1);
 static_assert(offsetof(Header, codec) == 2);
 static_assert(offsetof(Header, level) == 3);
-static_assert(offsetof(Header, code_width) == 4);
+static_assert(offsetof(Header, reserved0) == 4);
 static_assert(offsetof(Header, length_width) == 5);
-static_assert(offsetof(Header, codes_encoding) == 6);
-static_assert(offsetof(Header, run_width) == 7);
+static_assert(offsetof(Header, reserved1) == 6);
 static_assert(offsetof(Header, row_count) == 8);
 static_assert(offsetof(Header, entry_count) == 12);
 static_assert(offsetof(Header, frame_count) == 16);
-static_assert(offsetof(Header, run_count) == 20);
+static_assert(offsetof(Header, reserved2) == 20);
 static_assert(offsetof(Header, off_frames) == 24);
 static_assert(offsetof(Header, off_lengths) == 28);
 static_assert(offsetof(Header, off_lcps) == 32);
 static_assert(offsetof(Header, off_codes) == 36);
-static_assert(offsetof(Header, off_runs) == 40);
+static_assert(offsetof(Header, reserved3) == 40);
 static_assert(offsetof(Header, off_symtab) == 44);
 static_assert(offsetof(Header, symtab_size) == 48);
 static_assert(offsetof(Header, off_data) == 52);

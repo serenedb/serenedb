@@ -330,7 +330,7 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
     auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
     std::vector<uint8_t> file(in->Length());
     in->ReadData(file.data(), file.size());
-    uint64_t parts[8]{};
+    uint64_t parts[7]{};
     for (const auto& block : cw.Meta().data) {
       if (!block.codec || block.byte_size == 0 ||
           !duckdb::IsSereneDBCompressionType(block.codec->type)) {
@@ -344,10 +344,9 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
       parts[1] += at(28) - at(24);
       parts[2] += at(32) - at(28);
       parts[3] += at(36) - at(32);
-      parts[4] += at(40) - at(36);
-      parts[5] += at(44) - at(40);
-      parts[6] += at(52) - at(44);
-      parts[7] += at(56);
+      parts[4] += at(44) - at(36);
+      parts[5] += at(52) - at(44);
+      parts[6] += at(56);
     }
     uint64_t dictionaries = 0;
     for (const auto& d : cw.Meta().dictionaries) {
@@ -355,7 +354,7 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
     }
     std::fprintf(stderr,
                  "breakdown %s header %llu frames %llu lengths %llu lcps %llu "
-                 "codes %llu runs %llu symtab %llu data %llu trained %llu\n",
+                 "codes %llu symtab %llu data %llu trained %llu\n",
                  arm.name, static_cast<unsigned long long>(parts[0]),
                  static_cast<unsigned long long>(parts[1]),
                  static_cast<unsigned long long>(parts[2]),
@@ -363,7 +362,6 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(parts[4]),
                  static_cast<unsigned long long>(parts[5]),
                  static_cast<unsigned long long>(parts[6]),
-                 static_cast<unsigned long long>(parts[7]),
                  static_cast<unsigned long long>(dictionaries));
   }
   if (std::getenv("SDB_BENCH_HASH")) {
@@ -584,7 +582,7 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
       auto info =
         block.codec->get_segment_info(duckdb::QueryContext{}, *segment);
       for (const auto* name : {"transform", "leaf", "codec", "shape",
-                               "dictionary", "codes", "codes_transform"}) {
+                               "dictionary", "codes_transform"}) {
         if (info.contains(name)) {
           key += std::string{" "} + name + "=" + info[name];
         }

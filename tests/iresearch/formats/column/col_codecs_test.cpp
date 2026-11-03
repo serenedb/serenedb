@@ -508,7 +508,7 @@ TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   EXPECT_EQ(batch.size(), offset);
 }
 
-TEST(PackedReaderTest, SingleValuesMatchUnpackedGroups) {
+TEST(PackedReaderTest, ReadsEveryWidth) {
   constexpr size_t kValues = 5 * irs::codecs::kGroup;
   std::mt19937_64 rng{7};
   for (uint8_t width = 0; width <= 32; ++width) {
@@ -525,10 +525,6 @@ TEST(PackedReaderTest, SingleValuesMatchUnpackedGroups) {
     duckdb::BitpackingPrimitives::PackBuffer<uint32_t, true>(
       packed.data(), values.data(), kValues, width);
     irs::codecs::text::PackedReader reader{packed.data(), width};
-    for (size_t i = kValues; i-- > 0;) {
-      ASSERT_EQ(values[i], reader.Single(i))
-        << "width " << int{width} << ", value " << i;
-    }
     for (size_t i = 0; i < kValues; ++i) {
       ASSERT_EQ(values[i], reader.At(i))
         << "width " << int{width} << ", value " << i;
@@ -2342,13 +2338,10 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
   const auto h = irs::codecs::Header::Parse(block, size);
   ASSERT_EQ(h.shape, irs::codecs::Shape::Dedup);
-  ASSERT_EQ(h.codes_encoding, irs::codecs::CodesEncoding::Bitpack);
-  ASSERT_GT(h.code_width, 0);
-  ASSERT_GE((uint64_t{1} << h.code_width) - 1, uint64_t{h.entry_count});
-  uint32_t word = 0;
-  std::memcpy(&word, block + h.off_codes, sizeof(word));
-  word |= static_cast<uint32_t>((uint64_t{1} << h.code_width) - 1);
-  std::memcpy(block + h.off_codes, &word, sizeof(word));
+  auto codes = irs::codecs::NumericHeader::Parse(block + h.off_codes,
+                                                 h.off_symtab - h.off_codes);
+  codes.scale = h.entry_count;
+  duckdb::Store(codes, block + h.off_codes);
   {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -2452,9 +2445,10 @@ TEST_F(ColCodecsTest, DictionaryCodesUseTheNumericCodec) {
     irs::MemoryDirectory dir{};
     Write(dir, codec, {}, 60000, 16384, kTripledValues);
     Verify(dir, codec, 60000, kTripledValues);
-    const auto codes = SegmentInfo(dir, "codes");
-    EXPECT_NE(std::ranges::find(codes, "numeric"), codes.end())
-      << ::testing::PrintToString(codes);
+    const auto transforms = SegmentInfo(dir, "codes_transform");
+    EXPECT_TRUE(std::ranges::any_of(
+      transforms, [](const auto& transform) { return !transform.empty(); }))
+      << ::testing::PrintToString(transforms);
   }
 }
 
@@ -2553,10 +2547,10 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
     ASSERT_LE(offset + size, bytes.size());
     auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
     const auto h = irs::codecs::Header::Parse(block, size);
-    ASSERT_EQ(h.codes_encoding, irs::codecs::CodesEncoding::Numeric);
+    ASSERT_EQ(h.shape, irs::codecs::Shape::Dedup);
     if (leaf) {
-      auto codes = irs::codecs::NumericHeader::Parse(block + h.off_codes,
-                                                     h.off_runs - h.off_codes);
+      auto codes = irs::codecs::NumericHeader::Parse(
+        block + h.off_codes, h.off_symtab - h.off_codes);
       codes.leaf = irs::codecs::NumericLeaf::Zstd;
       duckdb::Store(codes, block + h.off_codes);
     } else {

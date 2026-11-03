@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/types/string_type.hpp>
@@ -43,7 +42,6 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs::text {
 
@@ -53,9 +51,6 @@ inline constexpr duckdb::idx_t kSparseEntries = 64;
 inline constexpr uint32_t kLazyFilterEntries = 4096;
 inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 inline constexpr duckdb::idx_t kFetchAhead = 16;
-
-ScratchVector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
-                               uint8_t width);
 
 struct PackedReader {
   PackedReader(duckdb::data_ptr_t src, uint8_t width)
@@ -70,24 +65,6 @@ struct PackedReader {
       loaded = group;
     }
     return values[i % kGroup];
-  }
-
-  uint32_t Single(duckdb::idx_t i) const noexcept {
-    if (width == 0) {
-      return 0;
-    }
-    const uint64_t bit = i * width;
-    const auto* word = src + bit / 32 * sizeof(uint32_t);
-    const auto shift = static_cast<uint32_t>(bit % 32);
-    uint32_t lo;
-    std::memcpy(&lo, word, sizeof(lo));
-    uint64_t value = lo >> shift;
-    if (shift + width > 32) {
-      uint32_t hi;
-      std::memcpy(&hi, word + sizeof(uint32_t), sizeof(hi));
-      value |= uint64_t{hi} << (32 - shift);
-    }
-    return static_cast<uint32_t>(value & ((uint64_t{1} << width) - 1));
   }
 
   duckdb::data_ptr_t src;

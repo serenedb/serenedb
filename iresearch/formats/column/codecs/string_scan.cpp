@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
-#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
@@ -42,18 +41,6 @@
 namespace irs::codecs::text {
 
 using duckdb::string_t;
-
-ScratchVector<uint32_t> Unpack(duckdb::data_ptr_t src, duckdb::idx_t count,
-                               uint8_t width) {
-  ScratchVector<uint32_t> out(
-    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count));
-  if (count != 0) {
-    duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
-      duckdb::data_ptr_cast(out.data()), src, count, width);
-  }
-  out.resize(count);
-  return out;
-}
 
 uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
                        uint32_t first, uint32_t end) {
@@ -77,7 +64,7 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
 
 NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
   const auto codes =
-    NumericHeader::Parse(base + h.off_codes, h.off_runs - h.off_codes);
+    NumericHeader::Parse(base + h.off_codes, h.off_symtab - h.off_codes);
   SDB_ENSURE(codes.row_count == h.row_count && codes.leaf == NumericLeaf::None,
              "col codec: corrupted row codes");
   return codes;
@@ -225,12 +212,10 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["shape"] = std::string{SnakeCaseName(h.shape)};
   info["codec"] = std::string{SnakeCaseName(h.codec)};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
-  info["codes"] = std::string{SnakeCaseName(h.codes_encoding)};
-  if (h.codes_encoding == CodesEncoding::Numeric) {
+  if (h.shape == Shape::Dedup) {
     const auto codes = CodesHeader(handle.Ptr() + segment.GetBlockOffset(), h);
     info["codes_transform"] = std::string{SnakeCaseName(codes.transform)};
   }
-  info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);
   if (h.flags == FrameDictionary::FirstFrame) {

@@ -54,45 +54,26 @@ uint64_t Packed(uint64_t count, uint32_t max_value) noexcept {
     count, BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_value));
 }
 
-CodesPlan PlanCodes(Shape shape, uint64_t rows, uint64_t entries,
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
                     uint64_t runs) noexcept {
-  CodesPlan plan;
   if (shape != Shape::Dedup) {
-    return plan;
+    return 0;
   }
   const auto max_code = static_cast<uint32_t>(entries);
-  const auto bitpack = Packed(rows, max_code);
-  const auto rle =
-    Packed(runs, max_code) + Packed(runs, static_cast<uint32_t>(rows));
-  plan.code_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_code);
-  if (rle < bitpack) {
-    plan.encoding = CodesEncoding::Rle;
-    plan.run_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(
-      static_cast<uint32_t>(rows));
-    plan.codes_count = runs;
-    plan.run_count = runs;
-    plan.bytes = rle;
-  } else {
-    plan.codes_count = rows;
-    plan.bytes = bitpack;
-  }
-  return plan;
+  return std::min(
+    Packed(rows, max_code),
+    Packed(runs, max_code) + Packed(runs, static_cast<uint32_t>(rows)));
 }
 
 void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, const CodesPlan& codes,
+            uint64_t lcps_bytes, uint64_t codes_bytes,
             uint64_t symtab_bytes) noexcept {
   h.off_frames = kHeaderSize;
   h.off_lengths =
     duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
   h.off_lcps = duckdb::AlignValue<uint64_t, 8>(h.off_lengths + lengths_bytes);
   h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
-  h.off_runs = duckdb::AlignValue<uint64_t, 8>(
-    h.off_codes +
-    BitpackingPrimitives::GetRequiredSize(codes.codes_count, codes.code_width));
-  h.off_symtab = duckdb::AlignValue<uint64_t, 8>(
-    h.off_runs +
-    BitpackingPrimitives::GetRequiredSize(codes.run_count, codes.run_width));
+  h.off_symtab = duckdb::AlignValue<uint64_t, 8>(h.off_codes + codes_bytes);
   h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
 }
 
@@ -110,7 +91,7 @@ void SegmentBuilder::Begin(Shape shape, uint8_t level, FrameLayout layout,
 uint64_t SegmentBuilder::Estimate() const noexcept {
   const auto entry_count = _entries.size() + FirstEntry();
   return kHeaderSize + Packed(entry_count, _max_len) +
-         PlanCodes(_shape, _rows, _entries.size(), _runs).bytes;
+         CodesBytes(_shape, _rows, _entries.size(), _runs);
 }
 
 void SegmentBuilder::SortEntries() {
@@ -157,8 +138,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   h.length_width =
     BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length);
   h.lcp_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp);
-  const auto codes = PlanCodes(_shape, _rows, _entries.size(), _runs);
-  h.code_width = codes.code_width;
   h.row_count = static_cast<uint32_t>(_rows);
   h.entry_count = static_cast<uint32_t>(entry_count);
   h.frame_count = static_cast<uint32_t>(frames.frames.size());
@@ -166,31 +145,16 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   h.dictionary = frames.dictionary;
   h.raw_bytes = _raw;
 
-  if (codes.encoding == CodesEncoding::Rle) {
-    _run_values.clear();
-    _run_ends.clear();
-    for (size_t i = 0; i < _codes.size(); ++i) {
-      if (i != 0 && _codes[i] == _codes[i - 1]) {
-        continue;
-      }
-      if (i != 0) {
-        _run_ends.push_back(static_cast<uint32_t>(i));
-      }
-      _run_values.push_back(_codes[i]);
-    }
-    _run_ends.push_back(static_cast<uint32_t>(_codes.size()));
-    SDB_ASSERT(_run_values.size() == codes.run_count);
+  std::string codes;
+  if (_shape == Shape::Dedup) {
+    codes = EncodeCodes(_codes, _codes_tuning);
   }
-  h.codes_encoding = codes.encoding;
-  h.run_count = static_cast<uint32_t>(codes.run_count);
-  h.run_width = codes.run_width;
-
   LayOut(h, frames.frames.size(),
          BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
          frames.lcps.empty()
            ? 0
            : BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
-         codes, frames.symtab.size());
+         codes.size(), frames.symtab.size());
   h.symtab_size = static_cast<uint32_t>(frames.symtab.size());
   h.data_size = static_cast<uint32_t>(data.size());
 
@@ -206,25 +170,8 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     BitpackingPrimitives::PackBuffer<uint32_t, true>(
       base + h.off_lcps, frames.lcps.data(), frames.lcps.size(), h.lcp_width);
   }
-  if (_shape == Shape::Dedup) {
-    if (codes.encoding == CodesEncoding::Rle) {
-      _run_values.resize(
-        BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_run_values.size()),
-        0);
-      _run_ends.resize(
-        BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_run_ends.size()), 0);
-      BitpackingPrimitives::PackBuffer<uint32_t, true>(
-        base + h.off_codes, _run_values.data(), _run_values.size(),
-        h.code_width);
-      BitpackingPrimitives::PackBuffer<uint32_t, true>(
-        base + h.off_runs, _run_ends.data(), _run_ends.size(), h.run_width);
-    } else {
-      _codes.resize(BitpackingPrimitives::RoundUpToAlgorithmGroupSize(_rows),
-                    0);
-      BitpackingPrimitives::PackBuffer<uint32_t, true>(
-        base + h.off_codes, _codes.data(), _codes.size(), h.code_width);
-      _codes.resize(_rows);
-    }
+  if (!codes.empty()) {
+    std::memcpy(base + h.off_codes, codes.data(), codes.size());
   }
   if (!frames.symtab.empty()) {
     std::memcpy(base + h.off_symtab, frames.symtab.data(),
@@ -247,7 +194,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   out.stats.emplace(std::move(stats));
   out.head.swap(_bytes);
   out.data.swap(data);
-  out.codes.swap(_codes);
 
   _stats.Clear();
   _codes.clear();

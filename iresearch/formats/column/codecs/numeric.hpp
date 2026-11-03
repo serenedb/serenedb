@@ -80,8 +80,7 @@ struct NumericTuning {
   }
 };
 
-NumericSegment EncodeCodes(std::span<const uint32_t> codes,
-                           uint64_t rival_bytes, NumericTuning& tuning);
+std::string EncodeCodes(std::span<const uint32_t> codes, NumericTuning& tuning);
 
 class NumericSealer {
  public:

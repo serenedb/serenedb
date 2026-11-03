@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
-#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -41,7 +40,6 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -54,7 +52,6 @@
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/codecs/string_scan.tpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
-#include "iresearch/store/unmap_behind.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -63,13 +60,8 @@ namespace irs::codecs::text {
 
 template<typename Leaf>
 struct DictionaryFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment& segment, data_ptr_t base) {
-    const auto& h = frames.header;
+  void Reset(duckdb::ColumnSegment& segment, data_ptr_t) {
     code_frames.reset();
-    codes = PackedReader{base + h.off_codes, h.code_width};
-    ends = PackedReader{base + h.off_runs, h.run_width};
-    run = 0;
-    last_group = kNoGroup;
     frames.decoded = CachedDictionary(segment);
   }
 
@@ -91,33 +83,11 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
       SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
       out[kept++] = {.entry = code, .at = at};
     };
-    switch (h.codes_encoding) {
-      case CodesEncoding::Bitpack:
-        for (idx_t i = 0; i < count; ++i) {
-          if (i + kFetchAhead < count && rows[i + kFetchAhead] < h.row_count) {
-            __builtin_prefetch(base + h.off_codes +
-                               rows[i + kFetchAhead] * h.code_width / 8);
-          }
-          SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-          keep(i, PackedCode(rows[i], i + 1 < count ? rows[i + 1] / kGroup
-                                                    : last_group));
-        }
-        break;
-      case CodesEncoding::Rle:
-        for (idx_t i = 0; i < count; ++i) {
-          SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-          keep(i, RunCode(rows[i]));
-        }
-        break;
-      case CodesEncoding::Numeric: {
-        auto& numeric = Numeric(base);
-        for (idx_t i = 0; i < count; ++i) {
-          SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-          keep(i, numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
-                                i + 1 == count ? kNoRow : rows[i + 1]));
-        }
-        break;
-      }
+    auto& numeric = Numeric(base);
+    for (idx_t i = 0; i < count; ++i) {
+      SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
+      keep(i, numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
+                            i + 1 == count ? kNoRow : rows[i + 1]));
     }
     order.resize(kept);
   }
@@ -125,52 +95,10 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
   IRS_FORCE_INLINE uint32_t ReadOne(data_ptr_t base, idx_t row) {
     const auto& h = frames.header;
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
-    uint32_t code = 0;
-    switch (h.codes_encoding) {
-      case CodesEncoding::Bitpack:
-        code = PackedCode(row, last_group);
-        break;
-      case CodesEncoding::Rle:
-        code = RunCode(row);
-        break;
-      case CodesEncoding::Numeric:
-        code = Numeric(base).Fetch(row, kNoRow, kNoRow);
-        break;
-    }
+    const auto code = Numeric(base).Fetch(row, kNoRow, kNoRow);
     SDB_ENSURE(code == 0 || code < h.entry_count,
                "col codec: corrupted row codes");
     return code;
-  }
-
-  IRS_FORCE_INLINE uint32_t PackedCode(idx_t row, idx_t neighbour) {
-    const auto group = row / kGroup;
-    const bool shared = group == codes.loaded || group == neighbour;
-    last_group = group;
-    return shared ? codes.At(row) : codes.Single(row);
-  }
-
-  IRS_FORCE_INLINE uint32_t RunCode(idx_t row) {
-    const auto& h = frames.header;
-    idx_t lo = run;
-    if (lo < h.run_count && ends.At(lo) <= row) {
-      ++lo;
-    }
-    if (lo >= h.run_count || ends.At(lo) <= row ||
-        (lo != 0 && ends.At(lo - 1) > row)) {
-      lo = 0;
-      idx_t hi = h.run_count;
-      while (lo < hi) {
-        const auto mid = lo + (hi - lo) / 2;
-        if (ends.Single(mid) <= row) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
-        }
-      }
-    }
-    SDB_ENSURE(lo < h.run_count, "col codec: corrupted run ends");
-    run = lo;
-    return codes.At(lo);
   }
 
   FrameDecoder<uint32_t>& Numeric(data_ptr_t base) {
@@ -196,14 +124,8 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
            frames.leaf.DecodedBytes() >= frames.header.raw_bytes;
   }
 
-  static constexpr idx_t kNoGroup = std::numeric_limits<idx_t>::max();
-
   FetchFrames<Leaf> frames;
   std::optional<FrameDecoder<uint32_t>> code_frames;
-  PackedReader codes{nullptr, 0};
-  PackedReader ends{nullptr, 0};
-  idx_t run = 0;
-  idx_t last_group = kNoGroup;
 };
 
 template<typename L>
@@ -223,7 +145,14 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
-    : entries{segment, std::move(handle), !cached} {
+    : entries{segment, std::move(handle), !cached},
+      code_frames{
+        entries.base + entries.header.off_codes,
+        CodesHeader(entries.base, entries.header), nullptr,
+        ReadContext::CacheSlot{
+          .file_offset = entries.file_offset + entries.header.off_codes,
+          .read_once = entries.read_once,
+        }} {
     if (const auto& slot = CacheSlotOf(segment); slot.touched) {
       cache = slot.cache;
       cache_slot = slot;
@@ -236,7 +165,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         .SetInvalid(0);
       full = entries.frames.empty();
     }
-    LoadCodes();
   }
 
   void AdoptDictionary(const DecodedDictionary& cached) {
@@ -286,37 +214,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
         duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));
     }
-  }
-
-  void LoadCodes() {
-    const auto& h = entries.header;
-    auto* base = entries.base;
-    if (h.codes_encoding == CodesEncoding::Numeric) {
-      code_frames.emplace(base + h.off_codes, CodesHeader(base, h), nullptr,
-                          ReadContext::CacheSlot{
-                            .file_offset = entries.file_offset + h.off_codes,
-                            .read_once = entries.read_once,
-                          });
-      return;
-    }
-    if (!Rle()) {
-      return;
-    }
-    run_values = Unpack(base + h.off_codes, h.run_count, h.code_width);
-    run_ends = Unpack(base + h.off_runs, h.run_count, h.run_width);
-    SDB_ENSURE(!run_ends.empty() && run_ends.back() == h.row_count,
-               "col codec: corrupted run ends");
-    SDB_ENSURE(
-      absl::c_all_of(run_values,
-                     [&](uint32_t code) { return code < h.entry_count; }),
-      "col codec: corrupted row codes");
-    if (entries.Streams()) {
-      entries.Release(h.off_codes, h.off_symtab);
-    }
-  }
-
-  bool Rle() const noexcept {
-    return entries.header.codes_encoding == CodesEncoding::Rle;
   }
 
   template<typename Entry>
@@ -500,21 +397,17 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   }
 
   const duckdb::SelectionVector& Codes(idx_t start, idx_t count) {
-    const auto start_offset = UnpackCodes(start, count);
-    if (start_offset != 0) {
-      auto* codes = code_sel->data();
-      std::memmove(codes, codes + start_offset, count * sizeof(duckdb::sel_t));
-    }
+    UnpackCodes(start, count);
     return *code_sel;
   }
 
   const duckdb::SelectionVector& Codes(idx_t start, idx_t span,
                                        const duckdb::SelectionVector& rows,
                                        idx_t row_count) {
-    const auto start_offset = UnpackCodes(start, span);
+    UnpackCodes(start, span);
     auto* codes = code_sel->data();
     for (idx_t i = 0; i < row_count; ++i) {
-      codes[i] = codes[start_offset + rows.get_index(i)];
+      codes[i] = codes[rows.get_index(i)];
     }
     return *code_sel;
   }
@@ -578,16 +471,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       }
     }
     WriteCodes(result, result_offset, codes, count);
-    if (!Rle() && !code_frames) {
-      const auto& h = entries.header;
-      const auto at = [&](uint64_t offset) {
-        return entries.file_offset + offset;
-      };
-      codes_behind.Advance(
-        *entries.read_once,
-        at(h.off_codes + (start - start % kGroup) * h.code_width / 8),
-        at(h.off_runs));
-    }
   }
 
   void EnsureThrough(uint32_t code) {
@@ -769,57 +652,17 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     }
   }
 
-  idx_t UnpackCodes(idx_t start, idx_t count) {
-    const auto& h = entries.header;
-    if (code_frames) {
-      ReserveCodes(count);
-      auto* codes = code_sel->data();
-      code_frames->Read(start, count, codes);
-      duckdb::sel_t max_code = 0;
-      for (idx_t i = 0; i < count; ++i) {
-        max_code = std::max(max_code, codes[i]);
-      }
-      SDB_ENSURE(max_code < h.entry_count, "col codec: corrupted row codes");
-      batch_max = max_code;
-      return 0;
-    }
-    if (Rle()) {
-      ReserveCodes(count);
-      auto* codes = code_sel->data();
-      size_t r = static_cast<size_t>(absl::c_upper_bound(run_ends, start) -
-                                     run_ends.begin());
-      idx_t pos = start;
-      idx_t i = 0;
-      duckdb::sel_t max_code = 0;
-      while (i < count) {
-        SDB_ENSURE(r < run_ends.size(), "col codec: corrupted run ends");
-        const auto take = std::min<idx_t>(run_ends[r] - pos, count - i);
-        std::fill_n(codes + i, take, run_values[r]);
-        max_code = std::max<duckdb::sel_t>(max_code, run_values[r]);
-        i += take;
-        pos += take;
-        ++r;
-      }
-      batch_max = max_code;
-      return 0;
-    }
-    const idx_t start_offset = start % kGroup;
-    const idx_t decode_count =
-      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(count +
-                                                                start_offset);
-    ReserveCodes(decode_count);
-    auto* src =
-      entries.base + h.off_codes + ((start - start_offset) * h.code_width) / 8;
-    duckdb::BitpackingPrimitives::UnPackBuffer<duckdb::sel_t>(
-      duckdb::data_ptr_cast(code_sel->data()), src, decode_count, h.code_width);
-    const auto* codes = code_sel->data() + start_offset;
+  void UnpackCodes(idx_t start, idx_t count) {
+    ReserveCodes(count);
+    auto* codes = code_sel->data();
+    code_frames.Read(start, count, codes);
     duckdb::sel_t max_code = 0;
     for (idx_t i = 0; i < count; ++i) {
       max_code = std::max(max_code, codes[i]);
     }
-    SDB_ENSURE(max_code < h.entry_count, "col codec: corrupted row codes");
+    SDB_ENSURE(max_code < entries.header.entry_count,
+               "col codec: corrupted row codes");
     batch_max = max_code;
-    return start_offset;
   }
 
   EntryFrames<Shape::Dedup, Leaf> entries;
@@ -828,13 +671,10 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   duckdb::sel_t batch_max = 0;
   uint32_t next_frame = 0;
   idx_t streamed = 0;
-  UnmapBehind codes_behind;
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
-  ScratchVector<uint32_t> run_values;
-  ScratchVector<uint32_t> run_ends;
-  std::optional<FrameDecoder<uint32_t>> code_frames;
+  FrameDecoder<uint32_t> code_frames;
   idx_t filter_match_count = 0;
   std::vector<uint8_t> verdicts;
   std::vector<uint32_t> pending;

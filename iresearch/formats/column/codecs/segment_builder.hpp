@@ -37,6 +37,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -51,20 +52,11 @@ inline constexpr uint64_t kDriftMinFraction = 4;
 
 uint64_t Packed(uint64_t count, uint32_t max_value) noexcept;
 
-struct CodesPlan {
-  CodesEncoding encoding = CodesEncoding::Bitpack;
-  uint8_t code_width = 0;
-  uint8_t run_width = 0;
-  uint64_t codes_count = 0;
-  uint64_t run_count = 0;
-  uint64_t bytes = 0;
-};
-
-CodesPlan PlanCodes(Shape shape, uint64_t rows, uint64_t entries,
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
                     uint64_t runs) noexcept;
 
 void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, const CodesPlan& codes,
+            uint64_t lcps_bytes, uint64_t codes_bytes,
             uint64_t symtab_bytes) noexcept;
 
 class DedupScratch {
@@ -118,7 +110,6 @@ struct Segment {
   uint32_t max_len = 0;
   std::string head;
   std::string data;
-  ScratchVector<uint32_t> codes;
   std::optional<duckdb::BaseStatistics> stats;
 
   uint64_t Size() const noexcept { return head.size() + data.size(); }
@@ -147,8 +138,13 @@ struct EncodedFrames {
 class SegmentBuilder {
  public:
   explicit SegmentBuilder(const StringAccumulator& acc,
-                          const duckdb::LogicalType& type, DedupScratch& dedup)
-    : _acc{acc}, _stats{type}, _type{type}, _dedup{dedup} {}
+                          const duckdb::LogicalType& type, DedupScratch& dedup,
+                          NumericTuning& codes_tuning)
+    : _acc{acc},
+      _stats{type},
+      _type{type},
+      _dedup{dedup},
+      _codes_tuning{codes_tuning} {}
 
   void Begin(Shape shape, uint8_t level, FrameLayout layout, uint64_t begin);
 
@@ -274,6 +270,7 @@ class SegmentBuilder {
   duckdb::StatsWriter<duckdb::string_t> _stats;
   const duckdb::LogicalType& _type;
   DedupScratch& _dedup;
+  NumericTuning& _codes_tuning;
   Shape _shape = Shape::Dedup;
   uint8_t _level = 0;
   FrameLayout _layout = FrameLayout::Dictionary;
@@ -293,8 +290,6 @@ class SegmentBuilder {
   std::vector<uint32_t> _remap;
   std::vector<std::string_view> _sorted;
   std::vector<uint32_t> _lengths;
-  std::vector<uint32_t> _run_values;
-  std::vector<uint32_t> _run_ends;
   std::string _bytes;
 };
 

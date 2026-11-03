@@ -148,7 +148,7 @@ class BlobEncoder {
       duckdb::BitpackingPrimitives::GetRequiredSize(
         entry_count,
         duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(p.max_len)),
-      0, PlanCodes(p.shape, p.rows, p.entries.size(), p.runs), 0);
+      0, CodesBytes(p.shape, p.rows, p.entries.size(), p.runs), 0);
     return h.off_data + data;
   }
 

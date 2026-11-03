@@ -352,7 +352,6 @@ class TypedSealer final : public NumericSealer {
       return std::move(*out);
     }
 
-    SDB_ASSERT(rival_bytes != kNoRival);
     BuildCandidates(nullptr);
     double best_price = static_cast<double>(rival_bytes);
     uint64_t best_bytes = rival_bytes;
@@ -1156,10 +1155,15 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
 
 }  // namespace
 
-NumericSegment EncodeCodes(std::span<const uint32_t> codes,
-                           uint64_t rival_bytes, NumericTuning& tuning) {
+std::string EncodeCodes(std::span<const uint32_t> codes,
+                        NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
-  return sealer.SealWith(kLeaflessPlan, rival_bytes, tuning, tuning.Due());
+  if (auto segment =
+        sealer.SealWith(kLeaflessPlan, kNoRival, tuning, tuning.Due());
+      !segment.bytes.empty()) {
+    return std::move(segment.bytes);
+  }
+  return sealer.SealWith(kLeaflessPlan, kNoRival, tuning, true).bytes;
 }
 
 std::unique_ptr<NumericSealer> NumericSealer::Make(

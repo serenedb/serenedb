@@ -44,9 +44,7 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::RowIdHandling row_id_handling);
 
   bool IsSink() const final { return true; }
-  bool ParallelSink() const final {
-    return _row_id_handling == duckdb::RowIdHandling::ASSUME_UNIQUE;
-  }
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(

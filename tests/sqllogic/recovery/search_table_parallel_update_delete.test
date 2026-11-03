@@ -92,6 +92,71 @@ segs
 8
 
 
+statement ok
+CREATE TABLE pud_src AS
+  SELECT i AS a, j FROM range(0, 8000, 2) t(i), range(3) r(j);
+
+
+statement ok
+SET sdb_faults = 'search_update_parallel_sink_fails';
+
+
+statement ok
+SET sdb_faults = 'search_delete_parallel_sink_fails';
+
+
+statement error
+UPDATE pud SET b = 'none' WHERE md5(b) = '';
+----
+db error: ERROR: intentional debug error
+
+
+statement error
+UPDATE pud SET b = 'none' FROM pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
+----
+db error: ERROR: intentional debug error
+
+
+statement error
+DELETE FROM pud WHERE md5(b) = '';
+----
+db error: ERROR: intentional debug error
+
+
+statement error
+DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET threads = 1;
+
+
+statement count 0
+UPDATE pud SET b = 'none' WHERE md5(b) = '';
+
+
+statement count 0
+UPDATE pud SET b = 'none' FROM pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
+
+
+statement count 0
+DELETE FROM pud WHERE md5(b) = '';
+
+
+statement count 0
+DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
+
+
+statement ok
+SET threads = 4;
+
+
+statement ok
+RESET sdb_faults;
+
+
 statement count 8000
 UPDATE pud SET b = 'u1_' || a;
 
@@ -133,11 +198,6 @@ SELECT (SELECT count(*) FROM (SELECT a, b FROM pud EXCEPT ALL SELECT a, b FROM p
 ----
 only_search	only_plain
 0	0
-
-
-statement ok
-CREATE TABLE pud_src AS
-  SELECT i AS a FROM range(0, 8000, 2) t(i), range(3) r(j);
 
 
 statement count 4000

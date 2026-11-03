@@ -123,17 +123,10 @@ class Writes {
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
 
-  template<typename Factory>
-  const PinnedSearchTable& EnsureSearchTable(duckdb::idx_t database_id,
-                                             duckdb::idx_t store_id,
-                                             Factory&& make) {
-    auto& pinned =
-      _readers.try_emplace(std::pair{database_id, store_id}).first->second;
-    if (!pinned.reader) {
-      pinned = make();
-    }
-    return pinned;
-  }
+  static PinnedSearchTable MakePinnedSearchTable(const Store& store);
+
+  const PinnedSearchTable& EnsureSearchTable(const Store& store);
+  const irs::DirectoryReader& PinnedReader(const Store& store) const;
 
   void ResetReaders() noexcept { _readers.clear(); }
 
@@ -185,7 +178,6 @@ class Writes {
   };
 
   StoreWrites& EnsureStoreWrites(const std::shared_ptr<Store>& store);
-  const irs::DirectoryReader& PinnedReader(const Store& store) const;
 
   // Node-based: the entry is well past FlatHashMap's size cut-off, and the
   // buffer is held by reference across a statement, so the nodes must not

@@ -126,6 +126,13 @@ PERF_BACKFILL_RUN="${PERF_BACKFILL_RUN:-1}"
 PERF_DML_RUN="${PERF_DML_RUN:-1}"
 PERF_DML_COL="${PERF_DML_COL:-${PERF_INDEX_NUMERIC_COL}}"
 
+# A fifth cold load, the same UPDATE and DELETE written as UPDATE ... FROM and
+# DELETE ... USING over a key table holding every value of PERF_DML_COL
+# PERF_DML_JOIN_DUP times: a joined DML can match a row more than once, so it
+# deduplicates the row ids it is handed, unlike the plain statements. Off with 0.
+PERF_DML_JOIN_RUN="${PERF_DML_JOIN_RUN:-1}"
+PERF_DML_JOIN_DUP="${PERF_DML_JOIN_DUP:-2}"
+
 # Optional segment_memory_max (BYTES) for the search table's shared iresearch
 # store, injected into its CTAS WITH clause. Empty = server default (256MB).
 # e.g. 16777216 = 16MB. Lets you A/B the segment budget through the harness
@@ -800,7 +807,7 @@ if [[ "${PERF_BACKFILL_RUN}" == "1" ]]; then
 	run_backfill_comparison
 fi
 
-# --- 10. DML comparison (guarded by PERF_DML_RUN, default on) -----------------
+# --- 10. DML comparison (PERF_DML_RUN and PERF_DML_JOIN_RUN, default on) -----
 # Both engines loaded with the same rows, then the same UPDATE and DELETE timed
 # on each. The search side's refresh after each statement is reported on its
 # own row and folded into its total: it is where the removals are applied and
@@ -810,17 +817,46 @@ fi
 # one engine's changes to whichever statement commits next. Row counts after the
 # DELETE are compared, so a run that loses or duplicates rows says so next to
 # its timings.
+#
+# `plain` filters the table itself; `join` matches it against dml_keys, rebuilt
+# off the clock before each statement from the transactional table's current
+# values, so both engines change the same rows as in `plain`.
 run_dml_comparison() {
+	local mode="$1"
 	printf '\n\n' | tee -a "${RUN_LOG}"
 	{
-		echo "###### DML (UPDATE every row, DELETE about half) ######"
+		echo "###### DML ${mode} (UPDATE every row, DELETE about half) ######"
 		echo "column: \"${PERF_DML_COL}\""
+		if [[ "${mode}" == "join" ]]; then
+			echo "key duplicates: ${PERF_DML_JOIN_DUP}"
+		fi
 	} | tee -a "${RUN_LOG}"
 
 	start_serened
 	create_view
 
 	local col="\"${PERF_DML_COL}\""
+	local update_txn update_search delete_txn delete_search
+	if [[ "${mode}" == "join" ]]; then
+		update_txn="UPDATE hits_txn_dml SET ${col} = hits_txn_dml.${col} - 1 FROM dml_keys WHERE hits_txn_dml.${col} = dml_keys.k;"
+		update_search="UPDATE hits_search_dml SET ${col} = hits_search_dml.${col} - 1 FROM dml_keys WHERE hits_search_dml.${col} = dml_keys.k;"
+		delete_txn="DELETE FROM hits_txn_dml USING dml_keys WHERE hits_txn_dml.${col} = dml_keys.k;"
+		delete_search="DELETE FROM hits_search_dml USING dml_keys WHERE hits_search_dml.${col} = dml_keys.k;"
+	else
+		update_txn="UPDATE hits_txn_dml SET ${col} = ${col} - 1;"
+		update_search="UPDATE hits_search_dml SET ${col} = ${col} - 1;"
+		delete_txn="DELETE FROM hits_txn_dml WHERE ${col} % 2 = 0;"
+		delete_search="DELETE FROM hits_search_dml WHERE ${col} % 2 = 0;"
+	fi
+	# Rebuilds dml_keys from the rows matching $1, then checkpoints it away.
+	dml_keys() {
+		[[ "${mode}" == "join" ]] || return 0
+		run_setup "dml_keys" "${BUILD_THREADS}" "
+CREATE OR REPLACE TABLE dml_keys AS
+SELECT ${col} AS k FROM hits_txn_dml, range(${PERF_DML_JOIN_DUP}) r(j) WHERE $1;
+"
+		run_setup "dml_keys_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
+	}
 
 	run_setup "dml_txn_load" "${BUILD_THREADS}" "
 CREATE TABLE hits_txn_dml WITH (storage = 'transactional') AS
@@ -836,13 +872,10 @@ VACUUM (REFRESH_TABLE) hits_search_dml;
 "
 	run_setup "dml_load_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
 
-	run_sql "dml_txn_update" "${BUILD_THREADS}" "
-UPDATE hits_txn_dml SET ${col} = ${col} - 1;
-"
+	dml_keys "true"
+	run_sql "dml_txn_update" "${BUILD_THREADS}" "${update_txn}"
 	run_setup "dml_txn_update_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
-	run_sql "dml_search_update" "${BUILD_THREADS}" "
-UPDATE hits_search_dml SET ${col} = ${col} - 1;
-"
+	run_sql "dml_search_update" "${BUILD_THREADS}" "${update_search}"
 	run_setup "dml_search_update_refresh" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search_dml;
 "
@@ -857,13 +890,10 @@ VACUUM (COMPACT_TABLE) hits_search_dml;
 "
 	segs_compact=$(psql "${PSQL_CONN}" -tAc "${segs_sql}" 2>&1 | tr -d '[:space:]')
 
-	run_sql "dml_txn_delete" "${BUILD_THREADS}" "
-DELETE FROM hits_txn_dml WHERE ${col} % 2 = 0;
-"
+	dml_keys "${col} % 2 = 0"
+	run_sql "dml_txn_delete" "${BUILD_THREADS}" "${delete_txn}"
 	run_setup "dml_txn_delete_checkpoint" "${BUILD_THREADS}" "CHECKPOINT;"
-	run_sql "dml_search_delete" "${BUILD_THREADS}" "
-DELETE FROM hits_search_dml WHERE ${col} % 2 = 0;
-"
+	run_sql "dml_search_delete" "${BUILD_THREADS}" "${delete_search}"
 	run_setup "dml_search_delete_refresh" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search_dml;
 "
@@ -897,7 +927,7 @@ VACUUM (REFRESH_TABLE) hits_search_dml;
 	s_del_total=$(dsum "${s_del}" "${s_del_ref}" "${s_del_cp}")
 	{
 		echo
-		echo "======== DML SUMMARY ========"
+		echo "======== DML ${mode} SUMMARY ========"
 		echo "column: ${col}    threads: ${BUILD_THREADS}"
 		echo
 		drow() { printf "%-26s %13s %13s   %7s\n" "$1" "$2" "$3" "$4"; }
@@ -921,7 +951,11 @@ VACUUM (REFRESH_TABLE) hits_search_dml;
 }
 
 if [[ "${PERF_DML_RUN}" == "1" ]]; then
-	run_dml_comparison
+	run_dml_comparison plain
+fi
+
+if [[ "${PERF_DML_JOIN_RUN}" == "1" ]]; then
+	run_dml_comparison join
 fi
 
 echo

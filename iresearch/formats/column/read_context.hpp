@@ -24,6 +24,7 @@
 #include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <string>
 #include <vector>
@@ -74,6 +75,8 @@ class ReadContext final : public BlockManager,
   void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
   bool MergeRead() const noexcept { return _merge_read; }
   void SetMergeRead(bool merge_read) noexcept { _merge_read = merge_read; }
+  duckdb::ObjectCache* Cache() const noexcept { return _cache; }
+  void SetCache(duckdb::ObjectCache* cache) noexcept { _cache = cache; }
   void SetUnmap(Unmap unmap) noexcept { _unmap = unmap; }
 
   void Release(uint64_t offset, uint64_t size) const noexcept;
@@ -90,6 +93,7 @@ class ReadContext final : public BlockManager,
     uint64_t file_id = 0;
     uint64_t file_offset = 0;
     std::atomic<bool>* touched = nullptr;
+    duckdb::ObjectCache* cache = nullptr;
     const codecs::TrainedDictionaries* dictionaries = nullptr;
   };
 
@@ -134,6 +138,7 @@ class ReadContext final : public BlockManager,
   bool _random_access = false;
   bool _read_ahead = true;
   bool _merge_read = false;
+  duckdb::ObjectCache* _cache;
   Unmap _unmap = Unmap::Never;
   std::atomic<size_t> _live_handles{0};
 };

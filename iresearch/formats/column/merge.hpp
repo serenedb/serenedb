@@ -55,8 +55,8 @@ struct MergeSource {
 class ColumnMerger {
  public:
   ColumnMerger(std::span<const MergeSource> sources,
-               const IndexFieldOptions* field_options,
-               const MergeOrder* order = nullptr);
+               const IndexFieldOptions* field_options, const MergeOrder* order,
+               duckdb::ObjectCache& cache);
 
   ColumnMerger(const ColumnMerger&) = delete;
   ColumnMerger& operator=(const ColumnMerger&) = delete;
@@ -158,6 +158,7 @@ class ColumnMerger {
   std::span<const MergeSource> _sources;
   const IndexFieldOptions* _field_options;
   const MergeOrder* _order;
+  duckdb::ObjectCache* _cache;
   duckdb::DatabaseInstance* _db = nullptr;
   uint32_t _row_group_size;
   std::vector<field_id> _ids;

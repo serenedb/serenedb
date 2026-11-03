@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -161,6 +162,7 @@ class MergePlan {
   SegmentMeta& _segment;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
+  duckdb::ObjectCache _cache;
   const IndexFieldOptions* _field_options;
   std::atomic_bool _aborted{false};
   MergeProgress _progress;

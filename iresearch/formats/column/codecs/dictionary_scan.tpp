@@ -220,7 +220,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached} {
     if (const auto& slot = CacheSlotOf(segment); slot.touched) {
-      cache = &segment.GetDatabase().GetObjectCache();
+      cache = slot.cache;
       cache_slot = slot;
     }
     if (cached) {

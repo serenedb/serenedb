@@ -162,7 +162,7 @@ class ColCopyCheckTest : public ::testing::Test {
 
   std::optional<irs::ReencodeEstimate> Estimate(
     irs::field_id id, const irs::IndexFieldOptions& options) const {
-    return irs::EstimateReencode(*_reader, Column(id), options);
+    return irs::EstimateReencode(*_reader, Column(id), options, nullptr);
   }
 
   irs::MemoryDirectory _dir;

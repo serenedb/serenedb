@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <atomic>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -130,13 +132,16 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
     _segment{segment},
     _scorer{scorer},
     _db{db},
+    _cache{db.GetObjectCache().GetMaxMemory(),
+           duckdb::BufferManager::GetBufferManager(db).GetBufferPool()},
     _field_options{field_options},
     _progress{[this, outer = progress] {
       return !_aborted.load(std::memory_order_relaxed) && (!outer || outer());
     }},
     _env{env},
     _hnsw_bases{hnsw_bases},
-    _key_order{sort ? std::make_unique<KeyOrder>(doc_map, *sort) : nullptr} {
+    _key_order{sort ? std::make_unique<KeyOrder>(doc_map, *sort, &_cache)
+                    : nullptr} {
   SDB_ASSERT(!sort || !sort->Empty());
 }
 
@@ -585,7 +590,8 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
     std::make_unique<ColWriter>(_col_dir, _segment.name, _db, WriteTier::Merge);
   _col_writer->SetFieldOptions(_field_options);
   _col_writer->SetHnswBases(_hnsw_bases);
-  _columns = std::make_unique<ColumnMerger>(_sources, _field_options, Order());
+  _columns =
+    std::make_unique<ColumnMerger>(_sources, _field_options, Order(), _cache);
   _norms.emplace(_sources, _doc_map.get_allocator().Manager(), Order());
   _idx = std::make_unique<IdxWriter>(_idx_dir, _segment.name);
 

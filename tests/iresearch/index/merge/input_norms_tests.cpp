@@ -153,7 +153,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
       for (const auto& input : _doc_map) {
         _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
       }
-      _order = std::make_unique<irs::KeyOrder>(_order_map, *sort);
+      _order = std::make_unique<irs::KeyOrder>(_order_map, *sort, nullptr);
       ASSERT_TRUE(_order->Prepare(1, [] { return true; }));
     }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,

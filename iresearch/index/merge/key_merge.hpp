@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -46,8 +47,9 @@ class KeyOrder {
     duckdb::LogicalType type;
   };
 
-  KeyOrder(MergeDocMap& doc_map, const SortSpec& spec)
-    : _doc_map{doc_map}, _spec{spec} {}
+  KeyOrder(MergeDocMap& doc_map, const SortSpec& spec,
+           duckdb::ObjectCache* cache)
+    : _doc_map{doc_map}, _spec{spec}, _cache{cache} {}
 
   KeyOrder(const KeyOrder&) = delete;
   KeyOrder& operator=(const KeyOrder&) = delete;
@@ -92,6 +94,7 @@ class KeyOrder {
 
   MergeDocMap& _doc_map;
   const SortSpec& _spec;
+  duckdb::ObjectCache* _cache;
   std::vector<KeyColumn> _keys;
   std::vector<uint64_t> _live;
   std::vector<uint64_t> _isolated;

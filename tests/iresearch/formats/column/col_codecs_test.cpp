@@ -41,6 +41,8 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <filesystem>
 #include <fstream>
@@ -1604,13 +1606,16 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
   scan_all(reopened, *col);
 }
 
-TEST_F(ColCodecsTest, MergeReadsLeaveTheDictionaryCacheToQueries) {
+TEST_F(ColCodecsTest, MergeReadsCacheInTheMergesOwnCache) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;
   irs::MemoryDirectory dir{};
   Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 8192,
         value);
-  auto& cache = Db().GetObjectCache();
+  auto& global = Db().GetObjectCache();
+  duckdb::ObjectCache merge{
+    global.GetMaxMemory(),
+    duckdb::BufferManager::GetBufferManager(Db()).GetBufferPool()};
   irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
@@ -1629,7 +1634,7 @@ TEST_F(ColCodecsTest, MergeReadsLeaveTheDictionaryCacheToQueries) {
       pos += take;
     }
   };
-  const auto cached = [&] {
+  const auto cached = [&](duckdb::ObjectCache& cache) {
     size_t count = 0;
     for (const auto& key : keys) {
       count += cache.Get<irs::codecs::DecodedDictionary>(key) ? 1 : 0;
@@ -1639,13 +1644,11 @@ TEST_F(ColCodecsTest, MergeReadsLeaveTheDictionaryCacheToQueries) {
   for (int i = 0; i != 2; ++i) {
     auto ctx = std::make_shared<irs::ReadContext>(r);
     ctx->SetMergeRead(true);
+    ctx->SetCache(&merge);
     scan_all(std::move(ctx));
   }
-  EXPECT_EQ(0u, cached());
-  scan_all(std::make_shared<irs::ReadContext>(r));
-  EXPECT_EQ(0u, cached());
-  scan_all(std::make_shared<irs::ReadContext>(r));
-  EXPECT_EQ(keys.size(), cached());
+  EXPECT_EQ(keys.size(), cached(merge));
+  EXPECT_EQ(0u, cached(global));
 }
 
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {

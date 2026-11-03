@@ -186,8 +186,8 @@ class EstimateTask final : public duckdb::BaseExecutorTask {
   void ExecuteTask() final {
     for (auto i = _next->fetch_add(1, std::memory_order_relaxed);
          i < _work.size(); i = _next->fetch_add(1, std::memory_order_relaxed)) {
-      _estimates[i] =
-        irs::EstimateReencode(*_work[i].reader, *_work[i].column, *_options);
+      _estimates[i] = irs::EstimateReencode(*_work[i].reader, *_work[i].column,
+                                            *_options, nullptr);
     }
   }
 

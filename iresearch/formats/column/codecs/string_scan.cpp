@@ -71,7 +71,7 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   if (!slot.touched || !Touched(slot)) {
     return nullptr;
   }
-  return segment.GetDatabase().GetObjectCache().Get<DecodedDictionary>(
+  return slot.cache->Get<DecodedDictionary>(
     DictionaryCacheKey(slot.file_id, slot.file_offset));
 }
 

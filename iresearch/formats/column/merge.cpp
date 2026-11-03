@@ -268,25 +268,29 @@ std::vector<std::vector<uint32_t>> TextLeavesOf(
   return out;
 }
 
-std::shared_ptr<ReadContext> SampleContext(const ColReader& reader) {
+std::shared_ptr<ReadContext> SampleContext(const ColReader& reader,
+                                           duckdb::ObjectCache& cache) {
   auto ctx = std::make_shared<ReadContext>(reader);
   ctx->SetMergeRead(true);
+  ctx->SetCache(&cache);
   return ctx;
 }
 
 std::shared_ptr<ReadContext> MergeContext(const ColReader& reader,
-                                          const duckdb::LogicalType& type) {
-  auto ctx = SampleContext(reader);
+                                          const duckdb::LogicalType& type,
+                                          duckdb::ObjectCache& cache) {
+  auto ctx = SampleContext(reader, cache);
   ctx->SetUnmap(ReadOnceUnmap(type));
   return ctx;
 }
 
 std::vector<std::shared_ptr<ReadContext>> SampleContexts(
-  std::span<const MergeSource> sources, field_id column) {
+  std::span<const MergeSource> sources, field_id column,
+  duckdb::ObjectCache& cache) {
   std::vector<std::shared_ptr<ReadContext>> ctxs(sources.size());
   for (size_t si = 0; si < sources.size(); ++si) {
     if (sources[si].col_reader && sources[si].col_reader->Column(column)) {
-      ctxs[si] = SampleContext(*sources[si].col_reader);
+      ctxs[si] = SampleContext(*sources[si].col_reader, cache);
     }
   }
   return ctxs;
@@ -450,8 +454,8 @@ bool ColumnMerger::VisitRows(field_id column, uint64_t begin, uint64_t end,
     }
     SDB_ASSERT(col->Type() == type);
     const uint64_t skip = lo - source_begin;
-    auto state = col->InitScan(ctxs.empty() ? MergeContext(*s.col_reader, type)
-                                            : ctxs[si]);
+    auto state = col->InitScan(
+      ctxs.empty() ? MergeContext(*s.col_reader, type, *_cache) : ctxs[si]);
     const uint64_t total = col->RowCount();
     if (!HasRemovals(s.reader->Meta())) {
       const uint64_t stop = std::min(skip + (hi - lo), total);
@@ -528,7 +532,7 @@ bool ColumnMerger::TrainLeaves(field_id column, ColWriter& output,
   }
   if (TrainsColumnDictionary(*_db, duckdb::LogicalType::VARCHAR,
                              opts.compression, CodecParams(opts))) {
-    const auto ctxs = SampleContexts(_sources, column);
+    const auto ctxs = SampleContexts(_sources, column, *_cache);
     const bool fallback = Rows(column) <= kSampleWindowsReach;
     ScanSampleWindows(
       _sources, column, ctxs,
@@ -689,7 +693,7 @@ void ColumnMerger::OpenOrdered(OrderedInput& in, size_t si, field_id column,
   if (!in.col) {
     return;
   }
-  auto ctx = MergeContext(*s.col_reader, in.col->Type());
+  auto ctx = MergeContext(*s.col_reader, in.col->Type(), *_cache);
   ctx->SetReadAhead(false);
   in.state = in.col->InitScan(std::move(ctx));
   const uint64_t total = in.col->RowCount();
@@ -883,10 +887,11 @@ bool ColumnMerger::VisitOrdered(field_id column, uint64_t begin, uint64_t end,
 
 ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
                            const IndexFieldOptions* field_options,
-                           const MergeOrder* order)
+                           const MergeOrder* order, duckdb::ObjectCache& cache)
   : _sources{sources},
     _field_options{field_options},
     _order{order},
+    _cache{&cache},
     _row_group_size{field_options ? field_options->row_group_size
                                   : uint32_t{DEFAULT_ROW_GROUP_SIZE}} {
   for (const auto& s : sources) {
@@ -967,7 +972,7 @@ bool ColumnMerger::Train(field_id column, ColWriter& output,
   const auto opts = Options(column);
   if (TrainsColumnDictionary(*_db, slot.first->Type(), opts.compression,
                              CodecParams(opts))) {
-    const auto ctxs = SampleContexts(_sources, column);
+    const auto ctxs = SampleContexts(_sources, column, *_cache);
     codecs::DictionarySampler sampler;
     uint64_t sampled = 0;
     SampleDictionary(_sources, column, ctxs, [&](std::string_view window) {
@@ -1030,13 +1035,15 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
   const auto& dictionary = Slot(column).dictionary;
   const auto estimate =
     dictionary
-      ? EstimateReencode(*source.col_reader, col, *_field_options, dictionary)
-      : EstimateReencode(*source.col_reader, col, *_field_options);
+      ? EstimateReencode(*source.col_reader, col, *_field_options, _cache,
+                         dictionary)
+      : EstimateReencode(*source.col_reader, col, *_field_options, _cache);
   if (ReencodePays(estimate)) {
     return MergeRange(column, part, begin, end, output, progress);
   }
   ReadContext ctx{*source.col_reader};
   ctx.SetMergeRead(true);
+  ctx.SetCache(_cache);
   ctx.SetUnmap(Unmap::EachBlock);
   std::span<const std::shared_ptr<const codecs::TrainedDictionary>> trained;
   if (!col.DictionaryMetas().empty()) {
@@ -1077,7 +1084,7 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
 
   if (cw.TrainsDictionary()) {
     SampleDictionary(
-      _sources, column, SampleContexts(_sources, column),
+      _sources, column, SampleContexts(_sources, column, *_cache),
       [&](std::string_view window) { cw.SampleDictionary({&window, 1}); });
   }
 

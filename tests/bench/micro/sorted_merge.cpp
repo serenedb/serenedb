@@ -618,7 +618,7 @@ void BM_KeyOrder(benchmark::State& state) {
     for (const auto& segment : inputs.reader) {
       doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
     }
-    irs::KeyOrder order{doc_map, spec};
+    irs::KeyOrder order{doc_map, spec, nullptr};
     if (!order.Prepare(1, proceed)) {
       state.SkipWithError("order failed");
       return;

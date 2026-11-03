@@ -51,8 +51,9 @@ using KeyColumn = KeyOrder::KeyColumn;
 
 class SegmentKeyReader final : public duckdb::PresortedMergeReader {
  public:
-  SegmentKeyReader(const SubReader& reader, std::span<const KeyColumn> keys)
-    : _cs{reader.GetColReader()} {
+  SegmentKeyReader(const SubReader& reader, std::span<const KeyColumn> keys,
+                   duckdb::ObjectCache* cache)
+    : _cs{reader.GetColReader()}, _cache{cache} {
     for (const auto& key : keys) {
       auto& column = *_columns.emplace_back(std::make_unique<Column>(key.type));
       column.reader = _cs ? _cs->Column(key.id) : nullptr;
@@ -72,6 +73,7 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
         if (!column.point) {
           column.point =
             std::make_unique<ColumnReader::PointReader>(*_cs, *column.reader);
+          column.point->SetCache(_cache);
         }
         column.value.ResetFromCache(column.value_cache);
         column.point->FetchRow(begin, column.value, 0);
@@ -82,6 +84,7 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
       if (!column.scanning) {
         auto ctx = std::make_shared<ReadContext>(*_cs);
         ctx->SetMergeRead(true);
+        ctx->SetCache(_cache);
         ctx->SetUnmap(ReadOnceUnmap(column.type));
         column.state = column.reader->InitScan(std::move(ctx));
         column.scanning = true;
@@ -130,23 +133,26 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
   };
 
   const ColReader* _cs;
+  duckdb::ObjectCache* _cache;
   std::vector<std::unique_ptr<Column>> _columns;
 };
 
 class SegmentKeys final : public duckdb::PresortedMergeInput {
  public:
-  SegmentKeys(const SubReader& reader, std::span<const KeyColumn> keys)
-    : _reader{reader}, _keys{keys} {}
+  SegmentKeys(const SubReader& reader, std::span<const KeyColumn> keys,
+              duckdb::ObjectCache* cache)
+    : _reader{reader}, _keys{keys}, _cache{cache} {}
 
   duckdb::idx_t Count() const final { return _reader.docs_count(); }
 
   duckdb::unique_ptr<duckdb::PresortedMergeReader> CreateReader() const final {
-    return duckdb::make_uniq<SegmentKeyReader>(_reader, _keys);
+    return duckdb::make_uniq<SegmentKeyReader>(_reader, _keys, _cache);
   }
 
  private:
   const SubReader& _reader;
   std::span<const KeyColumn> _keys;
+  duckdb::ObjectCache* _cache;
 };
 
 template<typename Work>
@@ -271,7 +277,7 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
   for (const auto& input : _doc_map) {
     inputs.push_back(
-      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, _keys));
+      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, _keys, _cache));
   }
   duckdb::PresortedMerge merge{std::move(types), std::move(modifiers),
                                std::move(inputs)};

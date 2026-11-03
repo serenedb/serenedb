@@ -941,7 +941,7 @@ struct ScanState final : duckdb::SegmentScanState {
     : handle{std::move(handle_p)},
       frames{handle.Ptr() + segment.GetBlockOffset(),
              SegmentHeader(handle.Ptr() + segment.GetBlockOffset(), segment),
-             &segment.GetDatabase().GetObjectCache(), CacheSlotOf(segment)} {}
+             CacheSlotOf(segment).cache, CacheSlotOf(segment)} {}
 
   duckdb::BufferHandle handle;
   FrameDecoder<T> frames;
@@ -1064,8 +1064,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
     cache.frames.emplace(base, SegmentHeader(base, segment),
-                         &segment.GetDatabase().GetObjectCache(),
-                         CacheSlotOf(segment));
+                         CacheSlotOf(segment).cache, CacheSlotOf(segment));
     cache.block = block;
   }
   auto& frames = *cache.frames;

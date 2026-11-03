@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <memory>
 
 #include "iresearch/index/column_info.hpp"
@@ -93,11 +94,12 @@ class ReencodeCache {
 
 ReencodeEstimate EstimateReencode(const ColReader& reader,
                                   const ColumnReader& column,
-                                  const IndexFieldOptions& options);
+                                  const IndexFieldOptions& options,
+                                  duckdb::ObjectCache* cache);
 
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options,
+  const IndexFieldOptions& options, duckdb::ObjectCache* cache,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary);
 
 }  // namespace irs

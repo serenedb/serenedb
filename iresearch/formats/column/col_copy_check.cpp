@@ -70,6 +70,7 @@ ReencodeKey KeyOf(const ColumnReader& column,
 
 ReencodeEstimate TrialReencode(
   const ColReader& reader, const ColumnReader& column, const ReencodeKey& key,
+  duckdb::ObjectCache* cache,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
   SDB_ASSERT(!column.Type().IsNested() && column.RowCount() != 0);
   const uint64_t rows = column.RowCount();
@@ -88,6 +89,7 @@ ReencodeEstimate TrialReencode(
   }
   auto ctx = std::make_shared<ReadContext>(reader);
   ctx->SetMergeRead(true);
+  ctx->SetCache(cache);
   auto state = column.InitScan(std::move(ctx));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;
@@ -155,18 +157,19 @@ void ReencodeCache::Store(field_id column, const ReencodeKey& key,
 
 ReencodeEstimate EstimateReencode(const ColReader& reader,
                                   const ColumnReader& column,
-                                  const IndexFieldOptions& options) {
+                                  const IndexFieldOptions& options,
+                                  duckdb::ObjectCache* cache) {
   const auto key = KeyOf(column, options);
   return reader.Reencodes().Estimate(column.Id(), key, [&] {
-    return TrialReencode(reader, column, key, nullptr);
+    return TrialReencode(reader, column, key, cache, nullptr);
   });
 }
 
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options,
+  const IndexFieldOptions& options, duckdb::ObjectCache* cache,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  return TrialReencode(reader, column, KeyOf(column, options),
+  return TrialReencode(reader, column, KeyOf(column, options), cache,
                        std::move(dictionary));
 }
 

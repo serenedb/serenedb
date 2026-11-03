@@ -27,6 +27,7 @@
 #include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/block.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
@@ -67,7 +68,7 @@ Unmap ReadOnceUnmap(const duckdb::LogicalType& type) {
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0} {}
+  : BlockManager{db, /*block_header_size=*/0}, _cache{&db.GetObjectCache()} {}
 
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
   : ReadContext{reader.Database()} {

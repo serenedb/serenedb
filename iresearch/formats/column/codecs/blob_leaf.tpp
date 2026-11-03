@@ -222,8 +222,7 @@ struct BlobFetch {
                duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
                size_t want, bool batched) {
     const auto& slot = CacheSlotOf(segment);
-    auto* cache =
-      slot.touched ? &segment.GetDatabase().GetObjectCache() : nullptr;
+    auto* cache = slot.cache;
     if (cache && decoded == 0 && Admitted(slot)) {
       if (segment_key.empty()) {
         segment_key = DictionaryCacheKey(slot.file_id, slot.file_offset);

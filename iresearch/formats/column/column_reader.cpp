@@ -465,10 +465,11 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
   ReadContext::CacheSlot slot;
   if (duckdb::IsSereneDBCompressionType(codec.type)) {
-    if (!ctx.MergeRead()) {
-      slot.file_id = _file_id;
-      slot.file_offset = m.file_offset;
+    slot.file_id = _file_id;
+    slot.file_offset = m.file_offset;
+    if (auto* cache = ctx.Cache()) {
       slot.touched = &_touched[w.block];
+      slot.cache = cache;
     }
     slot.dictionaries = Dictionaries(ctx);
   }

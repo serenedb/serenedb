@@ -66,6 +66,14 @@ class PostingsReader final {
     return bytes;
   }
 
+  void ReleaseMappedMemory() const noexcept {
+    for (const auto* in : {_doc_in.get(), _pos_in.get(), _pay_in.get()}) {
+      if (in) {
+        in->Unmap(0, in->Length());
+      }
+    }
+  }
+
   // features - the set of features available for segment
   void prepare(const ReaderState& state, IndexFeatures features);
 

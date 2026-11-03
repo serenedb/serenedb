@@ -2871,6 +2871,13 @@ class FieldReader::Impl {
     return bytes;
   }
 
+  void ReleaseMappedMemory() const noexcept {
+    _pr.ReleaseMappedMemory();
+    if (_terms_in) {
+      _terms_in->Unmap(0, _terms_in->Length());
+    }
+  }
+
   void prepare(const ReaderState& state);
 
   const TermReader* field(field_id id) const;
@@ -3136,6 +3143,10 @@ FieldReader::~FieldReader() = default;
 
 uint64_t FieldReader::CountMappedMemory() const {
   return _impl->CountMappedMemory();
+}
+
+void FieldReader::ReleaseMappedMemory() const noexcept {
+  _impl->ReleaseMappedMemory();
 }
 
 void FieldReader::prepare(const ReaderState& state) { _impl->prepare(state); }

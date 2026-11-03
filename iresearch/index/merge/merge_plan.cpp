@@ -634,6 +634,12 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
   return true;
 }
 
+void MergePlan::ReleaseInputs() const noexcept {
+  for (const auto& input : _doc_map) {
+    input.reader->ReleaseMappedMemory();
+  }
+}
+
 bool MergePlan::RunUnit(size_t unit) {
   SDB_ASSERT(unit < _units.size());
   SDB_WAIT_ON_FAILURE("pause_merge_unit");

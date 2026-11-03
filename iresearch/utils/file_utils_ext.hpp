@@ -157,6 +157,7 @@ inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
 inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
+size_t SystemPage() noexcept;
 void Prefetch(const void* addr, size_t size) noexcept;
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
 void Evict(const void* addr, size_t size) noexcept;

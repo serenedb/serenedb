@@ -54,6 +54,8 @@ class SegmentReader final : public SubReader {
 
   uint64_t CountMappedMemory() const final;
 
+  void ReleaseMappedMemory() const noexcept final;
+
   const SegmentInfo& Meta() const final;
 
   lead::Node::ptr docs_iterator() const final;

@@ -159,8 +159,13 @@ class MMapIndexInput final : public BytesViewInput {
     if (!_handle || offset >= _handle->size()) {
       return;
     }
+    const uint64_t size = _handle->size();
+    if (count >= size - offset) {
+      const uint64_t page = file_utils::SystemPage();
+      count = (size + page - 1) / page * page - offset;
+    }
     file_utils::Evict(static_cast<const byte_type*>(_handle->addr()) + offset,
-                      std::min<uint64_t>(count, _handle->size() - offset));
+                      count);
   }
 
   bool Warm(uint64_t offset, uint64_t count) const noexcept final {

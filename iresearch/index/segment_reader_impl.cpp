@@ -135,6 +135,15 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
   return bytes;
 }
 
+void SegmentReaderImpl::ReleaseMappedMemory() const noexcept {
+  if (_field_reader) {
+    _field_reader->ReleaseMappedMemory();
+  }
+  if (_data) {
+    _data->col_reader->ReleaseMappedMemory();
+  }
+}
+
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
   if (!_data) {
     return {};

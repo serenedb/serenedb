@@ -104,6 +104,8 @@ class MergePlan {
 
   void Abort() noexcept { _aborted.store(true, std::memory_order_relaxed); }
 
+  void ReleaseInputs() const noexcept;
+
   const MergeProfile& Profile() const noexcept { return _profile; }
 
  private:

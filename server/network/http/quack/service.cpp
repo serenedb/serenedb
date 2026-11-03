@@ -20,6 +20,7 @@
 
 #include "network/http/quack/service.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
@@ -95,6 +96,11 @@ bool IsLocalAddress(const asio_ns::ip::address& address) {
 
 bool Serves(std::span<const asio_ns::ip::tcp::endpoint> endpoints,
             std::string_view host, uint16_t port) {
+  if (absl::c_none_of(endpoints, [&](const asio_ns::ip::tcp::endpoint& e) {
+        return e.port() == port;
+      })) {
+    return false;
+  }
   if (host.starts_with('[') && host.ends_with(']')) {
     host = host.substr(1, host.size() - 2);
   }

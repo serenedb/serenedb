@@ -179,12 +179,8 @@ class ExcludeCosts {
     _probed_window = probed_lazy + tests;
     const double built = _words * kBitClearCost + eager;
     _bitset =
-      built +
-      (per_doc ? c * kBitTestCost + hits * kHitCost
-               : blocks * (kBitsetBlockCost +
-                           kBitsetBlockWordCost *
-                             std::min(block, _words / std::max(sparse, 1.0))) +
-                   c * dirty(sparse) * kBitsetDirtyTestCost);
+      built + (per_doc ? c * kBitTestCost + hits * kHitCost
+                       : batches * kBitsetBatchCost + c * kBitsetCandidateCost);
     _bitset_lead = built + c * kBitsetProbeCost;
   }
 

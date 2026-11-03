@@ -28,6 +28,7 @@
 #include <bit>
 #include <duckdb/common/allocator.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/detail/exclusion_of.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
@@ -498,6 +499,20 @@ TEST_P(PrunedTopTest, single_terms_with_exclusions) {
        }) {
     Check(shape);
   }
+}
+
+TEST(PrunedExcludeCosts, sparse_term_under_a_dense_lead_is_probed) {
+  constexpr irs::doc_id_t kSegmentDocs = 5032104;
+  constexpr uint64_t kLeadDocs = 4168066;
+  constexpr uint64_t kCandidates = 9335;
+  irs::PostingMeta excluded;
+  excluded.docs_count = 2751;
+  const irs::detail::PostingClause clause{irs::TermState{nullptr, excluded}};
+  const irs::detail::ExcludeCosts<irs::detail::PostingClause> costs{
+    std::span{&clause, 1}, {},
+    kCandidates,           kLeadDocs,
+    kSegmentDocs,          irs::detail::ExcludeUse::PerBlock};
+  EXPECT_EQ(costs.Probed(true), irs::detail::ExcludeForm::Probes);
 }
 
 TEST_P(PrunedTopTest, conjunctions_with_nested_disjunctions) {

@@ -1032,51 +1032,6 @@ TEST_F(ColCodecsTest, BatchedPointReadsKeepTheStringsOfEveryBlock) {
   }
 }
 
-TEST_F(ColCodecsTest, PointReadsCacheDecodedFrames) {
-  constexpr uint64_t kRows = 6000;
-  for (const auto codec : {duckdb::CompressionType::COMPRESSION_LZ4,
-                           duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
-                           duckdb::CompressionType::COMPRESSION_ZXC}) {
-    SCOPED_TRACE(duckdb::EnumUtil::ToString(codec));
-    irs::MemoryDirectory dir{};
-    Write(dir, codec, {}, kRows, 2048, kLongTextWithNulls);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    const auto cached = [&] {
-      std::vector<duckdb::shared_ptr<irs::codecs::DecodedFrame>> frames;
-      std::string key;
-      for (const auto& segment : CacheKeys(dir, *col)) {
-        for (uint32_t frame = 0; frame < 4096; ++frame) {
-          irs::codecs::FrameCacheKey(segment, frame, key);
-          if (auto hit =
-                Db().GetObjectCache().Get<irs::codecs::DecodedFrame>(key)) {
-            frames.emplace_back(std::move(hit));
-          }
-        }
-      }
-      return frames;
-    };
-    const auto lookups = [&] {
-      irs::ColumnReader::PointReader cursor{r, *col};
-      duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
-      for (uint64_t g = 17; g < kRows; g += 211) {
-        duckdb::FlatVector::ValidityMutable(out).Reset();
-        EXPECT_EQ(cursor.FetchRow(g, out, 0), kLongTextWithNulls(g).has_value())
-          << g;
-        ExpectRow(out, 0, g, kLongTextWithNulls);
-      }
-    };
-    lookups();
-    EXPECT_TRUE(cached().empty());
-    lookups();
-    const auto admitted = cached();
-    EXPECT_FALSE(admitted.empty());
-    lookups();
-    EXPECT_EQ(cached(), admitted);
-  }
-}
-
 TEST_F(ColCodecsTest, PointReadsUseTheCachedDictionary) {
   constexpr uint64_t kRows = 20000;
   const Value value = [](uint64_t g) -> std::optional<std::string> {

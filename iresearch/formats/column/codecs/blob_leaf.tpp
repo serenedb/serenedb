@@ -29,7 +29,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
 #include <string>
@@ -37,7 +36,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
@@ -178,8 +176,6 @@ struct BlobFetch {
     frame = kNoFrame;
     dictionary_ready = false;
     decoded_total = 0;
-    segment_key.clear();
-    admit = -1;
   }
 
   uint64_t Walked() const noexcept { return 0; }
@@ -221,7 +217,6 @@ struct BlobFetch {
     dense = !batched && hits > 1;
     hits = 0;
     decoded = 0;
-    held.reset();
   }
 
   void Extend(PackedReader& lengths, const FrameMeta& f, uint32_t need) {
@@ -245,26 +240,7 @@ struct BlobFetch {
   void Inflate(duckdb::ColumnSegment& segment, const Header& h,
                duckdb::const_data_ptr_t base, uint32_t lo, const FrameMeta& f,
                size_t want, bool batched) {
-    const auto& slot = CacheSlotOf(segment);
-    auto* cache = slot.cache;
-    if (cache && decoded == 0 && Admitted(slot)) {
-      if (segment_key.empty()) {
-        segment_key = DictionaryCacheKey(slot.file_id, slot.file_offset);
-      }
-      FrameCacheKey(segment_key, lo, key);
-      if (auto hit = cache->Get<DecodedFrame>(key);
-          hit && hit->Bytes().size() == f.raw_len) {
-        held = std::move(hit);
-        frame_data = reinterpret_cast<const char*>(held->Bytes().data());
-        decoded = f.raw_len;
-        return;
-      }
-    }
-    const bool admitted =
-      cache && Admitted(slot) &&
-      cache->GetCurrentMemoryRacy() + f.raw_len <= cache->GetMaxMemoryRacy();
-    const size_t target =
-      admitted || (!batched && (hits > 1 || dense)) ? f.raw_len : want;
+    const size_t target = !batched && (hits > 1 || dense) ? f.raw_len : want;
     const bool with_dictionary =
       h.flags == FrameDictionary::FirstFrame && lo != 0;
     const TrainedDictionary* trained = nullptr;
@@ -272,19 +248,6 @@ struct BlobFetch {
       trained = TrainedOf(segment, h);
     }
     Decode(f, h, base, target, with_dictionary, trained);
-    if (admitted) {
-      ScratchVector<uint8_t> bytes(f.raw_len);
-      std::memcpy(bytes.data(), frame_data, f.raw_len);
-      held = duckdb::make_shared_ptr<DecodedFrame>(std::move(bytes));
-      cache->Put(key, held);
-    }
-  }
-
-  bool Admitted(const ReadContext::CacheSlot& slot) noexcept {
-    if (admit < 0) {
-      admit = SecondTouch(slot);
-    }
-    return admit == 1;
   }
 
   void Decode(const FrameMeta& f, const Header& h,
@@ -382,10 +345,6 @@ struct BlobFetch {
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
   std::optional<typename Codec::Decompressor> decoder;
-  std::string segment_key;
-  std::string key;
-  duckdb::shared_ptr<DecodedFrame> held;
-  int8_t admit = -1;
 };
 
 template<typename Codec>

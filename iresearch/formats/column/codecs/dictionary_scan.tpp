@@ -243,7 +243,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     auto& validity = duckdb::FlatVector::ValidityMutable(view);
     validity.Initialize(count);
     validity.SetInvalid(0);
-    cold_entries = Sorted(Leaf::kCodec);
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
@@ -516,21 +515,8 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     return *code_sel;
   }
 
-  void WarmEntries() noexcept {
-    cold_entries = false;
-    constexpr uint32_t kPerLine = 64 / sizeof(string_t);
-    uint64_t bytes = 0;
-    for (uint32_t e = 0; e < entries.header.entry_count; e += kPerLine) {
-      bytes += entries.values[e].GetSize();
-    }
-    warmed_bytes = bytes;
-  }
-
   void WriteCodes(duckdb::Vector& result, idx_t result_offset,
                   const duckdb::SelectionVector& codes, idx_t count) {
-    if (cold_entries) {
-      WarmEntries();
-    }
     entries.ReferenceHeap(result);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
@@ -846,8 +832,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   idx_t streamed = 0;
   UnmapBehind codes_behind;
   bool full = false;
-  bool cold_entries = false;
-  uint64_t warmed_bytes = 0;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
   ScratchVector<uint32_t> run_values;

@@ -809,3 +809,53 @@ def test_shell(servers) -> None:
     assert lines[:5] == ["Count", "Count", "10", "count", "10"]
     assert lines[-10:] == ["Count", "10000000", "count", "10000000",
                            "count", "3", "id,name", "1,a", "2,b", "3,NULL"]
+
+
+def test_shell_pg_wire_and_quack_agree(servers) -> None:
+    _, conn_b, quack_b, _ = servers
+    conn_b.execute(
+        "CREATE TABLE wire_types (i INT, b BIGINT, d DOUBLE, n NUMERIC(10, 2), "
+        "s TEXT, f BOOL, dt DATE, ts TIMESTAMP)")
+    conn_b.execute(
+        "INSERT INTO wire_types VALUES "
+        "(1, 10000000000, 1.5, 12.34, 'one', true, '2026-01-02', "
+        "'2026-01-02 03:04:05'), "
+        "(2, -1, -0.25, -0.5, 'two', false, '1999-12-31', "
+        "'1999-12-31 23:59:59'), "
+        "(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")
+    queries = (
+        "SELECT * FROM {db}.public.wire_types ORDER BY i NULLS LAST; "
+        "SELECT count(*) AS rows, count(i) AS ints, sum(b) AS sum_b, "
+        "avg(d) AS avg_d, sum(n) AS sum_n, max(s) AS max_s, "
+        "min(dt) AS min_dt, max(ts) AS max_ts FROM {db}.public.wire_types; "
+        "SELECT s, i * 2 FROM {db}.public.wire_types WHERE f; "
+        "SELECT t.id, w.s FROM {db}.public.t "
+        "JOIN {db}.public.wire_types w ON t.id = w.i ORDER BY t.id;")
+
+    def shell(attach: str, db: str) -> list[str]:
+        result = subprocess.run(
+            [SERENED_BIN, "shell", ":memory:", "-csv", "-c",
+             attach + queries.format(db=db)],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout.splitlines()
+
+    pg_wire = shell(
+        "SET pg_use_text_protocol = true; SET pg_use_binary_copy = false; "
+        f"ATTACH 'host=127.0.0.1 port={conn_b.info.port} dbname=postgres "
+        "user=postgres' AS pg (TYPE postgres); ", "pg")
+    quack = shell(
+        f"ATTACH 'quack:127.0.0.1:{quack_b}' AS q (TOKEN 'postgres:'); ", "q")
+    assert pg_wire == quack
+    assert quack[:4] == [
+        "i,b,d,n,s,f,dt,ts",
+        "1,10000000000,1.5,12.34,one,true,2026-01-02,2026-01-02 03:04:05",
+        "2,-1,-0.25,-0.50,two,false,1999-12-31,1999-12-31 23:59:59",
+        "NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL",
+    ]
+    assert quack[4:6] == [
+        "rows,ints,sum_b,avg_d,sum_n,max_s,min_dt,max_ts",
+        "3,2,9999999999,0.625,11.84,two,1999-12-31,2026-01-02 03:04:05",
+    ]

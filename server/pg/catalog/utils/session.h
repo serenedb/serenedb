@@ -67,10 +67,6 @@ struct Session {
     reg_out;
   mutable std::deque<std::string> reg_out_texts;
   mutable std::array<RegOutRecent, 64> reg_out_recent;
-  mutable std::vector<duckdb::idx_t> prefetched_oids;
-  mutable std::vector<duckdb::optional_ptr<duckdb::CatalogEntry>>
-    prefetched_entries;
-  mutable size_t prefetched_next = 0;
 };
 
 Session MakeSession(duckdb::ClientContext* context);

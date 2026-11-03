@@ -83,9 +83,11 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
           .name = entry.name.GetIdentifierName()};
 }
 
-void PrefetchEntries(const Session& session);
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
+void EntriesByOid(
+  const Session& session, std::span<const duckdb::idx_t> oids,
+  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries);
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
@@ -150,6 +152,9 @@ inline bool IsTemporary(const Relation& relation) {
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry);
 std::optional<Relation> RowTypeOwner(const Session& session, uint64_t oid);
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation);
@@ -164,5 +169,8 @@ const duckdb::Permissions& PrivilegePermissions(
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid);
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry);
 
 }  // namespace sdb::pg

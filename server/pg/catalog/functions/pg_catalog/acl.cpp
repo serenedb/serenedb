@@ -424,9 +424,10 @@ struct RelationPrivileges : ObjectPrivileges<F> {
   }
 
   template<typename... Rest>
-  static std::optional<ObjectTarget> Find(const Session& session, uint64_t oid,
-                                          Rest... rest) {
-    const auto relation = RelationByOid(session, oid);
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry, Rest... rest) {
+    const auto relation = RelationByOid(session, oid, entry);
     if (!relation) {
       return std::nullopt;
     }
@@ -443,7 +444,8 @@ struct RelationPrivileges : ObjectPrivileges<F> {
                                       &PrivilegePermissions(*entry)},
                        rest...);
     }
-    return Find(session, Resolve(session, name), rest...);
+    const auto oid = Resolve(session, name);
+    return Find(session, oid, EntryByOid(session, oid), rest...);
   }
 };
 
@@ -623,10 +625,11 @@ struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
     return *RegIn(session, RegKind::Procedure, name, nullptr);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    if (const auto* macro = FindMacro(session, oid)) {
-      return ObjectTarget{&PrivilegePermissions(*macro)};
+  static std::optional<ObjectTarget> Find(
+    const Session& session, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+    if (entry && CatalogClassOid(entry->type) == kPgProcTable) {
+      return ObjectTarget{&PrivilegePermissions(*entry)};
     }
     if (!GetBuiltinFunctions(*session.context)->Find(oid)) {
       return std::nullopt;
@@ -645,9 +648,10 @@ struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
     return *RegIn(session, RegKind::Type, name, nullptr);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    if (const auto entry = EntryByOid(session, oid)) {
+  static std::optional<ObjectTarget> Find(
+    const Session&, uint64_t oid,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+    if (entry) {
       if (entry->type != CatalogType::TYPE_ENTRY) {
         return std::nullopt;
       }
@@ -701,9 +705,9 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
     ThrowUndefinedObject("server", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session& session,
-                                          uint64_t oid) {
-    const auto entry = EntryByOid(session, oid);
+  static std::optional<ObjectTarget> Find(
+    const Session&, uint64_t,
+    duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (!entry || entry->type != CatalogType::FOREIGN_SERVER_ENTRY) {
       return std::nullopt;
     }
@@ -960,21 +964,6 @@ duckdb::LogicalType PrivilegeArgument() {
   }
 }
 
-template<typename F, typename... Rest>
-auto FindObject(const typename F::Scope& scope, duckdb::string_t name,
-                Rest... rest) {
-  if constexpr (requires { F::FindNamed(scope, AsView(name), rest...); }) {
-    return F::FindNamed(scope, AsView(name), rest...);
-  } else {
-    return F::Find(scope, F::Resolve(scope, AsView(name)), rest...);
-  }
-}
-
-template<typename F, typename... Rest>
-auto FindObject(const typename F::Scope& scope, int64_t oid, Rest... rest) {
-  return F::Find(scope, static_cast<uint64_t>(oid), rest...);
-}
-
 template<typename F>
 class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
@@ -988,20 +977,17 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   }
 
   void Prefetch(duckdb::Vector& oids) {
-    if constexpr (std::is_base_of_v<RelationPrivileges<F>, F> ||
-                  std::is_same_v<F, FunctionPrivileges> ||
-                  std::is_same_v<F, TypePrivileges> ||
-                  std::is_same_v<F, ServerPrivileges>) {
-      const Session& session = _scope;
-      session.prefetched_oids.clear();
+    if constexpr (kFindsEntries) {
+      _oids.clear();
+      _next = 0;
       if (oids.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
         return;
       }
       for (const auto oid : oids.ValidValues<int64_t>()) {
-        session.prefetched_oids.push_back(
-          static_cast<duckdb::idx_t>(oid.GetValue()));
+        _oids.push_back(static_cast<duckdb::idx_t>(oid.GetValue()));
       }
-      PrefetchEntries(session);
+      _entries.resize(_oids.size());
+      EntriesByOid(_scope, _oids, _entries);
     }
   }
 
@@ -1017,7 +1003,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   template<typename Object, typename... Rest>
   duckdb::optional<bool> Answer(duckdb::idx_t role, duckdb::string_t text,
                                 Object object, Rest... rest) {
-    const auto target = FindObject<F>(_scope, object, rest...);
+    const auto target = FindObject(object, rest...);
     const auto& modes = Modes(text);
     if (target) {
       return F::Check(_scope, Closure(role), role, *target, modes);
@@ -1031,6 +1017,12 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   }
 
  private:
+  static constexpr bool kFindsEntries =
+    requires(const typename F::Scope& scope, uint64_t oid,
+             duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+      F::Find(scope, oid, entry);
+    };
+
   struct NamedRole {
     duckdb::string_t name;
     duckdb::idx_t role;
@@ -1040,6 +1032,34 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     duckdb::string_t text;
     typename F::Modes modes;
   };
+
+  template<typename... Rest>
+  auto FindObject(duckdb::string_t name, Rest... rest) {
+    if constexpr (requires { F::FindNamed(_scope, AsView(name), rest...); }) {
+      return F::FindNamed(_scope, AsView(name), rest...);
+    } else {
+      return FindObject(F::Resolve(_scope, AsView(name)), rest...);
+    }
+  }
+
+  template<typename... Rest>
+  auto FindObject(uint64_t oid, Rest... rest) {
+    if constexpr (kFindsEntries) {
+      return F::Find(_scope, oid, Entry(oid), rest...);
+    } else {
+      return F::Find(_scope, oid, rest...);
+    }
+  }
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> Entry(uint64_t oid) {
+    for (auto next = _next; next < _oids.size(); ++next) {
+      if (_oids[next] == oid) {
+        _next = next + 1;
+        return _entries[next];
+      }
+    }
+    return EntryByOid(_scope, oid);
+  }
 
   const typename F::Modes& Modes(duckdb::string_t text) {
     if (!_modes || text != _modes->text) {
@@ -1060,6 +1080,9 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   std::optional<NamedRole> _named;
   std::optional<ParsedModes> _modes;
   std::optional<duckdb::RoleAccess> _closure;
+  std::vector<duckdb::idx_t> _oids;
+  std::vector<duckdb::optional_ptr<duckdb::CatalogEntry>> _entries;
+  size_t _next = 0;
 };
 
 template<typename F>

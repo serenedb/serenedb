@@ -63,6 +63,24 @@ allowed	denied
 
 connection c_ved user=pfc_vedernikoff password=pfc_pw
 query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(o, CASE WHEN i % 3 = 0 THEN NULL ELSE 'SELECT' END) AS allowed
+  FROM unnest([
+    'pfc_granted'::regclass::oid,
+    'pfc_hidden'::regclass::oid
+  ]) AS u(o), range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+2000	2000	2000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
 SELECT relname, has_table_privilege(oid, 'SELECT') AS allowed
 FROM pg_class
 WHERE relname LIKE 'pfc\_%'

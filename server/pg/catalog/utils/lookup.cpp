@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
@@ -80,41 +79,33 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
   }
 }
 
-void PrefetchEntries(const Session& session) {
-  session.prefetched_next = 0;
-  session.prefetched_entries.resize(session.prefetched_oids.size());
-  if (session.database) {
-    session.database->GetOidIndex().GetVisible(session.prefetched_oids,
-                                               session.transaction->view,
-                                               session.prefetched_entries);
-  }
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  constexpr size_t kPrefetchWindow = 4;
-  const auto& oids = session.prefetched_oids;
-  const auto end =
-    std::min(oids.size(), session.prefetched_next + kPrefetchWindow);
-  auto next = session.prefetched_next;
-  while (next < end && oids[next] != oid) {
-    ++next;
-  }
-  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
-  if (next < end) {
-    entry = session.prefetched_entries[next];
-    session.prefetched_next = next + 1;
-  } else {
-    entry = session.database->GetOidIndex().GetVisible(
-      oid, session.transaction->view);
-  }
+  auto entry =
+    session.database->GetOidIndex().GetVisible(oid, session.transaction->view);
   if (!entry || entry->internal) {
     return nullptr;
   }
   return entry;
+}
+
+void EntriesByOid(
+  const Session& session, std::span<const duckdb::idx_t> oids,
+  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries) {
+  if (!session.database) {
+    absl::c_fill(entries, nullptr);
+    return;
+  }
+  session.database->GetOidIndex().GetVisible(oids, session.transaction->view,
+                                             entries);
+  for (auto& entry : entries) {
+    if (entry && entry->internal) {
+      entry = nullptr;
+    }
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -188,7 +179,13 @@ std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
-  if (const auto entry = EntryByOid(session, oid)) {
+  return FindRelation(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  if (entry) {
     if (CatalogClassOid(entry->type) != kPgClassTable &&
         (entry->type != duckdb::CatalogType::TYPE_ENTRY ||
          !duckdb::StructType::IsStruct(
@@ -259,7 +256,13 @@ const duckdb::ColumnList* TableColumns(const Relation& relation) {
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid) {
-  auto relation = FindRelation(session, oid);
+  return RelationByOid(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  auto relation = FindRelation(session, oid, entry);
   if (!relation) {
     return std::nullopt;
   }

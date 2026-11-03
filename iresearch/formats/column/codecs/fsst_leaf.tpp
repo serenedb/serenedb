@@ -99,6 +99,56 @@ uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
   return end;
 }
 
+class ChainGroups {
+ public:
+  template<typename Entries>
+  void Reset(uint32_t frame_count, Entries entries) {
+    _base.resize(frame_count + 1);
+    uint32_t groups = 0;
+    for (uint32_t f = 0; f < frame_count; ++f) {
+      const auto [first, end] = entries(f);
+      SDB_ENSURE(end > first, "col codec: corrupted frame table");
+      _base[f] = groups;
+      groups += (end - first + kChainRestart - 1) / kChainRestart;
+    }
+    _base[frame_count] = groups;
+    _offsets.resize(groups);
+    _known.assign(frame_count, 0);
+  }
+
+  void Clear() noexcept { _base.clear(); }
+  bool Empty() const noexcept { return _base.empty(); }
+  uint32_t Count() const noexcept { return _base.back(); }
+  uint32_t Base(uint32_t f) const noexcept { return _base[f]; }
+  uint32_t Groups(uint32_t f) const noexcept { return _base[f + 1] - _base[f]; }
+
+  uint64_t Offset(PackedReader& lengths, const FrameMeta& m, uint32_t f,
+                  uint32_t g) {
+    auto* offsets = _offsets.data() + _base[f];
+    auto& known = _known[f];
+    if (known == 0) {
+      offsets[0] = m.comp_off;
+      known = 1;
+    }
+    const uint64_t end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
+    for (; known <= g; ++known) {
+      const auto from = m.first_entry + (known - 1) * kChainRestart;
+      uint64_t offset = offsets[known - 1];
+      for (uint32_t e = from; e < from + kChainRestart; ++e) {
+        offset += lengths.At(e);
+      }
+      SDB_ENSURE(offset <= end, "col codec: corrupted front coding");
+      offsets[known] = offset;
+    }
+    return offsets[g];
+  }
+
+ private:
+  std::vector<uint32_t> _base;
+  std::vector<uint32_t> _known;
+  std::vector<uint64_t> _offsets;
+};
+
 struct FsstScan {
   template<typename Frames>
   FsstScan(duckdb::ColumnSegment&, const Frames& s)
@@ -108,17 +158,10 @@ struct FsstScan {
                    reinterpret_cast<const char*>(s.base + s.header.off_symtab),
                    s.header.symtab_size}),
                "col codec: corrupted symbol table");
-    group_base.resize(s.frames.size() + 1);
-    uint32_t groups = 0;
-    for (uint32_t f = 0; f < s.frames.size(); ++f) {
-      group_base[f] = groups;
-      groups += (s.FrameEnd(f) - s.frames[f].first_entry + kChainRestart - 1) /
-                kChainRestart;
-    }
-    group_base[s.frames.size()] = groups;
-    group_decoded.assign(groups, 0);
-    group_enc_off.resize(groups);
-    group_offsets_ready.assign(s.frames.size(), 0);
+    groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
+      return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
+    });
+    group_decoded.assign(groups.Count(), 0);
   }
 
   template<typename Frames>
@@ -157,35 +200,13 @@ struct FsstScan {
   template<typename Frames>
   void EnsureEntry(Frames& s, uint32_t e, uint32_t f) {
     const auto g = (e - s.frames[f].first_entry) / kChainRestart;
-    if (!group_decoded[group_base[f] + g]) {
+    if (!group_decoded[groups.Base(f) + g]) {
       DecodeGroup(s, f, g);
     }
   }
 
   template<typename Frames>
-  void EnsureGroupOffsets(Frames& s, uint32_t f) {
-    if (group_offsets_ready[f]) {
-      return;
-    }
-    const auto first = s.frames[f].first_entry;
-    const auto end = s.FrameEnd(f);
-    uint64_t off = s.frames[f].comp_off;
-    auto* out = group_enc_off.data() + group_base[f];
-    for (auto e = first; e < end; ++e) {
-      if ((e - first) % kChainRestart == 0) {
-        *out++ = static_cast<uint32_t>(off);
-      }
-      off += s.length_reader.At(e);
-    }
-    SDB_ENSURE(
-      off == static_cast<uint64_t>(s.frames[f].comp_off) + s.frames[f].comp_len,
-      "col codec: corrupted front coding");
-    group_offsets_ready[f] = 1;
-  }
-
-  template<typename Frames>
   void DecodeGroup(Frames& s, uint32_t f, uint32_t g) {
-    EnsureGroupOffsets(s, f);
     const auto first = s.frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
     const auto capacity = ChainCapacity(s.length_reader, lcps, first, end);
@@ -193,24 +214,21 @@ struct FsstScan {
     char* out = duckdb::StringVector::EmptyString(s.dictionary->data, capacity)
                   .GetDataWriteable();
     WalkChain(decoder, s.Data(), s.length_reader, lcps, first, end,
-              group_enc_off[group_base[f] + g], s.header.data_size, out,
-              capacity, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
-    group_decoded[group_base[f] + g] = 1;
+              groups.Offset(s.length_reader, s.frames[f], f, g),
+              s.header.data_size, out, capacity,
+              [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+    group_decoded[groups.Base(f) + g] = 1;
   }
 
   template<typename Frames>
   std::string_view DecodeHead(Frames& s, uint32_t f, uint32_t g) {
     const auto e = s.frames[f].first_entry + g * kChainRestart;
-    if (s.decoded[f] || group_decoded[group_base[f] + g]) {
+    if (s.decoded[f] || group_decoded[groups.Base(f) + g]) {
       return View(s.values[e]);
     }
-    uint64_t enc_off = s.frames[f].comp_off;
-    if (g != 0) {
-      EnsureGroupOffsets(s, f);
-      enc_off = group_enc_off[group_base[f] + g];
-    }
     std::string_view head;
-    WalkInPlace(decoder, s.Data(), s.length_reader, lcps, e, e + 1, enc_off,
+    WalkInPlace(decoder, s.Data(), s.length_reader, lcps, e, e + 1,
+                groups.Offset(s.length_reader, s.frames[f], f, g),
                 s.header.data_size, probe, [&](uint32_t, std::string_view v) {
                   head = v;
                   return true;
@@ -238,7 +256,7 @@ struct FsstScan {
     }
     const uint32_t f = lo - 1;
     uint32_t glo = 1;
-    uint32_t ghi = group_base[f + 1] - group_base[f];
+    uint32_t ghi = groups.Groups(f);
     while (glo < ghi) {
       const auto mid = glo + (ghi - glo) / 2;
       if (before(DecodeHead(s, f, mid))) {
@@ -250,7 +268,7 @@ struct FsstScan {
     const uint32_t g = glo - 1;
     const auto first = s.frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
-    if (s.decoded[f] || group_decoded[group_base[f] + g]) {
+    if (s.decoded[f] || group_decoded[groups.Base(f) + g]) {
       for (auto e = first; e < end; ++e) {
         if (!before(View(s.values[e]))) {
           return e;
@@ -258,10 +276,9 @@ struct FsstScan {
       }
       return end;
     }
-    EnsureGroupOffsets(s, f);
     return WalkInPlace(decoder, s.Data(), s.length_reader, lcps, first, end,
-                       group_enc_off[group_base[f] + g], s.header.data_size,
-                       probe,
+                       groups.Offset(s.length_reader, s.frames[f], f, g),
+                       s.header.data_size, probe,
                        [&](uint32_t, std::string_view v) { return before(v); });
   }
 
@@ -269,10 +286,8 @@ struct FsstScan {
 
   FsstDecoder decoder;
   PackedReader lcps{nullptr, 0};
-  std::vector<uint32_t> group_base;
+  ChainGroups groups;
   std::vector<uint8_t> group_decoded;
-  std::vector<uint32_t> group_enc_off;
-  std::vector<uint8_t> group_offsets_ready;
   uint64_t group_heap_bytes = 0;
   std::string probe;
 };
@@ -280,7 +295,7 @@ struct FsstScan {
 struct FsstFetch {
   void Reset(const Header& h, duckdb::const_data_ptr_t base) {
     decoder.reset();
-    group_base.clear();
+    groups.Clear();
     lcps = PackedReader{const_cast<duckdb::data_ptr_t>(base) + h.off_lcps,
                         h.lcp_width};
     walked = 0;
@@ -294,28 +309,15 @@ struct FsstFetch {
             PackedReader& lengths, uint32_t lo, const FrameMeta& f,
             uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
             bool) {
-    if (group_base.empty()) {
+    if (groups.Empty()) {
       Open(h, base);
     }
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
     const uint32_t restart = f.first_entry + group * kChainRestart;
-    auto* frame_offsets = offsets.data() + group_base[lo];
-    auto& frame_known = known[lo];
-    if (frame_known == 0) {
-      frame_offsets[0] = f.comp_off;
-      frame_known = 1;
-    }
-    for (; frame_known <= group; ++frame_known) {
-      const auto from = f.first_entry + (frame_known - 1) * kChainRestart;
-      uint64_t off = frame_offsets[frame_known - 1];
-      for (uint32_t e = from; e < from + kChainRestart; ++e) {
-        off += lengths.At(e);
-      }
-      frame_offsets[frame_known] = off;
-    }
-    const auto value = DecodeEntry(in, lengths, restart, entry,
-                                   frame_offsets[group], h.data_size);
+    const auto value =
+      DecodeEntry(in, lengths, restart, entry,
+                  groups.Offset(lengths, f, lo, group), h.data_size);
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
@@ -371,9 +373,7 @@ struct FsstFetch {
           reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size}),
       "col codec: corrupted symbol table");
     const auto* frames = base + h.off_frames;
-    group_base.resize(h.frame_count + 1);
-    uint32_t groups = 0;
-    for (uint32_t i = 0; i < h.frame_count; ++i) {
+    groups.Reset(h.frame_count, [&](uint32_t i) {
       const auto first =
         duckdb::Load<FrameMeta>(frames + i * kFrameMetaSize).first_entry;
       const auto end =
@@ -381,20 +381,13 @@ struct FsstFetch {
           ? duckdb::Load<FrameMeta>(frames + (i + 1) * kFrameMetaSize)
               .first_entry
           : h.entry_count;
-      SDB_ENSURE(end > first, "col codec: corrupted frame table");
-      group_base[i] = groups;
-      groups += (end - first + kChainRestart - 1) / kChainRestart;
-    }
-    group_base[h.frame_count] = groups;
-    offsets.resize(groups);
-    known.assign(h.frame_count, 0);
+      return std::pair{first, end};
+    });
   }
 
   std::optional<FsstDecoder> decoder;
   PackedReader lcps{nullptr, 0};
-  std::vector<uint32_t> group_base;
-  std::vector<uint32_t> known;
-  std::vector<uint64_t> offsets;
+  ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };

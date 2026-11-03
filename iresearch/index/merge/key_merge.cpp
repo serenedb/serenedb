@@ -80,8 +80,9 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
         continue;
       }
       if (!column.scanning) {
-        column.state =
-          column.reader->InitScan(std::make_shared<ReadContext>(*_cs));
+        auto ctx = std::make_shared<ReadContext>(*_cs);
+        ctx->SetUnmap(ReadOnceUnmap(column.type));
+        column.state = column.reader->InitScan(std::move(ctx));
         column.scanning = true;
       }
       SDB_ASSERT(begin >= column.position);

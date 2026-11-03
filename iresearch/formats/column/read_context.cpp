@@ -24,6 +24,7 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <duckdb/common/type_visitor.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
@@ -53,6 +54,17 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 };
 
 }  // namespace
+
+Unmap ReadOnceUnmap(const duckdb::LogicalType& type) {
+  return duckdb::TypeVisitor::Contains(
+           type,
+           [](const duckdb::LogicalType& t) {
+             return t.InternalType() == duckdb::PhysicalType::LIST ||
+                    t.id() == duckdb::LogicalTypeId::VARIANT;
+           })
+           ? Unmap::AtEnd
+           : Unmap::EachBlock;
+}
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
   : BlockManager{db, /*block_header_size=*/0} {}

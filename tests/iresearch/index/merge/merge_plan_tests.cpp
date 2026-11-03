@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -495,12 +496,15 @@ class ScratchDir {
 
 uint64_t PageSize() { return static_cast<uint64_t>(::sysconf(_SC_PAGESIZE)); }
 
-std::vector<bool> MappedPages(const std::filesystem::path& file) {
-  const auto page = PageSize();
+struct Mapping {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  uint64_t offset = 0;
+};
+
+std::vector<Mapping> Mappings(const std::filesystem::path& file) {
   const auto target = std::filesystem::canonical(file).string();
-  std::vector<bool> mapped((std::filesystem::file_size(file) + page - 1) /
-                           page);
-  const int pagemap = ::open("/proc/self/pagemap", O_RDONLY);
+  std::vector<Mapping> mappings;
   std::ifstream maps{"/proc/self/maps"};
   for (std::string line; std::getline(maps, line);) {
     const std::vector<std::string_view> fields =
@@ -509,16 +513,24 @@ std::vector<bool> MappedPages(const std::filesystem::path& file) {
       continue;
     }
     const std::vector<std::string_view> range = absl::StrSplit(fields[0], '-');
-    uint64_t begin = 0;
-    uint64_t end = 0;
-    uint64_t offset = 0;
-    if (range.size() != 2 || !absl::SimpleHexAtoi(range[0], &begin) ||
-        !absl::SimpleHexAtoi(range[1], &end) ||
-        !absl::SimpleHexAtoi(fields[2], &offset)) {
-      continue;
+    Mapping mapping;
+    if (range.size() == 2 && absl::SimpleHexAtoi(range[0], &mapping.begin) &&
+        absl::SimpleHexAtoi(range[1], &mapping.end) &&
+        absl::SimpleHexAtoi(fields[2], &mapping.offset)) {
+      mappings.push_back(mapping);
     }
-    for (auto at = begin; at < end; at += page) {
-      const auto index = (offset + at - begin) / page;
+  }
+  return mappings;
+}
+
+std::vector<bool> MappedPages(const std::filesystem::path& file) {
+  const auto page = PageSize();
+  std::vector<bool> mapped((std::filesystem::file_size(file) + page - 1) /
+                           page);
+  const int pagemap = ::open("/proc/self/pagemap", O_RDONLY);
+  for (const auto& mapping : Mappings(file)) {
+    for (auto at = mapping.begin; at < mapping.end; at += page) {
+      const auto index = (mapping.offset + at - mapping.begin) / page;
       uint64_t entry = 0;
       if (index < mapped.size() &&
           ::pread(pagemap, &entry, sizeof(entry),
@@ -533,30 +545,41 @@ std::vector<bool> MappedPages(const std::filesystem::path& file) {
   return mapped;
 }
 
+void Unmap(const std::filesystem::path& file) {
+  for (const auto& mapping : Mappings(file)) {
+    ::madvise(reinterpret_cast<void*>(mapping.begin),
+              mapping.end - mapping.begin, MADV_DONTNEED);
+  }
+}
+
 uint64_t MappedBytes(const std::filesystem::path& file) {
   return static_cast<uint64_t>(absl::c_count(MappedPages(file), true)) *
          PageSize();
 }
 
+uint64_t MappedInside(const std::vector<bool>& mapped,
+                      const irs::ColumnReader& column) {
+  const auto page = PageSize();
+  uint64_t count = 0;
+  for (const auto& block : column.DataBlocks()) {
+    const auto end = block.file_offset + block.byte_size;
+    for (auto p = (block.file_offset + page - 1) / page; (p + 1) * page <= end;
+         ++p) {
+      count += mapped[p] ? 1 : 0;
+    }
+  }
+  column.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    count += MappedInside(mapped, sub.column);
+  });
+  return count;
+}
+
 uint64_t MappedInsideBlocks(const std::filesystem::path& file,
                             const irs::ColReader& reader) {
-  const auto page = PageSize();
   const auto mapped = MappedPages(file);
   uint64_t count = 0;
-  const auto visit = [&](this const auto& self,
-                         const irs::ColumnReader& column) -> void {
-    for (const auto& block : column.DataBlocks()) {
-      const auto end = block.file_offset + block.byte_size;
-      for (auto p = (block.file_offset + page - 1) / page;
-           (p + 1) * page <= end; ++p) {
-        count += mapped[p] ? 1 : 0;
-      }
-    }
-    column.VisitSubColumns(
-      [&](const irs::ColumnReader::SubColumn& sub) { self(sub.column); });
-  };
   for (const auto& column : reader.Columns()) {
-    visit(*column);
+    count += MappedInside(mapped, *column);
   }
   return count;
 }
@@ -701,6 +724,81 @@ TEST_F(MergePlanMappingTest, TermRangePartsLeaveOnlyTheirBoundariesMapped) {
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::TermRange, kTextField).empty());
   ExpectIndexFilesLeft(id_parts + pair_parts);
   ExpectMerged();
+}
+
+class SortedMergeMappingTest : public ::testing::Test {
+ protected:
+  static constexpr size_t kDocs = 20000;
+  static constexpr size_t kSegments = 3;
+
+  void SetUp() final {
+    auto options = irs::tests::DefaultWriterOptions();
+    options.column_options = PlainColumns;
+    options.sort = _spec;
+    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+    std::mt19937_64 keys{17};
+    for (size_t s = 0; s != kSegments; ++s) {
+      auto batch = _writer->GetBatch();
+      for (size_t i = 0; i != kDocs; ++i) {
+        auto doc = batch.Insert();
+        WriteValue(doc, kBigintColumn, duckdb::LogicalType::BIGINT,
+                   duckdb::Value::BIGINT(static_cast<int64_t>(keys())));
+        WriteValue(doc, kTextColumn, duckdb::LogicalType::VARCHAR,
+                   duckdb::Value{LogLine(i)});
+      }
+      batch.Commit();
+      ASSERT_TRUE(_writer->RefreshCommit());
+    }
+    _reader = _writer->GetSnapshot();
+    _inputs = Segments(_reader);
+    ASSERT_EQ(kSegments, _inputs.size());
+    _expected = ExpectedSortedMerge(_inputs, _spec);
+  }
+
+  ScratchDir _scratch{"sorted_merge_mapping"};
+  std::filesystem::path _path = _scratch.Sub("index");
+  irs::MMapDirectory _dir{_path};
+  irs::SortSpec _spec{{{.column = kBigintColumn}}};
+  irs::IndexWriter::ptr _writer;
+  irs::DirectoryReader _reader;
+  std::vector<const irs::SubReader*> _inputs;
+  SegmentDump _expected;
+};
+
+TEST_F(SortedMergeMappingTest, SortKeysLeaveNoInputMappedBehindThem) {
+  for (const auto* input : _inputs) {
+    const auto& key = *input->GetColReader()->Column(kBigintColumn);
+    ASSERT_LT(
+      0, MappedInside(MappedPages(SegmentFile(_path, *input, "col")), key));
+    Unmap(SegmentFile(_path, *input, "col"));
+  }
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto* input : _inputs) {
+    doc_map.emplace_back(input, irs::IResourceManager::gNoop);
+  }
+  irs::FunctionFieldOptions options{
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kInputRowGroup, {}};
+  irs::SegmentMeta meta;
+  irs::MemoryDirectory out;
+  irs::MergePlan plan{out,
+                      doc_map,
+                      meta,
+                      nullptr,
+                      irs::DuckDBEngine::Instance().instance(),
+                      &options,
+                      irs::MergeProgress{},
+                      nullptr,
+                      &_spec};
+  ASSERT_TRUE(plan.Prepare(1));
+  for (const auto* input : _inputs) {
+    EXPECT_EQ(0, MappedInside(MappedPages(SegmentFile(_path, *input, "col")),
+                              *input->GetColReader()->Column(kBigintColumn)));
+  }
+  ASSERT_TRUE(RunPlan(plan, 1));
+  const auto merged =
+    irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, merged);
+  EXPECT_EQ("", FirstDifference(_expected, Dump(*merged)));
 }
 
 class ColumnSplitTest : public ::testing::Test {

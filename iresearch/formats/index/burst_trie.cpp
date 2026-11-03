@@ -1610,13 +1610,13 @@ void BlockIterator::Reset() {
 
 class UnmapBehind {
  public:
-  void Advance(const IndexInput& in, uint64_t at) noexcept {
+  void Advance(const IndexInput& in, uint64_t at, uint64_t end) noexcept {
     if (at < _from) {
       _from = at;
-      _at = at;
+      _end = end;
       return;
     }
-    _at = at;
+    _end = std::max(_end, end);
     const auto page = at / file_utils::kPage * file_utils::kPage;
     if (page >= _from + kChunk) {
       in.Unmap(_from, page - _from);
@@ -1625,8 +1625,8 @@ class UnmapBehind {
   }
 
   void Finish(const IndexInput& in) const noexcept {
-    if (_from < _at) {
-      in.Unmap(_from, _at - _from);
+    if (_from < _end) {
+      in.Unmap(_from, _end - _from);
     }
   }
 
@@ -1634,7 +1634,7 @@ class UnmapBehind {
   static constexpr uint64_t kChunk = file_utils::kPrefetchChunk;
 
   uint64_t _from = std::numeric_limits<uint64_t>::max();
-  uint64_t _at = 0;
+  uint64_t _end = 0;
 };
 
 class ReadOnceTrail : util::Noncopyable {
@@ -1667,25 +1667,28 @@ class ReadOnceTrail : util::Noncopyable {
 
   void Block(uint64_t start) noexcept {
     if (_consumed) {
-      _blocks.Advance(*_terms, start);
+      _blocks.Advance(*_terms, start, start);
     }
   }
 
   void Term(const PostingMeta& meta) noexcept {
     _consumed = true;
     if (meta.inline_size != 0) {
-      _inline.Advance(*_terms, _field->InlineOffset() +
-                                 static_cast<uint64_t>(meta.inline_data -
-                                                       _field->InlineRegion()));
+      const auto at =
+        _field->InlineOffset() +
+        static_cast<uint64_t>(meta.inline_data - _field->InlineRegion());
+      _inline.Advance(*_terms, at, at + meta.inline_size);
     }
-    if (DocExtent(meta) != 0) {
-      _doc.Advance(*_postings.doc, meta.doc_start);
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      _doc.Advance(*_postings.doc, meta.doc_start, meta.doc_start + extent);
     }
     if (_postings.pos) {
-      _pos.Advance(*_postings.pos, meta.pos_start);
+      _pos.Advance(*_postings.pos, meta.pos_start,
+                   meta.pos_start + PosExtent(meta));
     }
     if (_postings.pay) {
-      _pay.Advance(*_postings.pay, meta.pay_start);
+      _pay.Advance(*_postings.pay, meta.pay_start,
+                   meta.pay_start + PayExtent(meta));
     }
   }
 

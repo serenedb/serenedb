@@ -48,6 +48,8 @@ enum class Unmap : uint8_t {
   AtEnd,
 };
 
+Unmap ReadOnceUnmap(const duckdb::LogicalType& type);
+
 class ReadContext final : public BlockManager,
                           public duckdb::OverflowStringReader,
                           public duckdb::ColumnStreamReader {

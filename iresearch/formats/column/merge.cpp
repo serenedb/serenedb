@@ -277,14 +277,7 @@ std::shared_ptr<ReadContext> SampleContext(const ColReader& reader) {
 std::shared_ptr<ReadContext> MergeContext(const ColReader& reader,
                                           const duckdb::LogicalType& type) {
   auto ctx = SampleContext(reader);
-  ctx->SetUnmap(duckdb::TypeVisitor::Contains(
-                  type,
-                  [](const duckdb::LogicalType& t) {
-                    return t.InternalType() == duckdb::PhysicalType::LIST ||
-                           t.id() == duckdb::LogicalTypeId::VARIANT;
-                  })
-                  ? Unmap::AtEnd
-                  : Unmap::EachBlock);
+  ctx->SetUnmap(ReadOnceUnmap(type));
   return ctx;
 }
 

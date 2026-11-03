@@ -116,8 +116,8 @@ bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
       return false;
     }
   }
-  if (zxc_dctx_set_dict(_block_ctx.get(), _dictionary.data(),
-                        _dictionary.size(), nullptr) != ZXC_OK) {
+  if (zxc_dctx_ref_dict(_block_ctx.get(), _dictionary.data(),
+                        _dictionary.size()) != ZXC_OK) {
     return false;
   }
   const auto n =

@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <utility>
 
+#include "iresearch/formats/index/term_dict_ranges.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -31,15 +32,10 @@
 
 namespace irs {
 
-struct PostingBases {
-  uint64_t doc = 0;
-  uint64_t pos = 0;
-  uint64_t pay = 0;
-};
-
 struct TermPart {
   PostingBases bases;
   bytes_view terms;
+  const term_dict::RangeWriter* ranges = nullptr;
   uint64_t term_count = 0;
   uint64_t total_doc_freq = 0;
   uint64_t total_term_freq = 0;

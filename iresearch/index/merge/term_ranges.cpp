@@ -29,6 +29,8 @@
 #include <utility>
 
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/index/term_dict_format.hpp"
+#include "iresearch/formats/index/term_dict_ranges.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
@@ -57,6 +59,19 @@ duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> SourcesOf(
   return {keys.begin(), keys.end()};
 }
 
+uint32_t KeyWidth(std::span<const TermRangeMerge::Input> inputs) noexcept {
+  if (inputs.empty()) {
+    return 0;
+  }
+  const auto width = inputs.front().terms->key_width;
+  return absl::c_all_of(inputs,
+                        [&](const TermRangeMerge::Input& input) {
+                          return input.terms->key_width == width;
+                        })
+           ? width
+           : 0;
+}
+
 template<typename Postings>
 class RangeWriter {
  public:
@@ -64,13 +79,14 @@ class RangeWriter {
               std::span<const duckdb::shared_ptr<TermKeys>> keys,
               const FieldProperties& props,
               const TermRangeMerge::Target& target, Directory& dir,
-              const MergeProgress& progress)
+              const MergeProgress& progress, term_dict::RangeWriter* ranges)
     : _sources{sources},
       _keys{keys},
       _inputs(sources.size()),
       _props{props},
       _postings{progress},
-      _terms{props.index_features} {
+      _terms{props.index_features},
+      _ranges{ranges} {
     const FlushState state{
       .dir = &dir,
       .norms = target.norms,
@@ -81,6 +97,9 @@ class RangeWriter {
     };
     _writer.Prepare(state);
     _writer.BeginField(props);
+    if (_ranges) {
+      _ranges->Begin(_writer, target.doc_count);
+    }
   }
 
   bool Consume(std::span<const duckdb::PresortedRun> runs) {
@@ -100,6 +119,9 @@ class RangeWriter {
   bool Finish() {
     if (_open) {
       Close();
+    }
+    if (_ranges) {
+      _ranges->Seal();
     }
     _writer.EndField();
     _writer.FinishPart();
@@ -182,9 +204,12 @@ class RangeWriter {
       },
       _props.index_features);
     PostingMeta meta;
-    _writer.Write(_postings, meta);
+    _writer.Write(_postings, meta, _ranges ? _ranges->Tee() : DocTee{});
     if (meta.docs_count != 0) {
       _terms.Add(_current, meta);
+      if (_ranges) {
+        _ranges->Add(_current, meta);
+      }
     }
   }
 
@@ -195,6 +220,7 @@ class RangeWriter {
   PostingsWriter _writer;
   Postings _postings;
   TermPartWriter _terms;
+  term_dict::RangeWriter* _ranges;
   std::vector<size_t> _mask;
   bytes_view _current;
   uint64_t _groups = 0;
@@ -234,6 +260,7 @@ void TermRangeSink::Remove() noexcept {
 struct TermRangeMerge::Part {
   std::unique_ptr<MemoryDirectory> dir;
   bstring terms;
+  term_dict::RangeWriter ranges;
   uint64_t count = 0;
   uint64_t total_doc_freq = 0;
   uint64_t total_term_freq = 0;
@@ -242,23 +269,32 @@ struct TermRangeMerge::Part {
   bool done = false;
 };
 
-TermRangeMerge::TermRangeMerge(field_id field, FieldProperties props,
-                               std::vector<Input> inputs, bool sorted,
-                               const MergeProgress& progress)
+TermRangeMerge::TermRangeMerge(field_id field, DictMember member,
+                               FieldProperties props, std::vector<Input> inputs,
+                               bool sorted, const MergeProgress& progress)
   : _field{field},
+    _member{member},
     _props{props},
     _inputs{std::move(inputs)},
     _keys{KeysOf(_inputs)},
     _merge{SourcesOf(_keys)},
     _progress{&progress},
-    _sorted{sorted} {}
+    _sorted{sorted} {
+  const auto width = KeyWidth(_inputs);
+  _ranged = IsSubsetOf(IndexFeatures::Ranges, _props.index_features) &&
+            width != 0 && width <= term_dict::kMaxStride;
+}
 
 TermRangeMerge::~TermRangeMerge() = default;
+
+uint64_t TermVolume(const TermReader& terms) noexcept {
+  return std::max(terms.total_term_freq(), uint64_t{terms.docs_count()});
+}
 
 uint64_t TermRangeMerge::Volume() const {
   return absl::c_accumulate(_inputs, uint64_t{0},
                             [](uint64_t volume, const Input& input) {
-                              return volume + input.terms->total_term_freq();
+                              return volume + TermVolume(*input.terms);
                             });
 }
 
@@ -294,8 +330,13 @@ template<typename Postings>
 bool TermRangeMerge::WritePart(Part& part, size_t index) {
   SDB_ASSERT(_target.sink);
   part.dir = std::make_unique<MemoryDirectory>();
-  RangeWriter<Postings> writer{_inputs, _keys,     _props,
-                               _target, *part.dir, *_progress};
+  RangeWriter<Postings> writer{_inputs,
+                               _keys,
+                               _props,
+                               _target,
+                               *part.dir,
+                               *_progress,
+                               _ranged ? &part.ranges : nullptr};
   const auto state = _merge.BeginMerge(index);
   duckdb::vector<duckdb::PresortedRun> runs;
   while (!state->Done()) {
@@ -353,6 +394,7 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
     parts.push_back({
       .bases = part->bases,
       .terms = part->terms,
+      .ranges = _ranged ? &part->ranges : nullptr,
       .term_count = part->count,
       .total_doc_freq = part->total_doc_freq,
       .total_term_freq = part->total_term_freq,
@@ -366,6 +408,7 @@ void TermRangeMerge::ReleaseParts() noexcept {
   for (auto& part : _parts) {
     part->terms.clear();
     part->terms.shrink_to_fit();
+    part->ranges.Clear();
   }
   _docs.clear();
   _docs.shrink_to_fit();

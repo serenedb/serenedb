@@ -47,6 +47,8 @@ namespace irs {
 struct NormProvider;
 struct TermReader;
 
+uint64_t TermVolume(const TermReader& terms) noexcept;
+
 class TermRangeSink {
  public:
   TermRangeSink(Directory& dir, std::string_view segment,
@@ -83,7 +85,7 @@ class TermRangeMerge {
     TermRangeSink* sink;
   };
 
-  TermRangeMerge(field_id field, FieldProperties props,
+  TermRangeMerge(field_id field, DictMember member, FieldProperties props,
                  std::vector<Input> inputs, bool sorted,
                  const MergeProgress& progress);
   ~TermRangeMerge();
@@ -92,6 +94,7 @@ class TermRangeMerge {
   TermRangeMerge& operator=(const TermRangeMerge&) = delete;
 
   field_id Field() const noexcept { return _field; }
+  DictMember Member() const noexcept { return _member; }
 
   uint64_t Volume() const;
 
@@ -117,6 +120,7 @@ class TermRangeMerge {
   bool WritePart(Part& part, size_t index);
 
   field_id _field;
+  DictMember _member;
   FieldProperties _props;
   std::vector<Input> _inputs;
   std::vector<duckdb::shared_ptr<TermKeys>> _keys;
@@ -125,6 +129,7 @@ class TermRangeMerge {
   Target _target{};
   const MergeProgress* _progress;
   bool _sorted;
+  bool _ranged;
   size_t _appended = 0;
   std::vector<uint64_t> _docs;
 };

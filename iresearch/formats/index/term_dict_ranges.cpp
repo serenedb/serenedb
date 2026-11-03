@@ -284,6 +284,53 @@ void RangeWriter::Release(size_t level) {
   }
 }
 
+void RangeWriter::Seal() {
+  for (size_t level = 0; level != kMaxRangeLevels; ++level) {
+    Close(level);
+    Release(level);
+  }
+  for (auto& range : _levels) {
+    range.group.docs = {};
+    range.held.docs = {};
+  }
+}
+
+void RangeWriter::Append(const RangeWriter& part, uint64_t doc_base,
+                         IndexFeatures features) {
+  std::array<uint32_t, kMaxRangeLevels> counts;
+  for (size_t level = 0; level != kMaxRangeLevels; ++level) {
+    counts[level] = _levels[level].count;
+  }
+  for (size_t level = 0; level != kMaxRangeLevels; ++level) {
+    const auto& from = part._levels[level];
+    if (from.count == 0) {
+      return;
+    }
+    auto& to = _levels[level];
+    to.starts.append(from.starts);
+    if (level != 0) {
+      for (const auto first : from.firsts) {
+        to.firsts.push_back(counts[level - 1] + first);
+      }
+    }
+    uint32_t begin = 0;
+    for (const auto end : from.ends) {
+      const auto* record = from.records.data() + begin;
+      PostingMeta meta;
+      meta.inline_data =
+        record + PostingsReader::decode(record, features, meta);
+      meta.doc_start += doc_base;
+      _record.Clear();
+      _pw->EncodeAbsolute(_record, meta);
+      to.records.append(_record.View());
+      to.records.append(meta.Inline());
+      to.ends.push_back(static_cast<uint32_t>(to.records.size()));
+      begin = end;
+    }
+    to.count += from.count;
+  }
+}
+
 void RangeWriter::Finish(uint64_t terms) {
   size_t built = 0;
   for (; built != kMaxRangeLevels; ++built) {

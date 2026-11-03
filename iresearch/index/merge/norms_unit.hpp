@@ -33,7 +33,8 @@ class ColWriter;
 class MergeOrder;
 class NormColumnReader;
 
-const TermReader* StringTerms(const SubReader& reader, field_id id);
+const TermReader* MemberTerms(const SubReader& reader, field_id id,
+                              DictMember member);
 
 const NormColumnReader* SourceNormColumn(const MergeSource& source,
                                          field_id id);

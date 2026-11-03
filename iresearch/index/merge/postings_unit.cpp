@@ -231,11 +231,8 @@ TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
 
 TermRangeMerge* RangeOf(std::span<const std::unique_ptr<TermRangeMerge>> ranges,
                         field_id id, DictRef dict) {
-  if (dict.member != DictMember::Strings) {
-    return nullptr;
-  }
   for (const auto& range : ranges) {
-    if (range->Field() == id) {
+    if (range->Field() == id && range->Member() == dict.member) {
       return range.get();
     }
   }

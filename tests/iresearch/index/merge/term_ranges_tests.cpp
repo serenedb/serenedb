@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <iresearch/formats/flush_state.hpp>
+#include <iresearch/formats/index/term_dict_reader.hpp>
 #include <iresearch/formats/index/term_parts.hpp>
 #include <iresearch/formats/posting/block_index.hpp>
 #include <iresearch/formats/posting/writer.hpp>
@@ -35,6 +36,7 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -728,6 +730,110 @@ TEST_F(TermRangeMergeTest, ARangedFieldLeftWithOneTermMatchesTheOracle) {
   EXPECT_LE(2, TermRangeParts(plan)[kIdField]);
   ASSERT_TRUE(RunPlan(plan, 4));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
+}
+
+TEST_F(TermRangeMergeTest, RangedNumbersMatchASerialMerge) {
+  constexpr irs::field_id kNumberField = 6;
+  constexpr size_t kSegments = 4;
+  constexpr size_t kDocs = 12500;
+  const auto number = [](size_t s, size_t n) -> int64_t {
+    if (n % 2 == 0) {
+      return 0;
+    }
+    return static_cast<int64_t>((n * kSegments + s) * 7919 % 1000003) - 500000;
+  };
+  Open();
+  for (size_t s = 0; s != kSegments; ++s) {
+    auto batch = _writer->GetBatch();
+    for (size_t n = 0; n != kDocs; ++n) {
+      auto doc = batch.Insert();
+      tests::StringField id{"id", Key(absl::StrCat("s", s, "-"), n)};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+      tests::LongField value;
+      value.name = "number";
+      value.id = kNumberField;
+      value.value(number(s, n));
+      tests::InsertField(doc, value);
+    }
+    batch.Commit();
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  std::vector<std::string> removed;
+  for (size_t n = 0; n < kDocs; n += 5) {
+    removed.emplace_back(Key("s2-", n));
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  const auto inputs = Snapshot();
+  const auto merge = [&](irs::Directory& out, size_t threads) {
+    auto plan = MakePlan(out, inputs, nullptr);
+    EXPECT_TRUE(plan.Prepare(threads));
+    const auto parts = TermRangeParts(plan)[kNumberField];
+    EXPECT_TRUE(RunPlan(plan, threads));
+    return std::pair{parts, _meta};
+  };
+  irs::MemoryDirectory serial_dir;
+  irs::MemoryDirectory parallel_dir;
+  const auto [serial_parts, serial_meta] = merge(serial_dir, 1);
+  const auto [parallel_parts, parallel_meta] = merge(parallel_dir, 8);
+  EXPECT_EQ(0, serial_parts);
+  EXPECT_LE(2, parallel_parts);
+  const auto serial = irs::SegmentReaderImpl::Open(
+    serial_dir, serial_meta, irs::tests::DefaultReaderOptions());
+  const auto parallel = irs::SegmentReaderImpl::Open(
+    parallel_dir, parallel_meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, serial);
+  ASSERT_NE(nullptr, parallel);
+  EXPECT_EQ("", FirstDifference(Dump(*serial), Dump(*parallel)));
+  const auto numbers = [](const irs::SubReader& segment) {
+    const irs::TermReader* found = nullptr;
+    for (const auto* terms : segment.fields(kNumberField)) {
+      if (terms->meta().dict.member == irs::DictMember::Numbers) {
+        found = terms;
+      }
+    }
+    return found;
+  };
+  const auto* serial_numbers = numbers(*serial);
+  const auto* parallel_numbers = numbers(*parallel);
+  ASSERT_NE(nullptr, serial_numbers);
+  ASSERT_NE(nullptr, parallel_numbers);
+  EXPECT_FALSE(
+    static_cast<const irs::term_dict::TermReaderImpl&>(*parallel_numbers)
+      .RangeLevels()
+      .empty());
+  const auto range_docs = [](const irs::TermReader& terms, irs::bytes_view from,
+                             irs::bytes_view to) {
+    std::vector<irs::doc_id_t> docs;
+    terms.VisitRange(from, to,
+                     [&](irs::bytes_view, const irs::PostingMeta& meta) {
+                       auto it = tests::MakeSeekPostings(
+                         meta, terms.Handles(), terms.meta().index_features,
+                         irs::IndexFeatures::None, terms.HasScoreBounds());
+                       for (auto doc = it->Next(); !irs::doc_limits::eof(doc);
+                            doc = it->Next()) {
+                         docs.push_back(doc);
+                       }
+                     });
+    absl::c_sort(docs);
+    return docs;
+  };
+  std::mt19937 rng{7};
+  irs::byte_type lower[irs::numeric_utils::kNumericTermMaxSize];
+  irs::byte_type upper[irs::numeric_utils::kNumericTermMaxSize];
+  for (size_t i = 0; i != 200; ++i) {
+    const auto lo = static_cast<int64_t>(rng() % 1200000) - 600000;
+    const auto hi = lo + static_cast<int64_t>(rng() % 400000);
+    const auto from = i % 10 == 0
+                        ? irs::bytes_view{}
+                        : irs::numeric_utils::EncodeNumericTerm(lower, lo);
+    const auto to = i % 10 == 1
+                      ? irs::bytes_view{}
+                      : irs::numeric_utils::EncodeNumericTerm(upper, hi);
+    SCOPED_TRACE(absl::StrCat(lo, " ", hi));
+    EXPECT_EQ(range_docs(*serial_numbers, from, to),
+              range_docs(*parallel_numbers, from, to));
+  }
 }
 
 TEST_F(TermRangeMergeTest, PostingsFilesThatCannotBeCreatedFailThePlan) {

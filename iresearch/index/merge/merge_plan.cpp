@@ -405,6 +405,7 @@ void MergePlan::PlanUnits() {
       parts.push_back(AddUnit({
         .kind = MergeUnitKind::TermRange,
         .id = range->Field(),
+        .member = range->Member(),
         .cost = bytes / range->PartCount(),
         .part = part,
       }));
@@ -428,25 +429,32 @@ void MergePlan::PlanTermRanges() {
   if (_threads < 2) {
     return;
   }
-  std::vector<field_id> ids;
+  struct Ranged {
+    field_id id;
+    DictMember member;
+
+    auto operator<=>(const Ranged&) const = default;
+  };
+  std::vector<Ranged> ranged;
   for (const auto& [id, field] : _field_meta_map) {
-    const auto& strings = Strings(field);
-    if (strings.present && !IsSubsetOf(IndexFeatures::Vec, strings.features) &&
-        !IsSubsetOf(IndexFeatures::Ranges, strings.features)) {
-      ids.push_back(id);
+    for (const auto member : {DictMember::Strings, DictMember::Numbers}) {
+      const auto& merged = field.members[static_cast<size_t>(member)];
+      if (merged.present && !IsSubsetOf(IndexFeatures::Vec, merged.features)) {
+        ranged.push_back({.id = id, .member = member});
+      }
     }
   }
-  absl::c_sort(ids);
-  for (const auto id : ids) {
+  absl::c_sort(ranged);
+  for (const auto& [id, member] : ranged) {
     std::vector<TermRangeMerge::Input> inputs;
     uint64_t terms = 0;
     for (const auto& input : _doc_map) {
-      const auto* reader = StringTerms(*input.reader, id);
+      const auto* reader = MemberTerms(*input.reader, id, member);
       if (!reader) {
         continue;
       }
       terms += reader->size();
-      _term_volume += reader->total_term_freq();
+      _term_volume += TermVolume(*reader);
       inputs.push_back({.terms = reader, .remap = &input.remap});
     }
     const auto parts =
@@ -459,9 +467,10 @@ void MergePlan::PlanTermRanges() {
                                                    _index_features);
     }
     auto& range = _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
-      id,
-      MergedFieldProperties(id, Strings(_field_meta_map[id]).features,
-                            _merged_norm_ids),
+      id, member,
+      MergedFieldProperties(
+        id, _field_meta_map[id].members[static_cast<size_t>(member)].features,
+        _merged_norm_ids),
       std::move(inputs), static_cast<bool>(_key_order), _progress));
     range->Partition(parts,
                      {
@@ -488,8 +497,9 @@ bool MergePlan::MergeColumn(const MergeUnit& unit) {
 }
 
 bool MergePlan::MergeTermRange(const MergeUnit& unit) {
-  const auto it = absl::c_find_if(
-    _term_ranges, [&](const auto& range) { return range->Field() == unit.id; });
+  const auto it = absl::c_find_if(_term_ranges, [&](const auto& range) {
+    return range->Field() == unit.id && range->Member() == unit.member;
+  });
   SDB_ASSERT(it != _term_ranges.end());
   return (*it)->MergePart(unit.part);
 }

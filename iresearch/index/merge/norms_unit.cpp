@@ -198,9 +198,10 @@ void MergeOrderedNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
 
 }  // namespace
 
-const TermReader* StringTerms(const SubReader& reader, field_id id) {
+const TermReader* MemberTerms(const SubReader& reader, field_id id,
+                              DictMember member) {
   for (const auto* terms : reader.fields(id)) {
-    if (terms->meta().dict.member == DictMember::Strings) {
+    if (terms->meta().dict.member == member) {
       return terms;
     }
   }
@@ -212,7 +213,7 @@ const NormColumnReader* SourceNormColumn(const MergeSource& source,
   if (!source.col_reader) {
     return nullptr;
   }
-  const auto* terms = StringTerms(*source.reader, id);
+  const auto* terms = MemberTerms(*source.reader, id, DictMember::Strings);
   if (!terms || !field_limits::valid(terms->meta().norm)) {
     return nullptr;
   }

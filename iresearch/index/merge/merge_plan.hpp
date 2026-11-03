@@ -78,6 +78,7 @@ enum class MergeUnitKind : uint8_t {
 struct MergeUnit {
   MergeUnitKind kind;
   field_id id = field_limits::invalid();
+  DictMember member = DictMember::Strings;
   uint64_t cost = 0;
   uint32_t part = 0;
   std::vector<size_t> deps;

@@ -513,7 +513,7 @@ PartsField FieldWriter::BeginParts(DictRef dict, const BasicTermReader& reader,
                                    std::span<const TermPart> parts,
                                    uint64_t docs) {
   const auto id = reader.id();
-  SDB_ASSERT(dict.member == DictMember::Strings);
+  SDB_ASSERT(IsTermMember(dict.member));
   Begin(id, dict);
   PartsField field{
     .id = id,
@@ -523,12 +523,21 @@ PartsField FieldWriter::BeginParts(DictRef dict, const BasicTermReader& reader,
     .docs = docs,
   };
   const auto features = field.props.index_features;
-  SDB_ASSERT(!IsSubsetOf(IndexFeatures::Ranges, features));
   _pw.BeginField(field.props);
   _group_inline = false;
   _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
   if (_width == 0) {
     SampleFsst(reader);
+  }
+  if (IsSubsetOf(IndexFeatures::Ranges, features) && _width != 0) {
+    SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, features));
+    _ranges.Begin(_pw, _docs);
+  }
+  for (const auto& part : parts) {
+    SDB_ASSERT((part.ranges != nullptr) == _ranges.Active());
+    if (part.ranges) {
+      _ranges.Append(*part.ranges, part.bases.doc, features);
+    }
   }
 
   const bool freq_exists =
@@ -609,6 +618,9 @@ void FieldWriter::AppendPart(const PartsField& field, size_t part,
 }
 
 void FieldWriter::EndParts(const PartsField& field) {
+  if (_ranges.Active()) {
+    _ranges.Finish(_terms);
+  }
   auto stats = _pw.EndField();
   stats.docs_count = static_cast<doc_id_t>(field.docs);
   EndField(field.id, field.props, field.total_freq, field.first_inline, stats);

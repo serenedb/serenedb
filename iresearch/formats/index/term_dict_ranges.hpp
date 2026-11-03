@@ -36,6 +36,9 @@ class RangeWriter final {
   DocTee Tee() noexcept;
   void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
+  void Seal();
+  void Append(const RangeWriter& part, uint64_t doc_base,
+              IndexFeatures features);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,
              std::vector<uint64_t>& counts) const;

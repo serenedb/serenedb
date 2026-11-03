@@ -258,7 +258,10 @@ def generate(gen, constants, all_types):
                                             pronamespace=PG_CATALOG)['oid']) +
             named_oids(config.COLLATIONS,
                        lambda name: gen.one('pg_collation', collname=name,
-                                            collnamespace=PG_CATALOG)['oid']))
+                                            collnamespace=PG_CATALOG)['oid']) +
+            named_oids(config.ROLES,
+                       lambda name: gen.one('pg_authid',
+                                            rolname=name)['oid']))
     coded = table_files()
     tables, all_tables, known = [], [], set()
     for (relation_oid, schema, name, relkind, shared, row_type,

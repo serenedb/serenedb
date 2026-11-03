@@ -48,6 +48,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <span>
 #include <string_view>
 
 #include "catalog/boot.h"
@@ -66,6 +67,15 @@ namespace {
 
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
+
+struct PredefinedRole {
+  duckdb::idx_t oid;
+  std::string_view name;
+  RoleOption options;
+  std::span<const duckdb::idx_t> member_of;
+};
+
+#include "pg/catalog/generated/predefined_roles.gen.inc"
 
 void RequireDatabaseUnused(duckdb::ClientContext& context,
                            duckdb::AttachedDatabase& database) {
@@ -303,7 +313,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
     duckdb::CreateRoleInfo info;
     info.SetName(name);
     info.oid = predefined.oid;
-    info.options = RoleOption::Inherit;
+    info.options = predefined.options;
     for (const auto role : predefined.member_of) {
       info.member_of.push_back({.role = role, .grantor = pg::kRootUser});
     }

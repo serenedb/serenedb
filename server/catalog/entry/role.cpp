@@ -41,10 +41,30 @@ namespace sdb::catalog {
 namespace {
 
 duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
-  const auto it = absl::c_find_if(
-    kPredefinedRoles, [&](const auto& role) { return role.oid == oid; });
-  return it == std::end(kPredefinedRoles) ? duckdb::RoleCapability::None
-                                          : it->capability;
+  switch (oid) {
+    case pg::kPgReadAllSettingsRole:
+      return duckdb::RoleCapability::ReadAllSettings;
+    case pg::kPgReadAllStatsRole:
+      return duckdb::RoleCapability::ReadAllStats;
+    case pg::kPgSignalBackendRole:
+      return duckdb::RoleCapability::SignalBackend;
+    case pg::kPgCheckpointRole:
+      return duckdb::RoleCapability::Checkpoint;
+    case pg::kPgReadServerFilesRole:
+      return duckdb::RoleCapability::ReadServerFiles;
+    case pg::kPgWriteServerFilesRole:
+      return duckdb::RoleCapability::WriteServerFiles;
+    case pg::kPgReadAllDataRole:
+      return duckdb::RoleCapability::ReadAllData;
+    case pg::kPgWriteAllDataRole:
+      return duckdb::RoleCapability::WriteAllData;
+    case pg::kPgCreateSubscriptionRole:
+      return duckdb::RoleCapability::CreateSubscription;
+    case pg::kPgMaintainRole:
+      return duckdb::RoleCapability::Maintain;
+    default:
+      return duckdb::RoleCapability::None;
+  }
 }
 
 }  // namespace

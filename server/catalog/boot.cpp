@@ -312,7 +312,7 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
                                      std::move(extension));
   config.cluster_catalog = duckdb::Identifier{ClusterCatalog::kDatabaseName};
   config.bootstrap_role = pg::kRootUser;
-  config.database_owner_role = kPgDatabaseOwner;
+  config.database_owner_role = pg::kPgDatabaseOwnerRole;
 }
 
 void InitCatalog(std::string_view directory) {

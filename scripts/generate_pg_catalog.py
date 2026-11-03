@@ -21,7 +21,8 @@ create them, from FirstUnpinnedObjectId.
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
 objects SereneDB names), in server/pg/types/mapping.cpp (which PostgreSQL
-types SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
+types SereneDB supports), in server/catalog/entry/role.cpp (what each
+predefined role allows), in server/pg/catalog/tables/<schema>/<table>.cpp (which
 views are tables), in server/pg/catalog/table_functions/pg_catalog/<name>.cpp
 (the set-returning functions behind PostgreSQL views) and in
 server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
@@ -40,7 +41,8 @@ import argparse
 import os
 import sys
 
-from pg_catalog import builtins, claims, functions, relations, source, views
+from pg_catalog import (builtins, claims, functions, relations, roles, source,
+                        views)
 from pg_catalog.common import REPO_ROOT, write
 from pg_catalog.generator import Generator
 
@@ -53,6 +55,7 @@ def outputs():
         constants, types = builtins.generate(gen)
         relations.generate(gen, constants, types)
         functions.generate(gen, constants, types, views.generate(gen))
+        roles.generate(gen)
         out.update(gen.outputs)
     return out
 

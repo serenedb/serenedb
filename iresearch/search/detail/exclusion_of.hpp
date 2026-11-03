@@ -68,120 +68,21 @@ class ExcludeCosts {
     : _candidates{static_cast<double>(candidates)},
       _words{static_cast<double>(SegmentWords(docs_count))},
       _windows{static_cast<double>(SegmentWindows(docs_count))} {
-    const double c = _candidates;
-    const double s = static_cast<double>(std::max<uint64_t>(span, 1));
-    const double n = static_cast<double>(std::max<doc_id_t>(docs_count, 1));
-    const double block = kCostBlock;
-    const double blocks = c / block;
-    const bool per_doc = use == ExcludeUse::PerDoc;
-    const double touched =
-      per_doc
-        ? _windows * (1.0 - std::exp(-c / _windows))
-        : std::min(
-            _windows,
-            blocks * (1.0 + block * n / s / static_cast<double>(kWindowDocs)));
-    const auto dirty = [&](double sparse) {
-      return 1.0 - std::exp(-block * sparse / s);
-    };
     double sparse = static_cast<double>(SumDocs(terms));
     for (const auto& child : filters) {
       SDB_ASSERT(child);
       sparse += ChildClauseCost(*child, docs_count).sparse;
     }
-    const double leaf = static_cast<double>(doc_limits::kBlockSize);
-    const double lead_blocks = std::max(1.0, s / block);
-    const double batches =
-      per_doc ? c : lead_blocks * (1.0 - std::exp(-c / lead_blocks));
-    const double probed =
-      per_doc ? c : batches + std::max(c - batches, 0.0) * dirty(sparse);
-    const double spread = _windows * (1.0 - std::exp(-c / _windows));
-    double probed_lazy = 0;
-    double eager = 0;
-    double hits = 0;
-    double exact = 0;
-    const auto add = [&](const ClauseCost& clause) {
-      const auto d = static_cast<double>(clause.docs);
-      const auto leaves = static_cast<double>(clause.leaves);
-      if (clause.mask) {
-        const double probes = per_doc
-                                ? c * clause.probe
-                                : blocks * clause.block_probe +
-                                    c * dirty(clause.sparse) * clause.probe;
-        const double refill = touched * kMaskWindowCost;
-        const double lazy = refill + clause.lazy_fill * (touched / _windows);
-        _probes += probes;
-        _probed_probes += probes;
-        _lazy += lazy;
-        probed_lazy += lazy;
-        _filled += clause.fill + refill;
-        eager += clause.fill;
-        return;
-      }
-      const double reach = d * std::min(1.0, c / s);
-      const double steps = std::min(reach, c);
-      const double r = c > 0 ? reach / c : 0.0;
-      const double step =
-        kStepBaseCost + kStepJumpCost * std::max(0.0, 1.0 - r);
-      const double share = std::min(1.0, c / n);
-      const double block_probe =
-        clause.block_probe +
-        (clause.exact ? kBlockSeekCost * std::min(1.0, 4.0 * d / s) : 0.0);
-      double probes = per_doc ? c * clause.probe
-                              : blocks * block_probe +
-                                  c * dirty(clause.sparse) * clause.probe;
-      probes += steps * step +
-                kDecodeCost * std::min(reach, c * block * leaves) +
-                clause.matches * share * clause.hit;
-      _probes += probes;
-      const double refill =
-        touched * (clause.exact ? kWindowRefillCost * leaves
-                   : clause.nested
-                     ? kWindowNestedRefillCost
-                     : kWindowChildRefillCost +
-                         kWindowChildSeekCost * (1.0 - touched / _windows));
-      const double lazy = refill + clause.lazy_fill * (touched / _windows);
-      _lazy += lazy;
-      if (clause.exact && clause.leaves == 1) {
-        const double advances =
-          probed > 0 ? probed * (1.0 - std::exp(-d / probed)) : 0.0;
-        _probed_probes +=
-          probed * kLeafProbeCost +
-          advances * static_cast<double>(kProbeSteps) +
-          std::min(advances, std::max(1.0, d / leaf)) *
-            (kStepBaseCost + kStepJumpCost + leaf * kDecodeCost) +
-          clause.matches * share * clause.hit;
-        probed_lazy +=
-          spread * kWindowRefillCost + clause.lazy_fill * (spread / _windows);
-      } else {
-        _probed_probes += probes;
-        probed_lazy += lazy;
-      }
-      _filled += (clause.exact ? kFilledCost * d : clause.fill) + refill;
-      eager += clause.exact    ? clause.fill
-               : clause.nested ? clause.fill + _windows * kEagerNestedWindowCost
-                               : clause.fill + _windows * kEagerChildWindowCost;
-      hits += d * share;
-      exact += clause.exact ? 1.0 : 0.0;
-    };
+    const Reach reach{_candidates, _windows, span, docs_count, use, sparse};
+    Totals totals;
     for (size_t i = 0; i != terms.size(); ++i) {
-      add(TermClauseCost(CookieOf(terms[i]).docs_count, docs_count));
+      Add(reach, TermClauseCost(CookieOf(terms[i]).docs_count, docs_count),
+          totals);
     }
     for (const auto& child : filters) {
-      add(ChildClauseCost(*child, docs_count));
+      Add(reach, ChildClauseCost(*child, docs_count), totals);
     }
-    if (exact > 1.0) {
-      _probes += (per_doc ? c : c * dirty(sparse)) * kLeafProbeCost * exact;
-    }
-    const double tests = per_doc ? c * kWindowTestCost
-                                 : blocks * kWindowBlockCost +
-                                     c * dirty(sparse) * kWindowDirtyTestCost;
-    _window = _lazy + tests;
-    _probed_window = probed_lazy + tests;
-    const double built = _words * kBitClearCost + eager;
-    _bitset =
-      built + (per_doc ? c * kBitTestCost + hits * kHitCost
-                       : batches * kBitsetBatchCost + c * kBitsetCandidateCost);
-    _bitset_lead = built + c * kBitsetProbeCost;
+    Finish(reach, totals);
   }
 
   double Best(bool bitsets) const noexcept {
@@ -218,6 +119,148 @@ class ExcludeCosts {
   }
 
  private:
+  struct Reach {
+    Reach(double candidates, double windows, uint64_t span, doc_id_t docs_count,
+          ExcludeUse use, double sparse_docs) noexcept
+      : c{candidates},
+        s{static_cast<double>(std::max<uint64_t>(span, 1))},
+        n{static_cast<double>(std::max<doc_id_t>(docs_count, 1))},
+        blocks{c / kCostBlock},
+        per_doc{use == ExcludeUse::PerDoc},
+        sparse{sparse_docs} {
+      touched =
+        per_doc ? windows * (1.0 - std::exp(-c / windows))
+                : std::min(windows,
+                           blocks * (1.0 + kCostBlock * n / s /
+                                             static_cast<double>(kWindowDocs)));
+      const double lead_blocks = std::max(1.0, s / kCostBlock);
+      batches = per_doc ? c : lead_blocks * (1.0 - std::exp(-c / lead_blocks));
+      probed = per_doc ? c
+                       : batches + std::max(c - batches, 0.0) *
+                                     Dirty(*this, sparse_docs);
+      spread = windows * (1.0 - std::exp(-c / windows));
+    }
+
+    double c;
+    double s;
+    double n;
+    double blocks;
+    bool per_doc;
+    double sparse;
+    double touched = 0;
+    double batches = 0;
+    double probed = 0;
+    double spread = 0;
+  };
+
+  struct Totals {
+    double probed_lazy = 0;
+    double eager = 0;
+    double hits = 0;
+    double exact = 0;
+  };
+
+  static double Dirty(const Reach& reach, double docs) noexcept {
+    return 1.0 - std::exp(-kCostBlock * docs / reach.s);
+  }
+
+  void Add(const Reach& reach, const ClauseCost& clause, Totals& totals) {
+    if (clause.mask) {
+      AddMask(reach, clause, totals);
+      return;
+    }
+    const double c = reach.c;
+    const auto d = static_cast<double>(clause.docs);
+    const auto leaves = static_cast<double>(clause.leaves);
+    const double reached = d * std::min(1.0, c / reach.s);
+    const double steps = std::min(reached, c);
+    const double r = c > 0 ? reached / c : 0.0;
+    const double step = kStepBaseCost + kStepJumpCost * std::max(0.0, 1.0 - r);
+    const double share = std::min(1.0, c / reach.n);
+    const double block_probe =
+      clause.block_probe +
+      (clause.exact ? kBlockSeekCost * std::min(1.0, 4.0 * d / reach.s) : 0.0);
+    double probes = reach.per_doc
+                      ? c * clause.probe
+                      : reach.blocks * block_probe +
+                          c * Dirty(reach, clause.sparse) * clause.probe;
+    probes += steps * step +
+              kDecodeCost * std::min(reached, c * kCostBlock * leaves) +
+              clause.matches * share * clause.hit;
+    _probes += probes;
+    const double refill =
+      reach.touched * (clause.exact    ? kWindowRefillCost * leaves
+                       : clause.nested ? kWindowNestedRefillCost
+                                       : kWindowChildRefillCost +
+                                           kWindowChildSeekCost *
+                                             (1.0 - reach.touched / _windows));
+    const double lazy = refill + clause.lazy_fill * (reach.touched / _windows);
+    _lazy += lazy;
+    if (clause.exact && clause.leaves == 1) {
+      _probed_probes += ProbedTermCost(reach, d, share, clause);
+      totals.probed_lazy += reach.spread * kWindowRefillCost +
+                            clause.lazy_fill * (reach.spread / _windows);
+    } else {
+      _probed_probes += probes;
+      totals.probed_lazy += lazy;
+    }
+    _filled += (clause.exact ? kFilledCost * d : clause.fill) + refill;
+    totals.eager += clause.exact ? clause.fill
+                    : clause.nested
+                      ? clause.fill + _windows * kEagerNestedWindowCost
+                      : clause.fill + _windows * kEagerChildWindowCost;
+    totals.hits += d * share;
+    totals.exact += clause.exact ? 1.0 : 0.0;
+  }
+
+  void AddMask(const Reach& reach, const ClauseCost& clause,
+               Totals& totals) noexcept {
+    const double probes =
+      reach.per_doc ? reach.c * clause.probe
+                    : reach.blocks * clause.block_probe +
+                        reach.c * Dirty(reach, clause.sparse) * clause.probe;
+    const double refill = reach.touched * kMaskWindowCost;
+    const double lazy = refill + clause.lazy_fill * (reach.touched / _windows);
+    _probes += probes;
+    _probed_probes += probes;
+    _lazy += lazy;
+    totals.probed_lazy += lazy;
+    _filled += clause.fill + refill;
+    totals.eager += clause.fill;
+  }
+
+  static double ProbedTermCost(const Reach& reach, double d, double share,
+                               const ClauseCost& clause) noexcept {
+    const double leaf = static_cast<double>(doc_limits::kBlockSize);
+    const double probed = reach.probed;
+    const double advances =
+      probed > 0 ? probed * (1.0 - std::exp(-d / probed)) : 0.0;
+    return probed * kLeafProbeCost +
+           advances * static_cast<double>(kProbeSteps) +
+           std::min(advances, std::max(1.0, d / leaf)) *
+             (kStepBaseCost + kStepJumpCost + leaf * kDecodeCost) +
+           clause.matches * share * clause.hit;
+  }
+
+  void Finish(const Reach& reach, const Totals& totals) noexcept {
+    const double c = reach.c;
+    if (totals.exact > 1.0) {
+      _probes += (reach.per_doc ? c : c * Dirty(reach, reach.sparse)) *
+                 kLeafProbeCost * totals.exact;
+    }
+    const double tests =
+      reach.per_doc ? c * kWindowTestCost
+                    : reach.blocks * kWindowBlockCost +
+                        c * Dirty(reach, reach.sparse) * kWindowDirtyTestCost;
+    _window = _lazy + tests;
+    _probed_window = totals.probed_lazy + tests;
+    const double built = _words * kBitClearCost + totals.eager;
+    _bitset = built + (reach.per_doc ? c * kBitTestCost + totals.hits * kHitCost
+                                     : reach.batches * kBitsetBatchCost +
+                                         c * kBitsetCandidateCost);
+    _bitset_lead = built + c * kBitsetProbeCost;
+  }
+
   double ProbedLead() const noexcept { return _candidates * kProbedLeadCost; }
 
   double WindowedCost(bool bitsets) const noexcept {

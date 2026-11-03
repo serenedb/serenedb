@@ -75,6 +75,7 @@ void TermPartWriter::Add(bytes_view term, const PostingMeta& meta) {
   _prev.pay_start = meta.pay_start;
   _total_doc_freq += meta.docs_count;
   _total_term_freq += meta.freq;
+  _inline_bytes += meta.inline_size;
   ++_count;
 }
 

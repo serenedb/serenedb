@@ -662,6 +662,74 @@ TEST_F(TermRangeMergeTest, AnAbortedMergeLeavesNoPostingsFiles) {
   EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
 }
 
+TEST_F(TermRangeMergeTest, EmptyThinAndLongTermPartsMatchTheOracle) {
+  constexpr size_t kSegments = 4;
+  constexpr size_t kDocs = 12500;
+  constexpr size_t kKeys = kSegments * kDocs;
+  const auto value = [](size_t key) {
+    auto value = Key("k", key);
+    if (key % 997 == 0) {
+      value.append(5000, static_cast<char>('a' + key % 26));
+    }
+    return value;
+  };
+  Open();
+  for (size_t s = 0; s != kSegments; ++s) {
+    auto batch = _writer->GetBatch();
+    for (size_t n = 0; n != kDocs; ++n) {
+      auto doc = batch.Insert();
+      tests::StringField id{"id", value(n * kSegments + s)};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+    }
+    batch.Commit();
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  std::vector<std::string> removed;
+  for (size_t key = kKeys / 4; key != kKeys * 3 / 4; ++key) {
+    if (key < kKeys / 2 || key % 500 != 0) {
+      removed.emplace_back(value(key));
+    }
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  const auto inputs = Snapshot();
+  irs::MemoryDirectory out;
+  auto plan = MakePlan(out, inputs, nullptr);
+  ASSERT_TRUE(plan.Prepare(8));
+  EXPECT_LE(8, TermRangeParts(plan)[kIdField]);
+  ASSERT_TRUE(RunPlan(plan, 8));
+  EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
+}
+
+TEST_F(TermRangeMergeTest, ARangedFieldLeftWithOneTermMatchesTheOracle) {
+  Open();
+  for (size_t s = 0; s != 2; ++s) {
+    auto batch = _writer->GetBatch();
+    for (size_t n = 0; n != 5000; ++n) {
+      auto doc = batch.Insert();
+      tests::StringField id{"id", Key("k", n)};
+      id.id = kIdField;
+      tests::InsertField(doc, id);
+    }
+    batch.Commit();
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  std::vector<std::string> removed;
+  for (size_t n = 0; n != 5000; ++n) {
+    if (n != 2500) {
+      removed.push_back(Key("k", n));
+    }
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  const auto inputs = Snapshot();
+  irs::MemoryDirectory out;
+  auto plan = MakePlan(out, inputs, nullptr);
+  ASSERT_TRUE(plan.Prepare(4));
+  EXPECT_LE(2, TermRangeParts(plan)[kIdField]);
+  ASSERT_TRUE(RunPlan(plan, 4));
+  EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
+}
+
 TEST_F(TermRangeMergeTest, PostingsFilesThatCannotBeCreatedFailThePlan) {
   Open();
   AddSegments(4);

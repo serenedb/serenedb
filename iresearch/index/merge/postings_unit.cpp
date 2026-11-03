@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
 
 #include <span>
 #include <type_traits>
@@ -39,6 +40,7 @@
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
 #include "iresearch/index/merge/merged_terms.tpp"
+#include "iresearch/index/merge/partition_tasks.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -240,13 +242,33 @@ TermRangeMerge* RangeOf(std::span<const std::unique_ptr<TermRangeMerge>> ranges,
   return nullptr;
 }
 
+void WriteParts(term_dict::FieldWriter& writer,
+                const term_dict::PartsField& field,
+                duckdb::TaskScheduler& scheduler, size_t threads) {
+  const auto count = field.parts.size();
+  std::vector<std::unique_ptr<term_dict::FieldWriter>> built(count);
+  absl::Mutex mutex;
+  size_t appended = 0;
+  ForEachPartition(count, scheduler, threads, [&](size_t part) {
+    auto run = std::make_unique<term_dict::FieldWriter>(field, part);
+    absl::MutexLock lock{&mutex};
+    built[part] = std::move(run);
+    for (; appended != count && built[appended]; ++appended) {
+      writer.AppendPart(field, appended, *built[appended]);
+      built[appended].reset();
+    }
+  });
+  writer.EndParts(field);
+}
+
 template<typename Postings>
 bool WriteFields(const irs::FlushState& flush_state,
                  CompoundFieldIterator<Postings>& field_itr,
                  const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
                  std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                 uint64_t keyed_dicts) {
+                 uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
+                 size_t threads) {
   SDB_ASSERT(
     absl::c_all_of(ranges, [](const auto& range) { return range->Done(); }));
   auto field_writer =
@@ -303,8 +325,11 @@ bool WriteFields(const irs::FlushState& flush_state,
       key.id, field_itr.Meta().index_features, merged_norm_ids));
 
     if (auto* range = RangeOf(ranges, key.id, dict)) {
-      field_writer->WriteParts(dict, field_itr, range->Parts(),
-                               range->DocCount());
+      const auto parts = range->Parts();
+      WriteParts(
+        *field_writer,
+        field_writer->BeginParts(dict, field_itr, parts, range->DocCount()),
+        scheduler, threads);
       range->ReleaseParts();
       continue;
     }
@@ -342,7 +367,8 @@ bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts) {
+                   uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
+                   size_t threads) {
   const auto write = [&](auto postings) {
     CompoundFieldIterator<typename decltype(postings)::type> fields{
       inputs.size(), progress, field_options};
@@ -350,7 +376,7 @@ bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
       fields.Add(*input.reader, input.remap);
     }
     return WriteFields(flush_state, fields, merged_norm_ids, idx, extra, ranges,
-                       keyed_dicts);
+                       keyed_dicts, scheduler, threads);
   };
   return sorted ? write(std::type_identity<SortedPostings>{})
                 : write(std::type_identity<CompoundPostings>{});

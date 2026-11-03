@@ -29,7 +29,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/create_sort_key.hpp>
-#include <duckdb/parallel/task_executor.hpp>
 #include <memory>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -38,6 +37,7 @@
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/partition_tasks.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
@@ -154,47 +154,6 @@ class SegmentKeys final : public duckdb::PresortedMergeInput {
   std::span<const KeyColumn> _keys;
   duckdb::ObjectCache* _cache;
 };
-
-template<typename Work>
-class PartitionTask final : public duckdb::BaseExecutorTask {
- public:
-  PartitionTask(duckdb::TaskExecutor& executor, std::atomic_size_t& next,
-                size_t count, const Work& work) noexcept
-    : BaseExecutorTask{executor}, _next{&next}, _count{count}, _work{&work} {}
-
-  void ExecuteTask() final {
-    for (auto partition = _next->fetch_add(1, std::memory_order_relaxed);
-         partition < _count && !executor.HasError();
-         partition = _next->fetch_add(1, std::memory_order_relaxed)) {
-      (*_work)(partition);
-    }
-  }
-
- private:
-  std::atomic_size_t* _next;
-  size_t _count;
-  const Work* _work;
-};
-
-template<typename Work>
-void ForEachPartition(size_t count, duckdb::TaskScheduler& scheduler,
-                      size_t threads, const Work& work) {
-  const auto tasks = std::min(threads, count);
-  if (tasks < 2) {
-    for (size_t partition = 0; partition != count; ++partition) {
-      work(partition);
-    }
-    return;
-  }
-  std::atomic_size_t next{0};
-  duckdb::TaskExecutor executor{
-    scheduler, scheduler.CreateAccount(duckdb::SchedulerClass::BACKGROUND)};
-  for (size_t task = 0; task != tasks; ++task) {
-    executor.ScheduleTask(
-      duckdb::make_uniq<PartitionTask<Work>>(executor, next, count, work));
-  }
-  executor.WorkOnTasks();
-}
 
 }  // namespace
 

@@ -246,6 +246,19 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
   out.WriteData(kZeros, kSlack);
 }
 
+template<typename Visitor>
+void VisitPart(const TermPart& part, IndexFeatures features,
+               Visitor&& visitor) {
+  TermPartReader terms{part.terms, features};
+  while (terms.Next()) {
+    auto meta = terms.Meta();
+    meta.doc_start += part.bases.doc;
+    meta.pos_start += part.bases.pos;
+    meta.pay_start += part.bases.pay;
+    visitor(terms.Term(), meta);
+  }
+}
+
 }  // namespace
 
 void RecordOutput::WriteDirect(const byte_type*, size_t) {
@@ -257,6 +270,31 @@ void RecordOutput::WriteDirect(const byte_type*, size_t) {
 void FsstEncoderDelete::operator()(
   duckdb_fsst_encoder_t* encoder) const noexcept {
   duckdb_fsst_destroy(encoder);
+}
+
+FieldWriter::FieldWriter(const PartsField& field, size_t part)
+  : _pages{std::make_unique<Pages>()},
+    _inline_base{field.inline_bases[part]},
+    _compaction{true} {
+  _out = &_pages->out;
+  _dict = field.dict;
+  _width = field.width;
+  _encode = field.encode;
+  _key_prefix = field.key_prefix;
+  if (field.fsst) {
+    _fsst.reset(duckdb_fsst_duplicate(field.fsst));
+  }
+  _pw.BeginField(field.props);
+  VisitPart(field.parts[part], field.props.index_features,
+            [&](bytes_view term, const PostingMeta& meta) {
+              if (_width == 0) {
+                AddPrefix(TermPrefix(term));
+              }
+              if (_terms++ == 0) {
+                _min.assign(term);
+              }
+              Commit(term, meta);
+            });
 }
 
 void FieldWriter::SampleFsst(const BasicTermReader& reader) {
@@ -471,48 +509,115 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   ResetField();
 }
 
-void FieldWriter::WriteParts(DictRef dict, const BasicTermReader& reader,
-                             std::span<const TermPart> parts, uint64_t docs) {
+PartsField FieldWriter::BeginParts(DictRef dict, const BasicTermReader& reader,
+                                   std::span<const TermPart> parts,
+                                   uint64_t docs) {
   const auto id = reader.id();
   SDB_ASSERT(dict.member == DictMember::Strings);
   Begin(id, dict);
-  const auto props = reader.properties();
-  SDB_ASSERT(!IsSubsetOf(IndexFeatures::Ranges, props.index_features));
-  _pw.BeginField(props);
+  PartsField field{
+    .id = id,
+    .dict = dict,
+    .props = reader.properties(),
+    .first_inline = _inline.size(),
+    .docs = docs,
+  };
+  const auto features = field.props.index_features;
+  SDB_ASSERT(!IsSubsetOf(IndexFeatures::Ranges, features));
+  _pw.BeginField(field.props);
   _group_inline = false;
   _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
   if (_width == 0) {
     SampleFsst(reader);
   }
 
-  const uint64_t first_inline = _inline.size();
   const bool freq_exists =
-    IndexFeatures::None != (props.index_features & IndexFeatures::Freq);
-  uint64_t total_freq = 0;
+    IndexFeatures::None != (features & IndexFeatures::Freq);
+  uint64_t terms = 0;
   for (const auto& part : parts) {
-    total_freq += freq_exists ? part.total_term_freq : part.total_doc_freq;
-    TermPartReader terms{part.terms, props.index_features};
-    while (terms.Next()) {
-      auto meta = terms.Meta();
-      meta.doc_start += part.bases.doc;
-      meta.pos_start += part.bases.pos;
-      meta.pay_start += part.bases.pay;
-      Add(terms.Term(), meta);
+    field.total_freq +=
+      freq_exists ? part.total_term_freq : part.total_doc_freq;
+    terms += part.term_count;
+  }
+  if (terms < 2) {
+    for (const auto& part : parts) {
+      VisitPart(part, features, [&](bytes_view term, const PostingMeta& meta) {
+        Add(term, meta);
+      });
     }
+    return field;
   }
 
+  AssignOrdinal();
+  field.parts = parts;
+  field.inline_bases.reserve(parts.size());
+  uint64_t base = _inline.size();
+  for (const auto& part : parts) {
+    field.inline_bases.push_back(base);
+    base += part.inline_bytes;
+  }
+  field.key_prefix = _key_prefix;
+  field.fsst = _fsst.get();
+  field.width = _width;
+  field.encode = _encode;
+  return field;
+}
+
+void FieldWriter::AppendPart(const PartsField& field, size_t part,
+                             FieldWriter& built) {
+  if (built._terms == 0) {
+    return;
+  }
+  Cut();
+  const uint64_t base = field.inline_bases[part];
+  SDB_ASSERT(_inline.size() == base);
+  if (_terms == 0) {
+    _min.assign(built._min);
+    _first_block = _blocks;
+    _first_entry = 0;
+    _first_record = 0;
+  }
+  _terms += built._terms;
+  for (const auto prefix : built._prefixes) {
+    AddPrefix(prefix);
+  }
+  if (built._blocks != 0) {
+    bstring first{_key_prefix};
+    first.append(built._min);
+    WriteSeparator(first);
+    PadToPage();
+    built._out->Flush();
+    built._pages->file >> *_out;
+    for (const auto& span : built._spans) {
+      _spans.push_back({.block = _blocks + span.block, .extra = span.extra});
+    }
+    StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
+    SDB_ASSERT(!built._inline_starts.empty() &&
+               built._inline_starts.front() == 0);
+    _inline_starts.append(built._inline_starts, 1);
+    if (built._blocks > 1) {
+      AppendSeparators(built._separators);
+      _separator = std::move(built._separator);
+    }
+    _last = std::move(built._last);
+    _inline_last = base + built._inline_last;
+    _blocks += built._blocks;
+  }
+  _inline_start = base + built._inline_start;
+  _inline.append(built._inline);
+  _block = std::move(built._block);
+}
+
+void FieldWriter::EndParts(const PartsField& field) {
   auto stats = _pw.EndField();
-  stats.docs_count = static_cast<doc_id_t>(docs);
-  EndField(id, props, total_freq, first_inline, stats);
+  stats.docs_count = static_cast<doc_id_t>(field.docs);
+  EndField(field.id, field.props, field.total_freq, field.first_inline, stats);
   ResetField();
 }
 
 void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
   if (_width == 0) {
-    const auto prefix = TermPrefix(term);
-    if (_prefixes.empty() || _prefixes.back() != prefix) {
-      _prefixes.push_back(prefix);
-    }
+    AddPrefix(TermPrefix(term));
   }
   if (_terms++ == 0) {
     _min.assign(term);
@@ -524,14 +629,24 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
     return;
   }
   if (_terms == 2) {
-    SDB_ENSURE(_ordinal < OrdinalLimit(_ordinal_bytes),
-               "term dictionary: more keyed dictionaries than ",
-               OrdinalLimit(_ordinal_bytes));
-    _key_prefix.clear();
-    AppendOrdinal(_key_prefix, _ordinal++, _ordinal_bytes);
+    AssignOrdinal();
     Commit(_min, _single);
   }
   Commit(term, meta);
+}
+
+void FieldWriter::AddPrefix(uint32_t prefix) {
+  if (_prefixes.empty() || _prefixes.back() != prefix) {
+    _prefixes.push_back(prefix);
+  }
+}
+
+void FieldWriter::AssignOrdinal() {
+  SDB_ENSURE(_ordinal < OrdinalLimit(_ordinal_bytes),
+             "term dictionary: more keyed dictionaries than ",
+             OrdinalLimit(_ordinal_bytes));
+  _key_prefix.clear();
+  AppendOrdinal(_key_prefix, _ordinal++, _ordinal_bytes);
 }
 
 void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
@@ -558,7 +673,7 @@ bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
   _record.Clear();
   _pw.Encode(_record, meta);
   if (meta.inline_size != 0 && !_group_inline) {
-    _record.WriteV64(_inline.size());
+    _record.WriteV64(_inline_base + _inline.size());
     _group_inline = true;
   }
   const auto record = _record.View();
@@ -670,16 +785,7 @@ void FieldWriter::Cut() {
     return;
   }
   Seal();
-  const auto first = KeyAt(_block, 0);
-  if (_blocks != 0) {
-    const auto separator =
-      first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
-    const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    StringOutput out{_separators};
-    out.WriteV32(static_cast<uint32_t>(shared));
-    WriteStr(out, separator.substr(shared));
-    _separator.assign(separator);
-  }
+  WriteSeparator(KeyAt(_block, 0));
   WriteBlock();
   StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
   _inline_last = _inline_start;
@@ -688,20 +794,52 @@ void FieldWriter::Cut() {
   Clear(_block);
 }
 
-void FieldWriter::WriteBlock() {
+void FieldWriter::WriteSeparator(bytes_view first) {
+  if (_blocks == 0) {
+    return;
+  }
+  EncodeSeparator(
+    first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1));
+}
+
+void FieldWriter::EncodeSeparator(bytes_view separator) {
+  const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
+  StringOutput out{_separators};
+  out.WriteV32(static_cast<uint32_t>(shared));
+  WriteStr(out, separator.substr(shared));
+  _separator.assign(separator);
+}
+
+void FieldWriter::AppendSeparators(std::string_view separators) {
+  const auto encoded = ViewCast<byte_type>(separators);
+  const auto* p = encoded.data();
+  [[maybe_unused]] const auto shared = vread<uint32_t>(p);
+  SDB_ASSERT(shared == 0);
+  const auto size = vread<uint32_t>(p);
+  EncodeSeparator({p, size});
+  p += size;
+  _separators.append(separators.substr(p - encoded.data()));
+}
+
+uint64_t FieldWriter::PadToPage() {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
   _out->WriteData(kZeros, pad);
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
   }
+  return position + pad;
+}
+
+void FieldWriter::WriteBlock() {
+  const uint64_t position = PadToPage();
   const uint64_t size = SerializedSize(_block);
   const auto pages = static_cast<uint32_t>((size + kPage - 1) / kPage);
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
   Serialize(_block, *_out);
-  SDB_ASSERT(_out->Position() == position + pad + size);
+  SDB_ASSERT(_out->Position() == position + size);
   ++_blocks;
 }
 

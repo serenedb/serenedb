@@ -43,6 +43,7 @@ struct TermPart {
   uint64_t term_count = 0;
   uint64_t total_doc_freq = 0;
   uint64_t total_term_freq = 0;
+  uint64_t inline_bytes = 0;
 };
 
 class TermPartWriter {
@@ -56,6 +57,7 @@ class TermPartWriter {
   uint64_t Count() const noexcept { return _count; }
   uint64_t TotalDocFreq() const noexcept { return _total_doc_freq; }
   uint64_t TotalTermFreq() const noexcept { return _total_term_freq; }
+  uint64_t InlineBytes() const noexcept { return _inline_bytes; }
 
  private:
   bstring _terms;
@@ -65,6 +67,7 @@ class TermPartWriter {
   uint64_t _count = 0;
   uint64_t _total_doc_freq = 0;
   uint64_t _total_term_freq = 0;
+  uint64_t _inline_bytes = 0;
   bool _has_freq;
   bool _has_pos;
   bool _has_offs;

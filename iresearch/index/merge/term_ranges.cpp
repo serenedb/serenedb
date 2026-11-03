@@ -237,6 +237,7 @@ struct TermRangeMerge::Part {
   uint64_t count = 0;
   uint64_t total_doc_freq = 0;
   uint64_t total_term_freq = 0;
+  uint64_t inline_bytes = 0;
   PostingBases bases;
   bool done = false;
 };
@@ -310,6 +311,7 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
   part.count = terms.Count();
   part.total_doc_freq = terms.TotalDocFreq();
   part.total_term_freq = terms.TotalTermFreq();
+  part.inline_bytes = terms.InlineBytes();
   part.terms = std::move(terms).TakeTerms();
   const auto& docs = writer.Docs();
   absl::MutexLock lock{&_target.sink->Mutex()};
@@ -354,6 +356,7 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
       .term_count = part->count,
       .total_doc_freq = part->total_doc_freq,
       .total_term_freq = part->total_term_freq,
+      .inline_bytes = part->inline_bytes,
     });
   }
   return parts;

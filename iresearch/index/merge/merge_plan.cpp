@@ -535,7 +535,8 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
          WritePostings(state, _doc_map, static_cast<bool>(_key_order),
                        _field_options, _progress, _merged_norm_ids, *_idx,
                        _cluster_readers, _term_ranges,
-                       KeyedDicts(_field_meta_map));
+                       KeyedDicts(_field_meta_map),
+                       duckdb::TaskScheduler::GetScheduler(_db), _threads);
 }
 
 bool MergePlan::WriteIndex(MergeStepClock& clock) {

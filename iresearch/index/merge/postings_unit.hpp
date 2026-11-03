@@ -22,6 +22,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <span>
 
@@ -50,6 +51,7 @@ bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts);
+                   uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
+                   size_t threads);
 
 }  // namespace irs

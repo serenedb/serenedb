@@ -39,6 +39,7 @@
 #include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/store/memory_directory.hpp"
 
 namespace irs::term_dict {
 
@@ -72,9 +73,25 @@ struct BlockBuilder {
   bool all_coded = true;
 };
 
+struct PartsField {
+  field_id id = field_limits::invalid();
+  DictRef dict;
+  FieldProperties props;
+  std::span<const TermPart> parts;
+  std::vector<uint64_t> inline_bases;
+  bstring key_prefix;
+  duckdb_fsst_encoder_t* fsst = nullptr;
+  uint64_t total_freq = 0;
+  uint64_t first_inline = 0;
+  uint64_t docs = 0;
+  uint32_t width = 0;
+  bool encode = true;
+};
+
 class FieldWriter final {
  public:
   explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
+  FieldWriter(const PartsField& field, size_t part);
 
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
@@ -82,13 +99,20 @@ class FieldWriter final {
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void prepare(const FlushState& state, uint64_t keyed_dicts);
   void write(DictRef dict, const BasicTermReader& reader);
-  void WriteParts(DictRef dict, const BasicTermReader& reader,
-                  std::span<const TermPart> parts, uint64_t docs);
+  PartsField BeginParts(DictRef dict, const BasicTermReader& reader,
+                        std::span<const TermPart> parts, uint64_t docs);
+  void AppendPart(const PartsField& field, size_t part, FieldWriter& built);
+  void EndParts(const PartsField& field);
   void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
   void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
   void end();
 
  private:
+  struct Pages {
+    MemoryFile file{IResourceManager::gNoop};
+    MemoryIndexOutput out{file};
+  };
+
   void Begin(field_id id, DictRef dict) noexcept;
   void BeginSlot(field_id id, DictRef dict);
   void EndSlot(field_id id, const PostingMeta& meta);
@@ -96,6 +120,8 @@ class FieldWriter final {
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
   void Add(bytes_view term, const PostingMeta& meta);
+  void AddPrefix(uint32_t prefix);
+  void AssignOrdinal();
   void Commit(bytes_view term, const PostingMeta& meta);
   bool Append(bytes_view term, const PostingMeta& meta);
   bool AppendFixedKey(bytes_view key, uint64_t records);
@@ -103,12 +129,17 @@ class FieldWriter final {
   void AppendVarColumns(uint32_t index, bytes_view key);
   void Seal();
   void Cut();
+  void WriteSeparator(bytes_view first);
+  void EncodeSeparator(bytes_view separator);
+  void AppendSeparators(std::string_view separators);
+  uint64_t PadToPage();
   void WriteBlock();
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
                 uint64_t first_inline, const PostingsWriter::FieldStats& stats);
   void ResetField() noexcept;
   void Reset() noexcept;
 
+  std::unique_ptr<Pages> _pages;
   PostingsWriter _pw;
   RecordOutput _record;
   BlockBuilder _block;
@@ -136,6 +167,7 @@ class FieldWriter final {
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
+  uint64_t _inline_base = 0;
   uint64_t _inline_start = 0;
   uint64_t _inline_last = 0;
   uint32_t _blocks = 0;

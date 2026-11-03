@@ -68,13 +68,32 @@ struct BlobScan {
         !s.decoded[0]) {
       s.DecodeFrame(0);
     }
+    Inflate(s, f, out, DictionaryFor(s, f));
+    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
+      s.values[e] = duckdb::string_t{out + off, len};
+    });
+  }
+
+  template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, std::string_view dictionary,
+              uint32_t* ends) {
+    Inflate(s, f, out, dictionary);
+    if (ends) {
+      Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
+        *ends++ = static_cast<uint32_t>(off + len);
+      });
+    }
+  }
+
+  template<typename Frames>
+  void Inflate(const Frames& s, uint32_t f, char* out,
+               std::string_view dictionary) {
     if constexpr (Trainable(Codec::kCodec)) {
       if (trained) {
-        DecodeTrained(s, f, out);
+        InflateTrained(s, f, out);
         return;
       }
     }
-    const auto dictionary = DictionaryFor(s, f);
     char* staging = out;
     if (f >= Codec::kFirstWindowed && !dictionary.empty()) {
       staging = Window(s, dictionary);
@@ -83,24 +102,24 @@ struct BlobScan {
       staging == out
         ? dictionary
         : std::string_view{staging - dictionary.size(), dictionary.size()});
-    Decode(s, f, out, staging);
+    Decompress(s, f, out, staging);
   }
 
   template<typename Frames>
-  void DecodeTrained(Frames& s, uint32_t f, char* out) {
+  void InflateTrained(const Frames& s, uint32_t f, char* out) {
     if constexpr (kTakesTrained<Codec>) {
       decoder.SetTrained(*trained);
-      Decode(s, f, out, out);
+      Decompress(s, f, out, out);
     } else {
       const auto bytes = trained->Bytes();
       char* staging = Window(s, bytes);
       decoder.SetDictionary({staging - bytes.size(), bytes.size()});
-      Decode(s, f, out, staging);
+      Decompress(s, f, out, staging);
     }
   }
 
   template<typename Frames>
-  void Decode(Frames& s, uint32_t f, char* out, char* staging) {
+  void Decompress(const Frames& s, uint32_t f, char* out, char* staging) {
     const auto& m = s.frames[f];
     SDB_ENSURE(
       decoder.Decompress(s.Data() + m.comp_off, m.comp_len, staging, m.raw_len),
@@ -108,12 +127,17 @@ struct BlobScan {
     if (staging != out) {
       std::memcpy(out, staging, m.raw_len);
     }
+  }
+
+  template<typename Frames, typename Visit>
+  static void Entries(Frames& s, uint32_t f, Visit&& visit) {
+    const auto& m = s.frames[f];
     const auto end = s.FrameEnd(f);
     uint64_t off = 0;
     for (uint32_t e = m.first_entry; e < end; ++e) {
       const auto len = s.length_reader.At(e);
       SDB_ENSURE(off + len <= m.raw_len, "col codec: corrupted entry lengths");
-      s.values[e] = duckdb::string_t{out + off, len};
+      visit(e, off, len);
       off += len;
     }
     SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
@@ -124,7 +148,7 @@ struct BlobScan {
     if (f == 0 || s.header.flags != FrameDictionary::FirstFrame) {
       return {};
     }
-    return {s.heap + s.frame_off[0], s.frames[0].raw_len};
+    return s.FirstFrame();
   }
 
   template<typename Frames>

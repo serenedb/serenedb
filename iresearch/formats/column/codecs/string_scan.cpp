@@ -184,6 +184,20 @@ void ReferenceOnce(HeapReference& reference,
   reference.source = source;
 }
 
+void ReferenceFrame(FrameLink& link,
+                    const duckdb::shared_ptr<const FrameBytes>& frame,
+                    duckdb::Vector& result) {
+  const auto& target = result.GetBufferRef()->GetAuxiliaryData();
+  if (target && frame.get() == link.frame &&
+      target.get() == link.target.lock().get()) {
+    return;
+  }
+  duckdb::StringVector::AddAuxiliaryData(
+    result, duckdb::make_uniq<FrameReference>(frame));
+  link.target = result.GetBufferRef()->GetAuxiliaryData();
+  link.frame = frame.get();
+}
+
 void EmitDecoded(const DecodedDictionary& decoded,
                  std::span<const EntryAt> order, duckdb::Vector& result,
                  HeapReference& reference) {

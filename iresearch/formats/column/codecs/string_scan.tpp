@@ -49,6 +49,7 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
+#include "iresearch/store/unmap_behind.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -72,7 +73,9 @@ struct EntryFrames {
       base{handle.GetDataMutable() + segment.GetBlockOffset()},
       header{Header::Parse(base, segment.SegmentSize())},
       type{segment.GetType()},
-      length_reader{base + header.off_lengths, header.length_width} {
+      length_reader{base + header.off_lengths, header.length_width},
+      read_once{CacheSlotOf(segment).read_once},
+      file_offset{CacheSlotOf(segment).file_offset} {
     SDB_ENSURE(header.shape == S && header.codec == Leaf::kCodec &&
                  header.row_count == segment.count &&
                  uint64_t{header.entry_count} <=
@@ -83,6 +86,10 @@ struct EntryFrames {
       return;
     }
     LoadFrames();
+    if (!kDedup && read_once) {
+      leaf.emplace(segment, *this);
+      return;
+    }
     if constexpr (kDedup) {
       dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
         type, header.entry_count);
@@ -93,10 +100,12 @@ struct EntryFrames {
     }
     auto& dict_data = dictionary->data;
     values = duckdb::FlatVector::GetDataMutable<string_t>(dict_data);
-    const auto heap_bytes =
-      std::max<idx_t>(header.raw_bytes, string_t::INLINE_LENGTH + 1);
-    heap = duckdb::StringVector::EmptyString(dict_data, heap_bytes)
-             .GetDataWriteable();
+    if (!read_once) {
+      const auto heap_bytes =
+        std::max<idx_t>(header.raw_bytes, string_t::INLINE_LENGTH + 1);
+      heap = duckdb::StringVector::EmptyString(dict_data, heap_bytes)
+               .GetDataWriteable();
+    }
     duckdb::StringVector::AddAuxiliaryData(
       dict_data, duckdb::make_uniq<ImmutablePayloads>());
     leaf.emplace(segment, *this);
@@ -152,9 +161,54 @@ struct EntryFrames {
 
   void DecodeFrame(uint32_t f) {
     SDB_ASSERT(!decoded[f]);
-    leaf->DecodeFrame(*this, f, heap + frame_off[f]);
+    leaf->DecodeFrame(*this, f, FrameOut(f));
     decoded[f] = 1;
     ++decoded_count;
+  }
+
+  char* FrameOut(uint32_t f) {
+    if (heap) {
+      return heap + frame_off[f];
+    }
+    SDB_ASSERT(read_once);
+    Trail(f);
+    auto frame = duckdb::make_shared_ptr<FrameBytes>(frames[f].raw_len);
+    char* out = frame->data.get();
+    duckdb::StringVector::AddAuxiliaryData(
+      dictionary->data, duckdb::make_uniq<FrameReference>(std::move(frame)));
+    if (f == 0) {
+      first = out;
+    }
+    return out;
+  }
+
+  std::string_view FirstFrame() const noexcept {
+    return {heap ? heap + frame_off[0] : first, frames[0].raw_len};
+  }
+
+  bool Streams() const noexcept { return read_once != nullptr; }
+
+  void Trail(uint32_t f) noexcept {
+    const auto& m = frames[f];
+    const auto at = [&](uint64_t offset) { return file_offset + offset; };
+    data_behind.Advance(*read_once, at(uint64_t{header.off_data} + m.comp_off),
+                        at(uint64_t{header.off_data} + header.data_size));
+    lengths_behind.Advance(*read_once,
+                           at(header.off_lengths + uint64_t{m.first_entry} *
+                                                     header.length_width / 8),
+                           at(header.off_lcps));
+    if (header.lcp_width != 0) {
+      lcps_behind.Advance(
+        *read_once,
+        at(header.off_lcps + uint64_t{m.first_entry} * header.lcp_width / 8),
+        at(header.off_codes));
+    }
+  }
+
+  void Release(uint64_t begin, uint64_t end) const noexcept {
+    if (begin < end) {
+      read_once->Unmap(file_offset + begin, end - begin);
+    }
   }
 
   void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
@@ -212,13 +266,19 @@ struct EntryFrames {
   Header header;
   duckdb::LogicalType type;
   PackedReader length_reader;
+  const IndexInput* read_once;
+  uint64_t file_offset;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
+  char* first = nullptr;
   std::vector<FrameMeta> frames;
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;
   size_t decoded_count = 0;
+  UnmapBehind data_behind;
+  UnmapBehind lengths_behind;
+  UnmapBehind lcps_behind;
   std::optional<typename Leaf::Scan> leaf;
 };
 
@@ -295,19 +355,21 @@ void ScanVector(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
 }
 
 template<typename Scan>
-void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
+void Select(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             const duckdb::SelectionVector& sel, idx_t sel_count) {
+  SDB_ASSERT(!CacheSlotOf(segment).read_once);
   state.scan_state->Cast<Scan>().Select(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count);
 }
 
 template<typename Scan>
-void Filter(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
+void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             duckdb::SelectionVector& sel, idx_t& sel_count,
             const duckdb::TableFilter& filter,
             duckdb::TableFilterState& filter_state) {
+  SDB_ASSERT(!CacheSlotOf(segment).read_once);
   state.scan_state->Cast<Scan>().Filter(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count, filter,
                                         filter_state);
@@ -329,6 +391,7 @@ template<typename Scan>
 void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  SDB_ASSERT(!CacheSlotOf(segment).read_once);
   using Fetch = typename Scan::Fetch;
   auto& handle = state.GetOrInsertHandle(segment);
   auto* base = handle.GetDataMutable() + segment.GetBlockOffset();

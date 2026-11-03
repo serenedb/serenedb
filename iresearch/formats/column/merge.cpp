@@ -769,6 +769,8 @@ bool ColumnMerger::VisitOrdered(field_id column, uint64_t begin, uint64_t end,
   const auto inputs = _order->Inputs();
   std::vector<uint64_t> live(_sources.size());
   _order->LiveRowsBefore(begin, live);
+  std::vector<uint64_t> last(_sources.size());
+  _order->LiveRowsBefore(end, last);
   std::vector<std::unique_ptr<OrderedInput>> cursors(_sources.size());
   std::vector<uint32_t> active;
   const bool fresh = IngestsLists(type);
@@ -812,7 +814,11 @@ bool ColumnMerger::VisitOrdered(field_id column, uint64_t begin, uint64_t end,
       visit(chunk_at, duckdb::Vector{out, out_sel, n}, n);
     }
     for (const auto a : active) {
-      cursors[a]->pending = 0;
+      auto& cursor = cursors[a];
+      cursor->pending = 0;
+      if (cursor->live == last[a]) {
+        cursor.reset();
+      }
     }
     active.clear();
     n = 0;
@@ -879,6 +885,9 @@ bool ColumnMerger::VisitOrdered(field_id column, uint64_t begin, uint64_t end,
       if (n == STANDARD_VECTOR_SIZE) {
         flush();
       }
+    }
+    if (cursor && cursor->live == last[i] && cursor->pending == 0) {
+      cursor.reset();
     }
   }
   flush();

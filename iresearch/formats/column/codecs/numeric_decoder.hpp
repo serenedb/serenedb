@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/store/unmap_behind.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -63,7 +64,8 @@ class FrameDecoder {
     : _base{base},
       _h{header},
       _cache{slot.touched ? cache : nullptr},
-      _slot{slot} {
+      _slot{slot},
+      _read_once{slot.read_once} {
     SDB_ENSURE(_h.width == sizeof(T), "numeric codec: width mismatch");
     if (Blocked()) {
       _per_frame = kFforFrameRows;
@@ -113,6 +115,9 @@ class FrameDecoder {
   }
 
   void Read(uint64_t row, uint64_t count, T* out) {
+    if (_read_once && count != 0) {
+      Trail(row);
+    }
     uint64_t done = 0;
     while (done < count) {
       if constexpr (std::is_integral_v<T>) {
@@ -154,6 +159,12 @@ class FrameDecoder {
  private:
   static constexpr uint64_t kNearShare = 32;
   static constexpr uint64_t kScanCacheDivisor = 2;
+
+  void Trail(uint64_t row) noexcept {
+    const uint64_t data = _slot.file_offset + _h.off_data;
+    _behind.Advance(*_read_once, data + MetaAt(FrameOf(row)).frame.comp_off,
+                    data + _h.data_size);
+  }
 
   void Seek(uint64_t row) {
     if (row >= _begin && row < _end) {
@@ -829,6 +840,8 @@ class FrameDecoder {
   NumericHeader _h;
   duckdb::ObjectCache* _cache;
   ReadContext::CacheSlot _slot;
+  const IndexInput* _read_once;
+  UnmapBehind _behind;
   std::string _segment_key;
   std::string _key;
   duckdb::shared_ptr<DecodedFrame> _held;

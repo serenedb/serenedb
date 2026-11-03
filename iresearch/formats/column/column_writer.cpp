@@ -982,6 +982,9 @@ void ColumnWriter::SealRowGroup() {
   } else {
     SealColumn(_type, chunks, _staged_rows, _skip_validity, _forced, _meta);
   }
+  for (duckdb::idx_t c = 0; c != _staged_chunks; ++c) {
+    _staged[c].data.ResetFromCache(_staged_caches[c]);
+  }
   _row_start += _staged_rows;
   _staged_chunks = 0;
   _staged_rows = 0;

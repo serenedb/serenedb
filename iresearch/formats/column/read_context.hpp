@@ -78,6 +78,9 @@ class ReadContext final : public BlockManager,
   duckdb::ObjectCache* Cache() const noexcept { return _cache; }
   void SetCache(duckdb::ObjectCache* cache) noexcept { _cache = cache; }
   void SetUnmap(Unmap unmap) noexcept { _unmap = unmap; }
+  bool ReadOnce() const noexcept {
+    return _merge_read && _unmap == Unmap::EachBlock;
+  }
 
   void Release(uint64_t offset, uint64_t size) const noexcept;
 
@@ -95,6 +98,7 @@ class ReadContext final : public BlockManager,
     std::atomic<bool>* touched = nullptr;
     duckdb::ObjectCache* cache = nullptr;
     const codecs::TrainedDictionaries* dictionaries = nullptr;
+    const IndexInput* read_once = nullptr;
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,

@@ -31,6 +31,8 @@
 #include <atomic>
 #include <cstddef>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
@@ -45,6 +47,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <iterator>
 #include <numeric>
 #include <random>
@@ -799,6 +802,96 @@ TEST_F(SortedMergeMappingTest, SortKeysLeaveNoInputMappedBehindThem) {
     irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ("", FirstDifference(_expected, Dump(*merged)));
+}
+
+TEST(StreamingScanMappingTest, StreamingScanLeavesConsumedPagesUnmapped) {
+  constexpr uint64_t kRows = 2500;
+  constexpr uint64_t kHalf = kRows / 2;
+  constexpr irs::field_id kColumn = 7;
+  constexpr std::string_view kSegment = "streamed";
+  ScratchDir scratch{"streaming_scan_mapping"};
+  const auto path = scratch.Sub("col");
+  irs::MMapDirectory dir{path};
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const auto text = [](uint64_t row) {
+    std::mt19937_64 rng{row + 1};
+    return RandomId(rng, 1400);
+  };
+  {
+    irs::ColWriter w{dir, kSegment, db};
+    auto& cw = w.OpenColumn(
+      kColumn, duckdb::LogicalType::VARCHAR, /*skip_validity=*/false,
+      static_cast<uint32_t>(kRows), duckdb::CompressionType::COMPRESSION_LZ4,
+      /*hyperloglog=*/false,
+      irs::ColCodecParams{.segment_target = 8 * 1024 * 1024});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vec{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec);
+      for (uint64_t k = 0; k < take; ++k) {
+        data[k] = duckdb::StringVector::AddString(vec, text(pos + k));
+      }
+      duckdb::FlatVector::SetSize(vec, take);
+      cw.Append(vec, take);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader reader{dir, kSegment, db, irs::IOAdvice::SEQUENTIAL};
+  const auto* col = reader.Column(kColumn);
+  ASSERT_NE(nullptr, col);
+  ASSERT_EQ(1, col->DataBlocks().size());
+  const auto& block = col->DataBlocks().front();
+  const auto file = path / irs::FileName(kSegment);
+  const auto page = PageSize();
+  const auto mapped_between = [&](uint64_t begin, uint64_t end) {
+    const auto mapped = MappedPages(file);
+    uint64_t count = 0;
+    for (auto p = (begin + page - 1) / page; (p + 1) * page <= end; ++p) {
+      count += mapped[p] ? 1 : 0;
+    }
+    return count;
+  };
+  irs::ReadContext warm{reader};
+  const auto* bytes = warm.TryReadStable(block.file_offset, block.byte_size);
+  ASSERT_NE(nullptr, bytes);
+  for (uint64_t at = 0; at < block.byte_size; at += page) {
+    static_cast<void>(*static_cast<const volatile uint8_t*>(bytes + at));
+  }
+  const auto header = irs::codecs::Header::Parse(bytes, block.byte_size);
+  ASSERT_EQ(irs::codecs::Shape::Plain, header.shape);
+  irs::codecs::FrameMeta last;
+  for (uint32_t f = 0; f < header.frame_count; ++f) {
+    const auto meta = duckdb::Load<irs::codecs::FrameMeta>(
+      bytes + header.off_frames + f * irs::codecs::kFrameMetaSize);
+    if (meta.first_entry < kHalf) {
+      last = meta;
+    }
+  }
+  const uint64_t data = block.file_offset + header.off_data;
+  const uint64_t data_end = data + header.data_size;
+  const uint64_t cursor = data + last.comp_off;
+  ASSERT_LT(data + 2 * irs::file_utils::kPrefetchChunk, cursor);
+
+  auto ctx = std::make_shared<irs::ReadContext>(reader);
+  ctx->SetMergeRead(true);
+  ctx->SetUnmap(irs::Unmap::EachBlock);
+  auto state = col->InitScan(ctx);
+  irs::ColumnReader::VectorScratch batch{duckdb::LogicalType::VARCHAR};
+  for (uint64_t pos = 0; pos < kHalf;) {
+    const auto take = std::min<uint64_t>(kHalf - pos, 250);
+    auto& out = batch.Reset();
+    col->Scan(state, out, take);
+    EXPECT_EQ(
+      text(pos + take - 1),
+      duckdb::FlatVector::GetData<duckdb::string_t>(out)[take - 1].GetString());
+    pos += take;
+  }
+  EXPECT_EQ(
+    0, mapped_between(data, cursor - irs::file_utils::kPrefetchChunk - page));
+  EXPECT_LT(0, mapped_between(cursor + last.comp_len + page, data_end));
+  state = {};
+  EXPECT_EQ(
+    0, mapped_between(block.file_offset, block.file_offset + block.byte_size));
 }
 
 class ColumnSplitTest : public ::testing::Test {

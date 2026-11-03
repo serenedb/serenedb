@@ -471,6 +471,9 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       slot.touched = &_touched[w.block];
       slot.cache = cache;
     }
+    if (ctx.ReadOnce()) {
+      slot.read_once = &ctx.In();
+    }
     slot.dictionaries = Dictionaries(ctx);
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);

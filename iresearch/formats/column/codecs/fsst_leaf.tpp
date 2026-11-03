@@ -139,6 +139,22 @@ struct FsstScan {
   }
 
   template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, std::string_view,
+              uint32_t* ends) {
+    const auto& m = s.frames[f];
+    const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
+    const auto chain = WalkChain(
+      decoder, s.Data(), s.length_reader, lcps, m.first_entry, s.FrameEnd(f),
+      m.comp_off, enc_end, out, m.raw_len, [&](uint32_t, std::string_view v) {
+        if (ends) {
+          *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
+        }
+      });
+    SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
+               "col codec: corrupted frame");
+  }
+
+  template<typename Frames>
   void EnsureEntry(Frames& s, uint32_t e, uint32_t f) {
     const auto g = (e - s.frames[f].first_entry) / kChainRestart;
     if (!group_decoded[group_base[f] + g]) {

@@ -85,6 +85,10 @@ struct PlainScan final : duckdb::SegmentScanState {
 
   void ScanFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
                 idx_t count) {
+    if (entries.Streams()) {
+      Stream(result, result_offset, start, count);
+      return;
+    }
     entries.EnsureEach(count, [&](idx_t i) { return start + i; });
     entries.ReferenceHeap(result);
     auto writer =
@@ -100,6 +104,7 @@ struct PlainScan final : duckdb::SegmentScanState {
 
   void Select(duckdb::Vector& result, idx_t start, idx_t,
               const duckdb::SelectionVector& rows, idx_t count) {
+    SDB_ASSERT(!entries.Streams());
     entries.EnsureEach(count,
                        [&](idx_t i) { return start + rows.get_index(i); });
     entries.ReferenceHeap(result);
@@ -109,7 +114,64 @@ struct PlainScan final : duckdb::SegmentScanState {
     }
   }
 
+  void Stream(duckdb::Vector& result, idx_t result_offset, idx_t start,
+              idx_t count) {
+    SDB_ASSERT(start >= streamed);
+    auto writer =
+      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
+    const auto stop = static_cast<uint32_t>(start + count);
+    for (auto e = static_cast<uint32_t>(start); e < stop;) {
+      if (frame == kNoFrame || e < entries.frames[frame].first_entry ||
+          e >= entries.FrameEnd(frame)) {
+        Open(entries.FrameOf(e));
+      }
+      ReferenceFrame(link, bytes, result);
+      const auto first_entry = entries.frames[frame].first_entry;
+      const auto end = std::min(stop, entries.FrameEnd(frame));
+      const char* data = bytes->data.get();
+      for (; e < end; ++e) {
+        const auto k = e - first_entry;
+        const uint32_t from = k == 0 ? 0 : ends[k - 1];
+        writer.WriteStringRef(string_t{data + from, ends[k] - from});
+      }
+    }
+    streamed = stop;
+  }
+
+  void Open(uint32_t f) {
+    const bool first_frame =
+      entries.header.flags == FrameDictionary::FirstFrame;
+    std::string_view dictionary;
+    if (f != 0 && first_frame) {
+      if (!frame_zero) {
+        frame_zero = Inflate(0, {}, nullptr);
+      }
+      dictionary = {frame_zero->data.get(), frame_zero->size};
+    }
+    ends.resize(entries.FrameEnd(f) - entries.frames[f].first_entry);
+    bytes = Inflate(f, dictionary, ends.data());
+    if (f == 0 && first_frame) {
+      frame_zero = bytes;
+    }
+    frame = f;
+  }
+
+  duckdb::shared_ptr<FrameBytes> Inflate(uint32_t f,
+                                         std::string_view dictionary,
+                                         uint32_t* frame_ends) {
+    entries.Trail(f);
+    auto out = duckdb::make_shared_ptr<FrameBytes>(entries.frames[f].raw_len);
+    entries.leaf->Stream(entries, f, out->data.get(), dictionary, frame_ends);
+    return out;
+  }
+
   EntryFrames<Shape::Plain, Leaf> entries;
+  uint32_t frame = kNoFrame;
+  duckdb::shared_ptr<const FrameBytes> bytes;
+  duckdb::shared_ptr<const FrameBytes> frame_zero;
+  ScratchVector<uint32_t> ends;
+  FrameLink link;
+  idx_t streamed = 0;
 };
 
 }  // namespace irs::codecs::text

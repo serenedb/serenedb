@@ -56,7 +56,9 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
+#include <iresearch/store/store_utils.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "index/index_tests.hpp"
@@ -1238,9 +1240,9 @@ struct Pair {
 
 // One block's worth of documents, mixing very short postings with high
 // frequencies so that min(dl) lands below max(tf).
-constexpr Pair kBlock[]{{1, 1},   {30, 31},  {1, 201}, {12, 15},
-                        {2, 2},   {25, 126}, {1, 4},   {7, 9},
-                        {40, 40}, {3, 300},  {18, 20}, {5, 5}};
+constexpr Pair kBlock[]{{1, 1},    {30, 31}, {1, 201}, {12, 15}, {2, 2},
+                        {25, 126}, {1, 4},   {7, 9},   {40, 40}, {3, 300},
+                        {18, 20},  {5, 5},   {2, 1},   {60, 3}};
 
 template<typename Scorer>
 irs::bstring MakeStats(const Scorer& scorer) {
@@ -1341,4 +1343,23 @@ TEST(score_bound_dominance_test, bound_scores_at_least_every_document) {
                                                 "tfidf_with_norms");
   AssertBoundDominates<irs::kScoreBoundMaxFreq>(irs::TFIDF{false},
                                                 "tfidf_plain");
+}
+
+TEST(score_bound_dominance_test, overlapping_token_bounds_round_trip) {
+  using Producer = irs::FreqNormProducer<irs::kScoreBoundMinNorm>;
+  for (const auto [freq, norm] :
+       {Pair{2, 1}, Pair{256, 1}, Pair{1, 256}, Pair{7, 7},
+        Pair{std::numeric_limits<uint32_t>::max(), 1}}) {
+    SCOPED_TRACE(std::make_pair(freq, norm));
+    const Producer::Entry entry{freq, norm};
+    irs::bstring bytes;
+    irs::BytesOutput out{bytes};
+    Producer::Write(entry, out);
+    ASSERT_EQ(bytes.size(), Producer::Size(entry));
+    irs::BytesViewInput in{bytes};
+    irs::FreqNormSource<irs::kScoreBoundFreq | irs::kScoreBoundNorm> source;
+    source.Read(in, bytes.size());
+    EXPECT_EQ(*irs::get<irs::FreqBlockAttr>(source)->value, freq);
+    EXPECT_EQ(irs::get<irs::Norm>(source)->value, norm);
+  }
 }

@@ -4,7 +4,8 @@
 A listener with proxy_protocol=require sits behind a proxy on the same host, so
 every TCP peer is 127.0.0.1. The client's address is the source in the PROXY
 header: a remote source must not get the loopback trust rules, and a header
-without a source must not match any host rule.
+without a source must not match any host rule. A client a proxy relays through
+a unix socket listener is judged the same way, not as a local connection.
 
 Runnable standalone:
     python3 tests/drivers/network/proxy_source_test.py --serened ./build/bin/serened
@@ -12,9 +13,11 @@ Runnable standalone:
 
 import argparse
 import os
+import shutil
 import socket
 import struct
 import sys
+import tempfile
 
 from hba_mask_test import AUTH_REQUESTED, BROKEN, REJECTED, TRUST, _recvn, _startup
 
@@ -24,9 +27,22 @@ sys.path.insert(0, os.path.join(
 from serened import Serened  # noqa: E402
 
 
-def probe(port: int, header: bytes, timeout: float = 5.0) -> str:
+def connect(target, timeout: float) -> socket.socket:
+    if isinstance(target, int):
+        return socket.create_connection(("127.0.0.1", target), timeout=timeout)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
     try:
-        s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        s.connect(target)
+    except OSError:
+        s.close()
+        raise
+    return s
+
+
+def probe(target, header: bytes, timeout: float = 5.0) -> str:
+    try:
+        s = connect(target, timeout)
     except OSError:
         return BROKEN
     try:
@@ -52,21 +68,31 @@ def v1(source: str, port: int) -> bytes:
 
 
 def run(binary: str) -> int:
+    socket_dir = tempfile.mkdtemp(prefix="pxs_")
+    unix = os.path.join(socket_dir, "pg.sock")
     srv = Serened(binary, prefix="proxy_source_",
                   ready=lambda host, p: probe(p, v1("127.0.0.1", p)) != BROKEN)
     srv.extra_args.append(
-        f"--listen=postgres://127.0.0.1:{srv.port}?proxy_protocol=require")
+        f"--listen=postgres://127.0.0.1:{srv.port}?proxy_protocol=require,"
+        f"postgres://{unix}?proxy_protocol=require")
     srv.start()
     failures = []
     try:
         cases = [
-            ("loopback source", v1("127.0.0.1", srv.port), {TRUST}),
-            ("remote source", v1("203.0.113.7", srv.port),
+            ("loopback source", srv.port, v1("127.0.0.1", srv.port), {TRUST}),
+            ("remote source", srv.port, v1("203.0.113.7", srv.port),
              {AUTH_REQUESTED, REJECTED}),
-            ("unknown source", b"PROXY UNKNOWN\r\n", {AUTH_REQUESTED, REJECTED}),
+            ("unknown source", srv.port, b"PROXY UNKNOWN\r\n",
+             {AUTH_REQUESTED, REJECTED}),
+            ("unix socket, loopback source", unix, v1("127.0.0.1", srv.port),
+             {TRUST}),
+            ("unix socket, remote source", unix, v1("203.0.113.7", srv.port),
+             {AUTH_REQUESTED, REJECTED}),
+            ("unix socket, unknown source", unix, b"PROXY UNKNOWN\r\n",
+             {AUTH_REQUESTED, REJECTED}),
         ]
-        for name, header, want in cases:
-            got = probe(srv.port, header)
+        for name, target, header, want in cases:
+            got = probe(target, header)
             ok = got in want
             print(f"[{'OK' if ok else 'FAIL'}] {name} -> {got} "
                   f"(want {sorted(want)})")
@@ -74,6 +100,7 @@ def run(binary: str) -> int:
                 failures.append(name)
     finally:
         srv.stop()
+        shutil.rmtree(socket_dir, ignore_errors=True)
     if failures:
         print(f"\nFAILED: {', '.join(failures)}")
         return 1

@@ -31,8 +31,6 @@
 
 namespace sdb::connector {
 
-// DELETE on a TableEngine::Search table. Single-threaded (no ParallelSink /
-// local sink state): the transaction buffers each row's rowid as a removal.
 class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
  public:
   // `return_chunk` is RETURNING: `types` is then the table row followed by the
@@ -49,11 +47,19 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     duckdb::RowIdHandling row_id_handling);
 
   bool IsSink() const final { return true; }
+  bool ParallelSink() const final {
+    return _row_id_handling == duckdb::RowIdHandling::ASSUME_UNIQUE;
+  }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;
+  duckdb::SinkCombineResultType Combine(
+    duckdb::ExecutionContext& context,
+    duckdb::OperatorSinkCombineInput& input) const final;
 
   bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(

@@ -16,6 +16,16 @@ SELECT ts_lexize('sql_mid_norm', 'red, green ,blue');
 ts_lexize
 {RED,GREEN,BLUE}
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_nested_lambda AS
+    (lambda x: list_transform(string_split(x, ' '), lambda w: upper(w) || x))
+
+query
+SELECT ts_lexize('sql_nested_lambda', 'red green');
+----
+ts_lexize
+{"REDred green","GREENred green"}
+
 
 # --- fan-out mid-chain: the expression returns a list per token ---
 

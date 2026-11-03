@@ -48,6 +48,7 @@ add_library(
     ${LIBRARY_DIR}/src_c/stem_UTF_8_swedish.c
     ${LIBRARY_DIR}/src_c/stem_UTF_8_tamil.c
     ${LIBRARY_DIR}/src_c/stem_UTF_8_turkish.c
+    ${LIBRARY_DIR}/src_c/stem_UTF_8_ukrainian.c
     ${LIBRARY_DIR}/src_c/stem_UTF_8_yiddish.c
     # END stemmers
     ${LIBRARY_DIR}/runtime/api.c

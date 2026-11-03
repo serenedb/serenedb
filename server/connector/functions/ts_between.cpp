@@ -21,7 +21,6 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -156,7 +155,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
     }
-  } else if (IsNumericTypeId(col_type)) {
+  } else if (term_dict::IsNumeric(col_type)) {
     if (!IsRangeNumericValueType(val_type)) {
       type_mismatch();
     }
@@ -180,7 +179,7 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
+    SetField(range, column_info);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* options = range.mutable_options();
@@ -196,26 +195,20 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
   }
 
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    auto* options = range.mutable_options();
-    auto& rng = options->range;
-    auto bytes = irs::ViewCast<irs::byte_type>(
-      irs::BooleanTerm(bound_val->GetValue<bool>()));
-    if (is_lower) {
-      rng.min.assign(bytes);
-      rng.min_type = bound_type;
-    } else {
-      rng.max.assign(bytes);
-      rng.max_type = bound_type;
-    }
+    const bool bound = bound_val->GetValue<bool>();
+    const auto accepts = [&](bool value) {
+      if (is_lower) {
+        return inclusive ? value >= bound : value > bound;
+      }
+      return inclusive ? value <= bound : value < bound;
+    };
+    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
+             accepts(false), accepts(true), ctx.boost);
     return;
   }
 
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-  *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
+  SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
   range.SetBoost(ctx.boost);
   SetLeafScorer(range, column_info);
   auto* options = range.mutable_options();
@@ -267,7 +260,7 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
     }
-  } else if (IsNumericTypeId(col_type)) {
+  } else if (term_dict::IsNumeric(col_type)) {
     if (!IsRangeNumericValueType(val_type)) {
       type_mismatch();
     }
@@ -303,39 +296,37 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
       return;
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
+    SetField(range, column_info);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     *range.mutable_options() = std::move(options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
-    range.SetBoost(ctx.boost);
-    SetLeafScorer(range, column_info);
-    auto* options = range.mutable_options();
-    auto& rng = options->range;
-    if (args.min) {
-      rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTerm(args.min->GetValue<bool>())));
-      rng.min_type =
-        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
-    if (args.max) {
-      rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTerm(args.max->GetValue<bool>())));
-      rng.max_type =
-        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    }
+    const auto accepts = [&](bool value) {
+      if (args.min) {
+        const bool min = args.min->GetValue<bool>();
+        if (args.min_incl ? value < min : value <= min) {
+          return false;
+        }
+      }
+      if (args.max) {
+        const bool max = args.max->GetValue<bool>();
+        if (args.max_incl ? value > max : value >= max) {
+          return false;
+        }
+      }
+      return true;
+    };
+    AddBools(MaybeNegated(parent, ctx, column_info), column_info,
+             accepts(false), accepts(true), ctx.boost);
   } else {
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
-    *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
+    SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
     auto* range_opts = range.mutable_options();
     auto& rng = range_opts->range;
-    auto emit_bound = [&](const duckdb::Value& v,
-                          irs::ByGranularRangeOptions::terms& boundary,
+    auto emit_bound = [&](const duckdb::Value& v, irs::bstring& boundary,
                           irs::BoundType& bt, bool incl) {
       WithNumericValue(col_type, v, [&](auto val) {
         irs::SetGranularNumericTerm(boundary, val);

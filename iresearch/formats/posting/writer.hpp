@@ -161,6 +161,11 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer) {
   return writer;
 }
 
+struct DocTee {
+  std::vector<doc_id_t>* docs = nullptr;
+  size_t limit = 0;
+};
+
 class PostingsWriter final {
  public:
   static constexpr std::string_view kDocExt = "doc";
@@ -178,8 +183,9 @@ class PostingsWriter final {
   void BeginField(const FieldProperties& meta,
                   TermPayloadWriter* term_pay = nullptr);
 
-  void Write(TermPostings& docs, PostingMeta& meta);
-  void WritePostings(const PostingRows& postings, PostingMeta& meta);
+  void Write(TermPostings& docs, PostingMeta& meta, DocTee tee = {});
+  void WritePostings(const PostingRows& postings, PostingMeta& meta,
+                     DocTee tee = {});
 
   void BeginBlock() noexcept {
     // clear state in order to write
@@ -188,7 +194,14 @@ class PostingsWriter final {
     _last_state.clear();
   }
 
-  void Encode(BufferedOutput& out, const PostingMeta& state);
+  void Encode(BufferedOutput& out, const PostingMeta& meta);
+
+  void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
+    const auto last = _last_state;
+    _last_state.clear();
+    Encode(out, meta);
+    _last_state = last;
+  }
 
   FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
@@ -882,7 +895,8 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
   _pay.last = 0;
 }
 
-inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
+inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
+                                  DocTee tee) {
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
@@ -909,6 +923,11 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
     }
     if (has_vec) {
       _term_docs.insert(_term_docs.end(), _run_docs, _run_docs + n);
+    }
+    if (tee.docs && tee.docs->size() < tee.limit) {
+      tee.docs->insert(
+        tee.docs->end(), _run_docs,
+        _run_docs + std::min<size_t>(n, tee.limit - tee.docs->size()));
     }
 
     for (uint32_t k = 0; k != n;) {
@@ -961,7 +980,7 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
 }
 
 inline void PostingsWriter::WritePostings(const PostingRows& postings,
-                                          PostingMeta& meta) {
+                                          PostingMeta& meta, DocTee tee) {
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
@@ -981,6 +1000,9 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
                              const uint32_t freq = has_freq ? occurrences : 0;
                              if (has_vec) {
                                _term_docs.push_back(doc);
+                             }
+                             if (tee.docs && tee.docs->size() < tee.limit) {
+                               tee.docs->push_back(doc);
                              }
                              BeginDocInTerm(doc, freq, meta, has_freq);
                              ++docs_count;

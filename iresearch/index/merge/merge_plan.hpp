@@ -22,6 +22,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +41,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
@@ -84,6 +86,20 @@ struct MergeUnit {
 
 inline constexpr uint64_t kMergeDocsMax =
   doc_limits::eof() - doc_limits::min() - (uint64_t{1} << 16);
+
+struct MergedMember {
+  IndexFeatures features = IndexFeatures::None;
+  bytes_view single;
+  bool present = false;
+  bool keyed = false;
+};
+
+struct MergedField {
+  std::optional<DictLayout> layout;
+  std::array<MergedMember, kDictMembers> members;
+};
+
+using MergedFieldMap = absl::flat_hash_map<field_id, MergedField>;
 
 class MergePlan {
  public:
@@ -172,7 +188,7 @@ class MergePlan {
   duckdb::TaskScheduler* _scheduler = nullptr;
   MergeProfile _profile;
   IndexFeatures _index_features{IndexFeatures::None};
-  absl::flat_hash_map<field_id, IndexFeatures> _field_meta_map;
+  MergedFieldMap _field_meta_map;
   std::unique_ptr<KeyOrder> _key_order;
   std::vector<MergeSource> _sources;
   std::unique_ptr<ColWriter> _col_writer;

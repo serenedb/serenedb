@@ -89,9 +89,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   ParseSegmentId(meta.name, reader->_id);
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options);
+  reader->_data->Open(dir, meta, options, options.index);
   reader->_field_reader =
-    std::make_shared<burst_trie::FieldReader>(*dir.ResourceManager().readers);
+    std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,
@@ -112,7 +112,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options);
+  reader->_data->Open(dir, meta, options, false);
   return reader;
 }
 
@@ -182,11 +182,13 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const SegmentMeta& meta,
-                                         const IndexReaderOptions& options) {
+                                         const IndexReaderOptions& options,
+                                         bool keep_terms) {
   SDB_ASSERT(options.db);
   col_reader =
     std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::RANDOM);
-  idx_reader = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases);
+  idx_reader =
+    std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases, keep_terms);
 }
 
 }  // namespace irs

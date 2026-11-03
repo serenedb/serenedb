@@ -24,6 +24,7 @@
 #include <span>
 
 #include "iresearch/formats/column/merge.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -31,6 +32,8 @@ namespace irs {
 class ColWriter;
 class MergeOrder;
 class NormColumnReader;
+
+const TermReader* StringTerms(const SubReader& reader, field_id id);
 
 const NormColumnReader* SourceNormColumn(const MergeSource& source,
                                          field_id id);

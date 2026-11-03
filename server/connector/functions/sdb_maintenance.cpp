@@ -83,7 +83,7 @@ struct CompactState final : duckdb::GlobalTableFunctionState {
   CompactState(duckdb::ClientContext& context, const CompactJob& job)
     : scheduler{duckdb::TaskScheduler::GetScheduler(context)},
       threads{duckdb::TaskScheduler::QueryThreads(context)},
-      compaction{job.target, job.request, scheduler} {}
+      compaction{job.target, job.request, context} {}
 
   duckdb::TaskScheduler& scheduler;
   duckdb::idx_t threads;

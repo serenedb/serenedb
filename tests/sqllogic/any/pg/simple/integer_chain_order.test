@@ -1,0 +1,38 @@
+statement ok
+CREATE TABLE ico (c int)
+
+statement ok
+INSERT INTO ico VALUES (1)
+
+query
+SELECT -205017384 * NULLIF(c, 1) * 98 AS r FROM ico
+----
+r
+NULL
+
+query
+SELECT 7 * (c - 1) * 2147483647 AS r FROM ico
+----
+r
+0
+
+query
+SELECT 2147483647 + NULLIF(c, 1) + 7 AS r FROM ico
+----
+r
+NULL
+
+query
+SELECT c + 2147483646 + (-10) AS r FROM ico
+----
+r
+2147483637
+
+statement error (integer out of range|Overflow in addition)
+SELECT c + 2147483647 + (-10) FROM ico
+
+statement error (integer out of range|Overflow in multiplication)
+SELECT c * 2147483647 * 2 * 0 FROM ico
+
+statement ok
+DROP TABLE ico

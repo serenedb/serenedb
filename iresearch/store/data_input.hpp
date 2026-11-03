@@ -128,7 +128,7 @@ class IndexInput : public DataInput {
 
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
-  virtual bool Warm(uint64_t, uint64_t) const noexcept { return false; }
+  virtual uint64_t Warm(uint64_t, uint64_t) const noexcept { return 0; }
 
   virtual void MarkWarm(uint64_t, uint64_t) const noexcept {}
 

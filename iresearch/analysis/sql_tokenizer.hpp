@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
+#include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "tokenizer.hpp"
 
@@ -35,6 +39,32 @@ namespace irs::analysis {
 
 struct SqlCall;
 
+class SqlExpression final : public duckdb::ObjectCacheEntry {
+ public:
+  static constexpr std::string_view ObjectType() {
+    return "sdb_sql_expression";
+  }
+
+  static duckdb::shared_ptr<SqlExpression> Get(duckdb::SharedObjectCache& cache,
+                                               std::string_view owner,
+                                               std::string_view text);
+
+  SqlExpression(std::string_view owner, std::string_view text);
+  ~SqlExpression() final;
+
+  std::string GetObjectType() final { return std::string{ObjectType()}; }
+
+  duckdb::optional_idx GetEstimatedCacheMemory() const final { return 0u; }
+
+  const duckdb::Expression& Bind(duckdb::ClientContext& ctx);
+
+ private:
+  std::string_view _owner;
+  absl::Mutex _mutex;
+  std::unique_ptr<duckdb::ParsedExpression> _parsed ABSL_GUARDED_BY(_mutex);
+  std::unique_ptr<duckdb::Expression> _expr ABSL_GUARDED_BY(_mutex);
+};
+
 class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
  public:
   struct Options {
@@ -43,9 +73,9 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
   };
 
   static constexpr std::string_view type_name() noexcept { return "sql"; }
-  static ptr Make(Options opts);
+  static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  explicit SqlTokenizer(Options opts);
+  SqlTokenizer(const Options& opts, duckdb::SharedObjectCache& cache);
   ~SqlTokenizer() override;
 
   TypeInfo::type_id type() const noexcept final {
@@ -67,16 +97,15 @@ class SqlTokenizer final : public Tokenizer, private util::Noncopyable {
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
  private:
-  void BindExpression(duckdb::ClientContext& ctx);
-
-  std::unique_ptr<duckdb::ParsedExpression> _parsed;
-  std::unique_ptr<duckdb::Expression> _expr;
+  duckdb::shared_ptr<SqlExpression> _expression;
+  const duckdb::Expression* _expr = nullptr;
   std::unique_ptr<SqlCall> _call;
 };
 
 class SqlPredicate final : private util::Noncopyable {
  public:
-  SqlPredicate(std::string_view owner, std::string_view expression);
+  SqlPredicate(std::string_view owner, std::string_view expression,
+               duckdb::SharedObjectCache& cache);
   ~SqlPredicate();
 
   void Bind(duckdb::ClientContext& ctx);
@@ -88,11 +117,8 @@ class SqlPredicate final : private util::Noncopyable {
   size_t MemoryUsage() const noexcept;
 
  private:
-  void BindExpression(duckdb::ClientContext& ctx);
-
   std::string_view _owner;
-  std::unique_ptr<duckdb::ParsedExpression> _parsed;
-  std::unique_ptr<duckdb::Expression> _expr;
+  duckdb::shared_ptr<SqlExpression> _expression;
   std::unique_ptr<SqlCall> _call;
 };
 

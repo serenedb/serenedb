@@ -26,9 +26,18 @@ target_sources(
         column/read_context.cpp
         column/variant_column_reader.cpp
         format_utils.cpp
-        index/burst_trie.cpp
+        index/field_reader.cpp
+        index/field_writer.cpp
         index/idx_reader.cpp
         index/idx_writer.cpp
+        index/term_dict_inline.cpp
+        index/term_dict_meta.cpp
+        index/term_dict_prefixes.cpp
+        index/term_dict_ranges.cpp
+        index/term_dict_reader.cpp
+        index/term_dict_root.cpp
+        index/term_dict_single.cpp
+        index/term_dict_walk.cpp
         index/term_parts.cpp
         index_meta_reader.cpp
         index_meta_writer.cpp

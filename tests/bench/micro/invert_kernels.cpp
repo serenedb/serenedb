@@ -252,7 +252,7 @@ void BM_ColumnarInvert(benchmark::State& state) {
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     DrainBatches(*field, batches,
                  [](bool ok) { benchmark::DoNotOptimize(ok); });
     benchmark::DoNotOptimize(field->Dictionary().Size());
@@ -271,7 +271,7 @@ void BM_ColumnarInvertExplicitPos(benchmark::State& state) {
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     field->Configure({.explicit_pos = true});
     DrainBatches(*field, batches,
                  [](bool ok) { benchmark::DoNotOptimize(ok); });
@@ -291,7 +291,8 @@ void BM_ColumnarInvertOffs(benchmark::State& state) {
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures | IndexFeatures::Offs);
+    auto* field =
+      inv.Emplace(1, StringLayout::kStrings, kFeatures | IndexFeatures::Offs);
     DrainBatches(*field, batches,
                  [](bool ok) { benchmark::DoNotOptimize(ok); });
     benchmark::DoNotOptimize(field->Dictionary().Size());
@@ -331,7 +332,7 @@ void BM_ColumnarOneToOne(benchmark::State& state) {
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     field->Configure({.unique = hint});
     for (auto& fb : batches) {
       benchmark::DoNotOptimize(field->InvertBlock(*fb.batch, {{fb.runs}}));
@@ -350,7 +351,7 @@ void BM_ColumnarScatter(benchmark::State& state) {
   FillBatches(batches);
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, kFeatures);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
   DrainBatches(*field, batches, [](bool) {});
 
   for (auto _ : state) {
@@ -370,7 +371,7 @@ void RunScatterShape(benchmark::State& state, IndexFeatures features,
                      bool release, Fill&& fill) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, features);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   fill(*field);
   ScatterScratch scratch{mem.rm};
   ScatteredField scattered{mem, scratch};
@@ -443,38 +444,9 @@ void BM_ScatterTermsUniqueKeep(benchmark::State& s) {
                   [](FieldInverter& f) { FillKeyword(f, GetUniqueCorpus()); });
 }
 
-void FillUniqueDict(FieldInverter& field, size_t dup_stride) {
-  const auto& corpus = GetUniqueCorpus();
-  std::vector<duckdb::string_t> terms;
-  terms.reserve(TokenBatch::kCapacity);
-  doc_id_t doc = doc_limits::min();
-  for (size_t i = 0; i < kTokens;) {
-    terms.clear();
-    const size_t n = std::min(TokenBatch::kCapacity, kTokens - i);
-    for (size_t j = 0; j < n; ++j) {
-      const size_t k = i + j;
-      const bool dup = dup_stride && k % dup_stride == 1;
-      const auto t = corpus.Term(dup ? k - 1 : k);
-      terms.push_back(duckdb::string_t{reinterpret_cast<const char*>(t.data()),
-                                       static_cast<uint32_t>(t.size())});
-    }
-    field.InvertPrimaryKeyBlock(std::span<const duckdb::string_t>{terms}, doc);
-    doc += static_cast<doc_id_t>(n);
-    i += n;
-  }
-}
-
 void BM_ScatterTermsLowCardKeep(benchmark::State& s) {
   RunScatterShape(s, IndexFeatures::Freq, false,
                   [](FieldInverter& f) { FillKeyword(f, GetLowCardCorpus()); });
-}
-void BM_ScatterTermsUniqueDictKeep(benchmark::State& s) {
-  RunScatterShape(s, IndexFeatures::None, false,
-                  [](FieldInverter& f) { FillUniqueDict(f, 0); });
-}
-void BM_ScatterTermsUniqueDictDupsKeep(benchmark::State& s) {
-  RunScatterShape(s, IndexFeatures::None, false,
-                  [](FieldInverter& f) { FillUniqueDict(f, 512); });
 }
 
 template<typename Fill>
@@ -482,7 +454,7 @@ void RunScatterDrain(benchmark::State& state, IndexFeatures features,
                      Fill&& fill) {
   auto mem = DefaultMemory();
   FieldsInverter inv{mem};
-  auto* field = inv.Emplace(1, features);
+  auto* field = inv.Emplace(1, StringLayout::kStrings, features);
   fill(*field);
   ScatterScratch scratch{mem.rm};
   ScatteredField scattered{mem, scratch};
@@ -514,22 +486,13 @@ void BM_ScatterDrainTermsUnique(benchmark::State& s) {
   RunScatterDrain(s, IndexFeatures::Freq,
                   [](FieldInverter& f) { FillKeyword(f, GetUniqueCorpus()); });
 }
-void BM_ScatterDrainUniqueDict(benchmark::State& s) {
-  RunScatterDrain(s, IndexFeatures::None,
-                  [](FieldInverter& f) { FillUniqueDict(f, 0); });
-}
-void BM_ScatterDrainUniqueDictDups(benchmark::State& s) {
-  RunScatterDrain(s, IndexFeatures::None,
-                  [](FieldInverter& f) { FillUniqueDict(f, 512); });
-}
-
 void BM_ColumnarKeyword(benchmark::State& state) {
   const auto& corpus = GetCorpus();
   auto mem = DefaultMemory();
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     doc_id_t doc = doc_limits::min();
     for (size_t i = 0; i < kTokens; ++i, ++doc) {
       const auto t = corpus.Term(i);
@@ -588,7 +551,7 @@ void BM_KeywordStagedPairs(benchmark::State& state) {
   std::vector<doc_id_t> docs;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     for (size_t base = 0; base < kTokens; base += kChunkRows) {
       const size_t n = std::min(kChunkRows, kTokens - base);
       terms.clear();
@@ -642,7 +605,7 @@ void BM_NumericPerValue(benchmark::State& state) {
   auto batch = std::make_unique<TokenBatch>();
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::None);
     doc_id_t doc = doc_limits::min();
     for (const auto v : vals) {
       batch->count = 0;
@@ -659,10 +622,10 @@ void BM_NumericPerValue(benchmark::State& state) {
 void RunNumericViaKeywords(benchmark::State& state,
                            const std::vector<int64_t>& vals) {
   auto mem = DefaultMemory();
-  constexpr uint32_t kMaxTerms = NumericTermCount<int64_t>();
+  constexpr uint32_t kMaxTerms = 1;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, IndexFeatures::None);
     benchmark::DoNotOptimize(field->InvertKeywords([&](auto&& emit) {
       duckdb::string_t terms[kMaxTerms];
       doc_id_t doc = doc_limits::min();
@@ -695,7 +658,8 @@ void RunNumericStagedPairs(benchmark::State& state,
   std::vector<doc_id_t> docs;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto* field =
+      inv.Emplace(1, NumericLayout::kNumbers, IndexFeatures::Ranges);
     for (size_t base = 0; base < kTokens; base += kChunkRows) {
       const size_t n = std::min(kChunkRows, kTokens - base);
       staged.clear();
@@ -740,7 +704,8 @@ void RunNumericUvfFused(benchmark::State& state,
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto* field =
+      inv.Emplace(1, NumericLayout::kNumbers, IndexFeatures::Ranges);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kNumChunk, fmt);
@@ -771,10 +736,11 @@ void BM_NumericBlockRuns(benchmark::State& state) {
   std::vector<int64_t> gathered;
   std::vector<doc_id_t> docs;
   std::vector<DocRun> runs;
-  constexpr uint32_t kMaxTerms = NumericTermCount<int64_t>();
+  constexpr uint32_t kMaxTerms = 1;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto* field =
+      inv.Emplace(1, NumericLayout::kNumbers, IndexFeatures::Ranges);
     for (size_t base = 0; base < kTokens; base += kChunkRows) {
       const size_t n = std::min(kChunkRows, kTokens - base);
       gathered.clear();
@@ -1394,7 +1360,7 @@ void RunInvertBlockKeyword(benchmark::State& state, const C& corpus,
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, features);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, features);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
@@ -1419,7 +1385,7 @@ void RunKeywordPerValue(benchmark::State& state, const C& corpus,
   auto mem = DefaultMemory();
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, features);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, features);
     doc_id_t doc = doc_limits::min();
     for (size_t i = 0; i < kTokens; ++i, ++doc) {
       const auto t = corpus.Term(i);
@@ -1451,7 +1417,7 @@ void RunInvertBlockKeywordWarm(benchmark::State& state, const C& corpus,
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     inv.Reset();
-    auto* field = inv.Emplace(1, features);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, features);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
@@ -1478,7 +1444,7 @@ void RunUvfKeyword(benchmark::State& state, const C& corpus,
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
@@ -1522,7 +1488,7 @@ void BM_UvfKeywordDict(benchmark::State& state) {
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
@@ -1587,7 +1553,7 @@ void RunTextDictionary(benchmark::State& state, bool by_entry) {
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     field->Configure(analyzer->Traits());
     const auto layout = field->Layout();
     bool ok = true;
@@ -1636,7 +1602,7 @@ void RunKeywordDictionary(benchmark::State& state, bool by_entry) {
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     bool ok = true;
     doc_id_t doc = doc_limits::min();
     for (const auto& chunk : input.chunks) {
@@ -1683,14 +1649,15 @@ void BM_UvfBool(benchmark::State& state) {
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto docs = inv.Docs(1, DictLayout::Bool);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
-      benchmark::DoNotOptimize(field->InvertBoolBlock(fmt, kChunk, doc));
+      docs.PushBools(fmt, kChunk, doc);
       doc += kChunk;
     }
-    benchmark::DoNotOptimize(field->Dictionary().Size());
+    benchmark::DoNotOptimize(docs.Of(DictMember::False).size() +
+                             docs.Of(DictMember::True).size());
   }
   SetUvfCounters(state, nchunks);
 }
@@ -1701,14 +1668,14 @@ void BM_UvfNull(benchmark::State& state) {
   duckdb::UnifiedVectorFormat fmt;
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, IndexFeatures::None);
+    auto docs = inv.Docs(1, DictLayout::String);
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
       vec.ToUnifiedFormat(kChunk, fmt);
-      benchmark::DoNotOptimize(field->InvertNullBlock(fmt, kChunk, doc));
+      docs.PushNulls(fmt, kChunk, doc);
       doc += kChunk;
     }
-    benchmark::DoNotOptimize(field->Dictionary().Size());
+    benchmark::DoNotOptimize(docs.Of(DictMember::Nulls).size());
   }
   SetUvfCounters(state, chunks.size());
 }
@@ -1718,7 +1685,7 @@ void RunKeywordsStream(benchmark::State& state, const C& corpus) {
   auto mem = DefaultMemory();
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     benchmark::DoNotOptimize(field->InvertKeywords([&](auto&& emit) {
       doc_id_t doc = doc_limits::min();
       for (size_t i = 0; i < kTokens; ++i, ++doc) {
@@ -1746,7 +1713,7 @@ void BM_TermsMemoryHighCard(benchmark::State& state) {
     CountingRM rm;
     InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
     for (size_t i = 0; i < kTokens; ++i, ++doc) {
       const auto t = corpus.Term(i);
@@ -1771,7 +1738,7 @@ void BM_TermsMemoryUnique(benchmark::State& state) {
     CountingRM rm;
     InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     doc_id_t doc = doc_limits::min();
     for (size_t i = 0; i < kTokens; ++i, ++doc) {
       const auto t = corpus.Term(i);
@@ -1842,7 +1809,7 @@ void BM_TermsMemorySparse(benchmark::State& state) {
     CountingRM rm;
     InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kTermsFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kTermsFeatures);
     duckdb::UnifiedVectorFormat fmt;
     doc_id_t doc = doc_limits::min();
     for (auto& vec : chunks) {
@@ -1864,7 +1831,7 @@ void BM_ColumnarKeywordLowCard(benchmark::State& state) {
 
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, kFeatures);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, kFeatures);
     doc_id_t doc = doc_limits::min();
     for (size_t i = 0; i < kTokens; ++i, ++doc) {
       const auto t = corpus.Term(i);
@@ -1890,7 +1857,7 @@ void RunColumnarMemory(benchmark::State& state, IndexFeatures features,
     CountingRM rm;
     InverterMemory mem{duckdb::Allocator::DefaultAllocator(), rm};
     FieldsInverter inv{mem};
-    auto* field = inv.Emplace(1, features);
+    auto* field = inv.Emplace(1, StringLayout::kStrings, features);
     field->Configure({.explicit_pos = explicit_pos});
     DrainBatches(*field, batches,
                  [](bool ok) { benchmark::DoNotOptimize(ok); });
@@ -1998,7 +1965,7 @@ void BM_PipelineLegacy(benchmark::State& state) {
   ::tests::FnTokenSink sink{TokenLayout::TermsPos, consume};
   for (auto _ : state) {
     FieldsInverter inv{mem};
-    field = inv.Emplace(1, features);
+    field = inv.Emplace(1, StringLayout::kStrings, features);
     doc_id_t doc = doc_limits::min();
     for (const auto& v : corpus.docs) {
       analyzer->Fill(v, doc, sink.writer, {sink.layout});
@@ -2036,12 +2003,8 @@ BENCHMARK(BM_ScatterTermsHCKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsHCRelease)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsUniqueKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterTermsLowCardKeep)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterTermsUniqueDictKeep)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterTermsUniqueDictDupsKeep)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterDrainTermsHC)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ScatterDrainTermsUnique)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterDrainUniqueDict)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ScatterDrainUniqueDictDups)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColumnarKeyword)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColumnarKeywordLowCard)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColKeywordBlock)->Unit(benchmark::kMillisecond);

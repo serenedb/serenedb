@@ -106,6 +106,10 @@ bool Term::operator<(const Term& rhs) const {
 Field::Field(irs::field_id id, irs::IndexFeatures index_features)
   : FieldMeta(id, index_features), stats{} {}
 
+Field::Field(irs::field_id id, irs::DictRef dict,
+             irs::IndexFeatures index_features)
+  : FieldMeta(id, index_features), stats{}, dict{dict} {}
+
 Term& Field::insert(irs::bytes_view t) {
   auto res = terms.emplace(t);
   return const_cast<Term&>(*res.first);
@@ -204,10 +208,14 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   EXPECT_TRUE(irs::field_limits::valid(f.Id()))
     << "insert_indexed: field must have a catalog-allocated id, not "
        "field_limits::invalid()";
+  const auto block_terms = f.BlockTerms();
+  if (block_terms && block_terms->empty()) {
+    return;
+  }
   const auto requested_features = f.GetIndexFeatures();
   const auto features = requested_features & (~irs::IndexFeatures::Offs);
 
-  const auto res = _fields.emplace(f.Id(), Field{f.Id(), features});
+  const auto res = _fields.emplace(f.Id(), Field{f.Id(), f.Dict(), features});
 
   Field& field = res.first->second;
 
@@ -225,7 +233,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
 
   _doc_fields.insert(&field);
 
-  if (const auto block_terms = f.BlockTerms(); block_terms.has_value()) {
+  if (block_terms) {
     const auto doc_id = doc();
     uint32_t inc_value = 1;
     for (const auto& block_term : *block_terms) {
@@ -245,9 +253,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
                    pst.positions().size()));
       inc_value = 0;
     }
-    if (!block_terms->empty()) {
-      field.docs.emplace(doc_id);
-    }
+    field.docs.emplace(doc_id);
     return;
   }
 
@@ -767,7 +773,8 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
       ASSERT_NE(expected_fields.end(), expected_field);
       ASSERT_EQ(expected_field->second.id, *actual_id_it);
 
-      const auto* actual_terms = actual_segment.field(*actual_id_it);
+      const auto* actual_terms =
+        actual_segment.field(*actual_id_it, expected_field->second.dict);
       ASSERT_NE(nullptr, actual_terms);
       ASSERT_EQ(expected_field->second.id, actual_terms->meta().id);
       ASSERT_EQ(expected_field->second.index_features,
@@ -791,8 +798,11 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         irs::IsSubsetOf(irs::IndexFeatures::Norm, actual_meta.index_features),
         irs::field_limits::valid(actual_meta.norm));
 
-      if (irs::IndexFeatures::None !=
-          (expected_field->second.index_features & irs::IndexFeatures::Freq)) {
+      if (expected_field->second.dict.member != irs::DictMember::Strings) {
+        ASSERT_EQ(0, actual_terms->total_term_freq());
+      } else if (irs::IndexFeatures::None !=
+                 (expected_field->second.index_features &
+                  irs::IndexFeatures::Freq)) {
         ASSERT_EQ(expected_field->second.total_freq(),
                   actual_terms->total_term_freq());
       } else {

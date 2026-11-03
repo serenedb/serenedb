@@ -36,6 +36,7 @@
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::format_utils {
 namespace {
@@ -85,7 +86,7 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
   bstring footer_buf;
   const auto* footer_data = in.ReadStable(footer.data_len, footer_len);
   if (!footer_data) {
-    footer_buf.resize(footer_len);
+    utils::StrResize(footer_buf, footer_len);
     in.ReadData(footer.data_len, footer_buf.data(), footer_len);
     footer_data = footer_buf.data();
   }

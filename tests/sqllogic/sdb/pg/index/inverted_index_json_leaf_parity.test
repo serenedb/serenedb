@@ -35,7 +35,7 @@ count
 statement error
 INSERT INTO jlp VALUES (9991, '{"nested":{"a":1}}'::json);
 ----
-db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 # The refused transaction rolled back whole -- no partial rows in the table.
@@ -72,7 +72,7 @@ count
 statement error
 INSERT INTO jlp VALUES (9992, '{"nested":[1,2]}'::json);
 ----
-db error: ERROR: Failed to commit: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 # The build path has to refuse what the insert path refuses. Rows first, so the

@@ -85,7 +85,9 @@ class SegmentStub final : public irs::SubReader {
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final { return nullptr; }
   std::span<const irs::field_id> field_ids() const final { return {}; }
-  const irs::TermReader* field(irs::field_id) const final { return nullptr; }
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
+    return {};
+  }
   irs::NormReader::ptr norms(irs::field_id) const final { return {}; }
 
  private:

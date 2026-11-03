@@ -1,0 +1,52 @@
+# An hnsw opclass with compression = false stores a search table's vectors
+# uncompressed, so its store is larger than with the default, which compresses
+# them.
+
+statement ok
+CREATE MACRO hc_vec(i) AS
+  list_transform(range(64), lambda j: ((CASE WHEN j = 0 THEN i ELSE (i + j) % 16 END) * 0.25)::FLOAT)::FLOAT[64];
+
+statement ok
+CREATE TABLE hc_auto (id INTEGER PRIMARY KEY, emb FLOAT[64])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX hc_auto_idx ON hc_auto
+  USING inverted(id, emb hnsw (metric = 'l2'));
+
+statement ok
+CREATE TABLE hc_raw (id INTEGER PRIMARY KEY, emb FLOAT[64])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX hc_raw_idx ON hc_raw
+  USING inverted(id, emb hnsw (metric = 'l2', compression = false));
+
+statement ok
+INSERT INTO hc_auto SELECT i, hc_vec(i) FROM range(4000) t(i);
+
+statement ok
+INSERT INTO hc_raw SELECT i, hc_vec(i) FROM range(4000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hc_auto;
+
+statement ok
+VACUUM (REFRESH_TABLE) hc_raw;
+
+query
+SELECT raw.value - packed.value > 4000 * 64 * 4 / 4 AS raw_vectors_stored
+FROM sdb_metrics raw, sdb_metrics packed
+WHERE raw.relation_id = (SELECT oid FROM pg_class WHERE relname = 'hc_raw')
+  AND raw.metric = 'index_size'
+  AND packed.relation_id = (SELECT oid FROM pg_class WHERE relname = 'hc_auto')
+  AND packed.metric = 'index_size';
+----
+raw_vectors_stored
+t
+
+query
+SELECT id FROM hc_raw ORDER BY emb <-> hc_vec(1234) LIMIT 1;
+----
+id
+1234

@@ -237,8 +237,6 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       }
       return;
     }
-    // Extension options: use the registered set_function so side effects
-    // (e.g. sdb_faults toggling global fault-point state) are re-applied.
     duckdb::ExtensionOption ext;
     if (!db_config.TryGetExtensionOption(setting, ext)) {
       return;

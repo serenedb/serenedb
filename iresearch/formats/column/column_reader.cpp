@@ -964,22 +964,26 @@ bool ColumnReader::ValiditySpanAllValid(ScanState& s, uint64_t anchor,
 }
 
 void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
-  duckdb::idx_t remaining = count;
-  while (remaining > 0) {
-    const auto avail = (s.window.end - s.window.begin) - s.st.offset_in_column;
-    if (remaining < avail) {
-      s.st.offset_in_column += remaining;
-      break;
-    }
-    remaining -= avail;
-    if (!NextSegment(s.window)) {
-      s.st.offset_in_column += avail;
-      break;
-    }
+  if (count < (s.window.end - s.window.begin) - s.st.offset_in_column) {
+    s.st.offset_in_column += count;
+    return;
+  }
+  if (count == 0 || _segments.empty()) {
+    return;
+  }
+  const uint64_t end = _offsets.back();
+  const uint64_t target =
+    std::min<uint64_t>(s.window.begin + s.st.offset_in_column + count, end);
+  const auto window =
+    target < end
+      ? Locate(target, s.window)
+      : BlockWindow{_segments.size() - 1, _offsets[_segments.size() - 1], end};
+  if (window.block != s.window.block) {
+    s.window = window;
     s.initialized = false;
-    s.st.offset_in_column = 0;
     s.st.internal_index = 0;
   }
+  s.st.offset_in_column = target - s.window.begin;
 }
 
 std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,

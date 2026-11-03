@@ -173,7 +173,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   const ScanBindData* scan = nullptr;
   duckdb::ClientContext* client_context = nullptr;
   const irs::IndexReader* reader = nullptr;
-  search::InvertedIndexSnapshotPtr snapshot;
+  search::StoreSnapshotPtr snapshot;
   size_t total_segments = 0;
   const VectorScorerOptions* vector_scorer = nullptr;
   std::optional<size_t> top_k;

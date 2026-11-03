@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
@@ -60,13 +58,5 @@ duckdb::idx_t KeepFirstRowIds(duckdb::RowIdDeduplicator& seen,
 void Create(std::span<const duckdb::UnifiedVectorFormat> formats,
             std::span<const PKColumn> columns, duckdb::idx_t row,
             std::string& key);
-
-inline duckdb::string_t SignedKeyTerm(int64_t value) noexcept {
-  static_assert(sizeof(int64_t) <= duckdb::string_t::INLINE_LENGTH);
-  char buf[sizeof(int64_t)];
-  absl::big_endian::Store(buf, value);
-  buf[0] = static_cast<char>(static_cast<uint8_t>(buf[0]) ^ 0x80);
-  return duckdb::string_t{buf, sizeof buf};
-}
 
 }  // namespace sdb::connector::primary_key

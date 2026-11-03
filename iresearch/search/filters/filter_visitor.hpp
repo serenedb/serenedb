@@ -32,14 +32,19 @@ namespace irs {
 struct SubReader;
 struct TermReader;
 
+template<typename Terms>
+score_t BoostOf(Terms& terms) {
+  if constexpr (requires(Terms& t) { t.Boost(); }) {
+    return terms.Boost();
+  } else {
+    return kNoBoost;
+  }
+}
+
 template<typename Terms, typename Visitor>
 void VisitTerms(Terms& terms, Visitor& visitor) {
   do {
-    auto boost = kNoBoost;
-    if constexpr (requires(Terms& t) { t.Boost(); }) {
-      boost = terms.Boost();
-    }
-    if (!visitor.Visit(boost)) {
+    if (!visitor.Visit(BoostOf(terms))) {
       return;
     }
   } while (terms.next());

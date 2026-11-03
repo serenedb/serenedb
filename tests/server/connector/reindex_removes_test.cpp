@@ -111,9 +111,7 @@ class ReindexRemovesTest : public ::testing::Test {
       values.emplace_back(rows[i].second);
     }
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
-    test::WriteValues(
-      trx, values, PkChunk{.column = &key},
-      PkPolicy{.index_term = false, .column = catalog::PkColumnKind::Has});
+    test::WriteValues(trx, values, &key, catalog::PkColumnKind::Has);
     EXPECT_TRUE(trx.Commit());
     _writer->RefreshCommit();
     for (const auto segment : Segments()) {

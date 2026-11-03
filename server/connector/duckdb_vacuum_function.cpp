@@ -50,8 +50,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "search/compaction/merge_planner.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
@@ -238,21 +237,6 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
   return *found;
 }
 
-// Every attached serenedb database. VACUUM maintains live storage, so the
-// attachments are the population an "all databases" run walks.
-std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
-  duckdb::ClientContext& context) {
-  std::vector<duckdb::reference<duckdb::Catalog>> out;
-  for (auto& attached :
-       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    auto& db_catalog = attached->GetCatalog();
-    if (db_catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      out.emplace_back(db_catalog);
-    }
-  }
-  return out;
-}
-
 void CompactTarget(Action action, const MergeTarget& target,
                    std::string_view verb, duckdb::ClientContext& context,
                    pg::ProgressMetrics* progress,
@@ -271,7 +255,7 @@ void CompactTarget(Action action, const MergeTarget& target,
       .mode = mode,
       .target_segments = search::DefaultTarget(mode, context),
     },
-    duckdb::TaskScheduler::GetScheduler(context)};
+    context};
   search::MergeResult merge;
   while (compaction.Next(tick, search::MergeOrigin::Vacuum, executor, merge)) {
     context.InterruptCheck();
@@ -287,12 +271,12 @@ void CompactTarget(Action action, const MergeTarget& target,
 // or a Search-table commit, in the same per-table order the walk visits them.
 // Owning pointers: the steps run after the collection walk finished.
 struct InvertedStep {
-  std::shared_ptr<search::InvertedIndexStorage> storage;
+  std::shared_ptr<search::Store> storage;
   // Owned for the whole pass, not aliased into the index: a concurrent DROP
   // INDEX destroys the bound index, and a merge that started against this
   // encoding has to finish against it.
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
-  std::shared_ptr<search::SearchTable> search_data;
+  std::shared_ptr<search::Store> search_data;
   std::string name;
 };
 
@@ -455,8 +439,9 @@ void DispatchInverted(duckdb::ClientContext& context,
     case Scope::All: {
       // Listed first: a walk scans the database it is for, and doing that from
       // inside the listing re-enters the very set the listing holds.
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }
@@ -523,6 +508,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                       progress, executor);
       }
       if (!status.ok()) {
+        context.InterruptCheck();
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                         ERR_MSG("failed to ", verb, " search table '",
                                 step.name, "': ", status.message()));
@@ -588,8 +574,9 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
       walk(LookupDatabase(context, target.database), {});
       break;
     case Scope::All: {
-      for (auto database : AttachedDatabases(context)) {
-        walk(database, {});
+      for (const auto& database :
+           catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+        walk(database->GetCatalog(), {});
       }
       break;
     }

@@ -84,12 +84,8 @@ int64_t RemovalKey(std::string_view key) {
 }
 
 void InsertRemovalKey(irs::IndexWriter::Document& doc, std::string_view key) {
-  irs::byte_type buf[sizeof(int64_t)];
-  tests::StringField field{
-    "name_key",
-    irs::ViewCast<char>(irs::TermRemoval::Term(RemovalKey(key), buf))};
-  field.id = tests::FieldIdFor("name_key");
-  ASSERT_TRUE(tests::InsertField(doc, field));
+  WriteValue(doc, tests::FieldIdFor("name_key"), duckdb::LogicalType::BIGINT,
+             duckdb::Value::BIGINT(RemovalKey(key)));
 }
 
 void InsertName(irs::IndexWriter::Transaction& trx, std::string_view name) {
@@ -102,8 +98,8 @@ void InsertName(irs::IndexWriter::Transaction& trx, std::string_view name) {
              duckdb::Value{std::string{name}});
 }
 
-irs::TermRemoval ByName(std::string_view name) {
-  return {.terms = {RemovalKey(name)}};
+irs::KeyRemoval ByName(std::string_view name) {
+  return {.keys = {RemovalKey(name)}};
 }
 
 std::vector<std::string> LiveNames(const irs::SubReader& segment) {

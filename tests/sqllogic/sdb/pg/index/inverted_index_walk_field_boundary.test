@@ -1,0 +1,72 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY wfb_kw AS keyword()
+
+
+statement ok
+CREATE TABLE wfb (id INT, f VARCHAR, g VARCHAR) WITH (storage = 'search')
+
+
+statement ok
+CREATE INDEX wfb_idx ON wfb USING inverted (id, f wfb_kw, g wfb_kw)
+
+
+statement ok
+INSERT INTO wfb SELECT i,
+    CASE WHEN i = 3000 THEN 'az' ELSE 'ay' || lpad(i::VARCHAR, 4, '0') END,
+    CASE WHEN i % 2 = 0 THEN 'xb1' ELSE 'xb2' END
+  FROM range(3001) t(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) wfb
+
+
+query
+EXPLAIN SELECT count(*) FROM wfb WHERE f LIKE '_b%'
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: wfb               │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Automaton ──────╮     │
+│ │ Field: f(string) │     │
+│ │ Pattern: _b%     │     │
+│ ╰──────────────────╯     │
+│ Output: row-count only   │
+│ ~600 rows                │
+╰──────────────────────────╯
+
+query
+SELECT count(*) FROM wfb WHERE f LIKE '_b%'
+----
+count
+0
+
+query
+SELECT count(*) FROM wfb WHERE f @@ ts_regexp('a[a-x].*|b.*')
+----
+count
+0
+
+query
+SELECT count(*) FROM wfb WHERE f @@ ts_levenshtein('xb1', 1)
+----
+count
+0
+
+query
+SELECT id FROM wfb WHERE f LIKE '_z%' ORDER BY id
+----
+id
+3000
+
+query
+SELECT count(*) FROM wfb WHERE g LIKE '_b%'
+----
+count
+3001

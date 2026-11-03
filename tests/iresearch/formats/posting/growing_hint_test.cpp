@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <iresearch/formats/posting/common.hpp>
@@ -44,7 +42,7 @@ class RecordingInput {
                           uint64_t& probes) noexcept
     : _hints{&hints}, _resident{&resident}, _probes{&probes} {}
 
-  bool Warm(uint64_t, uint64_t) const noexcept { return false; }
+  uint64_t Warm(uint64_t, uint64_t) const noexcept { return 0; }
   bool Resident(uint64_t offset, uint64_t size) const noexcept {
     ++*_probes;
     for (auto page = offset / fu::kPage; page * fu::kPage < offset + size;
@@ -75,14 +73,6 @@ struct Walked {
 
 std::vector<bool> Pages(uint64_t stop) {
   return std::vector<bool>(stop / fu::kPage + 1);
-}
-
-std::vector<bool> PagesBelow(uint64_t stop, uint64_t end) {
-  auto pages = Pages(stop);
-  for (uint64_t page = 0; (page + 1) * fu::kPage <= end; ++page) {
-    pages[page] = true;
-  }
-  return pages;
 }
 
 template<typename Hint>
@@ -116,106 +106,6 @@ Walked Walk(std::span<const uint64_t> loads, uint64_t stop,
 template<typename Hint>
 Walked Walk(std::span<const uint64_t> loads, uint64_t stop) {
   return Walk<Hint>(loads, stop, Pages(stop));
-}
-
-std::vector<uint64_t> TreeWalk(uint32_t fanout, uint32_t depth, uint64_t block,
-                               uint32_t leaf_every, uint64_t& next) {
-  std::vector<uint64_t> children;
-  for (uint32_t i = 0; depth != 0 && i != fanout; ++i) {
-    const auto child = TreeWalk(fanout, depth - 1, block, leaf_every, next);
-    if (depth > 1 || i % leaf_every == 0) {
-      children.insert(children.end(), child.begin(), child.end());
-    }
-  }
-  std::vector<uint64_t> loads{next};
-  next += block;
-  loads.insert(loads.end(), children.begin(), children.end());
-  return loads;
-}
-
-TEST(TreeWalkHintTest, FullWalkPrefetchesTheWalkedRange) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(16, 3, 4096, 1, size);
-  const auto walked = Walk<irs::TreeWalkHint>(loads, 4 * size);
-  EXPECT_LE(walked.cold.size(), 16U);
-  EXPECT_LE(walked.hinted, size + 2 * fu::kMaxReadahead);
-  EXPECT_LE(walked.hinted_end, size + 2 * fu::kMaxReadahead);
-}
-
-TEST(TreeWalkHintTest, SelectiveWalkPrefetchesTheWalkedRange) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(32, 3, 2048, 8, size);
-  const auto walked = Walk<irs::TreeWalkHint>(loads, 4 * size);
-  EXPECT_LE(walked.cold.size(), 32U);
-  EXPECT_LE(walked.hinted_end, size + 2 * fu::kMaxReadahead);
-}
-
-TEST(TreeWalkHintTest, ResidentRangeIsNotPrefetched) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(16, 3, 4096, 1, size);
-  const auto walked =
-    Walk<irs::TreeWalkHint>(loads, 4 * size, PagesBelow(4 * size, 4 * size));
-  EXPECT_EQ(walked.hinted, 0U);
-  EXPECT_TRUE(walked.cold.empty());
-}
-
-TEST(TreeWalkHintTest, ResidentLoadsAreNotPrefetched) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(16, 3, 4096, 1, size);
-  auto resident = Pages(4 * size);
-  for (const auto at : loads) {
-    resident[at / fu::kPage] = true;
-  }
-  const auto walked = Walk<irs::TreeWalkHint>(loads, 4 * size, resident);
-  EXPECT_EQ(walked.hinted, 0U);
-  EXPECT_TRUE(walked.cold.empty());
-}
-
-TEST(TreeWalkHintTest, WarmWalkProbesScaleWithBytes) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(32, 4, 512, 1, size);
-  const auto stop = size + 8 * fu::kMaxReadahead;
-  const auto walked =
-    Walk<irs::TreeWalkHint>(loads, stop, PagesBelow(stop, stop));
-  EXPECT_EQ(walked.hinted, 0U);
-  EXPECT_LE(walked.probes, 16 + 4 * size / fu::kMaxReadahead);
-}
-
-TEST(TreeWalkHintTest, ColdTailIsPrefetched) {
-  uint64_t size = 0;
-  const auto loads = TreeWalk(16, 3, 4096, 1, size);
-  const auto resident = size / 2;
-  const auto walked =
-    Walk<irs::TreeWalkHint>(loads, 4 * size, PagesBelow(4 * size, resident));
-  EXPECT_LE(walked.cold.size(), 16U);
-  EXPECT_LE(walked.hinted, size - resident + 3 * fu::kMaxReadahead);
-}
-
-TEST(TreeWalkHintTest, SparseLoadsAreNotPrefetched) {
-  std::vector<uint64_t> loads;
-  for (uint64_t i = 0; i != 64; ++i) {
-    loads.push_back(i * 1024 * 1024);
-  }
-  const auto walked = Walk<irs::TreeWalkHint>(loads, 128 * 1024 * 1024);
-  EXPECT_EQ(walked.hinted, 0U);
-  EXPECT_EQ(walked.cold.size(), loads.size());
-}
-
-TEST(TreeWalkHintTest, AncestorLoadsDoNotMoveTheWindow) {
-  uint64_t size = 0;
-  const auto tree = TreeWalk(16, 3, 4096, 1, size);
-  const auto ancestor = size + 64 * 1024 * 1024;
-  std::vector<uint64_t> loads;
-  for (size_t i = 0; i != tree.size(); ++i) {
-    loads.push_back(tree[i]);
-    if (i % 300 == 299) {
-      loads.push_back(ancestor);
-    }
-  }
-  const auto walked = Walk<irs::TreeWalkHint>(loads, 4 * ancestor);
-  EXPECT_LE(
-    absl::c_count_if(walked.cold, [&](uint64_t at) { return at < size; }), 16);
-  EXPECT_LE(walked.hinted_end, size + 2 * fu::kMaxReadahead);
 }
 
 TEST(GrowingHintTest, SequentialLoadsArePrefetchedAhead) {

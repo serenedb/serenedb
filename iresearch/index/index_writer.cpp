@@ -32,7 +32,9 @@
 #include <chrono>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <new>
 #include <ranges>
 #include <shared_mutex>
@@ -40,6 +42,9 @@
 #include <variant>
 #include <yaclib/coro/future.hpp>
 
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
@@ -98,10 +103,10 @@ struct FlushedSegmentContext {
     return false;
   }
 
-  bool CommittedBy(doc_id_t doc, size_t bound) const noexcept {
+  uint64_t TickOf(doc_id_t doc) const noexcept {
     const auto& order = flushed.order;
-    return (order.Empty() ? size_t{doc} - doc_limits::min()
-                          : order.OldRow(doc)) < bound;
+    return flushed.docs.TickAt(order.Empty() ? size_t{doc} - doc_limits::min()
+                                             : order.OldRow(doc));
   }
 
   void RemoveAll(uint64_t tick);
@@ -238,42 +243,65 @@ size_t IncomingPlace(const DirectoryReaderImpl& committed, const auto& entry) {
   return place;
 }
 
-void SortUnique(std::vector<int64_t>& terms) {
-  if (!absl::c_is_sorted(terms)) {
-    absl::c_sort(terms);
+void SortUnique(std::vector<int64_t>& keys) {
+  if (!absl::c_is_sorted(keys)) {
+    absl::c_sort(keys);
   }
-  terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
+  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
 }
 
-void RemoveTerms(std::span<const int64_t> keys, field_id key_field,
-                 const SubReader& segment, const auto& remove) {
-  const auto* field = segment.field(key_field);
-  if (!field) {
+std::span<const int64_t> KeysWithin(const duckdb::BaseStatistics& stats,
+                                    std::span<const int64_t> keys) {
+  if (!duckdb::NumericStats::HasMinMax(stats)) {
+    return keys;
+  }
+  const auto first =
+    absl::c_lower_bound(keys, duckdb::NumericStats::GetMin<int64_t>(stats));
+  return {first,
+          std::upper_bound(first, keys.end(),
+                           duckdb::NumericStats::GetMax<int64_t>(stats))};
+}
+
+void RemoveKeys(std::span<const int64_t> keys, field_id key_column,
+                const SubReader& segment, const auto& remove) {
+  const auto* columns = segment.GetColReader();
+  const auto* column = columns ? columns->Column(key_column) : nullptr;
+  if (!column) {
     return;
   }
-  const auto first = absl::c_lower_bound(keys, TermRemoval::Key(field->min()));
-  const auto last =
-    std::upper_bound(first, keys.end(), TermRemoval::Key(field->max()));
-  if (first == last) {
+  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
+  const auto candidates = KeysWithin(column->MergedStatistics(), keys);
+  if (candidates.empty()) {
     return;
   }
-  auto terms = field->iterator();
-  TermPostings::ptr postings;
-  byte_type buf[sizeof(int64_t)];
-  doc_id_t docs[doc_limits::kBlockSize];
-  for (auto key = first; key != last; ++key) {
-    if (!terms->seek(TermRemoval::Term(*key, buf))) {
+  ReadContext ctx{*columns};
+  auto state = column->InitScan(ctx);
+  ColumnReader::VectorScratch scratch{column->Type()};
+  uint64_t cursor = 0;
+  const auto blocks = column->DataBlocks();
+  for (size_t block = 0; block != blocks.size(); ++block) {
+    const auto matching = KeysWithin(blocks[block].statistics, candidates);
+    if (matching.empty()) {
       continue;
     }
-    if (const auto& meta = terms->cookie(); meta.docs_count == 1) {
-      remove(*key, doc_limits::min() + meta.doc_delta);
-      continue;
+    if (const auto first = column->DataBlockFirstRow(block); first != cursor) {
+      column->Skip(state, first - cursor);
+      cursor = first;
     }
-    postings = terms->ReusePostings(IndexFeatures::None, std::move(postings));
-    while (const auto n = postings->NextDocs(docs, nullptr)) {
-      for (uint32_t i = 0; i != n; ++i) {
-        remove(*key, docs[i]);
+    for (auto left = blocks[block].tuple_count; left != 0;) {
+      const auto take = std::min<uint64_t>(left, STANDARD_VECTOR_SIZE);
+      auto& scanned = scratch.Reset();
+      column->Scan(state, scanned, take);
+      const auto values = scanned.Values<int64_t>();
+      for (duckdb::idx_t i = 0; i != take; ++i) {
+        const auto value = values[i].GetValue();
+        const auto key = absl::c_lower_bound(matching, value);
+        if (key != matching.end() && *key == value) {
+          remove(*key, static_cast<doc_id_t>(doc_limits::min() + cursor + i));
+        }
       }
+      cursor += take;
+      left -= take;
     }
   }
 }
@@ -485,16 +513,16 @@ void ResolveRemoval(const DocRemoval& removal, const RemovalTargets& targets) {
   }
 }
 
-void ResolveTerms(const TermRemoval& removal, field_id key_field, uint64_t tick,
-                  std::span<FlushedSegmentContext> flushed) {
+void ResolveKeys(std::span<const int64_t> keys, field_id key_column,
+                 std::span<FlushedSegmentContext> flushed,
+                 const auto& removed_at) {
   for (auto& segment : flushed) {
-    const auto bound = segment.flushed.docs.UpperBound(tick);
-    RemoveTerms(removal.terms, key_field, *segment.reader,
-                [&](int64_t, doc_id_t doc) {
-                  if (segment.CommittedBy(doc, bound)) {
-                    segment.flushed.docs_mask.Add(doc);
-                  }
-                });
+    RemoveKeys(keys, key_column, *segment.reader,
+               [&](const int64_t& key, doc_id_t doc) {
+                 if (segment.TickOf(doc) <= removed_at(key)) {
+                   segment.flushed.docs_mask.Add(doc);
+                 }
+               });
   }
 }
 
@@ -503,7 +531,7 @@ uint64_t ResolveRemovals(
   const DirectoryReaderImpl& committed_reader, const SegmentNames& segment_mask,
   const auto& incoming, const auto& merges,
   std::span<FlushedSegmentContext> flushed,
-  std::span<DocumentMaskBuilder> removed, field_id key_field) {
+  std::span<DocumentMaskBuilder> removed, field_id key_column) {
   if (merges.empty() && absl::c_all_of(segments, [](const auto& segment) {
         return segment->queries.empty();
       })) {
@@ -534,7 +562,7 @@ uint64_t ResolveRemovals(
     }
   }
   uint64_t all_tick = writer_limits::kMinTick;
-  std::vector<const TermRemoval*> term_removals;
+  std::vector<std::pair<const KeyRemoval*, uint64_t>> key_removals;
   for (const auto& segment : segments) {
     SDB_ASSERT(segment != nullptr);
     for (const auto& entry : segment->queries) {
@@ -542,26 +570,45 @@ uint64_t ResolveRemovals(
         absl::Overload{[&](const std::shared_ptr<const DocRemoval>& positions) {
                          ResolveRemoval(*positions, targets);
                        },
-                       [&](const TermRemoval& terms) {
-                         ResolveTerms(terms, key_field, entry.tick, flushed);
-                         term_removals.emplace_back(&terms);
+                       [&](const KeyRemoval& keys) {
+                         key_removals.emplace_back(&keys, entry.tick);
                        },
-                       [&](IndexWriter::QueuedRemoval::AllDocs) {
+                       [&](IndexWriter::Queued::AllDocs) {
                          all_tick = std::max(all_tick, entry.tick);
-                       }},
-        entry.removal);
+                       },
+                       [](const IndexWriter::Queued::Adopted&) {}},
+        entry.op);
     }
   }
-  if (term_removals.empty()) {
+  if (key_removals.empty()) {
     return all_tick;
   }
   std::vector<int64_t> unsettled;
-  if (term_removals.size() == 1) {
-    unsettled = term_removals.front()->terms;
+  if (key_removals.size() == 1) {
+    const auto [removal, tick] = key_removals.front();
+    unsettled = removal->keys;
+    ResolveKeys(unsettled, key_column, flushed,
+                [tick](const int64_t&) { return tick; });
   } else {
-    unsettled = term_removals | std::views::transform(&TermRemoval::terms) |
-                std::views::join | std::ranges::to<std::vector>();
-    SortUnique(unsettled);
+    std::vector<std::pair<int64_t, uint64_t>> removed;
+    for (const auto& [removal, tick] : key_removals) {
+      for (const auto key : removal->keys) {
+        removed.emplace_back(key, tick);
+      }
+    }
+    absl::c_sort(removed);
+    std::vector<uint64_t> ticks;
+    unsettled.reserve(removed.size());
+    ticks.reserve(removed.size());
+    for (size_t i = 0; i != removed.size(); ++i) {
+      if (i + 1 == removed.size() || removed[i + 1].first != removed[i].first) {
+        unsettled.push_back(removed[i].first);
+        ticks.push_back(removed[i].second);
+      }
+    }
+    ResolveKeys(unsettled, key_column, flushed, [&](const int64_t& key) {
+      return ticks[&key - unsettled.data()];
+    });
   }
   std::vector<int64_t> settled;
   for (const auto& target : targets | std::views::values) {
@@ -570,12 +617,13 @@ uint64_t ResolveRemovals(
     }
     const auto masked = target.reader->MaskedDocs();
     settled.clear();
-    RemoveTerms(unsettled, key_field, *target.reader,
-                [&](int64_t key, doc_id_t doc) {
-                  if (!masked.Contains(doc) && target.removed->Add(doc)) {
-                    settled.emplace_back(key);
-                  }
-                });
+    RemoveKeys(unsettled, key_column, *target.reader,
+               [&](int64_t key, doc_id_t doc) {
+                 if (!masked.Contains(doc) && target.removed->Add(doc)) {
+                   settled.emplace_back(key);
+                 }
+               });
+    SortUnique(settled);
     auto next = settled.begin();
     std::erase_if(unsettled, [&](int64_t key) {
       while (next != settled.end() && *next < key) {
@@ -734,28 +782,51 @@ IndexWriter::Transaction::FlushAndFsync() {
   return flushed;
 }
 
-void IndexWriter::Transaction::Remove(TermRemoval removal) {
-  SDB_ASSERT(_writer->_key_field != field_limits::invalid());
-  SortUnique(removal.terms);
+void IndexWriter::Transaction::Remove(KeyRemoval removal) {
+  SDB_ASSERT(_writer->_key_column != field_limits::invalid());
+  SortUnique(removal.keys);
   Queue(std::move(removal));
 }
 
-void IndexWriter::Transaction::Reset() noexcept {
-  // TODO(mbkkt) rename Reset() to Rollback()
-  if (auto* segment = _active.Segment(); segment != nullptr) {
-    segment->Rollback();
+void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
+  auto& dir = _writer->_dir;
+  IndexSegment segment;
+  segment.filename = meta_file;
+  segment_meta::Read(dir, segment.meta, meta_file);
+  if (segment.meta.live_docs_count == 0) {
+    return;
   }
+  auto meta_ref = directory_utils::Reference(dir, segment.filename);
+  if (!meta_ref) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("cannot adopt segment meta '", segment.filename,
+                            "': it does not exist"));
+  }
+  auto reader = SegmentReaderImpl::Open(dir, segment.meta,
+                                        _writer->GetSnapshotImpl()->Options());
+  [[maybe_unused]] uint64_t id = 0;
+  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
+               id <= _writer->_seg_counter.load(std::memory_order_relaxed),
+             "Adopted segment id is above the segment counter; the writer was "
+             "not opened with cleanup_on_open = false");
+  FileRefs refs;
+  refs.emplace_back(std::move(meta_ref));
+  Queue(Queued::Adopted{.segment = std::move(segment),
+                        .refs = std::move(refs),
+                        .reader = std::move(reader)});
 }
 
 bool IndexWriter::Transaction::CommitImpl(
-  uint64_t last_tick, const SourcePosition& position) noexcept try {
+  const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
+  SDB_ASSERT(_staged);
   SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
-  segment->Commit(_queries, last_tick);
+  segment->Commit(_queries, _first_tick + _queries);
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
+  _staged = false;
   return true;
 } catch (...) {
   SDB_ASSERT(_active.Segment() != nullptr);
@@ -768,6 +839,8 @@ void IndexWriter::Transaction::Abort() noexcept {
   if (segment == nullptr) {
     return;  // nothing to do
   }
+  _queries = 0;
+  _staged = false;
   if (_active.Flush() == nullptr) {
     segment->Reset();  // reset before returning to pool
     _active = {};      // back to pool no needed Rollback
@@ -779,8 +852,7 @@ void IndexWriter::Transaction::Abort() noexcept {
   SDB_ASSERT(_active.Segment() == nullptr);
 }
 
-void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
-                                             CommitOnFlush* commit_on_flush) {
+void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   SDB_ASSERT(Valid());
   while (_active.Segment() == nullptr) {  // lazy init
     _active = _writer->GetSegmentContext(_exclusive_segment);
@@ -822,16 +894,6 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
       //  with keeping already flushed data?
       segment.Reset(true);
       throw;
-    }
-    if (commit_on_flush) {
-      if (!Commit()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
-                        ERR_MSG("commit-on-flush failed: out of memory"));
-      }
-      commit_on_flush->committed = true;
-      SDB_WAIT_ON_FAILURE("pause_create_index_between_batches");
-      UpdateSegment(disable_flush, /*commit_on_flush=*/nullptr);
-      return;
     }
   }
   // Hand the per-op options to the (pooled) writer before it materializes a
@@ -967,6 +1029,13 @@ void IndexWriter::FlushContext::FlushPending() {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
     segment->Flush();
+    for (auto& queued : segment->queries) {
+      if (auto* adopted = std::get_if<Queued::Adopted>(&queued.op)) {
+        incoming.emplace_back(std::move(adopted->segment), queued.tick,
+                              std::move(adopted->refs),
+                              std::move(adopted->reader));
+      }
+    }
     segments.push_back(std::move(segment));
   }
   ClearPending();
@@ -1278,7 +1347,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
-  writer->_key_field = options.key_field;
+  writer->_key_column = options.key_column;
   writer->_sort = std::move(options.sort);
   writer->_hnsw_bases = std::move(hnsw_bases);
   // Wrap the provider callbacks into the fallback options (tests).
@@ -1604,43 +1673,6 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
   co_return {};
 }
 
-void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick,
-                               const SourcePosition& position) {
-  IndexSegment segment;
-  segment.filename = meta_file;
-  segment_meta::Read(_dir, segment.meta, meta_file);
-  if (segment.meta.live_docs_count == 0) {
-    return;  // Nothing to adopt
-  }
-
-  auto meta_ref = directory_utils::Reference(_dir, segment.filename);
-  if (!meta_ref) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("cannot adopt segment meta '", segment.filename,
-                            "': it does not exist"));
-  }
-
-  auto adopted_reader =
-    SegmentReaderImpl::Open(_dir, segment.meta, GetSnapshotImpl()->Options());
-
-  [[maybe_unused]] uint64_t id = 0;
-  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
-               id <= _seg_counter.load(std::memory_order_relaxed),
-             "Adopted segment id is above the segment counter; the writer was "
-             "not opened with cleanup_on_open = false");
-
-  FileRefs refs;
-  refs.emplace_back(std::move(meta_ref));
-  auto flush = GetFlushContext();
-
-  // lock due to context modification
-  std::lock_guard lock{flush->pending_mutex};
-
-  flush->position = std::max(flush->position, position);
-  flush->incoming.emplace_back(std::move(segment), tick, std::move(refs),
-                               std::move(adopted_reader));
-}
-
 void IndexWriter::CompactionFloorGuard::Release() noexcept {
   if (_writer == nullptr) {
     return;
@@ -1915,7 +1947,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                                            ctx->incoming.size());
   const auto all_tick = ResolveRemovals(
     ctx->segments, committed_reader, ctx->segment_mask, ctx->incoming,
-    ctx->doc_maps, segment_ctxs, removed, _key_field);
+    ctx->doc_maps, segment_ctxs, removed, _key_column);
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments

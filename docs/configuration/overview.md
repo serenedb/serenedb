@@ -227,12 +227,16 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | --- | --- | --- | --- | --- |
 | `access_mode` | Access mode of the database (`AUTOMATIC`, `READ_ONLY` or `READ_WRITE`) | `VARCHAR` | `GLOBAL` | `automatic` |
 | `application_name` | Sets the application name to be reported in statistics and logs. | `VARCHAR` | `SESSION` |  |
+| `archive_command` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` |  |
+| `archive_mode` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` | `off` |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `SESSION` | `hex` |
 | `Calendar` | The current calendar | `VARCHAR` | `SESSION` | `gregorian` |
+| `checkpoint_timeout` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `300` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
 | `current_transaction_invalidation_policy` | Which types of exceptions invalidate the database for the current transaction | `VARCHAR` | `GLOBAL` | `STANDARD_POLICY` |
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
+| `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `GLOBAL` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
@@ -251,6 +255,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
 | `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
 | `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
+| `max_parallel_workers_per_gather` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `2` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
@@ -308,7 +313,6 @@ What the server records about itself.
 | `enable_profiling` | Enables profiling, and sets the output format (`query_tree`, `query_tree_optimizer`, `json`, `text`, `html`, `graphviz`, `yaml`, `mermaid`, `compact` or `no_output`) | `VARCHAR` | `SESSION` | NULL |
 | `enable_progress_bar` | Tracks the progress of long queries, so that `enable_progress_bar_print` can print it. On in every server session. | `BOOLEAN` | `SESSION` | `true` |
 | `enable_progress_bar_print` | Prints a progress bar for long queries, when `enable_progress_bar` is on. The bar goes to the standard output of the `serened` process, not to the client. | `BOOLEAN` | `SESSION` | `false` |
-| `legacy_metrics_format` | Deprecated. When enabled, profiling output uses the legacy flat format instead of the current grouped format. | `BOOLEAN` | `SESSION` | `off` |
 | `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Queries are appended to the file, also when the session sets its own path again; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
 | `logging_level` | The log level which will be recorded in the log | `VARCHAR` | `GLOBAL` | `INFO` |
 | `logging_mode` | Determines which types of log messages are logged | `VARCHAR` | `GLOBAL` | `LEVEL_ONLY` |
@@ -526,7 +530,7 @@ Everything that does not fall into the groups above.
 | `index_scan_percentage` | The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `DOUBLE` | `GLOBAL` | `0.001` |
 | `integer_division` | Whether or not the / operator defaults to integer division, or to floating point division | `BOOLEAN` | `SESSION` | `true` |
 | `integer_overflow` | What integer `+`, `-`, `*` and unary minus do when the result does not fit its type: `ERROR` raises an error, `WRAP` keeps the low bits of the result (two's complement wraparound). | `VARCHAR` | `SESSION` | `ERROR` |
-| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `ENABLE_SINGLE_ARROW` |
+| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `DEFAULT` |
 | `max_vacuum_tasks` | The maximum vacuum tasks to schedule during a checkpoint. | `UBIGINT` | `GLOBAL` | `100` |
 | `merge_http_secret_into_s3_request` | Merges http secret params into S3 requests | `BOOLEAN` | `SESSION` | `true` |
 | `perfect_ht_threshold` | Threshold in bytes for when to use a perfect hash table | `UBIGINT` | `SESSION` | `12` |

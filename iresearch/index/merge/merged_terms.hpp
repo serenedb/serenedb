@@ -70,9 +70,6 @@ class CompoundTermIterator : public TermOnlyIterator {
     _run_left = 0;
     _pending = kNoEntry;
     _pending_at_term = false;
-    _min_term.clear();
-    _max_term.clear();
-    _has_min_term = false;
   }
 
   const FieldMeta& Meta() const noexcept { return *_meta; }
@@ -88,18 +85,7 @@ class CompoundTermIterator : public TermOnlyIterator {
 
   TermPostings::ptr postings(IndexFeatures features) const final;
 
-  bytes_view value() const noexcept final {
-    if (!_has_min_term) [[unlikely]] {
-      _has_min_term = true;
-      _min_term = _current_term;
-    }
-    SDB_ASSERT(_max_term <= _current_term);
-    _max_term = _current_term;
-    return _current_term;
-  }
-
-  bytes_view MinTerm() const noexcept { return _min_term; }
-  bytes_view MaxTerm() const noexcept { return _max_term; }
+  bytes_view value() const noexcept final { return _current_term; }
 
  private:
   static constexpr size_t kNoEntry = std::numeric_limits<size_t>::max();
@@ -131,10 +117,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   size_t _pending{kNoEntry};
   bool _pending_at_term{false};
   bool _failed{false};
-  mutable bstring _min_term;
-  mutable bstring _max_term;
   mutable Postings _doc_itr;
-  mutable bool _has_min_term{false};
   const MergeProgress* _proceed;
   ProgressTracker _progress;
 };

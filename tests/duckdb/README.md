@@ -45,7 +45,9 @@ entries are reported as skipped results with their reason.
 
 In CI the suites a diff opens come from `scripts/ci/classify-changes.sh`:
 duckdb itself or any dependency it shares selects every suite, while an
-extension-only dependency selects just that extension.
+extension-only dependency selects just that extension, and the storage version
+list in `third_party/duckdb_versions` selects none: a new SereneDB storage
+version changes neither DuckDB nor iresearch.
 
 ## Branches
 
@@ -108,6 +110,10 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 - In spatial, `0007-function-set-shared-ptr` applies only after `0013`, and `0014-spatial-join-logical-cast` is not applied: `v1.5-variegata` already has its change.
 - DuckDB writes its iceberg patches against the iceberg commit it pins, older than iceberg `main`. Iceberg `main` already has `0001-can-autoload-extension-database` and its own port of `0001-table-function-signature-options`, so neither is applied, and `0002-alter-info-column-path` goes in with `git apply --3way`.
 - DuckDB's avro-c changes apply to Apache `main` with three conflicts, all where Apache's tree moved on: the CMake package lookups (`apply patches`), the test list (PRs 2 and 9), and PR 9's block reader, whose block count and size check absorbs Apache's own negative block size check ([apache/avro 3623](https://github.com/apache/avro/pull/3623)). None is dropped.
+
+### The update of 2026-10-20
+
+Upstream did not move: the boundaries of 2026-10-06 stand, and every fork's tree is its 2026-10-06 head's. Each patchset was rebuilt one commit per concern, and duckdb's ends with one `regen:` commit in place of the sixteen its pull requests had added.
 
 ### Our patchset by area (duckdb core)
 

@@ -28,9 +28,8 @@
 #include <iresearch/index/index_writer.hpp>
 #include <string>
 
-// Background-maintenance vocabulary shared by the maintained iresearch stores
-// (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
-// them.
+// Background-maintenance vocabulary shared by Store and the loops in
+// search/task.h that drive it.
 namespace sdb::search {
 
 // Maintenance cadence, read by the background loops while an ALTER rewrites it.
@@ -61,6 +60,7 @@ struct ResultWithTime {
 struct MergeResult {
   irs::CompactionResult outcome;
   std::string error;
+  bool backup = false;
 };
 
 }  // namespace sdb::search

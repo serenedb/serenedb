@@ -41,6 +41,7 @@ target_include_directories(
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
         ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
         ${CMAKE_SOURCE_DIR}/third_party/magic_enum
 )

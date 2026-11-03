@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <limits>
+#include <span>
+
 #include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 
@@ -55,8 +59,6 @@ struct ScatterScratch {
       ranked{ManagedTypedAllocator<RankedTerm>{rm}},
       ranked_alt{ManagedTypedAllocator<RankedTerm>{rm}},
       radix_counts{ManagedTypedAllocator<uint32_t>{rm}},
-      term_starts{ManagedTypedAllocator<uint32_t>{rm}},
-      inline_docs{ManagedTypedAllocator<doc_id_t>{rm}},
       docs{ManagedTypedAllocator<uint32_t*>{rm}},
       pos{ManagedTypedAllocator<uint32_t*>{rm}},
       offs_start{ManagedTypedAllocator<uint32_t*>{rm}},
@@ -74,8 +76,6 @@ struct ScatterScratch {
   ManagedVector<RankedTerm> ranked;
   ManagedVector<RankedTerm> ranked_alt;
   ManagedVector<uint32_t> radix_counts;
-  ManagedVector<uint32_t> term_starts;
-  ManagedVector<doc_id_t> inline_docs;
   ManagedVector<uint32_t*> docs;
   ManagedVector<uint32_t*> pos;
   ManagedVector<uint32_t*> offs_start;
@@ -90,39 +90,23 @@ class ScatteredField : util::Noncopyable {
   void Reset(const FieldInverter& field, const DocOrder& order = {});
 
   const FieldInverter& Field() const noexcept { return *_field; }
-  size_t TermCount() const noexcept {
-    if (_identity) {
-      return _field->InlineDocs().size();
-    }
-    return _s->term_starts.empty() ? _s->ranked.size()
-                                   : _s->term_starts.size() - 1;
-  }
+  size_t TermCount() const noexcept { return _s->ranked.size(); }
 
   const duckdb::string_t& TermAt(size_t rank) const noexcept {
     const auto entries = _field->Dictionary().Entries();
-    return entries[_identity ? rank : _s->ranked[RankAt(rank)].id];
+    return entries[_s->ranked[rank].id];
   }
 
-  uint64_t TermBegin(size_t rank) const noexcept {
-    const auto r = RankAt(rank);
-    return _all_inline ? r : _s->bounds[r];
-  }
-  uint64_t TermEnd(size_t rank) const noexcept {
-    const auto r = RankAt(rank + 1);
-    return _all_inline ? r : _s->bounds[r];
-  }
+  uint64_t TermBegin(size_t rank) const noexcept { return _s->bounds[rank]; }
+  uint64_t TermEnd(size_t rank) const noexcept { return _s->bounds[rank + 1]; }
 
-  bool AllInline() const noexcept { return _all_inline; }
+  uint32_t KeyWidth() const noexcept { return _width == kNoWidth ? 0 : _width; }
+  uint64_t TermBytes() const noexcept { return _term_bytes; }
 
   uint32_t* const* DocBlocks() const noexcept {
     return _s->docs.empty() ? nullptr : _s->docs.data();
   }
 
-  const doc_id_t* RankedInlineDocs() const noexcept {
-    SDB_ASSERT(_all_inline);
-    return _identity && !_remapped ? _field->InlineDocs().data()
-                                   : _s->inline_docs.data();
-  }
   uint32_t* const* PosBlocks() const noexcept {
     return _s->pos.empty() ? nullptr : _s->pos.data();
   }
@@ -134,20 +118,25 @@ class ScatteredField : util::Noncopyable {
   }
 
  private:
-  size_t RankAt(size_t rank) const noexcept {
-    return _s->term_starts.empty() ? rank : _s->term_starts[rank];
+  static constexpr uint32_t kNoWidth = std::numeric_limits<uint32_t>::max();
+
+  void ResetSizes() noexcept {
+    _width = kNoWidth;
+    _term_bytes = 0;
+  }
+  void NoteSize(uint32_t size) noexcept {
+    _width = _width == kNoWidth || _width == size ? size : 0;
+    _term_bytes += size;
   }
 
   void BuildHistogram(const PostingLogBase& log, size_t vocab);
   void RankLiveTerms(std::span<const duckdb::string_t> entries);
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);
-  void FoldDuplicateTerms(std::span<const duckdb::string_t> entries);
   uint64_t PrefixSums();
   uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);
   void RadixSortByKey();
-  void RemapInlineDocs(std::span<const doc_id_t> docs, const DocOrder& order);
   template<TokenLayout kLayout>
   void RemapLogDocs(const DocOrder& order);
 
@@ -162,8 +151,8 @@ class ScatteredField : util::Noncopyable {
   InverterMemory* _mem;
   ScatterScratch* _s;
   const FieldInverter* _field = nullptr;
-  bool _all_inline = false;
-  bool _identity = false;
+  uint64_t _term_bytes = 0;
+  uint32_t _width = kNoWidth;
   bool _remapped = false;
 };
 

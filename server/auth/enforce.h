@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <string_view>
 
 namespace duckdb {
 
@@ -38,6 +39,9 @@ namespace sdb::auth {
 
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan);
+
+void RequireSuperuser(duckdb::ClientContext& context,
+                      std::string_view function);
 
 bool Unowned(const duckdb::CatalogEntry& entry);
 

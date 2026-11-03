@@ -115,8 +115,8 @@ class LevenshteinIterator : public WrappedTermIterator {
     return true;
   }
 
-  bool SeekPast(bytes_view key) {
-    if (_impl->seek_ge(AfterKey(key)) == SeekResult::End) {
+  bool SeekGe(bytes_view target) {
+    if (_impl->seek_ge(target) == SeekResult::End) {
       return false;
     }
     Score();
@@ -178,6 +178,7 @@ void WalkTopTerms(const TermReader& reader,
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
   std::unique_ptr<const LevenshteinAcceptor> narrow;
+  bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
   const auto reaches = [&](score_t boost, uint8_t d) {
@@ -202,12 +203,12 @@ void WalkTopTerms(const TermReader& reader,
         options.provider(narrowed, options.with_transpositions);
       if (description) {
         distance = narrowed;
-        const bstring last{it->value()};
+        AssignAfterKey(past, it->value());
         auto acceptor = std::make_unique<const LevenshteinAcceptor>(
           description, prefix, term);
         it.emplace(reader.iterator(*acceptor), options);
         narrow = std::move(acceptor);
-        if (!it->SeekPast(last)) {
+        if (!it->SeekGe(past)) {
           return;
         }
         on_terms(it->GetImpl());
@@ -300,9 +301,9 @@ uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
 
 QueryBuilder::ptr PrepareLevenshteinSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field,
-  const LevenshteinAutomatonOptions& options, size_t terms_limit,
+  DictRef dict, const LevenshteinAutomatonOptions& options, size_t terms_limit,
   score_t boost) {
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, dict);
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -346,10 +347,10 @@ QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
-  const LevenshteinAutomatonOptions& options, score_t boost) {
+  DictRef dict, const LevenshteinAutomatonOptions& options, score_t boost) {
   SDB_ASSERT(options.parametric);
-  return PrepareLevenshteinSegment(segment, ctx, id, options, options.max_terms,
-                                   boost);
+  return PrepareLevenshteinSegment(segment, ctx, id, dict, options,
+                                   options.max_terms, boost);
 }
 
 field_visitor LevenshteinAutomatonFilter::visitor(
@@ -366,7 +367,8 @@ field_visitor LevenshteinAutomatonFilter::visitor(
 
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
-  return PrepareSegment(segment, ctx, field_id(), options(), GetBoost());
+  return PrepareSegment(segment, ctx, field_id(), dict(), options(),
+                        GetBoost());
 }
 
 PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
@@ -390,7 +392,7 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   target += term;
 }
 
-Filter::ptr LowerLevenshtein(irs::field_id id,
+Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost) {
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
@@ -398,6 +400,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id,
     [&] -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       auto& target = filter->mutable_options()->term;
       target.reserve(opts.prefix.size() + opts.term.size());
       target += opts.prefix;
@@ -412,6 +415,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id,
         prefix, term,          opts.max_terms};
       auto filter = std::make_unique<LevenshteinAutomatonFilter>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       *filter->mutable_options() = std::move(lowered);
       filter->SetBoost(boost);
       return filter;
@@ -429,7 +433,7 @@ TermPredicate::ptr LevenshteinAutomatonFilter::CompileTermPredicate() const {
 }
 
 TermPredicate::ptr ByEditDistance::CompileTermPredicate() const {
-  auto lowered = LowerLevenshtein(field_id(), options(), kNoBoost);
+  auto lowered = LowerLevenshtein(field_id(), dict(), options(), kNoBoost);
   if (!lowered) {
     return nullptr;
   }

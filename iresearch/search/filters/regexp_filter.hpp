@@ -73,11 +73,11 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   bool operator==(const ByRegexpOptions& rhs) const noexcept = default;
 };
 
-Filter::ptr CreateByRegexp(irs::field_id id, bytes_view pattern,
+Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                            RegexpSyntax syntax = RegexpSyntax::Perl,
                            score_t boost = kNoBoost);
 
-Filter::ptr LowerRegexp(irs::field_id id, bytes_view pattern,
+Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
                         RegexpSyntax syntax, score_t boost);
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {

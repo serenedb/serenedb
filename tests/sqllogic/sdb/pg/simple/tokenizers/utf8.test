@@ -108,14 +108,14 @@ t
 # characters ---
 
 query
-SELECT list_transform(generate_wildcard_ngrams('héllo', 3), x -> hex(x::BLOB)) AS t;
+SELECT list_transform(generate_wildcard_ngrams('héllo', 3), lambda x: hex(x::BLOB)) AS t;
 ----
 t
 {1F68C3A9,68C3A96C,C3A96C6C,6C6C6F,6C6F1F,6F1F}
 
 
 query
-SELECT list_transform(generate_wildcard_ngrams('日本語テキスト', 3), x -> hex(x::BLOB)) AS t;
+SELECT list_transform(generate_wildcard_ngrams('日本語テキスト', 3), lambda x: hex(x::BLOB)) AS t;
 ----
 t
 {1FE697A5E69CAC,E697A5E69CACE8AA9E,E69CACE8AA9EE38386,E8AA9EE38386E382AD,E38386E382ADE382B9,E382ADE382B9E38388,E382B9E383881F,E383881F}
@@ -345,6 +345,13 @@ t
 
 
 query
+SELECT stem_words(['книжками', 'читала', 'учителями', 'зеленого'], 'uk_UA.UTF-8') AS t;
+----
+t
+{книжк,чит,учител,зелен}
+
+
+query
 SELECT split_text_icu('日本語のテキストを分割する', 'ja_JP.UTF-8') AS t;
 ----
 t
@@ -370,8 +377,8 @@ CREATE TEXT SEARCH DICTIONARY tr_words AS
 
 
 query
-SELECT list_transform(ts_lexize('tr_words', 'IIIII'), x -> hex(x::BLOB)) AS chain,
-       list_transform(split_text(normalize_tokens(['IIIII'], 'tr_TR.UTF-8', case := 'lower')), x -> hex(x::BLOB)) AS nested;
+SELECT list_transform(ts_lexize('tr_words', 'IIIII'), lambda x: hex(x::BLOB)) AS chain,
+       list_transform(split_text(normalize_tokens(['IIIII'], 'tr_TR.UTF-8', case := 'lower')), lambda x: hex(x::BLOB)) AS nested;
 ----
 chain	nested
 {C4B1C4B1C4B1C4B1C4B1}	{C4B1C4B1C4B1C4B1C4B1}
@@ -385,8 +392,8 @@ CREATE TEXT SEARCH DICTIONARY tr_grams AS
 
 
 query
-SELECT list_transform(ts_lexize('tr_grams', 'II'), x -> hex(x::BLOB)) AS chain,
-       list_transform(generate_ngrams('ıı', 1, 2), x -> hex(x::BLOB)) AS nested;
+SELECT list_transform(ts_lexize('tr_grams', 'II'), lambda x: hex(x::BLOB)) AS chain,
+       list_transform(generate_ngrams('ıı', 1, 2), lambda x: hex(x::BLOB)) AS nested;
 ----
 chain	nested
 {C4B1,C4B1C4B1,C4B1}	{C4B1,C4B1C4B1,C4B1}
@@ -401,7 +408,7 @@ CREATE TEXT SEARCH DICTIONARY sh_mb_grams AS
 
 
 query
-SELECT list_transform(ts_lexize('sh_mb_grams', 'ab cd'), x -> hex(x::BLOB)) AS chain;
+SELECT list_transform(ts_lexize('sh_mb_grams', 'ab cd'), lambda x: hex(x::BLOB)) AS chain;
 ----
 chain
 {61,6162,62,61,6162,62,62E28094,E28094,E2809463,63,6364,64,63,6364,64}
@@ -415,7 +422,7 @@ CREATE TEXT SEARCH DICTIONARY en_words AS
 
 
 query
-SELECT list_transform(ts_lexize('en_words', 'IIIII'), x -> hex(x::BLOB)) AS t;
+SELECT list_transform(ts_lexize('en_words', 'IIIII'), lambda x: hex(x::BLOB)) AS t;
 ----
 t
 {6969696969}

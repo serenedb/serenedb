@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <sys/resource.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -4503,6 +4505,154 @@ TEST_P(DirectoryTestCase, unmap_keeps_contents_and_page_cache) {
   std::vector<irs::byte_type> after(data.size());
   in->ReadData(0, after.data(), after.size());
   EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
+}
+
+TEST_P(DirectoryTestCase, warm_counts_leading_marked_bytes) {
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  {
+    auto out = _dir->create("warm");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(80 * kPage + 100, 1);
+    out->WriteData(data.data(), data.size());
+  }
+  auto in = _dir->open("warm", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const bool tracked = dynamic_cast<MMapDirectory*>(_dir.get()) != nullptr;
+  const auto warm = [&](uint64_t bytes) { return tracked ? bytes : 0; };
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(0, in->Length()));
+  in->MarkWarm(2 * kPage, 4 * kPage);
+  in->MarkWarm(60 * kPage, 10 * kPage);
+  in->MarkWarm(78 * kPage, 10 * kPage);
+
+  EXPECT_EQ(0, in->Warm(kPage, 10 * kPage));
+  EXPECT_EQ(warm(4 * kPage - 100), in->Warm(2 * kPage + 100, 10 * kPage));
+  EXPECT_EQ(warm(2 * kPage), in->Warm(3 * kPage + 5, 2 * kPage));
+  EXPECT_EQ(warm(kPage), in->Warm(5 * kPage, 2 * kPage));
+  EXPECT_EQ(warm(10 * kPage - 7), in->Warm(60 * kPage + 7, 20 * kPage));
+  EXPECT_EQ(warm(kPage), in->Warm(63 * kPage, kPage));
+  EXPECT_EQ(warm(10 * kPage), in->Warm(79 * kPage, 10 * kPage));
+  EXPECT_EQ(0, in->Warm(in->Length(), kPage));
+  EXPECT_EQ(0, in->Warm(3 * kPage, 0));
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(3 * kPage, kPage));
+}
+
+TEST_P(DirectoryTestCase, hint_prefetches_the_cold_remainder) {
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  {
+    auto out = _dir->create("hint");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(80 * kPage + 100, 1);
+    out->WriteData(data.data(), data.size());
+  }
+  auto in = _dir->open("hint", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const bool tracked = dynamic_cast<MMapDirectory*>(_dir.get()) != nullptr;
+
+  using Ranges = std::vector<std::pair<uint64_t, uint64_t>>;
+  struct Recording {
+    uint64_t Warm(uint64_t offset, uint64_t size) const noexcept {
+      return in->Warm(offset, size);
+    }
+    bool Resident(uint64_t, uint64_t) const noexcept { return false; }
+    void Prefetch(uint64_t offset, uint64_t size) const noexcept {
+      prefetched.emplace_back(offset, offset + size);
+    }
+    void MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+      in->MarkWarm(offset, size);
+    }
+
+    const irs::IndexInput* in;
+    mutable Ranges prefetched;
+  };
+  Recording recording{.in = in.get(), .prefetched = {}};
+
+  irs::file_utils::InvalidateResidency();
+  irs::file_utils::Hint(recording, kPage, 10 * kPage);
+  EXPECT_EQ((Ranges{{kPage, 11 * kPage}}), recording.prefetched);
+
+  recording.prefetched.clear();
+  irs::file_utils::Hint(recording, 8 * kPage + 7, 6 * kPage);
+  EXPECT_EQ((tracked ? Ranges{{11 * kPage, 14 * kPage + 7}}
+                     : Ranges{{8 * kPage + 7, 14 * kPage + 7}}),
+            recording.prefetched);
+
+  recording.prefetched.clear();
+  irs::file_utils::Hint(recording, 2 * kPage, 12 * kPage);
+  EXPECT_EQ((tracked ? Ranges{} : Ranges{{2 * kPage, 14 * kPage}}),
+            recording.prefetched);
+}
+
+TEST_P(DirectoryTestCase,
+       hint_prefetches_a_warm_span_once_faults_show_eviction) {
+#ifdef RUSAGE_THREAD
+  if (!dynamic_cast<MMapDirectory*>(_dir.get())) {
+    GTEST_SKIP() << "only a mapped input tracks warm pages";
+  }
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  constexpr uint64_t kSize = 80 * kPage;
+  {
+    auto out = _dir->create("evicted");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(kSize, 1);
+    out->WriteData(data.data(), data.size());
+    out->Flush();
+  }
+  const std::string_view files[]{"evicted"};
+  ASSERT_TRUE(_dir->sync(files));
+  auto in = _dir->open("evicted", irs::IOAdvice::RANDOM);
+  ASSERT_FALSE(!in);
+  const auto* mapped = in->ReadStable(0, kSize);
+  ASSERT_NE(nullptr, mapped);
+
+  using Ranges = std::vector<std::pair<uint64_t, uint64_t>>;
+  struct Recording {
+    uint64_t Warm(uint64_t offset, uint64_t size) const noexcept {
+      return in->Warm(offset, size);
+    }
+    bool Resident(uint64_t, uint64_t) const noexcept { return false; }
+    void Prefetch(uint64_t offset, uint64_t size) const noexcept {
+      prefetched.emplace_back(offset, offset + size);
+    }
+    void MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+      in->MarkWarm(offset, size);
+    }
+
+    const irs::IndexInput* in;
+    mutable Ranges prefetched;
+  };
+  Recording recording{.in = in.get(), .prefetched = {}};
+  const auto major_faults = [] {
+    rusage usage{};
+    ::getrusage(RUSAGE_THREAD, &usage);
+    return usage.ru_majflt;
+  };
+
+  irs::file_utils::SyncResidency();
+  irs::file_utils::Hint(recording, 0, kSize);
+  EXPECT_EQ((Ranges{{0, kSize}}), recording.prefetched);
+  recording.prefetched.clear();
+  irs::file_utils::Hint(recording, 0, kSize);
+  EXPECT_EQ(Ranges{}, recording.prefetched);
+
+  in->Evict(0, kSize);
+  const auto before = major_faults();
+  uint64_t sum = 0;
+  for (uint64_t at = 0; at < kSize; at += kPage) {
+    sum += static_cast<const volatile irs::byte_type*>(mapped)[at];
+  }
+  ASSERT_EQ(kSize / kPage, sum);
+  if (major_faults() == before) {
+    GTEST_SKIP() << "evicted pages came back without a major fault";
+  }
+  irs::file_utils::Hint(recording, 0, kSize);
+  EXPECT_EQ((Ranges{{0, kSize}}), recording.prefetched);
+#else
+  GTEST_SKIP() << "no per-thread fault counts";
+#endif
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

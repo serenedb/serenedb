@@ -51,8 +51,7 @@
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_scheduler.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 #include "storage_engine/search_engine.h"
@@ -88,48 +87,7 @@ bool ShouldStop() noexcept {
   return lifecycle::IsStopping() || GetSearchEngine().IsStopping();
 }
 
-// Per-storage source of the merge's field options, pinned for the merge's
-// lifetime -- the only part of the background loops that differs by storage
-// type (see the PinCompactionOptions overloads below).
-struct CompactionOptions {
-  bool alive = false;
-  // Pins the options for the whole merge.
-  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
-  const irs::IndexFieldOptions* field_options = nullptr;
-};
-
-CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // Cloned for this merge: the merge encodes against what it took for its
-  // whole length, and an ALTER writes a new configuration rather than mutating
-  // this one, while a DROP destroys the bound index but not this clone.
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    if (attached->oid != idx.GetDatabaseId()) {
-      continue;
-    }
-    const auto entry =
-      attached->GetCatalog()
-        .Cast<catalog::SereneDBCatalog>()
-        .FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
-    if (!entry) {
-      break;
-    }
-    std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
-    const auto* raw = options.get();
-    return {
-      .alive = true, .keepalive = std::move(options), .field_options = raw};
-  }
-  return {};
-}
-
-CompactionOptions PinCompactionOptions(SearchTable& table) {
-  auto options = table.CompactionConfig();
-  const auto* raw = options.get();
-  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
-}
-
-template<typename Storage>
-void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
+void DoRefresh(Store& idx, bool run_cleanup, RefreshResult& code) {
   SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -167,10 +125,9 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-template<typename Storage>
 class StorageMergeJob final : public MergeJob {
  public:
-  StorageMergeJob(std::shared_ptr<Storage> storage,
+  StorageMergeJob(std::shared_ptr<Store> storage,
                   irs::IndexWriter::MergeTicket ticket) noexcept
     : _storage{std::move(storage)}, _ticket{std::move(ticket)} {}
 
@@ -197,11 +154,10 @@ class StorageMergeJob final : public MergeJob {
       co_return MergeResult{
         .outcome = {.error = irs::CompactionError::Cancelled}};
     }
-    // Pin the merge's field options for its whole lifetime (storage-specific,
-    // see PinCompactionOptions). A target found already dropped has nothing to
-    // merge.
-    auto opts = PinCompactionOptions(*_storage);
-    if (!opts.alive) {
+    // Pin the merge's field options for its whole lifetime. A target found
+    // already dropped has nothing to merge.
+    const auto options = _storage->CompactionOptions();
+    if (!options) {
       co_return MergeResult{
         .outcome = {.error = irs::CompactionError::Cancelled}};
     }
@@ -212,10 +168,15 @@ class StorageMergeJob final : public MergeJob {
     auto& db = irs::DuckDBEngine::Instance().instance();
     const irs::PipelineMergeExecutor executor{
       db, &duckdb::TaskScheduler::GetScheduler(db), 1 + helpers};
-    auto merged = co_await _storage->RunMergeAsync(std::move(_ticket), progress,
-                                                   opts.field_options,
-                                                   &AnnBuildEnv(), executor);
+    auto merged = co_await _storage->RunMergeAsync(
+      ClaimMaintenance(), std::move(_ticket), progress, options.get(),
+      &AnnBuildEnv(), executor);
     const auto took_ms = merged.outcome.stats.profile.TotalNanos() / 1'000'000;
+    if (merged.backup) {
+      SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
+                "' stopped by a backup");
+      co_return merged;
+    }
     if (!merged.error.empty()) {
       SDB_WARN(SEARCH, "error after running for ", took_ms,
                "ms while compacting Search index '", _storage->GetId(),
@@ -231,15 +192,15 @@ class StorageMergeJob final : public MergeJob {
   }
 
  private:
-  std::shared_ptr<Storage> _storage;
+  std::shared_ptr<Store> _storage;
   irs::IndexWriter::MergeTicket _ticket;
 };
 
-template<typename Storage>
-bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
-  if constexpr (std::is_same_v<Storage, SearchTable>) {
-    SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
+bool PlanMerges(const std::shared_ptr<Store>& idx, MergeScheduler& merges) {
+  if (IsBackupActive()) {
+    return false;
   }
+  SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
   const auto& relation = idx->MergeRelation();
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.StartRound(*relation);
@@ -258,7 +219,7 @@ bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
   jobs.reserve(tickets.size());
   for (auto& ticket : tickets) {
     jobs.emplace_back(
-      std::make_unique<StorageMergeJob<Storage>>(idx, std::move(ticket)));
+      std::make_unique<StorageMergeJob>(idx, std::move(ticket)));
   }
   merges.Enqueue(relation, std::move(jobs));
   return !tickets.empty() || !blocked.empty();
@@ -268,9 +229,8 @@ bool PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges) {
 // fit (one-shot, non-thread-safe Reset, lost-wakeup across iterations with many
 // producers), so we poll the per-index generation in bounded slices -- the
 // fallback the design explicitly allows. Returns early on a nudge or on stop.
-template<typename Storage>
 yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
-                                          std::weak_ptr<Storage> weak,
+                                          std::weak_ptr<Store> weak,
                                           uint64_t base_gen,
                                           Clock::duration interval,
                                           Clock::duration total) {
@@ -304,9 +264,8 @@ enum class LoopTick {
   kNeutral,   // keep the stretch
 };
 
-template<typename Storage, typename GetIntervalMs, typename Tick>
-yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
-                              std::string_view name,
+template<typename GetIntervalMs, typename Tick>
+yaclib::Future<> IntervalLoop(std::weak_ptr<Store> weak, std::string_view name,
                               GetIntervalMs get_interval_ms, Tick tick) {
   auto& s = BackgroundScheduler::instance();
   int stretch = 0;
@@ -382,14 +341,13 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
 
 }  // namespace
 
-template<typename Storage>
-yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
+yaclib::Future<> RefreshLoop(std::weak_ptr<Store> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
-    [](Storage& idx) -> size_t {
+    [](Store& idx) -> size_t {
       return idx.GetTasksSettings().refresh_interval_msec;
     },
-    [cleanup_count = size_t{0}](const std::weak_ptr<Storage>& target) mutable {
+    [cleanup_count = size_t{0}](const std::weak_ptr<Store>& target) mutable {
       auto idx = target.lock();
       if (!idx) {
         return LoopTick::kNeutral;
@@ -397,7 +355,8 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
       const size_t cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
-      const bool run_cleanup = stale || periodic;
+      const bool run_cleanup =
+        (stale || periodic) && !GetSearchEngine().IsBackupActive();
       if (run_cleanup) {
         cleanup_count = 0;
         idx->ClearStalePressure();
@@ -416,8 +375,7 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
     });
 }
 
-template<typename Storage>
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
+yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak) {
   auto& s = BackgroundScheduler::instance();
   auto& merges = GetSearchEngine().Merges();
   auto backoff = Clock::duration::zero();
@@ -486,11 +444,5 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   }
   co_return {};
 }
-
-template yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage>);
-template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage>);
-template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
-template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
 
 }  // namespace sdb::search

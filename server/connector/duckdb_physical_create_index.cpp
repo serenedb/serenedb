@@ -81,7 +81,7 @@
 #include "pg/progress_registry.h"
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -106,7 +106,6 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   duckdb::idx_t table_id;
   std::vector<InsertColumnMeta> columns;
 
-  bool pk_term = false;
   connector::PkColumnKind pk_column = connector::PkColumnKind::None;
   PkShape pk_shape = PkShape::Single;
   duckdb::idx_t pk_base_col_idx = 0;
@@ -119,11 +118,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   // the backfill. INT64_MAX (no filtering) when the source has no rowids.
   int64_t backfill_rowid_end = std::numeric_limits<int64_t>::max();
 
-  // delete logs stuff
-  std::vector<std::atomic<int64_t>> uncommitted_min_rowids;
-  std::atomic<size_t> registered_sinks{0};
-
-  std::shared_ptr<search::InvertedIndexStorage> index_storage;
+  std::shared_ptr<search::Store> index_storage;
   catalog::IndexTokenizers tokenizers;
   // The entry's own config: the encoding handed to iresearch and the source
   // of every per-field answer the build needs.
@@ -132,7 +127,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   std::vector<ExpressionSlot> expression_slots;
 
   std::optional<SearchBackfillTarget> search_backfill;
-  search::SearchTable::BuildClaim build_claim;
+  search::Store::BuildClaim build_claim;
 
   pg::ProgressMetrics* progress = nullptr;
 };
@@ -142,11 +137,9 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::unique_ptr<DuckDBSearchSinkInsertWriter> writer;
   // Per-chunk scratch, kept at high-water mark: Sink runs once per 2048 rows,
   // so anything rebuilt on the stack there is an allocation per chunk.
-  std::vector<duckdb::string_t> key_views;
   std::vector<FeedColumn> columns;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
-  size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
 };
 
 }  // namespace
@@ -302,8 +295,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
           published.storage->SetDeleteLogRowidEnd(published.rowid_horizon);
           state->backfill_rowid_end =
             static_cast<int64_t>(published.rowid_horizon);
-          state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
-            duckdb::TaskScheduler::QueryThreads(context));
         }
       }
     }
@@ -322,9 +313,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   // Off the entry, which owns the definition the store merely points at.
-  const auto policy = created->Cast<catalog::InvertedIndexEntry>().Config()->pk;
-  state->pk_term = policy.index_term;
-  state->pk_column = policy.column;
+  state->pk_column = created->Cast<catalog::InvertedIndexEntry>().Config()->pk;
   if (extras) {
     state->generated_pk_type = extras->generated_pk_type;
     state->file_manifest = extras->manifest;
@@ -387,30 +376,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   return state;
 }
 
-namespace {
-
-// A sink's entry moves only when its transaction commits: a mid-build cut
-// advances it to the batch that triggered the cut, the final commit retires
-// it to INT64_MAX. Every move republishes begin = min over the entries.
-void AdvanceUncommittedMin(CreateIndexGlobalState& gstate, size_t slot,
-                           int64_t min_rowid) {
-  if (slot == std::numeric_limits<size_t>::max()) {
-    return;
-  }
-  gstate.uncommitted_min_rowids[slot].store(min_rowid,
-                                            std::memory_order_release);
-  const auto reg = gstate.registered_sinks.load(std::memory_order_acquire);
-  SDB_ASSERT(reg <= gstate.uncommitted_min_rowids.size());
-  auto begin = std::numeric_limits<int64_t>::max();
-  for (size_t i = 0; i < reg; ++i) {
-    const auto& entry = gstate.uncommitted_min_rowids[i];
-    begin = std::min(begin, entry.load(std::memory_order_acquire));
-  }
-  gstate.index_storage->SetDeleteLogRowidBegin(begin);
-}
-
-}  // namespace
-
 duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBPhysicalCreateIndex::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
@@ -423,20 +388,13 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
 
   auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
   lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-    inverted_storage.GetTransaction());
+    inverted_storage.GetTransaction(/*exclusive_segment=*/true));
   lstate->search_trx->SetFieldOptions(gstate.config);
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx,
     [&gstate](irs::field_id id) { return gstate.tokenizers.Acquire(id); },
     IndexedColumnIds(*gstate.config), MakeEntryInfoProvider(*gstate.config),
     gstate.config->pk);
-
-  if (IsDuckDBTable()) {
-    auto& slot = lstate->uncommitted_min_slot;
-    slot = gstate.registered_sinks.fetch_add(1, std::memory_order_relaxed);
-    SDB_ASSERT(slot < gstate.uncommitted_min_rowids.size());
-  }
-
   return lstate;
 }
 
@@ -474,14 +432,12 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  PkChunk pk;
-  auto& key_views = lstate->key_views;
-  key_views.clear();
+  const duckdb::Vector* pk = nullptr;
   if (gstate.pk_column == connector::PkColumnKind::Has) {
     switch (gstate.pk_shape) {
       case PkShape::Single:
         SDB_ASSERT(gstate.pk_base_col_idx < chunk.ColumnCount());
-        pk.column = &chunk.data[gstate.pk_base_col_idx];
+        pk = &chunk.data[gstate.pk_base_col_idx];
         break;
       case PkShape::Struct: {
         const auto base = gstate.pk_base_col_idx;
@@ -502,19 +458,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         for (duckdb::idx_t i = 0; i < entries.size(); ++i) {
           entries[i].Reference(chunk.data[base + i]);
         }
-        pk.column = lstate->pk_scratch.get();
+        pk = lstate->pk_scratch.get();
       } break;
     }
-  }
-  if (gstate.pk_term) {
-    SDB_ASSERT(gstate.pk_shape == PkShape::Single);
-    key_views.reserve(num_rows);
-    auto pks = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_views.push_back(
-        primary_key::SignedKeyTerm(pks[row].GetValueUnsafe()));
-    }
-    pk.key_terms = key_views;
   }
 
   auto& columns = lstate->columns;
@@ -525,19 +471,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  const bool tracks_deletes =
-    lstate->uncommitted_min_slot != std::numeric_limits<size_t>::max();
-  irs::CommitOnFlush commit_on_flush;
-  FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots,
-            tracks_deletes ? &commit_on_flush : nullptr);
-
-  if (commit_on_flush.committed) {
-    auto rowids = chunk.data[gstate.pk_base_col_idx].Values<int64_t>();
-    const auto batch_min_rowid = rowids[0].GetValueUnsafe();
-    SDB_ASSERT(batch_min_rowid <= rowids[num_rows - 1].GetValueUnsafe());
-    AdvanceUncommittedMin(gstate, lstate->uncommitted_min_slot,
-                          batch_min_rowid);
-  }
+  FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots);
 
   gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
   if (gstate.progress) {
@@ -559,7 +493,6 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   // Flush this thread's tail segment here (in parallel Combines) rather than
   // leaving it for the single-threaded Finalize refresh to write.
   auto& trx = *lstate.search_trx;
-  trx.RegisterFlush();
   try {
     trx.Flush();
   } catch (const irs::SqlException& e) {
@@ -580,8 +513,6 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
                     ERR_MSG("failed to commit index '", gstate.index_name,
                             "': out of memory"));
   }
-  AdvanceUncommittedMin(gstate, lstate.uncommitted_min_slot,
-                        std::numeric_limits<int64_t>::max());
   return duckdb::SinkCombineResultType::FINISHED;
 }
 

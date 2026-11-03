@@ -844,15 +844,7 @@ void RegisterShellDocsBackend() {
          return {};
        }
      },
-     .offered = [session] { return session->Offered(); },
-     .load =
-       [](duckdb::ClientContext& context) {
-         auto& db = duckdb::DatabaseInstance::GetDatabase(context);
-         irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
-         connector::RegisterMarkdownRenderFunctions(db);
-         RegisterDocsFunctions(db);
-         duckdb::ExtensionLoader::RefreshSearchPath(context);
-       }});
+     .offered = [session] { return session->Offered(); }});
 }
 
 }  // namespace sdb::docs

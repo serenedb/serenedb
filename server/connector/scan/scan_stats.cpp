@@ -54,8 +54,9 @@ const irs::FieldTermRange* KeywordTermRange(const ScanBindData& bind,
   }
   const auto& index = bind.relation.ScannedIndex();
   const auto field_id = index.TermField(bind.columns.ids[column_index]);
-  return index.IsKeywordField(field_id) ? reader.GetTermRange(field_id)
-                                        : nullptr;
+  return index.IsKeywordField(field_id)
+           ? reader.GetTermRange(field_id, irs::StringLayout::kStrings)
+           : nullptr;
 }
 
 duckdb::string_t AsStringT(irs::bytes_view bytes) {
@@ -89,7 +90,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
   explicit ScanPartition(const ScanBindData& bind,
-                         search::InvertedIndexSnapshotPtr snapshot)
+                         search::StoreSnapshotPtr snapshot)
     : _bind{bind}, _snapshot{std::move(snapshot)} {}
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetColumnStatistics(
@@ -107,7 +108,7 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
 
  private:
   const ScanBindData& _bind;
-  search::InvertedIndexSnapshotPtr _snapshot;
+  search::StoreSnapshotPtr _snapshot;
 };
 
 }  // namespace

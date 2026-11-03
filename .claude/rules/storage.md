@@ -21,7 +21,7 @@ Older releases refuse what they don't know, so most changes need no new version:
 - **New enum value, variant or codec:** appended.
 - **Never** reuse a field id or reorder struct members (positional serialization numbers them by position). A changed default, type or meaning is a new field or a new version.
 
-A new storage version only for a change older releases would misread instead of refusing, or to stop reading old data: add `serenedb_vN` to `third_party/duckdb/src/storage/version_map.json` and run `scripts/duckdb_family.sh regen`; to stop reading older data, also raise `SERENEDB_VERSION_LOWER`. It gets its own PR and a line in the release notes, and a value is never reused.
+A new storage version only for a change older releases would misread instead of refusing, or to stop reading old data: add `serenedb_vN` to `third_party/duckdb_versions/version_map.json` and run `third_party/duckdb_versions/generate.py`; to stop reading older data, also raise its `serenedb_readable_from`. It gets its own PR and a line in the release notes, and a value is never reused.
 
 Test a format change the way a release meets old data: a fault point makes the writer produce the old shape, the test restarts and reads it back.
 

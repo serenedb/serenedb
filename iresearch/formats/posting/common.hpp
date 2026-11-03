@@ -20,16 +20,19 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
@@ -138,6 +141,36 @@ void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   }
 }
 
+using FileRange = std::pair<uint64_t, uint64_t>;
+
+template<typename Ranges>
+void AppendRange(Ranges& ranges, uint64_t from, uint64_t to) {
+  SDB_ASSERT(from <= to);
+  if (!ranges.empty()) {
+    auto& last = ranges.back();
+    SDB_ASSERT(last.first <= from);
+    if (from <= last.second + file_utils::kPage) {
+      last.second = std::max(last.second, to);
+      return;
+    }
+  }
+  ranges.emplace_back(from, to);
+}
+
+template<typename Input>
+uint64_t HintRanges(const Input& in, std::span<const FileRange> ranges,
+                    uint64_t budget = kMaxPrefetch) {
+  for (const auto& [from, to] : ranges) {
+    if (budget == 0) {
+      break;
+    }
+    const auto size = std::min(to - from, budget);
+    file_utils::Hint(in, from, size);
+    budget -= size;
+  }
+  return budget;
+}
+
 class GrowingHint {
  public:
   void Arm(uint64_t at, uint64_t stop) noexcept {
@@ -183,95 +216,6 @@ class GrowingHint {
   uint64_t _run = 0;
   uint64_t _skipped = 0;
   uint64_t _window = kFirst;
-};
-
-class TreeWalkHint {
- public:
-  void Arm(uint64_t at, uint64_t stop) noexcept {
-    _start = at;
-    _last = at;
-    _end = at;
-    _stop = stop;
-    _window = kFirst;
-    _visits = 0;
-    _away = false;
-  }
-
-  template<typename Input>
-  IRS_FORCE_INLINE void Advance(const Input& in, uint64_t at) noexcept {
-    if (!Follow(at)) {
-      return;
-    }
-    ++_visits;
-    _last = std::max(_last, at);
-    if (_window == kFirst) {
-      _end = std::min(_end, at);
-    }
-    if (!_cold && !Probe(in, at)) {
-      return;
-    }
-    if (_last + _window / 2 >= _end && _end < _stop) [[unlikely]] {
-      Grow(in);
-    }
-  }
-
- private:
-  static constexpr uint64_t kFirst = file_utils::kPrefetchChunk;
-  static constexpr uint64_t kLast = file_utils::kMaxReadahead;
-  static_assert(kFirst < kLast);
-  static constexpr uint64_t kFar = 2 * kLast;
-  static constexpr uint64_t kVisits = 8;
-  static constexpr uint64_t kStride = kFirst;
-  static constexpr uint64_t kProbeSpan = kLast / 2;
-
-  bool Follow(uint64_t at) noexcept {
-    if (at > _last + kFar) {
-      if (!_away) {
-        _away = true;
-        return false;
-      }
-      Arm(at, _stop);
-    } else if (at + kFar < _last) {
-      Arm(at, _stop);
-    }
-    _away = false;
-    return true;
-  }
-
-  template<typename Input>
-  bool Probe(const Input& in, uint64_t at) noexcept {
-    if (_visits > kVisits &&
-        std::max(at, _probed) - std::min(at, _probed) < kProbeSpan) {
-      return false;
-    }
-    _probed = at;
-    _cold = !in.Resident(at, 1);
-    return _cold;
-  }
-
-  template<typename Input>
-  void Grow(const Input& in) noexcept {
-    if (_end >= _stop || _visits < kVisits ||
-        _last - _start > _visits * kStride) {
-      return;
-    }
-    const auto len = std::min(_window, _stop - _end);
-    if (!file_utils::SampledResident(in, _end, len)) {
-      in.Prefetch(_end, len);
-    }
-    _end += len;
-    _window = std::min(2 * _window, kLast);
-  }
-
-  uint64_t _start = 0;
-  uint64_t _last = 0;
-  uint64_t _end = 0;
-  uint64_t _stop = 0;
-  uint64_t _window = kFirst;
-  uint64_t _visits = 0;
-  uint64_t _probed = 0;
-  bool _away = false;
-  bool _cold = false;
 };
 
 inline IRS_FORCE_INLINE void SetBitRange(uint64_t* IRS_RESTRICT words,

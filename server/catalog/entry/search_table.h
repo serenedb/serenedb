@@ -63,7 +63,7 @@ class DirectoryReader;
 }  // namespace irs
 namespace sdb::search {
 
-class SearchTable;
+class Store;
 
 }  // namespace sdb::search
 namespace sdb::catalog {
@@ -127,7 +127,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   SearchTableEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
     duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,
-    std::shared_ptr<search::SearchTable> inherited_storage = {},
+    std::shared_ptr<search::Store> inherited_storage = {},
     duckdb::shared_ptr<duckdb::CatalogSet> inherited_triggers = {});
 
   const duckdb::ColumnList& GetColumns() const final { return _columns; }
@@ -204,12 +204,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
 
   duckdb::ColumnList _columns;
-  std::shared_ptr<search::SearchTable> _storage;
+  std::shared_ptr<search::Store> _storage;
   SearchTableOptions _options;
   std::vector<SortKey> _sort_keys;
 };
-
-std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
-  duckdb::DuckCatalog& catalog);
 
 }  // namespace sdb::catalog

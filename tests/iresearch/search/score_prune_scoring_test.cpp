@@ -45,7 +45,6 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include <iresearch/formats/posting/score_bound_writer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
-#include <iresearch/index/typed_terms.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
@@ -66,6 +65,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 
@@ -458,19 +458,19 @@ void ScorePruneFieldFactory(tests::Document& doc, const std::string& name,
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (JsonDocGenerator::ValueType::BOOL == data.vt && !data.b) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
     field.Name(name);
     field.id = ColumnIdFor(name);
-    field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+    field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
   } else if (data.is_number()) {
     doc.insert(std::make_shared<DoubleField>());
     auto& field = (doc.indexed.end() - 1).as<DoubleField>();

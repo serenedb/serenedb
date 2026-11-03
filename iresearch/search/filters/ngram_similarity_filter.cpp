@@ -41,21 +41,21 @@ size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field_name,
-  const std::vector<irs::bstring>& ngrams, float_t threshold, score_t boost) {
+  DictRef dict, const std::vector<irs::bstring>& ngrams, float_t threshold,
+  score_t boost) {
   SDB_ASSERT(irs::field_limits::valid(field_name));
   SDB_ASSERT(!ngrams.empty());
   const auto terms_count = ngrams.size();
   const auto min_match_count = MinMatchCount(terms_count, threshold);
+  const TermReader* field = segment.field(field_name, dict);
 
   if (terms_count == 1) {
-    return ByTerm::PrepareSegment(segment, ctx, field_name, ngrams.front());
+    return ByTerm::PrepareSegment(segment, ctx, field, ngrams.front());
   }
 
   auto* ngram_collector =
     ctx.collector ? &irs::utils::downCast<SlotsCollector>(*ctx.collector)
                   : nullptr;
-
-  const TermReader* field = segment.field(field_name);
 
   if (!field) {
     return QueryBuilder::Empty();

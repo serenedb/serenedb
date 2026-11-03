@@ -27,6 +27,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/string.hpp"
@@ -62,22 +63,57 @@ class WrappedTermIterator : public TermIterator {
   SeekTermIterator::ptr _impl;
 };
 
+inline void AssignAfterKey(bstring& out, bytes_view key) {
+  out.reserve(key.size() + 1);
+  out.assign(key);
+  out.push_back(0);
+}
+
 inline bstring AfterKey(bytes_view key) {
-  bstring after{key};
-  after.push_back(0);
+  bstring after;
+  AssignAfterKey(after, key);
   return after;
 }
 
-inline bstring UpperBoundOf(bytes_view prefix) {
-  bstring upper{prefix};
-  while (!upper.empty()) {
-    if (upper.back() != 0xFF) {
-      ++upper.back();
-      return upper;
+inline void AssignUpperBoundOf(bstring& out, bytes_view prefix) {
+  out.assign(prefix);
+  while (!out.empty()) {
+    if (out.back() != 0xFF) {
+      ++out.back();
+      return;
     }
-    upper.pop_back();
+    out.pop_back();
   }
+}
+
+inline bstring UpperBoundOf(bytes_view prefix) {
+  bstring upper;
+  AssignUpperBoundOf(upper, prefix);
   return upper;
+}
+
+inline bstring RangeLower(bytes_view min, BoundType type) {
+  switch (type) {
+    case BoundType::Unbounded:
+      return {};
+    case BoundType::Inclusive:
+      return bstring{min};
+    case BoundType::Exclusive:
+      return AfterKey(min);
+  }
+  return {};
+}
+
+inline bstring RangeUpper(bytes_view max, BoundType type) {
+  switch (type) {
+    case BoundType::Unbounded:
+      return {};
+    case BoundType::Inclusive:
+      return AfterKey(max);
+    case BoundType::Exclusive:
+      return bstring{max};
+  }
+  return {};
 }
 
 class BoundedTermIterator : public SeekTermIterator {

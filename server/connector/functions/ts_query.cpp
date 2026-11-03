@@ -856,8 +856,8 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   // BOOLEAN). The filter builder dispatches per column type: VARCHAR
   // bounds tokenise through the ambient analyzer (single-token
   // requirement) and emit irs::ByRange; numeric bounds emit
-  // irs::ByGranularRange; BOOLEAN bounds emit irs::ByRange over the
-  // BooleanTerm encoding. Bound vs column type mismatch is a bind-time
+  // irs::ByGranularRange; BOOLEAN bounds match the value slots they
+  // admit. Bound vs column type mismatch is a bind-time
   // error. NULL bound is also a bind-time error -- use
   // RANGE(NULL, ..., ...) for unbounded semantics.
   //

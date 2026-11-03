@@ -206,7 +206,7 @@ clickhouse::ColumnRef BuildLookupColumn(Vector &vec, idx_t count) {
 				break;
 			default: {
 				const auto value = UnifiedVectorFormat::GetData<hugeint_t>(fmt)[idx];
-				col->Append(absl::MakeInt128(value.upper, value.lower));
+				col->Append(clickhouse::Bignum::MakeInt128(value.upper, value.lower));
 				break;
 			}
 			}

@@ -162,25 +162,47 @@ int64_t NameKey(std::string_view name) {
   return static_cast<int64_t>(key);
 }
 
-irs::TermRemoval NameRemoval(std::initializer_list<std::string_view> names) {
-  irs::TermRemoval removal;
+irs::KeyRemoval NameRemoval(std::initializer_list<std::string_view> names) {
+  irs::KeyRemoval removal;
   for (const auto name : names) {
-    removal.terms.push_back(NameKey(name));
+    removal.keys.push_back(NameKey(name));
   }
   return removal;
 }
+
+class NameKeyField final : public tests::FieldBase {
+ public:
+  explicit NameKeyField(int64_t key) : _key{key} {
+    name = std::string{kNameKey};
+    id = tests::FieldIdFor(kNameKey);
+  }
+
+  bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final {
+    duckdb::Vector key{duckdb::LogicalType::BIGINT, 1};
+    duckdb::FlatVector::GetDataMutable<int64_t>(key)[0] = _key;
+    duckdb::FlatVector::ValidityMutable(key).SetAllValid(1);
+    doc.GetColWriter()
+      ->OpenColumn(id, duckdb::LogicalType::BIGINT)
+      .Append(doc.DocId() - irs::doc_limits::min(), key, 1);
+    return true;
+  }
+
+  std::optional<std::vector<irs::bstring>> BlockTerms() const final {
+    return std::vector<irs::bstring>{};
+  }
+
+  bool Write(irs::DataOutput&) const final { return true; }
+
+ private:
+  int64_t _key;
+};
 
 void AddNameKey(tests::Document& doc, const std::string& name,
                 const tests::JsonDocGenerator::JsonValue& data) {
   if (name != "name" || !data.is_string()) {
     return;
   }
-  irs::byte_type buf[sizeof(int64_t)];
-  auto key = std::make_shared<tests::StringField>(
-    std::string{kNameKey},
-    irs::ViewCast<char>(irs::TermRemoval::Term(NameKey(data.str), buf)));
-  key->id = tests::FieldIdFor(kNameKey);
-  doc.indexed.push_back(std::move(key));
+  doc.indexed.push_back(std::make_shared<NameKeyField>(NameKey(data.str)));
 }
 
 void NameKeyedJsonFieldFactory(tests::Document& doc, const std::string& name,
@@ -189,15 +211,15 @@ void NameKeyedJsonFieldFactory(tests::Document& doc, const std::string& name,
   AddNameKey(doc, name, data);
 }
 
-irs::TermRemoval RemovalOfName(const tests::Document& src) {
+irs::KeyRemoval RemovalOfName(const tests::Document& src) {
   const auto* name =
     dynamic_cast<const tests::StringField*>(src.indexed.get("name"));
   EXPECT_NE(nullptr, name);
   return NameRemoval({name->value()});
 }
 
-irs::TermRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
-                                         const tests::Document& src) {
+irs::KeyRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
+                                        const tests::Document& src) {
   auto ctx = writer.GetBatch();
   {
     auto doc = ctx.Insert();
@@ -209,9 +231,9 @@ irs::TermRemoval InsertWithNameRemovable(irs::IndexWriter& writer,
   return RemovalOfName(src);
 }
 
-irs::TermRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
-                                         irs::TermRemoval removal,
-                                         const tests::Document& src) {
+irs::KeyRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
+                                        irs::KeyRemoval removal,
+                                        const tests::Document& src) {
   auto ctx = writer.GetBatch();
   ctx.Remove(std::move(removal));
   {
@@ -224,11 +246,10 @@ irs::TermRemoval UpdateWithNameRemovable(irs::IndexWriter& writer,
   return RemovalOfName(src);
 }
 
-irs::TermRemoval Merged(std::initializer_list<irs::TermRemoval> parts) {
-  irs::TermRemoval merged;
+irs::KeyRemoval Merged(std::initializer_list<irs::KeyRemoval> parts) {
+  irs::KeyRemoval merged;
   for (const auto& part : parts) {
-    merged.terms.insert(merged.terms.end(), part.terms.begin(),
-                        part.terms.end());
+    merged.keys.insert(merged.keys.end(), part.keys.begin(), part.keys.end());
   }
   return merged;
 }
@@ -333,9 +354,9 @@ class SubReaderMock final : public irs::SubReader {
     return {};
   }
 
-  const irs::TermReader* field(irs::field_id) const final {
+  std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     EXPECT_FALSE(true);
-    return nullptr;
+    return {};
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
@@ -349,7 +370,7 @@ namespace tests {
 
 irs::IndexWriterOptions CsDefaultWriterOptions() {
   auto options = irs::tests::DefaultWriterOptions();
-  options.key_field = tests::FieldIdFor(kNameKey);
+  options.key_column = tests::FieldIdFor(kNameKey);
   return options;
 }
 
@@ -1901,7 +1922,7 @@ TEST_P(IndexTestCase, writer_clear_with_pending_refresh_and_registered_batch) {
       tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
     CaptureNameLikeFields(doc, doc3->indexed);
   }
-  trx.RegisterFlush();
+  irs::IndexWriter::Transaction::Stage(std::array{&trx});
   ASSERT_EQ(1, writer->BufferedDocs());
 
   std::thread clearer{[&] { writer->Clear(); }};
@@ -2528,7 +2549,7 @@ TEST_P(IndexTestCase, document_context) {
     {
       auto ctx = writer->GetBatch();
 
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2575,7 +2596,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
     }
 
     writer->RefreshCommit();
@@ -2613,7 +2634,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc1->indexed.begin(), doc1->indexed.end()));
         CaptureNameLikeFields(doc, doc1->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2660,14 +2681,14 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
           tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2725,7 +2746,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2786,7 +2807,7 @@ TEST_P(IndexTestCase, document_context) {
       auto ctx = writer->GetBatch();
 
       ctx.Remove(std::move(removal_doc1));
-      ctx.Reset();
+      ctx.Abort();
     }
 
     writer->RefreshCommit();
@@ -2821,7 +2842,7 @@ TEST_P(IndexTestCase, document_context) {
       auto ctx = writer->GetBatch();
 
       ctx.Remove(std::move(removal_doc1));
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2882,7 +2903,7 @@ TEST_P(IndexTestCase, document_context) {
         CaptureNameLikeFields(doc, doc3->indexed);
       }
       ctx.Remove(std::move(removal_doc2));
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -2949,7 +2970,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
     }
 
     writer->RefreshCommit();
@@ -2990,7 +3011,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3052,7 +3073,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3131,7 +3152,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc2->indexed.begin(), doc2->indexed.end()));
         CaptureNameLikeFields(doc, doc2->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -3202,7 +3223,7 @@ TEST_P(IndexTestCase, document_context) {
           tests::InsertFields(doc, doc3->indexed.begin(), doc3->indexed.end()));
         CaptureNameLikeFields(doc, doc3->indexed);
       }
-      ctx.Reset();
+      ctx.Abort();
       {
         auto doc = ctx.Insert();
         ASSERT_TRUE(
@@ -11250,7 +11271,7 @@ TEST_P(IndexTestCase11, commit_payload) {
   ASSERT_EQ(reader, writer->GetSnapshot());
   // commit with a specified payload
   {
-    const uint64_t expected_tick = 42;
+    const uint64_t expected_offset = 42;
 
     // insert document (trx 1)
     {
@@ -11262,7 +11283,7 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick - 10, {.offset = expected_tick - 10});
+      trx.Commit({.offset = expected_offset - 10});
     }
 
     // insert document (trx 0)
@@ -11275,14 +11296,14 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick, {.offset = expected_tick});
+      trx.Commit({.offset = expected_offset});
     }
 
     payload_offset = 0;
 
     input_payload = reader.Meta().filename;
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_EQ(expected_tick, payload_offset);
+    ASSERT_EQ(expected_offset, payload_offset);
 
     // transaction is already started
     ASSERT_NE(0, payload_calls_count);
@@ -11301,7 +11322,7 @@ TEST_P(IndexTestCase11, commit_payload) {
 
   // commit with rollback
   {
-    const uint64_t expected_tick = 42;
+    const uint64_t expected_offset = 42;
 
     // insert document (trx 1)
     {
@@ -11313,7 +11334,7 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick - 10, {.offset = expected_tick - 10});
+      trx.Commit({.offset = expected_offset - 10});
     }
 
     // insert document (trx 0)
@@ -11326,7 +11347,7 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick, {.offset = expected_tick});
+      trx.Commit({.offset = expected_offset});
     }
 
     payload_offset = 0;
@@ -11334,7 +11355,7 @@ TEST_P(IndexTestCase11, commit_payload) {
     const auto committed_payload = input_payload;
     input_payload = reader.Meta().filename;
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_EQ(expected_tick, payload_offset);
+    ASSERT_EQ(expected_offset, payload_offset);
 
     writer->RefreshAbort();
 
@@ -11536,7 +11557,7 @@ TEST_P(IndexTestCase11, docs_mask_one_file_per_version) {
   ASSERT_EQ(*segment_meta().docs_mask, *reader[0].docs_mask());
 }
 
-TEST_P(IndexTestCase11, testExternalGeneration) {
+TEST_P(IndexTestCase11, RemovalAfterARefreshMasksItsDoc) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
@@ -11562,13 +11583,13 @@ TEST_P(IndexTestCase11, testExternalGeneration) {
       tests::InsertFields(doc, doc1->stored.begin(), doc1->stored.end());
       ASSERT_TRUE(doc);
     }
-    trx.Commit(3);
+    trx.Commit();
   }
   writer->RefreshCommit();
   {
     auto trx2 = writer->GetBatch();
     trx2.Remove(tests::RemovalOf(*writer, MakeByTerm(kNameFieldId, "A")));
-    trx2.Commit(4);
+    trx2.Commit();
   }
   ASSERT_TRUE(writer->RefreshBegin());
   writer->RefreshCommit();
@@ -11581,7 +11602,7 @@ TEST_P(IndexTestCase11, testExternalGeneration) {
   ASSERT_EQ(1, segment.live_docs_count());
 }
 
-TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
+TEST_P(IndexTestCase11, ReaderAfterARemovalHoldsItsFiles) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
 
@@ -11614,13 +11635,13 @@ TEST_P(IndexTestCase11, testExternalGenerationDifferentStart) {
       CaptureNameLikeFields(doc, doc1->indexed);
       ASSERT_TRUE(doc);
     }
-    trx.Commit(3);
+    trx.Commit();
   }
   writer->RefreshCommit();
   {
     auto trx2 = writer->GetBatch();
     trx2.Remove(tests::RemovalOf(*writer, MakeByTerm(kNameFieldId, "A")));
-    trx2.Commit(4);
+    trx2.Commit();
   }
   ASSERT_TRUE(writer->RefreshBegin());
   writer->RefreshCommit();

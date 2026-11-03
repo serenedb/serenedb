@@ -32,9 +32,6 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
-
-namespace {}  // namespace
-
 namespace {
 
 enum class RangeKind {
@@ -58,7 +55,10 @@ class ByRangeIterator : public WrappedTermIterator {
  public:
   ByRangeIterator(const TermReader& reader,
                   const ByRangeFilterOptions::range_type& range)
-    : WrappedTermIterator{reader.iterator()}, _range{&range} {}
+    : WrappedTermIterator{reader.IteratorUntil(
+        range.max_type == BoundType::Unbounded ? bytes_view{}
+                                               : bytes_view{range.max})},
+      _range{&range} {}
 
   bool next() final {
     bool res = false;
@@ -92,13 +92,13 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx) const {
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
-  return PrepareSegment(segment, sub_ctx, field_id(), options().range,
-                        GetBoost());
+  return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
+                        options().range, GetBoost());
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
-                                          const irs::field_id field,
+                                          const TermReader* reader,
                                           const options_type::range_type& rng,
                                           score_t boost) {
   switch (Classify(rng)) {
@@ -109,7 +109,6 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
       break;
   }
 
-  const auto* reader = segment.field(field);
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -120,7 +119,6 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
-  mtv.Prepare(segment, *reader, terms.GetImpl());
   VisitTerms(terms, mtv);
   return MultiTermQuery::Finish(std::move(query), ctx);
 }

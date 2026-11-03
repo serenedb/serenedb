@@ -78,8 +78,9 @@ const duckdb::BaseStatistics* DirectoryReader::GetColumnStats(
   return _impl->GetColumnStats(field);
 }
 
-const FieldTermRange* DirectoryReader::GetTermRange(field_id field) const {
-  return _impl->GetTermRange(field);
+const FieldTermRange* DirectoryReader::GetTermRange(field_id field,
+                                                    DictRef dict) const {
+  return _impl->GetTermRange(field, dict);
 }
 
 size_t DirectoryReader::size() const { return _impl->size(); }

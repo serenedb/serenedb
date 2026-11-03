@@ -86,7 +86,7 @@ GeoPlan Cells(std::vector<std::string> terms, GeoAcceptor acceptor) {
 QueryBuilder::ptr PrepareCells(const SubReader& segment,
                                const PrepareContext& ctx,
                                std::span<const std::string> geo_terms,
-                               irs::field_id id) {
+                               const TermReader* reader) {
   SDB_ASSERT(!geo_terms.empty());
 
   std::vector<std::string_view> sorted_terms(geo_terms.begin(),
@@ -95,7 +95,6 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
 
-  const auto* reader = segment.field(id);
   if (!reader) {
     return QueryBuilder::Empty();
   }
@@ -122,13 +121,13 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
 }
 
 QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
-                            irs::field_id field, score_t boost,
+                            const TermReader* reader, score_t boost,
                             const GeoFilterOptionsBase& options,
                             const GeoPlan& plan) {
   if (plan.kind != GeoPlan::Kind::Cells) {
     return QueryBuilder::Empty();
   }
-  auto cells = PrepareCells(segment, ctx, plan.terms, field);
+  auto cells = PrepareCells(segment, ctx, plan.terms, reader);
   if (!cells || cells->Kind() == QueryKind::Empty) {
     return QueryBuilder::Empty();
   }
@@ -165,13 +164,13 @@ std::pair<S2Cap, bool> GetBound(BoundType type, S2Point origin,
           BoundType::Inclusive == type};
 }
 
-BooleanFilter ExcludeCentre(irs::field_id id,
-                            const GeoDistanceFilterOptions& options) {
+BooleanFilter ExcludeCentre(const GeoDistanceFilter& filter) {
   BooleanFilter root;
   auto excl = std::make_unique<GeoDistanceFilter>();
-  *excl->mutable_field_id() = id;
+  *excl->mutable_field_id() = filter.field_id();
+  *excl->mutable_dict() = filter.dict();
   auto& opts = *excl->mutable_options();
-  opts = options;
+  opts = filter.options();
   opts.plan.reset();
   opts.range.min = 0;
   opts.range.min_type = BoundType::Inclusive;
@@ -379,8 +378,8 @@ std::shared_ptr<const GeoPlan> PlanGeo(
 
 QueryBuilder::ptr GeoFilter::PrepareSegment(const SubReader& segment,
                                             const PrepareContext& ctx) const {
-  return MakeQuery(segment, ctx, field_id(), ctx.boost * GetBoost(), options(),
-                   *PlanGeo(options()));
+  return MakeQuery(segment, ctx, segment.field(field_id(), dict()),
+                   ctx.boost * GetBoost(), options(), *PlanGeo(options()));
 }
 
 PrepareCollector::ptr GeoFilter::MakeCollectorImpl(const Scorer* scorer,
@@ -398,12 +397,11 @@ QueryBuilder::ptr GeoDistanceFilter::PrepareSegment(
     case GeoPlan::Kind::All:
       return MatchAll(segment, sub_ctx);
     case GeoPlan::Kind::AllButCentre:
-      return ExcludeCentre(field_id(), options())
-        .PrepareSegment(segment, sub_ctx);
+      return ExcludeCentre(*this).PrepareSegment(segment, sub_ctx);
     case GeoPlan::Kind::Empty:
     case GeoPlan::Kind::Cells:
-      return MakeQuery(segment, sub_ctx, field_id(), sub_ctx.boost, options(),
-                       *plan);
+      return MakeQuery(segment, sub_ctx, segment.field(field_id(), dict()),
+                       sub_ctx.boost, options(), *plan);
   }
   SDB_ASSERT(false);
   return QueryBuilder::Empty();

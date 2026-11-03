@@ -74,10 +74,10 @@ TOKENIZERS = [
 # SQL stages take the value as their first argument, or name it with a lambda;
 # their function form maps over the list {l}.
 SQL_STAGES = [
-    ("upper()", "list_transform({l}, x -> upper(x))"),
-    ("(lambda x: trim(x))", "list_transform({l}, x -> trim(x))"),
-    ("replace('o', '0')", "list_transform({l}, x -> replace(x, 'o', '0'))"),
-    ("string_split(',')", "flatten(list_transform({l}, x -> string_split(x, ',')))"),
+    ("upper()", "list_transform({l}, lambda x: upper(x))"),
+    ("(lambda x: trim(x))", "list_transform({l}, lambda x: trim(x))"),
+    ("replace('o', '0')", "list_transform({l}, lambda x: replace(x, 'o', '0'))"),
+    ("string_split(',')", "flatten(list_transform({l}, lambda x: string_split(x, ',')))"),
     ("(lambda x: x)", "{l}"),
 ]
 
@@ -151,7 +151,7 @@ def _create(cur, name: str, definition: str) -> None:
 def _mismatches(cur, lhs: str, rhs: str, values: list[str]) -> list:
     rows = ", ".join("(" + sql.quote(v) + ")" for v in values)
     cur.execute(
-        f"SELECT v, list_transform(l, x -> hex(x::BLOB)), list_transform(r, x -> hex(x::BLOB)) "
+        f"SELECT v, list_transform(l, lambda x: hex(x::BLOB)), list_transform(r, lambda x: hex(x::BLOB)) "
         f"FROM (SELECT v, {lhs} AS l, {rhs} AS r FROM (VALUES {rows}) AS t(v)) "
         "WHERE l IS DISTINCT FROM r"
     )

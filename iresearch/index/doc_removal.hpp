@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <absl/base/internal/endian.h>
-
-#include <bit>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -84,21 +81,8 @@ struct DocRemoval {
   std::vector<Group> groups;
 };
 
-struct TermRemoval {
-  static bytes_view Term(int64_t key,
-                         byte_type (&buf)[sizeof(int64_t)]) noexcept {
-    absl::big_endian::Store64(
-      buf, std::bit_cast<uint64_t>(key) ^ (uint64_t{1} << 63));
-    return {buf, sizeof(int64_t)};
-  }
-
-  static int64_t Key(bytes_view term) noexcept {
-    SDB_ASSERT(term.size() == sizeof(int64_t));
-    return std::bit_cast<int64_t>(absl::big_endian::Load64(term.data()) ^
-                                  (uint64_t{1} << 63));
-  }
-
-  std::vector<int64_t> terms;
+struct KeyRemoval {
+  std::vector<int64_t> keys;
 };
 
 class DocRemovalBuilder {

@@ -55,7 +55,7 @@ connection after_create
 statement error
 CREATE TABLE cw_refused (a INTEGER);
 ----
-db error: ERROR: Failed to commit: catalog log: could not append the transaction
+db error: ERROR: catalog log: could not append the transaction
 
 
 connection after_create

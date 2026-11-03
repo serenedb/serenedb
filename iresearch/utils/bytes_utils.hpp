@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <optional>
+#include <type_traits>
+
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/numeric_utils.hpp"
@@ -377,6 +380,26 @@ inline T ReadBE(Iterator& in) {
 template<typename T, typename Iterator>
 inline T vread(Iterator& in) {
   return bytes_io<T, sizeof(T)>::vread(in);
+}
+
+template<typename T>
+IRS_FORCE_INLINE std::optional<T> ReadVarint(const byte_type*& in,
+                                             const byte_type* end) noexcept {
+  static_assert(std::is_unsigned_v<T>);
+  constexpr uint32_t kBits = 8 * sizeof(T);
+  T value = 0;
+  for (uint32_t shift = 0; in != end && shift < kBits; shift += 7) {
+    const byte_type b = *in++;
+    const T bits = b & 0x7Fu;
+    if (kBits - shift < 7 && bits >> (kBits - shift) != 0) {
+      return std::nullopt;
+    }
+    value |= bits << shift;
+    if (b < 0x80) {
+      return value;
+    }
+  }
+  return std::nullopt;
 }
 
 template<typename N, std::invocable<byte_type> Assign>

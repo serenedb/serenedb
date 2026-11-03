@@ -47,9 +47,9 @@ FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
 bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
                    bool sorted, const IndexFieldOptions* field_options,
                    const MergeProgress& progress,
-                   const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
-                   IdxWriter& idx,
+                   const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
-                   std::span<const std::unique_ptr<TermRangeMerge>> ranges);
+                   std::span<const std::unique_ptr<TermRangeMerge>> ranges,
+                   uint64_t keyed_dicts);
 
 }  // namespace irs

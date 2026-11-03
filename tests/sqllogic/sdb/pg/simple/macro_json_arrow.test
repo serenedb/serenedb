@@ -104,11 +104,14 @@ t
 # a macro parameter no longer binds. Keyword lambdas remain the way to
 # shadow (mja_shadow above).
 
-statement ok
+statement error
 CREATE MACRO mja_arrow_shadow(v, l) AS list_transform(l, v -> v || 'q')
+----
+db error: ERROR: Invalid lambda parameters<slt:ignore>! Parameters must be unqualified comma-separated names like x or (x, y).
+
 
 statement error
-SELECT mja_arrow_shadow('unused', ['p', 'r'])
+CREATE MACRO mja_arrow_shadow(v, l) AS (SELECT list_transform(l, v -> v || 'q'))
 ----
 db error: ERROR: Invalid lambda parameters<slt:ignore>! Parameters must be unqualified comma-separated names like x or (x, y).
 

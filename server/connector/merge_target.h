@@ -36,11 +36,10 @@
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_registry.h"
 #include "search/compaction/merge_scheduler.h"
-#include "search/inverted_index_storage.h"
 #include "search/maintenance.h"
-#include "search/search_table.h"
-#include "search/store_stats.h"
+#include "search/store.h"
 #include "storage_engine/search_engine.h"
+#include "utils/drain_gate.h"
 
 namespace sdb::connector {
 
@@ -59,10 +58,9 @@ class MergeTarget {
  public:
   static MergeTarget Resolve(duckdb::ClientContext& context,
                              std::string_view relation);
-  static MergeTarget Of(std::shared_ptr<search::SearchTable> table,
-                        std::string name);
+  static MergeTarget Of(std::shared_ptr<search::Store> table, std::string name);
   static MergeTarget Of(
-    std::shared_ptr<search::InvertedIndexStorage> index,
+    std::shared_ptr<search::Store> index,
     std::shared_ptr<const catalog::InvertedIndexConfig> options,
     std::string name);
 
@@ -87,6 +85,7 @@ class MergeTarget {
                const irs::IndexFieldOptions* field_options,
                const irs::AnnBuildEnv* env, search::MergeOrigin origin,
                const irs::PipelineMergeExecutor& executor,
+               utils::DrainGate::Pass maintenance,
                search::MergeResult& merged) const;
   search::MergeScheduler::Lease TakeOver() const {
     return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
@@ -95,22 +94,19 @@ class MergeTarget {
 
  private:
   void SetDatabase(const duckdb::InCatalogEntry& entry);
-  void SetStore();
 
   std::string _name;
   std::string _database;
   bool _read_only = false;
   std::shared_ptr<const catalog::InvertedIndexConfig> _options;
-  std::shared_ptr<search::SearchTable> _table;
-  std::shared_ptr<search::InvertedIndexStorage> _index;
-  search::MaintainedStore* _store = nullptr;
+  std::shared_ptr<search::Store> _store;
   irs::containers::FlatHashMap<irs::field_id, std::string> _column_names;
 };
 
 class ManualCompaction {
  public:
   ManualCompaction(const MergeTarget& target, MergeRequest request,
-                   duckdb::TaskScheduler& scheduler);
+                   duckdb::ClientContext& context);
 
   bool Next(const irs::MergeProgress& progress, search::MergeOrigin origin,
             const irs::PipelineMergeExecutor& executor,
@@ -121,7 +117,7 @@ class ManualCompaction {
 
   const MergeTarget& _target;
   std::shared_ptr<const irs::IndexFieldOptions> _options;
-  duckdb::TaskScheduler* _scheduler;
+  duckdb::ClientContext* _context;
   MergeRequest _request;
   search::MergeRoundPlan _plan;
   size_t _next = 0;

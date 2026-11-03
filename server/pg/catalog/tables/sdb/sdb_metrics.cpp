@@ -31,8 +31,7 @@
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/sdb/merge_records.h"
 #include "pg/catalog/tables/tables.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "search/store_stats.h"
 #include "server/utils/metrics.h"
 

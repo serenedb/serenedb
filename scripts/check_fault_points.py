@@ -30,6 +30,7 @@ RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
+DUCKDB_FAULTS = frozenset({"slow_expression_bind"})
 DUCKDB_PARK_FAULTS = frozenset({"pause_checkpoint", "pause_wal_sync"})
 TEST_DIR = "tests"
 
@@ -149,9 +150,11 @@ def main():
     if os.path.exists(os.path.join(ROOT, DUCKDB_CHECKOUT)):
         duckdb_faults, duckdb_parks = scan_sources(DUCKDB_DIRS)
         for name, loc in sorted(duckdb_faults.items()):
-            if name not in DUCKDB_PARK_FAULTS or name not in duckdb_parks:
+            parks = name in duckdb_parks
+            if name not in (DUCKDB_PARK_FAULTS if parks else DUCKDB_FAULTS):
+                listing = "DUCKDB_PARK_FAULTS" if parks else "DUCKDB_FAULTS"
                 errors.append(
-                    f"{loc}: fault '{name}' is missing from DUCKDB_PARK_FAULTS in "
+                    f"{loc}: fault '{name}' is missing from {listing} in "
                     "scripts/check_fault_points.py, which CI's pre-commit reads "
                     "instead of DuckDB's sources when the change leaves the duckdb "
                     "gitlink alone"
@@ -161,7 +164,12 @@ def main():
                 f"scripts/check_fault_points.py: DUCKDB_PARK_FAULTS lists '{name}', "
                 "which DuckDB's sources do not park on"
             )
-    for name in sorted(DUCKDB_PARK_FAULTS):
+        for name in sorted(DUCKDB_FAULTS - (duckdb_faults.keys() - duckdb_parks)):
+            errors.append(
+                f"scripts/check_fault_points.py: DUCKDB_FAULTS lists '{name}', "
+                "which DuckDB's sources do not define as a fault that does not park"
+            )
+    for name in sorted(DUCKDB_FAULTS | DUCKDB_PARK_FAULTS):
         source_faults.setdefault(name, DUCKDB_DIRS[0])
     park_faults |= DUCKDB_PARK_FAULTS
 

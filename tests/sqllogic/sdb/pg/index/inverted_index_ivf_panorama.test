@@ -29,14 +29,14 @@ CREATE INDEX pn_axis_idx ON pn_axis USING inverted(pk, emb ivf (metric = 'l2', q
 
 statement count 2000
 INSERT INTO pn_axis
-SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) pn_axis
 
 query
-SELECT pk, round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+SELECT pk, round(emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64], 3) AS d
 FROM pn_axis_idx ORDER BY d LIMIT 5;
 ----
 pk	d
@@ -49,7 +49,7 @@ pk	d
 # A deep pool keeps the threshold moving while the scan is still running.
 query
 SELECT count(*) AS n, round(sum(d)::DOUBLE, 1) AS s FROM (
-  SELECT emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] AS d
+  SELECT emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64] AS d
   FROM pn_axis_idx ORDER BY d LIMIT 500
 ) q;
 ----
@@ -74,7 +74,7 @@ CREATE INDEX pn_l2_idx ON pn_l2 USING inverted(pk, emb ivf (metric = 'l2', quant
 
 statement count 2000
 INSERT INTO pn_l2
-SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
 FROM range(2000) t(i)
 
 statement ok
@@ -88,7 +88,7 @@ CREATE INDEX pn_ip_idx ON pn_ip USING inverted(pk, emb ivf (metric = 'ip', quant
 
 statement count 2000
 INSERT INTO pn_ip
-SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
 FROM range(2000) t(i)
 
 statement ok
@@ -102,7 +102,7 @@ CREATE INDEX pn_cos_idx ON pn_cos USING inverted(pk, emb ivf (metric = 'cosine',
 
 statement count 2000
 INSERT INTO pn_cos
-SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) / (j + 1))::FLOAT)::FLOAT[64]
 FROM range(2000) t(i)
 
 statement ok
@@ -113,19 +113,19 @@ VACUUM (REFRESH_TABLE) pn_cos
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM pn_l2_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_l2
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
   UNION ALL
   ((SELECT pk FROM pn_l2
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_l2_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
 ) q;
 ----
@@ -135,19 +135,19 @@ diff
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM pn_ip_idx
-      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <#> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_ip
-      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <#> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
   UNION ALL
   ((SELECT pk FROM pn_ip
-      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <#> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_ip_idx
-      ORDER BY emb <#> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <#> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
 ) q;
 ----
@@ -157,19 +157,19 @@ diff
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM pn_cos_idx
-      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <=> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_cos
-      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <=> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
   UNION ALL
   ((SELECT pk FROM pn_cos
-      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <=> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_cos_idx
-      ORDER BY emb <=> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <=> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
 ) q;
 ----
@@ -180,11 +180,11 @@ diff
 query
 SELECT count(*) AS mismatched FROM (
   SELECT i.pk, i.d::DOUBLE AS di, t.d::DOUBLE AS dt FROM
-    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+    (SELECT pk, emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_l2_idx
        ORDER BY d LIMIT 20) i
     JOIN
-    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+    (SELECT pk, emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_l2) t
     USING (pk)
 ) q WHERE abs(di - dt) > 1e-5;
@@ -197,14 +197,14 @@ mismatched
 
 query
 SELECT count(*) AS n FROM pn_axis_idx
-WHERE emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] < 10.5;
+WHERE emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64] < 10.5;
 ----
 n
 10
 
 query
 SELECT pk FROM pn_axis_idx
-WHERE emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] <= 3
+WHERE emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64] <= 3
 ORDER BY pk;
 ----
 pk
@@ -215,10 +215,10 @@ pk
 query
 SELECT count(*) AS diff FROM (
   (SELECT pk FROM pn_l2_idx
-     WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
+     WHERE emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
   EXCEPT
   (SELECT pk FROM pn_l2
-     WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
+     WHERE emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 0.9)
 ) q;
 ----
 diff
@@ -241,19 +241,19 @@ count
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM pn_l2_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_l2
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
   UNION ALL
   ((SELECT pk FROM pn_l2
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20)
    EXCEPT
    (SELECT pk FROM pn_l2_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 20))
 ) q;
 ----
@@ -278,7 +278,7 @@ CREATE INDEX pn_lanes_idx ON pn_lanes USING inverted(pk, emb ivf (metric = 'l2',
 
 statement count 4000
 INSERT INTO pn_lanes
-SELECT i, list_transform(range(64), j -> (sin(i * 0.7 + j * 1.3) + i * 0.001)::FLOAT)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda j: (sin(i * 0.7 + j * 1.3) + i * 0.001)::FLOAT)::FLOAT[64]
 FROM range(4000) t(i)
 
 statement ok
@@ -290,11 +290,11 @@ RESET sdb_ivf_posting_size
 query
 SELECT count(*) AS mismatched FROM (
   SELECT i.pk, i.d::DOUBLE AS di, t.d::DOUBLE AS dt FROM
-    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+    (SELECT pk, emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_lanes_idx
-       WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9) i
+       WHERE emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9) i
     JOIN
-    (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
+    (SELECT pk, emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_lanes) t
     USING (pk)
 ) q WHERE abs(di - dt) > 1e-4;
@@ -304,7 +304,7 @@ mismatched
 
 query
 SELECT count(*) AS n FROM pn_lanes_idx
-WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9;
+WHERE emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9;
 ----
 n
 4000
@@ -322,7 +322,7 @@ CREATE INDEX pn_tree_idx ON pn_tree USING inverted(pk, emb ivf (metric = 'l2', q
 
 statement count 3000
 INSERT INTO pn_tree
-SELECT i, list_transform(range(64), j -> (sin(i * 1.1 + j * 0.9) / (j + 1))::FLOAT)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda j: (sin(i * 1.1 + j * 0.9) / (j + 1))::FLOAT)::FLOAT[64]
 FROM range(3000) t(i)
 
 statement ok
@@ -334,19 +334,19 @@ RESET sdb_ivf_posting_size
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM pn_tree_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 25)
    EXCEPT
    (SELECT pk FROM pn_tree
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 25))
   UNION ALL
   ((SELECT pk FROM pn_tree
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 25)
    EXCEPT
    (SELECT pk FROM pn_tree_idx
-      ORDER BY emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda j: (1.0 / (j + 1))::FLOAT)::FLOAT[64]
       LIMIT 25))
 ) q;
 ----
@@ -363,14 +363,14 @@ CREATE INDEX pn_nopk_idx ON pn_nopk USING inverted(emb ivf (metric = 'l2', quant
 
 statement count 2000
 INSERT INTO pn_nopk
-SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) pn_nopk
 
 query
-SELECT round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+SELECT round(emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64], 3) AS d
 FROM pn_nopk_idx ORDER BY d LIMIT 3;
 ----
 d
@@ -388,14 +388,14 @@ CREATE INDEX pn_l1_idx ON pn_l1 USING inverted(pk, emb ivf (metric = 'l1', quant
 
 statement count 2000
 INSERT INTO pn_l1
-SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 2001) t(i)
 
 statement ok
 VACUUM (REFRESH_TABLE) pn_l1
 
 query
-SELECT pk, emb <+> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64] AS d
+SELECT pk, emb <+> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64] AS d
 FROM pn_l1_idx ORDER BY d LIMIT 3;
 ----
 pk	d

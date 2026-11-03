@@ -20,6 +20,7 @@
 
 #include "search/store_stats.h"
 
+#include <atomic>
 #include <duckdb/common/error_data.hpp>
 #include <exception>
 #include <iresearch/index/directory_reader.hpp>
@@ -28,6 +29,8 @@
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
+
+#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 
@@ -52,15 +55,29 @@ void MaintainedStore::SetWriterOptions(irs::IndexWriterOptions& options) const {
 }
 
 yaclib::Future<MergeResult> MaintainedStore::RunMergeAsync(
-  irs::IndexWriter::MergeTicket ticket, const irs::MergeProgress& progress,
+  utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
+  const irs::MergeProgress& progress,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
   const irs::PipelineMergeExecutor& executor) {
+  MergeResult result;
+  if (!maintenance) {
+    result.outcome.error = irs::CompactionError::Cancelled;
+    result.backup = true;
+    co_return result;
+  }
+  std::atomic_bool backup{false};
+  const irs::MergeProgress interruptible = [&progress, &backup] {
+    if (IsBackupActive()) {
+      backup.store(true, std::memory_order_relaxed);
+      return false;
+    }
+    return progress();
+  };
   bool empty_compaction = false;
   bool failed = false;
-  MergeResult result;
   try {
-    co_await _writer->RunMerge(std::move(ticket), field_options, progress, env,
-                               executor, result.outcome);
+    co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
+                               env, executor, result.outcome);
     if (!result.outcome) {
       SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
                 " produced nothing: cancelled, or every document was removed");
@@ -72,6 +89,11 @@ yaclib::Future<MergeResult> MaintainedStore::RunMergeAsync(
     failed = true;
     result.outcome.error = irs::CompactionError::Fail;
     result.error = duckdb::ErrorData{e}.RawMessage();
+  }
+  if (!failed && !result.outcome && backup.load(std::memory_order_relaxed)) {
+    result.outcome.error = irs::CompactionError::Cancelled;
+    result.backup = true;
+    co_return result;
   }
   _maintenance.RecordCompaction(
     failed, empty_compaction,

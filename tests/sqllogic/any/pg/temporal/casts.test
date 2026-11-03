@@ -45,10 +45,11 @@ tstz2ttz
 12:34:56.789-04
 
 query
-SELECT (TIME '12:34:56.789')::TIMETZ AS t2ttz;
+SELECT (TIME '12:34:56.789')::TIMETZ::TIME AS t2ttz,
+       extract(timezone FROM (TIME '12:34:56.789')::TIMETZ) = extract(timezone FROM now()) AS current_offset;
 ----
-t2ttz
-12:34:56.789-04
+t2ttz	current_offset
+12:34:56.789	t
 
 query
 SELECT (TIMETZ '12:34:56.789+05:30')::TIME AS ttz2t;

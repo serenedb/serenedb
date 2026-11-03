@@ -20,8 +20,8 @@
 
 #pragma once
 
-#include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <iresearch/index/field_meta.hpp>
 #include <iresearch/types.hpp>
 
 #include "connector/column_id.h"
@@ -33,39 +33,17 @@ namespace sdb::connector::term_dict {
 // reserved field id.
 inline constexpr irs::field_id kPKFieldId = kGeneratedPKId;
 
-// How a duckdb type reaches the term dictionary. The numeric kinds name the
-// width the sink encoded the value at, so a query rebuilds the exact same
-// terms; anything the sink cannot index at all is Unsupported.
-enum class Kind : uint8_t {
-  Unsupported = 0,
-  Null,
-  Bool,
-  String,
-  NumericI32,
-  NumericI64,
-  NumericF32,
-  NumericF64,
-  Inet,
-};
-
-constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
+// The types the sink indexes as numbers; a query encodes its bounds at the
+// same width, so it rebuilds the exact same terms.
+constexpr bool IsNumeric(duckdb::LogicalTypeId id) noexcept {
   using enum duckdb::LogicalTypeId;
   switch (id) {
-    case SQLNULL:
-      return Kind::Null;
-    case BOOLEAN:
-      return Kind::Bool;
-    case VARCHAR:
-    case BLOB:
-    case GEOMETRY:
-      return Kind::String;
     case TINYINT:
     case SMALLINT:
     case INTEGER:
     case UTINYINT:
     case USMALLINT:
     case DATE:
-      return Kind::NumericI32;
     case BIGINT:
     case UINTEGER:
     case TIME:
@@ -77,34 +55,58 @@ constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
     case TIMESTAMP_MS:
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ_NS:
-      return Kind::NumericI64;
     case FLOAT:
-      return Kind::NumericF32;
     case DOUBLE:
-      return Kind::NumericF64;
-    default:
-      return Kind::Unsupported;
-  }
-}
-
-inline Kind Classify(const duckdb::LogicalType& type) {
-  return pg::IsInetOrCidr(type) ? Kind::Inet : Classify(type.id());
-}
-
-constexpr bool IsNumeric(Kind kind) noexcept {
-  switch (kind) {
-    case Kind::NumericI32:
-    case Kind::NumericI64:
-    case Kind::NumericF32:
-    case Kind::NumericF64:
       return true;
     default:
       return false;
   }
 }
 
-constexpr bool IsSupported(Kind kind) noexcept {
-  return kind != Kind::Unsupported;
+constexpr bool IsIndexable(duckdb::LogicalTypeId id) noexcept {
+  using enum duckdb::LogicalTypeId;
+  switch (id) {
+    case SQLNULL:
+    case BOOLEAN:
+    case VARCHAR:
+    case BLOB:
+    case GEOMETRY:
+      return true;
+    default:
+      return IsNumeric(id);
+  }
+}
+
+inline bool IsIndexable(const duckdb::LogicalType& type) {
+  return pg::IsInetOrCidr(type) || IsIndexable(type.id());
+}
+
+// The layout a value of `type` is written with: `json_leaves` when a JSON
+// value is indexed leaf by leaf.
+inline irs::DictLayout LayoutOf(const duckdb::LogicalType& type,
+                                bool json_leaves) {
+  using enum duckdb::LogicalTypeId;
+  if (type.id() == LIST || type.id() == ARRAY) {
+    const auto& child = type.id() == LIST
+                          ? duckdb::ListType::GetChildType(type)
+                          : duckdb::ArrayType::GetChildType(type);
+    if (json_leaves && child.IsJSONType()) {
+      return irs::DictLayout::JsonList;
+    }
+    if (child.id() == BOOLEAN) {
+      return irs::DictLayout::BoolList;
+    }
+    return IsNumeric(child.id()) ? irs::DictLayout::NumericList
+                                 : irs::DictLayout::StringList;
+  }
+  if (json_leaves && type.IsJSONType()) {
+    return irs::DictLayout::Json;
+  }
+  if (type.id() == BOOLEAN) {
+    return irs::DictLayout::Bool;
+  }
+  return IsNumeric(type.id()) ? irs::DictLayout::Numeric
+                              : irs::DictLayout::String;
 }
 
 }  // namespace sdb::connector::term_dict

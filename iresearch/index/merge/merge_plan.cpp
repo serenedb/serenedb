@@ -65,8 +65,6 @@
 namespace irs {
 namespace {
 
-using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
-
 constexpr uint64_t kAnnCostPerByte = 32;
 constexpr uint64_t kCopyCostDivisor = 10;
 constexpr double kEncodeCostPerRow = 0.3;
@@ -87,23 +85,54 @@ uint64_t Share(uint64_t total, uint64_t part, uint64_t whole) {
            : static_cast<uint64_t>(absl::uint128{total} * part / whole);
 }
 
-void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
+void ComputeFieldMeta(MergedFieldMap& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
     if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
       continue;
     }
-    const auto* term_reader = reader.field(id);
-    SDB_ASSERT(term_reader);
-    const auto& field_meta = term_reader->meta();
-    const auto [field_meta_it, is_new] =
-      field_meta_map.emplace(id, field_meta.index_features);
-    if (!is_new) {
-      field_meta_it->second &= field_meta.index_features;
+    const auto fields = reader.fields(id);
+    if (fields.empty()) {
+      continue;
     }
-    index_features |= field_meta.index_features;
+    auto& field = field_meta_map[id];
+    const auto layout = fields.front()->meta().dict.layout;
+    if (!field.layout) {
+      field.layout = layout;
+    } else if (*field.layout != layout) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("merge: field ", id,
+                              " has different dictionary layouts in its "
+                              "segments"));
+    }
+    for (const auto* term_reader : fields) {
+      auto& merged =
+        field.members[static_cast<size_t>(term_reader->meta().dict.member)];
+      const auto features = term_reader->meta().index_features;
+      index_features |= features;
+      merged.features = merged.present ? merged.features & features : features;
+      merged.keyed = merged.keyed || term_reader->size() != 1 ||
+                     (merged.present && merged.single != term_reader->min());
+      if (!merged.present) {
+        merged.single = term_reader->min();
+        merged.present = true;
+      }
+    }
   }
+}
+
+uint64_t KeyedDicts(const MergedFieldMap& field_meta_map) noexcept {
+  uint64_t count = 0;
+  for (const auto& [id, field] : field_meta_map) {
+    count += static_cast<uint64_t>(absl::c_count_if(
+      field.members, [](const MergedMember& member) { return member.keyed; }));
+  }
+  return count;
+}
+
+const MergedMember& Strings(const MergedField& field) noexcept {
+  return field.members[static_cast<size_t>(DictMember::Strings)];
 }
 
 doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
@@ -399,8 +428,10 @@ void MergePlan::PlanTermRanges() {
     return;
   }
   std::vector<field_id> ids;
-  for (const auto& [id, features] : _field_meta_map) {
-    if (!IsSubsetOf(IndexFeatures::Vec, features)) {
+  for (const auto& [id, field] : _field_meta_map) {
+    const auto& strings = Strings(field);
+    if (strings.present && !IsSubsetOf(IndexFeatures::Vec, strings.features) &&
+        !IsSubsetOf(IndexFeatures::Ranges, strings.features)) {
       ids.push_back(id);
     }
   }
@@ -408,18 +439,20 @@ void MergePlan::PlanTermRanges() {
   for (const auto id : ids) {
     std::vector<TermRangeMerge::Input> inputs;
     uint64_t terms = 0;
+    bool fixed = false;
     for (const auto& input : _doc_map) {
-      const auto* reader = input.reader->field(id);
+      const auto* reader = StringTerms(*input.reader, id);
       if (!reader) {
         continue;
       }
+      fixed = fixed || reader->key_width != 0;
       terms += reader->size();
       _term_volume += reader->total_term_freq();
       inputs.push_back({.terms = reader, .remap = &input.remap});
     }
     const auto parts =
       std::min<uint64_t>(terms / kTermsPerPart, _threads * kPartsPerThread);
-    if (parts < 2) {
+    if (fixed || parts < 2) {
       continue;
     }
     if (!_term_sink) {
@@ -427,7 +460,9 @@ void MergePlan::PlanTermRanges() {
                                                    _index_features);
     }
     auto& range = _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
-      id, MergedFieldProperties(id, _field_meta_map[id], _merged_norm_ids),
+      id,
+      MergedFieldProperties(id, Strings(_field_meta_map[id]).features,
+                            _merged_norm_ids),
       std::move(inputs), static_cast<bool>(_key_order), _progress));
     range->Partition(parts,
                      {
@@ -499,9 +534,9 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
   };
   return _segment.docs_count == 0 ||
          WritePostings(state, _doc_map, static_cast<bool>(_key_order),
-                       _field_options, _progress, _merged_norm_ids,
-                       _doc_map.get_allocator().Manager(), *_idx,
-                       _cluster_readers, _term_ranges);
+                       _field_options, _progress, _merged_norm_ids, *_idx,
+                       _cluster_readers, _term_ranges,
+                       KeyedDicts(_field_meta_map));
 }
 
 bool MergePlan::WriteIndex(MergeStepClock& clock) {
@@ -608,8 +643,10 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
 
   std::vector<field_id> norm_fields;
   if (_field_options) {
-    for (const auto& [id, features] : _field_meta_map) {
-      if (IsSubsetOf(IndexFeatures::Norm, features)) {
+    for (const auto& [id, field] : _field_meta_map) {
+      if (const auto& strings = Strings(field);
+          strings.present &&
+          IsSubsetOf(IndexFeatures::Norm, strings.features)) {
         norm_fields.emplace_back(id);
       }
     }

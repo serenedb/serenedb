@@ -93,6 +93,7 @@ add_executable(
     formats/posting/growing_hint_test.cpp
     formats/posting_alloc_test.cpp
     formats/sparse_bitmap_test.cpp
+    formats/term_dict_test.cpp
     index/assert_format.cpp
     index/buffered_column_test.cpp
     index/compaction/merge_ticket_tests.cpp
@@ -193,8 +194,6 @@ add_executable(
     utils/crc_test.cpp
     utils/directory_utils_tests.cpp
     utils/file_utils_tests.cpp
-    utils/fst_builder_test.cpp
-    utils/fst_string_weight_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp

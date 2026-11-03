@@ -168,13 +168,22 @@ class MMapIndexInput final : public BytesViewInput {
                       count);
   }
 
-  bool Warm(uint64_t offset, uint64_t count) const noexcept final {
+  uint64_t Warm(uint64_t offset, uint64_t count) const noexcept final {
     if (!_handle || count == 0 || offset >= _handle->size()) {
-      return false;
+      return 0;
     }
     const auto& residency = _handle->residency();
-    return residency.Valid(file_utils::ResidencyEpoch()) &&
-           residency.Test(offset / file_utils::kPage, Last(offset, count));
+    if (!residency.Valid(file_utils::ResidencyEpoch())) {
+      return 0;
+    }
+    const uint64_t first = offset / file_utils::kPage;
+    const uint64_t last = Last(offset, count);
+    const uint64_t pages = residency.Test(first, last);
+    if (pages > last - first) {
+      return count;
+    }
+    const uint64_t warm = (first + pages) * file_utils::kPage;
+    return warm - std::min(warm, offset);
   }
 
   void MarkWarm(uint64_t offset, uint64_t count) const noexcept final {

@@ -39,6 +39,7 @@
 #include "catalog/database_directory.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
+#include "utils/drain_gate.h"
 
 namespace irs {
 
@@ -162,7 +163,8 @@ class MaintainedStore {
                                   busy);
   }
   yaclib::Future<MergeResult> RunMergeAsync(
-    irs::IndexWriter::MergeTicket ticket, const irs::MergeProgress& progress,
+    utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
+    const irs::MergeProgress& progress,
     const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
     const irs::PipelineMergeExecutor& executor);
 

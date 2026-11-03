@@ -134,8 +134,8 @@ class WithoutColumnStore final : public irs::SubReader {
     return _segment.field_ids();
   }
 
-  const irs::TermReader* field(irs::field_id id) const final {
-    return _segment.field(id);
+  std::span<const irs::TermReader* const> fields(irs::field_id id) const final {
+    return _segment.fields(id);
   }
 
   irs::NormReader::ptr norms(irs::field_id) const final { return {}; }

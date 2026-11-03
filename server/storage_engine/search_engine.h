@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <absl/status/status.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -29,12 +31,12 @@
 #include <yaclib/algo/wait_group.hpp>
 
 #include "search/compaction/merge_scheduler.h"
+#include "utils/drain_gate.h"
 
 namespace sdb {
 namespace search {
 
-class InvertedIndexStorage;
-class SearchTable;
+class Store;
 
 class SearchEngine;
 
@@ -61,10 +63,8 @@ class SearchEngine final {
   MergeScheduler& Merges() noexcept { return *_merges; }
 
   // Launch the per-target refresh + compaction loops, registering their Futures
-  // so stop() can join them. Templated on the storage type
-  // (InvertedIndexStorage or SearchTable); instantiated for both in the .cpp.
-  template<typename Storage>
-  void StartTasks(const std::shared_ptr<Storage>& storage);
+  // so stop() can join them.
+  void StartTasks(const std::shared_ptr<Store>& store);
 
   // Loops poll this so they bail out of long-running cycles promptly.
   bool IsStopping() const noexcept {
@@ -98,7 +98,11 @@ class SearchEngine final {
     _running_ann_workers.fetch_sub(n, std::memory_order_release);
   }
 
+  bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
+  utils::DrainGate& Maintenance() noexcept { return _maintenance; }
+
  private:
+  utils::DrainGate _maintenance;
   std::atomic<bool> _stopping{false};
   std::atomic<uint32_t> _running_ann_workers{0};
   std::unique_ptr<MergeScheduler> _merges;
@@ -109,6 +113,18 @@ class SearchEngine final {
 };
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
+
+inline bool IsBackupActive() noexcept {
+  return GetSearchEngine().IsBackupActive();
+}
+
+inline utils::DrainGate::Pass ClaimMaintenance() noexcept {
+  return GetSearchEngine().Maintenance().TryEnter();
+}
+
+inline absl::Status BackupInProgressError() {
+  return absl::UnavailableError("a backup is in progress");
+}
 
 inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
   return GetSearchEngine().AcquireAnnWorkers(want, held);

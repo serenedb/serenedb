@@ -37,7 +37,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_scheduler.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
@@ -110,17 +110,11 @@ void SearchEngine::stop() {
   _loops.Wait();
 }
 
-template<typename Storage>
-void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
+void SearchEngine::StartTasks(const std::shared_ptr<Store>& store) {
   if (_stopping.load(std::memory_order_acquire)) {
     return;
   }
-  _loops.Consume(RefreshLoop<Storage>(storage),
-                 CompactionCoordinator<Storage>(storage));
+  _loops.Consume(RefreshLoop(store), CompactionCoordinator(store));
 }
-
-template void SearchEngine::StartTasks(
-  const std::shared_ptr<InvertedIndexStorage>&);
-template void SearchEngine::StartTasks(const std::shared_ptr<SearchTable>&);
 
 }  // namespace sdb::search

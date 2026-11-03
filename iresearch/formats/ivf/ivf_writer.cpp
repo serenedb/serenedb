@@ -310,23 +310,7 @@ IvfTermReader::IvfTermReader(
     _count{cluster_offsets.empty() ? 0 : cluster_offsets.size() - 1},
     _meta{postings_id, IndexFeatures::Vec} {
   SDB_ASSERT(qw->BlockSetting().record_size != 0);
-  size_t first = _count;
-  size_t last = _count;
-  for (size_t c = 0; c < _count; ++c) {
-    if (cluster_offsets[c + 1] == cluster_offsets[c]) {
-      continue;
-    }
-    if (first == _count) {
-      first = c;
-    }
-    last = c;
-  }
-  if (first != _count) {
-    EncodeCentroidTerm(static_cast<uint32_t>(first), _min_buf.data());
-    _min = {_min_buf.data(), _min_buf.size()};
-    EncodeCentroidTerm(static_cast<uint32_t>(last), _max_buf.data());
-    _max = {_max_buf.data(), _max_buf.size()};
-  }
+  key_width = kCentroidTermWidth;
 }
 
 IvfTermReader::~IvfTermReader() = default;

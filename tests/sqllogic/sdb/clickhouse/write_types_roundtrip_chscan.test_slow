@@ -87,8 +87,7 @@ id	v_float	v_double
 3	0	0
 
 # ---------------------------------------------------------------------
-# Boolean: true/false round-trip. The ClickHouse connector surfaces Bool back
-# through serened as 1/0 on this path.
+# Boolean: true/false round-trip.
 # ---------------------------------------------------------------------
 statement ok
 CREATE TABLE chwt.default.wt_bool (id BIGINT PRIMARY KEY, v_flag BOOLEAN NOT NULL);
@@ -100,8 +99,8 @@ query
 SELECT id, v_flag FROM chwt.default.wt_bool ORDER BY id;
 ----
 id	v_flag
-1	1
-2	0
+1	t
+2	f
 
 # ---------------------------------------------------------------------
 # VARCHAR (NOT NULL -> plain String): a plain handle, the empty string, an
@@ -190,6 +189,23 @@ id	v_dec
 3	0.00
 4	99999999.99
 
+statement ok
+CREATE TABLE chwt.default.wt_wide (id BIGINT PRIMARY KEY, v_huge HUGEINT NOT NULL, v_uhuge UHUGEINT NOT NULL, v_dec DECIMAL(38,4) NOT NULL);
+
+statement ok
+INSERT INTO chwt.default.wt_wide VALUES
+  (1, 170141183460469231731687303715884105727, 340282366920938463463374607431768211455, 1234567890123456789012345678901234.5678),
+  (2, -170141183460469231731687303715884105728, 0, -9876543210987654321098765432109876.5432),
+  (3, -1, 18446744073709551616, 0);
+
+query
+SELECT id, v_huge, v_uhuge, v_dec FROM chwt.default.wt_wide ORDER BY id;
+----
+id	v_huge	v_uhuge	v_dec
+1	170141183460469231731687303715884105727	340282366920938463463374607431768211455	1234567890123456789012345678901234.5678
+2	-170141183460469231731687303715884105728	0	-9876543210987654321098765432109876.5432
+3	-1	18446744073709551616	0.0000
+
 # ---------------------------------------------------------------------
 # NULL round-trip through Nullable *numeric* columns (INTEGER + DOUBLE left
 # nullable -> Nullable(Int32) / Nullable(Float64)): a genuine NULL on row 2.
@@ -210,6 +226,29 @@ id	v_int	v_dbl
 1	100	1.5
 2	NULL	NULL
 3	-7	-2.5
+
+statement ok
+CREATE TABLE chwt.default.wt_nullable_wide (id BIGINT PRIMARY KEY, v_huge HUGEINT, v_uhuge UHUGEINT, v_dec4 DECIMAL(4,1), v_dec9 DECIMAL(9,2));
+
+statement ok
+INSERT INTO chwt.default.wt_nullable_wide VALUES
+  (1, -170141183460469231731687303715884105728, 340282366920938463463374607431768211455, 999.9, 9999999.99),
+  (2, NULL, NULL, NULL, NULL),
+  (3, 1, 18446744073709551616, -999.9, -0.01);
+
+query
+SELECT id, v_huge, v_uhuge, v_dec4, v_dec9 FROM chwt.default.wt_nullable_wide ORDER BY id;
+----
+id	v_huge	v_uhuge	v_dec4	v_dec9
+1	-170141183460469231731687303715884105728	340282366920938463463374607431768211455	999.9	9999999.99
+2	NULL	NULL	NULL	NULL
+3	1	18446744073709551616	-999.9	-0.01
+
+query
+SELECT DISTINCT typeof(v_dec4) AS t4, typeof(v_dec9) AS t9 FROM chwt.default.wt_nullable_wide;
+----
+t4	t9
+DECIMAL(4,1)	DECIMAL(9,2)
 
 # ---------------------------------------------------------------------
 # Out-of-scope boundary: a DuckDB type with no ClickHouse equivalent (TIME;
@@ -248,7 +287,13 @@ statement ok
 DROP TABLE chwt.default.wt_dec;
 
 statement ok
+DROP TABLE chwt.default.wt_wide;
+
+statement ok
 DROP TABLE chwt.default.wt_nullable;
+
+statement ok
+DROP TABLE chwt.default.wt_nullable_wide;
 
 statement ok
 DETACH chwt;

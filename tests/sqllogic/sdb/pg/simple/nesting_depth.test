@@ -17,6 +17,12 @@ db error: ERROR: stack depth limit exceeded
 
 
 statement error
+SELECT * FROM query('SELECT ' || repeat('(SELECT ', 300000) || '67' || repeat(')', 300000))
+----
+db error: ERROR: stack depth limit exceeded
+
+
+statement error
 SELECT * FROM query('SELECT ' || repeat('NOT ', 300000) || 'true, $1, $a')
 ----
 db error: ERROR: Mixing named and positional parameters is not supported yet

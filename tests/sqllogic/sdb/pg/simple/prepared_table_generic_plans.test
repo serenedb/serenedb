@@ -133,7 +133,7 @@ n
 
 
 statement ok
-CHECKPOINT;
+FORCE CHECKPOINT;
 
 
 query

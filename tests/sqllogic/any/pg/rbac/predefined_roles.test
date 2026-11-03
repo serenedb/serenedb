@@ -176,9 +176,16 @@ statement ok
 GRANT pg_checkpoint TO prr_reader;
 
 
+onlyif postgres
 connection c_reader user=prr_reader password=prr_pw
 statement ok
 CHECKPOINT;
+
+
+skipif postgres
+connection c_reader user=prr_reader password=prr_pw
+statement ok
+FORCE CHECKPOINT;
 
 
 statement ok

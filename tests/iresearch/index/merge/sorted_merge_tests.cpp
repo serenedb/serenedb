@@ -456,10 +456,10 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   }
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
-  irs::KeyOrder serial{serial_map, spec};
+  irs::KeyOrder serial{serial_map, spec, nullptr};
   ASSERT_TRUE(serial.Prepare(1, [] { return true; }));
 
-  irs::KeyOrder split{split_map, spec};
+  irs::KeyOrder split{split_map, spec, nullptr};
   ASSERT_TRUE(split.Prepare(4, [] { return true; }, &scheduler, 4));
   const auto ids = [](const irs::MergeOrder& order) {
     const auto inputs = order.Inputs();
@@ -477,7 +477,7 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
     EXPECT_EQ(serial.IsolatedBegin(i), split.IsolatedBegin(i));
   }
 
-  irs::KeyOrder stopped{stopped_map, spec};
+  irs::KeyOrder stopped{stopped_map, spec, nullptr};
   EXPECT_FALSE(stopped.Prepare(4, [] { return false; }, &scheduler, 4));
 }
 

@@ -131,7 +131,8 @@ class SimulatedObjectStore final : public duckdb::FileSystem {
   bool ListFilesExtended(
     const std::string& directory,
     const std::function<void(duckdb::OpenFileInfo& info)>& callback,
-    duckdb::optional_ptr<duckdb::FileOpener> opener) final;
+    duckdb::optional_ptr<duckdb::FileOpener> opener,
+    const duckdb::ListFilesOptions& options) final;
   bool SupportsListFilesExtended() const final { return true; }
 
  private:

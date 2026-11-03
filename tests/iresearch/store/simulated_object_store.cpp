@@ -373,14 +373,15 @@ void SimulatedObjectStore::RemoveDirectory(
     [&](duckdb::OpenFileInfo& file) {
       names.push_back(absl::StrCat(DirectoryPrefix(directory), file.path));
     },
-    opener);
+    opener, {.recursive = true});
   RemoveFiles(names, opener);
 }
 
 bool SimulatedObjectStore::ListFilesExtended(
   const std::string& directory,
   const std::function<void(duckdb::OpenFileInfo& info)>& callback,
-  duckdb::optional_ptr<duckdb::FileOpener> opener) {
+  duckdb::optional_ptr<duckdb::FileOpener> opener,
+  const duckdb::ListFilesOptions& options) {
   Request(_list);
   SDB_IF_FAILURE("object_store_list_fails") {
     throw duckdb::IOException("simulated LIST failure for \"%s\"", directory);

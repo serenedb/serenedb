@@ -147,9 +147,11 @@ void RemoveTree(const std::string& path) noexcept {
     auto& fs = StorageFileSystem();
     SDB_IF_FAILURE("pause_removal_midway") {
       std::vector<std::string> files;
-      fs.ListFilesRecursive(path, [&](duckdb::OpenFileInfo& info) {
-        files.push_back(std::move(info.path));
-      });
+      fs.ListFiles(path,
+                   [&](duckdb::OpenFileInfo& info) {
+                     files.push_back(std::move(info.path));
+                   },
+                   nullptr, {.recursive = true});
       if (!files.empty()) {
         fs.RemoveFile(fs.JoinPath(path, *absl::c_min_element(files)));
       }
@@ -208,14 +210,16 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
 
 StorageSize StorageBytes(const std::string& directory) {
   StorageSize size;
-  StorageFileSystem().ListFilesRecursive(
-    directory, [&](duckdb::OpenFileInfo& info) {
+  StorageFileSystem().ListFiles(
+    directory,
+    [&](duckdb::OpenFileInfo& info) {
       duckdb::idx_t bytes = 0;
       if (info.extended_info &&
           info.extended_info->TryGetOption("file_size", bytes)) {
         (absl::StrContains(info.path, '/') ? size.nested : size.files) += bytes;
       }
-    });
+    },
+    nullptr, {.recursive = true});
   return size;
 }
 

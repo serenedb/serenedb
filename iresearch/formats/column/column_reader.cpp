@@ -465,9 +465,11 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
   ReadContext::CacheSlot slot;
   if (duckdb::IsSereneDBCompressionType(codec.type)) {
-    slot.file_id = _file_id;
-    slot.file_offset = m.file_offset;
-    slot.touched = &_touched[w.block];
+    if (!ctx.MergeRead()) {
+      slot.file_id = _file_id;
+      slot.file_offset = m.file_offset;
+      slot.touched = &_touched[w.block];
+    }
     slot.dictionaries = Dictionaries(ctx);
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);

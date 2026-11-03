@@ -270,7 +270,7 @@ std::vector<std::vector<uint32_t>> TextLeavesOf(
 
 std::shared_ptr<ReadContext> SampleContext(const ColReader& reader) {
   auto ctx = std::make_shared<ReadContext>(reader);
-  ctx->SetReusableDictionaries(true);
+  ctx->SetMergeRead(true);
   return ctx;
 }
 
@@ -1036,9 +1036,10 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
     return MergeRange(column, part, begin, end, output, progress);
   }
   ReadContext ctx{*source.col_reader};
+  ctx.SetMergeRead(true);
   ctx.SetUnmap(Unmap::EachBlock);
   std::span<const std::shared_ptr<const codecs::TrainedDictionary>> trained;
-  if (col.HasDictionaries()) {
+  if (!col.DictionaryMetas().empty()) {
     trained = *col.Dictionaries(ctx);
   }
   std::vector<uint16_t> dictionaries;

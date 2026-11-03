@@ -114,7 +114,7 @@ class ListColumnReader final : public ColumnReader {
                                                        uint64_t count) const {
     const auto n = static_cast<duckdb::idx_t>(count + 1);
     auto dictionary =
-      s.ctx->ReusableDictionaries()
+      s.ctx->MergeRead()
         ? duckdb::DictionaryVector::CreateReusableDictionary(_type, n)
         : duckdb::make_buffer<duckdb::DictionaryEntry>(
             duckdb::Vector{_type, n});

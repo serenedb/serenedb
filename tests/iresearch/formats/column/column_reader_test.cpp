@@ -1392,7 +1392,7 @@ TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
   PrefetchRecordingDirectory dir{mem, prefetched};
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto& col = *r.Column(kS);
-  ASSERT_TRUE(col.HasDictionaries());
+  ASSERT_FALSE(col.DictionaryMetas().empty());
   irs::ReadContext ctx{r, true};
   prefetched.clear();
   ASSERT_TRUE(col.Dictionaries(ctx));
@@ -3129,7 +3129,7 @@ TEST_F(ColumnReaderTest,
       irs::ColWriter w{dir, arm.segment, Db()};
       auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
       auto ctx = std::make_shared<irs::ReadContext>(src);
-      ctx->SetReusableDictionaries(arm.reusable);
+      ctx->SetMergeRead(arm.reusable);
       ctx->SetReadAhead(arm.read_ahead);
       auto state = col->InitScan(std::move(ctx));
       uint64_t pos = 0;

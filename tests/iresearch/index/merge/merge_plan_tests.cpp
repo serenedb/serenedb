@@ -1117,7 +1117,7 @@ class NestedTextSplitTest : public ColumnSplitTest {
     ASSERT_NE(nullptr, col);
     ASSERT_NE(nullptr, col->Child());
     const auto& entries = *col->Child();
-    EXPECT_FALSE(entries.StructField(0).HasDictionaries());
+    EXPECT_TRUE(entries.StructField(0).DictionaryMetas().empty());
     const auto& values = entries.StructField(1);
     EXPECT_EQ(1, values.DictionaryMetas().size());
     const auto blocks = DictionariesByBlock(*merged->GetColReader(), values);
@@ -1306,7 +1306,8 @@ class ColumnCopyTest : public ColumnSplitTest {
                  duckdb::Value{LogLine(row)});
     });
     auto merged = MergeSegments(dir, Fresh(1), 16384);
-    EXPECT_TRUE(merged->GetColReader()->Column(kText)->HasDictionaries());
+    EXPECT_FALSE(
+      merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
     return merged;
   }
 };
@@ -1330,7 +1331,7 @@ TEST_F(ColumnCopyTest, MergeWrittenInputsCopyTheirBlocks) {
     EXPECT_EQ(expected, BlocksOf(*merged, id));
   }
   EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kText).size());
-  EXPECT_FALSE(merged->GetColReader()->Column(kText)->HasDictionaries());
+  EXPECT_TRUE(merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
 }
 
 TEST_F(ColumnCopyTest, CopiesLeaveNoInputMappedBehindThem) {
@@ -1538,7 +1539,8 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesUseTheTrainedDictionary) {
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  EXPECT_TRUE(merged->GetColReader()->Column(kText)->HasDictionaries());
+  EXPECT_FALSE(
+    merged->GetColReader()->Column(kText)->DictionaryMetas().empty());
   EXPECT_TRUE(
     absl::c_linear_search(DictionariesByBlock(*merged, kText), "trained:1"));
 }
@@ -1749,7 +1751,7 @@ TEST_F(ColumnCopyTest, CopiedDuckDBBlocksBesideTrainedDictionariesCopyAgain) {
                                    kTrainedRowGroup);
   ASSERT_NE(nullptr, first);
   ASSERT_EQ(streamed_blocks, duckdb_blocks(*first));
-  ASSERT_TRUE(first->GetColReader()->Column(kText)->HasDictionaries());
+  ASSERT_FALSE(first->GetColReader()->Column(kText)->DictionaryMetas().empty());
   AddSegment(40000, [&](auto& doc, size_t row) {
     WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
                duckdb::Value{status(row)});

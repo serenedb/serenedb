@@ -87,7 +87,7 @@ ReencodeEstimate TrialReencode(
     writer.ShareLeafDictionary({}, std::move(dictionary), 1);
   }
   auto ctx = std::make_shared<ReadContext>(reader);
-  ctx->SetReusableDictionaries(true);
+  ctx->SetMergeRead(true);
   auto state = column.InitScan(std::move(ctx));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;

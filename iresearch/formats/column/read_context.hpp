@@ -72,10 +72,8 @@ class ReadContext final : public BlockManager,
   bool RandomAccess() const noexcept { return _random_access; }
   bool ReadAhead() const noexcept { return _read_ahead; }
   void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
-  bool ReusableDictionaries() const noexcept { return _reusable_dictionaries; }
-  void SetReusableDictionaries(bool reusable) noexcept {
-    _reusable_dictionaries = reusable;
-  }
+  bool MergeRead() const noexcept { return _merge_read; }
+  void SetMergeRead(bool merge_read) noexcept { _merge_read = merge_read; }
   void SetUnmap(Unmap unmap) noexcept { _unmap = unmap; }
 
   void Release(uint64_t offset, uint64_t size) const noexcept;
@@ -135,7 +133,7 @@ class ReadContext final : public BlockManager,
   std::deque<CacheSlot> _cache_slots;
   bool _random_access = false;
   bool _read_ahead = true;
-  bool _reusable_dictionaries = false;
+  bool _merge_read = false;
   Unmap _unmap = Unmap::Never;
   std::atomic<size_t> _live_handles{0};
 };

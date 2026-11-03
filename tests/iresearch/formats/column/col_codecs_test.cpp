@@ -1604,6 +1604,50 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
   scan_all(reopened, *col);
 }
 
+TEST_F(ColCodecsTest, MergeReadsLeaveTheDictionaryCacheToQueries) {
+  const auto& value = kLowCardinalityWithNulls;
+  constexpr uint64_t kRows = 20000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 8192,
+        value);
+  auto& cache = Db().GetObjectCache();
+  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  const auto keys = CacheKeys(dir, *col);
+  ASSERT_GT(keys.size(), 1u);
+  const auto scan_all = [&](std::shared_ptr<irs::ReadContext> ctx) {
+    auto state = col->InitScan(std::move(ctx));
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, take);
+      out.Flatten(take);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ExpectRow(out, k, pos + k, value);
+      }
+      pos += take;
+    }
+  };
+  const auto cached = [&] {
+    size_t count = 0;
+    for (const auto& key : keys) {
+      count += cache.Get<irs::codecs::DecodedDictionary>(key) ? 1 : 0;
+    }
+    return count;
+  };
+  for (int i = 0; i != 2; ++i) {
+    auto ctx = std::make_shared<irs::ReadContext>(r);
+    ctx->SetMergeRead(true);
+    scan_all(std::move(ctx));
+  }
+  EXPECT_EQ(0u, cached());
+  scan_all(std::make_shared<irs::ReadContext>(r));
+  EXPECT_EQ(0u, cached());
+  scan_all(std::make_shared<irs::ReadContext>(r));
+  EXPECT_EQ(keys.size(), cached());
+}
+
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;

@@ -72,6 +72,7 @@ struct NumericTuning {
   bool calibrated = false;
   CalibrationClock clock;
   double bytes_per_row = 0;
+  double codes_ratio = 1;
   duckdb::CompressionType rival = duckdb::CompressionType::COMPRESSION_AUTO;
 
   bool Due() noexcept { return !calibrated || clock.Due(); }
@@ -80,7 +81,11 @@ struct NumericTuning {
   }
 };
 
-std::string EncodeCodes(std::span<const uint32_t> codes, NumericTuning& tuning);
+uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
+                       uint64_t entries, uint64_t runs) noexcept;
+
+std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
+                        uint64_t runs, NumericTuning& tuning);
 
 class NumericSealer {
  public:

@@ -37,6 +37,7 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
+#include <iresearch/formats/column/codecs/numeric.hpp>
 #include <iresearch/formats/column/codecs/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -1021,6 +1022,26 @@ TEST_F(ColNumericCodecTest, CorruptedFrameTableIsRejected) {
 #else
   EXPECT_ANY_THROW(scan());
 #endif
+}
+
+TEST(ColNumericCodesTest, EstimateFollowsWhatTheEncoderWrote) {
+  constexpr uint64_t kEntries = 300;
+  for (const uint64_t run : {uint64_t{1}, uint64_t{64}}) {
+    SCOPED_TRACE(run);
+    std::vector<uint32_t> codes(16384);
+    uint64_t runs = 0;
+    for (size_t i = 0; i != codes.size(); ++i) {
+      codes[i] = static_cast<uint32_t>((i / run) * 7 % kEntries);
+      runs += i == 0 || codes[i] != codes[i - 1] ? 1 : 0;
+    }
+    irs::codecs::NumericTuning tuning;
+    const auto bytes =
+      irs::codecs::EncodeCodes(codes, kEntries, runs, tuning).size();
+    const auto estimate =
+      irs::codecs::EstimateCodes(tuning, codes.size(), kEntries, runs);
+    EXPECT_LE(estimate, bytes);
+    EXPECT_GE(estimate + 1, bytes);
+  }
 }
 
 }  // namespace

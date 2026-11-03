@@ -54,15 +54,9 @@ uint64_t Packed(uint64_t count, uint32_t max_value) noexcept {
     count, BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_value));
 }
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    uint64_t runs) noexcept {
-  if (shape != Shape::Dedup) {
-    return 0;
-  }
-  const auto max_code = static_cast<uint32_t>(entries);
-  return std::min(
-    Packed(rows, max_code),
-    Packed(runs, max_code) + Packed(runs, static_cast<uint32_t>(rows)));
+uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
+                    const NumericTuning& tuning) noexcept {
+  return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;
 }
 
 void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
@@ -91,7 +85,7 @@ void SegmentBuilder::Begin(Shape shape, uint8_t level, FrameLayout layout,
 uint64_t SegmentBuilder::Estimate() const noexcept {
   const auto entry_count = _entries.size() + FirstEntry();
   return kHeaderSize + Packed(entry_count, _max_len) +
-         CodesBytes(_shape, _rows, _entries.size(), _runs);
+         CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);
 }
 
 void SegmentBuilder::SortEntries() {
@@ -147,7 +141,7 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
 
   std::string codes;
   if (_shape == Shape::Dedup) {
-    codes = EncodeCodes(_codes, _codes_tuning);
+    codes = EncodeCodes(_codes, _entries.size(), _runs, _codes_tuning);
   }
   LayOut(h, frames.frames.size(),
          BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),

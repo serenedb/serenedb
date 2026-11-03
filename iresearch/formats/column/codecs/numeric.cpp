@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <bit>
 #include <cstring>
+#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/main/database.hpp>
@@ -1153,17 +1154,40 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
   }
 }
 
+uint64_t Packed(uint64_t count, uint64_t max_value) noexcept {
+  return duckdb::BitpackingPrimitives::GetRequiredSize(
+    count, duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(
+             static_cast<uint32_t>(max_value)));
+}
+
+uint64_t CodesBound(uint64_t rows, uint64_t entries, uint64_t runs) noexcept {
+  return std::min(Packed(rows, entries),
+                  Packed(runs, entries) + Packed(runs, rows));
+}
+
 }  // namespace
 
-std::string EncodeCodes(std::span<const uint32_t> codes,
-                        NumericTuning& tuning) {
+uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
+                       uint64_t entries, uint64_t runs) noexcept {
+  return static_cast<uint64_t>(
+    static_cast<double>(CodesBound(rows, entries, runs)) * tuning.codes_ratio);
+}
+
+std::string EncodeCodes(std::span<const uint32_t> codes, uint64_t entries,
+                        uint64_t runs, NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes};
-  if (auto segment =
-        sealer.SealWith(kLeaflessPlan, kNoRival, tuning, tuning.Due());
-      !segment.bytes.empty()) {
-    return std::move(segment.bytes);
+  bool due = tuning.Due();
+  auto bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, due).bytes;
+  if (bytes.empty()) {
+    due = true;
+    bytes = sealer.SealWith(kLeaflessPlan, kNoRival, tuning, true).bytes;
   }
-  return sealer.SealWith(kLeaflessPlan, kNoRival, tuning, true).bytes;
+  if (const auto bound = CodesBound(codes.size(), entries, runs);
+      due && bound != 0) {
+    tuning.codes_ratio =
+      static_cast<double>(bytes.size()) / static_cast<double>(bound);
+  }
+  return bytes;
 }
 
 std::unique_ptr<NumericSealer> NumericSealer::Make(

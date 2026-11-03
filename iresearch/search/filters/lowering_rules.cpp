@@ -268,9 +268,9 @@ void LowerNode(Filter::ptr& slot) {
                          node.GetBoost(), node.options().bytes);
   } else if (type == Type<ByRegexp>::id()) {
     auto& node = irs::utils::downCast<ByRegexp>(*slot);
-    slot = LowerRegexp(node.field_id(), node.dict(), node.options().pattern,
-                       node.options().syntax, node.GetBoost(),
-                       node.options().bytes);
+    slot =
+      LowerRegexp(node.field_id(), node.dict(), node.options().pattern,
+                  node.options().syntax, node.GetBoost(), node.options().bytes);
   } else if (type == Type<ByEditDistance>::id()) {
     auto& node = irs::utils::downCast<ByEditDistance>(*slot);
     slot = LowerLevenshtein(node.field_id(), node.dict(), node.options(),

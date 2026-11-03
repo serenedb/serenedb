@@ -2961,6 +2961,9 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
             VisitFrames(out, [&](const auto& frame) {
               framed += frame.GetAllocationSize();
             });
+            if (!read_once) {
+              out.Flatten(take);
+            }
           }
         }
         for (size_t b = 0; b != batches.size(); ++b) {

@@ -89,4 +89,15 @@ chandler
 
 
 statement ok
+CREATE INDEX beast_heap_art ON beast_heap (id);
+
+
+query
+SELECT name FROM beast_heap_art WHERE ctid = (SELECT ctid FROM beast_heap WHERE id = 67);
+----
+name
+nolan
+
+
+statement ok
 DROP TABLE beast_heap;

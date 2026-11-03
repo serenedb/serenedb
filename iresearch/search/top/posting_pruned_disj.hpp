@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -47,6 +48,9 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
   using Base::FirstNotBelow;
   using Base::Members;
   using Base::ReadLeaf;
+  using Base::RepositionForWindow;
+  using Base::ScoreLeaf;
+  using Base::Scores;
 
  public:
   using Base::AdvanceBlock;
@@ -108,23 +112,35 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
 
   void Fill(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
             score_t* IRS_RESTRICT window) {
-    ForEachScoredBlock(
-      max, [&](const doc_id_t* IRS_RESTRICT docs, uint32_t len,
-               const score_t* IRS_RESTRICT scores) IRS_FORCE_INLINE {
-        static constexpr auto kBits = BitsRequired<uint64_t>();
-        const auto add = [&](uint32_t i) IRS_FORCE_INLINE {
-          const size_t offset = docs[i] - min;
-          SetBit(mask[offset / kBits], offset % kBits);
-          window[offset] += scores[i];
-        };
-        if (len == doc_limits::kBlockSize) [[likely]] {
-          VisitDocs<doc_limits::kBlockSize>(doc_limits::kBlockSize, add);
-        } else {
-          for (uint32_t i = 0; i != len; ++i) {
-            add(i);
-          }
-        }
-      });
+    if (_doc >= max) {
+      return;
+    }
+    Unmask(_doc);
+    RepositionForWindow(_doc);
+    const auto* const end = std::cend(_docs);
+    const auto* begin = end - _left_in_leaf - 1;
+    for (;;) {
+      if (!_scored) {
+        ScoreLeaf();
+      }
+      const auto* const scores = Scores() + (begin - std::cbegin(_docs));
+      if (_max_in_leaf >= max) {
+        const auto* const it = detail::AddUntil<ScoreMergeType::Sum, false>(
+          begin, end, scores, min, max, nullptr, mask, window);
+        _left_in_leaf = static_cast<uint32_t>(end - it) - 1;
+        _doc = *it;
+        return;
+      }
+      detail::AddWhole<ScoreMergeType::Sum, false>(begin, end, scores, min,
+                                                   nullptr, mask, window);
+      if (_left_in_list == 0) {
+        _left_in_leaf = 0;
+        _doc = doc_limits::eof();
+        return;
+      }
+      ReadLeaf(_max_in_leaf);
+      begin = end - _len;
+    }
   }
 
   template<typename DocsBuffer, typename ScoresBuffer>

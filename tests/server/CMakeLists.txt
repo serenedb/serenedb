@@ -8,6 +8,7 @@ add_executable(
     backup/backup_label_test.cpp
     backup/pg_control_test.cpp
     backup/restore_test.cpp
+    client_context_await_test.cpp
     database_directory_test.cpp
     drain_gate_test.cpp
     docs_search_test.cpp

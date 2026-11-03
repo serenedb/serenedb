@@ -95,17 +95,13 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
     });
 }
 
-std::optional<Cut> RecordCut(
-  const std::filesystem::path& backup_dir,
+Cut RecordCut(
+  duckdb::ClientContext& context, const std::filesystem::path& backup_dir,
   std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  pg::ProgressMetrics& progress, absl::FunctionRef<bool()> cancelled) {
+  pg::ProgressMetrics& progress) {
   Cut cut;
-  auto& gate = CommitGate();
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
-  if (!gate.Close(cancelled)) {
-    return std::nullopt;
-  }
-  absl::Cleanup open = [&gate] { gate.Open(); };
+  const auto commits = CommitGate().Close(context);
   cut.catalog_link = backup_dir / kCatalogLink;
   cut.catalog_log_size =
     catalog::ClusterOf().SnapshotCatalogLog(cut.catalog_link);
@@ -127,12 +123,6 @@ std::optional<Cut> RecordCut(
   return cut;
 }
 
-void Resume() noexcept {
-  search::GetSearchEngine().Maintenance().Open();
-  catalog::ResumeRemovals();
-  CheckpointGate().Open();
-}
-
 }  // namespace
 
 BackupSession& BackupSession::Instance() {
@@ -140,9 +130,9 @@ BackupSession& BackupSession::Instance() {
   return gSession;
 }
 
-std::optional<StartedBackup> BackupSession::Begin(
-  BackupOwner owner, std::string_view label, pg::ProgressMetrics& progress,
-  absl::FunctionRef<bool()> cancelled) {
+StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
+                                   BackupOwner owner, std::string_view label,
+                                   pg::ProgressMetrics& progress) {
   progress.SetCommand(pg::ProgressCommand::BaseBackup);
   progress.SetPhase(pg::progress_phase::BaseBackup::Initializing);
   absl::MutexLock lock{&_mutex};
@@ -158,11 +148,7 @@ std::optional<StartedBackup> BackupSession::Begin(
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
-  auto& checkpoints = CheckpointGate();
-  if (!checkpoints.Close(cancelled)) {
-    return std::nullopt;
-  }
-  absl::Cleanup reopen = [&checkpoints] { checkpoints.Open(); };
+  auto checkpoints = CheckpointGate().Close(context);
   auto pins = catalog::SereneDBDatabases(
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
   std::erase_if(pins,
@@ -215,26 +201,19 @@ std::optional<StartedBackup> BackupSession::Begin(
   catalog::DeferRemovals();
   absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
-  auto& maintenance = search::GetSearchEngine().Maintenance();
-  if (!maintenance.Close(cancelled)) {
-    return std::nullopt;
-  }
-  absl::Cleanup reopen_maintenance = [&maintenance] { maintenance.Open(); };
-  auto cut = RecordCut(backup_dir, pins, progress, cancelled);
-  if (!cut) {
-    return std::nullopt;
-  }
+  auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
+  auto cut = RecordCut(context, backup_dir, pins, progress);
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  cut->catalog_link = cut->catalog_link.lexically_relative(layout.directory);
+  cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
-    label, start_lsn, positions.SystemIdentifier(), absl::Now(), *cut);
-  std::move(reopen_maintenance).Cancel();
+    label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
   std::move(resume_removals).Cancel();
   std::move(remove_backup_dir).Cancel();
-  std::move(reopen).Cancel();
 
   // Noexcept committing of backup start
+  _checkpoints = std::move(checkpoints);
+  _maintenance = std::move(maintenance);
   _pins = std::move(pins);
   _checkpoint_keys = std::move(checkpoint_keys);
   _backup_dir = std::move(backup_dir);
@@ -274,7 +253,9 @@ void BackupSession::End() noexcept {
 }
 
 void BackupSession::Stop() noexcept {
-  Resume();
+  _maintenance.reset();
+  catalog::ResumeRemovals();
+  _checkpoints.reset();
   _checkpoint_keys.clear();
   _pins.clear();
   catalog::RemoveTree(_backup_dir);

@@ -261,7 +261,7 @@ void SereneDBClientState::TransactionPreCommit(
     }
   }
   if (transaction.ModifiedDatabase() || !written.empty()) {
-    _connection_ctx->EnterCommitGate();
+    _connection_ctx->EnterCommitGate(context);
     SDB_PARK_ONCE_ON_FAILURE("pause_commit_in_gate");
   }
   tls_committing_ctx = _connection_ctx.get();

@@ -55,6 +55,18 @@ db error: ERROR: backup is not in progress
 HINT: Did you call pg_backup_start()?
 
 
+connection timed
+statement ok
+SET statement_timeout = '200ms';
+
+
+connection timed
+statement error
+SELECT pg_backup_start('bcw_timed_out');
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
 connection inserter
 statement async ok
 INSERT INTO bcw_plain VALUES (1);

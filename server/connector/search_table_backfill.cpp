@@ -337,7 +337,6 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
   SDB_ASSERT(shard.BuildInFlight());
-  const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it
   // at a statement boundary, so every segment it saw would outlive the build
@@ -349,7 +348,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
 
   shard.WatchTruncates();
 
-  shard.DrainPriorWriters(cancelled);
+  shard.DrainPriorWriters(context);
   shard.Publish();
 
   irs::IndexWriter::CompactionFloorGuard floor;
@@ -358,7 +357,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     if (floor.Held()) {
       break;
     }
-    if (cancelled()) {
+    if (context.IsInterrupted()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_QUERY_CANCELED),
                       ERR_MSG("canceled while waiting for compaction on "
                               "search table ",

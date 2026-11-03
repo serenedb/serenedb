@@ -138,3 +138,7 @@ HINT: Available values: debug5, debug4, debug3, debug2, debug1, log, notice, war
 onlyif serenedb
 statement ok
 SET client_min_messages = 'verbose';
+
+
+statement error invalid value for parameter "bytea_output": "nope"
+SET bytea_output = 'nope';

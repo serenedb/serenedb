@@ -312,7 +312,6 @@ What the server records about itself.
 | `enable_profiling` | Enables profiling, and sets the output format (`query_tree`, `query_tree_optimizer`, `json`, `text`, `html`, `graphviz`, `yaml`, `mermaid`, `compact` or `no_output`) | `VARCHAR` | `SESSION` | NULL |
 | `enable_progress_bar` | Tracks the progress of long queries, so that `enable_progress_bar_print` can print it. On in every server session. | `BOOLEAN` | `SESSION` | `true` |
 | `enable_progress_bar_print` | Prints a progress bar for long queries, when `enable_progress_bar` is on. The bar goes to the standard output of the `serened` process, not to the client. | `BOOLEAN` | `SESSION` | `false` |
-| `legacy_metrics_format` | Deprecated. When enabled, profiling output uses the legacy flat format instead of the current grouped format. | `BOOLEAN` | `SESSION` | `off` |
 | `log_query_path` | Specifies the path to which queries should be logged (default: NULL, queries are not logged). Queries are appended to the file, also when the session sets its own path again; a file another session logs to is refused. | `VARCHAR` | `SESSION` |  |
 | `logging_level` | The log level which will be recorded in the log | `VARCHAR` | `GLOBAL` | `INFO` |
 | `logging_mode` | Determines which types of log messages are logged | `VARCHAR` | `GLOBAL` | `LEVEL_ONLY` |
@@ -529,7 +528,7 @@ Everything that does not fall into the groups above.
 | `index_scan_percentage` | The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage \* total_row_count) rows match, we perform an index scan instead of a table scan. | `DOUBLE` | `GLOBAL` | `0.001` |
 | `integer_division` | Whether or not the / operator defaults to integer division, or to floating point division | `BOOLEAN` | `SESSION` | `true` |
 | `integer_overflow` | What integer `+`, `-`, `*` and unary minus do when the result does not fit its type: `ERROR` raises an error, `WRAP` keeps the low bits of the result (two's complement wraparound). | `VARCHAR` | `SESSION` | `ERROR` |
-| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `ENABLE_SINGLE_ARROW` |
+| `lambda_syntax` | Deprecated. Configures the use of the deprecated single arrow operator (->) for lambda functions. | `VARCHAR` | `SESSION` | `DEFAULT` |
 | `max_vacuum_tasks` | The maximum vacuum tasks to schedule during a checkpoint. | `UBIGINT` | `GLOBAL` | `100` |
 | `merge_http_secret_into_s3_request` | Merges http secret params into S3 requests | `BOOLEAN` | `SESSION` | `true` |
 | `perfect_ht_threshold` | Threshold in bytes for when to use a perfect hash table | `UBIGINT` | `SESSION` | `12` |

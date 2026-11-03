@@ -49,14 +49,8 @@ auto Transactions(std::vector<Slot>& slots) {
 }
 
 void ReleaseWriter(StoreWrites& w) noexcept {
-  if (w.truncate_claim) {
-    w.store->ReleaseTruncate();
-    w.truncate_claim = false;
-  }
-  if (w.writer_slot >= 0) {
-    w.store->DeregisterWriter(static_cast<unsigned>(w.writer_slot));
-    w.writer_slot = -1;
-  }
+  w.truncate_claim.reset();
+  w.registration.reset();
 }
 
 irs::IndexWriter::Transaction& AddTransaction(StoreWrites& w,
@@ -159,15 +153,14 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
                             const catalog::SearchTableEntry& table) {
   auto& w = EnsureStoreWrites(store);
   w.table = &table;
-  if (w.writer_slot < 0) {
-    const auto slot = store->RegisterWriter();
-    if (!slot) {
+  if (!w.registration) {
+    w.registration = store->RegisterWriter();
+    if (!w.registration) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
         ERR_MSG("Attempting to write to table ", table.name.GetIdentifierName(),
                 " but another transaction is truncating it"));
     }
-    w.writer_slot = static_cast<int>(*slot);
   }
 }
 
@@ -237,13 +230,13 @@ void Writes::AddSearchTruncate(const std::shared_ptr<Store>& store,
                                bool clears_store) {
   auto& w = EnsureStoreWrites(store);
   if (!w.truncate_claim) {
-    if (!store->ClaimTruncate()) {
+    w.truncate_claim = store->ClaimTruncate();
+    if (!w.truncate_claim) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
         ERR_MSG("Attempting to truncate table ", table_name.GetIdentifierName(),
                 " but another transaction is writing to this table"));
     }
-    w.truncate_claim = true;
   }
   w.slots.clear();
   w.buffer_trx = nullptr;

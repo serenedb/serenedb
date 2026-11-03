@@ -185,9 +185,9 @@ void Transaction::Commit(duckdb::transaction_t owner) {
   }
 }
 
-void Transaction::EnterCommitGate() {
+void Transaction::EnterCommitGate(duckdb::ClientContext& context) {
   if (!_commit_pass) {
-    _commit_pass = backup::CommitGate().Enter();
+    _commit_pass = backup::CommitGate().Enter(context);
   }
 }
 
@@ -231,7 +231,7 @@ void Transaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
 }
 
 void Transaction::Destroy(duckdb::transaction_t owner) noexcept {
-  _commit_pass.Release();
+  _commit_pass.reset();
   for (const auto& table : _layout_claims) {
     table->ReleaseLayout(owner);
   }

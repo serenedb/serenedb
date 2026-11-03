@@ -20,58 +20,47 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
-
 #include <atomic>
 #include <cstdint>
-#include <utility>
+#include <duckdb/main/client_context.hpp>
+#include <memory>
+
+#include "iresearch/utils/assert.hpp"
 
 namespace sdb::utils {
 
 class DrainGate final {
- public:
-  class [[nodiscard]] Pass {
-   public:
-    Pass() = default;
-    explicit Pass(DrainGate* gate) noexcept : _gate{gate} {}
-    Pass(Pass&& other) noexcept : _gate{std::exchange(other._gate, nullptr)} {}
-    Pass& operator=(Pass&& other) noexcept {
-      if (this != &other) {
-        Release();
-        _gate = std::exchange(other._gate, nullptr);
-      }
-      return *this;
+  struct Leaver {
+    void operator()(DrainGate* gate) const noexcept {
+      SDB_ASSERT(gate);
+      gate->Leave();
     }
-    ~Pass() { Release(); }
-
-    explicit operator bool() const noexcept { return _gate != nullptr; }
-    void Release() noexcept {
-      if (auto* gate = std::exchange(_gate, nullptr)) {
-        gate->Leave();
-      }
+  };
+  struct Opener {
+    void operator()(DrainGate* gate) const noexcept {
+      SDB_ASSERT(gate);
+      gate->Open();
     }
-
-   private:
-    DrainGate* _gate = nullptr;
   };
 
-  Pass Enter();
-  Pass TryEnter() noexcept;
-  bool Close(absl::FunctionRef<bool()> cancelled) noexcept;
-  void Open() noexcept;
-  bool WaitOpen(absl::FunctionRef<bool()> cancelled);
-  bool IsClosed() const noexcept { return _state.load() & kClosed; }
+ public:
+  using Pass = std::unique_ptr<DrainGate, Leaver>;
+  using Closed = std::unique_ptr<DrainGate, Opener>;
+
+  [[nodiscard]] Pass Enter(duckdb::ClientContext& context);
+  [[nodiscard]] Pass TryEnter() noexcept;
+  [[nodiscard]] Closed Close(duckdb::ClientContext& context);
+  bool IsClosed() const noexcept {
+    return _state.load(std::memory_order_relaxed) & kClosed;
+  }
 
  private:
   static constexpr uint32_t kClosed = 1;
   static constexpr uint32_t kPass = 2;
 
-  static bool IsOpen(std::atomic<uint32_t>* state) noexcept;
-  static bool IsDrained(std::atomic<uint32_t>* state) noexcept;
   void Leave() noexcept;
+  void Open() noexcept;
 
-  absl::Mutex _mutex;
   std::atomic<uint32_t> _state{0};
 };
 

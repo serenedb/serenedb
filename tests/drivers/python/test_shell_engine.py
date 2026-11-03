@@ -126,13 +126,17 @@ def test_explain_in_a_terminal_prints_the_plan_and_one_analyze_hint() -> None:
         ".web to open it in a browser") == 1, output
 
 
-def test_explain_analyze_for_a_browser_prints_no_hint(tmp_path: Path) -> None:
+@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+def test_explain_analyze_for_a_browser_prints_no_hint(tmp_path: Path, shape: str) -> None:
     opener = tmp_path / "bin" / "xdg-open"
     opener.parent.mkdir()
     opener.write_text("#!/bin/sh\nexit 0\n")
     opener.chmod(0o755)
     output = _interactive(
-        ["EXPLAIN ANALYZE (FORMAT WEB) SELECT 1;"],
+        [
+            f"SET explain_output_format = '{shape}';",
+            "EXPLAIN ANALYZE (FORMAT WEB) SELECT 1;",
+        ],
         env={"PATH": f"{opener.parent}:{os.environ['PATH']}", "TMP": str(tmp_path)},
     )
     assert "Opening query profile in browser" in output, output
@@ -147,12 +151,19 @@ def test_explain_analyze_into_a_file_writes_no_hint(tmp_path: Path) -> None:
     assert "in a browser" not in plan.read_text() + output, output
 
 
+@pytest.mark.parametrize("highlight", ["on", "off"])
 @pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
-def test_only_a_plan_taller_than_the_terminal_goes_through_the_pager(shape: str) -> None:
-    lines = [f"SET explain_output_format = '{shape}';", "EXPLAIN SELECT 1;"]
+def test_only_a_plan_taller_than_the_terminal_goes_through_the_pager(
+    shape: str, highlight: str
+) -> None:
+    lines = [
+        f".highlight {highlight}",
+        f"SET explain_output_format = '{shape}';",
+        "EXPLAIN SELECT 1;",
+    ]
     pager = {"PAGER": "sed s/^/paged:/"}
-    assert "paged:" in _interactive(lines, rows=4, env=pager)
-    assert "paged:" not in _interactive(lines, env=pager)
+    assert "paged:" in _interactive(lines, rows=6, env=pager)
+    assert "paged:" not in _interactive(lines, rows=7, env=pager)
 
 
 def test_a_view_keeps_its_table() -> None:

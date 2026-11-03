@@ -1,0 +1,33 @@
+statement ok
+SET sdb_faults = 'transaction_end_fails'
+
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE never_committed (i INT)
+
+statement error
+COMMIT
+----
+db error: ERROR: cannot commit - transaction_end_fails is armed
+
+
+connection other
+statement ok
+SET sdb_faults = '-transaction_end_fails'
+
+statement ok
+ROLLBACK
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'never_committed'
+----
+n
+0
+
+query
+SELECT 1 AS r
+----
+r
+1

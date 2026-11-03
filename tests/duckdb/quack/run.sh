@@ -26,34 +26,55 @@ free_port() {
 	python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
 }
 
-# One test file against a fresh serened, which serves quack with the token the templates attach with. The
-# server reads files from the client's working directory, as the in-process server of the upstream suite does.
-run_one() {
-	local test=$1 dir pid port rc attempt ready_by
-	dir=$(mktemp -d "$WORK/test.XXXXXX")
-	echo "$test" >"$dir/name"
+# A fresh serened named <name> in <dir>, which serves quack with the token the templates attach with, as
+# quack:127.0.0.1:$started_port. The server reads files from the client's working directory, as the
+# in-process server of the upstream suite does.
+start_serened() {
+	local dir=$1 name=$2 attempt ready_by
 	for attempt in 1 2 3; do
-		port=$(free_port)
-		(cd "$QUACK_DIR" && exec "$SERENED" "$dir/data.$attempt" \
-			"--listen=postgres://127.0.0.1:$(free_port),http://127.0.0.1:$port?api=quack" \
-			--auth_bearer_token=asdf) >"$dir/serened.log" 2>&1 &
-		pid=$!
+		started_port=$(free_port)
+		(cd "$QUACK_DIR" && exec "$SERENED" "$dir/$name.data.$attempt" \
+			"--listen=postgres://127.0.0.1:$(free_port),http://127.0.0.1:$started_port?api=quack" \
+			--auth_bearer_token=asdf) >"$dir/$name.log" 2>&1 &
+		started_pid=$!
 		ready_by=$((SECONDS + 60))
-		while kill -0 "$pid" 2>/dev/null && ! curl -s -o /dev/null "http://127.0.0.1:$port/quack"; do
+		while kill -0 "$started_pid" 2>/dev/null && ! curl -s -o /dev/null "http://127.0.0.1:$started_port/quack"; do
 			if ((SECONDS > ready_by)); then
-				kill "$pid"
+				kill "$started_pid"
 				break
 			fi
 			sleep 0.1
 		done
-		kill -0 "$pid" 2>/dev/null && break
+		kill -0 "$started_pid" 2>/dev/null && return
+		wait "$started_pid"
+	done
+}
+
+# One test file against a serened of its own, and a second one when the file attaches {QUACK_SERVER2}.
+run_one() {
+	local test=$1 dir file rc pid
+	local -a pids=() servers=() passthrough=()
+	dir=$(mktemp -d "$WORK/test.XXXXXX")
+	echo "$test" >"$dir/name"
+	file=$test
+	[[ $file == /* ]] || file="$WORKSPACE/third_party/duckdb/$test"
+	start_serened "$dir" serened
+	pids+=("$started_pid")
+	servers+=("QUACK_SERVER=quack:127.0.0.1:$started_port")
+	passthrough+=(--env-passthrough QUACK_SERVER)
+	if grep -qF '{QUACK_SERVER2}' "$file"; then
+		start_serened "$dir" serened2
+		pids+=("$started_pid")
+		servers+=("QUACK_SERVER2=quack:127.0.0.1:$started_port")
+		passthrough+=(--env-passthrough QUACK_SERVER2)
+	fi
+	env "${servers[@]}" timeout 300 "$UNITTEST" --test-dir "$WORKSPACE/third_party/duckdb" \
+		--test-config "$CONFIG" "${passthrough[@]}" "$test" >"$dir/unittest.log" 2>&1
+	rc=$?
+	for pid in "${pids[@]}"; do
+		kill "$pid" 2>/dev/null
 		wait "$pid"
 	done
-	QUACK_SERVER="quack:127.0.0.1:$port" timeout 300 "$UNITTEST" --test-dir "$WORKSPACE/third_party/duckdb" \
-		--test-config "$CONFIG" --env-passthrough QUACK_SERVER "$test" >"$dir/unittest.log" 2>&1
-	rc=$?
-	kill "$pid" 2>/dev/null
-	wait "$pid"
 	if [[ $rc -ne 0 ]] || ! grep -qE '^All tests passed|^All tests were skipped' "$dir/unittest.log"; then
 		echo FAILED >"$dir/result"
 	elif grep -q '^All tests were skipped' "$dir/unittest.log"; then
@@ -62,7 +83,7 @@ run_one() {
 		echo ok >"$dir/result"
 	fi
 }
-export -f run_one free_port
+export -f run_one start_serened free_port
 export WORK WORKSPACE QUACK_DIR SERENED UNITTEST CONFIG
 
 mapfile -t skips < <(python3 -c 'import json, sys

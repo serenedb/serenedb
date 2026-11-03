@@ -96,7 +96,7 @@ pk
 
 # JSON-returning expression `(j->'val')` — the per-leaf-type dispatch path.
 # Catalog synthesizes string/numeric/bool/null sub-field ids; the filter
-# builder peels casts (e.g. ::int, ::bool) and routes each predicate to its
+# builder peels casts (::double, ::bool) and routes each predicate to its
 # typed sub-field. Rows hold {"val": primitive}; the JSON column itself is
 # an object so we don't add a column-side index here (the column primitive
 # path is covered by m_j_prim above).
@@ -125,7 +125,7 @@ pk
 
 # Expression source: numeric leaf via cast-peel
 query
-SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::int = 42;
+SELECT pk FROM m_jv_expr_kw WHERE (j->'val')::double = 42;
 ----
 pk
 2

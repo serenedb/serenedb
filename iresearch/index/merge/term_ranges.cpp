@@ -21,6 +21,7 @@
 #include "iresearch/index/merge/term_ranges.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <span>
@@ -202,15 +203,41 @@ class RangeWriter {
 
 }  // namespace
 
+TermRangeSink::TermRangeSink(Directory& dir, std::string_view segment,
+                             IndexFeatures features)
+  : _dir{&dir}, _segment{segment} {
+  absl::Cleanup remove = [this]() noexcept { Remove(); };
+  PostingsWriter::PrepareOutputs(_out, {
+                                         .dir = &dir,
+                                         .name = _segment,
+                                         .doc_count = 0,
+                                         .index_features = features,
+                                       });
+  std::move(remove).Cancel();
+}
+
+TermRangeSink::~TermRangeSink() { Remove(); }
+
+void TermRangeSink::Remove() noexcept {
+  const auto remove = [&](IndexOutput::ptr& out, std::string_view ext) {
+    if (!out) {
+      return;
+    }
+    out.reset();
+    _dir->remove(FileName(_segment, ext));
+  };
+  remove(_out.doc, PostingsWriter::kDocExt);
+  remove(_out.pos, PostingsWriter::kPosExt);
+  remove(_out.pay, PostingsWriter::kPayExt);
+}
+
 struct TermRangeMerge::Part {
-  MemoryDirectory dir;
+  std::unique_ptr<MemoryDirectory> dir;
   bstring terms;
   uint64_t count = 0;
   uint64_t total_doc_freq = 0;
   uint64_t total_term_freq = 0;
-  IndexInput::ptr doc;
-  IndexInput::ptr pos;
-  IndexInput::ptr pay;
+  PostingBases bases;
   bool done = false;
 };
 
@@ -251,6 +278,7 @@ void TermRangeMerge::Partition(size_t parts, const Target& target,
   for (size_t p = 0; p != _merge.PartitionCount(); ++p) {
     _parts.emplace_back(std::make_unique<Part>());
   }
+  _appended = 0;
   _docs.assign(bitset::bits_to_words(target.doc_count + doc_limits::min()), 0);
 }
 
@@ -263,8 +291,10 @@ bool TermRangeMerge::MergePart(size_t part) {
 
 template<typename Postings>
 bool TermRangeMerge::WritePart(Part& part, size_t index) {
-  RangeWriter<Postings> writer{_inputs, _keys,    _props,
-                               _target, part.dir, *_progress};
+  SDB_ASSERT(_target.sink);
+  part.dir = std::make_unique<MemoryDirectory>();
+  RangeWriter<Postings> writer{_inputs, _keys,     _props,
+                               _target, *part.dir, *_progress};
   const auto state = _merge.BeginMerge(index);
   duckdb::vector<duckdb::PresortedRun> runs;
   while (!state->Done()) {
@@ -281,29 +311,37 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
   part.total_doc_freq = terms.TotalDocFreq();
   part.total_term_freq = terms.TotalTermFreq();
   part.terms = std::move(terms).TakeTerms();
-  const auto open = [&](std::string_view ext) -> IndexInput::ptr {
-    const auto name = FileName(kPartName, ext);
-    bool exists = false;
-    if (!part.dir.exists(exists, name) || !exists) {
-      return nullptr;
-    }
-    return part.dir.open(name, IOAdvice::SEQUENTIAL);
-  };
-  part.doc = open(PostingsWriter::kDocExt);
-  part.pos = open(PostingsWriter::kPosExt);
-  part.pay = open(PostingsWriter::kPayExt);
   const auto& docs = writer.Docs();
-  absl::MutexLock lock{&_mutex};
+  absl::MutexLock lock{&_target.sink->Mutex()};
   SDB_ASSERT(docs.words() <= _docs.size());
   for (size_t w = 0; w != docs.words(); ++w) {
     _docs[w] |= docs.data()[w];
   }
   part.done = true;
+  for (; _appended != _parts.size() && _parts[_appended]->done; ++_appended) {
+    auto& next = *_parts[_appended];
+    if (next.count != 0) {
+      const auto open = [&](std::string_view ext) -> IndexInput::ptr {
+        const auto name = FileName(kPartName, ext);
+        bool exists = false;
+        if (!next.dir->exists(exists, name) || !exists) {
+          return nullptr;
+        }
+        return next.dir->open(name, IOAdvice::SEQUENTIAL);
+      };
+      const auto doc = open(PostingsWriter::kDocExt);
+      const auto pos = open(PostingsWriter::kPosExt);
+      const auto pay = open(PostingsWriter::kPayExt);
+      next.bases = AppendPostings(_target.sink->Outputs(), doc.get(), pos.get(),
+                                  pay.get());
+    }
+    next.dir.reset();
+  }
   return true;
 }
 
 bool TermRangeMerge::Done() const noexcept {
-  return absl::c_all_of(_parts, [](const auto& part) { return part->done; });
+  return _appended == _parts.size();
 }
 
 std::vector<TermPart> TermRangeMerge::Parts() const {
@@ -311,9 +349,7 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
   parts.reserve(_parts.size());
   for (const auto& part : _parts) {
     parts.push_back({
-      .doc = part->doc.get(),
-      .pos = part->pos.get(),
-      .pay = part->pay.get(),
+      .bases = part->bases,
       .terms = part->terms,
       .term_count = part->count,
       .total_doc_freq = part->total_doc_freq,
@@ -325,13 +361,6 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
 
 void TermRangeMerge::ReleaseParts() noexcept {
   for (auto& part : _parts) {
-    part->doc.reset();
-    part->pos.reset();
-    part->pay.reset();
-    for (const auto ext : {PostingsWriter::kDocExt, PostingsWriter::kPosExt,
-                           PostingsWriter::kPayExt}) {
-      part->dir.remove(FileName(kPartName, ext));
-    }
     part->terms.clear();
     part->terms.shrink_to_fit();
   }

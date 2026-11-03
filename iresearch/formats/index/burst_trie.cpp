@@ -822,13 +822,12 @@ void FieldWriter::Impl::write(field_id id, const FieldProperties& props,
     if (part.term_count == 0) {
       continue;
     }
-    const auto bases = _pw.Append(part.doc, part.pos, part.pay);
     TermPartReader terms{part.terms, props.index_features};
     while (terms.Next()) {
       auto meta = terms.Meta();
-      meta.doc_start += bases.doc;
-      meta.pos_start += bases.pos;
-      meta.pay_start += bases.pay;
+      meta.doc_start += part.bases.doc;
+      meta.pos_start += part.bases.pos;
+      meta.pay_start += part.bases.pay;
       const auto term = terms.Term();
       if (term_count == 0) {
         min_term.assign(term);

@@ -26,14 +26,19 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/term_keys.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 
@@ -41,6 +46,28 @@ namespace irs {
 
 struct NormProvider;
 struct TermReader;
+
+class TermRangeSink {
+ public:
+  TermRangeSink(Directory& dir, std::string_view segment,
+                IndexFeatures features);
+  ~TermRangeSink();
+
+  TermRangeSink(const TermRangeSink&) = delete;
+  TermRangeSink& operator=(const TermRangeSink&) = delete;
+
+  absl::Mutex& Mutex() noexcept { return _mutex; }
+
+  PostingsOutputs& Outputs() noexcept { return _out; }
+
+ private:
+  void Remove() noexcept;
+
+  Directory* _dir;
+  std::string _segment;
+  absl::Mutex _mutex;
+  PostingsOutputs _out;
+};
 
 class TermRangeMerge {
  public:
@@ -53,6 +80,7 @@ class TermRangeMerge {
     const NormProvider* norms;
     ScorerPtr scorer;
     size_t doc_count;
+    TermRangeSink* sink;
   };
 
   TermRangeMerge(field_id field, FieldProperties props,
@@ -97,7 +125,7 @@ class TermRangeMerge {
   Target _target{};
   const MergeProgress* _progress;
   bool _sorted;
-  absl::Mutex _mutex;
+  size_t _appended = 0;
   std::vector<uint64_t> _docs;
 };
 

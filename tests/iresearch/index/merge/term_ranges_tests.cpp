@@ -35,10 +35,13 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <random>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -151,46 +154,83 @@ std::vector<irs::doc_id_t> Docs(size_t count, irs::doc_id_t step) {
   return docs;
 }
 
+std::vector<std::string> PostingsFiles(const irs::Directory& dir) {
+  std::vector<std::string> files;
+  dir.visit([&](std::string_view name) {
+    if (name.ends_with(".doc") || name.ends_with(".pos") ||
+        name.ends_with(".pay")) {
+      files.emplace_back(name);
+    }
+    return true;
+  });
+  return files;
+}
+
+class NoPositionsDirectory final : public tests::DirectoryMock {
+ public:
+  using tests::DirectoryMock::DirectoryMock;
+
+  irs::IndexOutput::ptr create(std::string_view name) final {
+    if (name.ends_with(".pos")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("cannot create ", name));
+    }
+    return tests::DirectoryMock::create(name);
+  }
+};
+
 TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
   constexpr auto kFeatures = irs::IndexFeatures::Freq;
   irs::FieldProperties props;
   props.index_features = kFeatures;
-  const auto long_docs = Docs(1000, 3);
-  irs::MemoryDirectory part_dir;
-  irs::PostingMeta part_meta;
-  {
+  const auto write_part = [&](irs::Directory& dir,
+                              std::span<const irs::doc_id_t> docs) {
     irs::PostingsWriter writer;
-    const irs::FlushState state{.dir = &part_dir,
+    const irs::FlushState state{.dir = &dir,
                                 .name = "part",
                                 .doc_count = 4000,
                                 .index_features = kFeatures};
     writer.Prepare(state);
     writer.BeginField(props);
-    VectorPostings postings{long_docs};
-    writer.Write(postings, part_meta);
+    VectorPostings postings{docs};
+    irs::PostingMeta meta;
+    writer.Write(postings, meta);
     writer.EndField();
     writer.FinishPart();
-  }
+    return meta;
+  };
+  const auto long_docs = Docs(1000, 3);
+  irs::MemoryDirectory part_dir;
+  const auto part_meta = write_part(part_dir, long_docs);
   ASSERT_LT(irs::doc_limits::kBlockSize, part_meta.docs_count);
   const auto part_doc = part_dir.open("part.doc", irs::IOAdvice::SEQUENTIAL);
   ASSERT_NE(nullptr, part_doc);
   for (size_t lead = 20; lead != 140; ++lead) {
     SCOPED_TRACE(lead);
+    irs::MemoryDirectory lead_dir;
+    write_part(lead_dir, Docs(lead, 7));
+    const auto lead_doc = lead_dir.open("part.doc", irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(nullptr, lead_doc);
     irs::MemoryDirectory dir;
     uint64_t base = 0;
     {
+      const irs::FlushState created{.dir = &dir,
+                                    .name = "final",
+                                    .doc_count = 4000,
+                                    .index_features = kFeatures};
+      irs::PostingsOutputs outputs;
+      irs::PostingsWriter::PrepareOutputs(outputs, created);
+      irs::AppendPostings(outputs, lead_doc.get(), nullptr, nullptr);
+      base = irs::AppendPostings(outputs, part_doc.get(), nullptr, nullptr).doc;
       irs::PostingsWriter writer;
-      const irs::FlushState state{.dir = &dir,
-                                  .name = "final",
-                                  .doc_count = 4000,
-                                  .index_features = kFeatures};
-      writer.Prepare(state);
+      const irs::FlushState adopted{.dir = &dir,
+                                    .name = "final",
+                                    .doc_count = 4000,
+                                    .index_features = kFeatures,
+                                    .postings = &outputs};
+      writer.Prepare(adopted);
+      EXPECT_EQ(nullptr, outputs.doc);
       writer.BeginField(props);
-      const auto lead_docs = Docs(lead, 7);
-      VectorPostings lead_postings{lead_docs};
-      irs::PostingMeta lead_meta;
-      writer.Write(lead_postings, lead_meta);
-      base = writer.Append(part_doc.get(), nullptr, nullptr).doc;
       writer.EndField();
       writer.End();
     }
@@ -225,26 +265,68 @@ class TailPayloads final : public irs::TermPayloadWriter {
 };
 
 TEST(PostingsAppendTest, AFieldWithoutPayloadWriterKeepsThePayStreamUnpadded) {
-  irs::MemoryDirectory dir;
-  irs::PostingsWriter writer;
-  const irs::FlushState state{
-    .dir = &dir,
-    .name = "final",
-    .doc_count = 16,
-    .index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Vec,
+  const auto pay_length = [](bool then_terms) {
+    irs::MemoryDirectory dir;
+    irs::PostingsWriter writer;
+    const irs::FlushState state{
+      .dir = &dir,
+      .name = "final",
+      .doc_count = 16,
+      .index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Vec,
+    };
+    writer.Prepare(state);
+    TailPayloads payloads;
+    irs::FieldProperties vectors;
+    vectors.index_features = irs::IndexFeatures::Vec;
+    writer.BeginField(vectors, &payloads);
+    writer.EndField();
+    if (then_terms) {
+      irs::FieldProperties terms;
+      terms.index_features = irs::IndexFeatures::Freq;
+      writer.BeginField(terms);
+      writer.EndField();
+    }
+    writer.End();
+    uint64_t length = 0;
+    EXPECT_TRUE(dir.length(length, "final.pay"));
+    return length;
   };
-  writer.Prepare(state);
-  TailPayloads payloads;
-  irs::FieldProperties vectors;
-  vectors.index_features = irs::IndexFeatures::Vec;
-  writer.BeginField(vectors, &payloads);
-  writer.EndField();
-  irs::FieldProperties terms;
-  terms.index_features = irs::IndexFeatures::Freq;
-  writer.BeginField(terms);
-  EXPECT_EQ(3, writer.Append(nullptr, nullptr, nullptr).pay);
-  writer.EndField();
-  writer.End();
+  EXPECT_EQ(pay_length(false), pay_length(true));
+}
+
+TEST(PostingsAppendTest, PrepareCreatesOnlyTheOutputsItIsNotHanded) {
+  irs::MemoryDirectory dir;
+  const auto features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+                        irs::IndexFeatures::Offs;
+  irs::PostingsOutputs outputs{.doc = dir.create("final.doc")};
+  constexpr irs::byte_type kLead[]{1, 2, 3};
+  outputs.doc->WriteData(kLead, std::size(kLead));
+  {
+    irs::PostingsWriter writer;
+    writer.Prepare({
+      .dir = &dir,
+      .name = "final",
+      .doc_count = 16,
+      .index_features = features,
+      .postings = &outputs,
+    });
+    EXPECT_EQ(nullptr, outputs.doc);
+    irs::FieldProperties props;
+    props.index_features = features;
+    writer.BeginField(props);
+    writer.EndField();
+    writer.End();
+  }
+  for (const std::string_view name : {"final.pos", "final.pay"}) {
+    bool exists = false;
+    EXPECT_TRUE(dir.exists(exists, name));
+    EXPECT_TRUE(exists) << name;
+  }
+  const auto doc = dir.open("final.doc", irs::IOAdvice::SEQUENTIAL);
+  ASSERT_NE(nullptr, doc);
+  irs::byte_type lead[std::size(kLead)];
+  doc->ReadData(lead, std::size(lead));
+  EXPECT_TRUE(absl::c_equal(kLead, lead));
 }
 
 class TermPartsTest : public ::testing::TestWithParam<irs::IndexFeatures> {};
@@ -511,6 +593,86 @@ TEST_F(TermRangeMergeTest, StoppedPartsFailTheMerge) {
     const bool ok = RunPlan(plan, 4);
     EXPECT_EQ(calls.load() <= stop_after, ok);
   }
+}
+
+TEST_F(TermRangeMergeTest, PartsAppendInPartOrderWhicheverFinishesFirst) {
+  Open();
+  AddSegments(12);
+  const auto inputs = Snapshot();
+  const auto expected = ExpectedMerge(inputs);
+  auto doc_map = irs::MakeMergeDocMap(inputs, irs::IResourceManager::gNoop);
+  irs::MemoryDirectory out;
+  irs::MergePlan plan{out,
+                      doc_map,
+                      _meta,
+                      nullptr,
+                      irs::DuckDBEngine::Instance().instance(),
+                      &_field_options,
+                      {},
+                      nullptr};
+  ASSERT_TRUE(plan.Prepare(8));
+  const auto units = plan.Units();
+  std::vector<size_t> firsts;
+  std::vector<size_t> rest;
+  for (size_t unit = units.size(); unit-- != 0;) {
+    if (units[unit].kind == irs::MergeUnitKind::TermRange) {
+      (units[unit].part == 0 ? firsts : rest).push_back(unit);
+    }
+  }
+  ASSERT_FALSE(rest.empty());
+  for (const auto unit : rest) {
+    ASSERT_TRUE(plan.RunUnit(unit));
+  }
+  for (const auto unit : firsts) {
+    ASSERT_TRUE(plan.RunUnit(unit));
+  }
+  for (size_t unit = 0; unit != units.size(); ++unit) {
+    if (units[unit].kind != irs::MergeUnitKind::TermRange) {
+      ASSERT_TRUE(plan.RunUnit(unit));
+    }
+  }
+  EXPECT_EQ("", MergedDifference(out, expected));
+}
+
+TEST_F(TermRangeMergeTest, AnAbortedMergeLeavesNoPostingsFiles) {
+  Open();
+  AddSegments(4);
+  const auto inputs = Snapshot();
+  irs::MemoryDirectory out;
+  {
+    auto plan = MakePlan(out, inputs, nullptr);
+    ASSERT_TRUE(plan.Prepare(4));
+    EXPECT_FALSE(PostingsFiles(out).empty());
+    const auto units = plan.Units();
+    std::vector<size_t> later;
+    for (size_t unit = 0; unit != units.size(); ++unit) {
+      if (units[unit].kind != irs::MergeUnitKind::TermRange) {
+        continue;
+      }
+      if (units[unit].part == 0) {
+        ASSERT_TRUE(plan.RunUnit(unit));
+      } else {
+        later.push_back(unit);
+      }
+    }
+    ASSERT_FALSE(later.empty());
+    plan.Abort();
+    EXPECT_FALSE(plan.RunUnit(later.front()));
+  }
+  EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
+}
+
+TEST_F(TermRangeMergeTest, PostingsFilesThatCannotBeCreatedFailThePlan) {
+  Open();
+  AddSegments(4);
+  const auto inputs = Snapshot();
+  irs::MemoryDirectory out;
+  NoPositionsDirectory failing{out};
+  {
+    auto plan = MakePlan(failing, inputs, nullptr);
+    EXPECT_THROW(plan.Prepare(4), irs::SqlException);
+  }
+  EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
 }
 
 }  // namespace

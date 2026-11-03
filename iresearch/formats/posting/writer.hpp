@@ -26,6 +26,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -171,11 +172,7 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
-  struct Bases {
-    uint64_t doc = 0;
-    uint64_t pos = 0;
-    uint64_t pay = 0;
-  };
+  static void PrepareOutputs(PostingsOutputs& out, const FlushState& state);
 
   void Prepare(const FlushState& state);
   void BeginField(const FieldProperties& meta,
@@ -207,8 +204,6 @@ class PostingsWriter final {
   const bitset& Docs() const noexcept { return _docs; }
 
   void FinishPart();
-
-  Bases Append(IndexInput* doc, IndexInput* pos, IndexInput* pay);
 
   void End();
 
@@ -341,34 +336,49 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
   });
 }
 
-inline void PostingsWriter::Prepare(const FlushState& state) {
+inline void PostingsWriter::PrepareOutputs(PostingsOutputs& out,
+                                           const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
 
   std::string name;
 
-  // Prepare document stream
-  format_utils::PrepareOutput(name, _doc_out, state, kDocExt);
+  if (!out.doc) {
+    format_utils::PrepareOutput(name, out.doc, state, kDocExt);
+  }
 
-  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
-    // Prepare proximity stream
-    _pos.Reset();
-    _pos_group.Reset();
-    format_utils::PrepareOutput(name, _pos_out, state, kPosExt);
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos) &&
+      !out.pos) {
+    format_utils::PrepareOutput(name, out.pos, state, kPosExt);
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
   // fixed-width per-document payloads (IndexFeatures::Vec, e.g. IVF codes).
-  const bool has_offs =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Offs);
-  const bool has_vec =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
-  if (has_offs) {
+  if (IndexFeatures::None !=
+        (state.index_features & (IndexFeatures::Offs | IndexFeatures::Vec)) &&
+      !out.pay) {
+    format_utils::PrepareOutput(name, out.pay, state, kPayExt);
+  }
+}
+
+inline void PostingsWriter::Prepare(const FlushState& state) {
+  PostingsOutputs out;
+  if (state.postings) {
+    out = std::move(*state.postings);
+  }
+  PrepareOutputs(out, state);
+  _doc_out = std::move(out.doc);
+  _pos_out = std::move(out.pos);
+  _pay_out = std::move(out.pay);
+
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
+    _pos.Reset();
+    _pos_group.Reset();
+  }
+
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
     _pay.Reset();
     _pay_group.Reset();
-  }
-  if (has_offs || has_vec) {
-    format_utils::PrepareOutput(name, _pay_out, state, kPayExt);
   }
 
   _writer = PrepareScoreBoundWriter(state.scorer);
@@ -810,40 +820,36 @@ inline void PostingsWriter::FinishPart() {
   _doc_out.reset();
 }
 
-inline PostingsWriter::Bases PostingsWriter::Append(IndexInput* doc,
-                                                    IndexInput* pos,
-                                                    IndexInput* pay) {
-  if (_pos.size != 0) {
-    FlushTailPos();
-  }
-  if (_pay.size != 0) {
-    FlushTailPay();
-  }
-  FlushGroups();
-  BlockIndex::WritePad(*_doc_out);
-  const Bases bases{
-    .doc = _doc_out->Position(),
-    .pos = _pos_out ? _pos_out->Position() : 0,
-    .pay = _pay_out ? _pay_out->Position() : 0,
+inline PostingBases AppendPostings(PostingsOutputs& out, IndexInput* doc,
+                                   IndexInput* pos, IndexInput* pay) {
+  SDB_ASSERT(out.doc);
+  BlockIndex::WritePad(*out.doc);
+  const PostingBases bases{
+    .doc = out.doc->Position(),
+    .pos = out.pos ? out.pos->Position() : 0,
+    .pay = out.pay ? out.pay->Position() : 0,
   };
-  const auto copy = [](IndexInput* in, IndexOutput* out) {
+  constexpr uint64_t kChunk = uint64_t{1} << 16;
+  std::unique_ptr<byte_type[]> buffer;
+  const auto copy = [&](IndexInput* in, IndexOutput* to) {
     if (!in) {
       return;
     }
-    SDB_ASSERT(out);
-    constexpr uint64_t kChunk = uint64_t{1} << 16;
-    auto buffer = std::make_unique_for_overwrite<byte_type[]>(kChunk);
+    SDB_ASSERT(to);
+    if (!buffer) {
+      buffer = std::make_unique_for_overwrite<byte_type[]>(kChunk);
+    }
     const auto length = in->Length();
     for (uint64_t offset = 0; offset < length;) {
       const auto n = std::min(kChunk, length - offset);
       in->ReadData(offset, buffer.get(), n);
-      out->WriteData(buffer.get(), n);
+      to->WriteData(buffer.get(), n);
       offset += n;
     }
   };
-  copy(doc, _doc_out.get());
-  copy(pos, _pos_out.get());
-  copy(pay, _pay_out.get());
+  copy(doc, out.doc.get());
+  copy(pos, out.pos.get());
+  copy(pay, out.pay.get());
   return bases;
 }
 

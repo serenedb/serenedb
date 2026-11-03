@@ -420,13 +420,21 @@ void MergePlan::PlanTermRanges() {
     if (parts < 2) {
       continue;
     }
+    if (!_term_sink) {
+      _term_sink = std::make_unique<TermRangeSink>(_idx_dir, _segment.name,
+                                                   _index_features);
+    }
     auto& range = _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
       id, MergedFieldProperties(id, _field_meta_map[id], _merged_norm_ids),
       std::move(inputs), static_cast<bool>(_key_order), _progress));
-    range->Partition(
-      parts,
-      {.norms = &*_norms, .scorer = _scorer, .doc_count = _segment.docs_count},
-      _scheduler, _threads);
+    range->Partition(parts,
+                     {
+                       .norms = &*_norms,
+                       .scorer = _scorer,
+                       .doc_count = _segment.docs_count,
+                       .sink = _term_sink.get(),
+                     },
+                     _scheduler, _threads);
   }
 }
 
@@ -485,6 +493,7 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
     .scorer = _scorer,
     .doc_count = _segment.docs_count,
     .index_features = _index_features,
+    .postings = _term_sink ? &_term_sink->Outputs() : nullptr,
   };
   return _segment.docs_count == 0 ||
          WritePostings(state, _doc_map, static_cast<bool>(_key_order),

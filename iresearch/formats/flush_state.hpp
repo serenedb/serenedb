@@ -27,11 +27,18 @@
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/store/data_output.hpp"
 
 namespace irs {
 
 struct Directory;
 struct NormProvider;
+
+struct PostingsOutputs {
+  IndexOutput::ptr doc;
+  IndexOutput::ptr pos;
+  IndexOutput::ptr pay;
+};
 
 struct FlushState {
   Directory* const dir{};
@@ -40,6 +47,7 @@ struct FlushState {
   ScorerPtr scorer = nullptr;
   const size_t doc_count;
   IndexFeatures index_features{IndexFeatures::None};
+  PostingsOutputs* postings = nullptr;
 };
 
 }  // namespace irs

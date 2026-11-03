@@ -31,12 +31,14 @@
 
 namespace irs {
 
-class IndexInput;
+struct PostingBases {
+  uint64_t doc = 0;
+  uint64_t pos = 0;
+  uint64_t pay = 0;
+};
 
 struct TermPart {
-  IndexInput* doc = nullptr;
-  IndexInput* pos = nullptr;
-  IndexInput* pay = nullptr;
+  PostingBases bases;
   bytes_view terms;
   uint64_t term_count = 0;
   uint64_t total_doc_freq = 0;

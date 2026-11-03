@@ -189,6 +189,7 @@ class MergePlan {
   std::optional<InputNormProvider> _norms;
   std::optional<ReadContext> _ivf_ctx;
   std::vector<const BasicTermReader*> _cluster_readers;
+  std::unique_ptr<TermRangeSink> _term_sink;
   std::vector<std::unique_ptr<TermRangeMerge>> _term_ranges;
   uint64_t _term_volume = 0;
 };

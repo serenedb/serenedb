@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/vector.hpp>
+#include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <optional>
@@ -31,7 +32,6 @@
 namespace duckdb {
 
 class ClientContext;
-class DatabaseInstance;
 class LogicalGet;
 class FunctionData;
 
@@ -43,7 +43,12 @@ void IResearchPushdownComplexFilter(
   duckdb::FunctionData* bind_data,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
-void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+void RewriteSearchCallsToColumnRefs(
+  duckdb::OptimizerExtensionInput& input,
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
+
+void LimitTsDictScans(duckdb::OptimizerExtensionInput& input,
+                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);

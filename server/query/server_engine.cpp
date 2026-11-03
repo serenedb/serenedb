@@ -20,6 +20,7 @@
 
 #include "query/server_engine.h"
 
+#include <absl/base/no_destructor.h>
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
 
@@ -64,18 +65,12 @@
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "query/engine_host.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
-
-extern "C" const duckdb::DefaultType* duckdb_external_types(
-  duckdb::idx_t* count) {
-  const auto types = sdb::pg::ExternalTypes();
-  *count = types.size();
-  return types.data();
-}
 
 ABSL_FLAG(uint64_t, cpu_threads, 0,
           "Executor pool size at process start. 0 = let server "
@@ -90,6 +85,11 @@ ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {
+
+void InstallEngineHost(EngineMode mode) {
+  static absl::NoDestructor<EngineHost> gHost{mode};
+  duckdb::EngineHost::Install(*gHost);
+}
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // Server-mode DuckDB state lives under the datadir, never in cwd-relative
@@ -202,8 +202,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterIResearchScanFunction(db);
 
   pg::RegisterSystemTableScanFunction(db);
-
-  connector::RegisterSereneDBOptimizers(db);
 
   // The inverted index: its build plan and its store-side instance are
   // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind

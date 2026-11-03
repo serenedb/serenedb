@@ -275,14 +275,4 @@ void RegisterSereneDBStorage(
   duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
 }
 
-void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
-  duckdb::PlannerExtension::Register(
-    duckdb::DBConfig::GetConfig(db),
-    duckdb::PlannerExtension{
-      .post_bind_function = &optimizer::WrapVariantOutputs,
-      .get_sql_value_function = &pg::SystemUserValueFunction,
-    });
-  optimizer::RegisterIResearchPlanOptimizer(db);
-}
-
 }  // namespace sdb::connector

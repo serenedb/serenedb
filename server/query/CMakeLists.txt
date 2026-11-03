@@ -1,9 +1,52 @@
 target_sources(
     sereneserver
     PRIVATE
+        engine_host.cpp
         server_engine.cpp
         config.cpp
         utils.cpp
         config_variables.cpp
         transaction.cpp
+)
+
+target_include_directories(
+    sereneserver
+    SYSTEM
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/autocomplete/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/json/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/parquet/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/tpcds/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/tpch/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_avro/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_azure/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_clickhouse/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_httpfs/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_inet/src"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_markdown/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_postgres/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial/src"
+)
+
+target_link_libraries(
+    sereneserver
+    PRIVATE
+        duckdb_shell
+        core_functions_extension
+        parquet_extension
+        tpch_extension
+        tpcds_extension
+        json_extension
+        httpfs_extension
+        avro_extension
+        iceberg_extension
+        postgres_scanner_extension
+        autocomplete_extension
+        icu_extension
+        inet_extension
+        azure_extension
+        spatial_extension
+        markdown_extension
+        clickhouse_scanner_extension
 )

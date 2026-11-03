@@ -74,7 +74,6 @@ target_link_libraries(
     serenedb-tests
     PRIVATE sereneserver gtest serene_docs_corpus
 )
-sdb_link_duckdb_extensions(serenedb-tests)
 
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PRIVATE serene_docs_index)

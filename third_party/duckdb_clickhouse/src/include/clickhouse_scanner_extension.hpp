@@ -1,16 +1,19 @@
+#pragma once
+
 #ifndef DUCKDB_BUILD_LOADABLE_EXTENSION
 #define DUCKDB_BUILD_LOADABLE_EXTENSION
 #endif
 #include "duckdb.hpp"
 
-using namespace duckdb;
-
-class ClickhouseScannerExtension : public Extension {
+class ClickhouseScannerExtension : public duckdb::Extension {
 public:
-	string Name() override {
+	std::string Name() override {
 		return "clickhouse_scanner";
 	}
-	void Load(ExtensionLoader &loader) override;
+	void Load(duckdb::ExtensionLoader &loader) override;
+	std::string Version() const override;
+
+	static void OnConnectionOpened(duckdb::ClientContext &context);
 };
 
 extern "C" {

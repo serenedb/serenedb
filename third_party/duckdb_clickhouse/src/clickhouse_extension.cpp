@@ -5,6 +5,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/planner/extension_callback.hpp"
 
 #include "clickhouse_logging.hpp"
@@ -44,7 +45,7 @@ public:
 class ClickHouseExtensionCallback : public ExtensionCallback {
 public:
 	void OnConnectionOpened(ClientContext &context) override {
-		context.registered_state->Insert("clickhouse_extension", make_shared_ptr<ClickHouseExtensionState>());
+		ClickhouseScannerExtension::OnConnectionOpened(context);
 	}
 };
 
@@ -153,17 +154,31 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                          "Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)",
 	                          LogicalType::UBIGINT, Value());
 
-	// Shared dbconnector ORDER BY / LIMIT / TOP_N pushdown (with CH safety vetoes).
-	OptimizerExtension clickhouse_optimizer;
-	clickhouse_optimizer.optimize_function = ClickHouseOptimizer::Optimize;
-	OptimizerExtension::Register(config, std::move(clickhouse_optimizer));
+	if (!EngineHost::IsInstalled()) {
+		// Shared dbconnector ORDER BY / LIMIT / TOP_N pushdown (with CH safety vetoes).
+		OptimizerExtension clickhouse_optimizer;
+		clickhouse_optimizer.optimize_function = ClickHouseOptimizer::Optimize;
+		OptimizerExtension::Register(config, std::move(clickhouse_optimizer));
 
-	// Rebind-on-stale-schema recovery (registers ClickHouseExtensionState per connection).
-	ExtensionCallback::Register(config, make_shared_ptr<ClickHouseExtensionCallback>());
+		// Rebind-on-stale-schema recovery (registers ClickHouseExtensionState per connection).
+		ExtensionCallback::Register(config, make_shared_ptr<ClickHouseExtensionCallback>());
+	}
 }
 
 void ClickhouseScannerExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
+}
+
+std::string ClickhouseScannerExtension::Version() const {
+#ifdef EXT_VERSION_CLICKHOUSE_SCANNER
+	return EXT_VERSION_CLICKHOUSE_SCANNER;
+#else
+	return "";
+#endif
+}
+
+void ClickhouseScannerExtension::OnConnectionOpened(ClientContext &context) {
+	context.registered_state->Insert("clickhouse_extension", make_shared_ptr<ClickHouseExtensionState>());
 }
 
 extern "C" {

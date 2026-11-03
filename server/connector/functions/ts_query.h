@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/optimizer/optimizer_extension.hpp>
+
 namespace duckdb {
 
 class ExtensionLoader;
@@ -28,8 +30,14 @@ class ExtensionLoader;
 namespace sdb::connector {
 
 // Registers everything TSQUERY: the value type and modifier types
-// (tokenize/boost), casts, constructors, parser functions, operators,
-// predicate stubs and the constant-folding optimizer pass.
+// (tokenize/boost), casts, constructors, parser functions, operators and
+// predicate stubs.
 void RegisterTSQueryFunctions(duckdb::ExtensionLoader& loader);
+
+void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
+                          duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
+
+bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
+                            bool parent_frozen);
 
 }  // namespace sdb::connector

@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <duckdb.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
-#include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -34,6 +34,7 @@
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/planner.hpp>
 #include <functional>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -90,25 +91,19 @@ using sdb::connector::SearchColumnInfo;
 constexpr connector::ColumnId kTestTokenizerColumnId =
   connector::ColumnId{connector::kMaxRealColumnIdValue + 4};
 
-// ---------------------------------------------------------------------------
-// Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
-// hook (iresearch_plan.cpp), which fires AFTER DuckDB's built-in optimizers but
-// BEFORE ColumnBindingResolver converts BoundColumnRefExpression into
-// BoundReferenceExpression. The test stands in for that hook: it snapshots a
-// deep copy of the plan at exactly the same point, so MakeSearchFilter here
-// sees the same expression shape it would in production.
-// ---------------------------------------------------------------------------
-thread_local duckdb::unique_ptr<duckdb::LogicalOperator> tlCapturedPlan;
-
-void CaptureOptimizer(duckdb::OptimizerExtensionInput& input,
-                      duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-  tlCapturedPlan = plan->Copy(input.context);
+duckdb::unique_ptr<duckdb::LogicalOperator> OptimizedPlan(
+  duckdb::Connection& connection, std::string_view sql) {
+  auto statements = connection.ExtractStatements(sql);
+  auto& context = *connection.context;
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan;
+  context.RunFunctionInTransaction([&] {
+    duckdb::Planner planner{context};
+    planner.CreatePlan(std::move(statements[0]));
+    duckdb::Optimizer optimizer{*planner.binder, context};
+    plan = optimizer.Optimize(std::move(planner.plan));
+  });
+  return plan;
 }
-
-class CapturePlanOptimizer : public duckdb::OptimizerExtension {
- public:
-  CapturePlanOptimizer() { optimize_function = CaptureOptimizer; }
-};
 
 // Walks to the first LogicalFilter directly (or through a chain of
 // LogicalFilter/LogicalProjection) above a LogicalGet, mirroring
@@ -682,7 +677,6 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // as extra AND siblings ((a=10 AND b=t) OR (a=20 AND b=d) also becomes
     // a IN {10,20} AND b IN {t,d}) which would change the filter shape.
     opts.insert(duckdb::OptimizerType::FILTER_PULLUP);
-    duckdb::OptimizerExtension::Register(db_config, CapturePlanOptimizer());
   }
 
   void AssertFilter(
@@ -721,22 +715,21 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << "CREATE TABLE failed: " << create_res->GetError()
       << " (SQL: " << create_sql << ")";
 
-    tlCapturedPlan.reset();
     _conn.BeginTransaction();
     absl::Cleanup rollback = [&] { _conn.Rollback(); };
-    // ExtractPlan may throw duckdb::Exception on binding errors. We want
+    // OptimizedPlan may throw duckdb::Exception on binding errors. We want
     // those surfaced into the test result, not swallowed.
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan;
     try {
-      (void)_conn.ExtractPlan(sql);
+      plan = OptimizedPlan(_conn, sql);
     } catch (const std::exception& e) {
       if (must_succeed) {
-        FAIL() << "ExtractPlan threw: " << e.what();
+        FAIL() << "OptimizedPlan threw: " << e.what();
       }
       return;
     }
-    ASSERT_TRUE(tlCapturedPlan) << "optimizer hook did not fire";
 
-    auto [filter_op, get_op] = FindFilterAndGet(*tlCapturedPlan);
+    auto [filter_op, get_op] = FindFilterAndGet(*plan);
     if (!filter_op || !get_op) {
       if (must_succeed) {
         FAIL() << "No LogicalFilter above LogicalGet in plan for: " << sql;

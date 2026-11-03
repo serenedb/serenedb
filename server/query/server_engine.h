@@ -22,6 +22,8 @@
 
 #include <duckdb/main/database.hpp>
 
+#include "query/engine_host.h"
+
 namespace duckdb {
 
 struct DBConfig;
@@ -29,16 +31,16 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::server::query {
 
+void InstallEngineHost(EngineMode mode);
+
 // Pre-construct mutator handed to irs::DuckDBEngine::Initialize.
-// Installs the `serenedb` storage extension and the SET-config variables
-// it reads at attach time. Runs AFTER the lite defaults and BEFORE the
-// duckdb::DuckDB ctor.
+// Runs AFTER the lite defaults and BEFORE the duckdb::DuckDB ctor.
 void ConfigureServerDBConfig(duckdb::DBConfig& config);
 
 void RegisterEngineModules(duckdb::DatabaseInstance& db);
 
 // Post-construct fill on a live DatabaseInstance: every connector
-// function/cast/optimiser registration, the SereneDBCreateIndexPlan
+// function/cast registration, the SereneDBCreateIndexPlan
 // index-type loop, the SereneDBCopyFileSystem subsystem install, and the
 // pg::InitSystemFunctions / pg::InitSystemViews caches. Called from
 // serened main() right after DuckDBEngine::Initialize().

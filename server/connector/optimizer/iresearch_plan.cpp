@@ -1629,6 +1629,8 @@ bool TryClaimSearchFilter(
     });
 }
 
+}  // namespace
+
 void RewriteSearchCallsToColumnRefs(
   duckdb::OptimizerExtensionInput& input,
   duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
@@ -1640,6 +1642,8 @@ void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
                       duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   LimitTsDictEnumerations(*plan);
 }
+
+namespace {
 
 bool StoredColumn(const duckdb::LogicalGet& get,
                   const connector::ScanBindData& bind_data,
@@ -2124,21 +2128,6 @@ std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   }
   column_info->column_stored = column_stored;
   return column_info;
-}
-
-void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db) {
-  duckdb::OptimizerExtension::Register(
-    db.config, duckdb::OptimizerExtension{
-                 .rule = &RewriteSearchCallsToColumnRefs,
-                 .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
-                 .where = duckdb::OptimizerHookPosition::Before,
-               });
-  duckdb::OptimizerExtension::Register(
-    db.config, duckdb::OptimizerExtension{
-                 .rule = &LimitTsDictScans,
-                 .anchor = duckdb::OptimizerType::FILTER_PUSHDOWN,
-                 .where = duckdb::OptimizerHookPosition::After,
-               });
 }
 
 }  // namespace sdb::optimizer

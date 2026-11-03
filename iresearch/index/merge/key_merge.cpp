@@ -188,7 +188,7 @@ void ForEachPartition(size_t count, duckdb::TaskScheduler* scheduler,
   }
   std::atomic_size_t next{0};
   duckdb::TaskExecutor executor{
-    *scheduler, scheduler->CreateAccount(duckdb::SchedulerClass::FOREGROUND)};
+    *scheduler, scheduler->CreateAccount(duckdb::SchedulerClass::BACKGROUND)};
   for (size_t task = 0; task != tasks; ++task) {
     executor.ScheduleTask(
       duckdb::make_uniq<PartitionTask<Work>>(executor, next, count, work));

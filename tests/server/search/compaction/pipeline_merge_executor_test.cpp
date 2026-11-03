@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/synchronization/notification.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <array>
@@ -326,6 +327,67 @@ TEST_F(PipelineMergeExecutorTest, CallerRunsTheUnitsNoWorkerTook) {
   _writer->RefreshCommit();
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
+}
+
+class NotifyTask final : public duckdb::Task {
+ public:
+  explicit NotifyTask(absl::Notification& done) : _done{done} {}
+
+  duckdb::TaskExecutionResult Execute(duckdb::TaskExecutionMode) final {
+    _done.Notify();
+    return duckdb::TaskExecutionResult::TASK_FINISHED;
+  }
+
+ private:
+  absl::Notification& _done;
+};
+
+TEST_F(PipelineMergeExecutorTest, UnitsLeaveTheirWorkersSlotToOtherTasks) {
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  std::atomic<bool> armed{false};
+  std::atomic<std::thread::id> driver;
+  std::atomic<bool> held{false};
+  absl::Notification worker_inside;
+  absl::Notification ran;
+  const irs::MergeProgress progress = [&] {
+    if (!armed.load()) {
+      return true;
+    }
+    if (std::this_thread::get_id() == driver.load()) {
+      worker_inside.WaitForNotificationWithTimeout(absl::Seconds(10));
+    } else if (!held.exchange(true)) {
+      worker_inside.Notify();
+      ran.WaitForNotificationWithTimeout(absl::Seconds(10));
+    }
+    return true;
+  };
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+                      TestDb(), nullptr, progress, nullptr};
+  ASSERT_TRUE(plan.Prepare());
+  duckdb::TaskScheduler own{TestDb()};
+  own.SetThreads(1, 0);
+  own.RelaunchThreads();
+  const irs::PipelineMergeExecutor executor{TestDb(), &own, 2};
+  armed = true;
+  bool merged = false;
+  std::thread merge{[&] {
+    driver = std::this_thread::get_id();
+    merged = executor.Run(plan);
+  }};
+  EXPECT_TRUE(worker_inside.WaitForNotificationWithTimeout(absl::Seconds(10)));
+  const auto producer =
+    own.CreateProducer(own.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  own.ScheduleTask(*producer, duckdb::make_shared_ptr<NotifyTask>(ran));
+  EXPECT_TRUE(ran.WaitForNotificationWithTimeout(absl::Seconds(5)));
+  merge.join();
+  own.Join();
+  EXPECT_TRUE(merged);
 }
 
 TEST_F(PipelineMergeExecutorTest, StoppedMergeKeepsTheInputs) {

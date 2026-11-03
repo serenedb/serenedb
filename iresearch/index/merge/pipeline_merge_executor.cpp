@@ -154,7 +154,7 @@ bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   context.task_scheduler = _scheduler;
   context.SetSchedulerAccount(
     duckdb::TaskScheduler::GetScheduler(context).CreateAccount(
-      duckdb::SchedulerClass::FOREGROUND));
+      duckdb::SchedulerClass::BACKGROUND));
   context.config.threads = threads;
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     context, duckdb::SetScope::SESSION, duckdb::Value::BIGINT(0));

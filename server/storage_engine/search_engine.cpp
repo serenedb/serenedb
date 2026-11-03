@@ -24,13 +24,11 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -98,13 +96,9 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
-  const auto threads = static_cast<size_t>(MaxConcurrentCompactions());
-  _merge_tasks = std::make_unique<duckdb::TaskScheduler>(
-    irs::DuckDBEngine::Instance().instance());
-  _merge_tasks->SetThreads(threads, 0);
-  _merge_tasks->RelaunchThreads();
   _merges = std::make_unique<MergeScheduler>(
-    BackgroundScheduler::instance().executor(), threads);
+    BackgroundScheduler::instance().executor(),
+    static_cast<size_t>(MaxConcurrentCompactions()));
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
@@ -114,7 +108,6 @@ void SearchEngine::stop() {
   _merges->Stop();
   _loops.Done();
   _loops.Wait();
-  _merge_tasks->Join();
 }
 
 template<typename Storage>

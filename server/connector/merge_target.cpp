@@ -43,6 +43,7 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -268,8 +269,13 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
     return;
   }
   merged.outcome.error = irs::CompactionError::Fail;
-  merged = irs::GetBlocking(_store->RunMergeAsync(
-    std::move(tickets.front()), progress, field_options, env, executor));
+  merged = irs::GetBlocking(BackgroundScheduler::instance()
+                              .Run([&] {
+                                return _store->RunMergeAsync(
+                                  std::move(tickets.front()), progress,
+                                  field_options, env, executor);
+                              })
+                              .On(nullptr));
 }
 
 void MergeTarget::Publish() const {

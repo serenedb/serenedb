@@ -23,6 +23,8 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/numeric/int128.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <atomic>
@@ -635,6 +637,7 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
 bool MergePlan::RunUnit(size_t unit) {
   SDB_ASSERT(unit < _units.size());
   SDB_WAIT_ON_FAILURE("pause_merge_unit");
+  SDB_IF_FAILURE("slow_merge_unit") { absl::SleepFor(absl::Seconds(5)); }
   SDB_IF_FAILURE("irs::MergeUnit") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }

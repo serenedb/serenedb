@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
@@ -60,8 +59,6 @@ class SearchEngine final {
   void stop();
 
   MergeScheduler& Merges() noexcept { return *_merges; }
-
-  duckdb::TaskScheduler& MergeTasks() noexcept { return *_merge_tasks; }
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them. Templated on the storage type
@@ -104,7 +101,6 @@ class SearchEngine final {
  private:
   std::atomic<bool> _stopping{false};
   std::atomic<uint32_t> _running_ann_workers{0};
-  std::unique_ptr<duckdb::TaskScheduler> _merge_tasks;
   std::unique_ptr<MergeScheduler> _merges;
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the

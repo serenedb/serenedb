@@ -18,6 +18,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+import quack_wire
 from serened import reserve_port
 
 SERENED_BIN = os.environ.get(
@@ -482,6 +483,34 @@ def test_lost_session_reconnects(servers) -> None:
             "SELECT count(*) FROM b.public.t").fetchone() == (3,)
 
 
+@pytest.mark.faults
+def test_expired_lease_reconnects(servers) -> None:
+    conn_a, conn_b, quack_b, pg_a = servers
+    conn_b.execute("SET quack_max_heartbeat_timeout = 3")
+    conn_a.execute(f"ATTACH 'quack:127.0.0.1:{quack_b}' AS leased "
+                   "(TOKEN 'postgres:', HEARTBEAT_TIMEOUT 3)")
+    try:
+        with _connect(pg_a, time.monotonic() + 10) as conn:
+            assert conn.execute(
+                "SELECT count(*) FROM leased.public.t").fetchone() == (3,)
+            conn_a.execute("SET sdb_faults = 'quack_heartbeat_paused'")
+            try:
+                conn_b.execute("SET sdb_faults = 'quack_sweep_paused'")
+                try:
+                    time.sleep(4)
+                    with pytest.raises(psycopg.Error, match="lease expired"):
+                        conn.execute("SELECT count(*) FROM leased.public.t")
+                finally:
+                    conn_b.execute("SET sdb_faults = '-quack_sweep_paused'")
+            finally:
+                conn_a.execute("SET sdb_faults = '-quack_heartbeat_paused'")
+            assert conn.execute(
+                "SELECT count(*) FROM leased.public.t").fetchone() == (3,)
+    finally:
+        conn_b.execute("RESET quack_max_heartbeat_timeout")
+        conn_a.execute("DETACH leased")
+
+
 def test_prepared_scan_after_lost_session(servers) -> None:
     _, conn_b, quack_b, pg_a = servers
 
@@ -859,3 +888,78 @@ def test_shell_pg_wire_and_quack_agree(servers) -> None:
         "rows,ints,sum_b,avg_d,sum_n,max_s,min_dt,max_ts",
         "3,2,9999999999,0.625,11.84,two,1999-12-31,2026-01-02 03:04:05",
     ]
+
+
+def test_send_data_refuses_forged_vectors(servers) -> None:
+    _, conn_b, quack_b, _ = servers
+    bigint_list = quack_wire.list_type(
+        quack_wire.logical_type(quack_wire.BIGINT))
+    batches = {
+        "\"entries\" holds 4096 elements instead of 1": quack_wire.chunk(
+            1, [bigint_list],
+            [quack_wire.list_vector(0, 4096, quack_wire.fixed_vector(b""))]),
+        "lengths exceed its 3 bytes": quack_wire.chunk(
+            1, [quack_wire.logical_type(quack_wire.VARCHAR)],
+            [quack_wire.string_vector([100], b"abc")]),
+    }
+    session = quack_wire.Session(quack_b, BEARER)
+    try:
+        for error, batch in batches.items():
+            message_type, message = session.send_data("no_stream", batch)
+            assert message_type == quack_wire.ERROR_RESPONSE
+            assert error in message
+    finally:
+        session.close()
+    assert conn_b.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_send_data_checks_batches_against_their_stream(servers) -> None:
+    _, conn_b, quack_b, _ = servers
+    varchar = quack_wire.logical_type(quack_wire.VARCHAR)
+    cases = (
+        ("BIGINT", quack_wire.chunk(
+            1, [varchar], [quack_wire.string_vector([5], b"hello")]),
+         "column types of its data stream"),
+        ("VARCHAR", quack_wire.chunk(
+            1, [varchar], [quack_wire.string_vector([2], b"\xff\xfe")]),
+         "Invalid UTF-8"),
+        ("BOOLEAN", quack_wire.chunk(
+            1, [quack_wire.logical_type(quack_wire.BOOLEAN)],
+            [quack_wire.fixed_vector(b"\x02")]),
+         "Invalid BOOLEAN value 2"),
+    )
+    session = quack_wire.Session(quack_b, BEARER)
+    try:
+        for query_uuid, (column_type, batch, error) in enumerate(cases, 1):
+            stream = f"checked_{query_uuid}"
+            session.prepare(
+                f"SELECT * FROM scan_data_from_quack_client('{stream}', "
+                f"NULL::STRUCT(a {column_type}))", query_uuid)
+            message_type, message = session.send_data(stream, batch)
+            assert message_type == quack_wire.ERROR_RESPONSE
+            assert error in message
+    finally:
+        session.close()
+    assert conn_b.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_connect_agrees_on_a_storage_version(servers) -> None:
+    _, _, quack_b, _ = servers
+    newer = (100 << 32) + 7
+    session = quack_wire.Session(quack_b, BEARER, str(newer))
+    try:
+        assert session.message_type == quack_wire.CONNECTION_RESPONSE
+        agreed = session.serenedb_storage_version
+        assert 0 < agreed < newer
+        assert session.prepare("SELECT 42", 1)[0] != quack_wire.ERROR_RESPONSE
+    finally:
+        session.close()
+    session = quack_wire.Session(quack_b, BEARER, str(agreed))
+    session.close()
+    assert session.serenedb_storage_version == agreed
+    for header, error in (("69", "writes storage version v2.0.0 at newest"),
+                          ("abc", "names no storage version")):
+        session = quack_wire.Session(quack_b, BEARER, header)
+        session.close()
+        assert session.message_type == quack_wire.ERROR_RESPONSE
+        assert error in session.error

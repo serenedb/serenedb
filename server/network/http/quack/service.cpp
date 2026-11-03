@@ -394,6 +394,7 @@ yaclib::Future<> Service::SweepLoop() {
     if (Stopping() || scheduler.IsStopping()) {
       break;
     }
+    SDB_IF_FAILURE("quack_sweep_paused") { continue; }
     _core.Sweep();
   }
   co_return {};
@@ -404,7 +405,7 @@ yaclib::Task<> Service::Handle(RequestContext& context,
                                HttpResponseWriter& writer) {
   BodyReader body{request.body};
   duckdb::QuackRequest quack_request{
-    body, !request.Header(duckdb::QUACK_SERENEDB_HEADER).empty()};
+    body, std::string{request.Header(duckdb::QUACK_SERENEDB_HEADER)}};
   Host host{*this, context};
   const auto& task = context.Resumer();
   const duckdb::QuackWaker waker = [task] { task->RequestRun(); };

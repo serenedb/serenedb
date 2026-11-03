@@ -16,11 +16,11 @@ FROM range(1, 6001) t(g)
 
 statement ok
 CREATE INDEX ptk_text_idx ON ptk USING inverted (id, body ptk_words) INCLUDE (body, n)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)')
+    WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0)
 
 statement ok
 CREATE INDEX ptk_pos_idx ON ptk USING inverted (id, body ptk_words_pos) INCLUDE (n)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)')
+    WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0)
 
 statement ok
 VACUUM (REFRESH_TABLE) ptk

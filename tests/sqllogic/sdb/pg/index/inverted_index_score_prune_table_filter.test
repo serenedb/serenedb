@@ -240,7 +240,7 @@ FROM range(1, 40001) t(g);
 
 statement ok
 CREATE INDEX wtw_idx ON wtw USING inverted (id, body wtf_words) INCLUDE (n, body)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)', compaction_interval = 0);
 
 
 statement ok

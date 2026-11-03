@@ -299,7 +299,7 @@ TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
   EXPECT_FALSE(Started("a3"));
   EXPECT_EQ(1, _board.helpers["a1"]);
   EXPECT_EQ(0, _board.helpers["a2"]);
-  EXPECT_EQ(0, scheduler->Wanted(*first));
+  EXPECT_EQ(1, scheduler->Wanted(*first));
 
   Enqueue(*scheduler, second, "b1", 512 * kMiB);
   EXPECT_FALSE(Started("b1"));
@@ -311,6 +311,23 @@ TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
   EXPECT_EQ(1, scheduler->Wanted(*first));
   CompleteAll(MergeOutcome::Merged);
   EXPECT_EQ(3, scheduler->Wanted(*first));
+}
+
+TEST_F(MergeSchedulerTest, SmallMergesRunBesideBigMergesWaitingForTheirTurn) {
+  auto scheduler = Make(4);
+  auto relation = Relation(1);
+  EnqueueRound(*scheduler, relation,
+               {{.name = "big1", .bytes = 512 * kMiB},
+                {.name = "big2", .bytes = 512 * kMiB},
+                {.name = "big3", .bytes = 512 * kMiB}});
+  EXPECT_TRUE(Started("big1"));
+  EXPECT_TRUE(Started("big2"));
+  EXPECT_FALSE(Started("big3"));
+  ASSERT_EQ(1, scheduler->Wanted(*relation));
+  Enqueue(*scheduler, relation, "small", 8 * kMiB);
+  EXPECT_TRUE(Started("small"));
+  EXPECT_EQ(0, scheduler->Wanted(*relation));
+  CompleteAll(MergeOutcome::Merged);
 }
 
 TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {

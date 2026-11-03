@@ -20,6 +20,7 @@
 
 #include "search/compaction/merge_scheduler.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 
@@ -156,8 +157,17 @@ size_t MergeScheduler::Wanted(const Relation& relation) const {
   if (_stopping || relation.paused != 0) {
     return 0;
   }
+  const auto queued_big = static_cast<size_t>(
+    absl::c_count_if(_queue, [&relation](const auto& entry) {
+      return entry->relation.get() == &relation &&
+             entry->estimate.lane == MergeLane::Big;
+    }));
+  const auto room = RelationCap() > relation.running_big
+                      ? RelationCap() - relation.running_big
+                      : 0;
+  const auto blocked = queued_big > room ? queued_big - room : 0;
   const auto round = RoundSize();
-  const auto used = relation.queued + relation.running;
+  const auto used = relation.queued + relation.running - blocked;
   return used < round ? round - used : 0;
 }
 

@@ -27,7 +27,7 @@ namespace tests::merge {
 
 irs::PipelineMergeExecutor MakeExecutor(size_t threads) {
   return irs::PipelineMergeExecutor{irs::DuckDBEngine::Instance().instance(),
-                                    nullptr, threads};
+                                    threads};
 }
 
 bool RunPlan(irs::MergePlan& plan, size_t threads) {

@@ -291,6 +291,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
     _context{&context},
     _request{std::move(request)} {
   _target.Publish();
+  search::GetSearchEngine().Maintenance().Enter(context).reset();
   Plan();
   if (!_plan.merges.empty()) {
     _lease = _target.TakeOver();

@@ -723,7 +723,7 @@ TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {
               auto trx = writer->GetBatch();
               InsertName(trx, kNames[inserts[i]]);
               if (((reset >> i) & 1U) == 1U) {
-                trx.Reset();
+                trx.Abort();
               }
               ASSERT_TRUE(trx.Commit());
             }
@@ -780,7 +780,7 @@ TEST_P(SortedIndexStressTestCase, commit_on_tick) {
           if (aborted) {
             trxs[w].Abort();
           } else {
-            ASSERT_TRUE(trxs[w].Commit(tick));
+            ASSERT_TRUE(trxs[w].Commit({.offset = tick}));
           }
           if (refresh) {
             writers[w]->RefreshCommit();
@@ -824,7 +824,7 @@ TEST_P(SortedIndexStressTestCase, split_empty_commit) {
     InsertName(trx, "B");
     InsertName(trx, "C");
     trx.Remove(ByName("A"));
-    ASSERT_TRUE(trx.Commit(10));
+    ASSERT_TRUE(trx.Commit({.offset = 10}));
     InsertName(trx, "D");
     trx.Remove(ByName("B"));
     trx.Remove(ByName("C"));
@@ -852,11 +852,11 @@ TEST_P(SortedIndexStressTestCase, remove_tick) {
       InsertName(trx, "B");
       InsertName(trx, "C");
       trx.Remove(ByName("A"));
-      ASSERT_TRUE(trx.Commit(10));
+      ASSERT_TRUE(trx.Commit({.offset = 10}));
       InsertName(trx, "D");
       InsertName(trx, "E");
       trx.Remove(ByName("E"));
-      ASSERT_TRUE(trx.Commit(20));
+      ASSERT_TRUE(trx.Commit({.offset = 20}));
       ASSERT_TRUE(writer->RefreshCommit());
     }
     ExpectSameNames(*twins.plain, *twins.sorted);

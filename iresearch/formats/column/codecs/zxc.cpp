@@ -22,6 +22,7 @@
 
 #include <zxc_buffer.h>
 #include <zxc_constants.h>
+#include <zxc_error.h>
 
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
@@ -64,32 +65,33 @@ size_t Zxc::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(zxc_compress_bound(raw_size));
 }
 
-Zxc::Compressor::Compressor() : _ctx{zxc_create_cctx(nullptr)} {
+Zxc::Compressor::Compressor() : _ctx{zxc_create_cctx()} {
   SDB_ENSURE(_ctx, "zxc: cannot create a compression context");
 }
 
 void Zxc::Compressor::LoadDictionary(std::string_view dictionary) {
-  _dictionary = ZxcDictionary(dictionary);
+  dictionary = ZxcDictionary(dictionary);
+  _dictionary = !dictionary.empty();
+  if (!_dictionary) {
+    return;
+  }
+  if (!_block_ctx) {
+    _block_ctx.reset(zxc_create_cctx());
+    SDB_ENSURE(_block_ctx, "zxc: cannot create a compression context");
+  }
+  const auto rc = zxc_cctx_set_dict(_block_ctx.get(), dictionary.data(),
+                                    dictionary.size(), nullptr);
+  SDB_ENSURE(rc == ZXC_OK, "zxc: cannot load a dictionary: ", rc);
 }
 
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity) {
-  zxc_compress_opts_t opts{};
-  opts.level = _level;
-  if (_dictionary.empty() || size == 0 || size > ZXC_BLOCK_SIZE_MAX) {
-    const auto n =
-      zxc_compress_cctx(_ctx.get(), src, size, dst, capacity, &opts);
-    SDB_ENSURE(n > 0, "zxc compression failed: ", n);
-    return static_cast<size_t>(n);
-  }
-  if (!_block_ctx) {
-    _block_ctx.reset(zxc_create_cctx(nullptr));
-    SDB_ENSURE(_block_ctx, "zxc: cannot create a compression context");
-  }
-  opts.dict = _dictionary.data();
-  opts.dict_size = _dictionary.size();
-  const auto n =
-    zxc_compress_block(_block_ctx.get(), src, size, dst, capacity, &opts);
+  const bool block = _dictionary && size != 0 && size <= ZXC_BLOCK_SIZE_MAX;
+  auto* ctx = block ? _block_ctx.get() : _ctx.get();
+  const auto rc = zxc_cctx_set_param(ctx, ZXC_C_LEVEL, _level);
+  SDB_ENSURE(rc == ZXC_OK, "zxc: cannot set level ", _level, ": ", rc);
+  const auto n = block ? zxc_compress_block(ctx, src, size, dst, capacity)
+                       : zxc_compress_cctx(ctx, src, size, dst, capacity);
   SDB_ENSURE(n > 0, "zxc compression failed: ", n);
   return static_cast<size_t>(n);
 }
@@ -105,8 +107,7 @@ void Zxc::Decompressor::SetDictionary(std::string_view dictionary) noexcept {
 bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
                                    size_t raw_size) noexcept {
   if (_dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
-    const auto n =
-      zxc_decompress_dctx(_ctx.get(), src, size, dst, raw_size, nullptr);
+    const auto n = zxc_decompress_dctx(_ctx.get(), src, size, dst, raw_size);
     return n >= 0 && static_cast<size_t>(n) == raw_size;
   }
   if (!_block_ctx) {
@@ -115,11 +116,12 @@ bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
       return false;
     }
   }
-  zxc_decompress_opts_t opts{};
-  opts.dict = _dictionary.data();
-  opts.dict_size = _dictionary.size();
-  const auto n = zxc_decompress_block_safe(_block_ctx.get(), src, size, dst,
-                                           raw_size, &opts);
+  if (zxc_dctx_set_dict(_block_ctx.get(), _dictionary.data(),
+                        _dictionary.size(), nullptr) != ZXC_OK) {
+    return false;
+  }
+  const auto n =
+    zxc_decompress_block_safe(_block_ctx.get(), src, size, dst, raw_size);
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 

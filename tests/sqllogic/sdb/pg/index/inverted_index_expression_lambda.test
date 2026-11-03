@@ -5,7 +5,7 @@ CREATE TEXT SEARCH DICTIONARY iel_kw AS keyword() WITH (frequency)
 
 
 statement ok
-CREATE MACRO iel_names(l) AS list_transform(l, x -> x.a)
+CREATE MACRO iel_names(l) AS list_transform(l, lambda x: x.a)
 
 
 statement ok
@@ -13,7 +13,7 @@ CREATE TABLE iel_search (id INTEGER, tags VARCHAR[], parts STRUCT(a VARCHAR, b I
 
 
 statement ok
-CREATE INDEX iel_search_idx ON iel_search USING inverted (id, (list_transform(tags, x -> lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, p -> p.b > 1)) included())
+CREATE INDEX iel_search_idx ON iel_search USING inverted (id, (list_transform(tags, lambda x: lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, lambda p: p.b > 1)) included())
 
 
 statement ok
@@ -25,7 +25,7 @@ VACUUM (REFRESH_TABLE) iel_search
 
 
 query
-SELECT id FROM iel_search WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+SELECT id FROM iel_search WHERE (list_transform(tags, lambda x: lower(x))) @@ ts_like('red') ORDER BY id
 ----
 id
 1
@@ -45,7 +45,7 @@ VACUUM (REFRESH_TABLE) iel_search
 
 
 query
-SELECT id FROM iel_search WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+SELECT id FROM iel_search WHERE (list_transform(tags, lambda x: lower(x))) @@ ts_like('red') ORDER BY id
 ----
 id
 1
@@ -70,11 +70,11 @@ CREATE VIEW iel_view AS SELECT * FROM read_parquet('${__TEST_DIR__}/iel_view.par
 
 
 statement ok
-CREATE INDEX iel_view_idx ON iel_view USING inverted (id, (list_transform(tags, x -> lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, p -> p.b > 1)) included())
+CREATE INDEX iel_view_idx ON iel_view USING inverted (id, (list_transform(tags, lambda x: lower(x))) iel_kw, (iel_names(parts)) iel_kw, (list_filter(parts, lambda p: p.b > 1)) included())
 
 
 query
-SELECT id FROM iel_view_idx WHERE (list_transform(tags, x -> lower(x))) @@ ts_like('red') ORDER BY id
+SELECT id FROM iel_view_idx WHERE (list_transform(tags, lambda x: lower(x))) @@ ts_like('red') ORDER BY id
 ----
 id
 1

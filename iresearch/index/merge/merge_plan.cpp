@@ -30,6 +30,7 @@
 #include <atomic>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
 #include <limits>
@@ -439,20 +440,18 @@ void MergePlan::PlanTermRanges() {
   for (const auto id : ids) {
     std::vector<TermRangeMerge::Input> inputs;
     uint64_t terms = 0;
-    bool fixed = false;
     for (const auto& input : _doc_map) {
       const auto* reader = StringTerms(*input.reader, id);
       if (!reader) {
         continue;
       }
-      fixed = fixed || reader->key_width != 0;
       terms += reader->size();
       _term_volume += reader->total_term_freq();
       inputs.push_back({.terms = reader, .remap = &input.remap});
     }
     const auto parts =
       std::min<uint64_t>(terms / kTermsPerPart, _threads * kPartsPerThread);
-    if (fixed || parts < 2) {
+    if (parts < 2) {
       continue;
     }
     if (!_term_sink) {
@@ -471,7 +470,7 @@ void MergePlan::PlanTermRanges() {
                        .doc_count = _segment.docs_count,
                        .sink = _term_sink.get(),
                      },
-                     _scheduler, _threads);
+                     duckdb::TaskScheduler::GetScheduler(_db), _threads);
   }
 }
 
@@ -566,9 +565,8 @@ bool MergePlan::WriteIndex(MergeStepClock& clock) {
   return true;
 }
 
-bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
+bool MergePlan::Prepare(size_t threads) {
   _threads = threads;
-  _scheduler = scheduler;
   MergeStepClock clock{_profile};
   uint64_t live_docs = 0;
   for (const auto& input : _doc_map) {
@@ -592,7 +590,9 @@ bool MergePlan::Prepare(size_t threads, duckdb::TaskScheduler* scheduler) {
       threads > 1
         ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
         : 1;
-    if (!_key_order->Prepare(partitions, _progress, _scheduler, threads)) {
+    if (!_key_order->Prepare(partitions, _progress,
+                             duckdb::TaskScheduler::GetScheduler(_db),
+                             threads)) {
       return false;
     }
     _segment.docs_count = _key_order->Order().Rows();

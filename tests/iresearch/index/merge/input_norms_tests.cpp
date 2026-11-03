@@ -154,7 +154,11 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
         _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
       }
       _order = std::make_unique<irs::KeyOrder>(_order_map, *sort, nullptr);
-      ASSERT_TRUE(_order->Prepare(1, [] { return true; }));
+      ASSERT_TRUE(_order->Prepare(
+        1, [] { return true; },
+        duckdb::TaskScheduler::GetScheduler(
+          irs::DuckDBEngine::Instance().instance()),
+        1));
     }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,
                                            irs::tests::DefaultReaderOptions());

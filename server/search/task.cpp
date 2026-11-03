@@ -32,7 +32,6 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <exception>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -165,9 +164,8 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    auto& db = irs::DuckDBEngine::Instance().instance();
     const irs::PipelineMergeExecutor executor{
-      db, &duckdb::TaskScheduler::GetScheduler(db), 1 + helpers};
+      irs::DuckDBEngine::Instance().instance(), 1 + helpers};
     auto merged = co_await _storage->RunMergeAsync(
       ClaimMaintenance(), std::move(_ticket), progress, options.get(),
       &AnnBuildEnv(), executor);
@@ -197,7 +195,8 @@ class StorageMergeJob final : public MergeJob {
 };
 
 bool PlanMerges(const std::shared_ptr<Store>& idx, MergeScheduler& merges) {
-  if (IsBackupActive()) {
+  const auto maintenance = ClaimMaintenance();
+  if (!maintenance) {
     return false;
   }
   SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");

@@ -29,6 +29,8 @@
 #include <duckdb.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/main/config.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/interrupt.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -69,6 +71,19 @@ duckdb::DatabaseInstance& TestDb() {
 duckdb::ClientContext& TestContext() {
   static auto* conn = new duckdb::Connection{TestDb()};
   return *conn->context;
+}
+
+[[nodiscard]] auto PinWorkers(duckdb::idx_t total, duckdb::idx_t external) {
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(TestDb());
+  scheduler.SetThreads(total, external);
+  scheduler.RelaunchThreads();
+  return absl::Cleanup{[&scheduler] {
+    const auto& config = duckdb::DBConfig::GetConfig(TestDb());
+    scheduler.SetThreads(
+      config.options.maximum_threads,
+      duckdb::Settings::Get<duckdb::ExternalThreadsSetting>(config));
+    scheduler.RelaunchThreads();
+  }};
 }
 
 catalog::ColumnTokenizer KeywordTokenizer(irs::field_id) {
@@ -164,23 +179,25 @@ class PipelineMergeExecutorTest : public ::testing::Test {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
     DuckDBSearchSinkInsertWriter sink{
       trx, KeywordTokenizer, std::array<ColumnId, 1>{kValueColumn},
-      NoEntryInfoProvider(),
-      PkPolicy{.index_term = false, .column = catalog::PkColumnKind::Has}};
+      NoEntryInfoProvider(), catalog::PkColumnKind::Has};
     for (size_t first = 0; first < rowids.size();
          first += STANDARD_VECTOR_SIZE) {
       const auto n =
         std::min<size_t>(STANDARD_VECTOR_SIZE, rowids.size() - first);
       duckdb::Vector ids{duckdb::LogicalType::BIGINT, n};
-      duckdb::Vector values{duckdb::LogicalType::BIGINT, n};
+      duckdb::Vector values{duckdb::LogicalType::VARCHAR, n};
       auto* id_data = duckdb::FlatVector::GetDataMutable<int64_t>(ids);
-      auto* value_data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+      auto* value_data =
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(values);
       for (size_t i = 0; i < n; ++i) {
         id_data[i] = rowids[first + i];
-        value_data[i] = rowids[first + i] * 10;
+        value_data[i] = duckdb::StringVector::AddString(
+          values, absl::StrCat("v", rowids[first + i] * 10));
       }
-      sink.Init(n, PkChunk{.column = &ids});
+      sink.Init(n, &ids);
       sink.SwitchColumn(
-        ColumnDescriptor{kValueColumn, duckdb::LogicalType::BIGINT}, values, n);
+        ColumnDescriptor{kValueColumn, duckdb::LogicalType::VARCHAR}, values,
+        n);
       sink.Finish();
     }
     ASSERT_TRUE(trx.Commit());
@@ -241,17 +258,19 @@ class PipelineMergeExecutorTest : public ::testing::Test {
     for (const auto& segment : reader) {
       const auto rowids = Read(segment, kGeneratedPKId);
       for (const auto id : segment.field_ids()) {
-        for (auto it = segment.field(id)->iterator(); it->next();) {
-          const irs::bstring term{it->value()};
-          auto postings = it->postings(irs::IndexFeatures::None);
-          auto mask = segment.MaskedDocs();
-          irs::doc_id_t docs[irs::doc_limits::kBlockSize];
-          uint32_t freqs[irs::doc_limits::kBlockSize];
-          while (const auto count = postings->NextDocs(docs, freqs)) {
-            for (uint32_t i = 0; i < count; ++i) {
-              if (!mask.Contains(docs[i])) {
-                out.emplace_back(id, term,
-                                 rowids[docs[i] - irs::doc_limits::min()]);
+        for (const auto* field : segment.fields(id)) {
+          for (auto it = field->iterator(); it->next();) {
+            const irs::bstring term{it->value()};
+            auto postings = it->postings(irs::IndexFeatures::None);
+            auto mask = segment.MaskedDocs();
+            irs::doc_id_t docs[irs::doc_limits::kBlockSize];
+            uint32_t freqs[irs::doc_limits::kBlockSize];
+            while (const auto count = postings->NextDocs(docs, freqs)) {
+              for (uint32_t i = 0; i < count; ++i) {
+                if (!mask.Contains(docs[i])) {
+                  out.emplace_back(id, term,
+                                   rowids[docs[i] - irs::doc_limits::min()]);
+                }
               }
             }
           }
@@ -269,7 +288,7 @@ class PipelineMergeExecutorTest : public ::testing::Test {
 TEST_F(PipelineMergeExecutorTest, MergesKeepEveryRow) {
   const auto before = Rows();
   ASSERT_EQ(4, _writer->GetSnapshot().size());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  irs::PipelineMergeExecutor executor{TestDb(), 8};
   const auto result =
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
   ASSERT_TRUE(result);
@@ -282,8 +301,8 @@ TEST_F(PipelineMergeExecutorTest, MergesKeepEveryRow) {
 
 TEST_F(PipelineMergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
   const auto before = Postings();
-  ASSERT_LT(Rows().size(), before.size());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  ASSERT_EQ(Rows().size(), before.size());
+  irs::PipelineMergeExecutor executor{TestDb(), 8};
   ASSERT_TRUE(
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   _writer->RefreshCommit();
@@ -293,7 +312,7 @@ TEST_F(PipelineMergeExecutorTest, MergedPostingsKeepEveryRowsTerms) {
 
 TEST_F(PipelineMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   const auto before = Rows();
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 1};
+  irs::PipelineMergeExecutor executor{TestDb(), 1};
   EXPECT_EQ(1, executor.Threads());
   ASSERT_TRUE(
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
@@ -302,26 +321,10 @@ TEST_F(PipelineMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   EXPECT_EQ(before, Rows());
 }
 
-TEST_F(PipelineMergeExecutorTest, MergesRunOnTheSchedulerTheyAreGiven) {
-  const auto before = Rows();
-  duckdb::TaskScheduler own{TestDb()};
-  own.SetThreads(4, 0);
-  own.RelaunchThreads();
-  irs::PipelineMergeExecutor executor{TestDb(), &own, 4};
-  ASSERT_TRUE(
-    tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
-  own.Join();
-  _writer->RefreshCommit();
-  EXPECT_EQ(1, _writer->GetSnapshot().size());
-  EXPECT_EQ(before, Rows());
-}
-
 TEST_F(PipelineMergeExecutorTest, CallerRunsTheUnitsNoWorkerTook) {
   const auto before = Rows();
-  duckdb::TaskScheduler lonely{TestDb()};
-  lonely.SetThreads(1, 1);
-  lonely.RelaunchThreads();
-  irs::PipelineMergeExecutor executor{TestDb(), &lonely, 4};
+  const auto restore = PinWorkers(1, 1);
+  irs::PipelineMergeExecutor executor{TestDb(), 4};
   ASSERT_TRUE(
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor));
   _writer->RefreshCommit();
@@ -370,10 +373,9 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveTheirWorkersSlotToOtherTasks) {
   irs::MergePlan plan{out,      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare());
-  duckdb::TaskScheduler own{TestDb()};
-  own.SetThreads(1, 0);
-  own.RelaunchThreads();
-  const irs::PipelineMergeExecutor executor{TestDb(), &own, 2};
+  const auto restore = PinWorkers(1, 0);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(TestDb());
+  const irs::PipelineMergeExecutor executor{TestDb(), 2};
   armed = true;
   bool merged = false;
   std::thread merge{[&] {
@@ -381,18 +383,17 @@ TEST_F(PipelineMergeExecutorTest, UnitsLeaveTheirWorkersSlotToOtherTasks) {
     merged = executor.Run(plan);
   }};
   EXPECT_TRUE(worker_inside.WaitForNotificationWithTimeout(absl::Seconds(10)));
-  const auto producer =
-    own.CreateProducer(own.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
-  own.ScheduleTask(*producer, duckdb::make_shared_ptr<NotifyTask>(ran));
+  const auto producer = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  scheduler.ScheduleTask(*producer, duckdb::make_shared_ptr<NotifyTask>(ran));
   EXPECT_TRUE(ran.WaitForNotificationWithTimeout(absl::Seconds(5)));
   merge.join();
-  own.Join();
   EXPECT_TRUE(merged);
 }
 
 TEST_F(PipelineMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   const auto before = Rows();
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  irs::PipelineMergeExecutor executor{TestDb(), 4};
   std::atomic<size_t> calls{0};
   const auto result = tests::Compact(
     *_writer, FullMerge(), nullptr, [&] { return calls.fetch_add(1) < 2; },
@@ -420,7 +421,7 @@ TEST_F(PipelineMergeExecutorTest, StopAtAnyPointFailsTheMerge) {
     EXPECT_TRUE(absl::c_any_of(plan.Units(), [](const irs::MergeUnit& unit) {
       return unit.kind == irs::MergeUnitKind::TermRange;
     }));
-    irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+    irs::PipelineMergeExecutor executor{TestDb(), 8};
     return executor.Run(plan);
   };
   std::atomic<size_t> calls{0};
@@ -447,7 +448,7 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
   }
   const auto before = Rows();
   const auto postings = Postings();
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  irs::PipelineMergeExecutor executor{TestDb(), 4};
   const auto result =
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
   ASSERT_TRUE(result);
@@ -470,13 +471,10 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesPartitionOnTheirScheduler) {
   }
   const auto before = Rows();
   const auto postings = Postings();
-  duckdb::TaskScheduler own{TestDb()};
-  own.SetThreads(4, 0);
-  own.RelaunchThreads();
-  irs::PipelineMergeExecutor executor{TestDb(), &own, 4};
+  const auto restore = PinWorkers(4, 0);
+  irs::PipelineMergeExecutor executor{TestDb(), 4};
   const auto result =
     tests::Compact(*_writer, FullMerge(), nullptr, {}, nullptr, executor);
-  own.Join();
   ASSERT_TRUE(result);
   EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Postings), 0);
   _writer->RefreshCommit();
@@ -548,7 +546,7 @@ TEST_F(PipelineMergeExecutorTest, PostingsMergeInTermRanges) {
               return unit.kind == irs::MergeUnitKind::TermRange &&
                      unit.id == part->id;
             }));
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
+  irs::PipelineMergeExecutor executor{TestDb(), 8};
   ASSERT_TRUE(executor.Run(plan));
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
 }
@@ -691,7 +689,7 @@ TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {
   irs::MergePlan plan{failing,  doc_map, meta, nullptr,
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare());
-  irs::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  irs::PipelineMergeExecutor executor{TestDb(), 4};
   EXPECT_THROW(executor.Run(plan), irs::SqlException);
 }
 

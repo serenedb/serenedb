@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -36,6 +37,7 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <exception>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/store/directory_attributes.hpp>
@@ -117,7 +119,9 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
              duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
              const std::optional<irs::ScorerOptions>& top_k_scorer,
              const irs::SortSpec& sort, bool is_new)
-  : MaintainedStore{id, sort, std::move(directory)},
+  : _directory{std::move(directory)},
+    _sort{sort},
+    _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
     _id{id},
     _db_id{db_id},
     _in_memory{in_memory},
@@ -142,7 +146,9 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
              duckdb::idx_t id, bool is_new,
              const catalog::SearchTableOptions& options,
              const duckdb::ColumnList& columns, irs::SortSpec sort)
-  : MaintainedStore{id, std::move(sort), std::move(directory)},
+  : _directory{std::move(directory)},
+    _sort{std::move(sort)},
+    _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
     _id{id},
     _db_id{db_id},
     _in_memory{in_memory},
@@ -427,6 +433,57 @@ StoreStats Store::GetStats() const {
   stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
+}
+
+void Store::SetWriterOptions(irs::IndexWriterOptions& options) const {
+  options.sort = _sort;
+}
+
+yaclib::Future<MergeResult> Store::RunMergeAsync(
+  utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
+  const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  const irs::PipelineMergeExecutor& executor) {
+  MergeResult result;
+  if (!maintenance) {
+    result.outcome.error = irs::CompactionError::Cancelled;
+    result.backup = true;
+    co_return result;
+  }
+  std::atomic_bool backup{false};
+  const irs::MergeProgress interruptible = [&progress, &backup] {
+    if (IsBackupActive()) {
+      backup.store(true, std::memory_order_relaxed);
+      return false;
+    }
+    return progress();
+  };
+  bool empty_compaction = false;
+  bool failed = false;
+  try {
+    co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
+                               env, executor, result.outcome);
+    if (!result.outcome) {
+      SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
+                " produced nothing: cancelled, or every document was removed");
+      empty_compaction = true;
+    } else {
+      empty_compaction = result.outcome.size == 0;
+    }
+  } catch (const std::exception& e) {
+    failed = true;
+    result.outcome.error = irs::CompactionError::Fail;
+    result.error = duckdb::ErrorData{e}.RawMessage();
+  }
+  if (!failed && !result.outcome && backup.load(std::memory_order_relaxed)) {
+    result.outcome.error = irs::CompactionError::Cancelled;
+    result.backup = true;
+    co_return result;
+  }
+  _maintenance.RecordCompaction(
+    failed, empty_compaction,
+    result.outcome.stats.profile.TotalNanos() / 1'000'000);
+  co_return result;
 }
 
 void Store::Clear(const irs::SourcePosition& position) {

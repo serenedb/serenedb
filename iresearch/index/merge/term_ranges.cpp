@@ -262,10 +262,10 @@ uint64_t TermRangeMerge::Volume() const {
 }
 
 void TermRangeMerge::Partition(size_t parts, const Target& target,
-                               duckdb::TaskScheduler* scheduler,
+                               duckdb::TaskScheduler& scheduler,
                                size_t threads) {
   _target = target;
-  _merge.Partition(parts, true, scheduler, threads);
+  _merge.Partition(parts, true, &scheduler, threads);
   for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
     for (size_t i = 0; i != _keys.size(); ++i) {
       if (const auto row = _merge.PartitionBegin(p, i);

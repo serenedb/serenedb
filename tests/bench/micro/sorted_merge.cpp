@@ -231,7 +231,7 @@ void BM_Merge(benchmark::State& state) {
     {}};
   const irs::SortSpec spec{{{.column = kKey}}};
   const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), nullptr, threads};
+    irs::DuckDBEngine::Instance().instance(), threads};
   for (auto _ : state) {
     state.PauseTiming();
     const auto base_kb = ResetPeakKb();
@@ -619,7 +619,10 @@ void BM_KeyOrder(benchmark::State& state) {
       doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
     }
     irs::KeyOrder order{doc_map, spec, nullptr};
-    if (!order.Prepare(1, proceed)) {
+    if (!order.Prepare(1, proceed,
+                       duckdb::TaskScheduler::GetScheduler(
+                         irs::DuckDBEngine::Instance().instance()),
+                       1)) {
       state.SkipWithError("order failed");
       return;
     }

@@ -177,10 +177,10 @@ class PartitionTask final : public duckdb::BaseExecutorTask {
 };
 
 template<typename Work>
-void ForEachPartition(size_t count, duckdb::TaskScheduler* scheduler,
+void ForEachPartition(size_t count, duckdb::TaskScheduler& scheduler,
                       size_t threads, const Work& work) {
   const auto tasks = std::min(threads, count);
-  if (!scheduler || tasks < 2) {
+  if (tasks < 2) {
     for (size_t partition = 0; partition != count; ++partition) {
       work(partition);
     }
@@ -188,7 +188,7 @@ void ForEachPartition(size_t count, duckdb::TaskScheduler* scheduler,
   }
   std::atomic_size_t next{0};
   duckdb::TaskExecutor executor{
-    *scheduler, scheduler->CreateAccount(duckdb::SchedulerClass::BACKGROUND)};
+    scheduler, scheduler.CreateAccount(duckdb::SchedulerClass::BACKGROUND)};
   for (size_t task = 0; task != tasks; ++task) {
     executor.ScheduleTask(
       duckdb::make_uniq<PartitionTask<Work>>(executor, next, count, work));
@@ -242,7 +242,7 @@ void KeyOrder::ConcatOrder() {
 }
 
 bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
-                       duckdb::TaskScheduler* scheduler, size_t threads) {
+                       duckdb::TaskScheduler& scheduler, size_t threads) {
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
   for (const auto& key : _spec.keys) {
@@ -281,7 +281,7 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
   }
   duckdb::PresortedMerge merge{std::move(types), std::move(modifiers),
                                std::move(inputs)};
-  merge.Partition(partitions, false, scheduler, threads);
+  merge.Partition(partitions, false, &scheduler, threads);
   PlanParts(merge);
   std::atomic_bool stopped{false};
   ForEachPartition(merge.PartitionCount(), scheduler, threads,

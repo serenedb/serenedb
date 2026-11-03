@@ -38,14 +38,13 @@
 #include <yaclib/exe/inline.hpp>
 
 #include "search/compaction/merge_scheduler.h"
-#include "search/store_stats.h"
+#include "search/maintenance.h"
 #include "server/utils/metrics.h"
 
 namespace {
 
 using sdb::search::DescribeInputs;
 using sdb::search::EstimateMerge;
-using sdb::search::MaintainedStore;
 using sdb::search::MergeJob;
 using sdb::search::MergeLane;
 using sdb::search::MergeOrigin;
@@ -822,14 +821,12 @@ TEST_F(MergeSchedulerTest, ForegroundMergesAreRecordedBesideQueuedOnes) {
   EXPECT_EQ(MergeOutcome::Merged, history[2].outcome);
 }
 
-TEST_F(MergeSchedulerTest, AStoreSeesTheNudgesOfItsRelation) {
+TEST_F(MergeSchedulerTest, ARelationSeesItsNudges) {
   auto scheduler = Make(2);
-  MaintainedStore store{3, {}, nullptr};
-  const auto& relation = store.MergeRelation();
-  EXPECT_EQ(3, relation->id);
+  const auto relation = std::make_shared<MergeScheduler::Relation>(3);
   scheduler->TakeOver(relation);
-  EXPECT_EQ(1, store.CompactionGeneration());
-  store.NudgeCompaction();
+  EXPECT_EQ(1, relation->CompactionGeneration());
+  relation->NudgeCompaction();
   EXPECT_EQ(2, relation->CompactionGeneration());
   EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*relation));
 }

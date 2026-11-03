@@ -23,7 +23,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <iostream>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
@@ -437,8 +436,7 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
       }
     },
     busy);
-  const irs::PipelineMergeExecutor executor{
-    Db(), &duckdb::TaskScheduler::GetScheduler(Db()), 1};
+  const irs::PipelineMergeExecutor executor{Db(), 1};
   for (auto& ticket : tickets) {
     irs::CompactionResult result;
     irs::GetReady(writer.RunMerge(std::move(ticket), nullptr, {}, nullptr,

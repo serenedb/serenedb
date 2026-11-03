@@ -457,10 +457,10 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
   irs::KeyOrder serial{serial_map, spec, nullptr};
-  ASSERT_TRUE(serial.Prepare(1, [] { return true; }));
+  ASSERT_TRUE(serial.Prepare(1, [] { return true; }, scheduler, 1));
 
   irs::KeyOrder split{split_map, spec, nullptr};
-  ASSERT_TRUE(split.Prepare(4, [] { return true; }, &scheduler, 4));
+  ASSERT_TRUE(split.Prepare(4, [] { return true; }, scheduler, 4));
   const auto ids = [](const irs::MergeOrder& order) {
     const auto inputs = order.Inputs();
     std::vector<size_t> out(inputs.size());
@@ -478,7 +478,7 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   }
 
   irs::KeyOrder stopped{stopped_map, spec, nullptr};
-  EXPECT_FALSE(stopped.Prepare(4, [] { return false; }, &scheduler, 4));
+  EXPECT_FALSE(stopped.Prepare(4, [] { return false; }, scheduler, 4));
 }
 
 TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
@@ -980,7 +980,11 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
     const auto rebuilt = Segments(rebuilt_reader);
     ASSERT_EQ(1, rebuilt.size());
 
-    const auto bytes = [&](std::span<const irs::SubReader* const> segments,
+    struct Merged {
+      std::string postings;
+      SegmentDump dump;
+    };
+    const auto merge = [&](std::span<const irs::SubReader* const> segments,
                            const irs::SortSpec* sort) {
       irs::MemoryDirectory out;
       bool flushed = false;
@@ -990,23 +994,30 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
       EXPECT_TRUE(flushed);
       std::vector<std::string> files;
       for (const auto& file : meta.files) {
-        if (!file.ends_with(".col")) {
+        if (file.ends_with(".doc") || file.ends_with(".pos") ||
+            file.ends_with(".pay")) {
           files.push_back(file);
         }
       }
       std::ranges::sort(files);
-      std::string content;
+      Merged merged;
       for (const auto& file : files) {
         auto in = out.open(file, irs::IOAdvice::SEQUENTIAL);
         EXPECT_NE(nullptr, in) << file;
-        const auto at = content.size();
-        content.resize(at + in->Length());
-        in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(content.data() + at),
-                     in->Length());
+        const auto at = merged.postings.size();
+        merged.postings.resize(at + in->Length());
+        in->ReadData(
+          reinterpret_cast<duckdb::data_ptr_t>(merged.postings.data() + at),
+          in->Length());
       }
-      return content;
+      merged.dump = Dump(*irs::SegmentReaderImpl::Open(
+        out, meta, irs::tests::DefaultReaderOptions()));
+      return merged;
     };
-    EXPECT_EQ(bytes(rebuilt, nullptr), bytes(inputs, &spec));
+    const auto expected = merge(rebuilt, nullptr);
+    const auto actual = merge(inputs, &spec);
+    EXPECT_EQ(expected.postings, actual.postings);
+    EXPECT_EQ("", FirstDifference(expected.dump, actual.dump));
   }
 }
 

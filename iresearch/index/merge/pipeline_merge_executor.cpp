@@ -151,7 +151,6 @@ bool PipelineMergeExecutor::Run(MergePlan& plan) const {
   const auto threads = std::max<size_t>(_threads, 1);
   duckdb::Connection connection{_db};
   auto& context = *connection.context;
-  context.task_scheduler = _scheduler;
   context.SetSchedulerAccount(
     duckdb::TaskScheduler::GetScheduler(context).CreateAccount(
       duckdb::SchedulerClass::BACKGROUND));
@@ -188,8 +187,7 @@ bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
       *profile = plan.Profile();
     }
   };
-  merged = plan.Prepare(executor.Threads(), executor.Scheduler()) &&
-           executor.Run(plan);
+  merged = plan.Prepare(executor.Threads()) && executor.Run(plan);
   return merged;
 }
 

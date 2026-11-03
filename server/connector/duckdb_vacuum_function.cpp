@@ -456,8 +456,7 @@ void DispatchInverted(duckdb::ClientContext& context,
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
   const irs::PipelineMergeExecutor executor{
-    *context.db, &duckdb::TaskScheduler::GetScheduler(context),
-    duckdb::TaskScheduler::QueryThreads(context)};
+    *context.db, duckdb::TaskScheduler::QueryThreads(context)};
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.storage) {

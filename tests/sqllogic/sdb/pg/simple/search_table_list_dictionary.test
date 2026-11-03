@@ -110,7 +110,7 @@ total	wrong
 
 query
 SELECT count(*) AS total, count(*) FILTER (WHERE
-  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), k -> 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
+  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), lambda k: 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
 FROM list_dict_joined;
 ----
 total	wrong
@@ -134,7 +134,7 @@ total	wrong
 
 query
 SELECT count(*) AS total, count(*) FILTER (WHERE
-  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), k -> 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
+  skills IS DISTINCT FROM CASE WHEN id < 50000 THEN list_transform(range(16), lambda k: 'k' || ((id * 13 + k * k * 7) % 5000)) END) AS wrong
 FROM list_dict_joined;
 ----
 total	wrong

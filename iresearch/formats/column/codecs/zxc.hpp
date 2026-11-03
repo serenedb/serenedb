@@ -52,7 +52,7 @@ struct Zxc {
 
     void SetLevel(uint8_t level) noexcept {
       _level = EffectiveLevel<Zxc>(level);
-      _dictionary = {};
+      _dictionary = false;
     }
 
     void LoadDictionary(std::string_view dictionary);
@@ -63,7 +63,7 @@ struct Zxc {
     uint8_t _level = kDefaultLevel;
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
     std::unique_ptr<zxc_cctx, ZxcFree> _block_ctx;
-    std::string_view _dictionary;
+    bool _dictionary = false;
   };
 
   class Decompressor {

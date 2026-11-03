@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <optional>
@@ -55,8 +56,7 @@ class KeyOrder {
   KeyOrder& operator=(const KeyOrder&) = delete;
 
   [[nodiscard]] bool Prepare(size_t partitions, const MergeProgress& progress,
-                             duckdb::TaskScheduler* scheduler = nullptr,
-                             size_t threads = 1);
+                             duckdb::TaskScheduler& scheduler, size_t threads);
 
   uint64_t IsolatedBegin(size_t input) const noexcept {
     return _isolated[input];

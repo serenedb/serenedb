@@ -93,7 +93,7 @@ std::vector<irs::IndexWriter::MergeTicket> ReserveCountMerge(
 irs::CompactionResult RunReservedMerge(irs::IndexWriter& writer,
                                        irs::IndexWriter::MergeTicket ticket) {
   const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), nullptr, 1};
+    irs::DuckDBEngine::Instance().instance(), 1};
   irs::CompactionResult result;
   irs::GetReady(
     writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor, result));

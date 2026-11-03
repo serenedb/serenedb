@@ -20,17 +20,8 @@
 
 #include "search/store_stats.h"
 
-#include <atomic>
-#include <duckdb/common/error_data.hpp>
-#include <exception>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/log.hpp>
-#include <utility>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
-
-#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 
@@ -48,57 +39,6 @@ StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
     stats.numFiles += meta.files.size();
   }
   return stats;
-}
-
-void MaintainedStore::SetWriterOptions(irs::IndexWriterOptions& options) const {
-  options.sort = _sort;
-}
-
-yaclib::Future<MergeResult> MaintainedStore::RunMergeAsync(
-  utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
-  const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  const irs::PipelineMergeExecutor& executor) {
-  MergeResult result;
-  if (!maintenance) {
-    result.outcome.error = irs::CompactionError::Cancelled;
-    result.backup = true;
-    co_return result;
-  }
-  std::atomic_bool backup{false};
-  const irs::MergeProgress interruptible = [&progress, &backup] {
-    if (IsBackupActive()) {
-      backup.store(true, std::memory_order_relaxed);
-      return false;
-    }
-    return progress();
-  };
-  bool empty_compaction = false;
-  bool failed = false;
-  try {
-    co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
-                               env, executor, result.outcome);
-    if (!result.outcome) {
-      SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
-                " produced nothing: cancelled, or every document was removed");
-      empty_compaction = true;
-    } else {
-      empty_compaction = result.outcome.size == 0;
-    }
-  } catch (const std::exception& e) {
-    failed = true;
-    result.outcome.error = irs::CompactionError::Fail;
-    result.error = duckdb::ErrorData{e}.RawMessage();
-  }
-  if (!failed && !result.outcome && backup.load(std::memory_order_relaxed)) {
-    result.outcome.error = irs::CompactionError::Cancelled;
-    result.backup = true;
-    co_return result;
-  }
-  _maintenance.RecordCompaction(
-    failed, empty_compaction,
-    result.outcome.stats.profile.TotalNanos() / 1'000'000);
-  co_return result;
 }
 
 }  // namespace sdb::search

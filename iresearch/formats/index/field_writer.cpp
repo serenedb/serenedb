@@ -475,14 +475,15 @@ void FieldWriter::WriteParts(DictRef dict, const BasicTermReader& reader,
                              std::span<const TermPart> parts, uint64_t docs) {
   const auto id = reader.id();
   SDB_ASSERT(dict.member == DictMember::Strings);
-  SDB_ASSERT(reader.key_width == 0);
   Begin(id, dict);
   const auto props = reader.properties();
   SDB_ASSERT(!IsSubsetOf(IndexFeatures::Ranges, props.index_features));
   _pw.BeginField(props);
   _group_inline = false;
-  _width = 0;
-  SampleFsst(reader);
+  _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
+  if (_width == 0) {
+    SampleFsst(reader);
+  }
 
   const uint64_t first_inline = _inline.size();
   const bool freq_exists =

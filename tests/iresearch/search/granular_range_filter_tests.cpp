@@ -29,6 +29,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "tests_shared.hpp"
 #include "typed_terms.hpp"
 
@@ -1399,8 +1400,8 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       live[pk] = false;
     }
     check(2);
-    ASSERT_TRUE(writer->Compact(
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    ASSERT_TRUE(
+      tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount())));
     writer->RefreshCommit();
     ASSERT_EQ(1, open_reader().size());
     check(2);

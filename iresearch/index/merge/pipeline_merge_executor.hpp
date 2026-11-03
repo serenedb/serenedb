@@ -34,7 +34,6 @@
 namespace duckdb {
 
 class DatabaseInstance;
-class TaskScheduler;
 
 }  // namespace duckdb
 namespace irs {
@@ -42,19 +41,15 @@ namespace irs {
 class PipelineMergeExecutor {
  public:
   explicit PipelineMergeExecutor(duckdb::DatabaseInstance& db,
-                                 duckdb::TaskScheduler* scheduler,
                                  size_t threads) noexcept
-    : _db{db}, _scheduler{scheduler}, _threads{threads} {}
+    : _db{db}, _threads{threads} {}
 
   size_t Threads() const noexcept { return _threads; }
-
-  duckdb::TaskScheduler* Scheduler() const noexcept { return _scheduler; }
 
   bool Run(MergePlan& plan) const;
 
  private:
   duckdb::DatabaseInstance& _db;
-  duckdb::TaskScheduler* _scheduler;
   size_t _threads;
 };
 

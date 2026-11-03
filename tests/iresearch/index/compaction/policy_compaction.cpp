@@ -166,7 +166,7 @@ irs::CompactionResult Compact(irs::IndexWriter& writer,
                               const irs::IndexFieldOptions* field_options,
                               const irs::MergeProgress& progress) {
   const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), nullptr, 1};
+    irs::DuckDBEngine::Instance().instance(), 1};
   return Compact(writer, policy, field_options, progress, nullptr, executor);
 }
 

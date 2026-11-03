@@ -151,30 +151,6 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   EXPECT_EQ(db.NumberOfThreads(), 4U);
 }
 
-TEST(DuckDBThreads, ClientRunsOnTheSchedulerItIsGiven) {
-  duckdb::DBConfig config;
-  config.options.maximum_threads = 1;
-  duckdb::DuckDB db{nullptr, &config};
-  duckdb::Connection con{db};
-  CreateRecordedTable(con);
-  auto& shared = duckdb::TaskScheduler::GetScheduler(*db.instance);
-  EXPECT_EQ(&shared, &duckdb::TaskScheduler::GetScheduler(*con.context));
-  EXPECT_EQ(PeakThreads(con), 1U);
-
-  duckdb::TaskScheduler own{*db.instance};
-  own.SetThreads(4, 1);
-  own.RelaunchThreads();
-  con.context->task_scheduler = own;
-  EXPECT_EQ(&own, &duckdb::TaskScheduler::GetScheduler(*con.context));
-  EXPECT_EQ(duckdb::TaskScheduler::QueryThreads(*con.context), 4U);
-  EXPECT_GT(PeakThreads(con), 1U);
-
-  con.context->task_scheduler = nullptr;
-  EXPECT_EQ(&shared, &duckdb::TaskScheduler::GetScheduler(*con.context));
-  EXPECT_EQ(PeakThreads(con), 1U);
-  own.Join();
-}
-
 class FunctionTask final : public duckdb::Task {
  public:
   explicit FunctionTask(std::function<void()> fn) : _fn{std::move(fn)} {}

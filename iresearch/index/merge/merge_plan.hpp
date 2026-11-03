@@ -59,7 +59,6 @@
 namespace duckdb {
 
 class DatabaseInstance;
-class TaskScheduler;
 
 }  // namespace duckdb
 namespace irs {
@@ -112,7 +111,7 @@ class MergePlan {
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;
 
-  bool Prepare(size_t threads = 1, duckdb::TaskScheduler* scheduler = nullptr);
+  bool Prepare(size_t threads = 1);
 
   std::span<const MergeUnit> Units() const noexcept { return _units; }
 
@@ -185,7 +184,6 @@ class MergePlan {
   const AnnBuildEnv* _env;
   HnswBases* _hnsw_bases;
   size_t _threads = 1;
-  duckdb::TaskScheduler* _scheduler = nullptr;
   MergeProfile _profile;
   IndexFeatures _index_features{IndexFeatures::None};
   MergedFieldMap _field_meta_map;

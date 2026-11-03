@@ -801,23 +801,22 @@ void AssertRemappedKeys(std::span<const std::string> vals,
   auto mem = DefaultMemory();
   FieldsInverter inv_old{mem};
   FieldsInverter inv_new{mem};
-  auto* old_field = inv_old.Emplace(1, IndexFeatures::Freq);
-  auto* new_field = inv_new.Emplace(1, IndexFeatures::Freq);
-  std::vector<duckdb::string_t> old_terms;
-  std::vector<duckdb::string_t> new_terms;
-  for (const auto& v : vals) {
-    old_terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
-  }
+  auto* old_field =
+    inv_old.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
+  auto* new_field =
+    inv_new.Emplace(1, StringLayout::kStrings, IndexFeatures::Freq);
   DocOrder order;
   order.new2old.assign(new2old.begin(), new2old.end());
   order.old2new.resize(new2old.size());
   for (uint32_t row = 0; row != new2old.size(); ++row) {
-    const auto& v = vals[new2old[row]];
-    new_terms.emplace_back(v.data(), static_cast<uint32_t>(v.size()));
     order.old2new[new2old[row]] = row;
   }
-  ASSERT_TRUE(old_field->InvertPrimaryKeyBlock(old_terms, doc_limits::min()));
-  ASSERT_TRUE(new_field->InvertPrimaryKeyBlock(new_terms, doc_limits::min()));
+  for (uint32_t row = 0; row != vals.size(); ++row) {
+    ASSERT_TRUE(InvertKeyword(*old_field, doc_limits::min() + row,
+                              ToBytesView(vals[row])));
+    ASSERT_TRUE(InvertKeyword(*new_field, doc_limits::min() + row,
+                              ToBytesView(vals[new2old[row]])));
+  }
 
   ScatterScratch remapped_scratch{mem.rm};
   ScatteredField remapped{mem, remapped_scratch};
@@ -826,7 +825,6 @@ void AssertRemappedKeys(std::span<const std::string> vals,
   ScatteredField expected{mem, expected_scratch};
   expected.Reset(*new_field);
 
-  ASSERT_TRUE(remapped.AllInline());
   ASSERT_EQ(expected.TermCount(), remapped.TermCount());
   for (size_t r = 0; r != expected.TermCount(); ++r) {
     ASSERT_EQ(TermBytes(expected, r), TermBytes(remapped, r)) << r;

@@ -81,11 +81,9 @@ struct CompactBindData final : duckdb::TableFunctionData {
 
 struct CompactState final : duckdb::GlobalTableFunctionState {
   CompactState(duckdb::ClientContext& context, const CompactJob& job)
-    : scheduler{duckdb::TaskScheduler::GetScheduler(context)},
-      threads{duckdb::TaskScheduler::QueryThreads(context)},
+    : threads{duckdb::TaskScheduler::QueryThreads(context)},
       compaction{job.target, job.request, context} {}
 
-  duckdb::TaskScheduler& scheduler;
   duckdb::idx_t threads;
   ManualCompaction compaction;
   size_t merges = 0;
@@ -376,8 +374,7 @@ void CompactExecute(duckdb::ClientContext& context,
   const irs::MergeProgress progress = [&context] {
     return StatementRunning(context);
   };
-  const irs::PipelineMergeExecutor executor{*context.db, &state.scheduler,
-                                            state.threads};
+  const irs::PipelineMergeExecutor executor{*context.db, state.threads};
   search::MergeResult merge;
   if (!state.compaction.Next(progress, search::MergeOrigin::Sql, executor,
                              merge)) {

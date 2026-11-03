@@ -24,6 +24,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
@@ -68,6 +69,8 @@ class Directory {
   Directory(duckdb::DatabaseInstance& db, std::string_view root);
   Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
             std::string_view root);
+  Directory(duckdb::DatabaseInstance& db, duckdb::MemoryFileSystem& fs,
+            std::string_view root);
 
   IndexOutput::ptr Create(std::string_view name) const;
   IndexOutput::ptr CreateWhole(std::string_view name) const;
@@ -98,6 +101,7 @@ class Directory {
 
     duckdb::DatabaseInstance& db;
     duckdb::FileSystem& fs;
+    duckdb::MemoryFileSystem* memory;
     std::string root;
     StorageKind kind;
     IndexFileRefs refs;

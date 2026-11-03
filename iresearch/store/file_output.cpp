@@ -44,22 +44,27 @@ PendingUploads CurrentUploads() noexcept {
 }
 
 IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
+                                  duckdb::MemoryFileSystem* memory,
                                   const std::string& path,
                                   const Directory::Observers& observers,
                                   bool remote, duckdb::BlockCache* cache) {
   auto handle =
     fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                         duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  return ptr{new FileOutput{std::move(handle), observers, remote, cache}};
+  return ptr{
+    new FileOutput{std::move(handle), memory, observers, remote, cache}};
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
+                       duckdb::MemoryFileSystem* memory,
                        const Directory::Observers& observers, bool remote,
                        duckdb::BlockCache* cache)
   : _handle{std::move(handle)}, _observers{observers}, _remote{remote} {
   SDB_ASSERT(_handle);
-  SetWindow(_handle->GetWriteWindow());
-  if (_begin == nullptr) {
+  if (memory && &_handle->file_system == memory) {
+    _memory = memory;
+    SetWindow(_memory->GetWriteWindow(*_handle));
+  } else {
     _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
     _begin = _pos = _buf.get();
     _end = _begin + kBufferSize;
@@ -109,7 +114,7 @@ void FileOutput::CommitWindow() {
     return;
   }
   _crc.process_bytes(_begin, size);
-  _handle->CommitWriteWindow(size);
+  _memory->CommitWriteWindow(*_handle, size);
   _offset += size;
   _begin = _pos;
 }
@@ -159,7 +164,7 @@ void FileOutput::Overflow(const byte_type* data, size_t size) {
         return;
       }
       CommitWindow();
-      SetWindow(_handle->GetWriteWindow());
+      SetWindow(_memory->GetWriteWindow(*_handle));
       SDB_ASSERT(_begin != _end);
     }
   }

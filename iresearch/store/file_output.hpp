@@ -41,7 +41,8 @@ PendingUploads CurrentUploads() noexcept;
 
 class FileOutput final : public IndexOutput {
  public:
-  static ptr Open(duckdb::FileSystem& fs, const std::string& path,
+  static ptr Open(duckdb::FileSystem& fs, duckdb::MemoryFileSystem* memory,
+                  const std::string& path,
                   const Directory::Observers& observers, bool remote,
                   duckdb::BlockCache* cache);
 
@@ -49,6 +50,7 @@ class FileOutput final : public IndexOutput {
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
+             duckdb::MemoryFileSystem* memory,
              const Directory::Observers& observers, bool remote,
              duckdb::BlockCache* cache);
 
@@ -68,6 +70,7 @@ class FileOutput final : public IndexOutput {
 
   std::unique_ptr<byte_type[]> _buf;
   std::unique_ptr<duckdb::FileHandle> _handle;
+  duckdb::MemoryFileSystem* _memory = nullptr;
   Crc32c _crc;
   uint64_t _unhinted = 0;
   Directory::Observers _observers;

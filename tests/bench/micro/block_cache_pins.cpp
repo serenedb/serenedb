@@ -24,6 +24,7 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <vector>
 
 namespace {
 
@@ -39,12 +40,13 @@ duckdb::BlockCache& Cache() {
 void Fill() {
   auto& cache = Cache();
   gFile = cache.CreateUnbackedFile("memory://bench/block_cache_pins");
+  duckdb::BlockCacheAppender appender{cache, gFile};
+  std::vector<uint8_t> bytes(duckdb::BlockCache::BLOCK_SIZE);
   for (duckdb::idx_t block = 0; block != kBlocks; ++block) {
-    auto pin = cache.CreateBlock(*gFile, block);
-    std::memset(pin.GetDataMutable(), static_cast<int>(block),
-                duckdb::BlockCache::BLOCK_SIZE);
+    std::memset(bytes.data(), static_cast<int>(block), bytes.size());
+    appender.Append(bytes.data(), bytes.size());
   }
-  cache.SetUnbackedSize(*gFile, kBlocks * duckdb::BlockCache::BLOCK_SIZE);
+  appender.Finish();
 }
 
 void BmPinSameBlock(benchmark::State& state) {

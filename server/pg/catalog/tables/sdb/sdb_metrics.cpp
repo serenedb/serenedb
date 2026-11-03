@@ -114,9 +114,7 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
     rows.emplace_back(metric, static_cast<int64_t>(value), description);
   };
   auto& db = *scan.Context().db;
-  const auto cache = db.TryGetBlockCache();
-  const auto stats =
-    cache ? cache->GetStatistics() : duckdb::BlockCacheStatistics{};
+  const auto stats = db.GetBlockCache().GetStatistics();
   add("block_cache_capacity_bytes",
       duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
       "memory the cache of remote and in-memory index files may use, in "

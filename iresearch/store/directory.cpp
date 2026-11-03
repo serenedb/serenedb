@@ -84,8 +84,16 @@ Directory::Directory(duckdb::DatabaseInstance& db, std::string_view root)
 
 Directory::Directory(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                      std::string_view root)
-  : _state{
-      std::make_shared<State>(db, fs, RootPath(root), StorageKindOf(root))} {}
+  : _state{std::make_shared<State>(db, fs,
+                                   StorageKindOf(root) == StorageKind::Memory
+                                     ? &db.GetMemoryFileSystem()
+                                     : nullptr,
+                                   RootPath(root), StorageKindOf(root))} {}
+
+Directory::Directory(duckdb::DatabaseInstance& db, duckdb::MemoryFileSystem& fs,
+                     std::string_view root)
+  : _state{std::make_shared<State>(db, fs, &fs, RootPath(root),
+                                   StorageKind::Memory)} {}
 
 std::string Directory::Path(std::string_view name) const {
   return absl::StrCat(_state->root, name);
@@ -134,7 +142,8 @@ IndexOutput::ptr Directory::Create(std::string_view name, bool cached) const {
       cache = &blocks;
     }
   }
-  auto output = FileOutput::Open(_state->fs, path, _observers, remote, cache);
+  auto output = FileOutput::Open(_state->fs, _state->memory, path, _observers,
+                                 remote, cache);
   std::move(abandon).Cancel();
   return output;
 }
@@ -146,7 +155,7 @@ std::unique_ptr<InputFile> Directory::Open(
     return OpenBlocks(path);
   }
   if (Kind() == StorageKind::Memory) {
-    if (auto blocks = _state->fs.GetBlockFile(path)) {
+    if (auto blocks = _state->memory->GetBlockFile(path)) {
       return std::make_unique<InputFile>(Cache(), std::move(blocks));
     }
   }
@@ -287,7 +296,7 @@ void Directory::SyncDirectory() const {
 
 void Directory::Compact(std::string_view name) const {
   if (Kind() == StorageKind::Memory) {
-    _state->fs.Compact(Path(name));
+    _state->memory->Compact(Path(name));
   }
 }
 

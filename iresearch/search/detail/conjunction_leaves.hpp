@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -32,6 +33,9 @@ namespace irs::detail {
 
 template<typename Leaf, size_t N = 0>
 class ConjunctionLeaves {
+  static constexpr bool kDeferrable =
+    requires(Leaf& leaf) { leaf.ProbeDeferred(doc_id_t{}); };
+
  public:
   template<typename Estimate, typename Make, typename Emit>
   ConjunctionLeaves(size_t size, Estimate&& estimate, Make&& make, Emit&& emit)
@@ -70,12 +74,44 @@ class ConjunctionLeaves {
   }
 
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
-    for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end; ++it) {
-      if (const auto probe = it->Probe(target); probe != target) {
+    if constexpr (kDeferrable && N != 0) {
+      return [&]<size_t... I>(std::index_sequence<I...>) IRS_FORCE_INLINE {
+        auto probe = target;
+        static_cast<void>((
+          ((probe = ProbeOf(_leaves[I + 1], target, I + 1)) == target) && ...));
         return probe;
+      }(std::make_index_sequence<N - 1>{});
+    } else if constexpr (kDeferrable) {
+      for (size_t i = 1; i != _leaves.size(); ++i) {
+        if (const auto probe = ProbeOf(_leaves[i], target, i);
+            probe != target) {
+          return probe;
+        }
       }
+      return target;
+    } else {
+      for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end;
+           ++it) {
+        if (const auto probe = it->Probe(target); probe != target) {
+          return probe;
+        }
+      }
+      return target;
     }
-    return target;
+  }
+
+  void DeferFrom(size_t first)
+    requires kDeferrable
+  {
+    _deferred = static_cast<uint32_t>(first);
+  }
+
+  Leaf* Deferred() noexcept {
+    if constexpr (kDeferrable) {
+      return _leaves.begin() + _deferred;
+    } else {
+      return _leaves.end();
+    }
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
@@ -89,6 +125,15 @@ class ConjunctionLeaves {
 
  private:
   using Order = containers::Fixed<uint32_t, N>;
+
+  IRS_FORCE_INLINE doc_id_t ProbeOf(Leaf& leaf, doc_id_t doc, size_t i) {
+    if constexpr (kDeferrable) {
+      if (i >= _deferred && leaf.Deferred()) [[unlikely]] {
+        return leaf.ProbeDeferred(doc);
+      }
+    }
+    return leaf.Probe(doc);
+  }
 
   template<typename Estimate>
   static const Order& SortBy(Order&& order, Estimate& estimate) {
@@ -105,6 +150,9 @@ class ConjunctionLeaves {
     SDB_ASSERT(!_leaves.empty());
     for (size_t i = 0; i != _leaves.size(); ++i) {
       emit(order[i], _leaves[i]);
+    }
+    if constexpr (kDeferrable) {
+      _deferred = static_cast<uint32_t>(_leaves.size());
     }
   }
 
@@ -129,7 +177,9 @@ class ConjunctionLeaves {
           doc = Lead().Next();
           break;
         }
-        if (const auto probe = it->Probe(doc); probe != doc) {
+        if (const auto probe =
+              ProbeOf(*it, doc, static_cast<size_t>(it - _leaves.begin()));
+            probe != doc) {
           doc = Lead().Seek(probe);
           break;
         }
@@ -142,6 +192,7 @@ class ConjunctionLeaves {
   }
 
   containers::Fixed<Leaf, N> _leaves;
+  [[no_unique_address]] utils::Need<kDeferrable, uint32_t> _deferred{};
 };
 
 }  // namespace irs::detail

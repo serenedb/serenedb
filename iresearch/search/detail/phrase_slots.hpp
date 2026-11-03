@@ -44,8 +44,8 @@ struct PhraseTerms {
   };
 
   PhraseTerms(std::span<const PostingMeta> metas,
-              std::span<const TermInterval> intervals)
-    : metas{metas} {
+              std::span<const TermInterval> intervals, uint64_t docs)
+    : metas{metas}, docs{docs} {
     const bool distinct = absl::c_none_of(
       intervals.subspan(1),
       [](const TermInterval& interval) { return interval.offs_min == 0; });
@@ -65,7 +65,26 @@ struct PhraseTerms {
     }
   }
 
+  bool Defers(uint64_t lead, uint64_t term) const noexcept {
+    return lead >= kDeferLead && term >= kDeferRatio * lead &&
+           term * kDeferShare < docs;
+  }
+
+  bool Defers() const noexcept {
+    uint64_t lead = std::numeric_limits<uint64_t>::max();
+    for (const auto j : leaves) {
+      lead = std::min<uint64_t>(lead, metas[j].docs_count);
+    }
+    return absl::c_any_of(
+      leaves, [&](uint32_t j) { return Defers(lead, metas[j].docs_count); });
+  }
+
+  static constexpr uint64_t kDeferLead = 4 * doc_limits::kBlockSize;
+  static constexpr uint64_t kDeferRatio = 16;
+  static constexpr uint64_t kDeferShare = 4;
+
   std::span<const PostingMeta> metas;
+  uint64_t docs;
   absl::InlinedVector<uint32_t, 8> leaves;
   absl::InlinedVector<Repeat, 4> repeats;
 };
@@ -74,6 +93,8 @@ template<typename Matcher, typename Leaf, size_t N = 0, typename Slot = Leaf>
 class PhraseSlots {
   static constexpr bool kVariadic = !std::is_same_v<Slot, Leaf>;
   static constexpr bool kRepeats = !kVariadic && N == 0;
+  static constexpr bool kDeferrable =
+    !kVariadic && requires(Leaf& leaf) { leaf.Defer(); };
 
  public:
   template<typename... Args>
@@ -111,6 +132,16 @@ class PhraseSlots {
     SDB_ASSERT(terms.metas.size() > 1);
     SDB_ASSERT(kRepeats || terms.repeats.empty());
     _matcher.Finish();
+    if constexpr (kDeferrable) {
+      const uint64_t lead = _leaves.Lead().Estimate();
+      for (size_t i = _leaves.Size(); i-- != 1;) {
+        auto& leaf = _leaves.begin()[i];
+        if (terms.Defers(lead, leaf.Estimate())) {
+          leaf.Defer();
+          _leaves.DeferFrom(i);
+        }
+      }
+    }
   }
 
   template<typename... Args>
@@ -311,6 +342,8 @@ class PhraseSlots {
   static uint32_t DocFreqOf(Slot& slot) {
     if constexpr (kVariadic) {
       slot.OnMatch();
+    } else if constexpr (kDeferrable) {
+      slot.Sync();
     }
     return slot.Positions().DocFreq();
   }
@@ -320,9 +353,16 @@ class PhraseSlots {
       for (auto& slot : _leaves) {
         slot.OnMatch();
       }
-    } else if constexpr (kRepeats) {
-      if (!_repeats.empty()) {
-        return FollowRepeats();
+    } else {
+      if constexpr (kDeferrable) {
+        for (auto* leaf = _leaves.Deferred(); leaf != _leaves.end(); ++leaf) {
+          leaf->Sync();
+        }
+      }
+      if constexpr (kRepeats) {
+        if (!_repeats.empty()) {
+          return FollowRepeats();
+        }
       }
     }
     return true;

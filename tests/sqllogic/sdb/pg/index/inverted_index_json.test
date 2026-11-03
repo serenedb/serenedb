@@ -328,19 +328,23 @@ SELECT id FROM prim_types_idx WHERE content->>'val' = 'hello';
 id
 1
 
-# Each non-string leaf type is queryable via the predicate's natural type
-# applied to the (JSON-typed) indexed expression. The filter builder peels
-# the user's CAST around the path, picks the matching mangle byte, and looks
-# up the correct pre-emitted field on the index. Numeric casts are
-# normalised to DOUBLE because all JSON numbers are written through
-# NumericTokenizer.reset(double) in the sink.
+# A number leaf is queryable through ::double and a boolean leaf through
+# ::bool on the indexed path; a leaf of another kind matches neither.
 
-# Integer-valued leaf via ::int cast.
+# Integer-valued leaf via ::double cast.
 query
-SELECT id FROM prim_types_idx WHERE (content->'val')::int = 42;
+SELECT id FROM prim_types_idx WHERE (content->'val')::double = 42;
 ----
 id
 2
+
+# Any other cast is checked on the rows with the cast's own rules, so the
+# string leaf fails it as it does on the table.
+statement error
+SELECT id FROM prim_types_idx WHERE (content->'val')::int = 42;
+----
+db error: ERROR: Failed to cast value to numerical: "hello"
+
 
 # Float-valued leaf via ::double cast.
 query
@@ -481,13 +485,13 @@ statement ok
 VACUUM (REFRESH_TABLE) num_str_split;
 
 query
-SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
+SELECT id FROM num_str_split_idx WHERE (content->'val')::double = 42;
 ----
 id
 2
 
 query
-EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::int = 42;
+EXPLAIN SELECT id FROM num_str_split_idx WHERE (content->'val')::double = 42;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
@@ -611,10 +615,10 @@ SELECT id FROM mixed_tok_idx WHERE content->>'val' = 'hello';
 id
 1
 
-# Numeric tokenizer side: integer cast routes to the numeric-mangled field
-# without ever evaluating the cast on string-leaf rows.
+# Numeric side: ::double looks up the number leaves only, so the string
+# leaves never meet the cast.
 query
-SELECT id FROM mixed_tok_idx WHERE (content->'val')::int = 42;
+SELECT id FROM mixed_tok_idx WHERE (content->'val')::double = 42;
 ----
 id
 2
@@ -664,7 +668,7 @@ VACUUM (REFRESH_TABLE) json_text;
 # Numeric / bool / null leaves are stored under their own field_ids with
 # IndexFeatures::None, and routed by the typed-cast filter at read time.
 query
-SELECT id FROM json_text_idx WHERE (content->'v')::int = 42;
+SELECT id FROM json_text_idx WHERE (content->'v')::double = 42;
 ----
 id
 1
@@ -995,14 +999,14 @@ statement ok
 VACUUM (REFRESH_TABLE) jp_inc2;
 
 query
-SELECT id, label FROM jp_inc2_idx WHERE (doc->'val')::int = 42 ORDER BY id;
+SELECT id, label FROM jp_inc2_idx WHERE (doc->'val')::double = 42 ORDER BY id;
 ----
 id	label
 1	a
 3	c
 
 query
-SELECT id, label FROM jp_inc2_idx WHERE (doc->'val')::int = 99 ORDER BY id;
+SELECT id, label FROM jp_inc2_idx WHERE (doc->'val')::double = 99 ORDER BY id;
 ----
 id	label
 2	b
@@ -1214,7 +1218,7 @@ id
 2
 
 query
-SELECT id FROM jorder_idx WHERE (doc->'a')::int = 7 ORDER BY id;
+SELECT id FROM jorder_idx WHERE (doc->'a')::double = 7 ORDER BY id;
 ----
 id
 2

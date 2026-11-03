@@ -51,3 +51,42 @@ id	name
 
 statement ok
 DROP TABLE beast_search;
+
+
+statement ok
+CREATE TABLE beast_heap (id int, name text);
+
+
+statement ok
+INSERT INTO beast_heap VALUES (6, 'karl'), (7, 'chandler'), (67, 'nolan');
+
+
+statement ok
+CREATE INDEX beast_heap_idx ON beast_heap USING inverted (id, name);
+
+
+query
+SELECT pg_typeof(ctid)::text AS ctid, xmin::text AS xmin, cmax::text AS cmax
+FROM beast_heap_idx
+WHERE id = 6;
+----
+ctid	xmin	cmax
+tid	0	0
+
+
+query
+SELECT count(DISTINCT ctid) AS rows FROM beast_heap_idx;
+----
+rows
+3
+
+
+query
+SELECT name FROM beast_heap_idx WHERE ctid = (SELECT ctid FROM beast_heap_idx WHERE id = 7);
+----
+name
+chandler
+
+
+statement ok
+DROP TABLE beast_heap;

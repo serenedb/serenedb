@@ -46,7 +46,7 @@ using RuneSet = std::vector<Runes>;
 constexpr size_t kMaxDepth = 256;
 constexpr size_t kMaxVisits = 100000;
 constexpr char32_t kEdge = re2::Runemax + 1;
-constexpr re2::Rune kReservedByte = 0xF8;
+constexpr byte_type kFirstByteNotInUtf8 = 0xF5;
 
 struct TreeDeleter {
   void operator()(re2::Regexp* re) const noexcept { re->Decref(); }
@@ -421,7 +421,7 @@ class Extractor {
       }
     };
     for (const auto rune : runes) {
-      _poisoned = _poisoned || IsSurrogate(rune) || Reserved(rune);
+      _poisoned = _poisoned || IsSurrogate(rune);
       if (fold && MayFold(rune)) {
         flush();
         pieces.push_back(rune < 0x80 ? AsciiCases(rune) : AnyChar());
@@ -457,7 +457,7 @@ class Extractor {
     set.reserve(size);
     for (const auto& range : cc) {
       for (auto rune = range.lo; rune <= range.hi; ++rune) {
-        _poisoned = _poisoned || IsSurrogate(rune) || Reserved(rune);
+        _poisoned = _poisoned || IsSurrogate(rune);
         set.emplace_back(1, static_cast<char32_t>(rune));
       }
     }
@@ -617,10 +617,6 @@ class Extractor {
     }
   }
 
-  bool Reserved(re2::Rune rune) const noexcept {
-    return _bytes && rune >= kReservedByte;
-  }
-
   size_t _n;
   byte_type _boundary;
   GramQueryLimits _limits;
@@ -756,7 +752,7 @@ class LikeShape {
     }
     auto& bytes = _tokens.back().bytes;
     for (auto rune : runes) {
-      if (IsSurrogate(rune) || (_bytes && rune >= kReservedByte)) {
+      if (IsSurrogate(rune)) {
         return false;
       }
       if (_bytes) {
@@ -806,7 +802,7 @@ GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
                           size_t gram_size, byte_type boundary,
                           const GramQueryLimits& limits, bool bytes) {
   SDB_ASSERT(gram_size != 0);
-  SDB_ASSERT(boundary >= kReservedByte);
+  SDB_ASSERT(boundary >= kFirstByteNotInUtf8);
   const auto tree = ParseTree(pattern, syntax, bytes);
   if (!tree) {
     return {.query = {.kind = Kind::None}};

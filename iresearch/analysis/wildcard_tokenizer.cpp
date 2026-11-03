@@ -20,7 +20,6 @@
 
 #include "iresearch/analysis/wildcard_tokenizer.hpp"
 
-#include <absl/algorithm/container.h>
 #include <simdutf.h>
 
 #include "iresearch/analysis/keyword_tokenizer.hpp"
@@ -45,7 +44,6 @@ Tokenizer::ptr WildcardTokenizer::Make(Options opts,
 namespace {
 
 constexpr byte_type kBoundary = WildcardTokenizer::kBoundary;
-constexpr byte_type kBoundaryInWord = 0xFE;
 
 void AppendEncodedTerm(bstring& terms, duckdb::string_t term) {
   const size_t size = term.GetSize();
@@ -169,12 +167,10 @@ void WildcardTokenizer::FillRow(const duckdb::UnifiedVectorFormat& values,
 
 template<TokenLayout Layout>
 void WildcardTokenizer::EmitEncoded(TokenSink& sink, size_t from, bool ascii) {
-  if (_bytes) {
-    EmitTerms<Symbols::Bytes, Layout>(sink, from);
-  } else if (ascii) {
-    EmitTerms<Symbols::Ascii, Layout>(sink, from);
+  if (ascii || _bytes) {
+    EmitTerms<true, Layout>(sink, from);
   } else {
-    EmitTerms<Symbols::Utf8, Layout>(sink, from);
+    EmitTerms<false, Layout>(sink, from);
   }
 }
 
@@ -184,26 +180,24 @@ void WildcardTokenizer::StoreTerms(TokenSink& sink) {
   }
 }
 
-template<WildcardTokenizer::Symbols S, TokenLayout Layout>
+template<bool Identity, TokenLayout Layout>
 void WildcardTokenizer::EmitTermGrams(TokenSink& sink, const byte_type* term,
                                       uint32_t size) {
   const uint32_t* bounds = nullptr;
   uint32_t nsym = size;
-  bool fold = S == Symbols::Bytes;
-  if constexpr (S == Symbols::Utf8) {
-    const bool utf8 =
-      simdutf::validate_utf8(reinterpret_cast<const char*>(term) + 1, size - 2);
-    fold = !utf8;
-    nsym = static_cast<uint32_t>(
-      classify::BuildUtf8CpBounds(term, size, utf8, _fill_bounds));
+  if constexpr (!Identity) {
+    nsym = static_cast<uint32_t>(classify::BuildUtf8CpBounds(
+      term, size,
+      simdutf::validate_utf8(reinterpret_cast<const char*>(term) + 1, size - 2),
+      _fill_bounds));
     bounds = _fill_bounds.data();
   }
   const auto n = static_cast<uint32_t>(_ngram.min_gram());
   const auto bnd = [&](uint32_t i) -> uint32_t {
-    if constexpr (S == Symbols::Utf8) {
-      return bounds[i];
-    } else {
+    if constexpr (Identity) {
       return i;
+    } else {
+      return bounds[i];
     }
   };
 
@@ -213,13 +207,7 @@ void WildcardTokenizer::EmitTermGrams(TokenSink& sink, const byte_type* term,
   }
   sink.EmitK<Layout>(
     count, size,
-    [&](byte_type* mem) IRS_FORCE_INLINE {
-      std::memcpy(mem, term, size);
-      if (fold) {
-        std::span word{mem + 1, size - 2};
-        absl::c_replace(word, kBoundary, kBoundaryInWord);
-      }
-    },
+    [&](byte_type* mem) IRS_FORCE_INLINE { std::memcpy(mem, term, size); },
     [&](size_t s, byte_type*) IRS_FORCE_INLINE {
       const auto b0 = bnd(static_cast<uint32_t>(s));
       const auto b1 = bnd(std::min(static_cast<uint32_t>(s) + n, nsym));
@@ -227,7 +215,7 @@ void WildcardTokenizer::EmitTermGrams(TokenSink& sink, const byte_type* term,
     });
 }
 
-template<WildcardTokenizer::Symbols S, TokenLayout Layout>
+template<bool Identity, TokenLayout Layout>
 void WildcardTokenizer::EmitTerms(TokenSink& sink, size_t from) {
   const auto* it = _terms.data() + from;
   const auto* end = _terms.data() + _terms.size();
@@ -235,7 +223,7 @@ void WildcardTokenizer::EmitTerms(TokenSink& sink, size_t from) {
     const auto size = vread<uint32_t>(it) + 2U;
     const auto* term = it;
     it += size;
-    EmitTermGrams<S, Layout>(sink, term, size);
+    EmitTermGrams<Identity, Layout>(sink, term, size);
   }
 }
 

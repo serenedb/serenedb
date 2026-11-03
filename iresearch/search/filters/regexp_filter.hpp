@@ -62,9 +62,7 @@ struct ByRegexpFilterOptions {
                                  bool bytes = false)
     : pattern{pattern}, syntax{syntax}, bytes{bytes} {}
 
-  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
-    return pattern == rhs.pattern && syntax == rhs.syntax && bytes == rhs.bytes;
-  }
+  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept = default;
 };
 
 struct ByRegexpOptions : ByRegexpFilterOptions {

@@ -87,6 +87,10 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
 
   void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
 
+  bool BinaryTerms() const noexcept {
+    return _analyzer->Traits().output != duckdb::LogicalTypeId::VARCHAR;
+  }
+
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _terms.capacity() +
            _fill_bounds.capacity() * sizeof(uint32_t) + _ngram.MemoryUsage() +
@@ -96,21 +100,15 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   auto& ngram() noexcept { return _ngram; }
 
  private:
-  enum class Symbols : uint8_t {
-    Ascii,
-    Bytes,
-    Utf8,
-  };
-
   template<TokenLayout Layout, bool KnownAscii>
   bool AppendValue(duckdb::string_t value, TokenSink& sink);
 
   template<TokenLayout Layout>
   void EmitEncoded(TokenSink& sink, size_t from, bool ascii);
-  template<Symbols S, TokenLayout Layout>
+  template<bool Identity, TokenLayout Layout>
   void EmitTerms(TokenSink& sink, size_t from);
   void StoreTerms(TokenSink& sink);
-  template<Symbols S, TokenLayout Layout>
+  template<bool Identity, TokenLayout Layout>
   void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 
   struct SubSink;

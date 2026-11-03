@@ -333,9 +333,11 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   }
   ValueAnalyzer value_analyzer;
   ValueTokens tokens;
-  if (SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
-                    tokens, has_pos, bytes, grams) &&
-      plan.exact) {
+  const bool decided =
+    SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
+                  tokens, has_pos, bytes, grams) &&
+    plan.exact;
+  if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;
   }
   auto re = std::make_shared<const re2::RE2>(ViewCast<char>(regexp),

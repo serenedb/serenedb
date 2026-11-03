@@ -1,0 +1,29 @@
+statement error
+SELECT * FROM query('SELECT ' || repeat('NOT ', 300000) || 'true')
+----
+db error: ERROR: stack depth limit exceeded
+
+
+statement error
+SELECT * FROM query('SELECT ' || repeat('abs(', 300000) || '1' || repeat(')', 300000))
+----
+db error: ERROR: stack depth limit exceeded
+
+
+statement error
+SELECT * FROM query('SELECT 1 FROM generate_series(1, 1) AS t0' || repeat(' CROSS JOIN generate_series(1, 1)', 300000))
+----
+db error: ERROR: stack depth limit exceeded
+
+
+statement error
+SELECT * FROM query('SELECT ' || repeat('NOT ', 300000) || 'true, $1, $a')
+----
+db error: ERROR: Mixing named and positional parameters is not supported yet
+
+
+query
+SELECT * FROM query('SELECT ' || repeat('abs(', 200) || '-67' || repeat(')', 200) || ' AS v')
+----
+v
+67

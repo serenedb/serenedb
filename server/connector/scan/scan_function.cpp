@@ -607,9 +607,6 @@ duckdb::virtual_column_map_t ScanGetVirtualColumns(
   if (bind.relation.table_entry) {
     result = bind.relation.table_entry->GetVirtualColumns();
     result.erase(duckdb::COLUMN_IDENTIFIER_TABLE_OID);
-    if (bind.relation.IsInvertedIndex()) {
-      result.erase(duckdb::COLUMN_IDENTIFIER_CTID);
-    }
   }
   if (bind.IsViewBacked()) {
     result.insert(

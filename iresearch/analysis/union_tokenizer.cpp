@@ -20,10 +20,7 @@
 
 #include "union_tokenizer.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <functional>
 
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
@@ -33,8 +30,8 @@ namespace irs::analysis {
 
 UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   : _subs{std::move(options)} {
-  SDB_ASSERT(absl::c_none_of(_subs, std::logical_not{}));
   for (size_t i = 0; i < _subs.size(); ++i) {
+    SDB_ASSERT(_subs[i]);
     const auto traits = _subs[i]->Traits();
     if (traits.store) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

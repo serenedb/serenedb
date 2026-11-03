@@ -1,11 +1,6 @@
 # serenedb-only (needs concurrent non-superuser password sessions): a schema
 # privilege changed in one transaction is not in force for another session
-# until it commits, whichever way the enforcer reaches the schema. By name is
-# the CatalogSet's own snapshot walk. Through a table (OWNER TO checks the new
-# owner's CREATE on the table's schema) it used to read whatever version was
-# newest, committed or not, so a pending GRANT was already honoured and a
-# pending REVOKE already enforced. Now the table resolves its schema with the
-# reader's transaction, like any other catalog lookup.
+# until it commits.
 #
 # Lore: vedernikoff owns the ledger and its schema; bob is the intern who is
 # handed the ledger once, and only once the grant is real.

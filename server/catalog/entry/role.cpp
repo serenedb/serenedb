@@ -38,6 +38,7 @@
 #include "pg/connection_context.h"
 
 namespace sdb::catalog {
+namespace {
 
 duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
   const auto it = absl::c_find_if(
@@ -45,6 +46,8 @@ duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
   return it == std::end(kPredefinedRoles) ? duckdb::RoleCapability::None
                                           : it->capability;
 }
+
+}  // namespace
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name) {
   const auto& text = name.GetIdentifierName();

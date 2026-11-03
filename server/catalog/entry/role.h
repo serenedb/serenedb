@@ -73,8 +73,6 @@ constexpr bool IsPredefinedRole(duckdb::idx_t oid) {
   return oid != pg::kInvalidOid && oid < pg::kMinSystem;
 }
 
-duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid);
-
 void RequireUnreservedRoleName(const duckdb::Identifier& name);
 std::string StoredPassword(std::string_view password);
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context);

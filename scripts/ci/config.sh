@@ -9,7 +9,7 @@ sdb_test_targets() {
 		[[ "$1" == --suite ]] && suites+=("$2") && shift
 		shift
 	done
-	((${#suites[@]})) || suites=(gtest iresearch iresearch-load duckdb re2)
+	((${#suites[@]})) || suites=(gtest iresearch iresearch-load duckdb re2 croaring)
 	local suite
 	for suite in "${suites[@]}"; do
 		case "$suite" in
@@ -18,6 +18,7 @@ sdb_test_targets() {
 		iresearch-load) echo iresearch-load-tests ;;
 		duckdb) echo unittest ;;
 		re2) echo re2-tests ;;
+		croaring) echo croaring-tests ;;
 		esac
 	done
 }

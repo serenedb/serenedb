@@ -53,6 +53,7 @@
 #include <utility>
 #include <vector>
 
+#include "backup/restore.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
@@ -62,7 +63,9 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tablespace.h"
 #include "pg/catalog/oids.h"
+#include "search/store.h"
 #include "search/wal_recovery.h"
+#include "utils/file_utils.h"
 
 ABSL_FLAG(std::string, missing_database, "refuse",
           "What boot does with a database whose data file is missing: "
@@ -93,14 +96,9 @@ std::vector<StorageEntry> ListStoragesOrDie(const std::string& directory) {
 
 absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
   absl::flat_hash_set<duckdb::idx_t> oids;
-  for (const SearchTableEntry& table : SearchTableEntries(catalog)) {
-    oids.insert(table.oid);
-  }
-  for (const InvertedIndexEntry& index : InvertedIndexEntries(catalog)) {
-    if (index.Storage()) {
-      oids.insert(index.oid);
-    }
-  }
+  ForEachSearchStorage(
+    catalog, [&](SearchTableEntry& table) { oids.insert(table.oid); },
+    [&](InvertedIndexEntry& index) { oids.insert(index.oid); });
   return oids;
 }
 
@@ -216,6 +214,42 @@ std::string DataDirectory::CatalogLogFile() const {
   return absl::StrCat(EngineDir(), "/", kCatalogLog);
 }
 
+std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
+  const std::filesystem::path& directory) {
+  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
+  std::error_code ec;
+  std::filesystem::directory_iterator entries{directory, ec};
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
+              "': ", ec.message());
+  }
+  for (const auto& entry : entries) {
+    const bool is_directory = entry.is_directory(ec);
+    if (ec) {
+      SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
+                "': ", ec.message());
+    }
+    const auto name = entry.path().filename().string();
+    if (const auto oid = OidFromName(name); is_directory && oid) {
+      found.emplace_back(*oid, entry.path());
+    }
+  }
+  return found;
+}
+
+std::filesystem::path DataDirectory::DatabaseDir(duckdb::idx_t oid) const {
+  return std::filesystem::path{EngineDir()} / absl::StrCat(oid);
+}
+
+std::filesystem::path DataDirectory::StorageDir(duckdb::idx_t database,
+                                                duckdb::idx_t oid) const {
+  return DatabaseDir(database) / absl::StrCat(oid);
+}
+
+std::string DataDirectory::DatabaseFile(duckdb::idx_t oid) const {
+  return (DatabaseDir(oid) / kDataFile).string();
+}
+
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
             duckdb::AttachVisibility visibility, bool defer_storage_load) {
@@ -282,6 +316,7 @@ void InitCatalog(std::string_view directory) {
   if (std::filesystem::create_directories(layout.EngineDir())) {
     StorageFileSystem().SyncDirectory(layout.directory);
   }
+  backup::PrepareDataDirectory(layout);
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   const auto log_path = layout.CatalogLogFile();
@@ -327,9 +362,8 @@ void InitCatalog(std::string_view directory) {
   cluster.OpenCatalogLog(std::move(catalog_log),
                          gMissingDatabases.policy != "skip");
   auto& manager = duckdb::DatabaseManager::Get(instance);
-  for (const auto& db : manager.GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !ReadDatabase(db->GetName().GetIdentifierName(),
+  for (const auto& db : SereneDBDatabases(manager)) {
+    if (!ReadDatabase(db->GetName().GetIdentifierName(),
                       [](const DatabaseCatalogEntry&) {})) {
       manager.DetachDatabase(context, db->GetName(),
                              duckdb::OnEntryNotFound::RETURN_NULL);
@@ -384,19 +418,15 @@ void InitCatalog(std::string_view directory) {
   search::OpenSearchStorages(catalogs);
   listings.WorkOnTasks();
   RemoveUnownedStorages(storages);
-  for (const auto& db : manager.GetDatabases()) {
-    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
-      db->GetStorageManager().FinishLoad(context);
-    }
+  const auto attached = SereneDBDatabases(manager);
+  for (const auto& db : attached) {
+    db->GetStorageManager().FinishLoad(context);
   }
-  search::RecoverSearchStorages();
+  search::RecoverSearchStorages(attached);
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
-  for (const auto& db : manager.GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& db : attached) {
+    db->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());

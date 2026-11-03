@@ -567,10 +567,10 @@ def test_reads_refuse_an_object_replaced_after_its_upload(tmp_path: Path) -> Non
                            location)
             _create_index(server)
             assert _matches(server) == [1]
-            terms = [key for key in fake.keys("bucket", f"replaced-{tmp_path.name}/")
-                     if key.endswith(".idx")]
-            assert terms, fake.keys("bucket")
-            for key in terms:
+            columns = [key for key in fake.keys("bucket", f"replaced-{tmp_path.name}/")
+                       if key.endswith(".col")]
+            assert columns, fake.keys("bucket")
+            for key in columns:
                 with fake.lock:
                     size = len(fake.objects[("bucket", key)].data)
                 fake.replace("bucket", key, bytes(size))
@@ -622,10 +622,10 @@ def test_reads_refuse_a_blob_replaced_after_its_upload(tmp_path: Path) -> None:
             _create_tablespace(server, location)
             _create_index(server)
             assert _matches(server) == [1]
-            terms = [name for name in fake.names("indexes", f"replaced-{tmp_path.name}/")
-                     if name.endswith(".idx")]
-            assert terms, fake.names("indexes")
-            for name in terms:
+            columns = [name for name in fake.names("indexes", f"replaced-{tmp_path.name}/")
+                       if name.endswith(".col")]
+            assert columns, fake.names("indexes")
+            for name in columns:
                 with fake.lock:
                     size = len(fake.blobs[("indexes", name)].data)
                 fake.replace("indexes", name, bytes(size))

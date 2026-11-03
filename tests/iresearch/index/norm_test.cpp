@@ -26,7 +26,6 @@
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -43,11 +42,8 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 
 using tests::FieldIdFor;
 
-auto MakeByTerm(irs::field_id id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id id, std::string_view value) {
+  return {id, {std::string{value}}};
 }
 
 class Tokenizer : public irs::analysis::TypedTokenizer<Tokenizer> {
@@ -364,8 +360,8 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
 
   const auto remove_long = MakeByTerm(FieldIdFor(kKey), "k0_100");
   const auto remove_short = MakeByTerm(FieldIdFor(kKey), "k1_7");
-  tests::Remove(*writer, *remove_long);
-  tests::Remove(*writer, *remove_short);
+  tests::Remove(*writer, remove_long);
+  tests::Remove(*writer, remove_short);
   writer->RefreshCommit();
   const irs::index_utils::CompactionCount compact_all;
   ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
@@ -912,7 +908,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   // Remove document
   {
     auto query_doc3 = MakeByTerm(kNameId, "D");
-    tests::Remove(*writer, *query_doc3);
+    tests::Remove(*writer, query_doc3);
     writer->RefreshCommit();
     AssertSnapshotEquality(*writer);
   }

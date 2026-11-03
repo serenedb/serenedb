@@ -43,7 +43,6 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
-#include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -97,14 +96,11 @@
 #include "pg/connection_context.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "search/wal_recovery.h"
 
 namespace sdb::catalog {
 namespace {
-
-constexpr uint64_t kPkSequenceCache = uint64_t{1} << 20;
 
 std::string_view StorageKind(const duckdb::CatalogEntry& entry) {
   return entry.type == duckdb::CatalogType::TABLE_ENTRY ? "search table"
@@ -231,17 +227,6 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
     auto entry =
       duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
     if (info.Base().oid == 0) {
-      if (!entry->PkSequenceName().empty()) {
-        duckdb::CreateSequenceInfo sequence_info;
-        sequence_info.SetQualification(GetName(), schema.name);
-        sequence_info.SetSequenceName(entry->PkSequenceName());
-        sequence_info.cache = kPkSequenceCache;
-        sequence_info.tags[kGeneratedPkSequenceTag] =
-          entry->name.GetIdentifierName();
-        sequence_info.permissions.owner = info.Base().permissions.owner;
-        info.Base().dependencies.AddOwnedDependency(
-          *schema.CreateSequence(transaction, sequence_info));
-      }
       entry->Storage()->StartTasks();
     }
     return std::move(entry);
@@ -279,7 +264,7 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   if (const auto& store = entry->SearchStore()) {
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
-    entry->AdoptStorage(search::InvertedIndexStorage::Create(
+    entry->AdoptStorage(std::make_shared<search::Store>(
       Directory(transaction, entry->Tablespace()), GetAttached(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
@@ -360,7 +345,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   }
   auto& del = planner.Make<connector::SereneDBSearchDelete>(
     *entry, std::move(op.expressions), op.types, op.estimated_cardinality,
-    op.return_chunk, std::move(op.return_columns), op.row_id_handling);
+    op.return_chunk, std::move(op.return_columns), op.returning_virtual_columns,
+    op.row_id_handling);
   del.children.emplace_back(plan);
   return del;
 }
@@ -649,14 +635,14 @@ void SereneDBCatalog::FinalizeLoad(
   auto& storage = GetAttached().GetStorageManager();
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log_path,
                                        _directory->Oid());
-  for (const SearchTableEntry& table : SearchTableEntries(*this)) {
-    RefuseTablespace(path, table, table.Tablespace());
-  }
-  for (const InvertedIndexEntry& index : InvertedIndexEntries(*this)) {
-    if (index.Storage()) {
+  ForEachSearchStorage(
+    *this,
+    [&](SearchTableEntry& table) {
+      RefuseTablespace(path, table, table.Tablespace());
+    },
+    [&](InvertedIndexEntry& index) {
       RefuseTablespace(path, index, index.Tablespace());
-    }
-  }
+    });
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);
   storage.FinishLoad(*context);
@@ -892,6 +878,56 @@ void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropSubscription(transaction, info);
+}
+
+duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(
+  duckdb::DatabaseManager& manager) {
+  auto databases = manager.GetDatabases();
+  std::erase_if(databases, [](const auto& db) {
+    return db->GetCatalog().GetCatalogType() != SereneDBCatalog::kStorageType;
+  });
+  return databases;
+}
+
+void ForEachSearchStorage(
+  SereneDBCatalog& catalog, absl::FunctionRef<void(SearchTableEntry&)> table,
+  std::optional<absl::FunctionRef<void(InvertedIndexEntry&)>> index) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  catalog.ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == duckdb::CatalogType::TABLE_ENTRY &&
+            entry.Cast<duckdb::TableCatalogEntry>().GetLogStorage()) {
+          auto& search_table = entry.Cast<SearchTableEntry>();
+          SDB_ASSERT(search_table.Storage());
+          table(search_table);
+        }
+      });
+    if (index) {
+      schema.get().Scan(duckdb::CatalogType::INDEX_ENTRY,
+                        [&](duckdb::CatalogEntry& entry) {
+                          if (connector::IsInvertedIndex(
+                                entry.Cast<duckdb::IndexCatalogEntry>())) {
+                            auto& inverted = entry.Cast<InvertedIndexEntry>();
+                            if (inverted.Storage()) {
+                              (*index)(inverted);
+                            }
+                          }
+                        });
+    }
+  }
+}
+
+std::vector<std::shared_ptr<search::Store>> SearchTableStorages(
+  SereneDBCatalog& catalog) {
+  std::vector<std::shared_ptr<search::Store>> tables;
+  ForEachSearchStorage(
+    catalog,
+    [&](SearchTableEntry& table) { tables.push_back(table.Storage()); },
+    std::nullopt);
+  return tables;
 }
 
 }  // namespace sdb::catalog

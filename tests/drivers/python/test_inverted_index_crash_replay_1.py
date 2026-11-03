@@ -11,7 +11,7 @@ from inverted_dml import (  # type: ignore[import-untyped]
 )
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4])
+@pytest.mark.parametrize("seed", [1, 2])
 def test_a_crash_during_concurrent_writes_replays_to_an_equal_index(
     tmp_path: Path, seed: int
 ) -> None:

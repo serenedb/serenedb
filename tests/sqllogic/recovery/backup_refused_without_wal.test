@@ -1,0 +1,99 @@
+control substitution on
+
+# A checkpoint that dies after it closed the database's WAL leaves the database
+# without one until a restart: pg_backup_start refuses rather than record a cut
+# of a database it cannot replay.
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE DATABASE brw_db;
+
+
+statement ok
+CREATE TABLE brw_db.public.t (x BIGINT);
+
+
+statement ok
+INSERT INTO brw_db.public.t VALUES (1);
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM brw_db.public.t;
+----
+n
+1
+
+
+connection default
+statement ok
+INSERT INTO brw_db.public.t VALUES (2);
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_checkpoint';
+
+
+statement ok
+SET debug_checkpoint_abort = 'before_moving_checkpoint_wal';
+
+
+connection checkpointer
+statement async error
+CHECKPOINT brw_db;
+----
+db error: ERROR: Checkpoint failed for database<slt:ignore>
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_checkpoint:parked';
+
+
+connection writer
+statement ok
+INSERT INTO brw_db.public.t VALUES (3);
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_checkpoint:release';
+
+
+connection checkpointer
+wait
+
+
+connection reader
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+RESET debug_checkpoint_abort;
+
+
+connection default
+statement error
+SELECT pg_backup_start('brw');
+----
+db error: ERROR: cannot start a backup: database "brw_db" has no active WAL after a failed checkpoint
+HINT: Restart the server, then retry.
+
+
+connection default
+query
+SELECT count(*) AS cut FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/backup/*');
+----
+cut
+0

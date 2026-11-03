@@ -21,7 +21,6 @@
 #include "search/wal_recovery.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/synchronization/mutex.h>
@@ -52,36 +51,13 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/inverted_store_index.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::search {
 namespace {
 
 using BoundIndexHandle =
   duckdb::IndexWriteHandle<connector::InvertedStoreIndex>;
-
-std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
-  std::vector<duckdb::reference<catalog::SereneDBCatalog>> catalogs;
-  for (const auto& database :
-       duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
-         .GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
-      catalogs.emplace_back(catalog.Cast<catalog::SereneDBCatalog>());
-    }
-  }
-  return catalogs;
-}
-
-std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
-InvertedIndexEntries() {
-  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
-  for (auto& catalog : SereneDBCatalogs()) {
-    indexes.append_range(catalog::InvertedIndexEntries(catalog.get()));
-  }
-  return indexes;
-}
 
 std::optional<BoundIndexHandle> BoundIndexOf(
   catalog::InvertedIndexEntry& entry) {
@@ -117,13 +93,15 @@ std::optional<MissingStorage> OpenSearchStorages(
   duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
   absl::Mutex mutex;
   std::optional<MissingStorage> missing;
-  const auto open = [&](const duckdb::CatalogEntry& entry, auto storage,
-                        auto... settings) {
+  const auto open = [&](const duckdb::CatalogEntry& entry,
+                        std::shared_ptr<Store> storage) {
+    if (!storage || storage->Opened()) {
+      return;
+    }
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
       executor,
-      [&mutex, &missing, &entry, storage = std::move(storage),
-       ... settings = std::move(settings)] {
-        if (storage->Open(settings...)) {
+      [&mutex, &missing, &entry, storage = std::move(storage)] {
+        if (storage->Open()) {
           return;
         }
         absl::MutexLock lock{&mutex};
@@ -134,32 +112,24 @@ std::optional<MissingStorage> OpenSearchStorages(
       "SearchOpenStorage"));
   };
   for (auto& catalog : catalogs) {
-    for (const catalog::SearchTableEntry& table :
-         catalog::SearchTableEntries(catalog.get())) {
-      if (!table.Storage()->Opened()) {
-        open(table, table.Storage());
-      }
-    }
-    for (const catalog::InvertedIndexEntry& index :
-         catalog::InvertedIndexEntries(catalog.get())) {
-      if (const auto& storage = index.Storage();
-          storage && !storage->Opened()) {
-        open(index, storage, catalog::ResolveSettings(index.options));
-      }
-    }
+    catalog::ForEachSearchStorage(
+      catalog.get(),
+      [&](catalog::SearchTableEntry& table) { open(table, table.Storage()); },
+      [&](catalog::InvertedIndexEntry& index) {
+        open(index, index.Storage());
+      });
   }
   executor.WorkOnTasks();
   return missing;
 }
 
-void RecoverSearchStorages() {
+void RecoverSearchStorages(
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
   const auto begin = std::chrono::steady_clock::now();
-  std::vector<std::pair<std::optional<BoundIndexHandle>,
-                        std::shared_ptr<InvertedIndexStorage>>>
+  std::vector<
+    std::pair<std::optional<BoundIndexHandle>, std::shared_ptr<Store>>>
     recovering;
-  std::vector<std::pair<duckdb::reference<duckdb::AttachedDatabase>,
-                        std::shared_ptr<SearchTable>>>
-    tables;
+  std::vector<std::shared_ptr<Store>> tables;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> databases;
   const auto add_database = [&](duckdb::AttachedDatabase& db) {
     if (absl::c_none_of(databases, [&](const auto& synced) {
@@ -168,28 +138,28 @@ void RecoverSearchStorages() {
       databases.emplace_back(db);
     }
   };
-  for (auto& index : InvertedIndexEntries()) {
-    const auto& storage = index.get().Storage();
-    if (!storage || !index.get().info) {
-      continue;
-    }
-    add_database(index.get().catalog.GetAttached());
-    recovering.emplace_back(BoundIndexOf(index.get()), storage);
-  }
-  for (auto& catalog : SereneDBCatalogs()) {
-    auto& db = catalog.get().GetAttached();
-    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
-      add_database(db);
-      tables.emplace_back(db, std::move(table));
-    }
+  for (const auto& db : attached) {
+    catalog::ForEachSearchStorage(
+      db->GetCatalog().Cast<catalog::SereneDBCatalog>(),
+      [&](catalog::SearchTableEntry& table) {
+        add_database(*db);
+        tables.push_back(table.Storage());
+      },
+      [&](catalog::InvertedIndexEntry& index) {
+        if (!index.info) {
+          return;
+        }
+        add_database(*db);
+        recovering.emplace_back(BoundIndexOf(index), index.Storage());
+      });
   }
   for (auto& db : databases) {
     SyncWal(db);
   }
-  std::atomic_size_t replayed{0};
-  std::atomic_size_t replayed_tables{0};
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
+  std::atomic_size_t replayed{0};
+  std::atomic_size_t replayed_tables{0};
   for (auto& [index, storage] : recovering) {
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
       executor,
@@ -204,29 +174,28 @@ void RecoverSearchStorages() {
       },
       "SearchFinishReplay"));
   }
-  for (auto& [db, table] : tables) {
+  for (auto& table : tables) {
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
       executor,
-      [&replayed_tables, &db = db.get(), table] {
-        if (table->FinishReplay(db)) {
+      [&replayed_tables, table] {
+        if (table->FinishReplay()) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
         if (const auto status = table->VacuumRefresh(); !status.ok()) {
-          SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
+          SDB_WARN(SEARCH, "refresh of search table '", table->GetId(),
                    "' after WAL replay failed: ", status.message());
         }
       },
       "SearchFinishReplay"));
   }
   executor.WorkOnTasks();
-  for (auto& catalog : SereneDBCatalogs()) {
-    auto& db = catalog.get().GetAttached();
-    auto& storage = db.GetStorageManager();
+  for (const auto& db : attached) {
+    auto& storage = db->GetStorageManager();
     if (storage.InMemory()) {
       continue;
     }
     const auto checkpoint =
-      duckdb::DuckTransactionManager::Get(db).SharedCheckpointLock();
+      duckdb::DuckTransactionManager::Get(*db).SharedCheckpointLock();
     auto commit_lock = storage.GetCommitLock();
     storage.ReleaseRetainedWAL(commit_lock);
   }
@@ -257,15 +226,14 @@ void RecoverSearchStorages() {
 }
 
 void StartSearchStorageTasks() {
-  for (auto& index : InvertedIndexEntries()) {
-    if (const auto& storage = index.get().Storage()) {
-      storage->StartTasks();
-    }
-  }
-  for (auto& catalog : SereneDBCatalogs()) {
-    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
-      table->StartTasks();
-    }
+  for (const auto& db : catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    catalog::ForEachSearchStorage(
+      db->GetCatalog().Cast<catalog::SereneDBCatalog>(),
+      [](catalog::SearchTableEntry& table) { table.Storage()->StartTasks(); },
+      [](catalog::InvertedIndexEntry& index) {
+        index.Storage()->StartTasks();
+      });
   }
 }
 

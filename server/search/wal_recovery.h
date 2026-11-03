@@ -22,6 +22,8 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,9 +37,13 @@ struct MissingStorage {
   std::string path;
 };
 
+// Opens the durable search storages of [catalogs] at once; the first missing
+// storage by oid, if any.
 std::optional<MissingStorage> OpenSearchStorages(
   std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs);
-void RecoverSearchStorages();
+
+void RecoverSearchStorages(
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
 
 }  // namespace sdb::search

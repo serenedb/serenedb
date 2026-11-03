@@ -179,8 +179,6 @@ const duckdb::UniqueConstraint* ReferencedKey(
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
                                 const duckdb::Constraint& constraint);
 
-bool NumbersRows(const duckdb::CatalogEntry& sequence);
-
 std::vector<std::string> RelationAttributeNames(const Session& session,
                                                 const Relation& relation);
 

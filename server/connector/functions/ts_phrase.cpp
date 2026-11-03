@@ -140,14 +140,13 @@ void AppendTokenSlots(irs::ByPhraseOptions& options,
 void AddPhrase(BoolTarget parent, const FilterContext& ctx,
                const SearchColumnInfo& column_info,
                irs::ByPhraseOptions&& options) {
-  const auto field_id =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+  const auto field_id = column_info.field_id;
   if (options.size() == 1) {
     if (const auto* set =
           std::get_if<irs::TermSetOptions>(&options.begin()->part)) {
       std::vector<irs::bstring> terms(set->terms.begin(), set->terms.end());
-      auto& node =
-        AddTermSet(MaybeNegated(parent, ctx, column_info), field_id, terms, 1);
+      auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field_id,
+                              TextOf(column_info), terms, 1);
       node.SetMergeType(irs::ScoreMergeType::Max);
       node.SetBoost(ctx.boost);
       return;
@@ -155,7 +154,7 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
   }
   auto& phrase = AddMaybeNegated<irs::ByPhrase>(parent, ctx, column_info);
   phrase.SetBoost(ctx.boost);
-  *phrase.mutable_field_id() = field_id;
+  SetField(phrase, column_info);
   *phrase.mutable_options() = std::move(options);
 }
 
@@ -276,9 +275,8 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 std::string_view hint) {
   if (auto term = PlanPhrase(QueryShingle(ctx, column_info), column_info,
                              options, label, hint, ctx.client_context)) {
-    AddTerm(MaybeNegated(parent, ctx, column_info),
-            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-            *term, ctx.boost);
+    AddTerm(MaybeNegated(parent, ctx, column_info), column_info.field_id,
+            TextOf(column_info), *term, ctx.boost);
     return;
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
@@ -290,8 +288,9 @@ bool MatchesPhrases(const SearchColumnInfo& column_info) {
   return HasPositions(column_info) ||
          (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
           irs::field_limits::valid(column_info.text) &&
+          column_info.layout != irs::DictLayout::JsonList &&
           (column_info.logical_type.IsJSONType() ||
-           !irs::field_limits::valid(column_info.numeric_field_id)));
+           column_info.layout != irs::DictLayout::Json));
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
@@ -316,10 +315,12 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
     irs::Filter::ptr lowered;
     if (auto term = PlanPhrase(shingle, *column_info, options, "to_tsquery",
                                "or search for single words", context)) {
-      lowered = irs::PartFilter(
-        phrase.field_id(), irs::ByTermOptions{.term = std::move(*term)}, true);
+      lowered =
+        irs::PartFilter(phrase.field_id(), phrase.dict(),
+                        irs::ByTermOptions{.term = std::move(*term)}, true);
     } else if (options.size() == 1 && options.word_separator().empty()) {
-      lowered = irs::PartFilter(phrase.field_id(), options.begin()->part, true);
+      lowered = irs::PartFilter(phrase.field_id(), phrase.dict(),
+                                options.begin()->part, true);
     } else {
       return;
     }

@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5) t(i)) TO '${__TEST_DIR__}/rdmr_1.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rdmr_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE VIEW rdmr_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/rdmr_*.parquet');
+
+
+statement ok
+CREATE INDEX rdmr_idx ON rdmr_v USING inverted(id, body rdmr_en)
+  WITH (reindex_interval = 0, compaction_interval = 0);
+
+
+statement ok
+COPY (SELECT i AS id, 'doc ' || i AS body FROM range(5, 8) t(i)) TO '${__TEST_DIR__}/rdmr_2.parquet' (FORMAT parquet);
+
+
+statement ok
+SET sdb_faults = 'refresh_before_manifest_publish';
+
+
+query
+SELECT action, files_added FROM serenedb_reindex('rdmr_idx');
+----
+action	files_added
+delta	1
+
+
+statement ok
+SET sdb_faults = '-refresh_before_manifest_publish';
+
+
+query
+SELECT id, body FROM rdmr_idx WHERE id >= 4 ORDER BY id;
+----
+id	body
+4	doc 4
+5	doc 5
+6	doc 6
+7	doc 7
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM rdmr_idx WHERE id >= 4 ORDER BY id;
+----
+id	body
+4	doc 4
+5	doc 5
+6	doc 6
+7	doc 7
+
+
+connection after_crash
+query
+SELECT * FROM serenedb_reindex('rdmr_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0

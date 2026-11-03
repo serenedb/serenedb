@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <span>
+
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
@@ -65,40 +69,25 @@ class ColumnarTermIterator final : public TermOnlyIterator {
       return 0;
     }
     const size_t first = _rank;
-    if (_scattered->AllInline()) {
-      const auto* docs = _scattered->RankedInlineDocs();
-      auto begin = _scattered->TermBegin(first);
-      for (size_t i = 0; i < n; ++i) {
-        const auto end = _scattered->TermEnd(first + i);
-        postings[i] = {.span = {.docs = docs + begin,
-                                .pos = nullptr,
-                                .offs_start = nullptr,
-                                .offs_end = nullptr,
-                                .count = static_cast<size_t>(end - begin)}};
-        terms[i] = AsBytesView(_scattered->TermAt(first + i));
-        begin = end;
+    auto begin = _scattered->TermBegin(first);
+    for (size_t i = 0; i < n; ++i) {
+      const auto end = _scattered->TermEnd(first + i);
+      if (end <= BlockEnd(begin)) [[likely]] {
+        postings[i] = {.span = BlockSpan(begin, end)};
+      } else {
+        postings[i] = {
+          .span = {},
+          .docs_blocks = _docs,
+          .pos_blocks = _pos,
+          .offs_start_blocks = _offs_start,
+          .offs_end_blocks = _offs_end,
+          .begin = begin,
+          .end = end,
+          .block_shift = ScatterScratch::kBlockShift,
+        };
       }
-    } else {
-      auto begin = _scattered->TermBegin(first);
-      for (size_t i = 0; i < n; ++i) {
-        const auto end = _scattered->TermEnd(first + i);
-        if (end <= BlockEnd(begin)) [[likely]] {
-          postings[i] = {.span = BlockSpan(begin, end)};
-        } else {
-          postings[i] = {
-            .span = {},
-            .docs_blocks = _docs,
-            .pos_blocks = _pos,
-            .offs_start_blocks = _offs_start,
-            .offs_end_blocks = _offs_end,
-            .begin = begin,
-            .end = end,
-            .block_shift = ScatterScratch::kBlockShift,
-          };
-        }
-        terms[i] = AsBytesView(_scattered->TermAt(first + i));
-        begin = end;
-      }
+      terms[i] = AsBytesView(_scattered->TermAt(first + i));
+      begin = end;
     }
     _rank += n;
     return n;
@@ -137,15 +126,33 @@ class ColumnarTermReader final : public BasicTermReader,
  public:
   void Reset(const ScatteredField& scattered) {
     _it.Reset(scattered);
-    _min = _max = {};
-    if (const auto nterms = scattered.TermCount()) {
-      _min = AsBytesView(scattered.TermAt(0));
-      _max = AsBytesView(scattered.TermAt(nterms - 1));
-    }
+    _scattered = &scattered;
+    key_width = scattered.KeyWidth();
   }
 
-  bytes_view(min)() const noexcept final { return _min; }
-  bytes_view(max)() const noexcept final { return _max; }
+  void SampleTerms(
+    uint64_t bytes,
+    absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final {
+    constexpr size_t kRun = 16;
+    if (!_scattered) {
+      return;
+    }
+    const size_t nterms = _scattered->TermCount();
+    const uint64_t total = _scattered->TermBytes();
+    if (nterms == 0 || total == 0) {
+      return;
+    }
+    const uint64_t runs = std::max<uint64_t>(1, bytes * nterms / total / kRun);
+    const size_t stride = std::max<size_t>(kRun, nterms / runs);
+    std::array<bytes_view, kRun> run;
+    for (size_t i = 0; i < nterms; i += stride) {
+      const size_t n = std::min(kRun, nterms - i);
+      for (size_t j = 0; j != n; ++j) {
+        run[j] = AsBytesView(_scattered->TermAt(i + j));
+      }
+      visit({run.data(), n});
+    }
+  }
   const FieldMeta& Meta() const noexcept { return _it.Meta(); }
   field_id id() const noexcept final { return Meta().id; }
   FieldProperties properties() const noexcept final { return Meta(); }
@@ -156,8 +163,7 @@ class ColumnarTermReader final : public BasicTermReader,
 
  private:
   mutable ColumnarTermIterator _it;
-  bytes_view _min{};
-  bytes_view _max{};
+  const ScatteredField* _scattered = nullptr;
 };
 
 }  // namespace irs

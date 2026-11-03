@@ -234,6 +234,7 @@ struct Ifield {
   }
   // Field identity; the on-disk storage key.
   virtual irs::field_id Id() const = 0;
+  virtual irs::DictRef Dict() const { return irs::StringLayout::kStrings; }
   virtual std::string_view Name() const = 0;
   virtual bool Write(irs::DataOutput& out) const = 0;
 };
@@ -274,13 +275,16 @@ class LongField : public FieldBase {
  public:
   typedef int64_t value_t;
 
-  LongField() = default;
+  LongField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   int64_t _value{};
@@ -299,7 +303,7 @@ class IntField : public FieldBase {
     irs::IndexFeatures extra_features = irs::IndexFeatures::None)
     : _value{value} {
     this->Name(std::string{name});
-    this->index_features |= extra_features;
+    this->index_features |= irs::IndexFeatures::Ranges | extra_features;
   }
   IntField(IntField&& other) = default;
 
@@ -308,6 +312,9 @@ class IntField : public FieldBase {
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   int32_t _value{};
@@ -321,13 +328,16 @@ class DoubleField : public FieldBase {
  public:
   typedef double_t value_t;
 
-  DoubleField() = default;
+  DoubleField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   double_t _value{};
@@ -341,13 +351,16 @@ class FloatField : public FieldBase {
  public:
   typedef float_t value_t;
 
-  FloatField() = default;
+  FloatField() { index_features = irs::IndexFeatures::Ranges; }
 
   bool InsertBlockInto(const irs::IndexWriter::Document& doc) const final;
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
   bool Write(irs::DataOutput& out) const final;
+  irs::DictRef Dict() const noexcept final {
+    return irs::NumericLayout::kNumbers;
+  }
 
  private:
   float_t _value{};
@@ -960,11 +973,12 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
   return true;
 }
 
-template<typename Filter, typename Indexed>
-bool Update(irs::IndexWriter& writer, Filter&& filter, Indexed ibegin,
+template<typename Indexed>
+bool Update(irs::IndexWriter& writer,
+            std::shared_ptr<const irs::DocRemoval> removal, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
-  ctx.Remove(std::forward<Filter>(filter));
+  ctx.Remove(std::move(removal));
   if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
   }
@@ -972,13 +986,42 @@ bool Update(irs::IndexWriter& writer, Filter&& filter, Indexed ibegin,
   return true;
 }
 
-// One-shot removal: opens a batch, queues the filter and commits it.
-// Equivalent to `auto b = writer.GetBatch(); b.Remove(filter); b.Commit();`.
-template<bool TickBound = true, typename Filter>
-void Remove(irs::IndexWriter& writer, Filter&& filter) {
+// One-shot removal: opens a batch, queues the removal and commits it.
+// Equivalent to `auto b = writer.GetBatch(); b.Remove(removal); b.Commit();`.
+inline void Remove(irs::IndexWriter& writer,
+                   std::shared_ptr<const irs::DocRemoval> removal) {
   auto trx = writer.GetBatch();
-  trx.template Remove<TickBound>(std::forward<Filter>(filter));
+  trx.Remove(std::move(removal));
   trx.Commit();
+}
+
+inline void Remove(irs::IndexWriter& writer, irs::KeyRemoval removal) {
+  auto trx = writer.GetBatch();
+  trx.Remove(std::move(removal));
+  trx.Commit();
+}
+
+struct Terms {
+  irs::field_id field;
+  std::vector<std::string> values;
+};
+
+std::shared_ptr<const irs::DocRemoval> RemovalOf(
+  const irs::DirectoryReader& reader, const Terms& terms);
+
+inline std::shared_ptr<const irs::DocRemoval> RemovalOf(
+  const irs::IndexWriter& writer, const Terms& terms) {
+  return RemovalOf(writer.GetSnapshot(), terms);
+}
+
+inline void Remove(irs::IndexWriter& writer, const Terms& terms) {
+  Remove(writer, RemovalOf(writer, terms));
+}
+
+template<typename Indexed>
+bool Update(irs::IndexWriter& writer, const Terms& terms, Indexed ibegin,
+            Indexed iend) {
+  return Update(writer, RemovalOf(writer, terms), ibegin, iend);
 }
 
 }  // namespace tests

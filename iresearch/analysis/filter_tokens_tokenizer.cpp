@@ -30,17 +30,20 @@
 
 namespace irs::analysis {
 
-Tokenizer::ptr FilterTokensTokenizer::Make(Options opts) {
-  return std::make_unique<FilterTokensTokenizer>(std::move(opts));
+Tokenizer::ptr FilterTokensTokenizer::Make(Options opts,
+                                           duckdb::SharedObjectCache& cache) {
+  return std::make_unique<FilterTokensTokenizer>(std::move(opts), cache);
 }
 
-FilterTokensTokenizer::FilterTokensTokenizer(Options opts)
+FilterTokensTokenizer::FilterTokensTokenizer(Options opts,
+                                             duckdb::SharedObjectCache& cache)
   : _min{opts.min_length},
     _max{opts.max_length == 0 ? std::numeric_limits<size_t>::max()
                               : opts.max_length},
     _by_length{opts.min_length != 0 || opts.max_length != 0} {
   if (!opts.predicate.empty()) {
-    _predicate = std::make_unique<SqlPredicate>(type_name(), opts.predicate);
+    _predicate =
+      std::make_unique<SqlPredicate>(type_name(), opts.predicate, cache);
   }
 }
 

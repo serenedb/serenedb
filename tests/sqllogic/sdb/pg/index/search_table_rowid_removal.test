@@ -1,0 +1,182 @@
+statement ok
+CREATE TABLE rr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO rr SELECT i, 'a' || i FROM generate_series(0, 299999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+statement ok
+INSERT INTO rr SELECT i, 'b' || i FROM generate_series(300000, 300099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+300100	45029854950
+
+statement ok
+DELETE FROM rr WHERE id % 1000 = 7;
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+299799	44984702843
+
+query
+SELECT count(*) AS n FROM rr WHERE id % 1000 = 7;
+----
+n
+0
+
+statement ok
+UPDATE rr SET v = 'u' WHERE id BETWEEN 122870 AND 122890;
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM rr WHERE v = 'u';
+----
+n	lo	hi
+21	122870	122890
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+299799	44984702843
+
+statement ok
+VACUUM (COMPACT_TABLE) rr;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('rr') WHERE column_name = 'id';
+----
+segments
+1
+
+statement ok
+DELETE FROM rr WHERE id BETWEEN 299990 AND 300010;
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+299779	44978702850
+
+statement ok
+DELETE FROM rr WHERE id = -1;
+
+statement ok
+DELETE FROM rr WHERE v = 'b300050';
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+299778	44978402800
+
+statement ok
+DELETE FROM rr WHERE v = 'a42';
+
+statement ok
+VACUUM (REFRESH_TABLE) rr;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rr;
+----
+n	s
+299777	44978402758
+
+statement ok
+DROP TABLE rr;
+
+statement ok
+CREATE TABLE rc (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO rc SELECT i, 'a' || i FROM generate_series(0, 99999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rc;
+
+statement ok
+INSERT INTO rc SELECT i, 'b' || i FROM generate_series(100000, 199999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rc;
+
+connection deleter
+statement ok
+BEGIN;
+
+connection deleter
+statement ok
+DELETE FROM rc WHERE id % 1000 = 3;
+
+connection deleter
+statement ok
+UPDATE rc SET v = 'moved' WHERE id = 150007;
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) rc;
+
+connection deleter
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) rc;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rc;
+----
+n	s
+199800	19979999400
+
+query
+SELECT count(*) AS n FROM rc WHERE id % 1000 = 3;
+----
+n
+0
+
+query
+SELECT id, v FROM rc WHERE id = 150007;
+----
+id	v
+150007	moved
+
+connection deleter
+statement ok
+DELETE FROM rc WHERE id % 1000 = 4;
+
+statement ok
+VACUUM (COMPACT_TABLE) rc;
+
+statement ok
+VACUUM (REFRESH_TABLE) rc;
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM rc;
+----
+n	s
+199600	19960098600
+
+statement ok
+DROP TABLE rc;

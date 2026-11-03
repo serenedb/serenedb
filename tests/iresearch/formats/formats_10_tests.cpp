@@ -26,7 +26,8 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/index/burst_trie.hpp>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/formats/posting/reader.hpp>
@@ -84,10 +85,7 @@ class Format10TestCase : public tests::FormatTestCase {
         writer.Write(it, posting_meta);
 
         // write attributes to out
-        writer.Encode(*out, posting_meta);
-        if (posting_meta.inline_size != 0) {
-          out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
-        }
+        tests::WriteRecord(writer, *out, posting_meta);
       }
 
       auto stats = writer.EndField();
@@ -117,19 +115,13 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::PostingsReader reader;
       reader.prepare(state, field.index_features);
 
-      irs::bstring in_data(in.Length() - in.Position(), 0);
-      in.ReadData(&in_data[0], in_data.size());
-      const auto* begin = in_data.c_str();
+      auto records = tests::ReadRecords(in);
+      const auto* begin = records.data.get();
 
       // read term attributes
       {
         irs::PostingMeta read_meta;
-        begin += reader.decode(begin, field.index_features, read_meta);
-        irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
-                                    irs::block_codec::kInSlack]{};
-        std::memcpy(inline_bytes, begin, read_meta.inline_size);
-        read_meta.inline_data = inline_bytes;
-        begin += read_meta.inline_size;
+        begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
         // check PostingMeta
         {
@@ -248,7 +240,7 @@ class Format10TestCase : public tests::FormatTestCase {
         }
       }
 
-      ASSERT_EQ(begin, in_data.data() + in_data.size());
+      ASSERT_EQ(begin, records.end);
     }
   }
 };
@@ -295,7 +287,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer.Encode(*out, meta0);
+      tests::WriteRecord(writer, *out, meta0);
     }
 
     // write postings for term0
@@ -311,7 +303,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer.Encode(*out, meta1);
+      tests::WriteRecord(writer, *out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -346,15 +338,14 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in.Length() - in.Position(), 0);
-    in.ReadData(&in_data[0], in_data.size());
-    const auto* begin = in_data.c_str();
+    auto records = tests::ReadRecords(in);
+    const auto* begin = records.data.get();
 
     // read term0 attributes & postings
     {
       irs::PostingMeta read_meta;
 
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta for term0
       {
@@ -378,7 +369,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     // check PostingMeta for term1
     {
       irs::PostingMeta read_meta;
-      begin += reader.decode(begin, field.index_features, read_meta);
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       {
         ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
@@ -399,7 +390,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
     }
 
-    ASSERT_EQ(begin, in_data.data() + in_data.size());
+    ASSERT_EQ(begin, records.end);
   }
 }
 
@@ -444,8 +435,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta0);
 
       // write attributes to out
-      writer.Encode(*out, meta0);
-      out->WriteData(meta0.inline_data, meta0.inline_size);
+      tests::WriteRecord(writer, *out, meta0);
       inline0.assign(meta0.Inline());
       meta0.inline_data = inline0.data();
     }
@@ -455,8 +445,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta1);
 
       // write attributes to out
-      writer.Encode(*out, meta1);
-      out->WriteData(meta1.inline_data, meta1.inline_size);
+      tests::WriteRecord(writer, *out, meta1);
       inline1.assign(meta1.Inline());
       meta1.inline_data = inline1.data();
     }
@@ -487,21 +476,15 @@ TEST_P(Format10TestCase, postings_read_write) {
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    irs::bstring in_data(in.Length() - in.Position(), 0);
-    in.ReadData(&in_data[0], in_data.size());
-    const auto* begin = in_data.c_str();
+    auto records = tests::ReadRecords(in);
+    const auto* begin = records.data.get();
 
     // cumulative attribute
     irs::PostingMeta read_meta;
-    irs::byte_type inline_bytes[irs::PostingMeta::kInlineBytes +
-                                irs::block_codec::kInSlack]{};
 
     // read term0 attributes
     {
-      begin += reader.decode(begin, field.index_features, read_meta);
-      std::memcpy(inline_bytes, begin, read_meta.inline_size);
-      read_meta.inline_data = inline_bytes;
-      begin += read_meta.inline_size;
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -524,10 +507,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term1 attributes
     {
-      begin += reader.decode(begin, field.index_features, read_meta);
-      std::memcpy(inline_bytes, begin, read_meta.inline_size);
-      read_meta.inline_data = inline_bytes;
-      begin += read_meta.inline_size;
+      begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
       // check PostingMeta
       {
@@ -548,7 +528,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
     }
 
-    ASSERT_EQ(begin, in_data.data() + in_data.size());
+    ASSERT_EQ(begin, records.end);
   }
 }
 
@@ -770,15 +750,12 @@ TEST_P(Format10TestCase, ires336) {
   irs::FieldMeta field_meta;
   field_meta.id = kFieldId;
   {
-    tests::MockTermReader term_reader{
-      trms, field_meta, (terms.empty() ? irs::bytes_view{} : *terms.begin()),
-      (terms.empty() ? irs::bytes_view{} : *terms.rbegin())};
+    tests::MockTermReader term_reader{trms, field_meta};
     irs::IdxWriter idx{*dir, segment_name};
-    irs::burst_trie::FieldWriter fw{/*compaction=*/true,
-                                    irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
-    fw.prepare(flush_state);
-    fw.write(term_reader);
+    fw.prepare(flush_state, 1);
+    fw.write(irs::StringLayout::kStrings, term_reader);
     fw.end();
     idx.Commit();
   }
@@ -787,13 +764,15 @@ TEST_P(Format10TestCase, ires336) {
   meta.name = segment_name;
 
   irs::IdxReader idx_reader{*dir, segment_name, true, nullptr};
-  irs::burst_trie::FieldReader fr_obj{irs::IResourceManager::gNoop};
+  irs::term_dict::FieldReader fr_obj{irs::IResourceManager::gNoop};
   auto* fr = &fr_obj;
   fr->prepare(
     irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
 
-  const auto* field = fr->field(field_meta.id);
-  ASSERT_NE(nullptr, field);
+  const auto fields = fr->fields(field_meta.id);
+  ASSERT_EQ(1, fields.size());
+  const auto* field = fields.front();
+  ASSERT_EQ(irs::StringLayout::kStrings, field->meta().dict);
   auto it = field->iterator();
   ASSERT_TRUE(it->seek(term));
 
@@ -975,7 +954,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         {
           TestPostings it(docs, field.index_features);
           writer.Write(it, posting_meta);
-          writer.Encode(*out, posting_meta);
+          tests::WriteRecord(writer, *out, posting_meta);
         }
 
         writer.EndField();
@@ -1001,12 +980,11 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         irs::PostingsReader reader;
         reader.prepare(state, field.index_features);
 
-        irs::bstring in_data(in.Length() - in.Position(), 0);
-        in.ReadData(&in_data[0], in_data.size());
-        const auto* begin = in_data.c_str();
+        auto records = tests::ReadRecords(in);
+        const auto* begin = records.data.get();
 
         irs::PostingMeta read_meta;
-        begin += reader.decode(begin, field.index_features, read_meta);
+        begin += tests::ReadRecord(begin, field.index_features, read_meta);
 
         const auto handles = reader.Handles();
 
@@ -1070,7 +1048,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
           }
         }
 
-        ASSERT_EQ(begin, in_data.data() + in_data.size());
+        ASSERT_EQ(begin, records.end);
       }
     };
 

@@ -56,6 +56,7 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
+#include "pg/version.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
@@ -1387,6 +1388,41 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "archive_mode",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{"off"}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "archive_command",
+      {
+        LogicalTypeId::VARCHAR,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value{""}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "checkpoint_timeout",
+      {
+        LogicalTypeId::INTEGER,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value::INTEGER(300); },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "max_parallel_workers_per_gather",
+      {
+        LogicalTypeId::INTEGER,
+        "Not used. Added for PostgreSQL compatibility only.",
+        [] { return duckdb::Value::INTEGER(2); },
+      },
+    },
+    {
       "standard_conforming_strings",
       {
         LogicalTypeId::BOOLEAN,
@@ -1599,6 +1635,10 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "external_threads",
   // Read-only in PostgreSQL, where reporting the value is the whole point of
   // the GUC.
+  "archive_command",
+  "archive_mode",
+  "checkpoint_timeout",
+  "data_directory",
   "in_hot_standby",
   "is_superuser",
   "max_identifier_length",
@@ -1610,6 +1650,14 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
 
 bool IsUnchangeableSetting(std::string_view name) {
   return kUnchangeableSettings.contains(name);
+}
+
+const duckdb::case_insensitive_set_view_t kNonTransactionalSettings = {
+  "sdb_faults",
+};
+
+bool IsNonTransactionalSetting(std::string_view name) {
+  return kNonTransactionalSettings.contains(name);
 }
 
 const duckdb::case_insensitive_set_view_t kSuperuserSettings = {

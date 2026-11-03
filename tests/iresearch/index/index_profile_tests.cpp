@@ -50,23 +50,20 @@ void StoreNamed(irs::IndexWriter::Document& d, const ParticleT& fields,
 
 class IndexProfileTestCase : public tests::IndexTestBase {
  private:
-  std::atomic_uint64_t _tick{irs::writer_limits::kMinTick + 1};
   std::mutex _commit_mutex;
-  bool _on_tick{false};
+  bool _staged{false};
 
-  void TransactionTick(irs::IndexWriter::Transaction& trx) {
-    if (_on_tick) {
-      trx.RegisterFlush();
-      trx.Commit(_tick.fetch_add(2) + 2);
-    } else {
-      trx.Commit();
+  void CommitTransaction(irs::IndexWriter::Transaction& trx) {
+    if (_staged) {
+      irs::IndexWriter::Transaction::Stage(std::array{&trx});
     }
+    trx.Commit();
   }
 
  public:
   IndexProfileTestCase() { irs::timer_utils::InitStats(true); }
 
-  void SetOnTick(bool value) noexcept { _on_tick = value; }
+  void SetStaged(bool value) noexcept { _staged = value; }
 
   void ProfileBulkIndex(size_t num_insert_threads, size_t num_update_threads,
                         size_t batch_size,
@@ -174,7 +171,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                   tests::InsertFields(d, csv_doc_template.indexed.begin(),
                                       csv_doc_template.indexed.end()));
               }
-              TransactionTick(ctx);
+              CommitTransaction(ctx);
             }
 
             if (count >= writer_batch_size) {
@@ -256,22 +253,19 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             }
 
             {
-              irs::Filter::ptr filter = std::make_unique<irs::ByTerm>();
               auto key_name = csv_doc_template.indexed.begin()->Name();
               auto key_id = csv_doc_template.indexed.begin()->Id();
               auto key_term =
                 csv_doc_template.indexed.get<tests::StringField>(key_name)
                   ->value();
+              auto removal = tests::RemovalOf(
+                *writer, tests::Terms{key_id, {std::string{key_term}}});
               auto value_name = (++(csv_doc_template.indexed.begin()))->Name();
               auto value_term =
                 csv_doc_template.indexed.get<tests::StringField>(value_name)
                   ->value();
               std::string updated_term(value_term.data(), value_term.size());
 
-              auto& filter_impl = static_cast<irs::ByTerm&>(*filter);
-              *filter_impl.mutable_field_id() = key_id;
-              filter_impl.mutable_options()->term =
-                irs::ViewCast<irs::byte_type>(key_term);
               // double up term
               updated_term.append(value_term.data(), value_term.size());
               csv_doc_template.indexed.get<tests::StringField>(value_name)
@@ -285,7 +279,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
               REGISTER_TIMER_NAMED_DETAILED("update");
               {
                 auto ctx = writer->GetBatch();
-                ctx.Remove(std::move(filter));
+                ctx.Remove(std::move(removal));
                 {
                   auto d = ctx.Insert();
                   EXPECT_TRUE(
@@ -294,7 +288,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
                   StoreNamed(d, csv_doc_template.indexed, "updated",
                              kUpdatedId);
                 }
-                TransactionTick(ctx);
+                CommitTransaction(ctx);
               }
               ++update_docs_count;
             }
@@ -543,52 +537,53 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_update_batched_mt) {
   ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_full_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_full_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(0, 0, 0);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_batched_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase,
+       profile_bulk_index_singlethread_batched_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(0, 0, 10000);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_compact_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_compact_mt_staged) {
+  SetStaged(true);
   // a lot of threads cause a lot of contention for the segment pool
   ProfileBulkIndexDedicatedCompact(8, 10000, 500);
 }
 
 TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_dedicated_commit_mt_tick) {
-  SetOnTick(true);
+       profile_bulk_index_multithread_dedicated_commit_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndexDedicatedCommit(16, 1, 1000);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_full_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_full_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(16, 0, 0);
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_batched_mt_tick) {
-  SetOnTick(true);
+TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_batched_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(16, 0, 10000);
 }
 
 TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_update_full_mt_tick) {
-  SetOnTick(true);
+       profile_bulk_index_multithread_update_full_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(16, 5, 0);  // 5 does not divide evenly into 16
 }
 
 TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_update_batched_mt_tick) {
-  SetOnTick(true);
+       profile_bulk_index_multithread_update_batched_mt_staged) {
+  SetStaged(true);
   ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 

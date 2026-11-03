@@ -38,6 +38,7 @@
 #include <yaclib/coro/on.hpp>
 
 #include "auth/role_closure.h"
+#include "backup/restore.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
@@ -175,26 +176,43 @@ SubscriptionEngine::~SubscriptionEngine() {
 }
 
 void SubscriptionEngine::start() {
-  std::vector<std::pair<std::string, duckdb::idx_t>> subscriptions;
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (const auto& database : manager.GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  struct Enabled {
+    std::string database;
+    duckdb::idx_t oid;
+    std::string name;
+  };
+  std::vector<Enabled> subscriptions;
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
-        if (entry.Cast<catalog::SubscriptionCatalogEntry>().Config().enabled) {
-          subscriptions.emplace_back(database->GetName().GetIdentifierName(),
-                                     entry.oid);
+        const auto& config =
+          entry.Cast<catalog::SubscriptionCatalogEntry>().Config();
+        if (config.enabled) {
+          subscriptions.push_back(
+            {database->GetName().GetIdentifierName(), entry.oid,
+             config.GetQualifiedName().Name().GetIdentifierName()});
         }
       });
   }
+  if (backup::SubscriptionsHeld()) {
+    for (const auto& subscription : subscriptions) {
+      Disable(subscription.database, subscription.oid);
+      SDB_WARN(REPLICATION, "subscription \"", subscription.name,
+               "\" in database \"", subscription.database,
+               "\" was disabled because the server was restored from a "
+               "backup; check its replication slot, then ALTER SUBSCRIPTION "
+               "... ENABLE");
+    }
+    backup::ReleaseSubscriptionHold();
+    subscriptions.clear();
+  }
   absl::MutexLock lock{&_mu};
-  for (const auto& [database, subscription] : subscriptions) {
-    LaunchLocked(database, subscription);
+  for (const auto& subscription : subscriptions) {
+    LaunchLocked(subscription.database, subscription.oid);
   }
   SDB_INFO(REPLICATION, "subscription engine started (", _subs.size(),
            " enabled subscriber(s))");
@@ -284,14 +302,11 @@ void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
   std::vector<duckdb::idx_t> subscriptions;
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  for (const auto& database : manager.GetDatabases()) {
-    auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    catalog.Cast<duckdb::DuckCatalog>()
+  for (const auto& database :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(
+         irs::DuckDBEngine::Instance().instance()))) {
+    database->GetCatalog()
+      .Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
       .Scan([&](duckdb::CatalogEntry& entry) {
         if (!subscription || *subscription == entry.oid) {

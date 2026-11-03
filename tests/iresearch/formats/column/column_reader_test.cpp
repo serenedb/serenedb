@@ -43,6 +43,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
+#include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -1734,6 +1735,117 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
     EXPECT_EQ(av.RowIsValid(i), arr_valid(g)) << "array row " << g;
     for (duckdb::idx_t e = 0; e < kDim; ++e) {
       EXPECT_EQ(cd[i * kDim + e], elem_val(g, e)) << "elem " << g << ":" << e;
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, SkipLandsOnItsRowFromAnywhere) {
+  constexpr uint64_t kRows = 20000;
+  constexpr uint32_t kRgSize = 1024;
+  constexpr irs::field_id kField = 1;
+  const auto value_of = [](uint64_t g) {
+    return static_cast<int64_t>(g * 7919 % 100003);
+  };
+
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kField, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/false, kRgSize);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* d = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        d[k] = value_of(pos + k);
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataRgCount(), 8U);
+  const auto row_at = [&](irs::ColumnReader::ScanState& state) {
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, 1);
+    out.Flatten(1);
+    return duckdb::FlatVector::GetData<int64_t>(out)[0];
+  };
+  for (const uint64_t row :
+       {uint64_t{5}, uint64_t{kRgSize}, uint64_t{kRgSize + 3},
+        uint64_t{7 * kRgSize - 1}, kRows / 2, kRows - 1}) {
+    auto state = col->InitScan(r.Ctx());
+    col->Skip(state, row);
+    EXPECT_EQ(col->GatherCursor(state), row);
+    EXPECT_EQ(row_at(state), value_of(row)) << "row " << row;
+    if (row + 1 + 2 * kRgSize < kRows) {
+      col->Skip(state, 2 * kRgSize);
+      EXPECT_EQ(row_at(state), value_of(row + 1 + 2 * kRgSize))
+        << "row " << row;
+    }
+  }
+
+  auto state = col->InitScan(r.Ctx());
+  duckdb::Vector block{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+  col->Scan(state, block, kRgSize);
+  col->Skip(state, 0);
+  EXPECT_EQ(row_at(state), value_of(kRgSize));
+  col->Skip(state, kRows);
+  EXPECT_EQ(col->GatherCursor(state), kRows);
+}
+
+TEST_F(ColumnReaderTest, VectorReadsInRandomOrderLandOnTheirRows) {
+  constexpr uint64_t kRows = 8000;
+  constexpr uint32_t kRgSize = 1024;
+  constexpr irs::field_id kField = 1;
+  constexpr duckdb::idx_t kDim = 16;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  const auto value_of = [](uint64_t g, duckdb::idx_t i) {
+    return std::sin(static_cast<float>(g * kDim + i)) * 123.456F;
+  };
+
+  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kField, vtype, /*skip_validity=*/false, kRgSize,
+                            duckdb::CompressionType::COMPRESSION_ALPRD);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{vtype, STANDARD_VECTOR_SIZE};
+      auto* d = duckdb::FlatVector::GetDataMutable<float>(
+        duckdb::ArrayVector::GetChildMutable(v));
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        for (duckdb::idx_t i = 0; i < kDim; ++i) {
+          d[k * kDim + i] = value_of(pos + k, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->Child()->DataRgCount(), 4U);
+  irs::ReadContext ctx{r, /*random_access=*/true};
+  irs::IvfVectorReader reader{*col, ctx};
+  std::vector<uint64_t> rows(kRows);
+  std::iota(rows.begin(), rows.end(), uint64_t{0});
+  std::shuffle(rows.begin(), rows.end(), std::mt19937_64{7});
+  for (const auto row : rows) {
+    const auto* v = reader.ReadDocBatch(
+      static_cast<irs::doc_id_t>(row + irs::doc_limits::min()), 1);
+    for (duckdb::idx_t i = 0; i < kDim; ++i) {
+      ASSERT_EQ(v[i], value_of(row, i)) << "row " << row << " elem " << i;
     }
   }
 }

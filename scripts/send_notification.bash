@@ -9,6 +9,7 @@
 # Optional:
 #   TG_USER_MAP    - JSON mapping GitHub usernames to TG usernames
 #   JOB_STATUS_*   - per-job results (e.g. JOB_STATUS_DOCKER=success)
+#   COVERAGE_WARNINGS - lines listed under "Coverage:"
 
 set -euo pipefail
 
@@ -78,6 +79,10 @@ done < <(env | grep "^JOB_STATUS_" | sort)
 
 if [[ -n "${JOB_LINES}" ]]; then
 	MESSAGE+=$'\n'"Jobs:${JOB_LINES}"
+fi
+
+if [[ -n "${COVERAGE_WARNINGS:-}" ]]; then
+	MESSAGE+=$'\n'"Coverage:"$'\n'"${COVERAGE_WARNINGS}"
 fi
 
 # Send

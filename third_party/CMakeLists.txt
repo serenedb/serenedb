@@ -60,6 +60,7 @@ sdb_add_module(fast_float)
 
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+set(SIMDJSON_DEVELOPMENT_CHECKS ${SDB_DEV} CACHE BOOL "" FORCE)
 sdb_add_module(simdjson)
 
 ################################################################################
@@ -81,6 +82,7 @@ sdb_add_module(yaclib)
 sdb_add_module(openssl DIR openssl-cmake)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
 set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
+set(OPENSSL_VERSION ${OPENSSL_VERSION} PARENT_SCOPE)
 
 # Repeating the trick done by NuRaft that helped our build survive folly.
 # Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
@@ -320,6 +322,7 @@ else()
         )
     endif()
 endif()
+set(NEED_PIC OFF CACHE BOOL "" FORCE)
 sdb_add_module(OpenBLAS NO_WARNINGS)
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)
@@ -360,6 +363,7 @@ sdb_add_module(libstemmer_c DIR libstemmer_c-cmake)
 
 set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(LZ4_POSITION_INDEPENDENT_LIB OFF CACHE BOOL "" FORCE)
+set(LZ4_JCC_ERRATUM OFF CACHE BOOL "" FORCE)
 sdb_add_module(lz4 DIR lz4/build/cmake)
 
 ################################################################################
@@ -451,7 +455,6 @@ set(HAVE_AWSLC 0 CACHE INTERNAL "")
 set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
 set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
 set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
-set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
 set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
@@ -491,7 +494,7 @@ file(
 )
 list(
     APPEND CLICKHOUSE_CPP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/cityhash/city.cc"
 )
 
 add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
@@ -501,17 +504,21 @@ target_include_directories(
     SYSTEM
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/cityhash"
 )
 
 target_compile_definitions(
     clickhouse_cpp
-    PRIVATE WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+    PRIVATE WITH_OPENSSL=1
+    PUBLIC
+        CH_MAP_BOOL_TO_UINT8=0
+        CH_USE_ABSEIL_FOR_BIGNUM=0
+        CH_NON_OPTIONAL_CURRENT_ENDPOINT=1
 )
 
 target_link_libraries(
     clickhouse_cpp
-    PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+    PUBLIC lz4_static zstd::zstd OpenSSL::SSL OpenSSL::Crypto
 )
 
 ###############################################################################
@@ -528,9 +535,55 @@ sdb_add_module(ada)
 ## croaring
 ################################################################################
 
-set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
+if(SDB_GTEST AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmocka/CMakeLists.txt)
+    set(ENABLE_ROARING_TESTS ON CACHE BOOL "" FORCE)
+    set(ROARING_UNSAFE_FROZEN_TESTS ON CACHE BOOL "" FORCE)
+    set(WITH_EXAMPLES OFF)
+    sdb_add_module(cmocka EXCLUDE_FROM_ALL NO_WARNINGS)
+    unset(WITH_EXAMPLES)
+    get_directory_property(
+        cmocka_version
+        DIRECTORY cmocka
+        DEFINITION cmocka_VERSION
+    )
+    include(CMakePackageConfigHelpers)
+    file(WRITE ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/cmocka-config.cmake "")
+    write_basic_package_version_file(
+        ${CMAKE_FIND_PACKAGE_REDIRECTS_DIR}/cmocka-config-version.cmake
+        VERSION ${cmocka_version}
+        COMPATIBILITY SameMajorVersion
+    )
+else()
+    set(ENABLE_ROARING_TESTS OFF CACHE BOOL "" FORCE)
+endif()
 set(ROARING_USE_CPM OFF CACHE BOOL "" FORCE)
+set(TEST_DATA_DIR tests/testdata/)
+set(BENCHMARK_DATA_DIR benchmarks/realdata/)
 sdb_add_module(croaring)
+unset(TEST_DATA_DIR)
+unset(BENCHMARK_DATA_DIR)
+if(ENABLE_ROARING_TESTS)
+    get_directory_property(
+        croaring_targets
+        DIRECTORY croaring/tests
+        BUILDSYSTEM_TARGETS
+    )
+    set(croaring_tests)
+    foreach(target IN LISTS croaring_targets)
+        get_target_property(type ${target} TYPE)
+        if(type STREQUAL "EXECUTABLE")
+            list(APPEND croaring_tests ${target})
+            target_compile_options(${target} PRIVATE -Wno-error)
+        endif()
+    endforeach()
+    set_target_properties(
+        ${croaring_tests}
+        PROPERTIES
+            C_STANDARD 23
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/croaring-tests
+    )
+    add_custom_target(croaring-tests DEPENDS ${croaring_tests})
+endif()
 
 ################################################################################
 ## fmt

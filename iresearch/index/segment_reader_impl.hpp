@@ -27,7 +27,7 @@
 #include <memory>
 #include <vector>
 
-#include "iresearch/formats/index/burst_trie.hpp"
+#include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -40,6 +40,7 @@ namespace irs {
 
 class ColReader;
 class NormColumnReader;
+struct DocMapsSlot;
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -58,6 +59,9 @@ class SegmentReaderImpl final : public SubReader {
     const Directory& dir, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
+  std::shared_ptr<const SegmentReaderImpl> ReopenReader(
+    const Directory& dir, const SegmentMeta& meta,
+    const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
     const Directory& dir, const SegmentMeta& meta) const;
 
@@ -65,10 +69,20 @@ class SegmentReaderImpl final : public SubReader {
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
 
+  const std::shared_ptr<const DocumentMask>& SharedDocsMask() const noexcept {
+    return _docs_mask;
+  }
+
+  uint64_t Id() const noexcept { return _id; }
+
+  const std::shared_ptr<DocMapsSlot>& DocMaps() const noexcept {
+    return _doc_maps;
+  }
+
   lead::Node::ptr docs_iterator() const final;
 
-  const TermReader* field(field_id id) const final {
-    return _field_reader->field(id);
+  std::span<const TermReader* const> fields(field_id id) const final {
+    return _field_reader->fields(id);
   }
 
   std::span<const field_id> field_ids() const final {
@@ -90,14 +104,16 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<IdxReader> idx_reader;
 
     void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options);
+              const IndexReaderOptions& options, bool keep_terms);
   };
 
   FileRefs _refs;
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
+  uint64_t _id = 0;
+  std::shared_ptr<DocMapsSlot> _doc_maps;
   std::shared_ptr<ColumnData> _data;
-  std::shared_ptr<burst_trie::FieldReader> _field_reader;
+  std::shared_ptr<term_dict::FieldReader> _field_reader;
 };
 
 }  // namespace irs

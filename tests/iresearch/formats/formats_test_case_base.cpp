@@ -34,7 +34,8 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/index/burst_trie.hpp>
+#include <iresearch/formats/index/field_reader.hpp>
+#include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
@@ -111,11 +112,8 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   ASSERT_TRUE(index_files.empty());
 }
 
-auto MakeByTerm(irs::field_id id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(irs::field_id id, std::string_view value) {
+  return {id, {std::string{value}}};
 }
 
 TEST_P(FormatTestCase, unreferenced_files_removed) {
@@ -183,7 +181,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete record from first segment (creating new index_meta file + doc_mask
     // file, remove old)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -195,7 +193,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -207,7 +205,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *query_doc2);
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -260,7 +258,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
 
     // delete record from first segment (creating new doc_mask file)
     {
-      tests::Remove(*writer, *query_doc1);
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -302,7 +300,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete record from first segment (creating new doc_mask file, not-remove
     // old)
     {
-      tests::Remove(*writer, *(query_doc2));
+      tests::Remove(*writer, query_doc2);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -314,7 +312,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete all record from first segment (creating new index_meta file,
     // remove old meta but leave first segment)
     {
-      tests::Remove(*writer, *(query_doc3));
+      tests::Remove(*writer, query_doc3);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -326,7 +324,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     // delete all records from second segment (creating new index_meta file,
     // remove old meta + unused segment)
     {
-      tests::Remove(*writer, *(query_doc4));
+      tests::Remove(*writer, query_doc4);
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -377,7 +375,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
         irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      tests::Remove(*writer, *(query_doc1));
+      tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
@@ -454,7 +452,7 @@ TEST_P(FormatTestCase, fields_seek_ge) {
   auto reader = open_reader();
   ASSERT_EQ(1, reader->size());
   auto& segment = reader[0];
-  auto field = segment.field(kFieldId);
+  auto field = segment.field(kFieldId, irs::NumericLayout::kNumbers);
   ASSERT_NE(nullptr, field);
 
   std::vector<irs::bstring> all_terms;
@@ -515,12 +513,8 @@ TEST_P(FormatTestCase, fields_seek_ge) {
   // seek to non-existent term in the middle
   {
     const std::vector<std::vector<irs::byte_type>> terms{
-      {207},
-      {208},
-      {208, 191},
-      {208, 192, 81},
-      {192, 192, 187, 86, 0},
-      {192, 192, 187, 88, 0}};
+      {160, 192, 96},     {160, 192, 128},       {160, 192, 160, 1},
+      {160, 192, 187, 0}, {160, 192, 83, 65, 0}, {160, 192, 154, 5, 0}};
 
     auto it = field->iterator();
 
@@ -714,16 +708,13 @@ TEST_P(FormatTestCase, fields_read_write) {
     Terms<SortedTermsT::iterator> terms(sorted_terms.begin(),
                                         sorted_terms.end());
     tests::MockTermReader term_reader{
-      terms, irs::FieldMeta{field.id, field.index_features},
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
+      terms, irs::FieldMeta{field.id, field.index_features}};
 
     irs::IdxWriter idx{dir(), "segment_name"};
-    irs::burst_trie::FieldWriter writer{/*compaction=*/false,
-                                        irs::IResourceManager::gNoop};
+    irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
-    writer.prepare(state);
-    writer.write(term_reader);
+    writer.prepare(state, 1);
+    writer.write(irs::StringLayout::kStrings, term_reader);
     writer.end();
     idx.Commit();
   }
@@ -734,16 +725,17 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name", true, nullptr};
-    irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
     ASSERT_EQ(1, reader->size());
 
     // check terms
-    ASSERT_EQ(nullptr, reader->field(static_cast<irs::field_id>(999)));
-    auto term_reader = reader->field(field.id);
-    ASSERT_NE(nullptr, term_reader);
+    ASSERT_TRUE(reader->fields(999).empty());
+    ASSERT_EQ(1, reader->fields(field.id).size());
+    auto term_reader = reader->fields(field.id).front();
+    ASSERT_EQ(irs::StringLayout::kStrings, term_reader->meta().dict);
     ASSERT_EQ(field.id, term_reader->meta().id);
     ASSERT_EQ(field.index_features, term_reader->meta().index_features);
 
@@ -835,17 +827,14 @@ TEST_P(FormatTestCase, fields_read_write) {
 
     // ensure term is not invalidated during consequent unsuccessful seeks
     {
-      constexpr std::pair<std::string_view, std::string_view> kTerms[]{
-        {"abcabamet", "abcabamet"},
-        {"abcabrit", "abcabsit"},
-        {"abcabzit", "abcabsit"},
-        {"abcabelit", "abcabelit"}};
+      constexpr std::string_view kTerms[]{"abcabamet", "abcabrit", "abcabzit",
+                                          "abcabelit"};
 
       auto term = term_reader->iterator();
-      for (const auto& [seek_term, expected_term] : kTerms) {
-        ASSERT_EQ(seek_term == expected_term,
-                  term->seek(irs::ViewCast<irs::byte_type>(seek_term)));
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(expected_term), term->value());
+      for (const auto seek_term : kTerms) {
+        const auto target = irs::ViewCast<irs::byte_type>(seek_term);
+        ASSERT_EQ(sorted_terms.contains(target), term->seek(target));
+        ASSERT_TRUE(sorted_terms.contains(term->value()));
       }
     }
 
@@ -875,41 +864,16 @@ TEST_P(FormatTestCase, fields_read_write) {
       }
     }
 
-    /* Here is the structure of blocks:
-     *   TERM aaLorem
-     *   TERM abaLorem
-     *   BLOCK abab ------> Integer
-     *                      ...
-     *                      ...
-     *   TERM abcaLorem
-     *   ...
-     *
-     * Here we seek to "abaN" and since first entry that
-     * is greater than "abaN" is BLOCK entry "abab".
-     *
-     * In case of "seek" we end our scan on BLOCK entry "abab",
-     * and further "next" cause the skipping of the BLOCK "abab".
-     *
-     * In case of "seek_next" we also end our scan on BLOCK entry "abab"
-     * but furher "next" get us to the TERM "ababInteger" */
     {
       auto seek_term = irs::ViewCast<irs::byte_type>(std::string_view("abaN"));
       auto seek_result =
         irs::ViewCast<irs::byte_type>(std::string_view("ababInteger"));
 
-      /* seek exactly to term */
       {
         auto term = term_reader->iterator();
         ASSERT_FALSE(term->seek(seek_term));
-        /* we on the BLOCK "abab" */
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abab")),
-                  term->value());
-        ASSERT_TRUE(term->next());
-        ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view("abcaLorem")),
-                  term->value());
       }
 
-      /* seek to term which is equal or greater than current */
       {
         auto term = term_reader->iterator();
         ASSERT_EQ(irs::SeekResult::NotFound, term->seek_ge(seek_term));

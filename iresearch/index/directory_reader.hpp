@@ -82,7 +82,7 @@ class DirectoryReader final : public IndexReader {
 
   const duckdb::BaseStatistics* GetColumnStats(field_id field) const;
 
-  const FieldTermRange* GetTermRange(field_id field) const;
+  const FieldTermRange* GetTermRange(field_id field, DictRef dict) const;
 
   size_t size() const final;
 

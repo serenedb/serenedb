@@ -197,8 +197,8 @@ class WordIterator final : public WrappedTermIterator {
       if (at == bytes_view::npos) {
         return true;
       }
-      const auto upper = UpperBoundOf(term.substr(0, at + _separator.size()));
-      if (upper.empty() || SeekResult::End == _impl->seek_ge(upper)) {
+      AssignUpperBoundOf(_upper, term.substr(0, at + _separator.size()));
+      if (_upper.empty() || SeekResult::End == _impl->seek_ge(_upper)) {
         return false;
       }
     }
@@ -206,6 +206,7 @@ class WordIterator final : public WrappedTermIterator {
 
   Bounds _bounds;
   bytes_view _separator;
+  bstring _upper;
   bool _started = false;
 };
 
@@ -503,7 +504,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
 
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
-                                       irs::field_id field,
+                                       irs::field_id field, DictRef dict,
                                        const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   auto* collector = ctx.collector
@@ -512,7 +513,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   const auto is_ord_empty = !collector || !collector->GetScorer();
 
   PhraseState state{ctx.memory};
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field(field, dict);
   state.reader = reader;
   const ColumnReader* column = nullptr;
   if (!detail::ResolvePhrase(reader, state.handles)) {
@@ -683,7 +684,7 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
   }
   SDB_ENSURE(options().slop() == 0 || !HasIntervalOffsets(options()),
              "slop and intervals are mutually exclusive");
-  return PhrasePrepareSegment(segment, sub_ctx, field_id(), options());
+  return PhrasePrepareSegment(segment, sub_ctx, field_id(), dict(), options());
 }
 
 bool ByPhrase::Prefetch(const SubReader& segment) const {
@@ -715,8 +716,8 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
     scorer, counts.terms, counts.expanded, stats, threads);
 }
 
-Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
-                       bool max_synonyms) {
+Filter::ptr PartFilter(field_id field, DictRef dict,
+                       ByPhraseOptions::PhrasePart part, bool max_synonyms) {
   return std::visit(
     [&]<typename Options>(Options& options) -> Filter::ptr {
       if constexpr (std::is_same_v<Options, TermSetOptions>) {
@@ -725,7 +726,8 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
         }
         auto node = std::make_unique<BooleanFilter>();
         for (const auto& term : options.terms) {
-          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
+          node->Add(TermClause{.field = field, .dict = dict, .term = term},
+                    Occur::Should);
         }
         node->SetMinShouldMatch(1);
         if (max_synonyms) {
@@ -735,11 +737,13 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
       } else if constexpr (std::is_same_v<Options, ShingleOptions>) {
         auto node = std::make_unique<ByTerm>();
         *node->mutable_field_id() = field;
+        *node->mutable_dict() = dict;
         node->mutable_options()->term = std::move(options.term);
         return node;
       } else {
         auto node = std::make_unique<typename Options::FilterType>();
         *node->mutable_field_id() = field;
+        *node->mutable_dict() = dict;
         *node->mutable_options() = std::move(options);
         return node;
       }

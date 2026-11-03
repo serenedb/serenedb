@@ -1667,13 +1667,9 @@ class Enforcer {
                 duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(*_context.db).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-        continue;
-      }
-      auto& duck_catalog = catalog.Cast<duckdb::DuckCatalog>();
+    for (const auto& db : catalog::SereneDBDatabases(
+           duckdb::DatabaseManager::Get(*_context.db))) {
+      auto& duck_catalog = db->GetCatalog().Cast<duckdb::DuckCatalog>();
       auto server =
         duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
           .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
@@ -1793,6 +1789,15 @@ class Enforcer {
 void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
                  duckdb::Binder& binder, duckdb::LogicalOperator& plan) {
   Enforcer{context, connection, binder, plan}.Run();
+}
+
+void RequireSuperuser(duckdb::ClientContext& context,
+                      std::string_view function) {
+  auto& conn = connector::GetSereneDBContext(context);
+  if (!ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for function ", function));
+  }
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {

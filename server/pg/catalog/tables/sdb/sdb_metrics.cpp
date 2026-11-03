@@ -35,8 +35,7 @@
 #include "catalog/entry/search_table.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "search/store_stats.h"
 #include "server/utils/metrics.h"
 
@@ -102,9 +101,10 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
                       metrics::Description(gauge));
   }
   auto& storage = scan.Database().GetAttached().GetStorageManager();
+  const auto commit_lock = storage.GetCommitLock();
   const auto wal = storage.GetWAL();
   rows.emplace_back("catalog_wal_appended_bytes",
-                    wal ? static_cast<int64_t>(wal->GetTotalWritten()) : 0,
+                    wal ? static_cast<int64_t>(wal->GetFlushedOffset()) : 0,
                     "bytes appended to the catalog wal since start");
   rows.emplace_back("catalog_wal_size_on_disk",
                     wal ? static_cast<int64_t>(storage.GetWALSize()) : 0,

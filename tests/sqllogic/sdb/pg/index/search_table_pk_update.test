@@ -1,6 +1,5 @@
-# User-PK search table DML through the synthetic-rowid path: a declared PRIMARY
-# KEY is enforced as a (future) unique index, but row identity is always the
-# internal generated PK, so UPDATE/DELETE address rows by that synthetic handle.
+# User-PK search table DML: a declared PRIMARY KEY is enforced as a (future)
+# unique index, but UPDATE/DELETE address rows by their rowid, the row's position.
 # Covers UPDATE of a non-PK column, UPDATE of the PK column itself (stable
 # identity, no composite-key rewrite), DELETE, and delete-then-reinsert of the
 # same PK. Search tables are commit-time-only, so each mutation is observed

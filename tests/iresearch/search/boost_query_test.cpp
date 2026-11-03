@@ -84,7 +84,8 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   static irs::Filter::ptr ParseQuery(std::string_view query) {
     irs::analysis::DelimitedTokenizer tokenizer(" ");
     auto root = std::make_unique<irs::BooleanFilter>();
-    irs::ParserContext ctx{*root, kContentFieldId, tokenizer};
+    irs::ParserContext ctx{*root, kContentFieldId, irs::StringLayout::kStrings,
+                           tokenizer};
     EXPECT_TRUE(irs::ParseQuery(ctx, query)) << ctx.error_message;
     irs::Filter::ptr f = std::move(root);
     irs::Optimize(f, {.scored = true});

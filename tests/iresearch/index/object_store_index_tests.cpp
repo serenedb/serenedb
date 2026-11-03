@@ -91,16 +91,28 @@ irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
 TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 3);
+  {
+    const irs::Directory dir{Db(), root};
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 3; ++segment) {
+      tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory};
+      for (size_t doc = 0; doc != 8; ++doc) {
+        ASSERT_TRUE(tests::Insert(*writer, *gen.next()));
+      }
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
   const irs::Directory restarted{Db(), root};
   const irs::DirectoryReader reader{restarted,
                                     irs::tests::DefaultReaderOptions()};
   duckdb::BlockCache::Get(Db()).Clear();
   store.ResetRequests();
 
-  const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"xyz"});
+  const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
   irs::ByTerm filter;
-  *filter.mutable_field_id() = tests::FieldIdFor("same");
+  *filter.mutable_field_id() = tests::FieldIdFor("name");
   filter.mutable_options()->term = term;
   for (const auto& segment : reader) {
     EXPECT_TRUE(filter.Prefetch(segment));
@@ -114,7 +126,7 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   ASSERT_EQ(3, store.Requests().get);
 
   for (const auto& segment : reader) {
-    const auto* terms = segment.field(tests::FieldIdFor("same"));
+    const auto* terms = segment.field(tests::FieldIdFor("name"));
     ASSERT_NE(nullptr, terms);
     EXPECT_EQ(1, terms->Lookup(term).docs_count);
     EXPECT_FALSE(filter.Prefetch(segment));
@@ -185,9 +197,10 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
     ASSERT_TRUE(tests::Insert(*writer, *gen.next()));
     ASSERT_TRUE(writer->RefreshCommit());
   }
-  std::vector<std::string> sources;
-  for (const auto& segment : writer->GetSnapshot()) {
-    sources.emplace_back(segment.Meta().name);
+  const auto sources = writer->GetSnapshot();
+  std::vector<const irs::SubReader*> replaced;
+  for (const auto& segment : sources) {
+    replaced.push_back(&segment);
   }
 
   std::vector<std::string> adopted;
@@ -203,11 +216,11 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
     build.Abort();
   }
 
-  const std::vector<std::string_view> replaced{sources.begin(), sources.end()};
-  const std::vector<std::string_view> adopting{adopted.begin(), adopted.end()};
-  writer->ReplaceSegments(
-    replaced, adopting,
-    [](irs::IndexWriter::QueryContext::FilterPtr&) { return true; });
+  std::vector<irs::IndexWriter::Replacement> replacements;
+  for (const auto& name : adopted) {
+    replacements.push_back({.meta_file = name});
+  }
+  writer->ReplaceSegments(replaced, std::move(replacements));
   ASSERT_TRUE(writer->RefreshCommit());
   const auto snapshot = writer->GetSnapshot();
   EXPECT_EQ(4, snapshot.size());

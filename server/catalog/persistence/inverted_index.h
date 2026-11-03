@@ -54,11 +54,6 @@ enum class PkColumnKind : uint8_t {
   Unable = 2,
 };
 
-struct PkPolicy {
-  bool index_term = true;
-  PkColumnKind column = PkColumnKind::Has;
-};
-
 struct KeyRecord {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id column_id = irs::field_limits::invalid();
@@ -67,9 +62,6 @@ struct KeyRecord {
 };
 
 struct FieldRecord {
-  irs::field_id numeric_field_id = irs::field_limits::invalid();
-  irs::field_id bool_field_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
   irs::field_id synthetic_column = irs::field_limits::invalid();
   search::Features features;
   bool store_values = false;
@@ -81,7 +73,7 @@ struct FieldRecord {
 };
 
 struct InvertedIndexData {
-  PkPolicy pk;
+  PkColumnKind pk = PkColumnKind::Has;
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;

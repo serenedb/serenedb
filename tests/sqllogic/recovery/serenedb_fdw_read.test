@@ -69,6 +69,14 @@ type	readonly
 serenedb_readonly	t
 
 query
+SELECT metric, value FROM sfr_snap.pg_catalog.sdb_metrics
+WHERE metric LIKE 'catalog_wal_%' ORDER BY metric;
+----
+metric	value
+catalog_wal_appended_bytes	0
+catalog_wal_size_on_disk	0
+
+query
 SELECT count(*) AS n, sum(id) AS s FROM sfr_snap.public.sfr_docs;
 ----
 n	s

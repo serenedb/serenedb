@@ -90,7 +90,8 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   const irs::SubReader* found_segment = nullptr;
   for (auto& segment : *reader.GetImpl()) {
     for (auto field_id : segment.field_ids()) {
-      if (const auto* f = segment.field(field_id); f && f->size() > 64) {
+      const auto* f = segment.field(field_id, irs::StringLayout::kStrings);
+      if (f && f->size() > 64) {
         field = f;
         found_segment = &segment;
         break;

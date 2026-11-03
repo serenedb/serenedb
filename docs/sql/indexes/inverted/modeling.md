@@ -67,6 +67,12 @@ A `TEXT[]` / `VARCHAR[]` column is indexed element-by-element: a row matches if 
 
 <SqlLogicTest id="sql/indexes/inverted/modeling/example_004" />
 
+An array that holds a `NULL` element is not itself `NULL`: `tags IS NULL` matches only rows whose array is `NULL`, and `tags IS NOT NULL` matches every other row, the same way as without the index.
+
+A `JSON[]` or `JSON[N]` key with a dictionary is indexed element by element too, each element by its JSON value: a string element is searched with `@@` like text, and a `null` element is neither a `NULL` array nor a `NULL` element. Number and boolean elements are reached through a cast of an indexed expression, such as `((doc -> 'tags')::JSON[])::DOUBLE[] @@ ts_between(40, 50, true, true)`. An element that is an object or an array is refused, when the row is written or when the index is created over it; index an expression that returns the values inside it as a `JSON[]` instead, such as `list_transform((doc -> 'items')::JSON[], lambda x: x -> 'name')` for a field of the objects in an array, `json_extract(doc::VARCHAR, '$.items[*].tags[*]')` for a JSONPath with wildcards, or `flatten((doc -> 'matrix')::JSON[][])` for nested arrays. Without a dictionary, each element is indexed as its JSON text.
+
+<SqlLogicTest id="sql/indexes/inverted/modeling/example_008" />
+
 ## Sizing and cost
 
 The index only stores what you ask it to -- keep it lean:

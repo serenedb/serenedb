@@ -153,7 +153,7 @@ std::optional<std::string> ColumnName(const Session& session,
     return columns->names[column].GetIdentifierName();
   }
   if (entry.type == SEQUENCE_ENTRY) {
-    if (NumbersRows(entry) || column >= kSequenceColumns.size()) {
+    if (column >= kSequenceColumns.size()) {
       return std::nullopt;
     }
     return std::string{kSequenceColumns[column]};

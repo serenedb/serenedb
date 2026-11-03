@@ -33,7 +33,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 #ifndef IRESEARCH_NO_VECTOR
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
@@ -43,15 +42,15 @@
 namespace irs {
 
 struct IdxReader::Impl {
-  std::unique_ptr<InputFile> file;
+  std::shared_ptr<const InputFile> file;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
   irs::containers::FlatHashMap<field_id, size_t> ann_by_id;
-  std::vector<std::pair<field_id, TermDictMeta>> term_dicts;
   std::vector<uint64_t> ann_ends;
+  term_dict::TermsMeta terms;
 };
 
 IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
-                     bool present, HnswBases* hnsw_bases)
+                     bool present, HnswBases* hnsw_bases, bool keep_terms)
   : _impl{std::make_unique<Impl>()} {
   if (!present) {
     return;
@@ -60,29 +59,8 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
   _impl->file = dir.Open(filename, duckdb::MappedFileAccess::RANDOM);
 
   format_utils::ReadFooter(
-    *_impl->file, filename, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-      footer.ReadOptionalList(
-        kIdxFieldTermDict, "term_dict",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            TermDictMeta meta;
-            const auto id = obj.ReadProperty<uint64_t>(0, "id");
-            meta.features = static_cast<IndexFeatures>(
-              obj.ReadProperty<uint32_t>(1, "features"));
-            meta.term_count = obj.ReadProperty<uint64_t>(2, "term_count");
-            meta.doc_count = obj.ReadProperty<uint64_t>(3, "doc_count");
-            meta.total_doc_freq =
-              obj.ReadProperty<uint64_t>(4, "total_doc_freq");
-            meta.total_term_freq =
-              obj.ReadProperty<uint64_t>(5, "total_term_freq");
-            meta.has_score_bounds =
-              obj.ReadProperty<bool>(6, "has_score_bounds");
-            meta.body_offset = obj.ReadProperty<uint64_t>(7, "body_offset");
-            meta.norm = obj.ReadPropertyWithExplicitDefault<uint64_t>(
-              8, "norm", field_limits::invalid());
-            _impl->term_dicts.emplace_back(id, std::move(meta));
-          });
-        });
+    *_impl->file, filename,
+    [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
 #ifndef IRESEARCH_NO_VECTOR
       footer.ReadOptionalList(
         kIdxFieldIvf, "ivf",
@@ -144,6 +122,13 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
           });
         });
 #endif
+      footer.ReadOptionalObject(
+        kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
+          auto meta = term_dict::ReadTerms(terms, data_size);
+          if (keep_terms) {
+            _impl->terms = std::move(meta);
+          }
+        });
     });
 }
 
@@ -160,15 +145,16 @@ const AnnIndex* IdxReader::Ann(field_id id) const noexcept {
            : _impl->ann_entries[it->second].second.get();
 }
 
-std::span<const std::pair<field_id, TermDictMeta>> IdxReader::TermDicts()
-  const noexcept {
-  return _impl->term_dicts;
+term_dict::TermsMeta IdxReader::TakeTerms() noexcept {
+  return std::exchange(_impl->terms, {});
 }
 
 std::span<const uint64_t> IdxReader::AnnEnds() const noexcept {
   return _impl->ann_ends;
 }
 
-const InputFile* IdxReader::File() const noexcept { return _impl->file.get(); }
+const std::shared_ptr<const InputFile>& IdxReader::File() const noexcept {
+  return _impl->file;
+}
 
 }  // namespace irs

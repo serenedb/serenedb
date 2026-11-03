@@ -219,8 +219,8 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto segment = local_state.memory_index.IndexChunk(count, [&](auto& doc) {
     const auto traits = field.tokens->Traits();
     const bool ok =
-      doc.WithTokens(field.Id(), kOffsetsFeatures, nullptr,
-                     [&](irs::FieldInverter& fld, irs::TokenSink& w) {
+      doc.WithTokens(field.Id(), irs::StringLayout::kStrings, kOffsetsFeatures,
+                     nullptr, [&](irs::FieldInverter& fld, irs::TokenSink& w) {
                        fld.Configure(traits);
                        const auto layout = fld.Layout();
                        irs::doc_id_t d = doc.DocId();

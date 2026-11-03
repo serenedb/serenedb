@@ -47,8 +47,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 #include "storage_engine/search_engine.h"
@@ -101,47 +100,7 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
   return irs::index_utils::MakePolicy(tier);
 }
 
-// Per-storage source of the merge's field options, pinned for the merge's
-// lifetime -- the only part of the background loops that differs by storage
-// type (see the PinCompactionOptions overloads below).
-struct CompactionOptions {
-  bool alive = false;
-  // Pins the options for the whole merge.
-  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
-  const irs::IndexFieldOptions* field_options = nullptr;
-};
-
-CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // Cloned for this merge: the merge encodes against what it took for its
-  // whole length, and an ALTER writes a new configuration rather than mutating
-  // this one, while a DROP destroys the bound index but not this clone.
-  const auto attached =
-    duckdb::AttachedDatabase::TryGetReference(idx.Database());
-  if (!attached) {
-    return {};
-  }
-  auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();
-  if (catalog.IsDropped()) {
-    return {};
-  }
-  const auto entry =
-    catalog.FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
-  if (!entry) {
-    return {};
-  }
-  std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
-  const auto* raw = options.get();
-  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
-}
-
-CompactionOptions PinCompactionOptions(SearchTable& table) {
-  auto options = table.CompactionConfig();
-  const auto* raw = options.get();
-  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
-}
-
-template<typename Storage>
-void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
+void DoRefresh(Store& idx, bool run_cleanup, RefreshResult& code) {
   SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
@@ -179,8 +138,7 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-template<typename Storage>
-auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
+auto DoCompaction(std::shared_ptr<Store> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
   absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
   SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
@@ -189,10 +147,10 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
   SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  // Pin the merge's field options for its whole lifetime (storage-specific, see
-  // PinCompactionOptions). A target found already dropped has nothing to merge.
-  auto opts = PinCompactionOptions(*idx);
-  if (!opts.alive) {
+  // Pin the merge's field options for its whole lifetime. A target found
+  // already dropped has nothing to merge.
+  const auto options = idx->CompactionOptions();
+  if (!options) {
     co_return false;
   }
   metrics::Scoped guard{metrics::Gauge::CompactionActive};
@@ -201,10 +159,13 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
 
   bool empty_compaction = false;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv());
+    policy, progress, empty_compaction, options.get(), &AnnBuildEnv());
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
+  } else if (absl::IsUnavailable(res)) {
+    SDB_TRACE(SEARCH, "compaction of Search index '", idx->GetId(),
+              "' stopped by a backup");
   } else {
     SDB_WARN(SEARCH, "error after running for ", time_ms,
              "ms while compacting Search index '", idx->GetId(),
@@ -220,15 +181,15 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
 // when the gate is full keeps the pool draining. noexcept on purpose: a slot is
 // acquired here and released only by its child, so if Run/push_back threw (OOM)
 // the slot would leak into the gate count -- fail fast instead.
-template<typename Storage>
 std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
-  const std::weak_ptr<Storage>& weak) noexcept {
+  const std::weak_ptr<Store>& weak) noexcept {
   std::vector<yaclib::FutureOn<bool>> runs;
-  while (!ShouldStop() && engine.TryAcquireCompaction()) {
+  while (!ShouldStop() && !engine.IsBackupActive() &&
+         engine.TryAcquireCompaction()) {
     const bool small = engine.FreeCompactionSlots() == 0;
     runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
-      if (ShouldStop()) {
+      if (ShouldStop() || engine.IsBackupActive()) {
         engine.ReleaseCompaction();
         return yaclib::MakeFuture(false);
       }
@@ -255,9 +216,8 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
 // fit (one-shot, non-thread-safe Reset, lost-wakeup across iterations with many
 // producers), so we poll the per-index generation in bounded slices -- the
 // fallback the design explicitly allows. Returns early on a nudge or on stop.
-template<typename Storage>
 yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
-                                          std::weak_ptr<Storage> weak,
+                                          std::weak_ptr<Store> weak,
                                           uint64_t base_gen,
                                           Clock::duration interval,
                                           Clock::duration total) {
@@ -291,9 +251,8 @@ enum class LoopTick {
   kNeutral,   // keep the stretch
 };
 
-template<typename Storage, typename GetIntervalMs, typename Tick>
-yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
-                              std::string_view name,
+template<typename GetIntervalMs, typename Tick>
+yaclib::Future<> IntervalLoop(std::weak_ptr<Store> weak, std::string_view name,
                               GetIntervalMs get_interval_ms, Tick tick) {
   auto& s = BackgroundScheduler::instance();
   int stretch = 0;
@@ -370,14 +329,13 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
 
 }  // namespace
 
-template<typename Storage>
-yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
+yaclib::Future<> RefreshLoop(std::weak_ptr<Store> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
-    [](Storage& idx) -> size_t {
+    [](Store& idx) -> size_t {
       return idx.GetTasksSettings().refresh_interval_msec;
     },
-    [cleanup_count = size_t{0}](const std::weak_ptr<Storage>& target) mutable {
+    [cleanup_count = size_t{0}](const std::weak_ptr<Store>& target) mutable {
       auto idx = target.lock();
       if (!idx) {
         return LoopTick::kNeutral;
@@ -385,7 +343,8 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
       const size_t cleanup_step = idx->GetTasksSettings().cleanup_interval_step;
       const bool stale = idx->StalePressure() >= kStalePressureCleanup;
       const bool periodic = cleanup_step && ++cleanup_count >= cleanup_step;
-      const bool run_cleanup = stale || periodic;
+      const bool run_cleanup =
+        (stale || periodic) && !GetSearchEngine().IsBackupActive();
       if (run_cleanup) {
         cleanup_count = 0;
         idx->ClearStalePressure();
@@ -404,8 +363,7 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
     });
 }
 
-template<typename Storage>
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
+yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak) {
   auto& s = BackgroundScheduler::instance();
   auto& engine = GetSearchEngine();
   auto backoff = Clock::duration::zero();
@@ -492,11 +450,5 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   }
   co_return {};
 }
-
-template yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage>);
-template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage>);
-template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
-template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
 
 }  // namespace sdb::search

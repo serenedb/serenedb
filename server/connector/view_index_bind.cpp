@@ -48,8 +48,8 @@
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
 #include "query/config_variable_names.h"
-#include "search/search_table.h"
-#include "search/search_table_transaction.h"
+#include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::connector {
 namespace {

@@ -479,6 +479,40 @@ SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('vedernikoff');
 count
 2
 
+# A file whose rows all fail the predicate contributes no docs, so its removal
+# finds nothing to remove.
+statement count 2
+COPY (SELECT 106 AS id, 'pudge stays outside' AS body
+      UNION ALL SELECT 107, 'vedernikoff stays outside')
+TO '${__TEST_DIR__}/reindex_part_d.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('reindex_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+system ok
+rm $__TEST_DIR__/reindex_part_d.parquet
+
+query
+SELECT * FROM serenedb_reindex('reindex_part_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	1	0
+
+query
+SELECT count(*) FROM reindex_part_idx;
+----
+count
+5
+
+query
+SELECT count(*) FROM reindex_part_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
 # The stale-statistics fold: when every id the ORIGINAL first file holds
 # satisfies the predicate, the pre-narrowing reader's column stats would
 # prove the WHERE "always true" and the optimizer would DELETE the pass's

@@ -27,13 +27,33 @@
 #include <cstdlib>
 
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/system_compiler.hpp"
+
+#ifdef SDB_COVERAGE
+extern "C" int __llvm_profile_write_file(void);
+#endif
 
 namespace irs {
+namespace {
+
+void FlushCoverage() noexcept {
+#ifdef SDB_COVERAGE
+  __llvm_profile_write_file();
+#endif
+}
+
+}  // namespace
 
 [[noreturn]] void FatalErrorExit() noexcept {
   log::Flush();
   std::fflush(nullptr);
+  FlushCoverage();
   std::_Exit(EXIT_FAILURE);
+}
+
+[[noreturn]] void PlannedCrashExit() noexcept {
+  FlushCoverage();
+  std::_Exit(kPlannedCrashExitCode);
 }
 
 }  // namespace irs

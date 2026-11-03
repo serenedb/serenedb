@@ -38,8 +38,16 @@ namespace sdb::catalog {
 
 inline constexpr std::string_view kEngineDir = "engine_v1";
 inline constexpr std::string_view kCatalogLog = "catalog.wal";
+inline constexpr std::string_view kDataFile = "data.db";
 
 duckdb::FileSystem& StorageFileSystem();
+// Creates [path], whose parent exists; throws when it exists already.
+void CreateDirectory(const std::filesystem::path& path);
+// Removes the files below [path] and it, logging what it could not remove.
+void RemoveTree(const std::string& path) noexcept;
+// While a backup runs, removals of dropped storages wait for ResumeRemovals.
+void DeferRemovals() noexcept;
+void ResumeRemovals();
 std::string EngineDirOf(std::string_view location);
 std::optional<duckdb::idx_t> OidFromName(std::string_view name);
 

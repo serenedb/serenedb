@@ -183,3 +183,252 @@ SELECT fnp_one(DISTINCT 1);
 
 statement ok
 DROP FUNCTION fnp_one;
+
+
+statement ok
+CREATE FUNCTION fnp_max_below(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT max(v) + x FROM generate_series(0, 3) r(v) WHERE v < x';
+
+
+statement ok
+CREATE FUNCTION fnp_count_plus(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) + x';
+
+
+statement ok
+CREATE FUNCTION fnp_sum(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT sum(x)::bigint FROM generate_series(1, 3) g(w)';
+
+
+statement ok
+CREATE FUNCTION fnp_nested_sum(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT (SELECT sum(x)::bigint FROM generate_series(1, 3) g(w)) FROM generate_series(1, 2) r(v)';
+
+
+statement ok
+CREATE FUNCTION fnp_grouped(x bigint) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) * x FROM generate_series(1, 6) g(w) GROUP BY w % 2 ORDER BY 1 DESC';
+
+
+statement ok
+CREATE FUNCTION fnp_cte(x bigint) RETURNS bigint LANGUAGE sql AS 'WITH c AS (SELECT x AS w) SELECT w + x FROM c';
+
+
+statement ok
+CREATE FUNCTION fnp_pair(x bigint, y bigint) RETURNS bigint LANGUAGE sql AS 'SELECT x + x + y FROM (VALUES (1)) v(c)';
+
+
+query
+SELECT i, fnp_max_below(i + 1) AS a, fnp_count_plus(i + 1) AS b, fnp_sum(i + 1) AS c, fnp_nested_sum(i + 1) AS d, fnp_grouped(i + 1) AS e, fnp_cte(i + 1) AS f FROM generate_series(0, 2) t(i) ORDER BY i;
+----
+i	a	b	c	d	e	f
+0	1	2	3	3	3	2
+1	3	3	6	6	6	4
+2	5	4	9	9	9	6
+
+
+query
+SELECT (SELECT fnp_pair(i + 1, x) FROM (VALUES (2)) w(i)) AS a FROM (SELECT 5 AS x) t;
+----
+a
+11
+
+
+statement ok
+CREATE FUNCTION fnp_twice_when(c boolean, x int) RETURNS int LANGUAGE sql RETURN CASE WHEN c THEN x + x ELSE 0 END;
+
+
+query
+SELECT i, fnp_twice_when(i > 0, 10 / i) AS a, fnp_twice_when(i > 0, fnp_twice_when(true, 10 / i)) AS b FROM generate_series(0, 2) t(i) ORDER BY i;
+----
+i	a	b
+0	0	0
+1	20	40
+2	10	20
+
+
+statement ok
+CREATE FUNCTION fnp_vdiff(x double precision) RETURNS double precision LANGUAGE sql RETURN x - x;
+
+
+query
+SELECT bool_or(fnp_vdiff(random()) <> 0) AS r FROM generate_series(1, 100);
+----
+r
+f
+
+
+statement ok
+CREATE SEQUENCE fnp_seq;
+
+
+statement ok
+CREATE FUNCTION fnp_seqdiff(a bigint) RETURNS bigint LANGUAGE sql AS 'SELECT a - a';
+
+
+query
+SELECT fnp_seqdiff(nextval('fnp_seq')) AS d;
+----
+d
+0
+
+
+query
+SELECT currval('fnp_seq') AS c;
+----
+c
+1
+
+
+statement ok
+DROP FUNCTION fnp_seqdiff;
+
+
+statement ok
+DROP SEQUENCE fnp_seq;
+
+
+statement ok
+CREATE FUNCTION fnp_positive(x int) RETURNS int LANGUAGE sql AS 'SELECT x WHERE x > 0';
+
+
+statement ok
+CREATE FUNCTION fnp_having(x int) RETURNS int LANGUAGE sql AS 'SELECT x HAVING x > 0';
+
+
+statement ok
+CREATE FUNCTION fnp_grand(x int) RETURNS bigint LANGUAGE sql AS 'SELECT x + count(*) FROM generate_series(1, 3) GROUP BY ()';
+
+
+query
+SELECT i, fnp_positive(i - 1) AS p, fnp_having(i - 1) AS h, fnp_grand(i) AS g FROM generate_series(0, 2) t(i) ORDER BY i;
+----
+i	p	h	g
+0	NULL	NULL	3
+1	NULL	NULL	4
+2	1	1	5
+
+
+statement ok
+CREATE FUNCTION fnp_cte_mixed(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT g.v AS v FROM generate_series(1, 3) g(v) WHERE v > 0) SELECT x + v FROM c ORDER BY v DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_cte_sub(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT (SELECT x) AS y) SELECT y FROM c';
+
+
+statement ok
+CREATE FUNCTION fnp_union(x int) RETURNS int LANGUAGE sql AS 'SELECT x UNION ALL SELECT x + 1 ORDER BY 1 DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_first(x int) RETURNS int LANGUAGE sql AS 'SELECT x + unnest(ARRAY[1, 2])';
+
+
+statement ok
+CREATE FUNCTION fnp_series(x int) RETURNS int LANGUAGE sql AS 'SELECT x + generate_series(1, 2)';
+
+
+query
+SELECT fnp_cte_mixed(10) AS m, fnp_cte_sub(7) AS s, fnp_union(4) AS u, fnp_first(10) AS f, fnp_series(20) AS g;
+----
+m	s	u	f	g
+13	7	5	11	21
+
+
+statement ok
+CREATE FUNCTION fnp_cte_param(x int) RETURNS int LANGUAGE sql AS 'WITH c AS (SELECT x + v AS w FROM generate_series(1, 3) g(v)) SELECT w FROM c ORDER BY w DESC LIMIT 1';
+
+
+statement ok
+CREATE FUNCTION fnp_first_unnested(x int) RETURNS int LANGUAGE sql AS 'SELECT unnest(ARRAY[1, 2]) + x';
+
+
+statement ok
+CREATE FUNCTION fnp_having_group(x int) RETURNS bigint LANGUAGE sql AS 'SELECT v + x FROM generate_series(1, 3) g(v) GROUP BY v HAVING v > 2 AND g.v < x';
+
+
+query
+SELECT fnp_cte_param(10) AS c, fnp_first_unnested(10) AS f, fnp_having_group(10) AS h;
+----
+c	f	h
+13	11	13
+
+
+statement error must appear in the GROUP BY clause or be used in an aggregate function
+CREATE FUNCTION fnp_having_ungrouped(x int) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM generate_series(1, 3) g(v) HAVING g.v > x';
+
+
+statement ok
+DROP FUNCTION fnp_having_group;
+
+
+statement ok
+DROP FUNCTION fnp_first_unnested;
+
+
+statement ok
+DROP FUNCTION fnp_cte_param;
+
+
+statement ok
+DROP FUNCTION fnp_series;
+
+
+statement ok
+DROP FUNCTION fnp_first;
+
+
+statement ok
+DROP FUNCTION fnp_union;
+
+
+statement ok
+DROP FUNCTION fnp_cte_sub;
+
+
+statement ok
+DROP FUNCTION fnp_cte_mixed;
+
+
+statement ok
+DROP FUNCTION fnp_grand;
+
+
+statement ok
+DROP FUNCTION fnp_having;
+
+
+statement ok
+DROP FUNCTION fnp_positive;
+
+
+statement ok
+DROP FUNCTION fnp_vdiff;
+
+
+statement ok
+DROP FUNCTION fnp_twice_when;
+
+
+statement ok
+DROP FUNCTION fnp_pair;
+
+
+statement ok
+DROP FUNCTION fnp_cte;
+
+
+statement ok
+DROP FUNCTION fnp_grouped;
+
+
+statement ok
+DROP FUNCTION fnp_nested_sum;
+
+
+statement ok
+DROP FUNCTION fnp_sum;
+
+
+statement ok
+DROP FUNCTION fnp_count_plus;
+
+
+statement ok
+DROP FUNCTION fnp_max_below;

@@ -27,6 +27,9 @@
 #include <deque>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/basic_term_reader.hpp>
+#include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/reader.hpp>
+#include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -34,11 +37,41 @@
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/lead/posting_docs.hpp>
+#include <memory>
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
 
 namespace tests {
+
+struct Records {
+  std::unique_ptr<irs::byte_type[]> data;
+  const irs::byte_type* end;
+};
+
+inline Records ReadRecords(irs::IndexInput& in) {
+  const uint64_t size = in.Length() - in.Position();
+  auto data =
+    std::make_unique<irs::byte_type[]>(size + irs::block_codec::kInSlack);
+  in.ReadData(data.get(), size);
+  const auto* end = data.get() + size;
+  return {std::move(data), end};
+}
+
+inline void WriteRecord(irs::PostingsWriter& writer, irs::IndexOutput& out,
+                        const irs::PostingMeta& meta) {
+  writer.Encode(out, meta);
+  if (meta.inline_size != 0) {
+    out.WriteData(meta.inline_data, meta.inline_size);
+  }
+}
+
+inline size_t ReadRecord(const irs::byte_type* in, irs::IndexFeatures features,
+                         irs::PostingMeta& meta) {
+  const auto size = irs::PostingsReader::decode(in, features, meta);
+  meta.inline_data = in + size;
+  return size + meta.inline_size;
+}
 
 class SeekPostings : public irs::lead::Node {
  public:
@@ -234,12 +267,8 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
 
 class MockTermReader final : public irs::BasicTermReader {
  public:
-  explicit MockTermReader(irs::TermIterator& it, irs::FieldMeta meta,
-                          irs::bytes_view min_term, irs::bytes_view max_term)
-    : _it{it},
-      _meta{std::move(meta)},
-      _min_term{min_term},
-      _max_term(max_term) {}
+  MockTermReader(irs::TermIterator& it, irs::FieldMeta meta)
+    : _it{it}, _meta{std::move(meta)} {}
 
  private:
   irs::TermOnlyIterator::ptr iterator() const final {
@@ -248,13 +277,9 @@ class MockTermReader final : public irs::BasicTermReader {
   const irs::FieldMeta& meta() const { return _meta; }
   irs::field_id id() const final { return meta().id; }
   irs::FieldProperties properties() const final { return meta(); }
-  irs::bytes_view min() const final { return _min_term; }
-  irs::bytes_view max() const final { return _max_term; }
 
   mutable BatchingTermIterator _it;
   irs::FieldMeta _meta;
-  irs::bytes_view _min_term;
-  irs::bytes_view _max_term;
 };
 
 class FormatTestCase : public IndexTestBase {

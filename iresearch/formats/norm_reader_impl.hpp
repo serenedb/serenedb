@@ -151,6 +151,10 @@ class NormReaderBase : public NormReader {
     return PageAt(At(doc));
   }
 
+  bool AllWarm(uint64_t first, uint64_t last) const noexcept {
+    return _column->Residency().Test(first, last) > last - first;
+  }
+
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
     SDB_ASSERT(docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc);
     if (_bytes == 0) {
@@ -172,16 +176,15 @@ class NormReaderBase : public NormReader {
     const auto epoch = file_utils::ResidencyEpoch();
     const bool valid = _column->Residency().Valid(epoch);
     if (valid) {
-      const auto& residency = _column->Residency();
       if (docs[n - 1] < _window_end) {
         const auto span = _column->Window(_window);
-        if (residency.Test(PageAt(span.data()),
-                           PageAt(span.data() + span.size() - 1))) {
+        if (AllWarm(PageAt(span.data()),
+                    PageAt(span.data() + span.size() - 1))) {
           Set(_probed_at + _window);
           Done(_window);
           return;
         }
-      } else if (residency.Test(PageOf(docs[0]), PageOf(docs[n - 1]))) {
+      } else if (AllWarm(PageOf(docs[0]), PageOf(docs[n - 1]))) {
         return;
       }
       if (Trusted(docs, n)) {
@@ -220,7 +223,7 @@ class NormReaderBase : public NormReader {
         end = page;
       }
       last = std::max(last, end);
-      if (spread && !(valid && _column->Residency().Test(begin, end))) {
+      if (spread && !(valid && AllWarm(begin, end))) {
         const auto* from = At(docs[i]);
         file_utils::Prefetch(from,
                              static_cast<size_t>(End(docs[j - 1]) - from));

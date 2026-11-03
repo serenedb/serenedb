@@ -377,7 +377,7 @@ connection default
 statement error
 CREATE TABLESPACE recreated LOCATION '${__TEST_DIR__}/recreated_b';
 ----
-db error: ERROR: Failed to commit: catalog log: could not append the transaction
+db error: ERROR: catalog log: could not append the transaction
 
 
 connection default

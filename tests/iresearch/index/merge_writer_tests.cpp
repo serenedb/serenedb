@@ -40,20 +40,14 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
+#include "postings_cursor.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace {
 
-irs::bstring FirstNumericTerm(auto value) {
+irs::bstring NumericTerm(auto value) {
   irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
   return irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)};
-}
-
-irs::bstring LastNumericTerm(auto value) {
-  irs::bstring term;
-  irs::numeric_utils::ForEachNumericTerm(
-    value, [&](irs::bytes_view t) { term.assign(t.data(), t.size()); });
-  return term;
 }
 
 // Stable per-name field ids, sourced from `tests::FieldIdFor` so the
@@ -67,6 +61,7 @@ inline constexpr irs::field_id kDocDoubleId = tests::FieldIdFor("doc_double");
 inline constexpr irs::field_id kDocFloatId = tests::FieldIdFor("doc_float");
 inline constexpr irs::field_id kDocIntId = tests::FieldIdFor("doc_int");
 inline constexpr irs::field_id kDocLongId = tests::FieldIdFor("doc_long");
+inline constexpr auto kNumeric = irs::NumericLayout::kNumbers;
 inline constexpr irs::field_id kDocStringId = tests::FieldIdFor("doc_string");
 inline constexpr irs::field_id kDocTextId = tests::FieldIdFor("doc_text");
 inline constexpr irs::field_id kFooId = tests::FieldIdFor("foo");
@@ -75,11 +70,8 @@ inline constexpr irs::field_id kAnotherColumnId =
 
 using tests::FieldIdFor;
 
-irs::Filter::ptr MakeByTerm(std::string_view name, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = FieldIdFor(name);
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+tests::Terms MakeByTerm(std::string_view name, std::string_view value) {
+  return {FieldIdFor(name), {std::string{value}}};
 }
 
 }  // namespace
@@ -289,7 +281,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
                                 &::irs::DuckDBEngine::Instance().instance()});
     ASSERT_EQ(33, segment->docs_count());
     ASSERT_EQ(33, segment->field(kNameId)->docs_count());
-    ASSERT_EQ(33, segment->field(kSeqId)->docs_count());
+    ASSERT_EQ(33, segment->field(kSeqId, kNumeric)->docs_count());
     ASSERT_EQ(33, segment->field(kSameId)->docs_count());
     ASSERT_EQ(13, segment->field(kDuplicatedId)->docs_count());
   }
@@ -783,8 +775,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
-  auto docs_count = [](const irs::SubReader& segment, irs::field_id field) {
-    auto* reader = segment.field(field);
+  auto docs_count = [](const irs::SubReader& segment, irs::field_id field,
+                       irs::DictRef dict = irs::StringLayout::kStrings) {
+    const auto* reader = segment.field(field, dict);
     return reader ? reader->docs_count() : 0;
   };
 
@@ -853,115 +846,89 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field(kDocDoubleId);
+      auto terms = segment.field(kDocDoubleId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((double_t)(2.718281828 * 2));
-      const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 1));
+      const auto max_term = NumericTerm((double_t)(2.718281828 * 2));
+      const auto min_term = NumericTerm((double_t)(2.718281828 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (double_t)(2.718281828 * 1), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
+      expected_terms[max_term].emplace(2);
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (double_t)(2.718281828 * 2), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(2);
-        });
-
-      ASSERT_EQ(2, docs_count(segment, kDocDoubleId));
+      ASSERT_EQ(2, docs_count(segment, kDocDoubleId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 2, min_term, max_term, 8, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
                     expected_terms);
     }
 
     // validate float field
     {
-      auto terms = segment.field(kDocFloatId);
+      auto terms = segment.field(kDocFloatId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 2));
-      const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 1));
+      const auto max_term = NumericTerm((float_t)(3.1415926535 * 2));
+      const auto min_term = NumericTerm((float_t)(3.1415926535 * 1));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (float_t)(3.1415926535 * 1), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
+      expected_terms[max_term].emplace(2);
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (float_t)(3.1415926535 * 2), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(2);
-        });
-
-      ASSERT_EQ(2, docs_count(segment, kDocFloatId));
+      ASSERT_EQ(2, docs_count(segment, kDocFloatId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 2, min_term, max_term, 4, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
                     expected_terms);
     }
 
     // validate int field
     {
-      auto terms = segment.field(kDocIntId);
+      auto terms = segment.field(kDocIntId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm(42 * 2);
-      const auto min_term = FirstNumericTerm(42 * 1);
+      const auto max_term = NumericTerm(42 * 2);
+      const auto min_term = NumericTerm(42 * 1);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(42 * 1, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(1);
-      });
+      expected_terms[min_term].emplace(1);
+      expected_terms[max_term].emplace(2);
 
-      irs::numeric_utils::ForEachNumericTerm(42 * 2, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(2);
-      });
-
-      ASSERT_EQ(2, docs_count(segment, kDocIntId));
+      ASSERT_EQ(2, docs_count(segment, kDocIntId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 2, min_term, max_term, 3, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
                     expected_terms);
     }
 
     // validate long field
     {
-      auto terms = segment.field(kDocLongId);
+      auto terms = segment.field(kDocLongId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((int64_t)12345 * 2);
-      const auto min_term = FirstNumericTerm((int64_t)12345 * 1);
+      const auto max_term = NumericTerm((int64_t)12345 * 2);
+      const auto min_term = NumericTerm((int64_t)12345 * 1);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (int64_t)12345 * 1, [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
+      expected_terms[max_term].emplace(2);
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (int64_t)12345 * 2, [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(2);
-        });
-
-      ASSERT_EQ(2, docs_count(segment, kDocLongId));
+      ASSERT_EQ(2, docs_count(segment, kDocLongId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 2, min_term, max_term, 5, features,
+      ValidateTerms(segment, *terms, 2, min_term, max_term, 2, features,
                     expected_terms);
     }
 
@@ -1067,96 +1034,85 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
     // validate double field
     {
-      auto terms = segment.field(kDocDoubleId);
+      auto terms = segment.field(kDocDoubleId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::DoubleField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((double_t)(2.718281828 * 3));
-      const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 3));
+      const auto max_term = NumericTerm((double_t)(2.718281828 * 3));
+      const auto min_term = NumericTerm((double_t)(2.718281828 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (double_t)(2.718281828 * 3), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocDoubleId));
+      ASSERT_EQ(1, docs_count(segment, kDocDoubleId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 1, min_term, max_term, 4, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
                     expected_terms);
     }
 
     // validate float field
     {
-      auto terms = segment.field(kDocFloatId);
+      auto terms = segment.field(kDocFloatId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::FloatField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 3));
-      const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 3));
+      const auto max_term = NumericTerm((float_t)(3.1415926535 * 3));
+      const auto min_term = NumericTerm((float_t)(3.1415926535 * 3));
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (float_t)(3.1415926535 * 3), [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocFloatId));
+      ASSERT_EQ(1, docs_count(segment, kDocFloatId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 1, min_term, max_term, 2, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
                     expected_terms);
     }
 
     // validate int field
     {
-      auto terms = segment.field(kDocIntId);
+      auto terms = segment.field(kDocIntId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::IntField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm(42 * 3);
-      const auto min_term = FirstNumericTerm(42 * 3);
+      const auto max_term = NumericTerm(42 * 3);
+      const auto min_term = NumericTerm(42 * 3);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(42 * 3, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(1);
-      });
+      expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocIntId));
+      ASSERT_EQ(1, docs_count(segment, kDocIntId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 1, min_term, max_term, 2, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
                     expected_terms);
     }
 
     // validate long field
     {
-      auto terms = segment.field(kDocLongId);
+      auto terms = segment.field(kDocLongId, kNumeric);
       ASSERT_NE(nullptr, terms);
       auto& field = terms->meta();
       auto features = tests::LongField().GetIndexFeatures();
-      const auto max_term = LastNumericTerm((int64_t)12345 * 3);
-      const auto min_term = FirstNumericTerm((int64_t)12345 * 3);
+      const auto max_term = NumericTerm((int64_t)12345 * 3);
+      const auto min_term = NumericTerm((int64_t)12345 * 3);
       std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                          absl::Hash<irs::bstring>>
         expected_terms;
 
-      irs::numeric_utils::ForEachNumericTerm(
-        (int64_t)12345 * 3, [&](irs::bytes_view term) {
-          expected_terms[irs::bstring{term}].emplace(1);
-        });
+      expected_terms[min_term].emplace(1);
 
-      ASSERT_EQ(1, docs_count(segment, kDocLongId));
+      ASSERT_EQ(1, docs_count(segment, kDocLongId, kNumeric));
       ASSERT_EQ(features, field.index_features);
       ASSERT_NE(nullptr, terms);
-      ValidateTerms(segment, *terms, 1, min_term, max_term, 4, features,
+      ValidateTerms(segment, *terms, 1, min_term, max_term, 1, features,
                     expected_terms);
     }
 
@@ -1292,134 +1248,93 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   // validate double field
   {
-    auto terms = segment->field(kDocDoubleId);
+    auto terms = segment->field(kDocDoubleId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::DoubleField().GetIndexFeatures();
-    const auto max_term = LastNumericTerm((double_t)(2.718281828 * 3));
-    const auto min_term = FirstNumericTerm((double_t)(2.718281828 * 1));
+    const auto max_term = NumericTerm((double_t)(2.718281828 * 3));
+    const auto min_term = NumericTerm((double_t)(2.718281828 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (double_t)(2.718281828 * 1), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(1);
-      });
+    expected_terms[min_term].emplace(1);
+    expected_terms[NumericTerm((double_t)(2.718281828 * 2))].emplace(2);
+    expected_terms[max_term].emplace(3);
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (double_t)(2.718281828 * 2), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(2);
-      });
-
-    irs::numeric_utils::ForEachNumericTerm(
-      (double_t)(2.718281828 * 3), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(3);
-      });
-
-    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId));
+    ASSERT_EQ(3, docs_count(*segment, kDocDoubleId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ValidateTerms(*segment, *terms, 3, min_term, max_term, 12, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
                   expected_terms);
   }
 
   // validate float field
   {
-    auto terms = segment->field(kDocFloatId);
+    auto terms = segment->field(kDocFloatId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::FloatField().GetIndexFeatures();
-    const auto max_term = LastNumericTerm((float_t)(3.1415926535 * 3));
-    const auto min_term = FirstNumericTerm((float_t)(3.1415926535 * 1));
+    const auto max_term = NumericTerm((float_t)(3.1415926535 * 3));
+    const auto min_term = NumericTerm((float_t)(3.1415926535 * 1));
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (float_t)(3.1415926535 * 1), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(1);
-      });
+    expected_terms[min_term].emplace(1);
+    expected_terms[NumericTerm((float_t)(3.1415926535 * 2))].emplace(2);
+    expected_terms[max_term].emplace(3);
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (float_t)(3.1415926535 * 2), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(2);
-      });
-
-    irs::numeric_utils::ForEachNumericTerm(
-      (float_t)(3.1415926535 * 3), [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(3);
-      });
-
-    ASSERT_EQ(3, docs_count(*segment, kDocFloatId));
+    ASSERT_EQ(3, docs_count(*segment, kDocFloatId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ValidateTerms(*segment, *terms, 3, min_term, max_term, 6, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
                   expected_terms);
   }
 
   // validate int field
   {
-    auto terms = segment->field(kDocIntId);
+    auto terms = segment->field(kDocIntId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::IntField().GetIndexFeatures();
-    const auto max_term = LastNumericTerm(42 * 3);
-    const auto min_term = FirstNumericTerm(42 * 1);
+    const auto max_term = NumericTerm(42 * 3);
+    const auto min_term = NumericTerm(42 * 1);
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    irs::numeric_utils::ForEachNumericTerm(42 * 1, [&](irs::bytes_view term) {
-      expected_terms[irs::bstring{term}].emplace(1);
-    });
+    expected_terms[min_term].emplace(1);
+    expected_terms[NumericTerm(42 * 2)].emplace(2);
+    expected_terms[max_term].emplace(3);
 
-    irs::numeric_utils::ForEachNumericTerm(42 * 2, [&](irs::bytes_view term) {
-      expected_terms[irs::bstring{term}].emplace(2);
-    });
-
-    irs::numeric_utils::ForEachNumericTerm(42 * 3, [&](irs::bytes_view term) {
-      expected_terms[irs::bstring{term}].emplace(3);
-    });
-
-    ASSERT_EQ(3, docs_count(*segment, kDocIntId));
+    ASSERT_EQ(3, docs_count(*segment, kDocIntId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ValidateTerms(*segment, *terms, 3, min_term, max_term, 4, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
                   expected_terms);
   }
 
   // validate long field
   {
-    auto terms = segment->field(kDocLongId);
+    auto terms = segment->field(kDocLongId, kNumeric);
     ASSERT_NE(nullptr, terms);
     auto& field = terms->meta();
     auto features = tests::LongField().GetIndexFeatures();
-    const auto max_term = LastNumericTerm((int64_t)12345 * 3);
-    const auto min_term = FirstNumericTerm((int64_t)12345 * 1);
+    const auto max_term = NumericTerm((int64_t)12345 * 3);
+    const auto min_term = NumericTerm((int64_t)12345 * 1);
     std::unordered_map<irs::bstring, std::unordered_set<irs::doc_id_t>,
                        absl::Hash<irs::bstring>>
       expected_terms;
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (int64_t)12345 * 1, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(1);
-      });
+    expected_terms[min_term].emplace(1);
+    expected_terms[NumericTerm((int64_t)12345 * 2)].emplace(2);
+    expected_terms[max_term].emplace(3);
 
-    irs::numeric_utils::ForEachNumericTerm(
-      (int64_t)12345 * 2, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(2);
-      });
-
-    irs::numeric_utils::ForEachNumericTerm(
-      (int64_t)12345 * 3, [&](irs::bytes_view term) {
-        expected_terms[irs::bstring{term}].emplace(3);
-      });
-
-    ASSERT_EQ(3, docs_count(*segment, kDocLongId));
+    ASSERT_EQ(3, docs_count(*segment, kDocLongId, kNumeric));
     ASSERT_EQ(features, field.index_features);
     ASSERT_NE(nullptr, terms);
-    ValidateTerms(*segment, *terms, 3, min_term, max_term, 6, features,
+    ValidateTerms(*segment, *terms, 3, min_term, max_term, 3, features,
                   expected_terms);
   }
 
@@ -2221,6 +2136,274 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
 
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   GTEST_SKIP() << "sorted-index merge path not supported";
+}
+
+TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
+  constexpr irs::field_id kField = 1;
+  constexpr irs::field_id kOther = 2;
+  constexpr irs::field_id kList = 3;
+  constexpr uint32_t kDocs = 4;
+  const auto keyword = [](size_t segment, uint32_t i) {
+    return absl::StrCat("s", segment, "-", i);
+  };
+
+  irs::Directory data_dir{irs::DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
+  {
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 2; ++segment) {
+      auto trx = writer->GetBatch();
+      {
+        auto doc = trx.Insert(false, kDocs);
+        ASSERT_TRUE(doc);
+        const auto d = doc.DocId();
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kField, irs::DictLayout::Json, [&](irs::MemberDocs& docs) {
+            docs.Push(irs::DictMember::Nulls, d);
+            if (segment == 0) {
+              docs.Push(irs::DictMember::JsonNulls, d + 1);
+            } else {
+              docs.Push(irs::DictMember::False, d + 2);
+            }
+            docs.Push(irs::DictMember::True, d + 3);
+          }));
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kList, irs::DictLayout::StringList, [&](irs::MemberDocs& docs) {
+            docs.Push(irs::DictMember::NullElements, d);
+          }));
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::JsonLayout::kNumbers, irs::IndexFeatures::Ranges,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertNumerics<int64_t>([&](auto&& emit) {
+              for (uint32_t i = 1; i != kDocs; ++i) {
+                emit(static_cast<int64_t>(segment * 10 + i), d + i);
+              }
+            });
+          }));
+        std::vector<std::string> values;
+        for (uint32_t i = 0; i != kDocs; ++i) {
+          values.push_back(keyword(segment, i));
+        }
+        for (const auto id : {kField, kOther}) {
+          ASSERT_TRUE(doc.WithField(
+            id,
+            id == kField ? irs::JsonLayout::kStrings
+                         : irs::StringLayout::kStrings,
+            irs::IndexFeatures::None, [&](irs::FieldInverter& fld) {
+              return fld.InvertKeywords([&](auto&& emit) {
+                for (uint32_t i = 0; i != kDocs; ++i) {
+                  emit(duckdb::string_t{values[i].data(), static_cast<uint32_t>(
+                                                            values[i].size())},
+                       d + i);
+                }
+              });
+            }));
+        }
+      }
+      ASSERT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+    tests::Remove(*writer,
+                  tests::Terms{.field = kOther, .values = {keyword(1, 1)}});
+    writer->RefreshCommit();
+  }
+
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
+  irs::SegmentMeta index_segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto segment = irs::SegmentReaderImpl::Open(
+    dir, index_segment,
+    irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
+  ASSERT_EQ(2 * kDocs - 1, segment->docs_count());
+
+  const auto docs_of = [&](irs::field_id id, irs::DictRef dict) {
+    std::vector<irs::doc_id_t> docs;
+    const auto* terms = segment->field(id, dict);
+    EXPECT_NE(nullptr, terms);
+    if (!terms) {
+      return docs;
+    }
+    auto it = terms->iterator();
+    while (it->next()) {
+      auto postings = ::tests::Docs(it->postings(irs::IndexFeatures::None));
+      for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+           doc = postings->Next()) {
+        docs.push_back(doc);
+      }
+    }
+    absl::c_sort(docs);
+    return docs;
+  };
+  using Docs = std::vector<irs::doc_id_t>;
+  const auto layout_of = [&](irs::field_id id) {
+    return segment->fields(id).front()->meta().dict.layout;
+  };
+  EXPECT_EQ(irs::DictLayout::Json, layout_of(kField));
+  EXPECT_EQ(irs::DictLayout::String, layout_of(kOther));
+  EXPECT_EQ(irs::DictLayout::StringList, layout_of(kList));
+  EXPECT_EQ((Docs{1, 5}), docs_of(kField, irs::JsonLayout::kNulls));
+  EXPECT_EQ((Docs{2}), docs_of(kField, irs::JsonLayout::kJsonNulls));
+  EXPECT_EQ((Docs{6}), docs_of(kField, irs::JsonLayout::kFalse));
+  EXPECT_EQ((Docs{4, 7}), docs_of(kField, irs::JsonLayout::kTrue));
+  EXPECT_EQ((Docs{2, 3, 4, 6, 7}), docs_of(kField, irs::JsonLayout::kNumbers));
+  EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
+            docs_of(kField, irs::JsonLayout::kStrings));
+  EXPECT_EQ((Docs{1, 2, 3, 4, 5, 6, 7}),
+            docs_of(kOther, irs::StringLayout::kStrings));
+  EXPECT_EQ((Docs{1, 5}), docs_of(kList, irs::StringListLayout::kNullElements));
+  EXPECT_EQ(nullptr, segment->field(kOther, irs::StringLayout::kNulls));
+  EXPECT_EQ(nullptr, segment->field(kList, irs::StringListLayout::kNulls));
+  EXPECT_EQ(nullptr, segment->field(kList, irs::StringListLayout::kStrings));
+  EXPECT_EQ(
+    irs::IndexFeatures::Ranges,
+    segment->field(kField, irs::JsonLayout::kNumbers)->meta().index_features);
+}
+
+TEST_P(MergeWriterTestCase, merges_every_member_of_a_json_list) {
+  constexpr irs::field_id kField = 1;
+  constexpr uint32_t kDocs = 3;
+
+  irs::Directory data_dir{irs::DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
+  {
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t segment = 0; segment != 2; ++segment) {
+      auto trx = writer->GetBatch();
+      {
+        auto doc = trx.Insert(false, kDocs);
+        ASSERT_TRUE(doc);
+        const auto d = doc.DocId();
+        ASSERT_TRUE(doc.WithMemberDocs(
+          kField, irs::DictLayout::JsonList, [&](irs::MemberDocs& docs) {
+            if (segment == 0) {
+              docs.Push(irs::DictMember::Nulls, d);
+              docs.Push(irs::DictMember::False, d + 1);
+              docs.Push(irs::DictMember::JsonNulls, d + 2);
+            } else {
+              docs.Push(irs::DictMember::NullElements, d);
+              docs.Push(irs::DictMember::True, d + 1);
+              docs.Push(irs::DictMember::JsonNulls, d + 1);
+            }
+          }));
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::JsonListLayout::kNumbers, irs::IndexFeatures::Ranges,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertNumerics<int64_t>(
+              [&](auto&& emit) { emit(static_cast<int64_t>(segment), d + 1); });
+          }));
+        const auto value = absl::StrCat("s", segment);
+        ASSERT_TRUE(doc.WithField(
+          kField, irs::JsonListLayout::kStrings, irs::IndexFeatures::None,
+          [&](irs::FieldInverter& fld) {
+            return fld.InvertKeywords([&](auto&& emit) {
+              emit(duckdb::string_t{value.data(),
+                                    static_cast<uint32_t>(value.size())},
+                   d + 2);
+            });
+          }));
+      }
+      ASSERT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+  }
+
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
+  irs::SegmentMeta index_segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
+  auto segment = irs::SegmentReaderImpl::Open(
+    dir, index_segment,
+    irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
+  ASSERT_EQ(2 * kDocs, segment->docs_count());
+
+  const auto dicts = segment->fields(kField);
+  ASSERT_EQ(irs::kDictMembers, dicts.size());
+  for (const auto* dict : dicts) {
+    EXPECT_EQ(irs::DictLayout::JsonList, dict->meta().dict.layout);
+  }
+  const auto docs_of = [&](irs::DictRef dict) {
+    std::vector<irs::doc_id_t> docs;
+    const auto* terms = segment->field(kField, dict);
+    EXPECT_NE(nullptr, terms);
+    if (!terms) {
+      return docs;
+    }
+    auto it = terms->iterator();
+    while (it->next()) {
+      auto postings = ::tests::Docs(it->postings(irs::IndexFeatures::None));
+      for (auto doc = postings->Next(); !irs::doc_limits::eof(doc);
+           doc = postings->Next()) {
+        docs.push_back(doc);
+      }
+    }
+    absl::c_sort(docs);
+    return docs;
+  };
+  using Docs = std::vector<irs::doc_id_t>;
+  EXPECT_EQ((Docs{1}), docs_of(irs::JsonListLayout::kNulls));
+  EXPECT_EQ((Docs{4}), docs_of(irs::JsonListLayout::kNullElements));
+  EXPECT_EQ((Docs{3, 5}), docs_of(irs::JsonListLayout::kJsonNulls));
+  EXPECT_EQ((Docs{2}), docs_of(irs::JsonListLayout::kFalse));
+  EXPECT_EQ((Docs{5}), docs_of(irs::JsonListLayout::kTrue));
+  EXPECT_EQ((Docs{2, 5}), docs_of(irs::JsonListLayout::kNumbers));
+  EXPECT_EQ((Docs{3, 6}), docs_of(irs::JsonListLayout::kStrings));
+}
+
+TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
+  constexpr irs::field_id kField = 1;
+  irs::Directory data_dir{irs::DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
+  for (const auto layout : {irs::DictLayout::Bool, irs::DictLayout::Json}) {
+    auto writer = irs::IndexWriter::Make(
+      data_dir,
+      layout == irs::DictLayout::Bool ? irs::kOmCreate : irs::kOmAppend,
+      irs::tests::DefaultWriterOptions());
+    {
+      auto trx = writer->GetBatch();
+      {
+        auto doc = trx.Insert(false, 1);
+        ASSERT_TRUE(doc);
+        ASSERT_TRUE(
+          doc.WithMemberDocs(kField, layout, [&](irs::MemberDocs& docs) {
+            docs.Push(irs::DictMember::True, doc.DocId());
+          }));
+      }
+      ASSERT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+  }
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
+                     TestEnv::MemoryRoot()};
+  irs::SegmentMeta index_segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_SQL_ERROR(irs::GetReady(writer.Flush(index_segment)),
+                   ERRCODE_INDEX_CORRUPTED);
 }
 
 INSTANTIATE_TEST_SUITE_P(

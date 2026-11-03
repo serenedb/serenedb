@@ -166,8 +166,7 @@ a	b	r
 1	2	one two
 2	1	two ONE
 
-# Generated key with an index: the generated PK stays the last row-identity
-# column.
+# No primary key, with an index: rows are addressed by their rowid.
 statement ok
 CREATE TABLE dml_g (r TEXT, n INT)
 WITH (storage = 'search', compaction_interval = 0);

@@ -56,8 +56,8 @@ class PostingsReader final {
   // features - the set of features available for segment
   void prepare(const ReaderState& state, IndexFeatures features);
 
-  size_t decode(const byte_type* in, IndexFeatures field_features,
-                PostingMeta& state);
+  static size_t decode(const byte_type* in, IndexFeatures field_features,
+                       PostingMeta& state);
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
@@ -97,7 +97,7 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-IRS_FORCE_INLINE inline size_t PostingsReader::decode(
+inline IRS_FORCE_INLINE size_t PostingsReader::decode(
   const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 

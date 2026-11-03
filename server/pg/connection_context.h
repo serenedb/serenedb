@@ -52,9 +52,6 @@ struct ReplBatch;
 }  // namespace sdb::replication
 namespace sdb::pg {
 
-inline constexpr std::string_view kPgServerVersion = "18.6";
-inline constexpr int32_t kPgServerVersionNum = 180006;
-
 class CopyInBatches;
 
 // Outcome of the connect-time login gate. On success `role` is the id of the

@@ -118,11 +118,11 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
                             ManifestSource manifest) {
-  options.meta_payload_writer = [this, manifest = std::move(manifest)](
-                                  const irs::SourcePosition& position,
-                                  duckdb::BinarySerializer& out) {
-    const auto current = manifest ? manifest() : nullptr;
-    WritePayload(position, current.get(), out);
+  _manifest = std::move(manifest);
+  options.meta_payload_writer = [this](const irs::SourcePosition& position,
+                                       duckdb::BinarySerializer& out) {
+    _written_manifest = _manifest ? _manifest() : nullptr;
+    WritePayload(position, _written_manifest.get(), out);
   };
   IndexStamp stamp;
   options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
@@ -138,6 +138,7 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
   auto writer = irs::IndexWriter::Make(
     _files, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
+  _written_manifest = stamp.manifest;
   _position = stamp.position;
   absl::MutexLock lock{&_positions_mutex};
   _published = stamp.position;
@@ -261,6 +262,7 @@ absl::Status IndexDurability::Refresh(
       were_changes = writer.RefreshBegin({
         .progress = progress,
         .reopen_reader = _reopen.exchange(false, std::memory_order_acq_rel),
+        .payload_changed = PayloadChanged(),
       });
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
@@ -312,14 +314,12 @@ absl::Status IndexDurability::Refresh(
 }
 
 void IndexDurability::ReplaceSegments(
-  irs::IndexWriter& writer, std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas,
-  absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-    removal_provider) {
+  irs::IndexWriter& writer, std::span<const irs::SubReader* const> replaced,
+  std::vector<irs::IndexWriter::Replacement> replacements) {
   auto lock = LockRefresh(_refresh_mutex);
   RequireFinished(writer);
   AwaitPendingSave(lock, writer);
-  writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
+  writer.ReplaceSegments(replaced, std::move(replacements));
 }
 
 void IndexDurability::Clear(irs::IndexWriter& writer,
@@ -339,7 +339,7 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
   try {
-    if (writer.RefreshBegin()) {
+    if (writer.RefreshBegin({.payload_changed = PayloadChanged()})) {
       _directory_dirty.store(true, std::memory_order_relaxed);
     }
   } catch (...) {
@@ -371,11 +371,9 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
   return FinishPendingSave(writer);
 }
 
-void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
+bool IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
   std::unique_lock lock{_refresh_mutex, std::try_to_lock};
-  if (lock.owns_lock()) {
-    FinishPendingSave(writer);
-  }
+  return lock.owns_lock() && FinishPendingSave(writer);
 }
 
 bool IndexDurability::FinishRefresh(irs::IndexWriter& writer) {
@@ -491,6 +489,10 @@ absl::Status IndexDurability::CompactFiles(irs::IndexWriter& writer) {
   }
   _reopen.store(true, std::memory_order_release);
   return absl::OkStatus();
+}
+
+bool IndexDurability::PayloadChanged() const {
+  return _manifest && _manifest() != _written_manifest;
 }
 
 bool IndexDurability::CanPersist() const {

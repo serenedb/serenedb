@@ -47,7 +47,7 @@ TEST(InvertedIndexConfigTest, StoredExpressionNeedsAStoredField) {
 
 TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
   constexpr irs::field_id kColumn = 1;
-  constexpr irs::field_id kNull = 5;
+  constexpr irs::field_id kSynthetic = 5;
   constexpr irs::field_id kTerms = 20;
   constexpr irs::field_id kStored = 21;
   constexpr irs::field_id kBoth = 22;
@@ -60,7 +60,7 @@ TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
                             expression};
   };
   InvertedIndexFields fields;
-  fields.emplace(kColumn, InvertedIndexField{{.null_field_id = kNull,
+  fields.emplace(kColumn, InvertedIndexField{{.synthetic_column = kSynthetic,
                                               .indexed_term_dict = true}});
   fields.emplace(kTerms, InvertedIndexField{{.indexed_term_dict = true}});
   fields.emplace(kStored, InvertedIndexField{{.store_values = true}});
@@ -91,7 +91,7 @@ TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
   EXPECT_EQ("e", config.StoredExpression(kStored));
   EXPECT_EQ("", config.StoredExpression(kTerms));
   EXPECT_TRUE(config.StoresExpressions());
-  const auto owner = config.LookupField(kNull);
+  const auto owner = config.LookupField(kSynthetic);
   EXPECT_EQ(kColumn, owner.entry_field_id);
   EXPECT_EQ(config.FindEntry(kColumn), owner.entry);
   EXPECT_EQ(nullptr, config.LookupField(77).entry);

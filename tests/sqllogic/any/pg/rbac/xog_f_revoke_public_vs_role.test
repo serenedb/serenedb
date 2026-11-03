@@ -51,7 +51,7 @@ t	t
 
 
 # Two grantee rows: the direct one for babsky and the empty-grantee PUBLIC row.
-query rowsort
+query ? rowsort
 SELECT e FROM (
   SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
 ) g WHERE e NOT LIKE 'postgres=%';
@@ -76,7 +76,7 @@ t	f
 
 
 # The PUBLIC row is gone; babsky's direct row remains.
-query rowsort
+query ? rowsort
 SELECT e FROM (
   SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
 ) g WHERE e NOT LIKE 'postgres=%';
@@ -104,7 +104,7 @@ t	t
 
 
 # Only the PUBLIC row survives now.
-query rowsort
+query ? rowsort
 SELECT e FROM (
   SELECT unnest(relacl::text[]) AS e FROM pg_class WHERE relname = 'xog_f_mop'
 ) g WHERE e NOT LIKE 'postgres=%';

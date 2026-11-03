@@ -26,17 +26,14 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
-#include <span>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "backup/commit_gate.h"
 #include "catalog/catalog.h"
-#include "catalog/entry/inverted_index.h"
-#include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
-#include "search/search_table_transaction.h"
+#include "search/store.h"
+#include "search/writes.h"
 
 namespace sdb::query {
 
@@ -45,10 +42,7 @@ class Transaction : public Config {
   using Config::Config;
 
 #ifdef SDB_DEV
-  ~Transaction() override {
-    SDB_ASSERT(_search_transactions.empty());
-    SDB_ASSERT(!_search_txn || _search_txn->Empty());
-  }
+  ~Transaction() override { SDB_ASSERT(!_search_txn || _search_txn->Empty()); }
 #endif
 
   // Per-statement snapshot lifecycle, driven by DuckDB's QueryBegin/QueryEnd.
@@ -74,15 +68,18 @@ class Transaction : public Config {
 
   void Rollback(duckdb::transaction_t owner);
 
+  void EnterCommitGate();
+  void LeaveCommitGate() noexcept { _commit_pass.Release(); }
+
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));
   }
 
-  void ClaimSearchLayout(std::shared_ptr<search::SearchTable> table,
+  void ClaimSearchLayout(std::shared_ptr<search::Store> table,
                          duckdb::transaction_t owner, std::string_view name);
 
   void AddCreatedIndex(duckdb::idx_t database,
-                       std::shared_ptr<search::InvertedIndexStorage> storage) {
+                       std::shared_ptr<search::Store> storage) {
     _created_indexes.emplace_back(database, std::move(storage));
   }
   void RefreshCreatedIndexes(duckdb::idx_t database);
@@ -106,14 +103,10 @@ class Transaction : public Config {
   // definition is handed in rather than looked up: the caller is the scan
   // The storage is handed in rather than read off the definition: an open
   // directory is the object's, not something a version of it describes.
-  search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(
-    duckdb::idx_t index_id,
-    const std::shared_ptr<search::InvertedIndexStorage>& storage);
+  search::StoreSnapshotPtr EnsureSearchSnapshot(
+    duckdb::idx_t index_id, const std::shared_ptr<search::Store>& storage);
 
-  // Lazily-created search-table (TableEngine::Search) transaction state +
-  // commit logic. Engaged on the first search-table write/scan. The operator
-  // and scan reach the per-shard mutators through here.
-  search::SearchTableTransaction& SearchTxn() {
+  search::Writes& SearchTxn() {
     if (!_search_txn) {
       _search_txn.emplace();
     }
@@ -128,74 +121,20 @@ class Transaction : public Config {
 
   void Destroy(duckdb::transaction_t owner) noexcept;
 
-  struct SearchSlot {
-    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
-    std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
-  };
-
-  SearchSlot& EnsureIndexSlot(
-    duckdb::idx_t index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config,
-    size_t slot = 0);
-
-  irs::IndexWriter::Transaction& EnsureIndexTransaction(
-    duckdb::idx_t index_id,
-    std::shared_ptr<search::InvertedIndexStorage> storage,
-    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
-    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
-              .transaction;
-  }
-
-  std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
-    const auto it = _search_transactions.find(index_id);
-    if (it == _search_transactions.end()) {
-      return {};
-    }
-    return it->second.slots;
-  }
-
-  const duckdb::Vector& FeedColumn(const void* database,
-                                   duckdb::idx_t table_oid,
-                                   duckdb::row_t first_row, duckdb::idx_t count,
-                                   duckdb::idx_t column,
-                                   const duckdb::Vector& source);
-
  private:
-  struct FeedColumns {
-    const void* database = nullptr;
-    duckdb::idx_t table_oid = 0;
-    duckdb::row_t first_row = 0;
-    duckdb::idx_t count = 0;
-    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
-  };
-
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
-  struct SearchTransaction {
-    std::vector<SearchSlot> slots;
-    std::shared_ptr<search::InvertedIndexStorage> storage;
-    uint64_t tick = 0;
-    irs::SourcePosition position;
-  };
-
-  irs::containers::FlatHashMap<duckdb::idx_t, SearchTransaction>
-    _search_transactions;
   irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
-                               search::InvertedIndexSnapshotPtr>
+                               search::StoreSnapshotPtr>
     _search_snapshots;
-  FeedColumns _feed_columns;
-  // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
-  // lazily via SearchTxn(); reset in Destroy.
-  std::optional<search::SearchTableTransaction> _search_txn;
+  std::optional<search::Writes> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
-  std::vector<
-    std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
+  std::vector<std::pair<duckdb::idx_t, std::shared_ptr<search::Store>>>
     _created_indexes;
-  std::vector<std::shared_ptr<search::SearchTable>> _layout_claims;
+  std::vector<std::shared_ptr<search::Store>> _layout_claims;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views
@@ -204,6 +143,7 @@ class Transaction : public Config {
   // Whether the in-flight statement modifies data; folded into _had_dml at
   // OnStatementEnd. Never spans a statement boundary.
   bool _statement_is_dml = false;
+  utils::DrainGate::Pass _commit_pass;
 };
 
 }  // namespace sdb::query

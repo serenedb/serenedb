@@ -29,29 +29,18 @@
 #include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
 
+class Directory;
 struct AnnIndex;
-struct IResourceManager;
-
-struct TermDictMeta {
-  IndexFeatures features{IndexFeatures::None};
-  uint64_t term_count{};
-  uint64_t doc_count{};
-  uint64_t total_doc_freq{};
-  uint64_t total_term_freq{};
-  bool has_score_bounds{false};
-  uint64_t body_offset{};
-  field_id norm{field_limits::invalid()};
-};
 
 struct IvfCentroidMeta {
   uint64_t tree_offset = 0;
@@ -79,14 +68,14 @@ struct HnswMeta {
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
 
-inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
 inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
+inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
 class IdxReader final {
  public:
   IdxReader(const Directory& dir, std::string_view segment_name, bool present,
-            HnswBases* hnsw_bases);
+            HnswBases* hnsw_bases, bool keep_terms = true);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
@@ -95,11 +84,11 @@ class IdxReader final {
   bool HasAnn(field_id id) const noexcept;
   const AnnIndex* Ann(field_id id) const noexcept;
 
-  std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
+  term_dict::TermsMeta TakeTerms() noexcept;
 
   std::span<const uint64_t> AnnEnds() const noexcept;
 
-  const InputFile* File() const noexcept;
+  const std::shared_ptr<const InputFile>& File() const noexcept;
 
  private:
   struct Impl;

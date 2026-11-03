@@ -244,6 +244,7 @@ auto MakeFieldPresence(irs::field_id field) {
 auto MakeByNumericTerm(irs::field_id field, int32_t value) {
   auto filter = std::make_unique<irs::ByTerm>();
   *filter->mutable_field_id() = field;
+  *filter->mutable_dict() = irs::NumericLayout::kNumbers;
 
   irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
   filter->mutable_options()->term =
@@ -268,6 +269,7 @@ auto MakeByTermAndRange(irs::field_id field, std::string_view value,
 
     auto& range = filter->mutable_options()->range;
     irs::SetGranularNumericTerm(range.max, upper_bound);
+    range.max_type = irs::BoundType::Inclusive;
     root->Add(std::move(filter), irs::Occur::Must);
   }
   return root;

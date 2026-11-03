@@ -39,8 +39,6 @@ struct OptimizeContext {
   bool fuse_seekable_acceptors = false;
   bool fuse_acceptor_intersections = false;
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
-  const irs::containers::FlatHashMap<irs::field_id, irs::field_id>*
-    null_markers = nullptr;
   const Scorer* scorer = nullptr;
   Deferral* deferral = nullptr;
 

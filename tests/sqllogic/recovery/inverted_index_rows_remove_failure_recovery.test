@@ -1,0 +1,77 @@
+control substitution on
+
+statement ok
+CREATE TABLE rows_remove (id BIGINT, msg TEXT);
+
+
+statement ok
+CREATE INDEX rows_remove_idx ON rows_remove USING inverted (id, msg)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rows_remove SELECT i, 'm' || (i % 7) FROM range(1000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rows_remove;
+
+
+statement ok
+SET sdb_faults = 'inverted_rows_remove_fails';
+
+
+statement ok
+DELETE FROM rows_remove WHERE id < 400;
+
+
+statement ok
+SET sdb_faults = '-inverted_rows_remove_fails';
+
+
+statement ok
+VACUUM (REFRESH_TABLE) rows_remove;
+
+
+query
+SELECT count(*) AS n FROM rows_remove_idx;
+----
+n
+1000
+
+
+statement error
+CHECKPOINT;
+----
+db error: ERROR: Checkpoint failed for database "<slt:ignore>". The database has been invalidated. Original error: inverted index <slt:ignore> is out of sync with its store table; refusing to checkpoint
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM rows_remove;
+----
+n
+600
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rows_remove;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM rows_remove_idx) AS total,
+       (SELECT count(*) FROM rows_remove_idx WHERE msg @@ 'm3') AS three,
+       (SELECT count(*) FROM rows_remove_idx WHERE id < 400) AS deleted;
+----
+total	three	deleted
+600	86	0

@@ -25,6 +25,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <memory>
+#include <span>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -50,9 +51,16 @@ struct PostingsHandles {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
+  using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
+  using TermAt = absl::FunctionRef<bytes_view(size_t)>;
+  using FoundTerm = absl::FunctionRef<void(size_t, const PostingMeta&)>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
+
+  virtual SeekTermIterator::ptr IteratorUntil(bytes_view) const {
+    return iterator();
+  }
 
   // Feeds `acceptor` the documents containing `term`, stopping when it returns
   // false. Bounds-checks against the field's term range first, and answers a
@@ -70,6 +78,12 @@ struct TermReader : public AttributeProvider {
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
   virtual bool Prefetch(bytes_view term) const { return false; }
+
+  virtual void LookupBatch(size_t count, TermAt term,
+                           FoundTerm found) const = 0;
+
+  virtual void VisitRange(bytes_view from, bytes_view to,
+                          RangeVisitor visit) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;
@@ -98,11 +112,16 @@ struct TermReader : public AttributeProvider {
   // Returns the most significant term.
   virtual bytes_view max() const = 0;
 
+  virtual void SampleTerms(
+    uint64_t, absl::FunctionRef<void(std::span<const bytes_view>)>) const {}
+
   // Returns true if the field has per-block score bounds persisted.
   virtual bool HasScoreBounds() const = 0;
 
   // The streams this field's postings live in.
   virtual PostingsHandles Handles() const noexcept = 0;
+
+  uint32_t key_width = 0;
 };
 
 }  // namespace irs

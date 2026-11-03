@@ -91,6 +91,8 @@ class InputFile {
   void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
   void Evict(uint64_t offset, uint64_t size) const noexcept;
   bool Resident(uint64_t offset, uint64_t size) const noexcept;
+  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept;
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept;
 
  private:
   struct MappedSpan {
@@ -104,8 +106,8 @@ class InputFile {
     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks;
   };
 
-  bool Warm(const MappedSpan& span, uint64_t offset,
-            uint64_t size) const noexcept;
+  uint64_t Warm(const MappedSpan& span, uint64_t offset,
+                uint64_t size) const noexcept;
   void MarkWarm(const MappedSpan& span, uint64_t offset,
                 uint64_t size) const noexcept;
   bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;

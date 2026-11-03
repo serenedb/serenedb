@@ -39,7 +39,7 @@ BUILD_INPUT_EXCEPTIONS = ("docs/*", "tests/sqllogic/sdb/pg/site_docs/*", "tests/
 SQLLOGIC_TEST_DIR = "tests/sqllogic/"
 BUNDLE_PATHS = (
     "bin/serened", "bin/serenedb-tests", "bin/iresearch-tests", "bin/iresearch-load-tests",
-    "bin/re2-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
+    "bin/re2-tests", "bin/croaring-tests", "third_party/duckdb/test/unittest", "CMakeCache.txt",
 )
 BUNDLE_CACHE = Path(os.environ.get("SDB_BUNDLE_CACHE", "/mnt/data/sdb-ci/bundles"))
 BUNDLE_MIN_FREE = 200 << 30
@@ -145,7 +145,10 @@ def cmd_stage(args):
     try:
         for source, rel in files:
             (tmp_dir / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, tmp_dir / rel)
+            if source.is_dir():
+                shutil.copytree(source, tmp_dir / rel)
+            else:
+                shutil.copy2(source, tmp_dir / rel)
         (tmp_dir / ".complete").write_text(args.digest)
         tmp_dir.chmod(0o755)
         if dest.exists():
@@ -448,6 +451,8 @@ def cmd_select_suites(args):
             out += ["--suite", "iresearch", "--suite", "iresearch-load"]
         if args.re2:
             out += ["--suite", "re2"]
+        if args.croaring:
+            out += ["--suite", "croaring"]
         suites = [s for s in args.duckdb_suites.split(",") if s]
         if suites and not args.no_duckdb:
             out += ["--suite", "duckdb"]
@@ -462,28 +467,52 @@ def cmd_select_suites(args):
     print(" ".join(out))
 
 
+def run_profiles(config, arch, run, profiles):
+    profiles.mkdir(parents=True)
+    got = 0
+    for key in store.run_files("profdata", run, f"{config}-{arch}-"):
+        store.get(key, profiles / key.rsplit("/", 1)[1])
+        got += 1
+    return got
+
+
+def in_build_image(bundle, *cmd):
+    subprocess.run(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
+                    "-v", f"{ROOT}:{ROOT}", "-w", str(ROOT), "-v", f"{bundle}:{bundle}", image_name(), *cmd],
+                   check=True)
+
+
 def cmd_coverage_report(args):
     arch = platform.machine()
-    image = image_name()
     bundle = fetched(args.config, arch, args.digest)
     out = ROOT / "out" / f"coverage-{args.config}"
     shutil.rmtree(out, ignore_errors=True)
     profiles = out / "profiles"
-    profiles.mkdir(parents=True)
-    got = 0
-    for key in store.run_files("profdata", args.run, f"{args.config}-{arch}-"):
-        store.get(key, profiles / key.rsplit("/", 1)[1])
-        got += 1
+    got = run_profiles(args.config, arch, args.run, profiles)
     label = f"coverage {args.config}/{arch}"
     if got < args.shards:
         label += f" (partial: profiles of {got} of {args.shards} shards)"
-    docker = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp",
-              "-v", f"{ROOT}:{ROOT}", "-w", str(ROOT), "-v", f"{bundle}:{bundle}"]
-    subprocess.run([*docker, image, "python3", "scripts/coverage/diff.py", "--build-dir", str(bundle),
-                    "--profiles", str(profiles), "--base", args.base, "--label", label,
-                    "--out", str(out)], check=True)
+    in_build_image(bundle, "python3", "scripts/coverage/diff.py", "--build-dir", str(bundle),
+                   "--profiles", str(profiles), "--base", args.base, "--label", label, "--out", str(out))
     shutil.rmtree(profiles)
     (out / "merged.profdata").unlink(missing_ok=True)
+
+
+def cmd_coverage_nightly(args):
+    arch = platform.machine()
+    bundle = fetched("dev", arch, args.digest)
+    out = ROOT / "out" / "coverage-nightly"
+    shutil.rmtree(out, ignore_errors=True)
+    profiles = out / "profiles"
+    got = run_profiles("dev", arch, args.run, profiles)
+    label = f"dev/{arch}, " + (f"partial: profiles of {got} of {args.shards} shards" if got < args.shards
+                               else f"{got} shards")
+    sha = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                         check=True).stdout.strip()
+    in_build_image(bundle, "python3", "scripts/coverage/nightly.py", "report", "--build-dir", str(bundle),
+                   "--profiles", str(profiles), "--label", label, "--run", args.run, "--sha", sha,
+                   "--out", str(out))
+    shutil.rmtree(profiles)
 
 
 def cmd_wait_check(args):
@@ -669,6 +698,7 @@ def main(argv):
     p.add_argument("--corpus", action="store_true", help="the sqlite corpus too")
     p.add_argument("--iresearch", action="store_true")
     p.add_argument("--re2", action="store_true")
+    p.add_argument("--croaring", action="store_true")
     p.add_argument("--duckdb-suites", default="", help="comma-separated DuckDB suites")
     p.add_argument("--no-duckdb", action="store_true",
                    help="leave out DuckDB's suites the diff opens (sqlsmith still follows core)")
@@ -683,6 +713,12 @@ def main(argv):
     p.add_argument("--base", default="origin/main")
     p.add_argument("--shards", type=int, default=0, help="how many shards the run had")
     p.set_defaults(fn=cmd_coverage_report)
+    p = sub.add_parser("coverage-nightly", help="report the coverage of the whole system by component "
+                                                "from a nightly's dev profiles")
+    p.add_argument("--digest", required=True, help="the dev bundle the run tested")
+    p.add_argument("--run", required=True, help="<run id>-<attempt>")
+    p.add_argument("--shards", type=int, default=0, help="how many dev shards the run had")
+    p.set_defaults(fn=cmd_coverage_nightly)
     p = sub.add_parser("wait-check", help="wait for a commit's check run to finish; fail unless it "
                                           "succeeded")
     p.add_argument("--repo", required=True)

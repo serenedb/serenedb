@@ -24,6 +24,7 @@
 #pragma once
 
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -45,7 +46,21 @@ size_t Residency(const void* addr, size_t size,
 uint32_t ResidencyEpoch() noexcept;
 void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
-void PollResidency() noexcept;
+bool PollResidency(uint64_t bytes) noexcept;
+
+template<typename Input>
+bool Evicted(const Input& in, uint64_t offset, uint64_t size,
+             uint32_t& epoch) noexcept {
+  if (in.Warm(offset, size) == size && !PollResidency(size)) {
+    return false;
+  }
+  const auto current = ResidencyEpoch();
+  if (current == epoch) {
+    return false;
+  }
+  epoch = current;
+  return true;
+}
 
 class ResidencyMap {
  public:
@@ -64,15 +79,16 @@ class ResidencyMap {
             1) != 0;
   }
 
-  bool Test(size_t first, size_t last) const noexcept {
+  size_t Test(size_t first, size_t last) const noexcept {
     SDB_ASSERT(first <= last && last < _pages);
     for (auto w = first / kBits, end = last / kBits; w <= end; ++w) {
-      const auto mask = Mask(w, first, last);
-      if ((_bits[w].load(std::memory_order_relaxed) & mask) != mask) {
-        return false;
+      const auto cold =
+        ~_bits[w].load(std::memory_order_relaxed) & Mask(w, first, last);
+      if (cold != 0) {
+        return w * kBits + std::countr_zero(cold) - first;
       }
     }
-    return true;
+    return last - first + 1;
   }
 
   void Set(size_t first, size_t last) const noexcept {

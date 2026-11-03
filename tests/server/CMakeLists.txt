@@ -5,11 +5,16 @@ add_executable(
     tests_main.cpp
     assertions_tests.cpp
     background_scheduler_test.cpp
+    backup/backup_label_test.cpp
+    backup/pg_control_test.cpp
+    backup/restore_test.cpp
     database_directory_test.cpp
+    drain_gate_test.cpp
     docs_search_test.cpp
     duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
+    duckdb_wal_block_reuse_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     meta_transaction_snapshot_test.cpp
@@ -56,7 +61,9 @@ add_executable(
     connector/pg_progress_registry_test.cpp
     connector/pg_serialize_array_test.cpp
     connector/pgoutput_test.cpp
+    connector/reindex_removes_test.cpp
     connector/scram_client_test.cpp
+    connector/search_row_removal_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp

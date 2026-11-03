@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <iresearch/utils/pg/errcode_for_file_access.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <system_error>
@@ -63,36 +64,6 @@ constexpr std::string_view kPgCopyHeader{
   "\0\0\0\0"
   "\0\0\0\0",
   19};
-
-constexpr int ErrcodeForFileAccess(int error) noexcept {
-  switch (error) {
-    case EPERM:
-    case EACCES:
-    case EROFS:
-      return ERRCODE_INSUFFICIENT_PRIVILEGE;
-    case ENOENT:
-      return ERRCODE_UNDEFINED_FILE;
-    case EEXIST:
-      return ERRCODE_DUPLICATE_FILE;
-    case ENOTDIR:
-    case EISDIR:
-    case ENOTEMPTY:
-      return ERRCODE_WRONG_OBJECT_TYPE;
-    case ENOSPC:
-      return ERRCODE_DISK_FULL;
-    case ENOMEM:
-      return ERRCODE_OUT_OF_MEMORY;
-    case ENFILE:
-    case EMFILE:
-      return ERRCODE_INSUFFICIENT_RESOURCES;
-    case EIO:
-      return ERRCODE_IO_ERROR;
-    case ENAMETOOLONG:
-      return ERRCODE_FILE_NAME_TOO_LONG;
-    default:
-      return ERRCODE_INTERNAL_ERROR;
-  }
-}
 
 int DuckExceptionToErrcode(duckdb::ExceptionType type) {
   switch (type) {
@@ -164,7 +135,7 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     int value = 0;
     if (fast_float::from_chars(text.data(), text.data() + text.size(), value)
           .ec == std::errc{}) {
-      return ErrcodeForFileAccess(value);
+      return irs::pg::ErrcodeForFileAccess(value);
     }
   }
   const auto subtype_it = extra.find("error_subtype");

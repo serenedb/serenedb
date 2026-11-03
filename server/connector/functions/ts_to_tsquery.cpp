@@ -248,7 +248,8 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
     }
     auto* shingle = ShingleOf(*info);
     out = {
-      .id = PickPerKindFieldId(*info, duckdb::LogicalTypeId::VARCHAR),
+      .id = info->field_id,
+      .dict = TextOf(*info),
       .tokenizer = shingle ? &shingle->Base() : info->tokenizer.analyzer.get()};
     _held.push_back(std::move(*info));
     return true;
@@ -256,7 +257,7 @@ class IndexFields final : public irs::ParserContext::FieldProvider {
 
   const SearchColumnInfo* Find(irs::field_id field) const {
     const auto it = absl::c_find_if(_held, [&](const SearchColumnInfo& info) {
-      return PickPerKindFieldId(info, duckdb::LogicalTypeId::VARCHAR) == field;
+      return info.field_id == field;
     });
     return it == _held.end() ? nullptr : &*it;
   }
@@ -278,9 +279,8 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
   GetVarcharArg(*func.GetChildren()[0], text, {"to_tsquery text", kSyntaxHint});
   auto& root = AddMaybeNegated<irs::BooleanFilter>(parent, ctx, column_info);
   root.SetBoost(ctx.boost);
-  irs::ParserContext parser_ctx{
-    root, PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    PhraseAnalyzer(ctx, column_info)};
+  irs::ParserContext parser_ctx{root, column_info.field_id, TextOf(column_info),
+                                PhraseAnalyzer(ctx, column_info)};
   std::optional<IndexFields> provider;
   if (column_info.index_fields) {
     provider.emplace(*column_info.index_fields);

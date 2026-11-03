@@ -212,7 +212,7 @@ connection after_alter_crash
 statement error
 CREATE OR REPLACE INDEX lxs_x ON lxs USING inverted (body);
 ----
-db error: ERROR: Failed to commit: catalog log: could not append the transaction
+db error: ERROR: catalog log: could not append the transaction
 
 
 connection after_alter_crash

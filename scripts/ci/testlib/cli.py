@@ -30,7 +30,7 @@ DUCKDB_DIRS = {d: s for s, d in duckdb.SUITE_DIRS.items() if s != "cpp"}
 DUCKDB_TESTS = (".test", ".test_slow", ".test_coverage")
 CPP_SOURCES = (".cpp", ".cc", ".h", ".hpp")
 SUITES = ("sqllogic", "recovery", "cancellation", "gtest", "iresearch", "iresearch-load", "drivers",
-          "re2", "duckdb", "sqlsmith", "stress", "postgres")
+          "re2", "croaring", "duckdb", "sqlsmith", "stress", "postgres")
 DEFAULT_SUITES = tuple(s for s in SUITES if s != "postgres")
 
 
@@ -120,6 +120,8 @@ def build_units(ctx, args, suites, skips):
         units += drivers.driver_units(ctx, args, skips)
     if "re2" in suites:
         units += gtest.re2_units(ctx, args, skips)
+    if "croaring" in suites:
+        units += gtest.croaring_units(ctx, args, skips)
     if "duckdb" in suites:
         units += duckdb.duckdb_units(ctx, args, skips)
     if "sqlsmith" in suites:
@@ -195,6 +197,9 @@ class ChangedTests:
             suite = DUCKDB_DIRS.get("/".join(parts[:2]))
             if suite:
                 self.ids[f"duckdb:{suite}:{'/'.join(parts[2:])}"].add(name)
+        if compiled and name.startswith("third_party/croaring/tests/") and name.endswith((".c", ".cpp")):
+            self.ids[f"croaring:{parts[-1].rsplit('.', 1)[0]}"].add(name)
+            return
         if not compiled or not name.endswith(CPP_SOURCES):
             return
         if name.startswith(("tests/", "third_party/re2/re2/testing/")):
@@ -326,7 +331,8 @@ def main(argv):
     if args.expect_fail and not changed:
         raise SystemExit("the diff changes no test that can fail on the merge base: the bugfix check "
                          "runs the changed sqllogic, recovery, driver and DuckDB sqllogic tests, "
-                         "while gtest, DuckDB C++ and re2 tests are compiled into its binaries")
+                         "while gtest, DuckDB C++, re2 and CRoaring tests are compiled into its "
+                         "binaries")
     if args.only_changed:
         units = changed
     elif args.postgres == "changed":

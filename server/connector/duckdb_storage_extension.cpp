@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "auth/enforce.h"
+#include "backup/commit_gate.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -63,8 +64,7 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/sql_utils.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
@@ -185,38 +185,27 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
 }
 
-std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
-  duckdb::AttachedDatabase& db) {
-  std::vector<std::shared_ptr<search::InvertedIndexStorage>> storages;
-  if (!InvertedStoreIndex::AnyBound()) {
-    return storages;
-  }
-  db.GetCatalog().Cast<duckdb::DuckCatalog>().ScanSchemas(
-    [&](duckdb::SchemaCatalogEntry& schema) {
-      schema.Scan(
-        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
-          if (entry.type != duckdb::CatalogType::TABLE_ENTRY ||
-              !entry.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
-            return;
-          }
-          auto& indexes = entry.Cast<duckdb::DuckTableEntry>()
-                            .GetStorage()
-                            .GetDataTableInfo()
-                            ->GetIndexes();
-          for (auto index : indexes.IndexEntries()) {
-            if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
-                index->GetIndexType() == InvertedStoreIndex::kTypeName) {
-              const auto handle = index->GetReadHandle<InvertedStoreIndex>();
-              storages.push_back(handle->Storage());
-            }
-          }
-        });
-    });
-  return storages;
-}
+struct CheckpointPass final : duckdb::CheckpointRequest {
+  explicit CheckpointPass(utils::DrainGate::Pass pass)
+    : pass{std::move(pass)} {}
+
+  utils::DrainGate::Pass pass;
+};
 
 class SereneDBStorageExtension final : public duckdb::StorageExtension {
  public:
+  duckdb::unique_ptr<duckdb::CheckpointRequest> OnCheckpointRequest(
+    duckdb::AttachedDatabase&) final {
+    auto pass = backup::CheckpointGate().TryEnter();
+    if (!pass) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+        ERR_MSG("cannot checkpoint while a backup is in progress"),
+        ERR_HINT("Retry after pg_backup_stop()."));
+    }
+    return duckdb::make_uniq<CheckpointPass>(std::move(pass));
+  }
+
   void OnLoadStorage(duckdb::AttachedDatabase& db) final {
     db.GetCatalog().Cast<catalog::SereneDBCatalog>().OpenStorages();
   }
@@ -225,7 +214,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
                                 duckdb::CheckpointOptions) final {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
-    const auto storages = BoundStorages(db);
+    const auto storages = InvertedStorages(db);
     auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
     duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
     for (const auto& storage : storages) {
@@ -235,8 +224,8 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
         "SearchPrepareCheckpoint"));
     }
     executor.WorkOnTasks();
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves{
-      storages.begin(), storages.end()};
+    std::vector<std::weak_ptr<search::Store>> saves{storages.begin(),
+                                                    storages.end()};
     duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
     if (saves.empty()) {
       _saves.erase(db.oid);
@@ -248,7 +237,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
   void OnCheckpointEnd(duckdb::AttachedDatabase& db,
                        duckdb::CheckpointOptions) final {
     SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint_before_index_finish");
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    std::vector<std::weak_ptr<search::Store>> saves;
     {
       duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
       if (const auto it = _saves.find(db.oid); it != _saves.end()) {
@@ -267,9 +256,10 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
       }
     }
     for (auto& table : catalog::SearchTableStorages(
-           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+           db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
       executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
-        executor, [table = std::move(table)] { table->FinishCheckpoint(); },
+        executor,
+        [table = std::move(table)] { table->FinishCheckpointIfIdle(); },
         "SearchFinishCheckpoint"));
     }
     executor.WorkOnTasks();
@@ -278,7 +268,7 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
   duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {
     duckdb::optional_idx needed;
     for (auto& table : catalog::SearchTableStorages(
-           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+           db.GetCatalog().Cast<catalog::SereneDBCatalog>())) {
       const auto generation = table->NeededWAL();
       if (generation &&
           (!needed.IsValid() || *generation < needed.GetIndex())) {
@@ -290,12 +280,42 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
 
  private:
   duckdb::mutex _saves_mutex;
-  absl::flat_hash_map<duckdb::idx_t,
-                      std::vector<std::weak_ptr<search::InvertedIndexStorage>>>
+  absl::flat_hash_map<duckdb::idx_t, std::vector<std::weak_ptr<search::Store>>>
     _saves;
 };
 
 }  // namespace
+
+std::vector<std::shared_ptr<search::Store>> InvertedStorages(
+  duckdb::AttachedDatabase& db) {
+  std::vector<std::shared_ptr<search::Store>> storages;
+  if (!InvertedStoreIndex::AnyBound()) {
+    return storages;
+  }
+  db.GetCatalog().Cast<duckdb::DuckCatalog>().ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) {
+      schema.Scan(
+        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+          if (entry.type != duckdb::CatalogType::TABLE_ENTRY ||
+              !entry.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+            return;
+          }
+          auto& indexes = entry.Cast<duckdb::DuckTableEntry>()
+                            .GetStorage()
+                            .GetDataTableInfo()
+                            ->GetIndexes();
+          for (auto index : indexes.IndexEntries()) {
+            if (index->GetIndexType() != InvertedStoreIndex::kTypeName) {
+              continue;
+            }
+            SDB_ASSERT(index->GetBindState() == duckdb::IndexBindState::BOUND);
+            const auto handle = index->GetReadHandle<InvertedStoreIndex>();
+            storages.push_back(handle->Storage());
+          }
+        });
+    });
+  return storages;
+}
 
 void RegisterSereneDBStorage(
   duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {

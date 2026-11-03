@@ -29,8 +29,8 @@ DEPENDENCY_ENTRY_TYPE = "Dependency"
 def generated_name_re(run_tag):
     # The kind letter must cover every family the generator makes: t table,
     # q sequence, v view, i index, d text search dictionary, s foreign server.
-    # Engine-derived names (<table>_pkey, <table>_pk_seq) never match, which is
-    # what keeps them out of the ghost check.
+    # Engine-derived names (<table>_pkey, <table>_<column>_seq) never match,
+    # which is what keeps them out of the ghost check.
     return re.compile(rf"^s{re.escape(run_tag)}_w\d+_(?:t|q|v|i|d|s|b|a)\d+$")
 
 

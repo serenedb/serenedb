@@ -20,10 +20,10 @@
 
 #include "connector/duckdb_physical_search_insert.h"
 
-#include <atomic>
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/fault_points.hpp>
@@ -33,14 +33,10 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,35 +45,25 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/search_sink_rows.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "query/transaction.h"
-#include "search/search_table.h"
 #include "search/search_table_changes.h"
+#include "search/store.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
 namespace {
 
 struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
-  std::shared_ptr<search::SearchTable> search_table;
-  duckdb::Catalog* catalog = nullptr;
-  duckdb::idx_t table_id = 0;
+  SearchSinkTable table;
   query::Transaction* sdb_txn = nullptr;
-  std::vector<ColumnId> column_ids;
-  duckdb::vector<duckdb::LogicalType> chunk_types;
-  duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
-  uint64_t write_buffer_max_bytes = 0;
 
-  std::atomic<bool> has_local_state = false;
-
-  std::mutex combine_mu;
+  absl::Mutex mutex;
   duckdb::idx_t insert_count = 0;
   // RETURNING only: the inserted rows, merged out of the sink threads.
   std::optional<duckdb::ColumnDataCollection> returned;
-
-  // Segments the sink threads flushed + fsynced, for the WAL to reference.
-  std::vector<std::string> flushed_segments;
 };
 
 struct SearchInsertSourceState final : duckdb::GlobalSourceState {
@@ -85,9 +71,9 @@ struct SearchInsertSourceState final : duckdb::GlobalSourceState {
 };
 
 struct SearchInsertLocalState final : duckdb::LocalSinkState {
-  std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
-  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
-  bool bulk = false;
+  explicit SearchInsertLocalState(uint64_t budget) : rows{budget} {}
+
+  SearchSinkRows rows;
   duckdb::idx_t insert_count = 0;
   // RETURNING only: collected per sink thread so a parallel insert does not
   // serialise on one collection, and merged on Combine.
@@ -127,22 +113,21 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
     table = &entry->Cast<catalog::SearchTableEntry>();
   }
 
-  state->search_table = table->Storage();
-  state->catalog = &table->catalog;
-  state->table_id = table->oid;
+  auto& target = state->table;
+  target.store = table->Storage();
+  target.catalog = &table->catalog;
+  target.table_id = table->oid;
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table, *table);
+  conn_ctx.SearchTxn().RegisterWriter(target.store, *table);
 
   const auto& columns = table->GetColumns();
-  state->column_ids.reserve(columns.LogicalColumnCount());
+  target.column_ids.reserve(columns.LogicalColumnCount());
   for (const auto& column : columns.Logical()) {
-    state->column_ids.emplace_back(TableColumnId(column));
+    target.column_ids.emplace_back(TableColumnId(column));
   }
-  state->chunk_types = columns.GetColumnTypes();
-  state->generated_pk_seq = table->GeneratedPkSequence(context);
-  SDB_ASSERT(state->generated_pk_seq);
-  state->write_buffer_max_bytes =
+  target.types = columns.GetColumnTypes();
+  target.buffer_bytes =
     duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
   state->sdb_txn = &conn_ctx;
@@ -157,23 +142,12 @@ duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBSearchInsert::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
   auto& gstate = sink_state->Cast<SearchInsertGlobalState>();
-  auto lstate = duckdb::make_uniq<SearchInsertLocalState>();
-
-  lstate->bulk =
-    gstate.has_local_state.exchange(true, std::memory_order_relaxed) ||
-    (context.pipeline && context.pipeline->GetMaxThreads() > 1);
+  const auto threads =
+    context.pipeline ? context.pipeline->GetMaxThreads() : duckdb::idx_t{1};
+  auto lstate = duckdb::make_uniq<SearchInsertLocalState>(
+    gstate.table.buffer_bytes / std::max<duckdb::idx_t>(1, threads));
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());
-  }
-
-  if (lstate->bulk) {
-    // Exclusive: Combine reports this thread's segments to the WAL, so they
-    // must not also carry a previous transaction's documents.
-    lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-      gstate.search_table->GetTransaction(/*exclusive_segment=*/true));
-    lstate->sink =
-      MakeSearchTableInsertSink(*lstate->search_trx, *gstate.search_table,
-                                *gstate.catalog, context.client);
   }
   return lstate;
 }
@@ -182,89 +156,36 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate =
-    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
+  auto& lstate = input.local_state.Cast<SearchInsertLocalState>();
 
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
-  auto& search_txn = gstate.sdb_txn->SearchTxn();
-  const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
-    duckdb::DuckTransaction::Get(context.client,
-                                 gstate.generated_pk_seq->catalog),
-    num_rows);
+  lstate.rows.Append(context.client, gstate.table, chunk);
 
-  if (lstate->bulk) {
-    WriteChunkToSearchSink(*lstate->sink, chunk, gstate.column_ids, pk_base,
-                           gstate.table_id, context.client);
-  } else {
-    // Buffer only. Nothing reaches iresearch until the buffer overruns or the
-    // transaction commits, which is what lets a flush hand the WHOLE buffer to
-    // one segment -- feeding as we go would leave a later flush with only the
-    // rows since the last feed, and rows it could never promote at all.
-    search_txn.AddInlineInsertChunk(
-      gstate.search_table,
-      duckdb::BufferManager::GetBufferManager(context.client),
-      gstate.chunk_types, gstate.column_ids, *gstate.catalog, chunk, pk_base);
-
-    if (search_txn.BufferedBytes(gstate.table_id) >
-        gstate.write_buffer_max_bytes) {
-      search_txn.FlushBuffer(gstate.search_table, context.client);
-    }
-  }
-
-  if (lstate->returned) {
+  if (lstate.returned) {
     // The chunk is the whole row in table-column order -- the defaults and the
     // STORED generated columns were resolved into the plan below this sink --
     // which is exactly what RETURNING projects over.
-    lstate->returned->Append(chunk);
+    lstate.returned->Append(chunk);
   }
-  lstate->insert_count += num_rows;
+  lstate.insert_count += num_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
 duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
-  duckdb::ExecutionContext& /*context*/,
+  duckdb::ExecutionContext& context,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto* lstate =
-    irs::utils::downCast<SearchInsertLocalState>(&input.local_state);
-  lstate->sink.reset();
-
-  if (lstate->returned && lstate->returned->Count() != 0) {
-    std::lock_guard<std::mutex> lock(gstate.combine_mu);
-    gstate.returned->Combine(*lstate->returned);
-  }
-
-  if (lstate->insert_count == 0) {
-    lstate->search_trx.reset();
-    return duckdb::SinkCombineResultType::FINISHED;
-  }
-
-  // On the worker, in parallel with the others, rather than deferring the tail
-  // to the single-threaded refresh commit; the fsync is what lets the WAL
-  // reference these by name instead of copying the rows.
-  std::vector<std::string> segments;
-  const bool owns_segment = lstate->bulk && lstate->search_trx != nullptr;
-  if (owns_segment) {
-    const auto flushed = lstate->search_trx->FlushAndFsync();
-    SDB_ASSERT(!flushed.empty(),
-               "sink thread with rows but no flushed segment");
-    segments.reserve(flushed.size());
-    for (const auto& segment : flushed) {
-      segments.push_back(segment.filename);
-    }
-  }
-
-  std::lock_guard<std::mutex> lock(gstate.combine_mu);
-  gstate.insert_count += lstate->insert_count;
-  if (owns_segment) {
-    gstate.flushed_segments.insert(gstate.flushed_segments.end(),
-                                   std::make_move_iterator(segments.begin()),
-                                   std::make_move_iterator(segments.end()));
-    gstate.sdb_txn->SearchTxn().AddParallelSearchTransaction(
-      gstate.search_table, std::move(lstate->search_trx));
+  auto& lstate = input.local_state.Cast<SearchInsertLocalState>();
+  lstate.rows.Flush();
+  absl::MutexLock lock{&gstate.mutex};
+  lstate.rows.HandOver(context.client, gstate.table,
+                       gstate.sdb_txn->SearchTxn());
+  gstate.insert_count += lstate.insert_count;
+  if (lstate.returned && lstate.returned->Count() != 0) {
+    gstate.returned->Combine(*lstate.returned);
   }
   return duckdb::SinkCombineResultType::FINISHED;
 }
@@ -274,12 +195,7 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  auto& search_txn = gstate.sdb_txn->SearchTxn();
-  if (!gstate.flushed_segments.empty()) {
-    search_txn.AddSegments(gstate.search_table,
-                           std::move(gstate.flushed_segments));
-  }
-  search_txn.FlushBufferTransaction(gstate.table_id);
+  gstate.sdb_txn->SearchTxn().FlushBufferTransaction(gstate.table.table_id);
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }

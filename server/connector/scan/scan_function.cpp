@@ -293,7 +293,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   }
 
   if (state->needs_lookup && ss.relation.IsInvertedIndex()) {
-    const auto pk_kind = ss.relation.ScannedIndex().pk.column;
+    const auto pk_kind = ss.relation.ScannedIndex().pk;
     if (pk_kind == catalog::PkColumnKind::None) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

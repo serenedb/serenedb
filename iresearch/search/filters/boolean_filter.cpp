@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -40,7 +41,7 @@ void WalkClauses(const BooleanFilter& node, OnTerms on_terms,
     const auto terms = node.Terms(occur);
     for (size_t begin = 0; begin != terms.size();) {
       size_t end = begin + 1;
-      while (end != terms.size() && terms[end].field == terms[begin].field &&
+      while (end != terms.size() && SameField(terms[end], terms[begin]) &&
              terms[end].scorer == terms[begin].scorer) {
         ++end;
       }
@@ -131,10 +132,9 @@ class TermsIterator : public WrappedTermIterator {
 };
 
 bool SingleField(std::span<const TermClause> terms) noexcept {
-  return absl::c_all_of(
-    terms, [field = terms.front().field](const TermClause& clause) noexcept {
-      return clause.field == field;
-    });
+  return absl::c_all_of(terms, [&](const TermClause& clause) noexcept {
+    return SameField(clause, terms.front());
+  });
 }
 
 TermPredicate::ptr CombinePredicates(std::vector<TermPredicate::ptr>&& preds) {
@@ -208,6 +208,7 @@ void BooleanFilter::Add(Filter::ptr filter, Occur occur) {
   if (filter->type() == irs::Type<ByTerm>::id()) {
     auto& term = irs::utils::downCast<ByTerm>(*filter);
     Add(TermClause{.field = term.field_id(),
+                   .dict = term.dict(),
                    .scorer = term.GetScorer(),
                    .term = std::move(term.mutable_options()->term),
                    .boost = term.GetBoost()},
@@ -407,17 +408,17 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
   const auto advance = [&] {
     child.collector = compound ? compound->Child(idx++) : nullptr;
   };
-  field_id opened = field_limits::invalid();
+  const TermClause* opened = nullptr;
   const TermReader* reader = nullptr;
   WalkClauses(
     *this,
     [&](std::span<const TermClause> run, Occur occur) {
       advance();
-      if (opened != run.front().field) {
-        opened = run.front().field;
-        reader = segment.field(opened);
+      if (!opened || !SameField(*opened, run.front())) {
+        opened = &run.front();
+        reader = segment.field(opened->field, opened->dict);
       }
-      if (reader == nullptr) {
+      if (!reader) {
         for (size_t i = 0; i != run.size(); ++i) {
           builder.AddTerm(nullptr, kNoPosting, kNoBoost, occur, {});
         }
@@ -431,16 +432,35 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
         SDB_ASSERT(collector->Size() == run.size());
         collector->Field(ctx.thread).Collect(*reader);
       }
-      for (size_t i = 0; i != run.size(); ++i) {
-        const auto meta = reader->Lookup(run[i].term);
-        if (collector && meta.docs_count != 0) {
-          collector->Term(ctx.thread, i).Collect(meta);
-        }
+      const auto add = [&](size_t i, const PostingMeta& meta) {
         builder.AddTerm(
           reader, meta,
           occur == Occur::MustNot ? kNoBoost : composite_boost * run[i].boost,
           occur,
           collector != nullptr ? collector->Record(i) : detail::StatsRecord{});
+      };
+      FileRanges docs;
+      size_t next = 0;
+      reader->LookupBatch(
+        run.size(), [&](size_t i) -> bytes_view { return run[i].term; },
+        [&](size_t i, const PostingMeta& meta) {
+          for (; next != i; ++next) {
+            add(next, kNoPosting);
+          }
+          if (collector) {
+            collector->Term(ctx.thread, i).Collect(meta);
+          }
+          if (const auto extent = DocExtent(meta); extent != 0) {
+            AppendRange(docs, meta.doc_start, meta.doc_start + extent);
+          }
+          add(i, meta);
+          ++next;
+        });
+      for (; next != run.size(); ++next) {
+        add(next, kNoPosting);
+      }
+      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
+        HintRanges(*doc, docs);
       }
     },
     [&](const Filter& filter, Occur occur) {

@@ -71,6 +71,7 @@ target_sources(
         catalog/utils/lookup.cpp
         catalog/utils/session.cpp
         catalog/views/information_schema/triggers.cpp
+        catalog/views/pg_catalog/pg_stat_progress_basebackup.cpp
         catalog/views/pg_catalog/pg_stat_progress_create_index.cpp
         catalog/views/sdb/pg_stat_progress_create_table_as.cpp
         command_tag.cpp

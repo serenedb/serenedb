@@ -187,15 +187,35 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
   }
 }
 
-bool InputFile::Warm(const MappedSpan& span, uint64_t offset,
-                     uint64_t size) const noexcept {
-  if (size == 0 || offset >= _length) {
-    return false;
+void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
+    MarkWarm(*span, offset, size);
   }
-  const auto last =
+}
+
+uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    return blocks->cache->IsCached(*blocks->blocks, offset, size) ? size : 0;
+  }
+  const auto& span = *std::get_if<MappedSpan>(&_kind);
+  return span.paged ? Warm(span, offset, size) : size;
+}
+
+uint64_t InputFile::Warm(const MappedSpan& span, uint64_t offset,
+                         uint64_t size) const noexcept {
+  if (size == 0 || offset >= _length ||
+      !span.residency.Valid(file_utils::ResidencyEpoch())) {
+    return 0;
+  }
+  const uint64_t first = offset / file_utils::kPage;
+  const uint64_t last =
     (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
-  return span.residency.Valid(file_utils::ResidencyEpoch()) &&
-         span.residency.Test(offset / file_utils::kPage, last);
+  const uint64_t pages = span.residency.Test(first, last);
+  if (pages > last - first) {
+    return size;
+  }
+  const uint64_t warm = (first + pages) * file_utils::kPage;
+  return warm - std::min(warm, offset);
 }
 
 void InputFile::MarkWarm(const MappedSpan& span, uint64_t offset,
@@ -232,10 +252,16 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
   if (!span.paged) {
     return false;
   }
-  if (Warm(span, offset, size)) {
-    file_utils::PollResidency();
+  uint64_t warm = Warm(span, offset, size);
+  SDB_ASSERT(warm <= size);
+  if (warm != 0 && file_utils::PollResidency(warm)) {
+    warm = 0;
+  }
+  if (warm == size) {
     return false;
   }
+  offset += warm;
+  size -= warm;
   const bool fetch =
     size <= file_utils::kPrefetchChunk || !Resident(offset, size);
   if (fetch) {

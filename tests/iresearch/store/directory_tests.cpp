@@ -41,6 +41,7 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <optional>
@@ -4287,6 +4288,40 @@ TEST_P(DirectoryTestCase, evict_keeps_contents) {
   EXPECT_EQ(0, std::memcmp(after.data(), data.data(), data.size()));
 }
 
+TEST_P(DirectoryTestCase, warm_counts_leading_hinted_bytes) {
+  constexpr uint64_t kPage = irs::file_utils::kPage;
+  {
+    auto out = _dir->Create("warm");
+    ASSERT_FALSE(!out);
+    const std::vector<irs::byte_type> data(80 * kPage + 100, 1);
+    out->WriteData(data.data(), data.size());
+    out->Close();
+  }
+  const auto in = _dir->Open("warm", duckdb::MappedFileAccess::RANDOM);
+  if (!in->Paged()) {
+    GTEST_SKIP() << "only a paged mapping tracks warm pages";
+  }
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(0, in->Length()));
+  in->Hint(2 * kPage, 4 * kPage);
+  in->Hint(60 * kPage, 10 * kPage);
+  in->Hint(78 * kPage, 10 * kPage);
+
+  EXPECT_EQ(0, in->Warm(kPage, 10 * kPage));
+  EXPECT_EQ(4 * kPage - 100, in->Warm(2 * kPage + 100, 10 * kPage));
+  EXPECT_EQ(2 * kPage, in->Warm(3 * kPage + 5, 2 * kPage));
+  EXPECT_EQ(kPage, in->Warm(5 * kPage, 2 * kPage));
+  EXPECT_EQ(10 * kPage - 7, in->Warm(60 * kPage + 7, 20 * kPage));
+  EXPECT_EQ(kPage, in->Warm(63 * kPage, kPage));
+  EXPECT_EQ(10 * kPage, in->Warm(79 * kPage, 10 * kPage));
+  EXPECT_EQ(0, in->Warm(in->Length(), kPage));
+  EXPECT_EQ(0, in->Warm(3 * kPage, 0));
+
+  irs::file_utils::InvalidateResidency();
+  EXPECT_EQ(0, in->Warm(3 * kPage, kPage));
+}
+
 TEST_P(DirectoryTestCase, input_type_follows_storage) {
   {
     auto out = _dir->Create("file");
@@ -4539,11 +4574,8 @@ TEST_P(DirectoryTestCase, open_missing_file) {
   ASSERT_THROW(_dir->ReadWhole("missing"), duckdb::IOException);
 }
 
-auto MakeByTerm(irs::field_id field_id, std::string_view value) {
-  auto filter = std::make_unique<irs::ByTerm>();
-  *filter->mutable_field_id() = field_id;
-  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
-  return filter;
+::tests::Terms MakeByTerm(irs::field_id field, std::string_view value) {
+  return {field, {std::string{value}}};
 }
 
 template<typename Visitor>
@@ -4695,7 +4727,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
                                 &::tests::GenericJsonFieldFactory);
   const ::tests::Document* doc1 = gen.next();
   const ::tests::Document* doc2 = gen.next();
-  Filter::ptr query_doc1 = MakeByTerm(irs::field_id{1}, "A");
+  auto query_doc1 = MakeByTerm(::tests::FieldIdFor("name"), "A");
 
   // writer commit tracks files that are in active segments
   {

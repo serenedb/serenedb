@@ -29,6 +29,7 @@
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -42,6 +43,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/doc_generator.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -340,20 +342,21 @@ void WriteBlock(IndexWriter::Transaction& trx,
     return;
   }
   const auto first_doc = doc.DocId();
-  if (!doc.WithField(kKey, IndexFeatures::Freq, [&](FieldInverter& fld) {
-        return fld.InvertKeywordBlock(key_fmt, n, first_doc);
-      })) {
+  if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
+                     [&](FieldInverter& fld) {
+                       return fld.InvertKeywordBlock(key_fmt, n, first_doc);
+                     })) {
     error = "the row-key field was rejected";
     return;
   }
   for (const auto& field : plan) {
     StoreSink* sink_for_field = (&field == plan.data()) ? store : nullptr;
-    const bool ok = doc.WithTokens(field.id, field.features, sink_for_field,
-                                   [&](FieldInverter& fld, TokenSink& sink) {
-                                     fld.Configure(traits);
-                                     tokenizer.Fill(text_fmt, n, first_doc,
-                                                    sink, {fld.Layout()});
-                                   });
+    const bool ok = doc.WithTokens(
+      field.id, StringLayout::kStrings, field.features, sink_for_field,
+      [&](FieldInverter& fld, TokenSink& sink) {
+        fld.Configure(traits);
+        tokenizer.Fill(text_fmt, n, first_doc, sink, {fld.Layout()});
+      });
     if (!ok) {
       error = std::string{"inversion rejected a block for field "} + field.name;
       return;
@@ -383,16 +386,17 @@ void WriteMultiValueDocs(IndexWriter::Transaction& trx,
       return;
     }
     const auto id = doc.DocId();
-    if (!doc.WithField(kKey, IndexFeatures::Freq, [&](FieldInverter& fld) {
-          return fld.InvertKeywordBlock(key_fmt, 1, id);
-        })) {
+    if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
+                       [&](FieldInverter& fld) {
+                         return fld.InvertKeywordBlock(key_fmt, 1, id);
+                       })) {
       error = "the row-key field was rejected";
       return;
     }
     for (const auto& field : plan) {
       StoreSink* sink_for_field = (&field == plan.data()) ? store : nullptr;
       const bool ok = doc.WithTokens(
-        field.id, field.features, sink_for_field,
+        field.id, StringLayout::kStrings, field.features, sink_for_field,
         [&](FieldInverter& fld, TokenSink& sink) {
           fld.Configure(traits);
           for (const auto& value : docs[d]) {
@@ -654,15 +658,16 @@ bool FillDocument(const IndexWriter::Document& doc,
   duckdb::UnifiedVectorFormat text_fmt;
   text_vec.ToUnifiedFormat(1, text_fmt);
 
-  if (!doc.WithField(kKey, IndexFeatures::Freq, [&](FieldInverter& fld) {
-        return fld.InvertKeywordBlock(key_fmt, 1, id);
-      })) {
+  if (!doc.WithField(kKey, StringLayout::kStrings, IndexFeatures::Freq,
+                     [&](FieldInverter& fld) {
+                       return fld.InvertKeywordBlock(key_fmt, 1, id);
+                     })) {
     error = "the row-key field was rejected";
     return false;
   }
   for (const auto& field : plan) {
     const bool ok =
-      doc.WithTokens(field.id, field.features, nullptr,
+      doc.WithTokens(field.id, StringLayout::kStrings, field.features, nullptr,
                      [&](FieldInverter& fld, TokenSink& sink) {
                        fld.Configure(traits);
                        tokenizer.Fill(text_fmt, 1, id, sink, {fld.Layout()});
@@ -675,11 +680,9 @@ bool FillDocument(const IndexWriter::Document& doc,
   return true;
 }
 
-Filter::ptr KeyFilter(std::string_view key) {
-  auto filter = std::make_unique<ByTerm>();
-  *filter->mutable_field_id() = kKey;
-  filter->mutable_options()->term = irs::ViewCast<byte_type>(key);
-  return filter;
+std::shared_ptr<const DocRemoval> ByKey(const DirectoryReader& snapshot,
+                                        std::string_view key) {
+  return ::tests::RemovalOf(snapshot, {kKey, {std::string{key}}});
 }
 
 double Seconds(Clock::time_point from) {
@@ -904,16 +907,17 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     ASSERT_TRUE(writer->RefreshCommit());
 
     {
+      const auto snapshot = writer->GetSnapshot();
       auto trx = writer->GetBatch();
       for (size_t i = 0; i < values.size(); ++i) {
         if (fate[i] == kRemoved) {
-          trx.Remove(KeyFilter(keys[i]));
+          trx.Remove(ByKey(snapshot, keys[i]));
           continue;
         }
         if (fate[i] != kReplaced) {
           continue;
         }
-        trx.Remove(KeyFilter(keys[i]));
+        trx.Remove(ByKey(snapshot, keys[i]));
         auto doc = trx.Insert();
         ASSERT_TRUE(doc);
         std::string error;

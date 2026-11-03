@@ -22,35 +22,35 @@
 
 #include <absl/algorithm/container.h>
 
-#include <algorithm>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 
 namespace irs {
 
+inline constexpr size_t kPrefetchedExtents = 64;
+
+using FileRanges = containers::SmallVector<FileRange, kPrefetchedExtents>;
+
 template<typename Input, typename Metas>
 void PrefetchDocExtents(const Input& in, Metas&& metas) {
-  std::vector<ByteExtent> extents;
+  FileRanges extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {
-      extents.emplace_back(meta.doc_start, extent);
+      extents.emplace_back(meta.doc_start, meta.doc_start + extent);
     }
   }
-  uint64_t budget = kMaxPrefetch;
-  for (const auto& extent : CoalesceExtents(extents, file_utils::kPage)) {
-    if (budget == 0) {
-      break;
-    }
-    const auto size = std::min(extent.size, budget);
-    Hint(in, extent.offset, size);
-    budget -= size;
+  absl::c_sort(extents);
+  FileRanges ranges;
+  for (const auto& [from, to] : extents) {
+    AppendRange(ranges, from, to);
   }
+  HintRanges(in, ranges);
 }
 
 template<typename InputType>

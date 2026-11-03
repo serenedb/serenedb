@@ -65,22 +65,27 @@ inline size_t HnswWalkVisits(uint32_t ef, uint32_t m0) noexcept {
   return size_t{ef} * m0;
 }
 
+enum class HnswWalks : uint8_t {
+  One,
+  Many,
+};
+
 class HnswVisited {
  public:
-  void Reset(size_t n, size_t visits) {
+  void Reset(size_t n, size_t visits, HnswWalks walks) {
     _n = n;
     Clear();
     const auto bitset = Words() * sizeof(uint64_t);
-    _table = kHnswVisitedSlots * sizeof(uint32_t) < bitset &&
-             visits * std::hardware_constructive_interference_size < bitset;
+    const auto slots = std::bit_ceil(std::max(kHnswVisitedSlots, 2 * visits));
+    _table = slots * sizeof(uint32_t) < bitset &&
+             (walks == HnswWalks::One ||
+              visits * std::hardware_constructive_interference_size < bitset);
     _dense = !_table;
     if (_dense) {
       if (_words.size() < Words()) {
         _words.assign(Words(), 0);
       }
-    } else if (const auto slots =
-                 std::bit_ceil(std::max(kHnswVisitedSlots, 2 * visits));
-               _slots.size() < slots) {
+    } else if (_slots.size() < slots) {
       _slots.assign(slots, 0);
       _shift = 64 - std::countr_zero(slots);
     }
@@ -814,7 +819,7 @@ HnswCandidate HnswDescendToBase(const HnswGraph& graph, Dist& dist, uint32_t ef,
                                 HnswSearchScratch& s) {
   const uint32_t entry = graph.EntryPoint();
   const uint32_t entry_top = graph.LevelOf(entry) - 1;
-  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
+  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()), HnswWalks::One);
   HnswCandidate cur{dist.One(entry), entry};
   if (entry_top > 0) {
     cur = HnswGreedyDescent(graph, dist, cur, entry_top, 0, s);
@@ -1087,7 +1092,8 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
     return true;
   }
   if constexpr (kHnswHops<Walk>) {
-    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
+    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()),
+                         HnswWalks::One);
   }
   const auto cur = HnswDescendToBase(graph, dist, ef, s);
   s.frontier.assign(1, cur);
@@ -1115,9 +1121,10 @@ bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
                         HnswSearchScratch& s, std::span<const uint32_t> seeds,
                         const Accept& accept, uint64_t budget) {
   HnswResetSearch(s);
-  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
+  s.visited.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()), HnswWalks::One);
   if constexpr (kHnswHops<Walk>) {
-    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()));
+    s.visited_hop2.Reset(graph.Size(), HnswWalkVisits(ef, graph.M0()),
+                         HnswWalks::One);
   }
   s.batch.clear();
   for (const auto node : seeds) {

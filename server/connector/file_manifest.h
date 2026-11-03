@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <roaring/roaring64.h>
+
 #include <cstdint>
 #include <duckdb/common/open_file_info.hpp>
+#include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/common/unordered_map.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -135,8 +139,9 @@ class IcebergObserve {
 
   struct DeleteMask {
     uint64_t file_id;
-    std::vector<int64_t> rows;
-    std::vector<std::pair<int32_t, roaring::Roaring>> dv;
+    duckdb::shared_ptr<const roaring::api::roaring64_bitmap_t> rows;
+    duckdb::shared_ptr<const duckdb::unordered_map<int32_t, roaring::Roaring>>
+      dv;
   };
 
   bool TryMask(size_t listing_idx, const search::FileManifestEntry& entry,

@@ -85,6 +85,8 @@ When the column must stay `JSON`, index a [JSON extraction expression](../../../
 
 <SqlLogicTest id="sql/indexes/inverted/json/example_004" />
 
+A JSON `null` value is not SQL `NULL`. `(doc -> 'k') IS NULL` matches only rows where `k` is missing, because `->` returns the JSON value `null` when `k` holds one; `doc ->> 'k' IS NULL` matches both, because `->>` returns SQL `NULL` for a JSON `null`. A cast of a JSON `null` to a number or a `BOOLEAN` is SQL `NULL` as well: `(doc -> 'k')::INTEGER IS NULL` matches rows where `k` is missing or holds `null`, and `NOT ((doc -> 'k')::INTEGER = 42)` matches neither. An index on the expression answers all of these the same way as the table does.
+
 ## Indexing a `JSON` column as `VARIANT`
 
 You do not have to migrate the column to `VARIANT` to get shredded, typed sub-field indexing — **cast to `VARIANT` inside the index expression**. The column stays `JSON` (a JSON-typed column casts straight with `::VARIANT`; a `VARCHAR` holding JSON needs `::JSON::VARIANT` first), while the index extracts typed sub-fields just as a real `VARIANT` column would:

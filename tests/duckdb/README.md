@@ -25,7 +25,7 @@ scripts/ci/test.py --build-dir build_clangd --suite duckdb                      
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite core     # just duckdb core
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite avro --duckdb-suite inet
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite interop  # DuckDB files against the official duckdb/duckdb image
-scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite quack    # quack's tests against a serened per file
+scripts/ci/test.py --build-dir build_clangd --suite duckdb --duckdb-suite quack    # quack's tests, and DuckDB's that attach QUACK_SERVER, against a serened per file
 scripts/ci/test.py --build-dir build_clangd --suite duckdb --test '*test/sql/aggregate/*'
 ```
 
@@ -308,7 +308,7 @@ The extension's tests outside the catalog directories run in batches like every 
 
 ## The quack suite
 
-Upstream's quack tests start a server in the test's own process with `quack_serve`, which our quack extension does not have: serened serves quack from an HTTP listener. [quack/run.sh](quack/run.sh) therefore runs each file against a serened of its own, started with `--auth_bearer_token=asdf` (the token the tests attach with) in the extension's directory, where `unittest` runs the file too. The file reaches it through `QUACK_SERVER` (`--env-passthrough`). `test/template/quack_setup.test_template` attaches that serened on the server connection and `CONNECT`s to it, so the statements the tests run "on the server" run in serened. That connection is a quack session of its own, which a file that lists the server's sessions excludes with `WHERE connection_id <> '{harness}'`, and the files that started a server of their own include the template instead. The files that test starting, stopping or configuring a server from SQL, or depend on what serened does differently, are in [config/quack.json](config/quack.json).
+Upstream's quack tests start a server in the test's own process with `quack_serve`, which our quack extension does not have: serened serves quack from an HTTP listener. [quack/run.sh](quack/run.sh) therefore runs each file against a serened of its own, started with `--auth_bearer_token=asdf` (the token the tests attach with) in the extension's directory, where `unittest` runs the file too. The file reaches it through `QUACK_SERVER` (`--env-passthrough`). `test/template/quack_setup.test_template` attaches that serened on the server connection and `CONNECT`s to it, so the statements the tests run "on the server" run in serened. That connection is a quack session of its own, which a file that lists the server's sessions excludes with `WHERE connection_id <> '{harness}'`, and the files that started a server of their own include the template instead. The files that test starting, stopping or configuring a server from SQL, or depend on what serened does differently, are in [config/quack.json](config/quack.json). DuckDB's own tests that attach `QUACK_SERVER` (CONNECT, external resources) run here too, each against a serened of its own; the core suite skips them.
 
 ## Traps
 

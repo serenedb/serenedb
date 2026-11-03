@@ -58,7 +58,7 @@
       ]
     },
     {
-      "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no quack_serve to start a server from SQL, and every file below starts one in the test's own process. The quack suite (tests/duckdb/quack/run.sh) runs quack's own tests against a serened.",
+      "reason": "The files below attach the quack server QUACK_SERVER names, which the quack suite (tests/duckdb/quack/run.sh) starts as a serened for each file.",
       "paths": [
         "test/sql/attach/attach_to_external_resource.test",
         "test/sql/attach/external_resource_lifecycle.test",

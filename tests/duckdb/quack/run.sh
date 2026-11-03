@@ -73,6 +73,9 @@ while IFS= read -r test; do
 	[[ " ${skips[*]} " == *" ${test#"$QUACK_DIR"/} "* ]] && continue
 	tests+=("$test")
 done < <(find "$QUACK_DIR/test" -name '*.test' -o -name '*.test_slow' | sort)
+while IFS= read -r test; do
+	tests+=("$test")
+done < <(cd "$WORKSPACE/third_party/duckdb" && grep -rlF --include='*.test' --include='*.test_slow' '{QUACK_SERVER}' test | sort)
 
 echo "===== [duckdb quack] serened: $SERENED"
 echo "===== [duckdb quack] ${#tests[@]} files, ${#skips[@]} skipped by $CONFIG, $DUCKDB_JOBS at a time"

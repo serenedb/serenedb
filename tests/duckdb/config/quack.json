@@ -1,5 +1,5 @@
 {
-  "description": "SereneDB test-config for the vendored duckdb_quack test suite. tests/duckdb/quack/run.sh runs each file against a serened of its own that serves quack, instead of the quack_serve server of the test's DuckDB process.",
+  "description": "SereneDB test-config for the vendored duckdb_quack test suite and DuckDB's tests that attach QUACK_SERVER. tests/duckdb/quack/run.sh runs each file against a serened of its own that serves quack, instead of the quack_serve server of the test's DuckDB process.",
   "skip_tests": [
     {
       "reason": "serened serves quack from an HTTP listener (`?api=quack`), so the quack extension has no server to run from SQL: quack_serve, quack_stop, quack_server_list, quack_generate_keys, the quack_server_* settings and the quack_authentication_function / quack_authorization_function hooks do not exist. Every file below tests starting, stopping or configuring a server from SQL, or needs a server at a fixed address (quack:localhost) or a second server.",

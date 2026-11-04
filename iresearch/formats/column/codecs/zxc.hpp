@@ -44,7 +44,9 @@ struct Zxc {
   static constexpr uint32_t kFirstWindowed =
     std::numeric_limits<uint32_t>::max();
 
-  static size_t Bound(size_t raw_size) noexcept;
+  static size_t Bound(size_t raw_size) noexcept {
+    return zxc_compress_bound(raw_size);
+  }
 
   class Dictionary {
    public:
@@ -75,7 +77,7 @@ struct Zxc {
                     std::string_view dictionary = {}) noexcept;
     size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
                             size_t raw_size,
-                            std::string_view dictionary = {}) noexcept {
+                            std::string_view dictionary) noexcept {
       return Decompress(src, size, dst, raw_size, dictionary) ? raw_size : 0;
     }
 

@@ -47,6 +47,7 @@ std::string_view ZxcDictionary(std::string_view dictionary) noexcept {
 }
 
 std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
+  level = EffectiveLevel<Zxc>(level);
   std::unique_ptr<zxc_cctx, ZxcFree> ctx{zxc_create_cctx()};
   SDB_ENSURE(ctx, "zxc: cannot create a compression context");
   const auto rc = zxc_cctx_set_param(ctx.get(), ZXC_C_LEVEL, level);
@@ -70,12 +71,8 @@ const duckdb::CompressionFunction& DictZxcFunction() {
   return kFunction;
 }
 
-size_t Zxc::Bound(size_t raw_size) noexcept {
-  return static_cast<size_t>(zxc_compress_bound(raw_size));
-}
-
 Zxc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
-  : _ctx{NewContext(EffectiveLevel<Zxc>(level))} {
+  : _ctx{NewContext(level)} {
   bytes = ZxcDictionary(bytes);
   SDB_ASSERT(!bytes.empty());
   const auto rc =
@@ -83,8 +80,7 @@ Zxc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
   SDB_ENSURE(rc == ZXC_OK, "zxc: cannot load a dictionary: ", rc);
 }
 
-Zxc::Compressor::Compressor(uint8_t level)
-  : _ctx{NewContext(EffectiveLevel<Zxc>(level))} {}
+Zxc::Compressor::Compressor(uint8_t level) : _ctx{NewContext(level)} {}
 
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity,

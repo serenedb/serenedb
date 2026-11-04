@@ -42,7 +42,7 @@ struct NumericChoice {
   NumericLeaf leaf = NumericLeaf::None;
   bool shuffled = false;
 
-  friend bool operator==(const NumericChoice&, const NumericChoice&) = default;
+  bool operator==(const NumericChoice&) const = default;
 };
 
 struct NumericSegment {

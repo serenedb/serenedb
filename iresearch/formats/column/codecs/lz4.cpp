@@ -26,8 +26,8 @@
 #include <lz4.h>
 #include <lz4hc.h>
 
-#include <limits>
 #include <memory>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
@@ -44,8 +44,6 @@ column's trained dictionary, stored once per column.
 */
 
 namespace irs::codecs {
-
-static_assert(Lz4::kMaxLevel == LZ4HC_CLEVEL_MAX);
 
 const duckdb::CompressionFunction& Lz4Function() {
   static const auto kFunction =
@@ -82,7 +80,7 @@ size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity,
                                  const Dictionary* dictionary) {
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  SDB_ASSERT(capacity <= std::numeric_limits<int>::max());
+  SDB_ASSERT(std::in_range<int>(capacity));
   const auto src_size = static_cast<int>(size);
   const auto dst_capacity = static_cast<int>(capacity);
   int n = 0;
@@ -108,17 +106,15 @@ Lz4Hc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
 }
 
 Lz4Hc::Compressor::Compressor(uint8_t level)
-  : _level{EffectiveLevel<Lz4Hc>(level)},
-    _work{std::make_unique_for_overwrite<LZ4_streamHC_t>()} {
-  SDB_ENSURE(LZ4_initStreamHC(_work.get(), sizeof(LZ4_streamHC_t)),
-             "lz4: cannot initialize a compression stream");
+  : _level{EffectiveLevel<Lz4Hc>(level)}, _work{LZ4_createStreamHC()} {
+  SDB_ENSURE(_work, "lz4: cannot create a compression stream");
 }
 
 size_t Lz4Hc::Compressor::Compress(const char* src, size_t size, char* dst,
                                    size_t capacity,
                                    const Dictionary* dictionary) {
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  SDB_ASSERT(capacity <= std::numeric_limits<int>::max());
+  SDB_ASSERT(std::in_range<int>(capacity));
   const auto src_size = static_cast<int>(size);
   const auto dst_capacity = static_cast<int>(capacity);
   int n = 0;
@@ -137,29 +133,27 @@ size_t Lz4Hc::Compressor::Compress(const char* src, size_t size, char* dst,
 bool Lz4::Decompressor::Decompress(const char* src, size_t size, char* dst,
                                    size_t raw_size,
                                    std::string_view dictionary) noexcept {
-  if (size > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-      raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+  if (!std::in_range<int>(size) || !std::in_range<int>(raw_size)) {
     return false;
   }
   const int n = LZ4_decompress_safe_usingDict(
     src, dst, static_cast<int>(size), static_cast<int>(raw_size),
     dictionary.data(), static_cast<int>(dictionary.size()));
-  return n >= 0 && static_cast<size_t>(n) == raw_size;
+  return n == static_cast<int>(raw_size);
 }
 
 size_t Lz4::Decompressor::DecompressPrefix(
   const char* src, size_t size, char* dst, size_t want, size_t raw_size,
   std::string_view dictionary) noexcept {
   SDB_ASSERT(want <= raw_size);
-  if (size > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-      raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+  if (!std::in_range<int>(size) || !std::in_range<int>(raw_size)) {
     return 0;
   }
   const int n = LZ4_decompress_safe_partial_usingDict(
     src, dst, static_cast<int>(size), static_cast<int>(want),
     static_cast<int>(raw_size), dictionary.data(),
     static_cast<int>(dictionary.size()));
-  return n >= 0 && static_cast<size_t>(n) >= want ? static_cast<size_t>(n) : 0;
+  return n >= static_cast<int>(want) ? static_cast<size_t>(n) : 0;
 }
 
 }  // namespace irs::codecs

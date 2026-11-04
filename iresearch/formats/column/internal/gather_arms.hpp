@@ -42,7 +42,7 @@ void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
   }
   rows.clear();
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    rows.push_back(row(i));
+    rows.emplace_back(row(i));
   }
   point->FetchRows(rows, out, at);
 }
@@ -77,17 +77,17 @@ void DenseRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   SDB_ASSERT(hits <= span && span <= STANDARD_VECTOR_SIZE);
   const uint64_t cur = self.Kind::GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherDense requires ascending rows");
-  if (hits * 32 >= span) {
-    if (anchor > cur) {
-      self.Kind::Skip(s, anchor - cur);
-    }
-    self.Kind::Scan(s, out, span);
-    if (hits != span) {
-      out.Slice(sel, hits);
-    }
+  if (hits * 32 < span) {
+    ScatterRuns(self, s, anchor, sel, hits, out, 0);
     return;
   }
-  ScatterRuns(self, s, anchor, sel, hits, out, 0);
+  if (anchor > cur) {
+    self.Kind::Skip(s, anchor - cur);
+  }
+  self.Kind::Scan(s, out, span);
+  if (hits != span) {
+    out.Slice(sel, hits);
+  }
 }
 
 inline void GatherSelected(const ColumnReader& reader,

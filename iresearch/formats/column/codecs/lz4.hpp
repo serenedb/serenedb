@@ -33,10 +33,16 @@
 
 namespace irs::codecs {
 
+struct Lz4HcFree {
+  void operator()(LZ4_streamHC_t* stream) const noexcept {
+    LZ4_freeStreamHC(stream);
+  }
+};
+
 struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
   static constexpr uint8_t kDefaultLevel = 1;
-  static constexpr uint8_t kMaxLevel = 12;
+  static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
   static constexpr uint32_t kFirstWindowed = 2;
 
   static size_t Bound(size_t raw_size) noexcept;
@@ -64,8 +70,7 @@ struct Lz4 {
     std::unique_ptr<LZ4_stream_t> _work;
   };
 
-  class Decompressor {
-   public:
+  struct Decompressor {
     static bool Decompress(const char* src, size_t size, char* dst,
                            size_t raw_size,
                            std::string_view dictionary = {}) noexcept;
@@ -103,10 +108,8 @@ struct Lz4Hc {
 
    private:
     int _level;
-    std::unique_ptr<LZ4_streamHC_t> _work;
+    std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _work;
   };
-
-  using Decompressor = Lz4::Decompressor;
 };
 
 }  // namespace irs::codecs

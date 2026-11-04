@@ -96,10 +96,8 @@ const duckdb::CompressionFunction* GetCodec(duckdb::DatabaseInstance& db,
 }
 
 const StringChoice* ChoiceOf(CompressionType type) {
-  if (const auto* text = TextCodecOf(type)) {
-    return &text->choice;
-  }
-  return nullptr;
+  const auto* text = TextCodecOf(type);
+  return text ? &text->choice : nullptr;
 }
 
 CompressionType TypeOf(StringChoice choice) noexcept {

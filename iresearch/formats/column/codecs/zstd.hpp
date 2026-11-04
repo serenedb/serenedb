@@ -38,7 +38,9 @@ struct Zstd {
   static constexpr uint8_t kMaxLevel = 22;
   static constexpr uint32_t kFirstWindowed = 1;
 
-  static size_t Bound(size_t raw_size) noexcept;
+  static size_t Bound(size_t raw_size) noexcept {
+    return ZSTD_compressBound(raw_size);
+  }
 
   class Dictionary {
    public:
@@ -65,7 +67,7 @@ struct Zstd {
 
   class Decompressor {
    public:
-    Decompressor() : _ctx{ZSTD_createDCtx()} {}
+    Decompressor();
 
     bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
                     std::string_view dictionary = {});

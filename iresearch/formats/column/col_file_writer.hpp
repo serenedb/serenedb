@@ -43,9 +43,6 @@ class ColFileWriter final {
 
   explicit ColFileWriter(IndexOutput::ptr out);
 
-  ColFileWriter(const ColFileWriter&) = delete;
-  ColFileWriter& operator=(const ColFileWriter&) = delete;
-
   uint64_t Position();
 
   uint64_t Append(std::string_view bytes);

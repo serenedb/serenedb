@@ -55,18 +55,16 @@ const duckdb::CompressionFunction& DictZstdFunction() {
   return kFunction;
 }
 
-size_t Zstd::Bound(size_t raw_size) noexcept {
-  return ZSTD_compressBound(raw_size);
-}
-
 namespace {
 
 std::unique_ptr<ZSTD_CDict, ZstdFree> NewDictionary(std::string_view bytes,
                                                     ZSTD_dictContentType_e type,
-                                                    int level, size_t frame) {
+                                                    uint8_t level,
+                                                    size_t frame) {
   std::unique_ptr<ZSTD_CDict, ZstdFree> dictionary{ZSTD_createCDict_advanced(
     bytes.data(), bytes.size(), ZSTD_dlm_byRef, type,
-    ZSTD_getCParams(level, frame, bytes.size()), ZSTD_defaultCMem)};
+    ZSTD_getCParams(EffectiveLevel<Zstd>(level), frame, bytes.size()),
+    ZSTD_defaultCMem)};
   SDB_ENSURE(dictionary, "zstd: cannot create a compression dictionary");
   return dictionary;
 }
@@ -74,18 +72,20 @@ std::unique_ptr<ZSTD_CDict, ZstdFree> NewDictionary(std::string_view bytes,
 }  // namespace
 
 Zstd::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
-  : _dictionary{NewDictionary(bytes, ZSTD_dct_rawContent,
-                              EffectiveLevel<Zstd>(level),
+  : _dictionary{NewDictionary(bytes, ZSTD_dct_rawContent, level,
                               kZstdDictionaryFrameBytes)} {}
 
 Zstd::Dictionary::Dictionary(uint8_t level, const TrainedDictionary& dictionary)
-  : _dictionary{NewDictionary(dictionary.Bytes(), ZSTD_dct_auto,
-                              EffectiveLevel<Zstd>(level),
+  : _dictionary{NewDictionary(dictionary.Bytes(), ZSTD_dct_auto, level,
                               kTrainedFrameBytes)} {}
 
 Zstd::Compressor::Compressor(uint8_t level)
   : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
   SDB_ENSURE(_ctx, "zstd: cannot create a compression context");
+}
+
+Zstd::Decompressor::Decompressor() : _ctx{ZSTD_createDCtx()} {
+  SDB_ENSURE(_ctx, "zstd: cannot create a decompression context");
 }
 
 size_t Zstd::Compressor::Compress(const char* src, size_t size, char* dst,

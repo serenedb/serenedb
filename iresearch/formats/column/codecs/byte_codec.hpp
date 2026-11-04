@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 
 namespace irs::codecs {
@@ -43,10 +44,7 @@ constexpr bool Sorted(ByteCodec leaf) noexcept {
 
 template<typename Codec>
 constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
-  if (level == 0) {
-    return Codec::kDefaultLevel;
-  }
-  return level < Codec::kMaxLevel ? level : Codec::kMaxLevel;
+  return level ? std::min(level, Codec::kMaxLevel) : Codec::kDefaultLevel;
 }
 
 enum class Shape : uint8_t {
@@ -58,7 +56,7 @@ struct StringChoice {
   Shape shape;
   ByteCodec leaf;
 
-  friend bool operator==(const StringChoice&, const StringChoice&) = default;
+  bool operator==(const StringChoice&) const = default;
 };
 
 }  // namespace irs::codecs

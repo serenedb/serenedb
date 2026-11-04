@@ -42,9 +42,7 @@ void WriteContext::WriteString(
   result_offset = 0;
 }
 
-duckdb::idx_t WriteContext::Position() const {
-  return static_cast<duckdb::idx_t>(_blocks->Position());
-}
+duckdb::idx_t WriteContext::Position() const { return _blocks->Position(); }
 
 void WriteContext::Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
   _blocks->Append({reinterpret_cast<const char*>(data), size});

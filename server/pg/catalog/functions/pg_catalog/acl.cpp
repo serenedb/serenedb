@@ -64,6 +64,7 @@
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
+#include "pg/types/char.h"
 #include "pg/types/logical.h"
 
 namespace sdb::pg {
@@ -127,7 +128,7 @@ void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
     const auto type = AsView(objtype.GetValue());
     const auto it = absl::c_find_if(kDefaultAcls, [&](const DefaultAcl& acl) {
-      return type.size() == 1 && type[0] == acl.objtype;
+      return CharIn(type) == static_cast<uint8_t>(acl.objtype);
     });
     if (it == std::end(kDefaultAcls)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -198,9 +199,11 @@ void LoadAcls(duckdb::ClientContext& context, duckdb::DataChunk& input,
       continue;
     }
     for (const auto item : list.GetChildValues()) {
-      if (item.IsValid()) {
-        ExplodeAcl(*roles, AsView(item.GetValue()), rows);
+      if (!item.IsValid()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                        ERR_MSG("ACL arrays must not contain null values"));
       }
+      ExplodeAcl(*roles, AsView(item.GetValue()), rows);
     }
   }
 }
@@ -1172,7 +1175,7 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   RegisterScalar(loader, pg_catalog, "acldefault",
                  duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{duckdb::LogicalType::VARCHAR, OID()},
+                 {duckdb::ScalarFunction{{CHAR(), OID()},
                                          duckdb::LogicalType::LIST(ACLITEM()),
                                          AclDefaultFunction}});
   duckdb::TableFunction function{

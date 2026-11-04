@@ -28,13 +28,12 @@
 
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
-
-class MergeOrder;
 
 class InputNormProvider final : public NormProvider {
  public:
@@ -66,7 +65,7 @@ class InputNormProvider final : public NormProvider {
   const MergeOrder* _order;
   mutable ManagedVector<doc_id_t> _sources;
   mutable absl::once_flag _mapped;
-  irs::containers::FlatHashMap<field_id, Field> _fields;
+  containers::FlatHashMap<field_id, Field> _fields;
 };
 
 }  // namespace irs

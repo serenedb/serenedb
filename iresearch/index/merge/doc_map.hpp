@@ -22,7 +22,6 @@
 
 #include <iterator>
 
-#include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/resource_manager.hpp"

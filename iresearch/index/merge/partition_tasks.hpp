@@ -32,20 +32,20 @@ class PartitionTask final : public duckdb::BaseExecutorTask {
  public:
   PartitionTask(duckdb::TaskExecutor& executor, std::atomic_size_t& next,
                 size_t count, const Work& work) noexcept
-    : BaseExecutorTask{executor}, _next{&next}, _count{count}, _work{&work} {}
+    : BaseExecutorTask{executor}, _next{next}, _count{count}, _work{work} {}
 
   void ExecuteTask() final {
-    for (auto partition = _next->fetch_add(1, std::memory_order_relaxed);
+    for (auto partition = _next.fetch_add(1, std::memory_order_relaxed);
          partition < _count && !executor.HasError();
-         partition = _next->fetch_add(1, std::memory_order_relaxed)) {
-      (*_work)(partition);
+         partition = _next.fetch_add(1, std::memory_order_relaxed)) {
+      _work(partition);
     }
   }
 
  private:
-  std::atomic_size_t* _next;
+  std::atomic_size_t& _next;
   size_t _count;
-  const Work* _work;
+  const Work& _work;
 };
 
 template<typename Work>

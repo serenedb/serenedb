@@ -24,12 +24,24 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 
-#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
+
+uint64_t SeekAnchor(SeekTermIterator& it, const TermKeys::TermAnchor& anchor) {
+  const bool found = it.seek(anchor.term);
+  SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
+             anchor.row);
+  return anchor.row + 1;
+}
+
+void NextTerm(SeekTermIterator& it, const TermKeys& keys, uint64_t row) {
+  const bool more = it.next();
+  SDB_ENSURE(more, "TermKeys: a term dictionary of ", keys.Count(),
+             " terms ends after ", row);
+}
 
 class TermKeyReader final : public duckdb::PresortedMergeReader {
  public:
@@ -50,14 +62,11 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
         duckdb::string_t{reinterpret_cast<const char*>(term.data()),
                          static_cast<uint32_t>(term.size())});
     }
-    keys.SetCardinality(count);
   }
 
  private:
   void Step() {
-    const bool next = _it->next();
-    SDB_ENSURE(next, "TermKeys: a term dictionary of ", _keys.Count(),
-               " terms ends after ", _next);
+    NextTerm(*_it, _keys, _next);
     if (_next % TermKeys::kAnchorStep == 0) {
       _keys.Record(_next, _it->value());
     }
@@ -71,10 +80,7 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
       if (anchor.row != TermKeys::kNoAnchor &&
           (want < _next || anchor.row >= _next)) {
         _it = _keys.Reader().iterator();
-        const bool found = _it->seek(anchor.term);
-        SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
-                   anchor.row);
-        _next = anchor.row + 1;
+        _next = SeekAnchor(*_it, anchor);
       } else if (want < _next) {
         _it = _keys.Reader().iterator();
         _next = 0;
@@ -91,8 +97,6 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
 };
 
 }  // namespace
-
-duckdb::idx_t TermKeys::Count() const { return _reader.size(); }
 
 duckdb::unique_ptr<duckdb::PresortedMergeReader> TermKeys::CreateReader()
   const {
@@ -126,15 +130,10 @@ void TermKeys::SeekBefore(SeekTermIterator& it, uint64_t row) const {
   }
   uint64_t next = 0;
   if (const auto anchor = Anchor(row - 1); anchor.row != kNoAnchor) {
-    const bool found = it.seek(anchor.term);
-    SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
-               anchor.row);
-    next = anchor.row + 1;
+    next = SeekAnchor(it, anchor);
   }
   for (; next < row; ++next) {
-    const bool more = it.next();
-    SDB_ENSURE(more, "TermKeys: a term dictionary of ", Count(),
-               " terms ends after ", next);
+    NextTerm(it, *this, next);
   }
 }
 

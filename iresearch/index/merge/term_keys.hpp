@@ -27,14 +27,12 @@
 #include <limits>
 #include <map>
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-struct SeekTermIterator;
-struct TermReader;
 
 class TermKeys final : public duckdb::PresortedMergeInput {
  public:
@@ -48,7 +46,7 @@ class TermKeys final : public duckdb::PresortedMergeInput {
 
   explicit TermKeys(const TermReader& reader) noexcept : _reader{reader} {}
 
-  duckdb::idx_t Count() const final;
+  duckdb::idx_t Count() const final { return _reader.size(); }
   duckdb::unique_ptr<duckdb::PresortedMergeReader> CreateReader() const final;
 
   const TermReader& Reader() const noexcept { return _reader; }

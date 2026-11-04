@@ -46,9 +46,14 @@ inline constexpr size_t kMergeStepCount = magic_enum::enum_count<MergeStep>();
 class MergeProfile {
  public:
   MergeProfile() = default;
-  MergeProfile(const MergeProfile& other) noexcept { CopyFrom(other); }
+  MergeProfile(const MergeProfile& other) noexcept { *this = other; }
   MergeProfile& operator=(const MergeProfile& other) noexcept {
-    CopyFrom(other);
+    for (size_t step = 0; step != kMergeStepCount; ++step) {
+      _nanos[step].store(other._nanos[step].load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+    }
+    _wall.store(other._wall.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
     return *this;
   }
 
@@ -77,15 +82,6 @@ class MergeProfile {
   }
 
  private:
-  void CopyFrom(const MergeProfile& other) noexcept {
-    for (size_t step = 0; step != kMergeStepCount; ++step) {
-      _nanos[step].store(other._nanos[step].load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-    }
-    _wall.store(other._wall.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-  }
-
   std::array<std::atomic<uint64_t>, kMergeStepCount> _nanos{};
   std::atomic<uint64_t> _wall{0};
 };

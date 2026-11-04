@@ -142,17 +142,11 @@ void MergeSchedule::Stop() {
 }
 
 bool MergeSchedule::Result() {
-  std::exception_ptr error;
-  bool ok = false;
-  {
-    Guard guard{_tasks.lock};
-    error = _error;
-    ok = !_failed;
+  Guard guard{_tasks.lock};
+  if (_error) {
+    std::rethrow_exception(_error);
   }
-  if (error) {
-    std::rethrow_exception(error);
-  }
-  return ok;
+  return !_failed;
 }
 
 }  // namespace irs

@@ -198,11 +198,9 @@ void VariantColumnReader::ReleaseLeavesBefore(ScanState& s,
   }
 }
 
-void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
-                                                duckdb::idx_t local_start,
-                                                duckdb::idx_t run,
-                                                duckdb::Vector& result,
-                                                duckdb::idx_t out_off) const {
+void VariantColumnReader::ReconstructVariantRun(
+  ScanState& s, size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
+  duckdb::Vector& result, duckdb::idx_t out_off, bool in_place) const {
   const auto& rg_meta = _variant_rgs[rg];
   SeekVariantRg(s, rg, local_start);
   auto& vs = *s.variant;
@@ -217,9 +215,13 @@ void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
     rg_meta.unshredded->ScanCount(*vstate.unshredded, entries[0], run, 0);
     rg_meta.shredded->ScanCount(*vstate.shredded, entries[1], run, 0);
     duckdb::FlatVector::SetSize(intermediate, run);
-    auto& scratch = ResetScratch(vs.scratch, result.GetType());
-    duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
-    duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
+    if (in_place) {
+      duckdb::VariantUtils::UnshredVariantData(intermediate, result, run);
+    } else {
+      auto& scratch = ResetScratch(vs.scratch, result.GetType());
+      duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
+      duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
+    }
   }
   vstate.local_pos += run;
 }
@@ -227,12 +229,20 @@ void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
 duckdb::idx_t VariantColumnReader::Scan(ScanState& s, duckdb::Vector& result,
                                         duckdb::idx_t count) const {
   NewOutputVector(s);
-  return ScanCount(s, result, count, /*result_offset=*/0);
+  return ScanRuns(s, result, count, /*result_offset=*/0, /*fresh=*/true);
 }
 
 duckdb::idx_t VariantColumnReader::ScanCount(
   ScanState& s, duckdb::Vector& result, duckdb::idx_t count,
   duckdb::idx_t result_offset) const {
+  return ScanRuns(s, result, count, result_offset, /*fresh=*/false);
+}
+
+duckdb::idx_t VariantColumnReader::ScanRuns(ScanState& s,
+                                            duckdb::Vector& result,
+                                            duckdb::idx_t count,
+                                            duckdb::idx_t result_offset,
+                                            bool fresh) const {
   if (count == 0) {
     return 0;
   }
@@ -241,7 +251,8 @@ duckdb::idx_t VariantColumnReader::ScanCount(
                     [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
                         duckdb::idx_t done) {
                       ReconstructVariantRun(s, rg, local_start, run, result,
-                                            result_offset + done);
+                                            result_offset + done,
+                                            fresh && run == count);
                     });
   if (_validity) {
     _validity->ColumnReader::ScanCount(s.child_states[0], result, count,

@@ -133,7 +133,10 @@ class VariantColumnReader final : public ColumnReader {
   void SeekVariantRg(ScanState& s, size_t rg, duckdb::idx_t target_local) const;
   void ReconstructVariantRun(ScanState& s, size_t rg, duckdb::idx_t local_start,
                              duckdb::idx_t run, duckdb::Vector& result,
-                             duckdb::idx_t out_off) const;
+                             duckdb::idx_t out_off, bool in_place) const;
+  duckdb::idx_t ScanRuns(ScanState& s, duckdb::Vector& result,
+                         duckdb::idx_t count, duckdb::idx_t result_offset,
+                         bool fresh) const;
   static const ColumnReader* FindShreddedLeaf(
     const ColumnReader& node, std::span<const std::string_view> path);
   std::vector<VariantRg> _variant_rgs;

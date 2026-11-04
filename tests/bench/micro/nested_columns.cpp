@@ -46,9 +46,10 @@ enum class Shape : uint8_t {
   MapUnique,
   StructRepeated,
   MapWide,
+  VariantShredded,
 };
 
-constexpr size_t kShapes = 6;
+constexpr size_t kShapes = 7;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
 
@@ -88,6 +89,9 @@ std::string ValueSql(Shape shape) {
       return "map_from_entries(list_transform(range(4), lambda k: {'key': "
              "'attribute.' || k, 'value': 'v' || ((i * 7919) % 30011) || '-' "
              "|| k}))";
+    case Shape::VariantShredded:
+      return "{'service': 'service.' || (i % 50), 'latency': i % 1000, "
+             "'trace': 'trace.' || i}::VARIANT";
   }
   return {};
 }
@@ -100,6 +104,9 @@ std::string EmptySql(Shape shape) {
   if (shape == Shape::MapRepeated || shape == Shape::MapUnique ||
       shape == Shape::MapWide) {
     return "map([], [])::MAP(VARCHAR, VARCHAR)";
+  }
+  if (shape == Shape::VariantShredded) {
+    return "('leftover.' || i)::VARIANT";
   }
   return "[]::VARCHAR[]";
 }
@@ -117,6 +124,9 @@ const Data& GetData(Shape shape) {
   }
   slot = std::make_unique<Data>();
   duckdb::Connection con{CsDb()};
+  if (shape == Shape::VariantShredded) {
+    con.Query("SET variant_minimum_shredding_size = 0");
+  }
   auto result =
     con.Query("SELECT CASE WHEN i % 20 = 0 THEN NULL WHEN i % 13 = 0 THEN " +
               EmptySql(shape) + " ELSE " + ValueSql(shape) +
@@ -326,24 +336,27 @@ void DenseGather(benchmark::State& state, Shape shape) {
 
 }  // namespace
 
-#define NESTED_CASES(fn)                                        \
-  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)     \
-    ->Unit(benchmark::kMillisecond)                             \
-    ->UseRealTime();                                            \
-  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)         \
-    ->Unit(benchmark::kMillisecond)                             \
-    ->UseRealTime();                                            \
-  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)       \
-    ->Unit(benchmark::kMillisecond)                             \
-    ->UseRealTime();                                            \
-  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)           \
-    ->Unit(benchmark::kMillisecond)                             \
-    ->UseRealTime();                                            \
-  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated) \
-    ->Unit(benchmark::kMillisecond)                             \
-    ->UseRealTime();                                            \
-  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)               \
-    ->Unit(benchmark::kMillisecond)                             \
+#define NESTED_CASES(fn)                                          \
+  BENCHMARK_CAPTURE(fn, list_repeated, Shape::ListRepeated)       \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, list_unique, Shape::ListUnique)           \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, map_repeated, Shape::MapRepeated)         \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, map_unique, Shape::MapUnique)             \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, struct_repeated, Shape::StructRepeated)   \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, map_wide, Shape::MapWide)                 \
+    ->Unit(benchmark::kMillisecond)                               \
+    ->UseRealTime();                                              \
+  BENCHMARK_CAPTURE(fn, variant_shredded, Shape::VariantShredded) \
+    ->Unit(benchmark::kMillisecond)                               \
     ->UseRealTime()
 
 NESTED_CASES(WriteSeal);

@@ -53,8 +53,7 @@ void Record(RatioHistory& hist, uint64_t raw, uint64_t comp,
 }  // namespace
 
 uint64_t FsstChainEncoder::Estimate(const SegmentBuilder& rows) const noexcept {
-  const auto entry_count = rows.Entries().size() + rows.FirstEntry();
-  return Packed(entry_count, rows.MaxLen()) +
+  return Packed(rows.EntryCount(), rows.MaxLen()) +
          (rows.Raw() / kFsstFrameRawBytes + 1) * kFrameMetaSize +
          static_cast<uint64_t>(
            static_cast<double>(rows.Raw()) *
@@ -64,10 +63,54 @@ uint64_t FsstChainEncoder::Estimate(const SegmentBuilder& rows) const noexcept {
 EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
                                        std::span<uint32_t> lengths) {
   const auto entries = rows.Entries();
-  Encode(entries, rows.FirstEntry());
+  const auto first_entry = rows.FirstEntry();
+  _suffixes.clear();
+  _lcp_stream.assign(first_entry, 0);
+  _frames.clear();
+  uint32_t max_lcp = 0;
+  std::string_view prev;
+  uint64_t frame_raw = 0;
+  uint64_t frame_first = 0;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    const auto sv = entries[i];
+    if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
+      _frames.emplace_back(static_cast<uint32_t>(frame_first),
+                           static_cast<uint32_t>(frame_raw), 0, 0);
+      frame_raw = 0;
+      frame_first = i;
+    }
+    const uint32_t lcp =
+      (i - frame_first) % kChainRestart == 0
+        ? 0
+        : static_cast<uint32_t>(absl::FindLongestCommonPrefix(prev, sv).size());
+    _lcp_stream.emplace_back(lcp);
+    max_lcp = std::max(max_lcp, lcp);
+    _suffixes.emplace_back(sv.substr(lcp));
+    frame_raw += sv.size();
+    prev = sv;
+  }
+  if (!entries.empty()) {
+    _frames.emplace_back(static_cast<uint32_t>(frame_first),
+                         static_cast<uint32_t>(frame_raw), 0, 0);
+  }
+  _codec.Encode(_suffixes, _data, _entry_lengths);
+  size_t off = 0;
+  uint32_t max_enc = 0;
+  for (size_t f = 0; f < _frames.size(); ++f) {
+    auto& frame = _frames[f];
+    const size_t end =
+      f + 1 < _frames.size() ? _frames[f + 1].first_entry : entries.size();
+    frame.comp_off = static_cast<uint32_t>(off);
+    for (size_t e = frame.first_entry; e < end; ++e) {
+      off += _entry_lengths[e];
+      max_enc = std::max(max_enc, _entry_lengths[e]);
+    }
+    frame.comp_len = static_cast<uint32_t>(off - frame.comp_off);
+    frame.first_entry += first_entry;
+  }
   absl::c_copy(_entry_lengths, lengths.begin());
   _lcp_stream.resize(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
-                       entries.size() + rows.FirstEntry()),
+                       rows.EntryCount()),
                      0);
   const auto symtab = _codec.SymbolTable();
   Record(_history[static_cast<size_t>(_shape)], rows.Raw(),
@@ -75,60 +118,11 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
   return {
     .codec = kCodec,
     .frames = _frames,
-    .max_length = _max_enc,
+    .max_length = max_enc,
     .lcps = _lcp_stream,
-    .max_lcp = _max_lcp,
+    .max_lcp = max_lcp,
     .symtab = symtab,
   };
-}
-
-void FsstChainEncoder::Encode(std::span<const std::string_view> entries,
-                              uint32_t first_entry) {
-  _suffixes.clear();
-  _lcp_stream.assign(first_entry, 0);
-  _max_lcp = 0;
-  _frames.clear();
-  std::string_view prev;
-  uint64_t frame_raw = 0;
-  uint64_t frame_first = 0;
-  for (size_t i = 0; i < entries.size(); ++i) {
-    const auto sv = entries[i];
-    auto lcp =
-      static_cast<uint32_t>(absl::FindLongestCommonPrefix(prev, sv).size());
-    if (frame_raw != 0 && frame_raw + sv.size() > kFsstFrameRawBytes) {
-      _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
-                                  static_cast<uint32_t>(frame_raw), 0, 0});
-      frame_raw = 0;
-      frame_first = i;
-    }
-    if ((i - frame_first) % kChainRestart == 0) {
-      lcp = 0;
-    }
-    _lcp_stream.push_back(lcp);
-    _max_lcp = std::max(_max_lcp, lcp);
-    _suffixes.push_back(sv.substr(lcp));
-    frame_raw += sv.size();
-    prev = sv;
-  }
-  if (!entries.empty()) {
-    _frames.push_back(FrameMeta{static_cast<uint32_t>(frame_first),
-                                static_cast<uint32_t>(frame_raw), 0, 0});
-  }
-  _codec.Encode(_suffixes, _data, _entry_lengths);
-  size_t off = 0;
-  size_t next = 0;
-  _max_enc = 0;
-  for (size_t f = 0; f < _frames.size(); ++f) {
-    const auto end =
-      f + 1 < _frames.size() ? _frames[f + 1].first_entry : entries.size();
-    _frames[f].comp_off = static_cast<uint32_t>(off);
-    for (; next < end; ++next) {
-      off += _entry_lengths[next];
-      _max_enc = std::max(_max_enc, _entry_lengths[next]);
-    }
-    _frames[f].comp_len = static_cast<uint32_t>(off - _frames[f].comp_off);
-    _frames[f].first_entry += first_entry;
-  }
 }
 
 }  // namespace irs::codecs::text

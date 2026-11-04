@@ -57,8 +57,6 @@ class FsstChainEncoder {
   std::string& Data() noexcept { return _data; }
 
  private:
-  void Encode(std::span<const std::string_view> entries, uint32_t first_entry);
-
   RatioHistory* _history;
   uint32_t _target;
   Shape _shape = Shape::Dedup;
@@ -68,8 +66,6 @@ class FsstChainEncoder {
   std::vector<uint32_t> _entry_lengths;
   std::vector<std::string_view> _suffixes;
   std::vector<uint32_t> _lcp_stream;
-  uint32_t _max_enc = 0;
-  uint32_t _max_lcp = 0;
 };
 
 }  // namespace irs::codecs::text

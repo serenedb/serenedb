@@ -181,9 +181,9 @@ class SegmentBuilder {
         SortEntries();
       }
     }
-    _lengths.assign(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
-                      _entries.size() + FirstEntry()),
-                    0);
+    _lengths.assign(
+      duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
+      0);
     const auto frames = leaf.Finish(
       *this, std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
     WriteSegment(frames, leaf.Data(), out);
@@ -192,6 +192,8 @@ class SegmentBuilder {
   uint32_t FirstEntry() const noexcept {
     return _shape == Shape::Dedup ? 1 : 0;
   }
+
+  size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
 
   std::span<const std::string_view> Entries() const noexcept {
     return _entries;
@@ -244,10 +246,10 @@ class SegmentBuilder {
 
   template<typename Leaf>
   IRS_FORCE_INLINE void AppendEntry(Leaf& leaf, std::string_view sv) {
-    _entries.push_back(sv);
+    _entries.emplace_back(sv);
     _max_len = std::max<uint32_t>(_max_len, static_cast<uint32_t>(sv.size()));
     _raw += sv.size();
-    leaf.Append(sv, FirstEntry() + static_cast<uint32_t>(_entries.size()) - 1);
+    leaf.Append(sv, static_cast<uint32_t>(EntryCount()) - 1);
   }
 
   IRS_FORCE_INLINE void PushCode(uint32_t code) {
@@ -290,7 +292,6 @@ class SegmentBuilder {
   std::vector<uint32_t> _remap;
   std::vector<std::string_view> _sorted;
   std::vector<uint32_t> _lengths;
-  std::string _bytes;
 };
 
 }  // namespace irs::codecs::text

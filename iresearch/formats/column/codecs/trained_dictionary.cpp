@@ -36,6 +36,16 @@ namespace {
 
 std::atomic<uint64_t> gNextDictionaryId{1};
 
+constexpr ZDICT_fastCover_params_t kTrainParams{
+  .k = 256,
+  .d = 8,
+  .f = 20,
+  .nbThreads = 1,
+  .splitPoint = 1.0,
+  .accel = 4,
+  .zParams = {.compressionLevel = 3},
+};
+
 ZSTD_DDict* LoadDictionary(std::string_view bytes) {
   auto* ddict =
     ZSTD_createDDict_advanced(bytes.data(), bytes.size(), ZSTD_dlm_byRef,
@@ -73,8 +83,7 @@ void DictionarySampler::Add(std::span<const std::string_view> entries) {
   for (auto e : entries) {
     while (!e.empty()) {
       const auto take = std::min(e.size(), kSamplePieceBytes - fill);
-      const bool keep = piece % every == 0;
-      if (keep) {
+      if (piece % every == 0) {
         _samples.append(e.substr(0, take));
       }
       fill += take;
@@ -94,14 +103,6 @@ std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
   if (!Ready()) {
     return nullptr;
   }
-  ZDICT_fastCover_params_t params{};
-  params.k = 256;
-  params.d = 8;
-  params.f = 20;
-  params.accel = 4;
-  params.nbThreads = 1;
-  params.splitPoint = 1.0;
-  params.zParams.compressionLevel = 3;
   const std::vector<size_t> sizes(_samples.size() / kSamplePieceBytes,
                                   kSamplePieceBytes);
   size_t n = 0;
@@ -110,7 +111,7 @@ std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
     kTrainedDictionaryBytes, [&](char* buf, size_t size) {
       n = ZDICT_trainFromBuffer_fastCover(
         buf, size, _samples.data(), sizes.data(),
-        static_cast<unsigned>(sizes.size()), params);
+        static_cast<unsigned>(sizes.size()), kTrainParams);
       return ZDICT_isError(n) ? 0 : n;
     });
   std::string{}.swap(_samples);

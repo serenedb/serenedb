@@ -168,8 +168,7 @@ struct Header {
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
           h.codec != ByteCodec::Fsst) ||
-         (h.flags == FrameDictionary::Trained && h.dictionary != 0 &&
-          Trainable(h.codec))) &&
+         (h.flags == FrameDictionary::Trained && Trainable(h.codec))) &&
         (h.flags == FrameDictionary::Trained) == (h.dictionary != 0) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&

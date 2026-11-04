@@ -83,8 +83,7 @@ void SegmentBuilder::Begin(Shape shape, uint8_t level, FrameLayout layout,
 }
 
 uint64_t SegmentBuilder::Estimate() const noexcept {
-  const auto entry_count = _entries.size() + FirstEntry();
-  return kHeaderSize + Packed(entry_count, _max_len) +
+  return kHeaderSize + Packed(EntryCount(), _max_len) +
          CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);
 }
 
@@ -119,41 +118,40 @@ void SegmentBuilder::SortEntries() {
 
 void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
                                   std::string& data, Segment& out) {
-  const auto entry_count = _entries.size() + FirstEntry();
+  const auto entry_count = EntryCount();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
                entry_count <= std::numeric_limits<uint32_t>::max() &&
                data.size() <= std::numeric_limits<uint32_t>::max(),
              "col codec: segment too large");
 
-  Header h;
-  h.shape = _shape;
-  h.codec = frames.codec;
-  h.level = _level;
-  h.length_width =
-    BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length);
-  h.lcp_width = BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp);
-  h.row_count = static_cast<uint32_t>(_rows);
-  h.entry_count = static_cast<uint32_t>(entry_count);
-  h.frame_count = static_cast<uint32_t>(frames.frames.size());
-  h.flags = frames.flags;
-  h.dictionary = frames.dictionary;
-  h.raw_bytes = _raw;
-
-  std::string codes;
-  if (_shape == Shape::Dedup) {
-    codes = EncodeCodes(_codes, _entries.size(), _runs, _codes_tuning);
-  }
+  Header h{
+    .shape = _shape,
+    .codec = frames.codec,
+    .level = _level,
+    .length_width =
+      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
+    .row_count = static_cast<uint32_t>(_rows),
+    .entry_count = static_cast<uint32_t>(entry_count),
+    .frame_count = static_cast<uint32_t>(frames.frames.size()),
+    .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
+    .data_size = static_cast<uint32_t>(data.size()),
+    .lcp_width =
+      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
+    .flags = frames.flags,
+    .dictionary = frames.dictionary,
+    .raw_bytes = _raw,
+  };
+  const auto codes =
+    _shape == Shape::Dedup
+      ? EncodeCodes(_codes, _entries.size(), _runs, _codes_tuning)
+      : std::string{};
   LayOut(h, frames.frames.size(),
          BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
-         frames.lcps.empty()
-           ? 0
-           : BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
+         BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
          codes.size(), frames.symtab.size());
-  h.symtab_size = static_cast<uint32_t>(frames.symtab.size());
-  h.data_size = static_cast<uint32_t>(data.size());
 
-  _bytes.assign(static_cast<size_t>(h.off_data), '\0');
-  auto* base = reinterpret_cast<duckdb::data_ptr_t>(_bytes.data());
+  out.head.assign(static_cast<size_t>(h.off_data), '\0');
+  auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.head.data());
   duckdb::Store(h, base);
   for (size_t i = 0; i < frames.frames.size(); ++i) {
     duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
@@ -172,8 +170,7 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
                 frames.symtab.size());
   }
 
-  auto stats = duckdb::BaseStatistics::CreateEmpty(_type);
-  _stats.Merge(stats);
+  _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
   out.config = {
     .choice = {_shape, frames.codec},
     .level = _level,
@@ -185,8 +182,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   out.nulls = _nulls;
   out.input = _input;
   out.max_len = _max_len;
-  out.stats.emplace(std::move(stats));
-  out.head.swap(_bytes);
   out.data.swap(data);
 
   _stats.Clear();

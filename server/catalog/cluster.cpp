@@ -406,8 +406,13 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-  if (auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name())) {
-    auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
+  auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
+  std::vector<duckdb::idx_t> dropped;
+  const auto check = [&](const duckdb::DropInfo& target) {
+    auto role = roles.GetEntry(transaction, target.GetQualifiedName().Name());
+    if (!role) {
+      return;
+    }
     if (session && (role->oid == session->GetRoleId() ||
                     role->oid == session->GetSessionRoleId() ||
                     role->oid == session->GetLoginRoleId())) {
@@ -420,34 +425,54 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
         ERR_MSG("cannot drop role \"", role->name.GetIdentifierName(),
                 "\" because it is required by the database system"));
     }
-    std::vector<duckdb::Identifier> members;
-    roles.Scan(transaction, [&](duckdb::CatalogEntry& other) {
-      if (absl::c_any_of(other.Cast<RoleCatalogEntry>().MemberOf(),
-                         [&](const duckdb::Membership& membership) {
-                           return membership.role == role->oid;
-                         })) {
-        members.emplace_back(other.name);
+    if (!absl::c_linear_search(dropped, role->oid)) {
+      dropped.push_back(role->oid);
+    }
+  };
+  check(info);
+  for (const auto& target : info.additional_drops) {
+    check(*target);
+  }
+  struct Membership {
+    duckdb::Identifier member;
+    duckdb::idx_t role;
+  };
+  std::vector<Membership> memberships;
+  roles.Scan(transaction, [&](duckdb::CatalogEntry& other) {
+    const bool listed = absl::c_linear_search(dropped, other.oid);
+    std::vector<duckdb::idx_t> granted;
+    for (const auto& membership : other.Cast<RoleCatalogEntry>().MemberOf()) {
+      if ((listed || absl::c_linear_search(dropped, membership.role)) &&
+          !absl::c_linear_search(granted, membership.role)) {
+        granted.push_back(membership.role);
+        memberships.push_back({other.name, membership.role});
+      }
+    }
+  });
+  for (const auto& membership : memberships) {
+    duckdb::AlterRoleInfo alter{membership.member};
+    alter.grant_role_id = membership.role;
+    alter.revoke = true;
+    ApplyAlter(transaction, alter);
+  }
+  struct Settings {
+    duckdb::Identifier database;
+    duckdb::idx_t role;
+  };
+  std::vector<Settings> settings;
+  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& database) {
+      for (const auto role : dropped) {
+        if (database.Cast<DatabaseCatalogEntry>().SettingsOf(role)) {
+          settings.push_back({database.name, role});
+        }
       }
     });
-    for (const auto& member : members) {
-      duckdb::AlterRoleInfo alter{member};
-      alter.grant_role_id = role->oid;
-      alter.revoke = true;
-      ApplyAlter(transaction, alter);
-    }
-    std::vector<duckdb::Identifier> databases;
-    GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .Scan(transaction, [&](duckdb::CatalogEntry& database) {
-        if (database.Cast<DatabaseCatalogEntry>().SettingsOf(role->oid)) {
-          databases.emplace_back(database.name);
-        }
-      });
-    for (const auto& database : databases) {
-      duckdb::AlterDatabaseSettingsInfo alter{database};
-      alter.role_id = role->oid;
-      alter.reset_all_config = true;
-      ApplyAlter(transaction, alter);
-    }
+  for (const auto& setting : settings) {
+    duckdb::AlterDatabaseSettingsInfo alter{setting.database};
+    alter.role_id = setting.role;
+    alter.reset_all_config = true;
+    ApplyAlter(transaction, alter);
   }
   duckdb::DuckCatalog::DropRole(transaction, info);
 }

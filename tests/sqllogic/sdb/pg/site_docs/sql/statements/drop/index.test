@@ -147,6 +147,33 @@ CREATE TABLE myschema.t1 (i INTEGER);
 statement ok
 DROP SCHEMA myschema CASCADE;
 
+# DOCS_TEST: example_016
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+CREATE TABLE orders (id INTEGER, amount DOUBLE);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW large_orders AS SELECT * FROM orders WHERE amount > 100;
+
+statement ok
+CREATE VIEW large_order_ids AS SELECT id FROM large_orders;
+
+statement error
+DROP VIEW large_orders;
+----
+db error: ERROR: Cannot drop entry "large_orders" because there are entries that depend on it.
+view "large_order_ids" depends on view "large_orders".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW large_orders, large_order_ids;
+
 # DOCS_TEST: example_013
 
 # DOCS_TEST_BODY

@@ -1,5 +1,5 @@
 statement ok
-DROP ROLE IF EXISTS mgt_made2, mgt_made, mgt_x, mgt_m, mgt_a2, mgt_a1, mgt_r;
+DROP ROLE IF EXISTS mgt_y, mgt_a4, mgt_a3, mgt_g, mgt_made2, mgt_made, mgt_x, mgt_m, mgt_a2, mgt_a1, mgt_r;
 
 
 statement ok
@@ -300,6 +300,62 @@ INHERIT
 
 statement ok
 RESET createrole_self_grant;
+
+
+statement ok
+CREATE ROLE mgt_g;
+
+
+statement ok
+CREATE ROLE mgt_a3;
+
+
+statement ok
+CREATE ROLE mgt_a4;
+
+
+statement ok
+CREATE ROLE mgt_y;
+
+
+statement ok
+GRANT mgt_g TO mgt_a3 WITH ADMIN OPTION;
+
+
+statement ok
+GRANT mgt_r TO mgt_a4 WITH ADMIN OPTION;
+
+
+statement ok
+SET ROLE mgt_a3;
+
+
+statement ok
+GRANT mgt_g TO mgt_x;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE mgt_a4;
+
+
+statement ok
+GRANT mgt_r TO mgt_y;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE mgt_a3, mgt_g;
+
+
+statement ok
+DROP ROLE mgt_a4, mgt_y;
 
 
 statement ok

@@ -1,0 +1,598 @@
+statement ok
+CREATE TABLE dropl_a (x INT);
+
+
+statement ok
+CREATE TABLE dropl_b (x INT);
+
+
+statement ok
+DROP TABLE dropl_a, dropl_b;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_a', 'dropl_b');
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dropl_c (x INT);
+
+
+skipif serenedb
+statement error
+DROP TABLE dropl_c, dropl_missing;
+----
+db error: ERROR: table "dropl_missing" does not exist
+
+
+onlyif serenedb
+statement error
+DROP TABLE dropl_c, dropl_missing;
+----
+db error: ERROR: Table with name dropl_missing does not exist!
+Did you mean "dropl_c"?
+
+
+query
+SELECT relname FROM pg_class WHERE relname = 'dropl_c';
+----
+relname
+dropl_c
+
+
+statement ok
+DROP TABLE IF EXISTS dropl_missing, dropl_c, dropl_missing2;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'dropl_c';
+----
+n
+0
+
+
+statement ok
+DROP TABLE IF EXISTS dropl_missing, dropl_missing2;
+
+
+statement ok
+CREATE TABLE dropl_dup (x INT);
+
+
+statement ok
+DROP TABLE dropl_dup, dropl_dup;
+
+
+statement ok
+CREATE TABLE dropl_k (x INT);
+
+
+statement ok
+CREATE VIEW dropl_kv AS SELECT 1 AS x;
+
+
+statement error
+DROP TABLE dropl_k, dropl_kv;
+----
+db error: ERROR: "dropl_kv" is not a table
+HINT: Use DROP VIEW to remove a view.
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('dropl_k', 'dropl_kv') ORDER BY relname;
+----
+relname
+dropl_k
+dropl_kv
+
+
+statement ok
+DROP TABLE dropl_k;
+
+
+statement ok
+DROP VIEW dropl_kv;
+
+
+statement ok
+CREATE TABLE dropl_t (x INT);
+
+
+statement ok
+CREATE VIEW dropl_v1 AS SELECT x FROM dropl_t;
+
+
+statement ok
+CREATE VIEW dropl_v2 AS SELECT x FROM dropl_v1;
+
+
+statement ok
+DROP VIEW dropl_v1, dropl_v2;
+
+
+statement ok
+CREATE VIEW dropl_v1 AS SELECT x FROM dropl_t;
+
+
+statement ok
+CREATE VIEW dropl_v2 AS SELECT x FROM dropl_v1;
+
+
+statement ok
+DROP VIEW dropl_v2, dropl_v1;
+
+
+statement ok
+CREATE VIEW dropl_v1 AS SELECT x FROM dropl_t;
+
+
+statement ok
+CREATE VIEW dropl_v2 AS SELECT x FROM dropl_v1;
+
+
+statement ok
+CREATE VIEW dropl_v3 AS SELECT x FROM dropl_v2;
+
+
+skipif serenedb
+statement error
+DROP VIEW dropl_v1, dropl_v2;
+----
+db error: ERROR: cannot drop desired object(s) because other objects depend on them
+DETAIL: view dropl_v3 depends on view dropl_v2
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+onlyif serenedb
+statement error
+DROP VIEW dropl_v1, dropl_v2;
+----
+db error: ERROR: Cannot drop entry "dropl_v2" because there are entries that depend on it.
+view "dropl_v3" depends on view "dropl_v2".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('dropl_v1', 'dropl_v2', 'dropl_v3') ORDER BY relname;
+----
+relname
+dropl_v1
+dropl_v2
+dropl_v3
+
+
+statement ok
+DROP VIEW dropl_v1, dropl_v2 CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_v1', 'dropl_v2', 'dropl_v3');
+----
+n
+0
+
+
+statement ok
+CREATE VIEW dropl_tv AS SELECT x FROM dropl_t;
+
+
+statement ok
+CREATE TABLE dropl_t2 (x INT);
+
+
+skipif serenedb
+statement error
+DROP TABLE dropl_t2, dropl_t;
+----
+db error: ERROR: cannot drop desired object(s) because other objects depend on them
+DETAIL: view dropl_tv depends on table dropl_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+onlyif serenedb
+statement error
+DROP TABLE dropl_t2, dropl_t;
+----
+db error: ERROR: Cannot drop entry "dropl_t" because there are entries that depend on it.
+view "dropl_tv" depends on table "dropl_t".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('dropl_t', 'dropl_t2', 'dropl_tv') ORDER BY relname;
+----
+relname
+dropl_t
+dropl_t2
+dropl_tv
+
+
+statement ok
+DROP TABLE dropl_t2, dropl_t CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_t', 'dropl_t2', 'dropl_tv');
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dropl_p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk (pid INT REFERENCES dropl_p (id));
+
+
+statement ok
+DROP TABLE dropl_p, dropl_fk;
+
+
+statement ok
+CREATE TABLE dropl_p (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk (pid INT REFERENCES dropl_p (id));
+
+
+statement ok
+DROP TABLE dropl_fk, dropl_p;
+
+
+statement ok
+CREATE TABLE dropl_r1 (x INT);
+
+
+statement ok
+CREATE TABLE dropl_r2 (x INT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE dropl_r1, dropl_r2;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('dropl_r1', 'dropl_r2') ORDER BY relname;
+----
+relname
+dropl_r1
+dropl_r2
+
+
+statement ok
+DROP TABLE dropl_r1, dropl_r2;
+
+
+statement ok
+CREATE SEQUENCE dropl_s1;
+
+
+statement ok
+CREATE SEQUENCE dropl_s2;
+
+
+statement ok
+DROP SEQUENCE dropl_s1, dropl_s2;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_s1', 'dropl_s2');
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dropl_it (x INT, y INT);
+
+
+statement ok
+CREATE INDEX dropl_i1 ON dropl_it (x);
+
+
+statement ok
+CREATE INDEX dropl_i2 ON dropl_it (y);
+
+
+statement ok
+DROP INDEX dropl_i1, dropl_i2;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_i1', 'dropl_i2');
+----
+n
+0
+
+
+statement ok
+DROP TABLE dropl_it;
+
+
+statement ok
+CREATE TYPE dropl_e AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE dropl_comp AS (v dropl_e);
+
+
+statement ok
+DROP TYPE dropl_e, dropl_comp;
+
+
+query
+SELECT count(*) AS n FROM pg_type WHERE typname IN ('dropl_e', 'dropl_comp');
+----
+n
+0
+
+
+statement ok
+CREATE FUNCTION dropl_callee(x INT) RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT x + 1; END;
+
+
+statement ok
+CREATE FUNCTION dropl_caller(x INT) RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT dropl_callee(x); END;
+
+
+statement ok
+DROP FUNCTION dropl_callee(INT), dropl_caller(INT);
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname IN ('dropl_callee', 'dropl_caller');
+----
+n
+0
+
+
+statement ok
+CREATE FUNCTION dropl_o(x INT) RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT x; END;
+
+
+statement ok
+CREATE FUNCTION dropl_o(x TEXT) RETURNS TEXT LANGUAGE SQL BEGIN ATOMIC SELECT x; END;
+
+
+statement ok
+CREATE FUNCTION dropl_o(x BIGINT) RETURNS BIGINT LANGUAGE SQL BEGIN ATOMIC SELECT x; END;
+
+
+statement ok
+DROP FUNCTION dropl_o(INT), dropl_o(TEXT);
+
+
+query
+SELECT dropl_o(5::BIGINT) AS v;
+----
+v
+5
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'dropl_o';
+----
+n
+1
+
+
+statement ok
+DROP FUNCTION dropl_o(BIGINT);
+
+
+statement ok
+CREATE SCHEMA dropl_sa;
+
+
+statement ok
+CREATE SCHEMA dropl_sb;
+
+
+statement ok
+DROP SCHEMA dropl_sa, dropl_sb;
+
+
+statement ok
+CREATE SCHEMA dropl_sc;
+
+
+statement ok
+CREATE SCHEMA dropl_sd;
+
+
+statement ok
+CREATE TABLE dropl_sc.t (x INT);
+
+
+skipif serenedb
+statement error
+DROP SCHEMA dropl_sd, dropl_sc;
+----
+db error: ERROR: cannot drop desired object(s) because other objects depend on them
+DETAIL: table dropl_sc.t depends on schema dropl_sc
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+onlyif serenedb
+statement error
+DROP SCHEMA dropl_sd, dropl_sc;
+----
+db error: ERROR: Cannot drop entry "dropl_sc" because there are entries that depend on it.
+table "t" depends on schema "dropl_sc".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname IN ('dropl_sc', 'dropl_sd') ORDER BY nspname;
+----
+nspname
+dropl_sc
+dropl_sd
+
+
+statement ok
+CREATE VIEW dropl_sd.v AS SELECT x FROM dropl_sc.t;
+
+
+statement ok
+DROP SCHEMA dropl_sc, dropl_sd CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname IN ('dropl_sa', 'dropl_sb', 'dropl_sc', 'dropl_sd');
+----
+n
+0
+
+
+statement ok
+CREATE ROLE dropl_ra;
+
+
+statement ok
+CREATE ROLE dropl_rb;
+
+
+statement ok
+GRANT dropl_ra TO dropl_rb;
+
+
+statement ok
+DROP ROLE dropl_ra, dropl_rb;
+
+
+skipif serenedb
+statement error
+DROP ROLE dropl_ra;
+----
+db error: ERROR: role "dropl_ra" does not exist
+
+
+onlyif serenedb
+statement error
+DROP ROLE dropl_ra;
+----
+db error: ERROR: Role with name dropl_ra does not exist!
+
+
+statement ok
+DROP ROLE IF EXISTS dropl_ra, dropl_rb;
+
+
+statement ok
+CREATE ROLE dropl_u1;
+
+
+statement ok
+CREATE ROLE dropl_u2;
+
+
+statement ok
+CREATE VIEW dropl_va AS SELECT 1 AS x;
+
+
+statement ok
+ALTER VIEW dropl_va OWNER TO dropl_u1;
+
+
+statement ok
+CREATE VIEW dropl_vb AS SELECT x FROM dropl_va;
+
+
+statement ok
+ALTER VIEW dropl_vb OWNER TO dropl_u2;
+
+
+statement ok
+SET ROLE dropl_u1;
+
+
+statement error
+DROP VIEW dropl_va, dropl_vb CASCADE;
+----
+db error: ERROR: must be owner of view dropl_vb
+
+
+statement ok
+DROP VIEW dropl_va CASCADE;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('dropl_va', 'dropl_vb');
+----
+n
+0
+
+
+statement ok
+DROP ROLE dropl_u1, dropl_u2;
+
+
+statement ok
+CREATE ROLE dropl_fkowner;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO dropl_fkowner;
+
+
+statement ok
+SET ROLE dropl_fkowner;
+
+
+statement ok
+CREATE TABLE dropl_fk0 (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk1 (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk2 (pid INT REFERENCES dropl_fk1 (id), id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk3 (pid INT REFERENCES dropl_fk2 (id), id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE dropl_fk4 (pid INT REFERENCES dropl_fk3 (id));
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP OWNED BY dropl_fkowner;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'dropl\_fk%';
+----
+n
+0
+
+
+statement ok
+DROP ROLE dropl_fkowner;

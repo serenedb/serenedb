@@ -35,23 +35,43 @@
 
 namespace irs {
 
+struct MergedPostingsInput {
+  TermPostings::ptr it;
+  const DocRemap* remap;
+  size_t source;
+};
+
+template<typename Inputs>
+void RefillPostings(std::vector<MergedPostingsInput>& itrs, Inputs& inputs,
+                    std::span<const size_t> group, IndexFeatures features) {
+  const auto* const empty = TermPostings::empty().get();
+  for (auto& entry : itrs) {
+    if (entry.it.get() != empty) {
+      inputs[entry.source].postings = std::move(entry.it);
+    }
+  }
+  itrs.clear();
+  itrs.reserve(group.size());
+  for (const auto i : group) {
+    auto& input = inputs[i];
+    SDB_ASSERT(input.it);
+    auto it = input.it->ReusePostings(features, std::move(input.postings));
+    SDB_ASSERT(it);
+    itrs.emplace_back(std::move(it), input.remap, i);
+  }
+}
+
 class CompoundPostings : public TermPostings {
  public:
-  struct PostingsT {
-    TermPostings::ptr it;
-    const DocRemap* remap;
-    size_t source;
-  };
-  using IteratorsT = std::vector<PostingsT>;
-
   static constexpr auto kProgressStepDocs = size_t{1} << size_t{14};
 
   explicit CompoundPostings(const MergeProgress& progress) noexcept
     : _progress(progress, kProgressStepDocs) {}
 
-  template<typename Func>
-  void Reset(Func&& func, IndexFeatures features) {
-    func(_iterators);
+  template<typename Inputs>
+  void Reset(Inputs& inputs, std::span<const size_t> group,
+             IndexFeatures features) {
+    RefillPostings(_iterators, inputs, group, features);
     _current_itr = 0;
     _at = 0;
     _size = 0;
@@ -75,7 +95,7 @@ class CompoundPostings : public TermPostings {
   uint32_t NextLive(TermPostings& it, const DocRemap& remap, doc_id_t* docs,
                     uint32_t* freqs);
 
-  std::vector<PostingsT> _iterators;
+  std::vector<MergedPostingsInput> _iterators;
   size_t _current_itr{0};
   ProgressTracker _progress;
   doc_id_t _docs[doc_limits::kBlockSize];
@@ -88,17 +108,15 @@ class CompoundPostings : public TermPostings {
 
 class SortedPostings : public TermPostings {
  public:
-  using PostingsT = CompoundPostings::PostingsT;
-  using IteratorsT = CompoundPostings::IteratorsT;
-
   static constexpr auto kProgressStepDocs = CompoundPostings::kProgressStepDocs;
 
   explicit SortedPostings(const MergeProgress& progress) noexcept
     : _progress(progress, kProgressStepDocs) {}
 
-  template<typename Func>
-  void Reset(Func&& func, IndexFeatures features) {
-    func(_iterators);
+  template<typename Inputs>
+  void Reset(Inputs& inputs, std::span<const size_t> group,
+             IndexFeatures features) {
+    RefillPostings(_iterators, inputs, group, features);
     _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
     _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
     _cursors.resize(_iterators.size());
@@ -147,7 +165,7 @@ class SortedPostings : public TermPostings {
   void Settle(size_t i);
   void SiftDown(size_t pos) noexcept;
 
-  std::vector<PostingsT> _iterators;
+  std::vector<MergedPostingsInput> _iterators;
   std::vector<Cursor> _cursors;
   std::vector<uint32_t> _heap;
   ProgressTracker _progress;
@@ -161,25 +179,5 @@ class SortedPostings : public TermPostings {
   bool _has_freq = false;
   bool _has_pos = false;
 };
-
-template<typename Inputs>
-void RefillPostings(CompoundPostings::IteratorsT& itrs, Inputs& inputs,
-                    std::span<const size_t> group, IndexFeatures features) {
-  const auto* const empty = TermPostings::empty().get();
-  for (auto& entry : itrs) {
-    if (entry.it.get() != empty) {
-      inputs[entry.source].postings = std::move(entry.it);
-    }
-  }
-  itrs.clear();
-  itrs.reserve(group.size());
-  for (const auto i : group) {
-    auto& input = inputs[i];
-    SDB_ASSERT(input.it);
-    auto it = input.it->ReusePostings(features, std::move(input.postings));
-    SDB_ASSERT(it);
-    itrs.emplace_back(std::move(it), input.remap, i);
-  }
-}
 
 }  // namespace irs

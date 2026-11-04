@@ -218,13 +218,10 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
     }
   }
   uint64_t rows = 0;
-  _live.resize(_doc_map.size());
   _isolated.assign(_doc_map.size(), kNotIsolated);
-  for (size_t i = 0; i != _doc_map.size(); ++i) {
-    auto& input = _doc_map[i];
+  for (auto& input : _doc_map) {
     const auto& reader = *input.reader;
-    _live[i] = reader.live_docs_count();
-    rows += _live[i];
+    rows += reader.live_docs_count();
     input.remap.id_map.resize(reader.docs_count() + doc_limits::min(),
                               doc_limits::eof());
   }
@@ -328,7 +325,7 @@ void KeyOrder::Finish() {
   }
   for (size_t i = 0; i != spans.size(); ++i) {
     if (spans[i].first <= spans[i].last &&
-        spans[i].last - spans[i].first + 1 == _live[i]) {
+        spans[i].last - spans[i].first + 1 == Reader(i).live_docs_count()) {
       _isolated[i] = spans[i].first;
     }
   }

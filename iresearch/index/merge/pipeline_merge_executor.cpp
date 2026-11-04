@@ -42,7 +42,6 @@
 
 #include "iresearch/index/merge/merge_schedule.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {
@@ -171,7 +170,7 @@ bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
                    MergeProfile* profile) {
   SDB_ASSERT(options.db);
   bool merged = false;
-  Finally invalidate = [&merged, &segment]() noexcept {
+  absl::Cleanup invalidate = [&merged, &segment]() noexcept {
     if (!merged) [[unlikely]] {
       segment.files.clear();
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};

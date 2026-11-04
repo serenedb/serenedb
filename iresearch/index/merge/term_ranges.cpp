@@ -54,11 +54,6 @@ std::vector<duckdb::shared_ptr<TermKeys>> KeysOf(
   return keys;
 }
 
-duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> SourcesOf(
-  std::span<const duckdb::shared_ptr<TermKeys>> keys) {
-  return {keys.begin(), keys.end()};
-}
-
 uint32_t KeyWidth(std::span<const TermRangeMerge::Input> inputs) noexcept {
   if (inputs.empty()) {
     return 0;
@@ -151,7 +146,6 @@ class RangeWriter {
     input.it = _sources[i].terms->iterator();
     input.remap = _sources[i].remap;
     _keys[i]->SeekBefore(*input.it, row);
-    input.next = row;
   }
 
   bytes_view Advance(size_t i) {
@@ -198,11 +192,7 @@ class RangeWriter {
     if (_postings.Aborted()) {
       return;
     }
-    _postings.Reset(
-      [this](typename Postings::IteratorsT& itrs) {
-        RefillPostings(itrs, _inputs, _mask, _props.index_features);
-      },
-      _props.index_features);
+    _postings.Reset(_inputs, _mask, _props.index_features);
     PostingMeta meta;
     _writer.Write(_postings, meta, _ranges ? _ranges->Tee() : DocTee{});
     if (meta.docs_count != 0) {
@@ -261,31 +251,51 @@ struct TermRangeMerge::Part {
   std::unique_ptr<MemoryDirectory> dir;
   bstring terms;
   term_dict::RangeWriter ranges;
-  uint64_t count = 0;
-  uint64_t total_doc_freq = 0;
-  uint64_t total_term_freq = 0;
-  uint64_t inline_bytes = 0;
-  PostingBases bases;
+  TermPart out;
   bool done = false;
 };
 
-TermRangeMerge::TermRangeMerge(field_id field, DictMember member,
-                               FieldProperties props, std::vector<Input> inputs,
-                               bool sorted, const MergeProgress& progress)
-  : _field{field},
-    _member{member},
+TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
+                               std::vector<Input> inputs, bool sorted,
+                               const MergeProgress& progress, size_t parts,
+                               const Target& target,
+                               duckdb::TaskScheduler& scheduler, size_t threads)
+  : _key{key},
     _props{props},
     _inputs{std::move(inputs)},
     _keys{KeysOf(_inputs)},
-    _merge{SourcesOf(_keys)},
+    _merge{duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>>(
+      _keys.begin(), _keys.end())},
+    _target{target},
     _progress{&progress},
-    _sorted{sorted} {
+    _sorted{sorted},
+    _docs(bitset::bits_to_words(target.doc_count + doc_limits::min())) {
   const auto width = KeyWidth(_inputs);
   _ranged = IsSubsetOf(IndexFeatures::Ranges, _props.index_features) &&
             width != 0 && width <= term_dict::kMaxStride;
+  _merge.Partition(parts, true, &scheduler, threads);
+  for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
+    for (size_t i = 0; i != _keys.size(); ++i) {
+      if (const auto row = _merge.PartitionBegin(p, i);
+          row != 0 && row < _keys[i]->Count()) {
+        _keys[i]->AddAnchor(row - 1);
+      }
+    }
+  }
+  for (size_t p = 0; p != _merge.PartitionCount(); ++p) {
+    _parts.emplace_back(std::make_unique<Part>());
+  }
 }
 
 TermRangeMerge::~TermRangeMerge() = default;
+
+TermRangeMerge* FindTermRange(
+  std::span<const std::unique_ptr<TermRangeMerge>> ranges,
+  DictKey key) noexcept {
+  const auto it = absl::c_find_if(
+    ranges, [&](const auto& range) { return range->Key() == key; });
+  return it == ranges.end() ? nullptr : it->get();
+}
 
 uint64_t TermVolume(const TermReader& terms) noexcept {
   return std::max(terms.total_term_freq(), uint64_t{terms.docs_count()});
@@ -296,27 +306,6 @@ uint64_t TermRangeMerge::Volume() const {
                             [](uint64_t volume, const Input& input) {
                               return volume + TermVolume(*input.terms);
                             });
-}
-
-void TermRangeMerge::Partition(size_t parts, const Target& target,
-                               duckdb::TaskScheduler& scheduler,
-                               size_t threads) {
-  _target = target;
-  _merge.Partition(parts, true, &scheduler, threads);
-  for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
-    for (size_t i = 0; i != _keys.size(); ++i) {
-      if (const auto row = _merge.PartitionBegin(p, i);
-          row != 0 && row < _keys[i]->Count()) {
-        _keys[i]->AddAnchor(row - 1);
-      }
-    }
-  }
-  _parts.clear();
-  for (size_t p = 0; p != _merge.PartitionCount(); ++p) {
-    _parts.emplace_back(std::make_unique<Part>());
-  }
-  _appended = 0;
-  _docs.assign(bitset::bits_to_words(target.doc_count + doc_limits::min()), 0);
 }
 
 bool TermRangeMerge::MergePart(size_t part) {
@@ -340,7 +329,7 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
   const auto state = _merge.BeginMerge(index);
   duckdb::vector<duckdb::PresortedRun> runs;
   while (!state->Done()) {
-    if (!NextTermRuns(_merge, *state, runs, *_progress, _field) ||
+    if (!NextTermRuns(_merge, *state, runs, *_progress, _key.id) ||
         !writer.Consume(runs)) {
       return false;
     }
@@ -349,10 +338,10 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
     return false;
   }
   auto& terms = writer.Terms();
-  part.count = terms.Count();
-  part.total_doc_freq = terms.TotalDocFreq();
-  part.total_term_freq = terms.TotalTermFreq();
-  part.inline_bytes = terms.InlineBytes();
+  part.out.term_count = terms.Count();
+  part.out.total_doc_freq = terms.TotalDocFreq();
+  part.out.total_term_freq = terms.TotalTermFreq();
+  part.out.inline_bytes = terms.InlineBytes();
   part.terms = std::move(terms).TakeTerms();
   part.terms.shrink_to_fit();
   const auto& docs = writer.Docs();
@@ -364,7 +353,7 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
   part.done = true;
   for (; _appended != _parts.size() && _parts[_appended]->done; ++_appended) {
     auto& next = *_parts[_appended];
-    if (next.count != 0) {
+    if (next.out.term_count != 0) {
       const auto open = [&](std::string_view ext) -> IndexInput::ptr {
         const auto name = FileName(kPartName, ext);
         bool exists = false;
@@ -376,8 +365,8 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
       const auto doc = open(PostingsWriter::kDocExt);
       const auto pos = open(PostingsWriter::kPosExt);
       const auto pay = open(PostingsWriter::kPayExt);
-      next.bases = AppendPostings(_target.sink->Outputs(), doc.get(), pos.get(),
-                                  pay.get());
+      next.out.bases = AppendPostings(_target.sink->Outputs(), doc.get(),
+                                      pos.get(), pay.get());
     }
     next.dir.reset();
   }
@@ -392,15 +381,9 @@ std::vector<TermPart> TermRangeMerge::Parts() const {
   std::vector<TermPart> parts;
   parts.reserve(_parts.size());
   for (const auto& part : _parts) {
-    parts.push_back({
-      .bases = part->bases,
-      .terms = part->terms,
-      .ranges = _ranged ? &part->ranges : nullptr,
-      .term_count = part->count,
-      .total_doc_freq = part->total_doc_freq,
-      .total_term_freq = part->total_term_freq,
-      .inline_bytes = part->inline_bytes,
-    });
+    auto& out = parts.emplace_back(part->out);
+    out.terms = part->terms;
+    out.ranges = _ranged ? &part->ranges : nullptr;
   }
   return parts;
 }

@@ -43,6 +43,10 @@ class TermRangeMerge;
 
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
+inline bool IsIndexField(const IndexFieldOptions* field_options, field_id id) {
+  return !field_options || field_options->GetFieldKind(id) == FieldKind::Index;
+}
+
 FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
                                       const MergedNormIdMap& merged_norm_ids);
 

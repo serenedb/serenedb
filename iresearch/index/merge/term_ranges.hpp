@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,13 @@ namespace irs {
 
 struct NormProvider;
 struct TermReader;
+
+struct DictKey {
+  field_id id;
+  DictMember member;
+
+  auto operator<=>(const DictKey&) const = default;
+};
 
 uint64_t TermVolume(const TermReader& terms) noexcept;
 
@@ -85,21 +93,18 @@ class TermRangeMerge {
     TermRangeSink* sink;
   };
 
-  TermRangeMerge(field_id field, DictMember member, FieldProperties props,
-                 std::vector<Input> inputs, bool sorted,
-                 const MergeProgress& progress);
+  TermRangeMerge(DictKey key, FieldProperties props, std::vector<Input> inputs,
+                 bool sorted, const MergeProgress& progress, size_t parts,
+                 const Target& target, duckdb::TaskScheduler& scheduler,
+                 size_t threads);
   ~TermRangeMerge();
 
   TermRangeMerge(const TermRangeMerge&) = delete;
   TermRangeMerge& operator=(const TermRangeMerge&) = delete;
 
-  field_id Field() const noexcept { return _field; }
-  DictMember Member() const noexcept { return _member; }
+  DictKey Key() const noexcept { return _key; }
 
   uint64_t Volume() const;
-
-  void Partition(size_t parts, const Target& target,
-                 duckdb::TaskScheduler& scheduler, size_t threads);
 
   size_t PartCount() const noexcept { return _parts.size(); }
 
@@ -119,19 +124,22 @@ class TermRangeMerge {
   template<typename Postings>
   bool WritePart(Part& part, size_t index);
 
-  field_id _field;
-  DictMember _member;
+  DictKey _key;
   FieldProperties _props;
   std::vector<Input> _inputs;
   std::vector<duckdb::shared_ptr<TermKeys>> _keys;
   duckdb::PresortedMerge _merge;
   std::vector<std::unique_ptr<Part>> _parts;
-  Target _target{};
+  Target _target;
   const MergeProgress* _progress;
   bool _sorted;
   bool _ranged;
   size_t _appended = 0;
   std::vector<uint64_t> _docs;
 };
+
+TermRangeMerge* FindTermRange(
+  std::span<const std::unique_ptr<TermRangeMerge>> ranges,
+  DictKey key) noexcept;
 
 }  // namespace irs

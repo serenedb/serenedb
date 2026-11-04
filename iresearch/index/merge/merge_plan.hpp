@@ -95,7 +95,7 @@ struct MergedMember {
 };
 
 struct MergedField {
-  std::optional<DictLayout> layout;
+  DictLayout layout = DictLayout::String;
   std::array<MergedMember, kDictMembers> members;
 };
 
@@ -156,9 +156,9 @@ class MergePlan {
 
   uint64_t AddColumns();
 
-  void PlanUnits();
+  void PlanUnits(std::span<const field_id> norm_fields, uint64_t term_volume);
 
-  void PlanTermRanges();
+  uint64_t PlanTermRanges();
 
   bool MergeColumn(const MergeUnit& unit);
 
@@ -194,7 +194,6 @@ class MergePlan {
   std::unique_ptr<ColumnMerger> _columns;
   containers::FlatHashMap<field_id, std::vector<ColumnRange>> _ranges;
   MergedNormIdMap _merged_norm_ids;
-  std::vector<field_id> _norm_fields;
   std::vector<MergeUnit> _units;
   bool _ivf = false;
   std::unique_ptr<IdxWriter> _idx;
@@ -206,7 +205,6 @@ class MergePlan {
   std::vector<const BasicTermReader*> _cluster_readers;
   std::unique_ptr<TermRangeSink> _term_sink;
   std::vector<std::unique_ptr<TermRangeMerge>> _term_ranges;
-  uint64_t _term_volume = 0;
 };
 
 }  // namespace irs

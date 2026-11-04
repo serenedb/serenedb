@@ -96,7 +96,6 @@ class KeyOrder {
   const SortSpec& _spec;
   duckdb::ObjectCache* _cache;
   std::vector<KeyColumn> _keys;
-  std::vector<uint64_t> _live;
   std::vector<uint64_t> _isolated;
   std::optional<MergeOrder> _order;
   std::vector<Part> _parts;

@@ -39,13 +39,22 @@ namespace {
 
 using Input = InputNormProvider::Input;
 
-constexpr uint64_t kNormAheadBytes = 16 * 1024;
+IRS_FORCE_INLINE const NormRegion& CachedRegion(const NormRegion*& cached,
+                                                const NormColumnReader& column,
+                                                doc_id_t doc) noexcept {
+  if (!cached || doc < cached->first_doc || doc >= cached->end_doc) {
+    cached = &column.Locate(doc);
+  }
+  return *cached;
+}
 
-uint32_t ReadOne(const NormRegion& region, doc_id_t doc) {
-  const auto value = region.Slot(doc);
-  return region.exceptions && value >= region.first_code
-           ? region.Exception(doc, value)
-           : value;
+void InvertIdMap(std::span<const doc_id_t> id_map, doc_id_t first,
+                 doc_id_t* out) {
+  for (doc_id_t doc = doc_limits::min(); doc < id_map.size(); ++doc) {
+    if (const auto to = id_map[doc]; !doc_limits::eof(to)) {
+      out[to - first] = doc;
+    }
+  }
 }
 
 class OrderedInputNormReader : public NormReader {
@@ -82,11 +91,7 @@ class OrderedInputNormReader : public NormReader {
       return 0;
     }
     const auto source = _sources[row];
-    const auto*& region = _regions[input];
-    if (!region || source < region->first_doc || source >= region->end_doc) {
-      region = &column->Locate(source);
-    }
-    return ReadOne(*region, source);
+    return ReadNorm(CachedRegion(_regions[input], *column, source), source);
   }
 
   score_t GetAvg() const noexcept final { return _avg; }
@@ -119,9 +124,7 @@ class InputNormReader : public NormReader {
       if (input.first == input.end) {
         continue;
       }
-      NormRegion whole;
-      whole.first_doc = input.first;
-      whole.end_doc = input.end;
+      const NormRegion whole{.first_doc = input.first, .end_doc = input.end};
       if (!_columns[i]) {
         _pieces.emplace_back(whole);
         continue;
@@ -158,11 +161,13 @@ class InputNormReader : public NormReader {
   uint32_t Get(doc_id_t doc) final {
     const auto& piece = _pieces[Find(doc)];
     if (piece.input == kDirect) {
-      return ReadOne(piece.region, doc);
+      return ReadNorm(piece.region, doc);
     }
     const auto& input = _inputs[piece.input];
     const auto source = input.docs[doc - input.first];
-    return ReadOne(RegionOf(piece.input, source), source);
+    const auto& region =
+      CachedRegion(_regions[piece.input], *_columns[piece.input], source);
+    return ReadNorm(region, source);
   }
 
   score_t GetAvg() const noexcept final { return _avg; }
@@ -203,12 +208,11 @@ class InputNormReader : public NormReader {
   template<bool Prefetch>
   static void Read(const NormRegion& region, std::span<const doc_id_t> docs,
                    uint32_t* values) {
-    ReadNormSlots(region, docs.data(), values, docs.size());
-    if (region.exceptions) {
-      PatchNormSlots(region, docs.data(), values, docs.size());
-    }
+    ReadNorms(region, docs.data(), values, docs.size());
     if constexpr (Prefetch) {
-      PrefetchAfter(region, docs);
+      const uint64_t bytes = region.bits / 8;
+      PrefetchNorms(region.base + uint64_t{docs.front()} * bytes,
+                    region.base + uint64_t{docs.back()} * bytes);
     }
   }
 
@@ -224,25 +228,11 @@ class InputNormReader : public NormReader {
     }
     const std::span<const doc_id_t> sources{_docs.data(), docs.size()};
     for (size_t at = 0; at != sources.size();) {
-      const auto& region = RegionOf(i, sources[at]);
+      const auto& region = CachedRegion(_regions[i], *_columns[i], sources[at]);
       const auto run = sources.subspan(at);
       const auto n = RunLength(run, region.end_doc);
       Read<Prefetch>(region, run.first(n), values + at);
       at += n;
-    }
-  }
-
-  static void PrefetchAfter(const NormRegion& region,
-                            std::span<const doc_id_t> docs) noexcept {
-    const uint64_t bytes = region.bits / 8;
-    const auto span = uint64_t{docs.back() - docs.front()} * bytes;
-    if (bytes == 0 || span > kNormAheadBytes) {
-      return;
-    }
-    const auto* last = region.base + uint64_t{docs.back()} * bytes;
-    for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
-         offset += ABSL_CACHELINE_SIZE) {
-      __builtin_prefetch(last + offset);
     }
   }
 
@@ -257,15 +247,6 @@ class InputNormReader : public NormReader {
       ++n;
     }
     return n;
-  }
-
-  const NormRegion& RegionOf(size_t i, doc_id_t source) noexcept {
-    const auto* region = _regions[i];
-    if (!region || source < region->first_doc || source >= region->end_doc) {
-      region = &_columns[i]->Locate(source);
-      _regions[i] = region;
-    }
-    return *region;
   }
 
   size_t Find(doc_id_t doc) noexcept {
@@ -333,12 +314,8 @@ void InputNormProvider::MapDocs() const {
   if (_order) {
     _sources.resize(_order->Rows());
     for (const auto& input : _inputs) {
-      const auto& id_map = input.source->remap->id_map;
-      for (doc_id_t doc = doc_limits::min(); doc < id_map.size(); ++doc) {
-        if (const auto out = id_map[doc]; !doc_limits::eof(out)) {
-          _sources[out - doc_limits::min()] = doc;
-        }
-      }
+      InvertIdMap(input.source->remap->id_map, doc_limits::min(),
+                  _sources.data());
     }
     return;
   }
@@ -348,11 +325,7 @@ void InputNormProvider::MapDocs() const {
       continue;
     }
     input.docs.resize(input.end - input.first);
-    for (doc_id_t doc = doc_limits::min(); doc < id_map.size(); ++doc) {
-      if (const auto out = id_map[doc]; !doc_limits::eof(out)) {
-        input.docs[out - input.first] = doc;
-      }
-    }
+    InvertIdMap(id_map, input.first, input.docs.data());
   }
 }
 

@@ -84,7 +84,7 @@ std::vector<NormPiece> NormPieces(field_id id,
 void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
                     std::vector<uint32_t>& values) {
   const auto& planned = piece.planned;
-  if (piece.reader == nullptr) {
+  if (!piece.reader) {
     writer.WriteRepeated(planned.rows, 0);
     return;
   }
@@ -173,24 +173,22 @@ void MergeOrderedNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
   const auto rows = order.Inputs();
   if (planned.min == planned.max) {
     writer.WriteRepeated(rows.size(), planned.min);
-    writer.CloseRegion();
-    writer.Finalize();
-    return;
-  }
-  std::vector<OrderedNormInput> inputs;
-  inputs.reserve(sources.size());
-  for (const auto& src : sources) {
-    inputs.emplace_back(src, SourceNormColumn(src, id));
-  }
-  std::vector<uint32_t> values;
-  for (size_t row = 0; row != rows.size();) {
-    const auto n = std::min(rows.size() - row, kNormMergeChunk);
-    values.resize(n);
-    for (size_t k = 0; k != n; ++k) {
-      values[k] = inputs[rows[row + k]].Next();
+  } else {
+    std::vector<OrderedNormInput> inputs;
+    inputs.reserve(sources.size());
+    for (const auto& src : sources) {
+      inputs.emplace_back(src, SourceNormColumn(src, id));
     }
-    writer.Write(values);
-    row += n;
+    std::vector<uint32_t> values;
+    for (size_t row = 0; row != rows.size();) {
+      const auto n = std::min(rows.size() - row, kNormMergeChunk);
+      values.resize(n);
+      for (size_t k = 0; k != n; ++k) {
+        values[k] = inputs[rows[row + k]].Next();
+      }
+      writer.Write(values);
+      row += n;
+    }
   }
   writer.CloseRegion();
   writer.Finalize();

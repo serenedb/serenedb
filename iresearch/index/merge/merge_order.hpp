@@ -35,7 +35,6 @@ class MergeOrder {
  public:
   class InputIds {
    public:
-    InputIds() = default;
     InputIds(std::span<const uint8_t> narrow,
              std::span<const uint16_t> wide) noexcept
       : _narrow{narrow}, _wide{wide} {}

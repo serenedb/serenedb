@@ -45,7 +45,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   CompoundTermIterator(const CompoundTermIterator&) = delete;
   CompoundTermIterator& operator=(const CompoundTermIterator&) = delete;
 
-  static constexpr const size_t kProgressStepTerms = size_t{1} << 7;
+  static constexpr size_t kProgressStepTerms = size_t{1} << 7;
 
   explicit CompoundTermIterator(const MergeProgress& progress)
     : _doc_itr{progress},

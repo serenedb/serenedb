@@ -41,12 +41,9 @@ void CompoundTermIterator<Postings>::Add(const TermReader& reader,
 
 template<typename Postings>
 void CompoundTermIterator<Postings>::Start() {
-  duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
-  inputs.reserve(_keys.size());
-  for (const auto& keys : _keys) {
-    inputs.emplace_back(keys);
-  }
-  _merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(std::move(inputs));
+  _merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
+    duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>>(
+      _keys.begin(), _keys.end()));
   _merge->Partition(1);
   _merge_state = _merge->BeginMerge(0);
 }
@@ -144,12 +141,7 @@ bool CompoundTermIterator<Postings>::next() {
 template<typename Postings>
 TermPostings::ptr CompoundTermIterator<Postings>::postings(
   IndexFeatures /*features*/) const {
-  _doc_itr.Reset(
-    [this](typename Postings::IteratorsT& itrs) {
-      RefillPostings(itrs, _term_iterators, _term_iterator_mask,
-                     Meta().index_features);
-    },
-    Meta().index_features);
+  _doc_itr.Reset(_term_iterators, _term_iterator_mask, Meta().index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 

@@ -86,30 +86,32 @@ uint64_t Share(uint64_t total, uint64_t part, uint64_t whole) {
            : static_cast<uint64_t>(absl::uint128{total} * part / whole);
 }
 
+auto& Member(auto& field, DictMember member) noexcept {
+  return field.members[static_cast<size_t>(member)];
+}
+
 void ComputeFieldMeta(MergedFieldMap& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader,
                       const IndexFieldOptions* field_options) {
   for (auto id : reader.field_ids()) {
-    if (field_options && field_options->GetFieldKind(id) != FieldKind::Index) {
+    if (!IsIndexField(field_options, id)) {
       continue;
     }
     const auto fields = reader.fields(id);
     if (fields.empty()) {
       continue;
     }
-    auto& field = field_meta_map[id];
     const auto layout = fields.front()->meta().dict.layout;
-    if (!field.layout) {
-      field.layout = layout;
-    } else if (*field.layout != layout) {
+    auto& field = field_meta_map.try_emplace(id, MergedField{.layout = layout})
+                    .first->second;
+    if (field.layout != layout) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                       ERR_MSG("merge: field ", id,
                               " has different dictionary layouts in its "
                               "segments"));
     }
     for (const auto* term_reader : fields) {
-      auto& merged =
-        field.members[static_cast<size_t>(term_reader->meta().dict.member)];
+      auto& merged = Member(field, term_reader->meta().dict.member);
       const auto features = term_reader->meta().index_features;
       index_features |= features;
       merged.features = merged.present ? merged.features & features : features;
@@ -130,10 +132,6 @@ uint64_t KeyedDicts(const MergedFieldMap& field_meta_map) noexcept {
       field.members, [](const MergedMember& member) { return member.keyed; }));
   }
   return count;
-}
-
-const MergedMember& Strings(const MergedField& field) noexcept {
-  return field.members[static_cast<size_t>(DictMember::Strings)];
 }
 
 doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
@@ -297,7 +295,6 @@ uint64_t MergePlan::AddColumns() {
     after_norms.push_back(_units.size() - 1);
   }
   std::vector<std::vector<ColumnRange>> unsplit;
-  std::vector<uint64_t> costs;
   uint64_t bytes = 0;
   uint64_t total = 0;
   for (const auto id : _columns->Columns()) {
@@ -305,16 +302,13 @@ uint64_t MergePlan::AddColumns() {
     for (const auto& input : inputs) {
       bytes += input.bytes;
     }
-    total += costs.emplace_back(
-      absl::c_accumulate(unsplit.emplace_back(RangesOf(inputs)), uint64_t{0},
-                         [](uint64_t cost, const ColumnRange& range) {
-                           return cost + range.cost;
-                         }));
+    for (const auto& range : unsplit.emplace_back(RangesOf(inputs))) {
+      total += range.cost;
+    }
   }
   const uint64_t target =
     _threads > 1 ? total / (kRangesPerThread * _threads) : 0;
   for (size_t i = 0; const auto id : _columns->Columns()) {
-    const auto cost = costs[i];
     auto column_ranges = SplitStretches(id, std::move(unsplit[i++]), target);
     if (column_ranges.size() < 2 &&
         (column_ranges.empty() || column_ranges[0].input == kEncode)) {
@@ -322,7 +316,7 @@ uint64_t MergePlan::AddColumns() {
       AddUnit({
         .kind = MergeUnitKind::Column,
         .id = id,
-        .cost = cost,
+        .cost = column_ranges.empty() ? 0 : column_ranges[0].cost,
         .deps = after_norms,
       });
       continue;
@@ -353,8 +347,9 @@ uint64_t MergePlan::AddColumns() {
   return bytes;
 }
 
-void MergePlan::PlanUnits() {
-  for (const auto id : _norm_fields) {
+void MergePlan::PlanUnits(std::span<const field_id> norm_fields,
+                          uint64_t term_volume) {
+  for (const auto id : norm_fields) {
     std::vector<size_t> after;
     if (!_units.empty()) {
       after.push_back(_units.size() - 1);
@@ -399,13 +394,13 @@ void MergePlan::PlanUnits() {
   uint64_t ranged_bytes = 0;
   std::vector<size_t> parts;
   for (const auto& range : _term_ranges) {
-    const auto bytes = Share(postings_bytes, range->Volume(), _term_volume);
+    const auto bytes = Share(postings_bytes, range->Volume(), term_volume);
     ranged_bytes += bytes;
     for (uint32_t part = 0; part != range->PartCount(); ++part) {
       parts.push_back(AddUnit({
         .kind = MergeUnitKind::TermRange,
-        .id = range->Field(),
-        .member = range->Member(),
+        .id = range->Key().id,
+        .member = range->Key().member,
         .cost = bytes / range->PartCount(),
         .part = part,
       }));
@@ -425,36 +420,31 @@ void MergePlan::PlanUnits() {
   }
 }
 
-void MergePlan::PlanTermRanges() {
+uint64_t MergePlan::PlanTermRanges() {
   if (_threads < 2) {
-    return;
+    return 0;
   }
-  struct Ranged {
-    field_id id;
-    DictMember member;
-
-    auto operator<=>(const Ranged&) const = default;
-  };
-  std::vector<Ranged> ranged;
+  std::vector<DictKey> ranged;
   for (const auto& [id, field] : _field_meta_map) {
     for (const auto member : {DictMember::Strings, DictMember::Numbers}) {
-      const auto& merged = field.members[static_cast<size_t>(member)];
+      const auto& merged = Member(field, member);
       if (merged.present && !IsSubsetOf(IndexFeatures::Vec, merged.features)) {
         ranged.push_back({.id = id, .member = member});
       }
     }
   }
   absl::c_sort(ranged);
-  for (const auto& [id, member] : ranged) {
+  uint64_t volume = 0;
+  for (const auto key : ranged) {
     std::vector<TermRangeMerge::Input> inputs;
     uint64_t terms = 0;
     for (const auto& input : _doc_map) {
-      const auto* reader = MemberTerms(*input.reader, id, member);
+      const auto* reader = MemberTerms(*input.reader, key.id, key.member);
       if (!reader) {
         continue;
       }
       terms += reader->size();
-      _term_volume += TermVolume(*reader);
+      volume += TermVolume(*reader);
       inputs.push_back({.terms = reader, .remap = &input.remap});
     }
     const auto parts =
@@ -466,21 +456,21 @@ void MergePlan::PlanTermRanges() {
       _term_sink = std::make_unique<TermRangeSink>(_idx_dir, _segment.name,
                                                    _index_features);
     }
-    auto& range = _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
-      id, member,
+    _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
+      key,
       MergedFieldProperties(
-        id, _field_meta_map[id].members[static_cast<size_t>(member)].features,
+        key.id, Member(_field_meta_map[key.id], key.member).features,
         _merged_norm_ids),
-      std::move(inputs), static_cast<bool>(_key_order), _progress));
-    range->Partition(parts,
-                     {
-                       .norms = &*_norms,
-                       .scorer = _scorer,
-                       .doc_count = _segment.docs_count,
-                       .sink = _term_sink.get(),
-                     },
-                     duckdb::TaskScheduler::GetScheduler(_db), _threads);
+      std::move(inputs), static_cast<bool>(_key_order), _progress, parts,
+      TermRangeMerge::Target{
+        .norms = &*_norms,
+        .scorer = _scorer,
+        .doc_count = _segment.docs_count,
+        .sink = _term_sink.get(),
+      },
+      duckdb::TaskScheduler::GetScheduler(_db), _threads));
   }
+  return volume;
 }
 
 bool MergePlan::MergeColumn(const MergeUnit& unit) {
@@ -497,11 +487,10 @@ bool MergePlan::MergeColumn(const MergeUnit& unit) {
 }
 
 bool MergePlan::MergeTermRange(const MergeUnit& unit) {
-  const auto it = absl::c_find_if(_term_ranges, [&](const auto& range) {
-    return range->Field() == unit.id && range->Member() == unit.member;
-  });
-  SDB_ASSERT(it != _term_ranges.end());
-  return (*it)->MergePart(unit.part);
+  auto* range =
+    FindTermRange(_term_ranges, {.id = unit.id, .member = unit.member});
+  SDB_ASSERT(range);
+  return range->MergePart(unit.part);
 }
 
 bool MergePlan::WriteColumnsFooter() {
@@ -656,7 +645,7 @@ bool MergePlan::Prepare(size_t threads) {
   std::vector<field_id> norm_fields;
   if (_field_options) {
     for (const auto& [id, field] : _field_meta_map) {
-      if (const auto& strings = Strings(field);
+      if (const auto& strings = Member(field, DictMember::Strings);
           strings.present &&
           IsSubsetOf(IndexFeatures::Norm, strings.features)) {
         norm_fields.emplace_back(id);
@@ -664,6 +653,7 @@ bool MergePlan::Prepare(size_t threads) {
     }
   }
   absl::c_sort(norm_fields);
+  std::vector<field_id> merged_norms;
   for (const auto id : norm_fields) {
     const auto stats = ComputeLiveNormStats(id, _sources);
     if (!stats.present) {
@@ -675,10 +665,10 @@ bool MergePlan::Prepare(size_t threads) {
                id);
     _merged_norm_ids.emplace(id, out);
     _norms->AddField(out, id, stats.sum, stats.non_zero);
-    _norm_fields.push_back(id);
+    merged_norms.push_back(id);
   }
-  PlanTermRanges();
-  PlanUnits();
+  const auto term_volume = PlanTermRanges();
+  PlanUnits(merged_norms, term_volume);
   clock.Lap(MergeStep::Prepare);
   return true;
 }

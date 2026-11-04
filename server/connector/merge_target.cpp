@@ -151,11 +151,8 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
 
 MergeTarget MergeTarget::Of(std::shared_ptr<search::Store> table,
                             std::string name) {
-  MergeTarget target;
-  target._name = std::move(name);
-  target._options = table->Config();
-  target._store = std::move(table);
-  return target;
+  auto options = table->Config();
+  return Of(std::move(table), std::move(options), std::move(name));
 }
 
 MergeTarget MergeTarget::Of(
@@ -196,7 +193,7 @@ search::MergeRoundPlan MergeTarget::Plan(
     snapshot,
     search::MergeRoundRequest{
       .mode = request.mode,
-      .settings = &_store->GetTasksSettings(),
+      .settings = _store->GetTasksSettings(),
       .merges = search::GetSearchEngine().Merges().RoundSize(),
       .target_segments =
         !_store->IsSearchTable() && request.mode == search::MergeMode::Compact
@@ -206,8 +203,8 @@ search::MergeRoundPlan MergeTarget::Plan(
       .row_group_size = _options->row_group_size,
       .inputs_max = _store->MergeInputsMax(),
       .segments = request.segments,
-      .field_options = &field_options,
-      .scheduler = &scheduler,
+      .field_options = field_options,
+      .scheduler = scheduler,
     });
 }
 
@@ -255,7 +252,6 @@ void MergeTarget::Compact(
   if (tickets.empty()) {
     return;
   }
-  merged.outcome.error = irs::CompactionError::Fail;
   merged =
     irs::GetBlocking(BackgroundScheduler::instance()
                        .Run([&] {
@@ -288,7 +284,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
                                    duckdb::ClientContext& context)
   : _target{target},
     _options{target.PinOptions()},
-    _context{&context},
+    _context{context},
     _request{std::move(request)} {
   _target.Publish();
   search::GetSearchEngine().Maintenance().Enter(context).reset();
@@ -301,7 +297,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
 
 void ManualCompaction::Plan() {
   _plan = _target.Plan(_target.Snapshot(), _request, *_options,
-                       duckdb::TaskScheduler::GetScheduler(*_context));
+                       duckdb::TaskScheduler::GetScheduler(_context));
   _next = 0;
 }
 
@@ -319,7 +315,7 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
   do {
     _target.Compact(
       planned, progress, _options.get(), _slot.AnnEnv(), origin, executor,
-      search::GetSearchEngine().Maintenance().Enter(*_context), merge);
+      search::GetSearchEngine().Maintenance().Enter(_context), merge);
   } while (merge.backup);
   auto& stats = merge.outcome.stats;
   if (search::Produced(search::OutcomeOf(merge.outcome))) {

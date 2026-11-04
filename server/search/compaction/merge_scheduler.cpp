@@ -33,6 +33,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
+#include <numeric>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -91,11 +92,8 @@ size_t MergeScheduler::RelationCap() const noexcept {
 }
 
 size_t MergeScheduler::GrantBigThreads(size_t wanted) {
-  if (_big >= BigThreads() || _threads >= _max_threads) {
-    return 0;
-  }
-  const auto granted =
-    std::min({wanted, BigThreads() - _big, _max_threads - _threads});
+  const auto granted = std::min({wanted, std::sub_sat(BigThreads(), _big),
+                                 std::sub_sat(_max_threads, _threads)});
   _big += granted;
   _threads += granted;
   return granted;
@@ -160,13 +158,10 @@ size_t MergeScheduler::Wanted(const Relation& relation) const {
       return entry->relation.get() == &relation &&
              entry->estimate.lane == MergeLane::Big;
     }));
-  const auto room = RelationCap() > relation.running_big
-                      ? RelationCap() - relation.running_big
-                      : 0;
-  const auto blocked = queued_big > room ? queued_big - room : 0;
-  const auto round = RoundSize();
-  const auto used = relation.queued + relation.running - blocked;
-  return used < round ? round - used : 0;
+  const auto room = std::sub_sat(RelationCap(), relation.running_big);
+  const auto blocked = std::sub_sat(queued_big, room);
+  return std::sub_sat(RoundSize(),
+                      relation.queued + relation.running - blocked);
 }
 
 std::vector<std::string> MergeScheduler::StartRound(Relation& relation) {

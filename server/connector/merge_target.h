@@ -67,7 +67,6 @@ class MergeTarget {
   const std::string& Name() const noexcept { return _name; }
   const std::string& Database() const noexcept { return _database; }
   bool ReadOnly() const noexcept { return _read_only; }
-  bool Sorted() const noexcept { return _store->Sorted(); }
   const irs::IndexFieldOptions& FieldOptions() const noexcept {
     return *_options;
   }
@@ -117,7 +116,7 @@ class ManualCompaction {
 
   const MergeTarget& _target;
   std::shared_ptr<const irs::IndexFieldOptions> _options;
-  duckdb::ClientContext* _context;
+  duckdb::ClientContext& _context;
   MergeRequest _request;
   search::MergeRoundPlan _plan;
   size_t _next = 0;

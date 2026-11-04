@@ -34,6 +34,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
+#include <iresearch/index/merge/partition_tasks.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <limits>
 #include <string_view>
@@ -72,6 +73,10 @@ struct Window {
   double score = std::numeric_limits<double>::max();
 };
 
+bool Alone(irs::CompactionView group) noexcept {
+  return group.size() == 1 && !irs::HasRemovals(group.front()->Meta());
+}
+
 RunCandidate DescribeCandidate(const irs::SubReader& segment, bool taken) {
   const auto& meta = segment.Meta();
   const auto live = static_cast<double>(meta.live_docs_count) /
@@ -105,9 +110,10 @@ void ConsiderRun(std::span<const RunCandidate> segments, size_t begin,
     const auto last = std::min(end, first + options.max_segments);
     for (auto next = first; next != last; ++next) {
       const auto& segment = segments[next];
+      const auto weight = std::max(segment.bytes, cost);
       bytes += segment.bytes;
-      floored += std::max(segment.bytes, cost);
-      largest = std::max(largest, std::max(segment.bytes, cost));
+      floored += weight;
+      largest = std::max(largest, weight);
       docs += segment.live_docs;
       if (bytes > options.max_bytes || docs > irs::kMergeDocsMax) {
         break;
@@ -141,25 +147,20 @@ irs::Compaction PickRun(std::span<RunCandidate> segments,
     ConsiderRun(segments, begin, end, options, best);
     begin = end;
   }
+  auto picked = segments.subspan(best.begin, best.end - best.begin);
+  if (picked.empty()) {
+    auto share = kMaxDeletedShare;
+    for (auto& segment : segments) {
+      if (!segment.taken && segment.deleted_share > share) {
+        picked = {&segment, 1};
+        share = segment.deleted_share;
+      }
+    }
+  }
   irs::Compaction candidates;
-  if (best.begin != best.end) {
-    for (auto i = best.begin; i != best.end; ++i) {
-      segments[i].taken = true;
-      candidates.emplace_back(segments[i].segment);
-    }
-    return candidates;
-  }
-  RunCandidate* purge = nullptr;
-  auto share = kMaxDeletedShare;
-  for (auto& segment : segments) {
-    if (!segment.taken && segment.deleted_share > share) {
-      purge = &segment;
-      share = segment.deleted_share;
-    }
-  }
-  if (purge) {
-    purge->taken = true;
-    candidates.emplace_back(purge->segment);
+  for (auto& segment : picked) {
+    segment.taken = true;
+    candidates.emplace_back(segment.segment);
   }
   return candidates;
 }
@@ -170,41 +171,12 @@ struct EstimateWork {
   size_t check = 0;
 };
 
-class EstimateTask final : public duckdb::BaseExecutorTask {
- public:
-  EstimateTask(duckdb::TaskExecutor& executor,
-               std::span<const EstimateWork> work,
-               std::span<irs::ReencodeEstimate> estimates,
-               std::atomic_size_t& next,
-               const irs::IndexFieldOptions& options) noexcept
-    : BaseExecutorTask{executor},
-      _work{work},
-      _estimates{estimates},
-      _next{&next},
-      _options{&options} {}
-
-  void ExecuteTask() final {
-    for (auto i = _next->fetch_add(1, std::memory_order_relaxed);
-         i < _work.size(); i = _next->fetch_add(1, std::memory_order_relaxed)) {
-      _estimates[i] = irs::EstimateReencode(*_work[i].reader, *_work[i].column,
-                                            *_options, nullptr);
-    }
-  }
-
- private:
-  std::span<const EstimateWork> _work;
-  std::span<irs::ReencodeEstimate> _estimates;
-  std::atomic_size_t* _next;
-  const irs::IndexFieldOptions* _options;
-};
-
 std::vector<irs::ReencodeEstimate> CheckRewrites(
   const MergeRoundRequest& request,
   std::span<const irs::SubReader* const> segments) {
-  SDB_ASSERT(request.scheduler && request.field_options);
   std::vector<irs::ReencodeEstimate> rewrites(segments.size());
   for (const auto& check :
-       CheckColumns(*request.scheduler, *request.field_options, segments)) {
+       CheckColumns(request.scheduler, request.field_options, segments)) {
     const auto& column = check.estimate;
     const bool saves = irs::ReencodePays({
       .stored_bytes = column.stored_bytes,
@@ -243,13 +215,11 @@ PlannedMerge DescribeMerge(std::string reason,
 
 void PlanBackground(const irs::IndexReader& reader,
                     const MergeRoundRequest& request, MergeRoundPlan& plan) {
-  SDB_ASSERT(request.settings);
   const irs::SegmentNames none;
   for (const auto& candidates :
-       PickMerges(*request.settings, request.inputs_max, reader,
+       PickMerges(request.settings, request.inputs_max, reader,
                   irs::CompactingSegments{none}, {}, request.merges)) {
-    if (candidates.size() == 1 &&
-        !irs::HasRemovals(candidates.front()->Meta())) {
+    if (Alone(candidates)) {
       break;
     }
     plan.merges.emplace_back(DescribeMerge("adjacent policy", candidates));
@@ -257,15 +227,15 @@ void PlanBackground(const irs::IndexReader& reader,
 }
 
 void PlaceAlone(const irs::SubReader& segment,
-                const irs::ReencodeEstimate* rewrite, MergeRoundPlan& plan) {
-  if (!rewrite || !irs::ReencodePays(*rewrite)) {
+                const irs::ReencodeEstimate& rewrite, MergeRoundPlan& plan) {
+  if (!irs::ReencodePays(rewrite)) {
     return;
   }
   const irs::SubReader* inputs[] = {&segment};
   plan.merges.emplace_back(DescribeMerge(
-    rewrite->codec_changed
+    rewrite.codec_changed
       ? std::string{"a declared column codec changed"}
-      : absl::StrCat("re-encoding saves ", SavedPercent(*rewrite), "%"),
+      : absl::StrCat("re-encoding saves ", SavedPercent(rewrite), "%"),
     inputs));
 }
 
@@ -324,15 +294,12 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
     taken += live_docs;
     --left;
   }
-  const auto alone = [](const irs::Compaction& bucket) {
-    return bucket.size() == 1 && !irs::HasRemovals(bucket.front()->Meta());
-  };
   const bool check = request.mode == MergeMode::Optimize;
   std::vector<irs::ReencodeEstimate> rewrites;
   if (check) {
     std::vector<const irs::SubReader*> lone;
     for (const auto& bucket : buckets) {
-      if (alone(bucket)) {
+      if (Alone(bucket)) {
         lone.emplace_back(bucket.front());
       }
     }
@@ -343,9 +310,10 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
     if (bucket.empty()) {
       continue;
     }
-    if (alone(bucket)) {
-      PlaceAlone(*bucket.front(), check ? &rewrites[next_lone++] : nullptr,
-                 plan);
+    if (Alone(bucket)) {
+      if (check) {
+        PlaceAlone(*bucket.front(), rewrites[next_lone++], plan);
+      }
       continue;
     }
     if (bucket.size() > request.inputs_max) {
@@ -390,7 +358,7 @@ void PlanSegments(const irs::IndexReader& reader,
     }
   }
   SDB_ASSERT(!candidates.empty());
-  if (candidates.size() == 1 && !irs::HasRemovals(candidates.front()->Meta())) {
+  if (Alone(candidates)) {
     return;
   }
   if (candidates.size() > request.inputs_max) {
@@ -429,24 +397,26 @@ std::vector<ColumnCopyCheck> CheckColumns(
                         return checks[lhs.check].estimate.stored_bytes >
                                checks[rhs.check].estimate.stored_bytes;
                       });
-  std::vector<irs::ReencodeEstimate> estimates(work.size());
+  const auto estimate_column = [&](size_t i) {
+    const auto& item = work[i];
+    const auto sampled =
+      irs::EstimateReencode(*item.reader, *item.column, options, nullptr);
+    auto& estimate = checks[item.check].estimate;
+    estimate.reencoded_bytes = static_cast<uint64_t>(
+      absl::uint128{estimate.stored_bytes} * sampled.reencoded_bytes /
+      std::max<uint64_t>(1, sampled.stored_bytes));
+    estimate.codec_changed = sampled.codec_changed;
+  };
   std::atomic_size_t next{0};
   duckdb::TaskExecutor executor{scheduler};
   const auto tasks = std::min<size_t>(
     work.size(), std::max<size_t>(1, scheduler.NumberOfThreads()));
   for (size_t task = 0; task != tasks; ++task) {
-    executor.ScheduleTask(duckdb::make_uniq<EstimateTask>(
-      executor, work, estimates, next, options));
+    executor.ScheduleTask(
+      duckdb::make_uniq<irs::PartitionTask<decltype(estimate_column)>>(
+        executor, next, work.size(), estimate_column));
   }
   executor.WorkOnTasks();
-  for (size_t i = 0; i != work.size(); ++i) {
-    const auto& sampled = estimates[i];
-    auto& estimate = checks[work[i].check].estimate;
-    estimate.reencoded_bytes = static_cast<uint64_t>(
-      absl::uint128{estimate.stored_bytes} * sampled.reencoded_bytes /
-      std::max<uint64_t>(1, sampled.stored_bytes));
-    estimate.codec_changed = sampled.codec_changed;
-  }
   return checks;
 }
 

@@ -56,6 +56,9 @@ class RoleCatalogEntry final : public duckdb::RoleEntry {
 
   const std::string& Password() const noexcept { return _password; }
   const duckdb::vector<std::string>& Config() const noexcept { return _config; }
+  const duckdb::vector<std::string>& AllRolesConfig() const noexcept {
+    return _all_roles_config;
+  }
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -69,6 +72,7 @@ class RoleCatalogEntry final : public duckdb::RoleEntry {
   int64_t _valid_until;
   std::string _password;
   duckdb::vector<std::string> _config;
+  duckdb::vector<std::string> _all_roles_config;
 };
 
 void ApplyConfigChange(duckdb::vector<std::string>& config,

@@ -65,7 +65,6 @@
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
 
 struct PredefinedRole {

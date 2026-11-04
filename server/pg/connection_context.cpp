@@ -162,6 +162,11 @@ std::string ConnectionContext::SessionUserName() const {
 }
 
 void ConnectionContext::ApplyRoleSettings() {
+  duckdb::vector<std::string> global_config;
+  catalog::ReadRole(catalog::kRootRole,
+                    [&](const catalog::RoleCatalogEntry& root) {
+                      global_config = root.AllRolesConfig();
+                    });
   duckdb::vector<std::string> database_config;
   duckdb::vector<std::string> database_role_config;
   catalog::ReadDatabase(
@@ -177,8 +182,8 @@ void ConnectionContext::ApplyRoleSettings() {
   catalog::ReadRole(_user, [&](const catalog::RoleCatalogEntry& role) {
     role_config = role.Config();
   });
-  for (const auto* config :
-       {&database_config, &role_config, &database_role_config}) {
+  for (const auto* config : {&global_config, &database_config, &role_config,
+                             &database_role_config}) {
     for (const std::string_view entry : *config) {
       const std::pair<std::string_view, std::string_view> setting =
         absl::StrSplit(entry, absl::MaxSplits('=', 1));

@@ -45,6 +45,11 @@ class PgDbRoleSetting final : public SystemTableScan<kPgDbRoleSettingSql> {
     Col<"setrole">(&duckdb::CatalogEntry::oid),
     Col<"setconfig">(&catalog::RoleCatalogEntry::Config));
 
+  static constexpr auto kGlobalSetting =
+    Shape<kSql, const catalog::RoleCatalogEntry>(
+      Col<"setrole">([](const auto&) { return kInvalidOid; }),
+      Col<"setconfig">(&catalog::RoleCatalogEntry::AllRolesConfig));
+
   static constexpr auto kDatabaseSetting =
     Shape<kSql, const DatabaseSettingRow>(
       Col<"setdatabase">([](const auto& row) { return row.database; }),
@@ -55,6 +60,9 @@ class PgDbRoleSetting final : public SystemTableScan<kPgDbRoleSettingSql> {
   void Row(const catalog::RoleCatalogEntry& role) {
     if (!role.Config().empty()) {
       Emit<kSetting>(role);
+    }
+    if (!role.AllRolesConfig().empty()) {
+      Emit<kGlobalSetting>(role);
     }
   }
 

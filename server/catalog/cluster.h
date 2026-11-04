@@ -108,6 +108,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   CatalogSnapshots _snapshots{*this};
 };
 
+inline constexpr std::string_view kRootRole = "postgres";
+
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();

@@ -434,12 +434,15 @@ struct AnnLocalState final : public RankedLocalState {
 
 struct TsDictLocalState;
 
+void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx);
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState& l,
                                             uint32_t seg_idx);
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);
 
+bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
+                       bool exact_counts, uint64_t rg_size);
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);

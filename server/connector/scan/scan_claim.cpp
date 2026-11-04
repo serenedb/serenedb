@@ -27,7 +27,11 @@
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/count/make.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/filter.hpp>
+#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -289,6 +293,29 @@ bool ConstantCount(const irs::Filter& filter) {
   return terms == 1 && others == 0;
 }
 
+bool CheapToPrepare(const irs::Filter& filter) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::ByTerm>::id() ||
+      type == irs::Type<irs::ByGranularRange>::id() ||
+      type == irs::Type<irs::All>::id() ||
+      type == irs::Type<irs::Empty>::id()) {
+    return true;
+  }
+  if (type != irs::Type<irs::BooleanFilter>::id()) {
+    return false;
+  }
+  const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(filter);
+  for (const auto occur :
+       {irs::Occur::Must, irs::Occur::Should, irs::Occur::MustNot}) {
+    for (const auto& child : boolean.Filters(occur)) {
+      if (!child || !CheapToPrepare(*child)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 void TakeUnit(ScanLocalState& l, ScanUnit unit) {
   l.unit = unit;
   l.has_unit = true;
@@ -418,6 +445,19 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
 
 }  // namespace
 
+bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
+                       bool exact_counts, uint64_t rg_size) {
+  if (query.Kind() == irs::QueryKind::Empty) {
+    return true;
+  }
+  if (shape == ScanShape::Count) {
+    return (exact_counts && irs::count::IsConstant(query)) ||
+           query.Postings() < rg_size;
+  }
+  return std::max<uint64_t>(query.Postings(), query.EstimateMax()) <
+         STANDARD_VECTOR_SIZE;
+}
+
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto& bind = g.Bind();
   const bool scan_ordered =
@@ -456,7 +496,12 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
 
   const auto where = g.ClaimedWhere();
-  const bool constant_count = g.shape == ScanShape::Count &&
+  const bool eager =
+    (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) &&
+    !g.scorer_obj && g.vector_scorer == nullptr &&
+    g.split != SplitMode::Never && g.live_segments < threads &&
+    CheapToPrepare(*g.filter);
+  const bool constant_count = !eager && g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
   uint64_t parallel = 0;
@@ -469,16 +514,25 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const uint64_t docs = sub.Meta().docs_count;
     work.rg_count = static_cast<uint32_t>(
       std::max<uint64_t>(1, (docs + g.rg_size - 1) / g.rg_size));
-    const bool split =
-      g.split != SplitMode::Never && work.rg_count > g.no_split_rgs &&
-      !(constant_count && sub.live_docs_count() == sub.docs_count());
+    const bool exact_counts =
+      g.col_filters.empty() && sub.live_docs_count() == sub.docs_count();
+    bool split = g.split != SplitMode::Never &&
+                 work.rg_count > g.no_split_rgs &&
+                 !(constant_count && exact_counts);
+    bool empty = false;
+    if (split && eager) {
+      PrepareSegmentNow(g, seg);
+      const auto& query = *g.queries[seg];
+      empty = query.Kind() == irs::QueryKind::Empty;
+      split = !SegmentStaysWhole(g.shape, query, exact_counts, g.rg_size);
+    }
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {
       run_end = i;
     }
     work.run_end = run_end;
-    parallel += split ? work.rg_count : 1;
+    parallel += empty ? 0 : split ? work.rg_count : 1;
     rgs += work.rg_count;
   }
   if (g.stats_stage) {

@@ -1,0 +1,197 @@
+# count(*) over an index whose column holds at most one value per row: a range,
+# an IN list, a list with IS NULL and a negated range count without reading
+# postings, and overlapping clauses still count each row once. Every count
+# matches the table under every unit-claiming mode, with one worker and with
+# several, before and after deletions. Small row groups split each segment
+# into many units.
+
+statement ok
+CREATE TABLE csv_t (id INT PRIMARY KEY, v INT, s VARCHAR)
+
+
+statement ok
+CREATE INDEX csv_idx ON csv_t USING inverted (id, v, s)
+  WITH (compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO csv_t
+SELECT i, CASE WHEN i % 10 = 0 THEN NULL ELSE i % 5000 END, 'k' || (i % 100)
+FROM generate_series(1, 20000) g(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) csv_t
+
+
+statement ok
+INSERT INTO csv_t
+SELECT i, CASE WHEN i % 10 = 0 THEN NULL ELSE i % 5000 END, 'k' || (i % 100)
+FROM generate_series(20001, 30000) g(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) csv_t
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_t WHERE v >= 0) AS full_range,
+  (SELECT count(*) FROM csv_t WHERE v IN (1, 2, 3, 4999)) AS in_list,
+  (SELECT count(*) FROM csv_t WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_t WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
+  (SELECT count(*) FROM csv_t
+     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
+  (SELECT count(*) FROM csv_t WHERE s IN ('k1', 'k2', 'k99')) AS keywords
+----
+narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
+108	21546	27000	24	3018	3240	16200	21600	900
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+SET sdb_scan_split = 'never'
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
+  (SELECT count(*) FROM csv_idx
+     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
+  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
+----
+narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
+108	21546	27000	24	3018	3240	16200	21600	900
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
+  (SELECT count(*) FROM csv_idx
+     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
+  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
+----
+narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
+108	21546	27000	24	3018	3240	16200	21600	900
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET sdb_scan_split = 'tail'
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
+  (SELECT count(*) FROM csv_idx
+     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
+  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
+----
+narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
+108	21546	27000	24	3018	3240	16200	21600	900
+
+
+statement ok
+SET sdb_scan_split = 'always'
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_idx WHERE v >= 0) AS full_range,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3, 4999)) AS in_list,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 0 AND 3000 OR v = 5) AS range_term,
+  (SELECT count(*) FROM csv_idx
+     WHERE v BETWEEN 0 AND 3000 OR v BETWEEN 2000 AND 4000) AS two_ranges,
+  (SELECT count(*) FROM csv_idx WHERE s IN ('k1', 'k2', 'k99')) AS keywords
+----
+narrow	dense	full_range	in_list	in_null	negated	range_term	two_ranges	keywords
+108	21546	27000	24	3018	3240	16200	21600	900
+
+
+statement ok
+DELETE FROM csv_t WHERE id BETWEEN 5000 AND 9000
+
+
+statement ok
+VACUUM (REFRESH_TABLE) csv_t
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_t WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_t WHERE v NOT BETWEEN 100 AND 4500) AS negated
+----
+narrow	dense	in_null	negated
+90	17955	2614	3150
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 100 AND 120) AS narrow,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT count(*) FROM csv_idx WHERE v IN (1, 2, 3) OR v IS NULL) AS in_null,
+  (SELECT count(*) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated
+----
+narrow	dense	in_null	negated
+90	17955	2614	3150
+
+
+query
+SELECT
+  (SELECT sum(id) FROM csv_t WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT sum(id) FROM csv_t WHERE v >= 0) AS full_range,
+  (SELECT sum(id) FROM csv_t WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_t WHERE v BETWEEN 10 AND 4000 AND id % 7 = 0)
+    AS dense_filtered
+----
+dense	full_range	negated	dense_filtered
+287369775	379800000	52897500	2565
+
+
+query
+SELECT
+  (SELECT sum(id) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS dense,
+  (SELECT sum(id) FROM csv_idx WHERE v >= 0) AS full_range,
+  (SELECT sum(id) FROM csv_idx WHERE v NOT BETWEEN 100 AND 4500) AS negated,
+  (SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000 AND id % 7 = 0)
+    AS dense_filtered
+----
+dense	full_range	negated	dense_filtered
+287369775	379800000	52897500	2565

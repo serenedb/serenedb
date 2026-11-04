@@ -55,6 +55,7 @@
 #include "index/compaction/policy_compaction.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_dump.hpp"
+#include "index/merge/support/segment_gen.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
@@ -2591,6 +2592,81 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   EXPECT_EQ("", tests::merge::FirstDifference(
                   tests::merge::ExpectedSortedMerge(inputs, sort),
                   tests::merge::Dump(*segment)));
+}
+
+TEST_P(MergeWriterTestCase, sorted_compaction_keeps_each_segment_contiguous) {
+  constexpr size_t kSegments = 3;
+  constexpr size_t kDocs = 10;
+  irs::MemoryDirectory dir;
+  auto options = irs::tests::DefaultWriterOptions();
+  options.sort = {{.column = kDocStringId}};
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  ASSERT_NE(nullptr, writer);
+  {
+    std::array<irs::IndexWriter::Transaction, kSegments> batches{
+      writer->GetBatch(), writer->GetBatch(), writer->GetBatch()};
+    for (size_t s = 0; s != kSegments; ++s) {
+      for (size_t i = 0; i != kDocs; ++i) {
+        auto doc = batches[s].Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        ASSERT_TRUE(tests::InsertField(doc, foo));
+        tests::merge::WriteValue(doc, kDocStringId,
+                                 duckdb::LogicalType::VARCHAR,
+                                 duckdb::Value{"bar"});
+        tests::merge::WriteValue(
+          doc, kSeqId, duckdb::LogicalType::BIGINT,
+          duckdb::Value::BIGINT(static_cast<int64_t>(s * kDocs + i)));
+      }
+    }
+    for (auto& batch : batches) {
+      ASSERT_TRUE(batch.Commit());
+    }
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  AssertSnapshotEquality(
+    writer->GetSnapshot(),
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+  {
+    const auto reader =
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(kSegments, reader.size());
+    for (const auto& segment : reader) {
+      EXPECT_EQ(kDocs, segment.docs_count());
+      EXPECT_EQ(kDocs, segment.live_docs_count());
+    }
+  }
+
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(tests::CompactionCount{
+                                        std::numeric_limits<size_t>::max()})));
+  ASSERT_TRUE(writer->RefreshCommit());
+  AssertSnapshotEquality(
+    writer->GetSnapshot(),
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+  const auto reader =
+    irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+  ASSERT_EQ(kSegments * kDocs, segment.docs_count());
+  ASSERT_EQ(kSegments * kDocs, segment.live_docs_count());
+  const auto seq = tests::merge::LiveValues(segment, kSeqId);
+  ASSERT_EQ(kSegments * kDocs, seq.size());
+  std::vector<int64_t> firsts;
+  for (size_t block = 0; block != kSegments; ++block) {
+    std::vector<int64_t> values;
+    for (size_t i = 0; i != kDocs; ++i) {
+      values.emplace_back(seq[block * kDocs + i].GetValue<int64_t>());
+    }
+    absl::c_sort(values);
+    std::vector<int64_t> expected(kDocs);
+    absl::c_iota(expected, values.front());
+    EXPECT_EQ(0, values.front() % static_cast<int64_t>(kDocs))
+      << "block " << block;
+    EXPECT_EQ(expected, values) << "block " << block;
+    firsts.emplace_back(values.front());
+  }
+  absl::c_sort(firsts);
+  EXPECT_EQ((std::vector<int64_t>{0, 10, 20}), firsts);
 }
 
 TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {

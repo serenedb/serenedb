@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/connection.hpp>
 #include <functional>
@@ -471,6 +472,130 @@ class SortedIndexStressTestCase : public SortedIndexTestCase {
     tests::AssertSnapshotEquality(
       twins.sorted->GetSnapshot(),
       irs::DirectoryReader{twins.sorted_dir, tests::CsDefaultReaderOptions()});
+  }
+
+  void RemoveSameKeyWithinTrx(std::span<const std::string_view> names) {
+    const size_t len = names.size();
+    std::vector<size_t> inserts(len);
+    std::iota(inserts.begin(), inserts.end(), size_t{0});
+    do {
+      std::vector<size_t> removes(len);
+      std::iota(removes.begin(), removes.end(), size_t{0});
+      do {
+        for (size_t reset = 0; reset != (size_t{1} << len); ++reset) {
+          Twins twins;
+          Open(twins, 0);
+          for (auto* writer : {twins.plain.get(), twins.sorted.get()}) {
+            for (size_t i = 0; i != len; ++i) {
+              {
+                auto trx = writer->GetBatch();
+                InsertName(trx, names[inserts[i]]);
+                if (((reset >> i) & 1U) == 1U) {
+                  trx.Abort();
+                }
+                ASSERT_TRUE(trx.Commit());
+              }
+              auto trx = writer->GetBatch();
+              trx.Remove(ByName(names[removes[i]]));
+              ASSERT_TRUE(trx.Commit());
+            }
+            writer->RefreshCommit();
+          }
+          std::vector<std::string> expected;
+          for (size_t i = 0; i != len; ++i) {
+            const auto removed = std::ranges::find(removes, inserts[i]);
+            if (((reset >> i) & 1U) == 0U &&
+                static_cast<size_t>(removed - removes.begin()) < i) {
+              expected.emplace_back(names[inserts[i]]);
+            }
+          }
+          std::ranges::sort(expected, std::greater{});
+          SCOPED_TRACE(absl::StrCat("inserts ", absl::StrJoin(inserts, ","),
+                                    " removes ", absl::StrJoin(removes, ","),
+                                    " reset ", reset));
+          ExpectSameNames(*twins.plain, *twins.sorted);
+          AssertCommitted(twins);
+          const auto reader = twins.sorted->GetSnapshot();
+          EXPECT_EQ(expected.empty() ? 0U : 1U, reader.size());
+          EXPECT_EQ(expected.size(), reader.live_docs_count());
+          EXPECT_LE(reader.docs_count(), len);
+          std::vector<std::string> actual;
+          for (const auto& segment_names : SegmentNames(*twins.sorted)) {
+            actual.insert(actual.end(), segment_names.begin(),
+                          segment_names.end());
+          }
+          std::ranges::sort(actual, std::greater{});
+          ASSERT_EQ(expected, actual);
+        }
+      } while (std::ranges::next_permutation(removes).found);
+    } while (std::ranges::next_permutation(inserts).found);
+  }
+
+  void CommitOnTick(std::span<const std::string_view> names) {
+    const size_t len = names.size();
+    for (size_t commit = 0; commit != (size_t{1} << len); ++commit) {
+      for (size_t reset = 0; reset != (size_t{1} << len); ++reset) {
+        SCOPED_TRACE(absl::StrCat("commit ", commit, " reset ", reset));
+        Twins twins;
+        Open(twins, 2);
+        std::array<irs::IndexWriter::Transaction, 2> trxs{
+          twins.plain->GetBatch(), twins.sorted->GetBatch()};
+        const std::array<irs::IndexWriter*, 2> writers{twins.plain.get(),
+                                                       twins.sorted.get()};
+        std::vector<std::string> expected;
+        uint64_t tick = irs::writer_limits::kMinTick + 1;
+        for (size_t i = 0; i != len; ++i) {
+          ++tick;
+          const bool aborted = ((reset >> i) & 1U) == 1U;
+          const bool refresh = ((commit >> i) & 1U) == 1U;
+          for (size_t w = 0; w != writers.size(); ++w) {
+            InsertName(trxs[w], names[i]);
+            if (aborted) {
+              trxs[w].Abort();
+            } else {
+              ASSERT_TRUE(trxs[w].Commit({.offset = tick}));
+            }
+            if (refresh) {
+              writers[w]->RefreshCommit();
+            }
+          }
+          if (!aborted) {
+            expected.emplace_back(names[i]);
+          }
+          if (refresh) {
+            ExpectSameNames(*twins.plain, *twins.sorted);
+            AssertCommitted(twins);
+          }
+        }
+        for (auto* writer : writers) {
+          writer->RefreshCommit();
+        }
+        ExpectSameNames(*twins.plain, *twins.sorted);
+        AssertCommitted(twins);
+        EXPECT_EQ(expected.size(),
+                  twins.sorted->GetSnapshot().live_docs_count());
+        const auto flushed = twins.sorted->GetSnapshot();
+        EXPECT_LE(expected.size(), flushed.docs_count());
+        EXPECT_LE(flushed.docs_count(), len);
+        for (auto* writer : writers) {
+          tests::Compact(*writer, kFullMerge);
+          writer->RefreshCommit();
+        }
+        ExpectSameNames(*twins.plain, *twins.sorted);
+        AssertCommitted(twins);
+        const auto compacted = twins.sorted->GetSnapshot();
+        EXPECT_EQ(expected.size(), compacted.docs_count());
+        EXPECT_EQ(expected.size(), compacted.live_docs_count());
+        std::ranges::sort(expected, std::greater{});
+        const auto merged = SegmentNames(*twins.sorted);
+        if (expected.empty()) {
+          EXPECT_TRUE(merged.empty());
+          continue;
+        }
+        ASSERT_EQ(1, merged.size());
+        EXPECT_EQ(expected, merged[0]);
+      }
+    }
   }
 };
 
@@ -1092,126 +1217,30 @@ TEST_P(SortedIndexTestCase,
 
 TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {
   constexpr std::string_view kNames[] = {"A", "B", "C", "D"};
-  constexpr size_t kLen = std::size(kNames);
-  std::array<size_t, kLen> inserts;
-  std::iota(inserts.begin(), inserts.end(), size_t{0});
-  do {
-    std::array<size_t, kLen> removes;
-    std::iota(removes.begin(), removes.end(), size_t{0});
-    do {
-      for (size_t reset = 0; reset != (size_t{1} << kLen); ++reset) {
-        Twins twins;
-        Open(twins, 0);
-        for (auto* writer : {twins.plain.get(), twins.sorted.get()}) {
-          for (size_t i = 0; i != kLen; ++i) {
-            {
-              auto trx = writer->GetBatch();
-              InsertName(trx, kNames[inserts[i]]);
-              if (((reset >> i) & 1U) == 1U) {
-                trx.Abort();
-              }
-              ASSERT_TRUE(trx.Commit());
-            }
-            auto trx = writer->GetBatch();
-            trx.Remove(ByName(kNames[removes[i]]));
-            ASSERT_TRUE(trx.Commit());
-          }
-          writer->RefreshCommit();
-        }
-        std::vector<std::string> expected;
-        for (size_t i = 0; i != kLen; ++i) {
-          const auto removed = std::ranges::find(removes, inserts[i]);
-          if (((reset >> i) & 1U) == 0U &&
-              static_cast<size_t>(removed - removes.begin()) < i) {
-            expected.emplace_back(kNames[inserts[i]]);
-          }
-        }
-        std::ranges::sort(expected, std::greater{});
-        SCOPED_TRACE(absl::StrCat("inserts ", absl::StrJoin(inserts, ","),
-                                  " removes ", absl::StrJoin(removes, ","),
-                                  " reset ", reset));
-        ExpectSameNames(*twins.plain, *twins.sorted);
-        AssertCommitted(twins);
-        const auto reader = twins.sorted->GetSnapshot();
-        EXPECT_EQ(expected.empty() ? 0U : 1U, reader.size());
-        EXPECT_EQ(expected.size(), reader.live_docs_count());
-        EXPECT_LE(reader.docs_count(), kLen);
-        std::vector<std::string> actual;
-        for (const auto& names : SegmentNames(*twins.sorted)) {
-          actual.insert(actual.end(), names.begin(), names.end());
-        }
-        std::ranges::sort(actual, std::greater{});
-        ASSERT_EQ(expected, actual);
-      }
-    } while (std::ranges::next_permutation(removes).found);
-  } while (std::ranges::next_permutation(inserts).found);
+  RemoveSameKeyWithinTrx(kNames);
+}
+
+TEST_P(SortedIndexStressTestCase,
+       doc_removal_same_key_within_trx_upstream_size) {
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
+  }
+  constexpr std::string_view kNames[] = {"A", "B", "C", "D", "E"};
+  RemoveSameKeyWithinTrx(kNames);
 }
 
 TEST_P(SortedIndexStressTestCase, commit_on_tick) {
   constexpr std::string_view kNames[] = {"A", "B", "C", "D", "E", "F"};
-  constexpr size_t kLen = std::size(kNames);
-  for (size_t commit = 0; commit != (size_t{1} << kLen); ++commit) {
-    for (size_t reset = 0; reset != (size_t{1} << kLen); ++reset) {
-      SCOPED_TRACE(absl::StrCat("commit ", commit, " reset ", reset));
-      Twins twins;
-      Open(twins, 2);
-      std::array<irs::IndexWriter::Transaction, 2> trxs{
-        twins.plain->GetBatch(), twins.sorted->GetBatch()};
-      const std::array<irs::IndexWriter*, 2> writers{twins.plain.get(),
-                                                     twins.sorted.get()};
-      std::vector<std::string> expected;
-      uint64_t tick = irs::writer_limits::kMinTick + 1;
-      for (size_t i = 0; i != kLen; ++i) {
-        ++tick;
-        const bool aborted = ((reset >> i) & 1U) == 1U;
-        const bool refresh = ((commit >> i) & 1U) == 1U;
-        for (size_t w = 0; w != writers.size(); ++w) {
-          InsertName(trxs[w], kNames[i]);
-          if (aborted) {
-            trxs[w].Abort();
-          } else {
-            ASSERT_TRUE(trxs[w].Commit({.offset = tick}));
-          }
-          if (refresh) {
-            writers[w]->RefreshCommit();
-          }
-        }
-        if (!aborted) {
-          expected.emplace_back(kNames[i]);
-        }
-        if (refresh) {
-          ExpectSameNames(*twins.plain, *twins.sorted);
-          AssertCommitted(twins);
-        }
-      }
-      for (auto* writer : writers) {
-        writer->RefreshCommit();
-      }
-      ExpectSameNames(*twins.plain, *twins.sorted);
-      AssertCommitted(twins);
-      EXPECT_EQ(expected.size(), twins.sorted->GetSnapshot().live_docs_count());
-      const auto flushed = twins.sorted->GetSnapshot();
-      EXPECT_LE(expected.size(), flushed.docs_count());
-      EXPECT_LE(flushed.docs_count(), kLen);
-      for (auto* writer : writers) {
-        tests::Compact(*writer, kFullMerge);
-        writer->RefreshCommit();
-      }
-      ExpectSameNames(*twins.plain, *twins.sorted);
-      AssertCommitted(twins);
-      const auto compacted = twins.sorted->GetSnapshot();
-      EXPECT_EQ(expected.size(), compacted.docs_count());
-      EXPECT_EQ(expected.size(), compacted.live_docs_count());
-      std::ranges::sort(expected, std::greater{});
-      const auto merged = SegmentNames(*twins.sorted);
-      if (expected.empty()) {
-        EXPECT_TRUE(merged.empty());
-        continue;
-      }
-      ASSERT_EQ(1, merged.size());
-      EXPECT_EQ(expected, merged[0]);
-    }
+  CommitOnTick(kNames);
+}
+
+TEST_P(SortedIndexStressTestCase, commit_on_tick_upstream_size) {
+  if (!std::getenv("SDB_LONG_TESTS")) {
+    GTEST_SKIP() << "too long for a PR run: test.py --long-tests runs it";
   }
+  constexpr std::string_view kNames[] = {"A", "B", "C", "D",
+                                         "E", "F", "G", "H"};
+  CommitOnTick(kNames);
 }
 
 TEST_P(SortedIndexStressTestCase, split_empty_commit) {

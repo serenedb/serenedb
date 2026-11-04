@@ -54,6 +54,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/compaction/policy_compaction.hpp"
 #include "index/merge/support/parallel_merge.hpp"
+#include "index/merge/support/segment_dump.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
@@ -2446,7 +2447,7 @@ TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
 TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
   const std::vector<std::vector<std::optional<std::string>>> segments{
     {std::nullopt, "kiwi", "fig", "apple"},
-    {"pear", "lime", "date"},
+    {"quince", "pear", "lime", "date"},
     {std::nullopt, "plum", "banana"},
   };
   irs::MemoryDirectory dir;
@@ -2459,7 +2460,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
         auto doc = batch.Insert();
         tests::StringField name{"foo", key.value_or(absl::StrCat("none", s))};
         name.id = kFooId;
-        tests::InsertField(doc, name);
+        ASSERT_TRUE(tests::InsertField(doc, name));
+        tests::StringField same{"same", "AAA"};
+        same.id = kSameId;
+        ASSERT_TRUE(tests::InsertField(doc, same));
         if (!key) {
           continue;
         }
@@ -2474,10 +2478,24 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
       }
       batch.Commit();
       ASSERT_TRUE(writer->RefreshCommit());
+      AssertSnapshotEquality(
+        writer->GetSnapshot(),
+        irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
     }
+    tests::Remove(*writer, MakeByTerm("foo", "quince"));
+    ASSERT_TRUE(writer->RefreshCommit());
+    AssertSnapshotEquality(
+      writer->GetSnapshot(),
+      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
   }
   auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(segments.size(), reader.size());
+  EXPECT_EQ(4, reader[0].docs_count());
+  EXPECT_EQ(4, reader[0].live_docs_count());
+  EXPECT_EQ(4, reader[1].docs_count());
+  EXPECT_EQ(3, reader[1].live_docs_count());
+  EXPECT_EQ(3, reader[2].docs_count());
+  EXPECT_EQ(3, reader[2].live_docs_count());
 
   irs::FunctionFieldOptions field_options{
     [](irs::field_id) { return irs::ColumnOptions{}; },
@@ -2506,9 +2524,20 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
                                           "lime",   "kiwi",  "fig",  "date",
                                           "banana", "apple"};
   ASSERT_EQ(expected.size(), segment->docs_count());
+  EXPECT_EQ(expected.size(), segment->live_docs_count());
+  std::vector<irs::doc_id_t> all(expected.size());
+  absl::c_iota(all, irs::doc_limits::min());
+  std::vector<irs::doc_id_t> live;
+  auto live_it = segment->docs_iterator();
+  for (auto doc = live_it->Next(); !irs::doc_limits::eof(doc);
+       doc = live_it->Next()) {
+    live.push_back(doc);
+  }
+  EXPECT_EQ(all, live);
 
   const auto* col = segment->GetColReader()->Column(kDocStringId);
   ASSERT_NE(nullptr, col);
+  EXPECT_EQ(expected.size(), col->RowCount());
   irs::ReadContext ctx{*segment->GetColReader()};
   auto state = col->InitScan(ctx);
   duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -2533,6 +2562,35 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
     ASSERT_EQ(1, postings->NextDocs(docs, freqs)) << expected[row];
     EXPECT_EQ(row + irs::doc_limits::min(), docs[0]) << expected[row];
   }
+  EXPECT_EQ(expected.size(), terms->size());
+  EXPECT_EQ(expected.size(), terms->docs_count());
+  EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"apple"}),
+            (terms->min)());
+  EXPECT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"plum"}),
+            (terms->max)());
+  EXPECT_FALSE(terms->iterator()->seek(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quince"})));
+
+  const auto* same = segment->field(kSameId);
+  ASSERT_NE(nullptr, same);
+  EXPECT_EQ(1, same->size());
+  auto same_it = same->iterator();
+  ASSERT_TRUE(
+    same_it->seek(irs::ViewCast<irs::byte_type>(std::string_view{"AAA"})));
+  std::vector<irs::doc_id_t> same_docs;
+  auto same_postings =
+    ::tests::Docs(same_it->postings(irs::IndexFeatures::None));
+  for (auto doc = same_postings->Next(); !irs::doc_limits::eof(doc);
+       doc = same_postings->Next()) {
+    same_docs.push_back(doc);
+  }
+  EXPECT_EQ(all, same_docs);
+
+  const std::vector<const irs::SubReader*> inputs{&reader[0], &reader[1],
+                                                  &reader[2]};
+  EXPECT_EQ("", tests::merge::FirstDifference(
+                  tests::merge::ExpectedSortedMerge(inputs, sort),
+                  tests::merge::Dump(*segment)));
 }
 
 TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {

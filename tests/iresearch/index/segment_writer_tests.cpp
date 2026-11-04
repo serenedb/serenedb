@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -320,27 +321,35 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 TEST_F(SegmentWriterTests, memory_store_sorted_field) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
+    SCOPED_TRACE(batched);
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
     ASSERT_EQ(0u, writer->memory_active());
     if (batched) {
       ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, kStagedDocs));
+      ASSERT_TRUE(writer->valid());
+      ASSERT_EQ(kStagedDocs, writer->buffered_docs());
     }
     size_t memory = 0;
     for (irs::doc_id_t i = 0; i < kStagedDocs; ++i) {
+      const auto doc = i + irs::doc_limits::min();
       if (!batched) {
-        writer->begin(0);
+        ASSERT_EQ(doc, writer->begin(0));
+        ASSERT_TRUE(writer->valid());
       }
       const auto value = absl::StrCat(kStagedDocs - i);
-      irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn,
-                               i + irs::doc_limits::min(), RawField{value});
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn, doc,
+                               RawField{value});
+      ASSERT_TRUE(writer->valid());
       writer->commit();
       ASSERT_LE(memory, writer->memory_active());
       memory = writer->memory_active();
     }
+    ASSERT_EQ(kStagedDocs, writer->buffered_docs());
     EXPECT_LT(0u, writer->GetColWriter()->StagedBytes());
     EXPECT_LE(writer->GetColWriter()->StagedBytes(), writer->memory_active());
     writer->reset();
@@ -351,78 +360,118 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
 TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
   const std::vector<irs::SortKey> spec{
     {{.column = kKeyColumn, .order = duckdb::OrderType::DESCENDING}}};
-  irs::MemoryDirectory dir;
-  auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
-  irs::SegmentMeta segment;
-  segment.name = "foo";
-  writer->reset(segment);
-  ASSERT_EQ(0u, writer->memory_active());
   constexpr irs::doc_id_t kDocs = 100;
-  ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, kDocs));
+  const auto key_of = [](irs::doc_id_t i) {
+    return absl::StrCat("key", i % 10, "-", i);
+  };
+  std::vector<std::string> expected;
   for (irs::doc_id_t i = 0; i < kDocs; ++i) {
-    const auto doc = i + irs::doc_limits::min();
-    const auto value = absl::StrCat("key", i % 10, "-", i);
-    KeyField field{value};
-    ASSERT_TRUE(tests::InsertField(*writer, doc, field));
-    irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn, doc,
-                             RawField{value});
-    writer->commit();
+    expected.push_back(key_of(i));
   }
-  ASSERT_LT(0u, writer->memory_active());
+  absl::c_sort(expected, std::greater{});
+  for (const bool batched : {false, true}) {
+    SCOPED_TRACE(batched);
+    irs::MemoryDirectory dir;
+    auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    ASSERT_EQ(0u, writer->memory_active());
+    irs::SegmentMeta segment;
+    segment.name = "foo";
+    writer->reset(segment);
+    ASSERT_EQ(0u, writer->memory_active());
+    if (batched) {
+      ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, kDocs));
+      ASSERT_TRUE(writer->valid());
+      ASSERT_EQ(kDocs, writer->buffered_docs());
+    }
+    for (irs::doc_id_t i = 0; i < kDocs; ++i) {
+      const auto doc = i + irs::doc_limits::min();
+      if (!batched) {
+        ASSERT_EQ(doc, writer->begin(0));
+        ASSERT_TRUE(writer->valid());
+      }
+      const auto value = key_of(i);
+      KeyField field{value};
+      ASSERT_TRUE(tests::InsertField(*writer, doc, field));
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn, doc,
+                               RawField{value});
+      ASSERT_TRUE(writer->valid());
+      writer->commit();
+    }
+    ASSERT_EQ(kDocs, writer->buffered_docs());
+    ASSERT_LT(0u, writer->memory_active());
 
-  irs::IndexSegment index_segment;
-  index_segment.meta.name = segment.name;
-  irs::DocumentMaskBuilder mask;
-  irs::DocOrder order;
-  writer->flush(index_segment, mask, order);
-  ASSERT_FALSE(order.Empty());
-  const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
-  ASSERT_NE(nullptr, reader);
-  const auto keys = BlobValues(*reader, kKeyColumn);
-  ASSERT_EQ(kDocs, keys.size());
-  EXPECT_TRUE(std::ranges::is_sorted(keys, std::greater{}));
-  const auto* field = reader->field(kKeyField);
-  ASSERT_NE(nullptr, field);
-  for (irs::doc_id_t doc = 0; doc != kDocs; ++doc) {
-    const auto& key = keys[doc];
-    auto terms = field->iterator();
-    ASSERT_TRUE(
-      terms->seek(irs::ViewCast<irs::byte_type>(std::string_view{key})));
-    auto postings = terms->postings(irs::IndexFeatures::None);
-    irs::doc_id_t docs[irs::doc_limits::kBlockSize];
-    uint32_t freqs[irs::doc_limits::kBlockSize];
-    ASSERT_EQ(1u, postings->NextDocs(docs, freqs)) << key;
-    EXPECT_EQ(doc + irs::doc_limits::min(), docs[0]) << key;
+    irs::IndexSegment index_segment;
+    index_segment.meta.name = segment.name;
+    irs::DocumentMaskBuilder mask;
+    irs::DocOrder order;
+    writer->flush(index_segment, mask, order);
+    ASSERT_FALSE(order.Empty());
+    ASSERT_EQ(kDocs, order.new2old.size());
+    EXPECT_EQ(0u, mask.Count());
+    EXPECT_EQ(kDocs, index_segment.meta.docs_count);
+    EXPECT_EQ(kDocs, index_segment.meta.live_docs_count);
+    const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
+    ASSERT_NE(nullptr, reader);
+    const auto keys = BlobValues(*reader, kKeyColumn);
+    ASSERT_EQ(kDocs, keys.size());
+    EXPECT_TRUE(std::ranges::is_sorted(keys, std::greater{}));
+    EXPECT_EQ(expected, keys);
+    const auto* field = reader->field(kKeyField);
+    ASSERT_NE(nullptr, field);
+    EXPECT_EQ(kDocs, field->size());
+    EXPECT_EQ(kDocs, field->docs_count());
+    for (irs::doc_id_t doc = 0; doc != kDocs; ++doc) {
+      const auto& key = keys[doc];
+      EXPECT_EQ(key_of(order.new2old[doc]), key);
+      EXPECT_EQ(doc, order.old2new[order.new2old[doc]]);
+      auto terms = field->iterator();
+      ASSERT_TRUE(
+        terms->seek(irs::ViewCast<irs::byte_type>(std::string_view{key})));
+      auto postings = terms->postings(irs::IndexFeatures::None);
+      irs::doc_id_t docs[irs::doc_limits::kBlockSize];
+      uint32_t freqs[irs::doc_limits::kBlockSize];
+      ASSERT_EQ(1u, postings->NextDocs(docs, freqs)) << key;
+      EXPECT_EQ(doc + irs::doc_limits::min(), docs[0]) << key;
+    }
+    writer->reset();
+    ASSERT_EQ(0u, writer->memory_active());
   }
-  writer->reset();
-  ASSERT_EQ(0u, writer->memory_active());
 }
 
 TEST_F(SegmentWriterTests, memory_store_field_sorted) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
+    SCOPED_TRACE(batched);
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
+    ASSERT_EQ(0u, writer->memory_active());
     if (batched) {
       ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, kStagedDocs));
+      ASSERT_TRUE(writer->valid());
+      ASSERT_EQ(kStagedDocs, writer->buffered_docs());
     }
     for (irs::doc_id_t i = 0; i < kStagedDocs; ++i) {
-      if (!batched) {
-        writer->begin(0);
-      }
       const auto doc = i + irs::doc_limits::min();
+      if (!batched) {
+        ASSERT_EQ(doc, writer->begin(0));
+        ASSERT_TRUE(writer->valid());
+      }
       const auto key = absl::StrCat(10000 + kStagedDocs - i);
       const auto payload = absl::StrCat("payload", i);
       irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn, doc,
                                RawField{key});
       irs::tests::StoreFieldAt(*writer->GetColWriter(), kPayloadColumn, doc,
                                RawField{payload});
+      ASSERT_TRUE(writer->valid());
       writer->commit();
     }
+    ASSERT_EQ(kStagedDocs, writer->buffered_docs());
     EXPECT_LT(0u, writer->GetColWriter()->StagedBytes());
+    EXPECT_LE(writer->GetColWriter()->StagedBytes(), writer->memory_active());
 
     irs::IndexSegment index_segment;
     index_segment.meta.name = segment.name;
@@ -430,11 +479,17 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
     irs::DocOrder order;
     writer->flush(index_segment, mask, order);
     ASSERT_EQ(kStagedDocs, order.new2old.size());
+    EXPECT_EQ(0u, mask.Count());
+    EXPECT_EQ(kStagedDocs, index_segment.meta.docs_count);
+    EXPECT_EQ(kStagedDocs, index_segment.meta.live_docs_count);
     const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
     ASSERT_NE(nullptr, reader);
+    const auto keys = BlobValues(*reader, kKeyColumn);
+    ASSERT_EQ(kStagedDocs, keys.size());
     const auto payloads = BlobValues(*reader, kPayloadColumn);
     ASSERT_EQ(kStagedDocs, payloads.size());
     for (irs::doc_id_t i = 0; i < kStagedDocs; ++i) {
+      EXPECT_EQ(absl::StrCat(10001 + i), keys[i]);
       EXPECT_EQ(absl::StrCat("payload", kStagedDocs - 1 - i), payloads[i]);
       EXPECT_EQ(kStagedDocs - 1 - i, order.new2old[i]);
       EXPECT_EQ(i, order.old2new[order.new2old[i]]);
@@ -448,7 +503,9 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   irs::MemoryDirectory dir;
   auto sorted = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+  ASSERT_EQ(0u, sorted->memory_active());
   auto unsorted = irs::SegmentWriter::make(dir, SortedOptions(nullptr));
+  ASSERT_EQ(0u, unsorted->memory_active());
   irs::SegmentMeta segment;
   segment.name = "foo";
   sorted->reset(segment);
@@ -457,15 +514,32 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
   ASSERT_EQ(0u, unsorted->memory_active());
   for (irs::doc_id_t i = 0; i < kStagedDocs; ++i) {
     const auto value = absl::StrCat("value", i);
+    const auto payload = absl::StrCat("payload", i);
     for (auto* writer : {sorted.get(), unsorted.get()}) {
-      writer->begin(0);
+      ASSERT_EQ(i + irs::doc_limits::min(), writer->begin(0));
+      ASSERT_TRUE(writer->valid());
       irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn,
                                writer->LastDocId(), RawField{value});
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), kPayloadColumn,
+                               writer->LastDocId(), RawField{payload});
+      ASSERT_TRUE(writer->valid());
       writer->commit();
     }
   }
+  EXPECT_EQ(kStagedDocs, sorted->buffered_docs());
+  EXPECT_EQ(kStagedDocs, unsorted->buffered_docs());
   EXPECT_LT(0u, unsorted->memory_active());
   EXPECT_EQ(0u, unsorted->GetColWriter()->StagedBytes());
+  const auto* staged_key = sorted->GetColWriter()->StagedColumn(kKeyColumn);
+  const auto* staged_payload =
+    sorted->GetColWriter()->StagedColumn(kPayloadColumn);
+  ASSERT_NE(nullptr, staged_key);
+  ASSERT_NE(nullptr, staged_payload);
+  EXPECT_LT(0u, staged_key->StagedBytes());
+  EXPECT_LT(0u, staged_payload->StagedBytes());
+  EXPECT_EQ(staged_key->StagedBytes() + staged_payload->StagedBytes(),
+            sorted->GetColWriter()->StagedBytes());
+  EXPECT_LE(sorted->GetColWriter()->StagedBytes(), sorted->memory_active());
   EXPECT_LT(unsorted->memory_active(), sorted->memory_active());
   sorted->reset();
   unsorted->reset();
@@ -475,39 +549,52 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
 
 TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
-  irs::MemoryDirectory dir;
-  auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
-  irs::SegmentMeta segment;
-  segment.name = "foo";
-  writer->reset(segment);
   constexpr irs::doc_id_t kDocs = 100;
-  for (irs::doc_id_t i = 0; i < kDocs; ++i) {
-    writer->begin(0);
-    irs::tests::StoreFieldAt(*writer->GetColWriter(), kPayloadColumn,
-                             writer->LastDocId(),
-                             RawField{absl::StrCat(kDocs - i)});
-    writer->commit();
-  }
-  ASSERT_TRUE(writer->remove(irs::doc_limits::min() + 7));
-  irs::IndexSegment index_segment;
-  index_segment.meta.name = segment.name;
-  irs::DocumentMaskBuilder mask;
-  irs::DocOrder order;
-  writer->flush(index_segment, mask, order);
-  EXPECT_TRUE(order.Empty());
-  EXPECT_EQ(1u, mask.Count());
-  EXPECT_TRUE(mask.Contains(irs::doc_limits::min() + 7));
-  EXPECT_EQ(kDocs, index_segment.meta.docs_count);
-  EXPECT_EQ(kDocs - 1, index_segment.meta.live_docs_count);
-  const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
-  ASSERT_NE(nullptr, reader);
-  std::vector<std::string> expected;
-  for (irs::doc_id_t i = 0; i < kDocs; ++i) {
-    if (i != 7) {
-      expected.push_back(absl::StrCat(kDocs - i));
+  for (const bool sorted : {true, false}) {
+    SCOPED_TRACE(sorted);
+    const auto column = sorted ? kPayloadColumn : kKeyColumn;
+    irs::MemoryDirectory dir;
+    auto writer =
+      irs::SegmentWriter::make(dir, SortedOptions(sorted ? &spec : nullptr));
+    ASSERT_EQ(0u, writer->memory_active());
+    irs::SegmentMeta segment;
+    segment.name = "foo";
+    writer->reset(segment);
+    ASSERT_EQ(0u, writer->memory_active());
+    for (irs::doc_id_t i = 0; i < kDocs; ++i) {
+      ASSERT_EQ(i + irs::doc_limits::min(), writer->begin(0));
+      ASSERT_TRUE(writer->valid());
+      irs::tests::StoreFieldAt(*writer->GetColWriter(), column,
+                               writer->LastDocId(),
+                               RawField{absl::StrCat(kDocs - i)});
+      ASSERT_TRUE(writer->valid());
+      writer->commit();
     }
+    ASSERT_EQ(kDocs, writer->buffered_docs());
+    ASSERT_LT(0u, writer->memory_active());
+    ASSERT_TRUE(writer->remove(irs::doc_limits::min() + 7));
+    irs::IndexSegment index_segment;
+    index_segment.meta.name = segment.name;
+    irs::DocumentMaskBuilder mask;
+    irs::DocOrder order;
+    writer->flush(index_segment, mask, order);
+    EXPECT_TRUE(order.Empty());
+    EXPECT_EQ(1u, mask.Count());
+    EXPECT_TRUE(mask.Contains(irs::doc_limits::min() + 7));
+    EXPECT_EQ(kDocs, index_segment.meta.docs_count);
+    EXPECT_EQ(kDocs - 1, index_segment.meta.live_docs_count);
+    const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
+    ASSERT_NE(nullptr, reader);
+    std::vector<std::string> expected;
+    for (irs::doc_id_t i = 0; i < kDocs; ++i) {
+      if (i != 7) {
+        expected.push_back(absl::StrCat(kDocs - i));
+      }
+    }
+    EXPECT_EQ(expected, BlobValues(*reader, column));
+    writer->reset();
+    ASSERT_EQ(0u, writer->memory_active());
   }
-  EXPECT_EQ(expected, BlobValues(*reader, kPayloadColumn));
 }
 
 TEST_F(SegmentWriterTests, reorder) {
@@ -518,42 +605,60 @@ TEST_F(SegmentWriterTests, reorder) {
   };
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const auto& inserted : cases) {
-    SCOPED_TRACE(absl::StrJoin(inserted, ","));
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
-    irs::SegmentMeta segment;
-    segment.name = "foo";
-    writer->reset(segment);
-    for (const auto name : inserted) {
-      writer->begin(name);
-      irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn,
-                               writer->LastDocId(), RawField{kNames[name]});
-      writer->commit();
-    }
-    const auto removed = std::ranges::find(inserted, 3) - inserted.begin();
-    ASSERT_TRUE(writer->remove(irs::doc_limits::min() +
-                               static_cast<irs::doc_id_t>(removed)));
-
-    irs::IndexSegment index_segment;
-    index_segment.meta.name = segment.name;
-    irs::DocumentMaskBuilder mask;
-    irs::DocOrder order;
-    writer->flush(index_segment, mask, order);
-    const bool identity = std::ranges::is_sorted(inserted);
-    ASSERT_EQ(identity, order.Empty());
-    EXPECT_EQ(1u, mask.Count());
-    EXPECT_TRUE(mask.Contains(irs::doc_limits::min() + 3));
-    const auto& docs = writer->docs_context();
-    for (size_t i = 0; i != inserted.size(); ++i) {
-      const auto old = identity ? i : order.new2old[i];
-      EXPECT_EQ(i, docs.TickAt(old)) << i;
-      if (!identity) {
-        EXPECT_EQ(i, order.old2new[old]);
+    for (const bool remove : {false, true}) {
+      SCOPED_TRACE(
+        absl::StrCat(absl::StrJoin(inserted, ","), remove ? " without D" : ""));
+      irs::MemoryDirectory dir;
+      auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+      ASSERT_EQ(0u, writer->memory_active());
+      irs::SegmentMeta segment;
+      segment.name = "foo";
+      writer->reset(segment);
+      ASSERT_EQ(0u, writer->memory_active());
+      for (size_t i = 0; i != inserted.size(); ++i) {
+        ASSERT_EQ(irs::doc_limits::min() + i, writer->begin(inserted[i]));
+        ASSERT_TRUE(writer->valid());
+        irs::tests::StoreFieldAt(*writer->GetColWriter(), kKeyColumn,
+                                 writer->LastDocId(),
+                                 RawField{kNames[inserted[i]]});
+        ASSERT_TRUE(writer->valid());
+        writer->commit();
       }
+      ASSERT_LT(0u, writer->memory_active());
+      if (remove) {
+        const auto removed = std::ranges::find(inserted, 3) - inserted.begin();
+        ASSERT_TRUE(writer->remove(irs::doc_limits::min() +
+                                   static_cast<irs::doc_id_t>(removed)));
+      }
+
+      irs::IndexSegment index_segment;
+      index_segment.meta.name = segment.name;
+      irs::DocumentMaskBuilder mask;
+      irs::DocOrder order;
+      writer->flush(index_segment, mask, order);
+      const bool identity = std::ranges::is_sorted(inserted);
+      ASSERT_EQ(identity, order.Empty());
+      EXPECT_EQ(remove ? 1u : 0u, mask.Count());
+      EXPECT_EQ(remove, mask.Contains(irs::doc_limits::min() + 3));
+      EXPECT_EQ(5u, index_segment.meta.docs_count);
+      EXPECT_EQ(remove ? 4u : 5u, index_segment.meta.live_docs_count);
+      const auto& docs = writer->docs_context();
+      for (size_t i = 0; i != inserted.size(); ++i) {
+        const auto old = identity ? i : order.new2old[i];
+        EXPECT_EQ(i, docs.TickAt(old)) << i;
+        if (!identity) {
+          EXPECT_EQ(i, order.old2new[old]);
+        }
+      }
+      const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
+      ASSERT_NE(nullptr, reader);
+      std::vector<std::string> expected{"A", "B", "C", "D", "E"};
+      if (remove) {
+        expected.erase(expected.begin() + 3);
+      }
+      EXPECT_EQ(expected, BlobValues(*reader, kKeyColumn));
+      writer->reset();
+      ASSERT_EQ(0u, writer->memory_active());
     }
-    const auto reader = OpenFlushed(dir, index_segment, std::move(mask));
-    ASSERT_NE(nullptr, reader);
-    EXPECT_EQ((std::vector<std::string>{"A", "B", "C", "E"}),
-              BlobValues(*reader, kKeyColumn));
   }
 }

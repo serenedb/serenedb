@@ -95,7 +95,6 @@ add_executable(
     formats/sparse_bitmap_test.cpp
     formats/term_dict_test.cpp
     index/assert_format.cpp
-    index/buffered_column_test.cpp
     index/compaction/merge_ticket_tests.cpp
     index/compaction_policy_tests.cpp
     index/doc_generator.cpp
@@ -123,6 +122,7 @@ add_executable(
     index/merge/term_keys_tests.cpp
     index/merge/term_ranges_tests.cpp
     index/merge_writer_tests.cpp
+    index/norm_column_test.cpp
     index/norm_test.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp

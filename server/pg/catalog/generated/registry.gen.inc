@@ -34,6 +34,7 @@ constexpr SystemTable* kSystemTables[] = {
   &gPgRewrite,
   &gPgSequence,
   &gPgShdepend,
+  &gPgShdescription,
   &gPgSubscription,
   &gPgSubscriptionRel,
   &gPgTablespace,

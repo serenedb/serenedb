@@ -33,6 +33,7 @@ extern SystemTable gPgReplicationOrigin;
 extern SystemTable gPgRewrite;
 extern SystemTable gPgSequence;
 extern SystemTable gPgShdepend;
+extern SystemTable gPgShdescription;
 extern SystemTable gPgSubscription;
 extern SystemTable gPgSubscriptionRel;
 extern SystemTable gPgTablespace;

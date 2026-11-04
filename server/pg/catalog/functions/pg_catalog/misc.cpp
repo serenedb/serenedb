@@ -163,6 +163,31 @@ void ObjDescription2Function(duckdb::DataChunk& args,
     });
 }
 
+void ShobjDescriptionFunction(duckdb::DataChunk& args,
+                              duckdb::ExpressionState& state,
+                              duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](int64_t oid,
+        duckdb::string_t catalog) -> duckdb::optional<duckdb::string_t> {
+      const auto* table =
+        GetSystemTable(irs::StaticStrings::kPgCatalogSchema, AsView(catalog));
+      if (!table || oid <= 0) {
+        return duckdb::nullopt;
+      }
+      auto entry = cluster.GetOidIndex().GetVisible(static_cast<uint64_t>(oid),
+                                                    transaction.view);
+      if (!entry || CatalogClassOid(entry->type) != table->Sql().oid) {
+        return duckdb::nullopt;
+      }
+      return Comment(result, entry->comment);
+    });
+}
+
 void ObjDescription1Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
@@ -1437,6 +1462,9 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "col_description", CONSISTENT_WITHIN_QUERY, InitSession,
     {duckdb::ScalarFunction{{oid, int4}, text, ColDescriptionFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "shobj_description", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{oid, text}, text, ShobjDescriptionFunction}});
   {
     duckdb::ScalarFunction function{
       {text, text}, text, PgGetSerialSequenceFunction};

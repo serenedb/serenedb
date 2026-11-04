@@ -57,6 +57,7 @@ target_sources(
         catalog/tables/pg_catalog/pg_rewrite.cpp
         catalog/tables/pg_catalog/pg_sequence.cpp
         catalog/tables/pg_catalog/pg_shdepend.cpp
+        catalog/tables/pg_catalog/pg_shdescription.cpp
         catalog/tables/pg_catalog/pg_subscription.cpp
         catalog/tables/pg_catalog/pg_subscription_rel.cpp
         catalog/tables/pg_catalog/pg_tablespace.cpp

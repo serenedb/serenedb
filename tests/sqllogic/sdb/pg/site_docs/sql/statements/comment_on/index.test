@@ -140,3 +140,29 @@ SELECT comment FROM sdb_functions();
 
 statement ok
 SELECT comment FROM sdb_functions();
+
+# DOCS_TEST: example_018
+
+statement ok
+DROP ROLE IF EXISTS reporting_team;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE reporting_team;
+
+statement ok
+COMMENT ON ROLE reporting_team IS 'read-only reporting users';
+
+query
+SELECT rolname, shobj_description(oid, 'pg_authid') AS description
+FROM pg_roles
+WHERE rolname = 'reporting_team';
+----
+rolname	description
+reporting_team	read-only reporting users
+
+# DOCS_TEST_END
+
+statement ok
+DROP ROLE reporting_team;

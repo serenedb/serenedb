@@ -388,7 +388,6 @@ constexpr SystemMacro kMacros[] = {
   // mode), so both are constant false. pgAdmin calls these on every connect.
   {"pg_catalog", "pg_is_in_recovery", "() AS false"},
   {"pg_catalog", "pg_is_wal_replay_paused", "() AS false"},
-  {"pg_catalog", "shobj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
 
   {"pg_catalog", "pg_relation_is_publishable", "(a) AS false"},
   {"pg_catalog", "pg_partition_ancestors", "(relid) AS CAST(relid AS regclass)"},

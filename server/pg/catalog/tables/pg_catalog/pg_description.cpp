@@ -124,17 +124,9 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
   }
 
  private:
-  static const std::string* Text(const duckdb::Value& comment) {
-    if (comment.IsNull()) {
-      return nullptr;
-    }
-    const auto& text = duckdb::StringValue::Get(comment);
-    return text.empty() ? nullptr : &text;
-  }
-
   void Comment(duckdb::idx_t classoid, duckdb::idx_t objoid, int32_t objsubid,
                const duckdb::Value& comment) {
-    if (const auto* text = Text(comment)) {
+    if (const auto* text = CommentText(comment)) {
       Emit<kDescription>({objoid, classoid, objsubid, *text});
     }
   }

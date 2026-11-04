@@ -41,6 +41,14 @@ std::optional<T> NonEmpty(T value) {
                                    : std::optional<T>{std::move(value)};
 }
 
+inline const std::string* CommentText(const duckdb::Value& comment) {
+  if (comment.IsNull()) {
+    return nullptr;
+  }
+  const auto& text = duckdb::StringValue::Get(comment);
+  return text.empty() ? nullptr : &text;
+}
+
 template<const auto& Rows>
 SystemRows<std::ranges::range_value_t<decltype(Rows)>> LoadStatic(SystemScan&) {
   return {Rows};

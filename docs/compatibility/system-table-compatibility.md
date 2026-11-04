@@ -72,7 +72,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
 | pg_sequence                 | 🟢            | Contains information about sequences. |
 | pg_shdepend                 | 🟢            | Records dependencies between database objects and shared objects. |
-| pg_shdescription            | 🟡            | Stores optional descriptions for shared database objects. |
+| pg_shdescription            | 🟢            | Stores optional descriptions (comments) for databases and roles. |
 | pg_shseclabel               | 🟡            | Stores security labels for shared database objects. |
 | pg_statistic                | 🟡            | Stores planner statistics. |
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |

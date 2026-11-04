@@ -61,6 +61,14 @@ Commenting on a `MACRO TABLE`:
 <SqlLogicTest id="sql/statements/comment_on/index/example_008" />
 
 
+## Databases and roles
+
+`COMMENT ON DATABASE` and `COMMENT ON ROLE` comment on the objects every database shares. `shobj_description(oid, 'pg_database')` and `shobj_description(oid, 'pg_authid')` read the comments back, and `pg_shdescription` lists them:
+
+<SqlLogicTest id="sql/statements/comment_on/index/example_018" />
+
+Commenting on a database takes its owner, or a member of the owning role. Commenting on a role takes the `CREATEROLE` attribute and the `ADMIN` option on the role, and a superuser for a superuser role; anyone else gets `permission denied`. A database that does not exist only produces a warning.
+
 ## Reading Comments
 
 Comments can be read by querying the `comment` column of the respective [metadata functions](../../functions/metadata.md):
@@ -110,7 +118,7 @@ List comments on `MACRO TABLE`s:
 The `COMMENT ON` statement currently has the following limitations:
 
 -   Comments are only supported on tables and columns. Comments on views, indexes, sequences, types and macros are not yet supported.
--   It is not possible to comment on schemas or databases.
+-   It is not possible to comment on schemas.
 -   It is not possible to comment on things that have a dependency (e.g., a table with an index).
 
 ## Syntax

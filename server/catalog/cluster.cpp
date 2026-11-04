@@ -472,7 +472,8 @@ void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();
-  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
+  if (!GetCatalogSet(type).AlterEntry(transaction, name, info) &&
+      info.if_not_found == duckdb::OnEntryNotFound::THROW_EXCEPTION) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));

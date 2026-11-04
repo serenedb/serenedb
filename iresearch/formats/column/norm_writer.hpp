@@ -143,13 +143,11 @@ class NormColumnWriter final {
  private:
   void FlushRowGroup();
   void EncodeRowGroup(std::span<const uint32_t> values);
-  void Begin(const NormLayout& layout, uint64_t rows, uint32_t max);
-  void Encode(std::span<const uint32_t> values);
+  void Begin(const NormStats& planned);
   void EncodeValues(std::span<const uint32_t> values, uint64_t first_row);
   template<size_t Bytes>
   void EncodeSlots(std::span<const uint32_t> values, uint64_t first_row);
   uint32_t Escape(uint64_t row, uint32_t value);
-  void End();
 
   field_id _id;
   ColFileWriter* _blocks = nullptr;
@@ -160,8 +158,6 @@ class NormColumnWriter final {
   std::vector<uint32_t> _values;
   NormRegionMeta _region;
   bool _open_region = false;
-  uint64_t _bucket = 0;
-  uint32_t _local = 0;
   std::vector<uint32_t> _bases;
   std::vector<uint32_t> _direct;
   std::vector<uint32_t> _overflow_rows;

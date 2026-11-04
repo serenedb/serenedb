@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -44,6 +45,8 @@ struct WriteChunk {
   duckdb::Vector data;
   duckdb::idx_t count;
 };
+
+WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count);
 
 void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count);
@@ -80,9 +83,11 @@ class ListKeys {
   static constexpr size_t kSource = 0;
   static constexpr size_t kStore = 1;
 
-  void SetChunk(size_t index, const duckdb::Vector& child, duckdb::idx_t count);
+  void SetChunk(size_t index, const duckdb::Vector& child) {
+    _chunks[index].Assign(child);
+  }
 
-  void Clear() noexcept { _chunks.clear(); }
+  void Clear() noexcept { _chunks = {}; }
 
   IRS_FORCE_INLINE uint64_t Hash(uint64_t offset, uint64_t length) const {
     const uint64_t h =
@@ -119,7 +124,7 @@ class ListKeys {
     duckdb::idx_t width = 0;
     std::vector<Node> children;
 
-    void Assign(const duckdb::Vector& vec, duckdb::idx_t count);
+    void Assign(const duckdb::Vector& vec);
 
     duckdb::idx_t Index(uint64_t e) const {
       return flat ? e : format.sel->get_index(e);
@@ -262,18 +267,11 @@ class ListKeys {
                              other.format.data + f * width,
                              length * width) == 0;
         }
-        if (kind == Kind::String) {
-          const auto* x =
-            reinterpret_cast<const duckdb::string_t*>(format.data) + e;
-          const auto* y =
-            reinterpret_cast<const duckdb::string_t*>(other.format.data) + f;
-          for (uint64_t k = 0; k < length; ++k) {
-            if (!(x[k] == y[k])) {
-              return false;
-            }
-          }
-          return true;
-        }
+        const auto* x =
+          reinterpret_cast<const duckdb::string_t*>(format.data) + e;
+        return std::equal(
+          x, x + length,
+          reinterpret_cast<const duckdb::string_t*>(other.format.data) + f);
       }
       for (uint64_t k = 0; k < length; ++k) {
         if (!Equal(e + k, other, f + k)) {
@@ -284,7 +282,7 @@ class ListKeys {
     }
   };
 
-  std::vector<Node> _chunks;
+  std::array<Node, 2> _chunks;
 };
 
 struct ListParts {
@@ -342,8 +340,8 @@ class ListIngest {
 
   bool Repetitive(const duckdb::UnifiedVectorFormat& parent,
                   const duckdb::list_entry_t* entries,
-                  const duckdb::Vector& child, duckdb::idx_t child_count,
-                  duckdb::idx_t off, duckdb::idx_t count);
+                  const duckdb::Vector& child, duckdb::idx_t off,
+                  duckdb::idx_t count);
 
   IRS_FORCE_INLINE void PushCode(uint64_t code) {
     if (_run == 0 || code != _run_code) {
@@ -406,11 +404,9 @@ class ListIngest {
   IRS_FORCE_INLINE bool Matches(uint32_t rep,
                                 const duckdb::list_entry_t& entry) const {
     const auto& r = _reps[rep];
-    if (r.length != entry.length) {
-      return false;
-    }
-    return entry.length == 0 ||
-           _keys.Equal(r.chunk, r.offset, entry.offset, entry.length);
+    return r.length == entry.length &&
+           (entry.length == 0 ||
+            _keys.Equal(r.chunk, r.offset, entry.offset, entry.length));
   }
 
   void Store(const duckdb::Vector& child);

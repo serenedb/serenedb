@@ -34,6 +34,12 @@
 
 namespace irs {
 
+WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count) {
+  auto ref = duckdb::Vector::Ref(vec);
+  duckdb::FlatVector::SetSize(ref, count);
+  return {std::move(ref), count};
+}
+
 void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count) {
   duckdb::idx_t off = 0;
@@ -41,9 +47,7 @@ void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
     const auto take =
       std::min<duckdb::idx_t>(count - off, STANDARD_VECTOR_SIZE);
     if (base == 0 && take == vec.size()) {
-      auto v = duckdb::Vector::Ref(vec);
-      duckdb::FlatVector::SetSize(v, take);
-      out.push_back(WriteChunk{std::move(v), take});
+      out.push_back(RefChunk(vec, take));
     } else {
       duckdb::Vector view{vec, base + off, base + off + take};
       out.push_back(WriteChunk{std::move(view), take});
@@ -59,16 +63,8 @@ std::vector<WriteChunk> UbigintChunks::Take() {
   return std::move(_chunks);
 }
 
-void ListKeys::SetChunk(size_t index, const duckdb::Vector& child,
-                        duckdb::idx_t count) {
-  if (index >= _chunks.size()) {
-    _chunks.resize(index + 1);
-  }
-  _chunks[index].Assign(child, count);
-}
-
-void ListKeys::Node::Assign(const duckdb::Vector& vec, duckdb::idx_t count) {
-  vec.ToUnifiedFormat(count, format);
+void ListKeys::Node::Assign(const duckdb::Vector& vec) {
+  vec.ToUnifiedFormat(format);
   flat = !format.sel->IsSet();
   all_valid = format.validity.AllValid();
   const auto& type = vec.GetType();
@@ -78,30 +74,27 @@ void ListKeys::Node::Assign(const duckdb::Vector& vec, duckdb::idx_t count) {
       const auto& fields = duckdb::StructVector::GetEntries(vec);
       children.resize(fields.size());
       for (size_t c = 0; c < fields.size(); ++c) {
-        children[c].Assign(fields[c], count);
+        children[c].Assign(fields[c]);
       }
     } break;
     case duckdb::PhysicalType::LIST:
       kind = Kind::List;
       children.resize(1);
-      children[0].Assign(duckdb::ListVector::GetChild(vec),
-                         duckdb::ListVector::GetListSize(vec));
+      children[0].Assign(duckdb::ListVector::GetChild(vec));
       break;
     case duckdb::PhysicalType::ARRAY:
       kind = Kind::Array;
       width = duckdb::ArrayType::GetSize(type);
       children.resize(1);
-      children[0].Assign(duckdb::ArrayVector::GetEntry(vec), count * width);
+      children[0].Assign(duckdb::ArrayVector::GetEntry(vec));
       break;
     case duckdb::PhysicalType::VARCHAR:
       kind = Kind::String;
       width = sizeof(duckdb::string_t);
-      children.clear();
       break;
     default:
       kind = Kind::Fixed;
       width = duckdb::GetTypeIdSize(type.InternalType());
-      children.clear();
       break;
   }
 }
@@ -121,23 +114,20 @@ void ListIngest::AddNulls(duckdb::idx_t count) {
 void ListIngest::Add(const duckdb::Vector& vec, duckdb::idx_t off,
                      duckdb::idx_t count) {
   duckdb::UnifiedVectorFormat parent;
-  vec.ToUnifiedFormat(off + count, parent);
+  vec.ToUnifiedFormat(parent);
   const auto* entries =
     duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(parent);
   const auto& child = duckdb::ListVector::GetChild(vec);
-  if (!_dedup &&
-      !(++_off_chunks % kProbeEvery == 0 &&
-        Repetitive(parent, entries, child, duckdb::ListVector::GetListSize(vec),
-                   off, count))) {
-    AddDistinct(parent, entries, child, off, count);
-    return;
-  }
   if (!_dedup) {
+    if (++_off_chunks % kProbeEvery != 0 ||
+        !Repetitive(parent, entries, child, off, count)) {
+      AddDistinct(parent, entries, child, off, count);
+      return;
+    }
     _dedup = true;
     OpenWindow();
   }
-  _keys.SetChunk(ListKeys::kSource, child,
-                 duckdb::ListVector::GetListSize(vec));
+  _keys.SetChunk(ListKeys::kSource, child);
   _fresh.clear();
   _picked.clear();
   if (TrackSource(vec)) {
@@ -258,10 +248,9 @@ void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
 
 bool ListIngest::Repetitive(const duckdb::UnifiedVectorFormat& parent,
                             const duckdb::list_entry_t* entries,
-                            const duckdb::Vector& child,
-                            duckdb::idx_t child_count, duckdb::idx_t off,
+                            const duckdb::Vector& child, duckdb::idx_t off,
                             duckdb::idx_t count) {
-  _keys.SetChunk(ListKeys::kSource, child, child_count);
+  _keys.SetChunk(ListKeys::kSource, child);
   _probe.clear();
   const auto end = off + std::min(count, kProbeRows);
   for (duckdb::idx_t i = off; i < end; ++i) {
@@ -362,8 +351,7 @@ void ListIngest::Store(const duckdb::Vector& child) {
     rep.offset = base + fresh.picked;
     rep.chunk = ListKeys::kStore;
   }
-  _keys.SetChunk(ListKeys::kStore, duckdb::ListVector::GetChild(tail),
-                 base + count);
+  _keys.SetChunk(ListKeys::kStore, duckdb::ListVector::GetChild(tail));
 }
 
 }  // namespace irs

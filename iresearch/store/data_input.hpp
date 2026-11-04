@@ -41,13 +41,7 @@
 
 namespace irs {
 
-struct ByteExtent {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-};
-
-std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
-                                      uint64_t gap) noexcept;
+using ByteExtent = duckdb::BlockCacheRange;
 
 struct PinnedBytes {
   bytes_view bytes;

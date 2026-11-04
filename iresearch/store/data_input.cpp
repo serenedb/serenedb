@@ -22,8 +22,6 @@
 
 #include "data_input.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 
 #include "iresearch/utils/assert.hpp"
@@ -31,25 +29,6 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
-
-std::span<ByteExtent> CoalesceExtents(std::span<ByteExtent> extents,
-                                      uint64_t gap) noexcept {
-  absl::c_sort(extents, [](const ByteExtent& l, const ByteExtent& r) {
-    return l.offset < r.offset;
-  });
-  size_t n = 0;
-  for (const auto& extent : extents) {
-    if (n != 0 &&
-        extent.offset <= extents[n - 1].offset + extents[n - 1].size + gap) {
-      auto& last = extents[n - 1];
-      last.size =
-        std::max(last.size, extent.offset + extent.size - last.offset);
-    } else {
-      extents[n++] = extent;
-    }
-  }
-  return extents.first(n);
-}
 
 void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
   const auto* file = in.File();
@@ -164,7 +143,11 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
 }
 
 void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
+  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
+    blocks->cache->MarkUnused(*blocks->blocks, offset, size);
+    return;
+  }
+  if (const auto* span = std::get_if<MappedSpan>(&_kind); span->paged) {
     span->mapping->Evict(offset, size);
   }
 }
@@ -178,11 +161,8 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
     return;
   }
   try {
-    for (const auto& extent :
-         CoalesceExtents(extents, duckdb::BlockCache::MERGE_GAP)) {
-      blocks->cache->Prefetch(blocks->blocks, extent.offset, extent.size,
-                              duckdb::BlockCachePrefetch::NEED);
-    }
+    blocks->cache->Prefetch(blocks->blocks, extents,
+                            duckdb::BlockCachePrefetch::NEED);
   } catch (...) {
   }
 }

@@ -1,0 +1,29 @@
+statement ok
+RESET sdb_faults;
+
+
+connection a
+statement ok
+SET sdb_faults = 'hba_config_write_fails';
+
+
+connection b
+statement ok
+SET sdb_faults = '-hba_config_write_fails';
+
+
+connection a
+statement error
+SET sdb_faults = '-foreign_server_with_unknown_option';
+----
+db error: ERROR: failure point '-foreign_server_with_unknown_option' not set
+
+
+connection b
+statement ok
+SET sdb_faults = 'hba_config_write_fails';
+
+
+connection b
+statement ok
+RESET sdb_faults;

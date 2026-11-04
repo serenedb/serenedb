@@ -215,6 +215,11 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   const bool is_reset = value.IsNull();
 
   try {
+    duckdb::Value current;
+    _client_ctx.TryGetCurrentSetting(setting, current);
+    if (duckdb::Value::NotDistinctFrom(current, value)) {
+      return;
+    }
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     auto setting_index = db_config.TryGetSettingIndex(setting, option);

@@ -224,7 +224,6 @@ void ConfigureShellEngine(duckdb::DBConfig& config) {
 
 void LoadShellEngine(duckdb::DatabaseInstance& db) {
   irs::log::SetLogger(&db.GetLogManager().GlobalLogger());
-  irs::DuckDBEngine::ConfigureExtensions(db);
   server::query::RegisterEngineModules(db);
 }
 
@@ -233,6 +232,7 @@ void LoadShellEngine(duckdb::DatabaseInstance& db) {
 int RunSubcommand(int argc, char* argv[],
                   duckdb_shell::ShellSubcommand subcommand) {
   argv[1] = argv[0];
+  server::query::InstallEngineHost(server::query::EngineMode::kShell);
   docs::RegisterShellDocsBackend();
   return duckdb_shell::Run(
     argc - 1, argv + 1, subcommand,
@@ -260,18 +260,13 @@ int main(int argc, char* argv[]) {
   // is initialized. Bracket the whole RunServer lifetime so the contract
   // holds.
   //
-  // Two-step boot: the lite Initialize (serene_base) installs the storage
-  // extension via the ConfigureServerDBConfig mutator BEFORE the duckdb
-  // ctor runs (storage extensions must be registered pre-construct), then
-  // RegisterServerExtensions fills connector/pg/index types on the live
-  // DatabaseInstance.
-  //
   // CLI flags are parsed FIRST: ConfigureServerDBConfig reads --cpu_threads to
   // size the DuckDB pool at construction, so the flags must be live before
   // Initialize (parseOptions is SDB_*-free precisely so it can run this early).
   sdb::app::AppServer::parseOptions(argc, argv);
   const auto remap =
     irs::RemapExecutable(absl::GetFlag(FLAGS_remap_executable));
+  server::query::InstallEngineHost(server::query::EngineMode::kServer);
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
   SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);

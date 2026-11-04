@@ -41,7 +41,4 @@ std::vector<std::shared_ptr<search::Store>> InvertedStorages(
 void RegisterSereneDBStorage(duckdb::DBConfig& config,
                              duckdb::shared_ptr<catalog::DataDirectory> layout);
 
-// Register SereneDB optimizer extensions with a live DuckDB instance.
-void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db);
-
 }  // namespace sdb::connector

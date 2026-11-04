@@ -26,6 +26,7 @@
 
 #include "engine_context.h"
 #include "query/config.h"
+#include "query/server_engine.h"
 
 namespace sdb::test {
 namespace {
@@ -42,6 +43,8 @@ int main(int argc, char** argv) {
   irs::CheckCpuFeatures(argv[0]);
   ::testing::InitGoogleTest(&argc, argv);
   irs::InitOptimizeRules();
+  sdb::server::query::InstallEngineHost(
+    sdb::server::query::EngineMode::kServer);
   irs::DuckDBEngine::Instance().Initialize(
     &sdb::connector::RegisterConfigVariables);
   auto connection = irs::DuckDBEngine::Instance().CreateConnection();

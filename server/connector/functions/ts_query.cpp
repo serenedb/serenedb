@@ -176,6 +176,8 @@ TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
   return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
+}  // namespace
+
 bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
                             bool parent_frozen) {
   if (SqlMinMatchOperand(parent)) {
@@ -184,6 +186,8 @@ bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
   return parent_frozen && duckdb::BoundCastExpression::IsCast(parent) &&
          HasGroupModifier(parent.GetReturnType());
 }
+
+namespace {
 
 [[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
                                     duckdb::idx_t, duckdb::CastParameters&) {
@@ -453,12 +457,16 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
   duckdb::ClientContext& _context;
 };
 
+}  // namespace
+
 void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan) {
     TSQueryFoldVisitor{input.context}.VisitOperator(*plan);
   }
 }
+
+namespace {
 
 [[noreturn]] void TSQueryStubFn(duckdb::DataChunk& /*args*/,
                                 duckdb::ExpressionState& /*state*/,
@@ -1223,14 +1231,6 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
   }
 }
 
-void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
-  duckdb::OptimizerExtension fold;
-  fold.pre_optimize_function = FoldTSQueryConstants;
-  fold.rewrite_barrier = MinMatchRewriteBarrier;
-  duckdb::OptimizerExtension::Register(loader.GetDatabaseInstance().config,
-                                       std::move(fold));
-}
-
 // All scorers share `name(BIGINT tableoid [, params...]) -> FLOAT`; the
 // iresearch_plan rule claims each call at compile time and threads the
 // scorer into bind_data -- the stub fires only if a call escapes the rule.
@@ -1275,7 +1275,6 @@ void RegisterTSQueryFunctions(duckdb::ExtensionLoader& loader) {
   RegisterTSQueryParserFunctions(loader);
   RegisterTSQueryOperators(loader);
   RegisterPredicateFunctions(loader);
-  RegisterTSQueryConstantFolding(loader);
 }
 
 }  // namespace sdb::connector

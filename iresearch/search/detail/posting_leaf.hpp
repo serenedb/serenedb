@@ -464,7 +464,7 @@ class PostingLeaf {
       freqs[hits] = _freqs.data[begin - first];
       offsets[hits] = offset;
       hits +=
-        static_cast<uint32_t>((mask[offset / kBits] >> (offset % kBits)) & 1);
+        static_cast<uint32_t>(CheckBit(mask[offset / kBits], offset % kBits));
     }
     if (hits != 0) {
       score_t scores[kBlock];

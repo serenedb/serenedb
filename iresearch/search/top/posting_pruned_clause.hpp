@@ -121,12 +121,14 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   uint32_t Keep(doc_id_t* IRS_RESTRICT docs, score_t* IRS_RESTRICT scores,
                 uint32_t n) {
     uint32_t kept = 0;
-    Members(docs, n, [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
-      docs[kept] = docs[i];
-      scores[kept] = scores[i];
-      _gather[kept] = freq;
-      kept += static_cast<uint32_t>(hit);
-    });
+    Members(docs, n,
+            [&](uint32_t i, doc_id_t doc, bool hit, uint32_t freq)
+              IRS_FORCE_INLINE {
+                docs[kept] = doc;
+                scores[kept] = scores[i];
+                _gather[kept] = freq;
+                kept += static_cast<uint32_t>(hit);
+              });
     return kept;
   }
 

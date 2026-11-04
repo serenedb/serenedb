@@ -231,7 +231,7 @@ CREATE TYPE mrbeast.int4 AS ENUM ('six', 'seven');
 statement error
 ALTER TYPE mrbeast.int4 SET SCHEMA main;
 ----
-db error: ERROR: type "int4" already exists in schema "main"
+db error: ERROR: Type with name "int4" already exists!
 
 
 statement ok

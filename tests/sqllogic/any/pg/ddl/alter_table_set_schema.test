@@ -65,10 +65,8 @@ ALTER TABLE feastables.videos SET SCHEMA beastland
 statement ok
 CREATE TABLE mrbeast.videos (views INT)
 
-statement error
+statement error "videos" already exists
 ALTER TABLE mrbeast.videos SET SCHEMA feastables
-----
-db error: ERROR: relation "videos" already exists in schema "feastables"
 
 
 statement ok
@@ -79,10 +77,31 @@ statement ok
 CREATE VIEW feastables.clips AS SELECT 2 AS n
 
 
-statement error
+statement error "clips" already exists
 ALTER VIEW mrbeast.clips SET SCHEMA feastables
+
+
+statement ok
+BEGIN
+
+
+statement ok
+DROP VIEW feastables.clips
+
+
+statement ok
+ALTER VIEW mrbeast.clips SET SCHEMA feastables
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT n FROM feastables.clips
 ----
-db error: ERROR: relation "clips" already exists in schema "feastables"
+n
+1
 
 
 statement ok
@@ -93,10 +112,8 @@ statement ok
 CREATE SEQUENCE feastables.subs
 
 
-statement error
+statement error "subs" already exists
 ALTER SEQUENCE mrbeast.subs SET SCHEMA feastables
-----
-db error: ERROR: relation "subs" already exists in schema "feastables"
 
 
 statement ok
@@ -111,10 +128,8 @@ statement ok
 CREATE TABLE feastables.merch_id_idx (id INT)
 
 
-statement error
+statement error "merch_id_idx" already exists
 ALTER TABLE mrbeast.merch SET SCHEMA feastables
-----
-db error: ERROR: relation "merch_id_idx" already exists in schema "feastables"
 
 
 statement ok
@@ -263,10 +278,8 @@ ALTER TYPE feastables.mood SET SCHEMA feastables
 statement ok
 CREATE TYPE mrbeast.mood AS ENUM ('sleepy')
 
-statement error
+statement error "mood" already exists
 ALTER TYPE feastables.mood SET SCHEMA mrbeast
-----
-db error: ERROR: type "mood" already exists in schema "mrbeast"
 
 
 statement ok
@@ -287,7 +300,7 @@ ALTER FUNCTION feastables.six_seven SET SCHEMA feastables
 statement ok
 CREATE FUNCTION mrbeast.six_seven() RETURNS int LANGUAGE sql AS 'SELECT 76'
 
-statement error already exists in schema
+statement error already exists
 ALTER FUNCTION feastables.six_seven SET SCHEMA mrbeast
 
 statement ok

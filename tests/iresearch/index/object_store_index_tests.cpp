@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
@@ -603,6 +604,29 @@ TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
   irs::bstring buf(2 * kBlock + 2, 0);
   in.ReadData(3 * kBlock - 1, buf.data(), buf.size());
   EXPECT_EQ(kBlocks / 2 + 1, tests::ObjectStore().Requests().get);
+}
+
+TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  constexpr uint64_t kSize = uint64_t{200} << 20;
+  const std::vector<irs::byte_type> block(kBlock, 0x5A);
+  {
+    auto out = dir.Create("long");
+    for (uint64_t written = 0; written < kSize; written += kBlock) {
+      out->WriteData(block.data(), block.size());
+    }
+    out->Close();
+  }
+  duckdb::BlockCache::Get(Db()).Clear();
+  const auto file = dir.Open("long", duckdb::MappedFileAccess::NORMAL);
+  tests::ObjectStore().ResetRequests();
+  irs::IndexInput in{*file};
+  std::vector<irs::byte_type> read(kSize);
+  irs::ReadOnce(in, read.data(), kSize);
+  EXPECT_EQ(kSize, static_cast<uint64_t>(absl::c_count(read, 0x5A)));
+  EXPECT_LE(tests::ObjectStore().Requests().get,
+            2 * kSize / duckdb::BlockCache::PIECE_SIZE);
 }
 
 constexpr uint64_t kValues = 100000;

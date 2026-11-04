@@ -37,15 +37,13 @@ void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
     return;
   }
   constexpr uint64_t kChunk = uint64_t{64} << 20;
-  constexpr uint64_t kAhead = 2 * kChunk;
+  constexpr uint64_t kMappedAhead = 2 * kChunk;
   const auto start = in.Position();
-  file->Prefetch(start, std::min(count, kAhead));
   for (uint64_t done = 0; done < count;) {
-    const auto n = std::min(count - done, kChunk);
-    if (done + kAhead < count) {
-      file->Prefetch(start + done + kAhead,
-                     std::min(count - done - kAhead, kChunk));
-    }
+    const auto rest = count - done;
+    const auto n = std::min(rest, kChunk);
+    file->Prefetch(start + done,
+                   file->Contiguous() ? std::min(rest, kMappedAhead) : rest);
     in.ReadData(b + done, n);
     file->Evict(start + done, n);
     done += n;

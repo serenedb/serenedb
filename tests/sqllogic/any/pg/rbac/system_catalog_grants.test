@@ -3,6 +3,10 @@ DROP ROLE IF EXISTS scg_monitor;
 
 
 statement ok
+DROP ROLE IF EXISTS scg_reader;
+
+
+statement ok
 CREATE ROLE scg_monitor;
 
 
@@ -103,3 +107,33 @@ f
 
 statement ok
 DROP ROLE scg_monitor;
+
+
+statement ok
+CREATE ROLE scg_reader;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA pg_catalog TO scg_reader;
+
+
+query
+SELECT has_table_privilege('scg_reader', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+t
+
+
+statement ok
+REVOKE SELECT ON ALL TABLES IN SCHEMA pg_catalog FROM scg_reader;
+
+
+query
+SELECT has_table_privilege('scg_reader', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+f
+
+
+statement ok
+DROP ROLE scg_reader;

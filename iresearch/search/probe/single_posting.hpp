@@ -84,15 +84,7 @@ class SinglePostingScored {
 
   ScoreFunction PrepareScore() {
     _provider.freq.value = _gather;
-    SDB_ASSERT(_args.scorer != nullptr);
-    return _args.scorer->PrepareScorer({
-      .segment = *_segment,
-      .field = _field->meta(),
-      .doc_attrs = _provider,
-      .fetcher = *_args.fetcher,
-      .stats = _args.stats,
-      .boost = _args.boost,
-    });
+    return detail::PrepareScore(_args, *_segment, _field->meta(), _provider);
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {

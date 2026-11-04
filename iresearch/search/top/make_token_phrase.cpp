@@ -55,14 +55,8 @@ class PrunedTokenPhrase : public Root {
     _anchor.Prepare(*query.Anchor(), *irs::detail::DocOf(field),
                     irs::detail::LayoutOf(field), query.Segment(), field, args);
     _provider.freq.value = &_freq;
-    _score = args.scorer->PrepareScorer({
-      .segment = query.Segment(),
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = _fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score =
+      irs::detail::PrepareScore(args, query.Segment(), field.meta(), _provider);
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {

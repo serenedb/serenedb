@@ -38,14 +38,7 @@ class PhraseBound {
               const irs::detail::ScoreArgs& args) {
     SDB_ASSERT(args.scorer != nullptr);
     if (auto source = args.scorer->PrepareScoreBoundSource()) {
-      _func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
+      _func = irs::detail::PrepareScore(args, segment, field.meta(), *source);
       _source = std::move(source);
     }
   }

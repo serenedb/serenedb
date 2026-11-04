@@ -47,15 +47,7 @@ class PhraseUnionMember : public UnionMember {
       _bound{segment, field, args},
       _fetcher{*args.fetcher} {
     _provider.freq.value = _freqs;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
   }
 
   bool Bounded() const noexcept { return _bound.Bounded(); }
@@ -153,13 +145,7 @@ class PhraseUnionMember : public UnionMember {
   }
 
   void ScoreBatch(uint32_t len) {
-    if (len == kScoreBlock) {
-      _fetcher.FetchScoreBlock(std::span<const doc_id_t, kScoreBlock>{_docs});
-      _score.ScoreBlock(_scores);
-    } else {
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, len});
-      _score.Score(_scores, static_cast<scores_size_t>(len));
-    }
+    FetchAndScore(_fetcher, _score, _docs, _scores, len);
   }
 
   ABSL_CACHELINE_ALIGNED doc_id_t _docs[kScoreBlock];

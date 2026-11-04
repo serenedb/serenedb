@@ -29,6 +29,18 @@ namespace {
 
 constexpr size_t kLengthBytes = sizeof(uint32_t);
 
+RegexpAcceptor::PartKind BytesPartKind(PatternKind kind) noexcept {
+  switch (kind) {
+    case PatternKind::RegexpPerlBytes:
+      return RegexpAcceptor::PartKind::PerlBytes;
+    case PatternKind::RegexpPosixEreBytes:
+      return RegexpAcceptor::PartKind::PosixEreBytes;
+    default:
+      SDB_ASSERT(kind == PatternKind::WildcardBytes);
+      return RegexpAcceptor::PartKind::WildcardBytes;
+  }
+}
+
 std::shared_ptr<const RegexpAcceptor> Compile(bytes_view pattern,
                                               PatternKind kind) {
   if (kind == PatternKind::Wildcard) {
@@ -37,6 +49,12 @@ std::shared_ptr<const RegexpAcceptor> Compile(bytes_view pattern,
   }
   if (kind == PatternKind::Union) {
     const auto parts = UnionParts(pattern);
+    return std::make_shared<const RegexpAcceptor>(std::span{parts});
+  }
+  if (kind == PatternKind::WildcardBytes ||
+      kind == PatternKind::RegexpPerlBytes ||
+      kind == PatternKind::RegexpPosixEreBytes) {
+    const RegexpAcceptor::Part parts[]{{BytesPartKind(kind), pattern}};
     return std::make_shared<const RegexpAcceptor>(std::span{parts});
   }
   SDB_ASSERT(kind == PatternKind::RegexpPerl ||
@@ -101,6 +119,8 @@ std::string DescribeUnion(bytes_view key) {
     switch (part.kind) {
       case RegexpAcceptor::PartKind::Perl:
       case RegexpAcceptor::PartKind::PosixEre:
+      case RegexpAcceptor::PartKind::PerlBytes:
+      case RegexpAcceptor::PartKind::PosixEreBytes:
         out.append("(?:").append(chars).append(")");
         break;
       case RegexpAcceptor::PartKind::Prefix:
@@ -108,6 +128,7 @@ std::string DescribeUnion(bytes_view key) {
         break;
       case RegexpAcceptor::PartKind::Term:
       case RegexpAcceptor::PartKind::Wildcard:
+      case RegexpAcceptor::PartKind::WildcardBytes:
         out.append(chars);
         break;
     }

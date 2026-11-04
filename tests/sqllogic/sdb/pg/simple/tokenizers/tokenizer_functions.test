@@ -186,6 +186,13 @@ t
 BLOB[]
 
 query
+SELECT typeof(generate_wildcard_ngrams('abc', 3)) AS fn,
+       typeof(ts_lexize('fn_wild', 'abc')) AS lexize;
+----
+fn	lexize
+BLOB[]	BLOB[]
+
+query
 SELECT typeof(encode_geopoint('{"lat": 1.5, "lng": 2.5}'::JSON, ['lat'], ['lng'])) AS t, array_length(encode_geopoint('{"lat": 1.5, "lng": 2.5}'::JSON, ['lat'], ['lng']), 1) > 0 AS has_terms;
 ----
 t	has_terms

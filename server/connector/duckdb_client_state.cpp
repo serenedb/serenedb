@@ -89,6 +89,11 @@ SereneDBClientState& SereneDBClientState::Register(
                        ERR_MSG("there is no transaction in progress")));
       return true;
     }
+    if (absl::StrContains(message, "can only be used in transaction blocks")) {
+      GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION), ERR_MSG(message)));
+      return true;
+    }
     GetSereneDBContext(ctx).AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
     return true;
@@ -117,11 +122,6 @@ SereneDBClientState& SereneDBClientState::Register(
       // ParameterStatus at the next ReadyForQuery (a cheap version bump; the
       // GUC poll itself is skipped entirely when nothing changed).
       sdb_ctx.MarkSettingsChanged();
-      // Outside an explicit transaction there's nothing to roll back --
-      // the map stays empty.
-      if (!sdb_ctx.IsExplicitTransaction()) {
-        return;
-      }
       duckdb::Value old_value;
       ctx.TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
       sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL,

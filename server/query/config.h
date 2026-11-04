@@ -80,9 +80,6 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
 
 class Config {
  public:
-  // Per-key tracking for a currently-open transaction. Populated only when
-  // `setting_change_handler` sees a real change inside an explicit txn;
-  // cleared on COMMIT / ROLLBACK.
   struct TxnVariable {
     // Value to restore on ROLLBACK. Captured on the first tracked event
     // for this key and never updated after.
@@ -125,7 +122,6 @@ class Config {
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
 
-  // Record a SET / SET LOCAL event inside an explicit txn.
   //   old_value -- value currently in effect (pre-event snapshot).
   //   new_value -- pointer to the about-to-be value for SET; nullptr for
   //                RESET. Used only to skip initial insertion when a SET

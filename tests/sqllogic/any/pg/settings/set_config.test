@@ -66,4 +66,56 @@ application_name
 
 
 statement ok
+SET application_name TO 'before_local';
+
+
+query
+SELECT set_config('application_name', 'local_value', true) AS value;
+----
+value
+local_value
+
+
+query
+SHOW application_name;
+----
+application_name
+before_local
+
+
+statement ok
+SET LOCAL application_name TO 'local_statement';
+
+
+query
+SHOW application_name;
+----
+application_name
+before_local
+
+
+statement ok
+CREATE TABLE set_config_zero (x int);
+
+
+statement ok
+INSERT INTO set_config_zero VALUES (0);
+
+
+statement error db error: ERROR: [Dd]ivision by zero.*
+SELECT set_config('application_name', 'failed', false), 1 / x FROM set_config_zero;
+
+
+query
+SHOW application_name;
+----
+application_name
+before_local
+
+
+statement ok
+DROP TABLE set_config_zero;
+
+
+statement ok
 RESET application_name;

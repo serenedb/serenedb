@@ -244,14 +244,8 @@ transaction_isolation
 repeatable read
 
 
-# 10. SET LOCAL outside a transaction -> error
-# Warning in Postgres
-skipif postgres
-skipif pg-wire-extended # TODO(mbkkt) peek for next sync, so autocommit?
-statement error
+statement ok
 SET LOCAL transaction_isolation TO 'read committed';
-----
-db error: ERROR: SET LOCAL can only be used in transaction blocks
 
 
 query
@@ -608,13 +602,9 @@ extra_float_digits
 1
 
 
-# 25. RESET LOCAL ALL outside a txn -> error
 skipif postgres
-skipif pg-wire-extended # TODO(mbkkt) peek for next sync, so autocommit?
-statement error
+statement ok
 RESET LOCAL ALL;
-----
-db error: ERROR: RESET LOCAL can only be used in transaction blocks
 
 
 # 26. RESET LOCAL ALL reverts at both COMMIT and ROLLBACK

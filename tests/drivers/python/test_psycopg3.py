@@ -834,6 +834,23 @@ def test_standalone_commit_rollback_no_txn_warns_25p01():
         c.close()
 
 
+def test_set_local_outside_a_transaction_block_warns_25p01():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.sqlstate, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SHOW application_name")
+            before = cur.fetchone()
+            cur.execute("SET LOCAL application_name = 'set_local_warns'")
+            cur.execute("SELECT set_config('application_name', 'set_config_quiet', true)")
+            cur.execute("SHOW application_name")
+            assert cur.fetchone() == before
+        assert diags == [("WARNING", "25P01", "SET LOCAL can only be used in transaction blocks")], diags
+    finally:
+        c.close()
+
+
 def test_engine_warning_reaches_the_client_as_a_notice():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     diags: list[tuple] = []

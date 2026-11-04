@@ -84,7 +84,7 @@ class ColumnWriter final {
     return {_staged.data(), _staged_chunks};
   }
 
-  uint64_t StagedBytes() const noexcept { return _staged_bytes; }
+  uint64_t StagedBytes() const noexcept { return _staged_bytes + _open_bytes; }
 
   void Reorder(std::span<const uint32_t> new2old);
 
@@ -202,6 +202,7 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _staged_bytes = 0;
+  uint64_t _open_bytes = 0;
   uint64_t _row_start = 0;
   bool _hll_auto = false;
   duckdb::Vector _hll_hashes{duckdb::LogicalType::HASH, nullptr};

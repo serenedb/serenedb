@@ -301,9 +301,8 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   if (outcome.sealed) {
     return outcome.all_dedup;
   }
-  return CompressData(type, chunks,
-                      duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
-                      meta.data);
+  return CompressData(
+    type, chunks, duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, meta.data);
 }
 
 bool ColumnWriter::SealNumeric(const duckdb::LogicalType& type,
@@ -696,6 +695,7 @@ void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
   const auto chunks = std::exchange(_staged_chunks, 0);
   _staged_rows = 0;
   _staged_bytes = 0;
+  _open_bytes = 0;
   _seal_at = _row_group_size;
   InitIngest();
   for (duckdb::idx_t c = 0; c != chunks; ++c) {
@@ -741,6 +741,7 @@ WriteChunk& ColumnWriter::OpenChunk() {
   if (_staged_chunks != 0 && _seal_at == std::numeric_limits<uint64_t>::max()) {
     const auto& full = _staged[_staged_chunks - 1];
     _staged_bytes += full.data.GetDataSize(full.count);
+    _open_bytes = 0;
   }
   if (_staged_chunks == _staged.size()) {
     auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
@@ -776,6 +777,9 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
       }
     }
     duckdb::FlatVector::SetSize(back.data, back.count);
+    if (_seal_at == std::numeric_limits<uint64_t>::max()) {
+      _open_bytes = back.data.GetDataSize(back.count);
+    }
     _staged_rows += take;
     off += take;
     if (_staged_rows == _seal_at) {

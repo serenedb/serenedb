@@ -26,9 +26,67 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
+namespace {
+
+uint64_t VisitInto(MultiTermQuery& query, const PrepareContext& ctx,
+                   const TermReader& reader, bytes_view from, bytes_view to) {
+  MultiTermVisitor mtv{ctx, query.State(), reader};
+  uint64_t docs = 0;
+  bool pieces = false;
+  reader.VisitRange(
+    from, to, [&](bytes_view term, const PostingMeta& meta, bool piece) {
+      pieces |= piece;
+      docs += meta.docs_count;
+      mtv.Visit(term, meta, kNoBoost);
+    });
+  if (pieces) {
+    query.State().MarkPieces();
+  }
+  return docs;
+}
+
+QueryBuilder::ptr Complement(const SubReader& segment,
+                             const PrepareContext& ctx,
+                             const TermReader& reader, bytes_view from,
+                             bytes_view to, uint64_t inside) {
+  const auto& meta = reader.meta();
+  if (ctx.KeepsTerms() || !reader.single_valued ||
+      meta.dict.layout != DictLayout::Numeric) {
+    return nullptr;
+  }
+  const auto* nulls = segment.field(
+    meta.id, {.layout = meta.dict.layout, .member = DictMember::Nulls});
+  const uint64_t null_docs = nulls != nullptr ? nulls->docs_count() : 0;
+  const uint64_t values = reader.docs_count();
+  if (values + null_docs != segment.docs_count() ||
+      inside <= values - inside + null_docs) {
+    return nullptr;
+  }
+  if (inside == segment.docs_count()) {
+    return memory::make_tracked<AllQuery>(ctx.memory, segment, ctx.boost);
+  }
+  auto tails = memory::make_tracked<MultiTermQuery>(
+    ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Sum);
+  VisitInto(*tails, ctx, reader, {}, from);
+  VisitInto(*tails, ctx, reader, to, {});
+  BooleanBuilder builder{segment, ctx.memory, 0, ctx.boost,
+                         ScoreMergeType::Sum};
+  builder.Add(memory::make_tracked<AllQuery>(ctx.memory, segment, kNoBoost),
+              Occur::Must);
+  builder.Add(MultiTermQuery::Finish(std::move(tails), ctx), Occur::MustNot);
+  if (null_docs != 0) {
+    builder.AddTerm(nulls, nulls->Lookup(kSlotTerm), kNoBoost, Occur::MustNot,
+                    {});
+  }
+  return builder.Finish();
+}
+
+}  // namespace
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
@@ -60,10 +118,11 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
     has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
-  MultiTermVisitor mtv{ctx, query->State(), *reader};
-  reader->VisitRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
-    mtv.Visit(term, meta, kNoBoost);
-  });
+  const auto inside = VisitInto(*query, ctx, *reader, from, to);
+  if (auto complement =
+        Complement(segment, ctx, *reader, from, to, inside)) {
+    return complement;
+  }
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
 

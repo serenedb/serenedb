@@ -44,6 +44,7 @@ struct PostingClause {
   TermState state;
   score_t boost = kNoBoost;
   StatsRecord stats{};
+  uint32_t group = 0;
 };
 
 struct AllDocsClause {

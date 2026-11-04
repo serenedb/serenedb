@@ -32,6 +32,8 @@ namespace irs::count {
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx = {});
 
+bool IsConstant(const QueryBuilder& query);
+
 Root::ptr MakeConstant(uint64_t count);
 
 Root::ptr MakeAllCount(doc_id_t count);

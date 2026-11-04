@@ -102,7 +102,7 @@ class FieldWriter final {
   void Cut();
   void WriteBlock();
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
-                uint64_t first_inline);
+                uint64_t docs_sum, uint64_t first_inline);
   void ResetField() noexcept;
   void Reset() noexcept;
 

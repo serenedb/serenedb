@@ -53,6 +53,9 @@ class MultiTermState {
   bool Empty() const noexcept { return _terms.empty(); }
   const auto* Reader() const noexcept { return _reader; }
 
+  void MarkPieces() noexcept { _pieces = true; }
+  bool HasPieces() const noexcept { return _pieces; }
+
   void Push(const PostingMeta& cookie, score_t boost,
             const byte_type* stats = nullptr) {
     _terms.emplace_back(cookie, boost, stats);
@@ -66,6 +69,7 @@ class MultiTermState {
   const TermReader* _reader = nullptr;
 
   ManagedVector<Entry> _terms;
+  bool _pieces = false;
 };
 
 }  // namespace irs

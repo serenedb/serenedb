@@ -916,12 +916,13 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       SCOPED_TRACE(testing::Message("round ") << round);
       std::vector<irs::bstring> keys;
       std::vector<irs::doc_id_t> actual;
-      reader.VisitRange(from, to,
-                        [&](irs::bytes_view key, const irs::PostingMeta& meta) {
-                          keys.emplace_back(key);
-                          const auto docs = DocsOf(reader, meta);
-                          actual.insert(actual.end(), docs.begin(), docs.end());
-                        });
+      reader.VisitRange(
+        from, to,
+        [&](irs::bytes_view key, const irs::PostingMeta& meta, bool) {
+          keys.emplace_back(key);
+          const auto docs = DocsOf(reader, meta);
+          actual.insert(actual.end(), docs.begin(), docs.end());
+        });
       ASSERT_LE(keys.size(), bound);
       for (size_t i = 0; i != keys.size(); ++i) {
         ASSERT_LE(from, irs::bytes_view{keys[i]});
@@ -1306,6 +1307,38 @@ TEST_P(TermDictTest, single_term_fields) {
     AssertVisits(*reader, field.entries, 20);
     if (single) {
       ASSERT_EQ(before, counting.Reads());
+    }
+  }
+}
+
+TEST_P(TermDictTest, single_valued_when_no_document_holds_two_terms) {
+  const Field fields[]{
+    {.id = 1,
+     .entries = NumericEntries({{10, 1}, {20, 2}, {30, 3}, {40, 4}}),
+     .dict = irs::NumericLayout::kNumbers},
+    {.id = 2,
+     .entries = NumericEntries({{10, 1}, {20, 2}, {30, 2}}),
+     .dict = irs::NumericLayout::kNumbers},
+    {.id = 3,
+     .entries = {{.key = Bytes("a"), .docs = {{1, 1}}},
+                 {.key = Bytes("b"), .docs = {{2, 1}, {3, 1}}}}},
+    {.id = 4, .entries = MakeEntries(Words(3000, 41))},
+    {.id = 5, .entries = MakeEntries({Bytes("only")})},
+  };
+  constexpr bool kExpected[]{true, false, true, false, true};
+  for (const bool compaction : {false, true}) {
+    SCOPED_TRACE(testing::Message("compaction ") << compaction);
+    Write(fields, compaction);
+    for (size_t i = 0; i != std::size(fields); ++i) {
+      SCOPED_TRACE(testing::Message("field ") << fields[i].id);
+      const auto* reader = Get(fields[i]);
+      ASSERT_NE(nullptr, reader);
+      ASSERT_EQ(kExpected[i], reader->single_valued);
+    }
+    const auto terms = TakeTerms();
+    for (const auto& head : terms.fields) {
+      SCOPED_TRACE(testing::Message("head ") << head.id);
+      ASSERT_EQ(kExpected[head.id - 1], head.single_valued);
     }
   }
 }
@@ -3273,10 +3306,11 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
         .to = round == 0 ? irs::bstring{} : bounds[rng() % bounds.size()],
         .metas = {},
       });
-      reader->VisitRange(visit.from, visit.to,
-                         [&](irs::bytes_view, const irs::PostingMeta& meta) {
-                           visit.metas.push_back(meta);
-                         });
+      reader->VisitRange(
+        visit.from, visit.to,
+        [&](irs::bytes_view, const irs::PostingMeta& meta, bool) {
+          visit.metas.push_back(meta);
+        });
     }
     {
       auto it = reader->iterator();
@@ -3563,11 +3597,13 @@ TEST_P(TermDictTest, point_range_visits_only_its_term) {
     to.push_back(0);
     std::vector<irs::bstring> keys;
     std::vector<irs::doc_id_t> docs;
-    reader->VisitRange(
-      key, to, [&](irs::bytes_view visited, const irs::PostingMeta& meta) {
-        keys.emplace_back(visited);
-        docs = DocsOf(*reader, meta);
-      });
+    reader->VisitRange(key, to,
+                       [&](irs::bytes_view visited, const irs::PostingMeta& meta,
+                           bool piece) {
+                         ASSERT_FALSE(piece);
+                         keys.emplace_back(visited);
+                         docs = DocsOf(*reader, meta);
+                       });
     return std::pair{std::move(keys), std::move(docs)};
   };
   for (const size_t i :
@@ -3612,7 +3648,7 @@ TEST_P(TermDictTest, mapped_range_visits_do_not_allocate) {
     const irs::bytes_view to = bounds[rng() % bounds.size()];
     const uint64_t before = ThreadAllocatedBytes();
     reader->VisitRange(from, to,
-                       [](irs::bytes_view, const irs::PostingMeta&) {});
+                       [](irs::bytes_view, const irs::PostingMeta&, bool) {});
     ASSERT_EQ(before, ThreadAllocatedBytes());
   }
 }

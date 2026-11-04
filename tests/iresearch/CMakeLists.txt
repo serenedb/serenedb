@@ -117,6 +117,7 @@ add_executable(
     search/boost_attribute_test.cpp
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
+    search/count_single_valued_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
     search/doc_collector_test.cpp

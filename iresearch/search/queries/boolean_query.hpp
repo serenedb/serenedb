@@ -172,7 +172,8 @@ class BooleanBuilder {
 
  private:
   void Push(BooleanQuery::PreparedBucket& bucket, const TermReader* reader,
-            const PostingMeta& meta, score_t boost, detail::StatsRecord stats);
+            const PostingMeta& meta, score_t boost, detail::StatsRecord stats,
+            uint32_t group);
 
   bool Absorb(QueryKind kind, Occur occur);
 
@@ -213,6 +214,7 @@ class BooleanBuilder {
   uint32_t _msm;
   score_t _boost;
   ScoreMergeType _merge_type;
+  uint32_t _groups = 0;
   bool _collects = false;
   bool _needs_terms = false;
   bool _empty = false;

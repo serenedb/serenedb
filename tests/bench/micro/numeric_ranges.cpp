@@ -346,7 +346,7 @@ void VisitAdaptive(const irs::TermReader& field, uint64_t lo, uint64_t hi,
   to_buf[to.size()] = 0;
   field.VisitRange(
     from, {to_buf, to.size() + 1},
-    [&](bytes_view, const irs::PostingMeta& meta) { visit(meta); });
+    [&](bytes_view, const irs::PostingMeta& meta, bool) { visit(meta); });
 }
 
 struct Query {

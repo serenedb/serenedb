@@ -52,7 +52,8 @@ struct PostingsHandles {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
-  using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
+  using RangeVisitor =
+    absl::FunctionRef<void(bytes_view, const PostingMeta&, bool)>;
   using TermAt = absl::FunctionRef<bytes_view(size_t)>;
   using FoundTerm = absl::FunctionRef<void(size_t, const PostingMeta&)>;
 
@@ -123,6 +124,7 @@ struct TermReader : public AttributeProvider {
   virtual PostingsHandles Handles() const noexcept = 0;
 
   uint32_t key_width = 0;
+  bool single_valued = false;
 };
 
 }  // namespace irs

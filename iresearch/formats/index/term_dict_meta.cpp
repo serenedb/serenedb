@@ -91,6 +91,7 @@ constexpr duckdb::field_id_t kDictInlineBase = 13;
 constexpr duckdb::field_id_t kDictInlineSize = 14;
 constexpr duckdb::field_id_t kDictText = 15;
 constexpr duckdb::field_id_t kDictRanges = 16;
+constexpr duckdb::field_id_t kDictSingleValued = 17;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
@@ -201,6 +202,10 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
                       WriteRanges(object, head.ranges);
                     });
   }
+  if (head.term_count != 1) {
+    out.WritePropertyWithDefault<bool>(kDictSingleValued, "single_valued",
+                                       head.single_valued, false);
+  }
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -306,6 +311,9 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
                             ReadRanges(object, head.ranges);
                           });
   }
+  head.single_valued =
+    head.term_count == 1 || in.ReadPropertyWithExplicitDefault<bool>(
+                              kDictSingleValued, "single_valued", false);
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   const bool has_ranges = !head.ranges.counts.empty() || head.ranges.size != 0;

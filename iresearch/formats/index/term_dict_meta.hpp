@@ -67,6 +67,7 @@ struct FieldHead {
   uint64_t inline_size = 0;
   TextHead text;
   RangesHead ranges;
+  bool single_valued = false;
 };
 
 struct SpanningBlock {

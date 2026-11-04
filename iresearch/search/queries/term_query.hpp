@@ -30,8 +30,8 @@ namespace irs {
 class TermQuery : public QueryBuilderImpl<TermQuery> {
  public:
   TermQuery(const SubReader& segment, const TermReader* reader,
-            const PostingMeta& cookie, score_t boost,
-            detail::StatsRecord stats);
+            const PostingMeta& cookie, score_t boost, detail::StatsRecord stats,
+            bool piece);
 
   void Visit(PreparedStateVisitor&, score_t boost) const final;
 
@@ -41,9 +41,12 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
 
   const TermState& State() const noexcept { return _state; }
 
+  bool Piece() const noexcept { return _piece; }
+
  private:
   TermState _state;
   score_t _boost;
+  bool _piece;
 };
 
 extern template class QueryBuilderImpl<TermQuery>;
@@ -52,6 +55,7 @@ QueryBuilder::ptr MakeTermQuery(IResourceManager& memory,
                                 const SubReader& segment,
                                 const TermReader* reader,
                                 const PostingMeta& meta, score_t boost,
-                                detail::StatsRecord stats = {});
+                                detail::StatsRecord stats = {},
+                                bool piece = false);
 
 }  // namespace irs

@@ -420,6 +420,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
 
   const uint64_t first_inline = _inline.size();
   uint64_t total_freq = 0;
+  uint64_t docs_sum = 0;
   const bool freq_exists =
     IndexFeatures::None != (props.index_features & IndexFeatures::Freq);
 
@@ -430,6 +431,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
     if (meta.docs_count == 0) {
       return;
     }
+    docs_sum += meta.docs_count;
     if (!freq_exists) {
       total_freq += meta.docs_count;
     }
@@ -464,7 +466,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
     }
   }
 
-  EndField(id, props, total_freq, first_inline);
+  EndField(id, props, total_freq, docs_sum, first_inline);
   ResetField();
 }
 
@@ -667,7 +669,8 @@ void FieldWriter::WriteBlock() {
 }
 
 void FieldWriter::EndField(field_id id, const FieldProperties& props,
-                           uint64_t total_freq, uint64_t first_inline) {
+                           uint64_t total_freq, uint64_t docs_sum,
+                           uint64_t first_inline) {
   if (_ranges.Active()) {
     _ranges.Finish(_terms);
   }
@@ -683,6 +686,7 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   head.features = props.index_features;
   head.term_count = _terms;
   head.doc_count = stats.docs_count;
+  head.single_valued = docs_sum == stats.docs_count;
   const bool text = _dict.member == DictMember::Strings;
   if (text) {
     head.text.total_freq = total_freq;

@@ -114,7 +114,7 @@ class RangeWalk {
         meta.inline_data =
           record +
           PostingsReader::decode(record, _field.meta().index_features, meta);
-        _visit(Key(_lower, start), meta);
+        _visit(Key(_lower, start), meta, true);
       } else if (level == 0) {
         const auto lower = from_side ? Key(_lower, start) : _from;
         const auto upper = last || !to_side ? _to : Key(_upper, next);
@@ -139,7 +139,7 @@ class RangeWalk {
       if (!upper.empty() && key >= upper) {
         return true;
       }
-      _visit(key, _cursor.Meta());
+      _visit(key, _cursor.Meta(), false);
     } while (_cursor.Advance());
     return false;
   }
@@ -351,7 +351,7 @@ void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
   }
   if (to.size() == from.size() + 1 && to.back() == 0 && to.starts_with(from)) {
     if (const auto meta = Lookup(from); meta.docs_count != 0) {
-      visit(from, meta);
+      visit(from, meta, false);
     }
     return;
   }

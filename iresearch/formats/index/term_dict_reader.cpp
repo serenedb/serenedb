@@ -200,6 +200,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
   key_width = head.width;
+  single_valued = head.single_valued;
   uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));

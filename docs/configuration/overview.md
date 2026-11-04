@@ -482,7 +482,6 @@ Not for production. These exist to reproduce and diagnose engine behaviour, and 
 | `iceberg_unsafe_skip_puffin_verification` | Skip the structural check of Puffin deletion-vector files, to read the invalid files some other Iceberg writers produce. | `BOOLEAN` | `GLOBAL` | `off` |
 | `legacy_disable_null_type` | Deprecated. When enabled, prevent the NULL type from leaving the binder (< v2.0 default behavior). | `BOOLEAN` | `SESSION` | `off` |
 | `old_implicit_casting` | Deprecated. Allow implicit casting to and from VARCHAR. | `BOOLEAN` | `GLOBAL` | `false` |
-| `sdb_search_pk_certify_from_wal` | Where a search table's primary-key check looks for rows that are committed but not yet published. When false, those rows are kept in memory from commit until publication; when true, they are read back from the write-ahead log instead, trading that memory for a read on each commit that is checked. Both reject the same duplicates. | `BOOLEAN` | `SESSION` | `false` |
 | `unsafe_disable_etag_checks` | Disable checks on ETag consistency | `BOOLEAN` | `SESSION` | `false` |
 
 ### Other

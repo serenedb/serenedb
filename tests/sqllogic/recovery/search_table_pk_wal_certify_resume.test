@@ -1,7 +1,7 @@
-# The WAL arm's commit pass resumes where the statement passes stopped, so it
-# answers only for what committed in between. This is the window that makes
-# that resume load-bearing: a conflicting key committed by somebody else after
-# the statement looked and before the commit does.
+# The commit pass resumes where the statement passes stopped, so it answers
+# only for what committed in between. This is the window that makes that
+# resume load-bearing: a conflicting key committed by somebody else after the
+# statement looked and before the commit does.
 #
 # No fault point needed -- an explicit transaction holds the two passes apart
 # on its own, because the statement pass runs at the INSERT and the commit pass
@@ -22,16 +22,6 @@ CREATE TABLE pkresume.public.t (id BIGINT PRIMARY KEY, s TEXT)
 # statement-end probe having worked.
 statement ok
 INSERT INTO pkresume.public.t VALUES (0, 'base');
-
-
-connection first
-statement ok
-SET sdb_search_pk_certify_from_wal = true;
-
-
-connection second
-statement ok
-SET sdb_search_pk_certify_from_wal = true;
 
 
 # --- the window itself -------------------------------------------------------

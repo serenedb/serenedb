@@ -51,14 +51,32 @@
 namespace sdb::search {
 namespace {
 
-// A tail that is not whole cannot be certified against. Every one of these
-// reads back as an empty tail, which is indistinguishable from "nothing was
-// committed" and would admit the duplicate the pass exists to catch, so the
-// commit is refused instead.
-// Which source the unpublished tier comes from. The two answer alike; this is
-// here to measure what they cost, and goes away with the arm that loses.
-bool CertifyFromWal(duckdb::ClientContext& context) {
-  return sdb::GetBoolSetting(context, "sdb_search_pk_certify_from_wal");
+// What a certifier must consult besides the published reader and its own
+// writes: rows that are durable, in no reader, and therefore invisible to a
+// probe that reads only the reader. The pointers borrow from the tail they
+// were read out of, which has to outlive the probe.
+struct UnpublishedTier {
+  std::vector<const irs::SubReader*> segments;
+  std::vector<const connector::KeyTerms*> keys;
+  std::vector<RowRange> removed;
+
+  bool Empty() const noexcept {
+    return segments.empty() && keys.empty() && removed.empty();
+  }
+};
+
+UnpublishedTier Flatten(const WalTail& tail) {
+  UnpublishedTier tier;
+  tier.segments.reserve(tail.segments.size());
+  for (const auto& segment : tail.segments) {
+    tier.segments.push_back(&segment);
+  }
+  tier.keys.reserve(tail.keys.keys.size());
+  for (const auto& key : tail.keys.keys) {
+    tier.keys.push_back(&key);
+  }
+  tier.removed = tail.keys.removed;
+  return tier;
 }
 
 // Both together, wherever the buffer they mirror is dropped: kept apart they
@@ -68,6 +86,10 @@ void DropBufferedKeys(SearchShardWrites& w) noexcept {
   w.encoded_rows = 0;
 }
 
+// A tail that is not whole cannot be certified against. Every one of these
+// reads back as an empty tail, which is indistinguishable from "nothing was
+// committed" and would admit the duplicate the pass exists to catch, so the
+// commit is refused instead.
 void RefuseUncertifiableTail(const WalTail& tail, duckdb::idx_t table_id) {
   if (!tail.error.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
@@ -380,48 +402,27 @@ void SearchTableTransaction::CertifyKeys(
     return;
   }
 
-  // Settled once, on the statement that first reaches a probe, and kept for
-  // the whole transaction: the commit passes and the install have to agree
-  // with this one about where the unpublished rows are, and a SET in between
-  // would otherwise leave them disagreeing.
-  if (!w.certify_from_wal) {
-    w.certify_from_wal = CertifyFromWal(context);
+  auto store = ResolveTailDatabase(*shard);
+  if (!store) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("The database holding search table ",
+                            shard->GetTableId(), " is no longer attached."));
   }
-
-  irs::DirectoryReader published;
-  WalTail wal;
-  UnpublishedTier tier;
-  PendingDelta::Reading delta;
-  if (*w.certify_from_wal) {
-    auto store = ResolveTailDatabase(*shard);
-    if (!store) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("The database holding search table ",
-                              shard->GetTableId(), " is no longer attached."));
-    }
-    irs::SourcePosition from;
-    std::tie(published, from) = shard->GetSnapshotWithPosition();
-    wal = ReadUnpublishedTail(*shard, *store, context, from, slots, nullptr);
-    RefuseUncertifiableTail(wal, shard->GetTableId());
-    // Where the commit pass picks up, for the same reason the delta arm keeps
-    // the lowest mark below: a key this statement wrote is answered for only as
-    // far as this statement looked.
-    if (!w.certified_tail || wal.boundary < *w.certified_tail) {
-      w.certified_tail = wal.boundary;
-    }
-    tier = Flatten(wal);
-  } else {
-    auto sources = shard->ReadCertificationSources();
-    // The lowest mark across this transaction's statements: a key the first
-    // statement wrote is only answered for as far as that statement looked, so
-    // the commit passes have to start from there for all of them.
-    if (!w.certified_mark || sources.delta.mark < *w.certified_mark) {
-      w.certified_mark = sources.delta.mark;
-    }
-    published = std::move(sources.reader);
-    delta = std::move(sources.delta);
-    tier = Flatten(delta.generations);
+  // The position first and the reader after it, so the reader can only be
+  // ahead of where the log read below starts -- never behind it, which is the
+  // way round that would leave rows in neither source.
+  auto [published, from] = shard->GetCertificationSnapshot();
+  const auto wal =
+    ReadUnpublishedTail(*shard, *store, context, from, slots, nullptr);
+  RefuseUncertifiableTail(wal, shard->GetTableId());
+  // Where the commit pass picks up. The lowest across this transaction's
+  // statements: a key the first statement wrote is answered for only as far as
+  // that statement looked, so the commit passes start from there for all of
+  // them.
+  if (!w.certified_tail || wal.boundary < *w.certified_tail) {
+    w.certified_tail = wal.boundary;
   }
+  UnpublishedTier tier = Flatten(wal);
 
   // An UPDATE that leaves the key columns alone asserts no key of its own: it
   // puts back, on a new row, the key the row it is replacing already had. So
@@ -467,8 +468,8 @@ void SearchTableTransaction::CertifyKeys(
                    op.delete_ranges.end());
   }
 
-  connector::UniqueProbe probe{new_keys ? &published : nullptr, tier.segments,
-                               std::move(tier.keys), key_fields, deleted};
+  connector::UniqueProbe probe{&published, tier.segments, std::move(tier.keys),
+                               key_fields, deleted};
 
   std::vector<const irs::SubReader*> segments;
   segments.reserve(readers.size());
@@ -492,8 +493,9 @@ void SearchTableTransaction::CertifyKeys(
 void SearchTableTransaction::CertifyAgainst(SearchShardWrites& w,
                                             duckdb::idx_t table_id,
                                             const irs::DirectoryReader* reader,
-                                            UnpublishedTier tier) {
+                                            const WalTail& tail) {
   SDB_ASSERT(!w.pk_slots.empty());
+  UnpublishedTier tier = Flatten(tail);
   if (reader == nullptr && tier.Empty()) {
     return;
   }
@@ -542,50 +544,38 @@ void SearchTableTransaction::CertifyAgainst(SearchShardWrites& w,
 void SearchTableTransaction::CertifyCommit(SearchShardWrites& w,
                                            duckdb::idx_t table_id,
                                            duckdb::ClientContext& context) {
-  if (*w.certify_from_wal) {
-    auto store = ResolveTailDatabase(*w.shard);
-    if (!store) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("The database holding search table ", table_id,
-                              " is no longer attached."));
-    }
-    // Resuming where the statement passes stopped, so this one answers only
-    // for what committed since. Starting over instead would re-walk every key
-    // this transaction wrote against state already ruled out -- and the rows
-    // it is committing are not in the log yet to be found either way, because
-    // `SearchTableLogWriter` writes them after this pass.
-    //
-    // Without a statement pass to resume from -- a transaction of deletes
-    // alone -- the reader and its position come together, for the same reason
-    // the delta arm takes its two that way: a refresh between them leaves the
-    // probe with a reader from before beside a tail from after, missing what
-    // the refresh moved.
-    irs::DirectoryReader reader;
-    irs::SourcePosition from;
-    if (w.certified_tail) {
-      from = *w.certified_tail;
-    } else {
-      std::tie(reader, from) = w.shard->GetSnapshotWithPosition();
-    }
-    const auto tail =
-      ReadUnpublishedTail(*w.shard, *store, context, from, w.pk_slots, nullptr);
-    RefuseUncertifiableTail(tail, table_id);
-    // Where the in-lock pass resumes. Set even for an empty tail: the pass
-    // still has to cover whatever commits between here and the commit lock.
-    w.wal_boundary = tail.boundary;
-    // The published reader only when no statement pass has probed it, the way
-    // the delta arm passes its own on `from_scratch`: the published position
-    // never goes backwards, so what that pass saw cannot have been missed.
-    CertifyAgainst(w, table_id, w.certified_tail ? nullptr : &reader,
-                   Flatten(tail));
-    return;
+  auto store = ResolveTailDatabase(*w.shard);
+  if (!store) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("The database holding search table ", table_id,
+                            " is no longer attached."));
   }
-  auto sources = w.shard->ClaimCertificationSources(w.certified_mark);
-  w.floor = std::move(sources.delta.floor);
-  // `sources` outlives the call: the tier borrows from its generations.
-  CertifyAgainst(w, table_id,
-                 sources.delta.from_scratch ? &sources.reader : nullptr,
-                 Flatten(sources.delta.generations));
+  // Resuming where the statement passes stopped, so this one answers only for
+  // what committed since. Starting over instead would re-walk every key this
+  // transaction wrote against state already ruled out -- and the rows it is
+  // committing are not in the log yet to be found either way, because
+  // `SearchTableLogWriter` writes them after this pass.
+  //
+  // Without a statement pass to resume from -- a transaction of deletes alone
+  // -- the reader and its position come from the same place the statement
+  // pass takes them, and in the same order and for the same reason.
+  irs::DirectoryReader reader;
+  irs::SourcePosition from;
+  if (w.certified_tail) {
+    from = *w.certified_tail;
+  } else {
+    std::tie(reader, from) = w.shard->GetCertificationSnapshot();
+  }
+  const auto tail =
+    ReadUnpublishedTail(*w.shard, *store, context, from, w.pk_slots, nullptr);
+  RefuseUncertifiableTail(tail, table_id);
+  // Where the in-lock pass resumes. Set even for an empty tail: the pass still
+  // has to cover whatever commits between here and the commit lock.
+  w.wal_boundary = tail.boundary;
+  // The published reader only when no statement pass has probed it: the
+  // published position never goes backwards, so what that pass saw cannot have
+  // been missed.
+  CertifyAgainst(w, table_id, w.certified_tail ? nullptr : &reader, tail);
 }
 
 void SearchTableTransaction::CertifyTail(
@@ -595,29 +585,21 @@ void SearchTableTransaction::CertifyTail(
     if (w.shard->GetDatabaseId() != database) {
       continue;
     }
-    if (w.wal_boundary) {
-      // Resuming where the pre-lock pass stopped, under the caller's commit
-      // lock: everything committed in between is between those two positions.
-      auto store = ResolveTailDatabase(*w.shard);
-      if (!store) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                        ERR_MSG("The database holding search table ", table_id,
-                                " is no longer attached."));
-      }
-      // Named, not inlined into the call: the tier borrows from the tail, and
-      // a temporary would be gone before the probe read it.
-      const auto tail = ReadUnpublishedTail(
-        *w.shard, *store, context, *w.wal_boundary, w.pk_slots, commit_lock);
-      RefuseUncertifiableTail(tail, table_id);
-      CertifyAgainst(w, table_id, nullptr, Flatten(tail));
+    if (!w.wal_boundary) {
       continue;
     }
-    if (!w.floor.Armed()) {
-      continue;
+    // Resuming where the pre-lock pass stopped, under the caller's commit
+    // lock: everything committed in between is between those two positions.
+    auto store = ResolveTailDatabase(*w.shard);
+    if (!store) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("The database holding search table ", table_id,
+                              " is no longer attached."));
     }
-    // Named for the same reason: the tier borrows from the generations.
-    const auto tail = w.shard->Delta().Extend(w.floor);
-    CertifyAgainst(w, table_id, nullptr, Flatten(tail));
+    const auto tail = ReadUnpublishedTail(
+      *w.shard, *store, context, *w.wal_boundary, w.pk_slots, commit_lock);
+    RefuseUncertifiableTail(tail, table_id);
+    CertifyAgainst(w, table_id, nullptr, tail);
   }
 }
 
@@ -741,19 +723,10 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
           .SharedCheckpointLock();
     }
   }
-  // A table with no primary key opens nothing and leaves no generation
-  // behind: the delta exists to be certified against, and nothing certifies
-  // against that table.
+  // A table with no primary key opens nothing: there is nothing to certify.
   for (auto& [table_id, w] : _writes) {
     if (w.pk_slots.empty()) {
       continue;
-    }
-    // Ahead of every `continue` below, because the install at the end of the
-    // commit reads it and a transaction of deletes alone takes one of them.
-    // Only statements that assert a key reach a probe, and DELETE never does,
-    // so this is the first place such a transaction can be asked at all.
-    if (!w.certify_from_wal) {
-      w.certify_from_wal = CertifyFromWal(context);
     }
     for (const auto& trx : w.transactions) {
       for (const auto& flushed : trx->Flushed()) {
@@ -761,9 +734,7 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
       }
     }
     // Deletes and truncates alone: this transaction asserts no key, so there
-    // is nothing to certify and no floor to arm. It still leaves a generation,
-    // which is how the rows it removed stay discounted until the publish
-    // applies them.
+    // is nothing to certify.
     if (w.pending_keys.empty() && w.flushed_segments.empty()) {
       continue;
     }
@@ -790,46 +761,7 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
     w.shard->MarkStaged(position);
-    InstallPendingDelta(w, table_id, w.first_tick + queries);
   }
-}
-
-void SearchTableTransaction::InstallPendingDelta(SearchShardWrites& w,
-                                                 duckdb::idx_t table_id,
-                                                 uint64_t tick) noexcept {
-  if (w.pk_slots.empty()) {
-    return;
-  }
-  // The WAL arm installs nothing: the rows this transaction is committing are
-  // going into the log either way, and reading them back from there is the
-  // whole of what it does differently. Skipping this is most of what it has to
-  // be cheaper by -- a generation per commit, holding its segment readers open
-  // until a refresh prunes it. The flag and not `wal_boundary`, which a
-  // transaction of deletes alone never sets: its removals are in the log too.
-  SDB_ASSERT(w.certify_from_wal);
-  if (*w.certify_from_wal) {
-    return;
-  }
-  // Released once the generation is in: from here the delta itself carries
-  // what this transaction wrote, so there is nothing left for a prune to take
-  // away from it.
-  const absl::Cleanup release = [&w]() noexcept { w.floor.Release(); };
-
-  auto generation = std::make_shared<PendingGeneration>();
-  generation->tick = tick;
-  generation->keys = std::move(w.pending_keys);
-
-  if (const auto changes = _changes.find(table_id); changes != _changes.end()) {
-    for (const auto& op : changes->second.ops) {
-      generation->removed.insert(generation->removed.end(),
-                                 op.delete_ranges.begin(),
-                                 op.delete_ranges.end());
-    }
-  }
-
-  generation->segments = std::move(w.flushed_segments);
-
-  w.shard->Delta().Install(std::move(generation));
 }
 
 void SearchTableTransaction::Publish(duckdb::idx_t database) noexcept {

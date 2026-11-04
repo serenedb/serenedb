@@ -91,7 +91,23 @@ class IndexDurability {
   void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
   bool FinishCheckpoint(irs::IndexWriter& writer);
   void FinishCheckpointIfIdle(irs::IndexWriter& writer);
+  // The published reader and the position it covers, as one instant. Waits
+  // out a refresh in progress to get it.
   std::pair<irs::DirectoryReader, irs::SourcePosition> Snapshot(
+    irs::IndexWriter& writer);
+
+  // The published reader and a position it is guaranteed to cover, for a
+  // certifier that goes on to read the log from that position. Waits for no
+  // refresh, which is the point: Refresh holds its lock across the whole
+  // publish, and certification happens on the commit path, where waiting that
+  // out would serialize every write to the table behind it.
+  //
+  // It needs no instant, only a position the reader cannot be behind. Refresh
+  // installs the new reader before it advances the published position, so a
+  // position read first can only lag the reader taken after it. Lagging is
+  // free: the rows in between are in the reader and in the log read, and a key
+  // found twice is still found. Leading would leave them in neither.
+  std::pair<irs::DirectoryReader, irs::SourcePosition> CertificationSnapshot(
     irs::IndexWriter& writer);
 
   absl::Status Cleanup(irs::Directory& dir);
@@ -127,7 +143,7 @@ class IndexDurability {
   absl::Mutex _refresh_mutex;
   irs::SourcePosition _position;
   mutable absl::Mutex _positions_mutex;
-  irs::SourcePosition _published;
+  irs::SourcePosition _published ABSL_GUARDED_BY(_positions_mutex);
   irs::SourcePosition _durable ABSL_GUARDED_BY(_positions_mutex);
   irs::SourcePosition _staged ABSL_GUARDED_BY(_positions_mutex);
   uint64_t _checkpoint = 0;

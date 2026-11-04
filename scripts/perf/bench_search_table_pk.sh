@@ -3,25 +3,19 @@
 # on the write path.
 #
 # The comparison this script is built for is ACROSS RUNS, not within one: the
-# same schema and the same statements, loaded by
-#   * --arm delta  -- enforced against the in-memory pending delta,
-#   * --arm wal    -- enforced by reading the WAL tail,
-#   * --arm none   -- a binary where the PK is declared and inert, e.g. main.
-# Schema and term indexing are identical in all three (PrimaryKeyConfig
-# term-indexes the key columns on main already), so the difference is
-# certification and nothing else.
-#
-# The two enforcing arms live in one binary and are chosen by a setting, so
-# their runs differ in that setting and in nothing else -- there is no second
-# build for a compiler or a flag to diverge in. Only the inert baseline needs
-# a binary of its own, because main has neither arm.
+# same schema and the same statements, run against a binary that enforces the
+# key and against one where it is declared and inert (main), with
+# PERF_SERENED_BIN pointed at each in turn. Schema and term indexing are
+# identical in both -- PrimaryKeyConfig term-indexes the key columns on main
+# already -- so the difference is certification and nothing else.
 #
 # Two shapes, because they exercise different halves:
 #   * one big transaction -- the statement-end probe (one per statement) and
 #     the in-transaction key index. The commit passes run ONCE for the whole
 #     load and are invisible here.
-#   * many small transactions -- per-commit cost. This is where the delta (a
-#     walk over its tail) and the WAL (a seek and a read) first diverge.
+#   * many small transactions -- per-commit cost: the pre-lock pass and the
+#     pass under the commit lock, each a read of the WAL tail, once per
+#     transaction.
 #
 # Why not CTAS, which run_search_table_perf.sh uses: CREATE TABLE AS cannot
 # carry a constraint, and ALTER TABLE ADD PRIMARY KEY is refused on a
@@ -49,29 +43,15 @@ ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 
 usage() {
 	cat <<'EOF'
-usage: bench_search_table_pk.sh [--arm delta|wal|none]
+usage: bench_search_table_pk.sh
 
-  --arm delta  certify against the in-memory pending delta (the default)
-  --arm wal    certify by reading back the WAL tail
-  --arm none   set nothing, for a binary without the setting (e.g. main)
+Takes no options; everything is a PERF_* environment variable, listed with
+its default below.
 EOF
 }
 
-ARM="delta"
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--arm)
-		[[ $# -ge 2 ]] || {
-			usage >&2
-			exit 2
-		}
-		ARM="$2"
-		shift 2
-		;;
-	--arm=*)
-		ARM="${1#--arm=}"
-		shift
-		;;
 	-h | --help)
 		usage
 		exit 0
@@ -83,13 +63,6 @@ while [[ $# -gt 0 ]]; do
 		;;
 	esac
 done
-case "${ARM}" in
-delta | wal | none) ;;
-*)
-	echo "--arm must be delta, wal or none (got: ${ARM})" >&2
-	exit 2
-	;;
-esac
 
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
 SERENED_BIN="${PERF_SERENED_BIN:-${BUILD_DIR}/bin/serened}"
@@ -98,7 +71,7 @@ PARQUET_DIR="${PERF_PARQUET_DIR:-${HOME}/data}"
 PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/hits.parquet}"
 DATA_DIR="${PERF_PK_DATA_DIR:-${RESULTS_DIR}/search_pk_perf_data}"
 PORT="${PERF_PORT:-6264}"
-LOG="/tmp/${USER:-$(id -un)}-serened-search-pk-perf-${ARM}.log"
+LOG="/tmp/${USER:-$(id -un)}-serened-search-pk-perf.log"
 
 # Rows to load. Empty = the whole parquet file.
 PERF_PK_ROWS="${PERF_PK_ROWS:-}"
@@ -109,8 +82,8 @@ PERF_PK_BATCHES="${PERF_PK_BATCHES:-100}"
 # (4 duplicate WatchIDs); the 1M and 10M samples are already unique.
 PERF_PK_DEDUP="${PERF_PK_DEDUP:-0}"
 # WITH options for the loaded tables. refresh_interval=0 holds the
-# committed-but-unpublished window open, which is the setting the delta and the
-# WAL tail behave most differently under.
+# committed-but-unpublished window open, so every commit pass reads a tail that
+# grows for the whole load instead of one a publish keeps trimming.
 PERF_PK_REFRESH_INTERVAL="${PERF_PK_REFRESH_INTERVAL:-}"
 PERF_PK_COMPACTION_INTERVAL="${PERF_PK_COMPACTION_INTERVAL:-0}"
 # Columns of the primary key. Any list starting with watchid stays unique,
@@ -146,7 +119,7 @@ if [[ ! -x "${SERENED_BIN}" ]]; then
 fi
 
 mkdir -p "${RESULTS_DIR}"
-RUN_LOG="${RESULTS_DIR}/pk-${ARM}-$(date -u +%Y%m%dT%H%M%SZ).log"
+RUN_LOG="${RESULTS_DIR}/pk-$(date -u +%Y%m%dT%H%M%SZ).log"
 PSQL_CONN="postgres://postgres@localhost:${PORT}/postgres"
 
 declare -A TIMINGS=()
@@ -262,9 +235,9 @@ scalar() {
 	psql "${PSQL_CONN}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
-# Memory, read off the server process rather than measured inside it: what the
-# two arms differ in is how much of the committed-but-unpublished window they
-# hold, and that is a property of the process, not of any one statement.
+# Memory, read off the server process rather than measured inside it: what a
+# load holds of the committed-but-unpublished window is a property of the
+# process, not of any one statement.
 #
 # VmHWM is a high-water mark over the process's whole life, so without a reset
 # every shape after the first would just report the parquet staging peak.
@@ -280,13 +253,12 @@ reset_peak_rss() {
 	echo 5 >"/proc/${SERVER_PID}/clear_refs" 2>/dev/null || true
 }
 
-# Held is read BEFORE the refresh that follows each load: publishing is what
-# releases what the delta arm is holding, so after it the two arms look alike
-# again and the difference this is here to show is gone.
+# Held is read BEFORE the refresh that follows each load: publishing releases
+# the window, so after it the number this is here to show is gone.
 #
 # Both numbers are RSS, so they carry whatever the allocator has not returned
 # to the OS; jemalloc (SDB_ALLOC=JE) is in no hurry to. Read them as an upper
-# bound on what an arm holds, and compare them between arms, not against zero.
+# bound, and compare them between runs, not against zero.
 mem_record() {
 	local label="$1"
 	PEAK_RSS["${label}"]="$(proc_field_mb VmHWM)"
@@ -294,24 +266,6 @@ mem_record() {
 }
 
 start_serened
-
-# Globally, not per session: every psql below opens its own, and an arm that
-# applied to some of them and not others would be measuring neither.
-if [[ "${ARM}" != "none" ]]; then
-	# `on`/`off`, which is what SHOW reports back whichever spelling it was set
-	# with, so the check below compares like with like.
-	if [[ "${ARM}" == "wal" ]]; then WANT=on; else WANT=off; fi
-	psql "${PSQL_CONN}" -v ON_ERROR_STOP=1 -X \
-		-c "SET GLOBAL sdb_search_pk_certify_from_wal = ${WANT};" \
-		2>&1 | tee -a "${RUN_LOG}"
-	GOT=$(scalar 'SHOW sdb_search_pk_certify_from_wal;')
-	if [[ "${GOT}" != "${WANT}" ]]; then
-		echo "arm ${ARM} did not take: setting reads '${GOT}', wanted '${WANT}'" >&2
-		exit 1
-	fi
-	printf 'arm: %s (sdb_search_pk_certify_from_wal = %s)\n' "${ARM}" "${GOT}" |
-		tee -a "${RUN_LOG}"
-fi
 
 # ---------------------------------------------------------------------------
 # Source staging, all off the clock. The parquet is read once into a
@@ -347,7 +301,7 @@ if [[ "${SRC_ROWS}" != "${SRC_KEYS}" ]]; then
 fi
 
 # The floor the memory numbers sit on: the source staged, no search table
-# loaded yet. Identical work in every arm, so it subtracts out.
+# loaded yet. Identical work in every run, so it subtracts out.
 mem_record staged
 
 # ---------------------------------------------------------------------------
@@ -501,7 +455,6 @@ sub() {
 	echo
 	echo "======== SEARCH TABLE PRIMARY KEY ========"
 	echo "binary:  ${SERENED_BIN}"
-	echo "arm:     ${ARM}"
 	echo "key:     ${PERF_PK_COLUMNS}"
 	echo "rows:    ${SRC_ROWS} (all keys distinct)"
 	echo "options: $(table_opts)"
@@ -579,10 +532,10 @@ sub() {
 		"$(fmt_mb "${HELD_RSS[many_txn_nopk]:-}")"
 	echo "Peak is VmHWM since that shape started, the mark being reset before"
 	echo "each; held is VmRSS at the end of the load, read before the refresh"
-	echo "that publishes it. Held is where an arm holding the unpublished"
-	echo "window in memory shows up, and is the number to compare between arms;"
-	echo "peak also carries what the load itself needed. Both are RSS, so they"
-	echo "include whatever jemalloc has not yet returned to the OS."
+	echo "that publishes it. Held is where whatever a load keeps of the"
+	echo "unpublished window shows up, and is the number to compare between"
+	echo "runs; peak also carries what the load itself needed. Both are RSS, so"
+	echo "they include whatever jemalloc has not yet returned to the OS."
 	echo
 	echo "rows loaded: pk_single=${PK_SINGLE_ROWS} pk_batched=${PK_BATCHED_ROWS}"
 	if [[ "${PERF_PK_REFERENCE}" == "1" ]]; then
@@ -593,8 +546,8 @@ sub() {
 	echo
 	echo "The pk/no column conflates certification with term-indexing the key"
 	echo "column, which a table without a PK does not do. For certification"
-	echo "alone, compare the pk column across runs: --arm none (main, inert),"
-	echo "--arm delta, --arm wal."
+	echo "alone, compare the pk column across runs: this binary against one"
+	echo "where the key is declared and inert (main)."
 	echo "=========================================="
 } | tee -a "${RUN_LOG}"
 

@@ -55,7 +55,6 @@
 #include "connector/column_id.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
-#include "search/search_pending_delta.h"
 #include "search/search_table_changes.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
@@ -164,47 +163,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   // such cover, so this holds the cleaner off across the whole sequence.
   irs::SegmentReader OpenNamedSegment(std::string_view meta_file) const;
 
-  // Rows committed into this table but not yet published, which the reader
-  // above cannot show either way: its inserts are missing from it and its
-  // removals are still live in it.
-  PendingDelta& Delta() noexcept { return _delta; }
-
-  // The published reader and the committed-but-unpublished generations beside
-  // it, taken as one pair. Apart, a refresh landing between them would leave
-  // the probe holding the reader from before beside the delta from after --
-  // missing exactly the keys the refresh moved across.
-  struct CertificationSources {
-    irs::DirectoryReader reader;
-    PendingDelta::Reading delta;
-  };
-
-  CertificationSources ReadCertificationSources() const {
-    CertificationSources sources;
-    sources.delta = _delta.Read([&] { sources.reader = GetDirectoryReader(); });
-    return sources;
-  }
-
-  // The same pair for a committer's pre-lock pass, which claims the tail above
-  // `certified` and arms a floor on it so its in-lock pass still finds what
-  // lands in between.
-  struct ClaimedSources {
-    irs::DirectoryReader reader;
-    PendingDelta::Claimed delta;
-  };
-
-  ClaimedSources ClaimCertificationSources(std::optional<uint64_t> certified) {
-    ClaimedSources sources;
-    sources.delta =
-      _delta.Claim(certified, [&] { sources.reader = GetDirectoryReader(); });
-    return sources;
-  }
-
   void Clear(const irs::SourcePosition& position) {
     _durability.Clear(*_writer, position);
-    // A publication that replaces the index rather than adding to it, and one
-    // the prune bound never sees: it bypasses RefreshUnsafe entirely. Every
-    // pending generation describes rows this clear has just killed.
-    _delta.Clear();
   }
 
   uint64_t NextTick(uint64_t count) noexcept {
@@ -324,6 +284,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   GetSnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
+
+  std::pair<irs::DirectoryReader, irs::SourcePosition>
+  GetCertificationSnapshot() {
+    return _durability.CertificationSnapshot(*_writer);
+  }
   void CloseDeleteLog();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
@@ -384,7 +349,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
-  PendingDelta _delta;
   // Held shared while a certifier turns a name out of the WAL into a reader,
   // exclusively while the cleaner unlinks: see OpenNamedSegment. A name is
   // only a name, and the cleaner is the only thing that can make it stop

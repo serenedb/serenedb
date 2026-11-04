@@ -39,9 +39,8 @@
 #include "connector/primary_key.h"
 #include "connector/search_key_index.h"
 #include "connector/search_key_unique.h"
-#include "search/search_pending_delta.h"
 #include "search/search_table_changes.h"
-#include "search/search_unpublished.h"
+#include "search/wal_tail_keys.h"
 
 namespace duckdb {
 
@@ -76,7 +75,7 @@ struct SearchShardWrites {
   // The keys of rows this transaction leaves in an unflushed iresearch
   // transaction, taken at PrepareCommit because the buffer that holds their
   // values is emptied there. Rows that reached a segment are not among them:
-  // the delta carries those segments and reads their dictionaries instead.
+  // those travel as `flushed_segments`, whose dictionaries a probe reads.
   std::vector<connector::KeyTerms> pending_keys;
   // The keys of the rows currently in this table's buffer. A statement-end
   // probe asks for everything still buffered, so without keeping them a
@@ -91,25 +90,18 @@ struct SearchShardWrites {
   // Readers over the segments this transaction flushed. Opened at
   // PrepareCommit, outside every lock, where the flushed set is already final:
   // Stage only registers the transactions on the flush context, which never
-  // flushes. They serve the pre-lock pass, the pass under DuckDB's commit lock
-  // -- which must not open a file -- and then the delta generation, so every
-  // later certifier reads the segment through the reader this commit already
-  // had to open rather than opening its own.
+  // flushes. They serve the pre-lock pass and the pass under DuckDB's commit
+  // lock, which must not open a file.
   std::vector<irs::SegmentReader> flushed_segments;
   // The table's key columns, empty when it has none. A search table's primary
   // key is fixed at CREATE TABLE -- ALTER TABLE ADD PRIMARY KEY is refused --
-  // so this is settled for the table's life, and a table without one neither
-  // certifies nor leaves a generation behind for anyone else to certify
-  // against.
+  // so this is settled for the table's life, and a table without one is never
+  // certified.
   std::vector<connector::primary_key::KeySlot> pk_slots;
-  // How far into the delta's install order this transaction's statement-end
-  // probes have settled the question, unset until one runs. The lowest of
-  // them, since a key written by the first statement is only covered as far as
-  // that statement looked.
-  std::optional<uint64_t> certified_mark;
-  // The WAL arm's equivalent: how far into the log this transaction's
-  // statement-end probes have settled the question. The lowest of them, for
-  // the same reason, and unset for a transaction that reaches no probe at all.
+  // How far into the log this transaction's statement-end probes have settled
+  // the question, unset for a transaction that reaches no probe at all. The
+  // lowest of them, since a key written by the first statement is only covered
+  // as far as that statement looked.
   std::optional<irs::SourcePosition> certified_tail;
   // Whether any statement asserted a key value of its own, rather than only
   // putting back one it was already replacing. False for a transaction made
@@ -123,23 +115,11 @@ struct SearchShardWrites {
   // no key probe can see -- published state still shows the row, masked by
   // this transaction's own delete set.
   std::vector<RowRange> rewritten_rows;
-  // Armed by the pre-lock pass over what it read, released once the generation
-  // is installed: what keeps the tail the in-lock pass still has to read from
-  // being pruned in between.
-  PendingDelta::PruneFloor floor;
-  // The WAL arm's equivalent of the floor, and the reason it needs none: where
-  // the pre-lock pass stopped reading, which is where the in-lock pass starts.
-  // The WAL keeps what it holds whether or not anyone is reading it, so there
-  // is nothing to hold back -- only a place to resume.
+  // Where the pre-lock pass stopped reading, which is where the in-lock pass
+  // starts. Nothing has to be held back across the window between them: the
+  // log keeps what it holds whether or not anyone is reading it, so a position
+  // is the whole of what the second pass needs from the first.
   std::optional<irs::SourcePosition> wal_boundary;
-  // Which source this transaction's unpublished rows come from, settled the
-  // first time it is asked -- a probe, or the commit for a transaction that
-  // reaches no probe. Every later pass and the install follow what was settled
-  // rather than re-reading the setting, so a SET mid-transaction cannot leave
-  // one pass looking where another put them. Unset until then, which is also
-  // why it is not a plain bool: "not asked yet" and "asked, and the answer was
-  // the delta" have to be told apart.
-  std::optional<bool> certify_from_wal;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -196,17 +176,17 @@ class SearchTableTransaction {
   // `new_keys` is false for a statement that can only put back key values the
   // published state already holds at the rows it is replacing: an UPDATE whose
   // SET list leaves the key columns alone. Such a statement skips the
-  // published tier, which is the expensive one, but not the delta.
+  // published tier, which is the expensive one, but not the unpublished tail.
   void CertifyKeys(duckdb::ClientContext& context,
                    const std::shared_ptr<SearchTable>& shard,
                    std::span<const connector::primary_key::KeySlot> slots,
                    bool new_keys);
 
   // The pass under DuckDB's commit lock, before the WAL write and before the
-  // commit's point of no return: this transaction's keys against the
-  // generations installed since its pre-lock pass claimed the delta. That
-  // lock is what serializes two committers racing on one key, and throwing
-  // from here is what still rolls the loser back.
+  // commit's point of no return: this transaction's keys against whatever
+  // committed since its pre-lock pass stopped reading. That lock is what
+  // serializes two committers racing on one key, and throwing from here is
+  // what still rolls the loser back.
   void CertifyTail(
     duckdb::idx_t database, duckdb::ClientContext& context,
     duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
@@ -278,25 +258,18 @@ class SearchTableTransaction {
   irs::IndexWriter::Transaction& EnsureBufferTransaction(
     const std::shared_ptr<SearchTable>& shard);
 
-  // Hands this transaction's rows and removals to the shard's delta, so that a
-  // concurrent certifier can see them for as long as the reader cannot.
-  void InstallPendingDelta(SearchShardWrites& w, duckdb::idx_t table_id,
-                           uint64_t tick) noexcept;
-
-  // The pre-lock pass, run from PrepareCommit: claims the delta's tail above
-  // what the statement-end probes settled, arms the floor on it, and puts this
-  // transaction's whole key set to what it claimed. Leaves the pass under the
-  // commit lock with only the concurrent window to read.
+  // The pre-lock pass, run from PrepareCommit: reads the log above what the
+  // statement-end probes settled and puts this transaction's whole key set to
+  // it. Leaves the pass under the commit lock with only the concurrent window
+  // to read.
   void CertifyCommit(SearchShardWrites& w, duckdb::idx_t table_id,
                      duckdb::ClientContext& context);
 
   // The body both commit passes share: this transaction's keys -- its
-  // unflushed tail and the segments it flushed -- against `tier`, and against
-  // `reader` when the pass has to answer for the published tier too. Takes the
-  // tier in its mode-neutral shape, so neither pass knows whether the rows
-  // came from the delta or from a read of the WAL.
+  // unflushed tail and the segments it flushed -- against `tail`, and against
+  // `reader` when the pass has to answer for the published tier too.
   void CertifyAgainst(SearchShardWrites& w, duckdb::idx_t table_id,
-                      const irs::DirectoryReader* reader, UnpublishedTier tier);
+                      const irs::DirectoryReader* reader, const WalTail& tail);
 
   // Refuses the commit if `removed` has already taken away a row this
   // transaction is rewriting, which would put its key back after the owner

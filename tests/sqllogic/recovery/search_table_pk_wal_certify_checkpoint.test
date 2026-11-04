@@ -32,11 +32,6 @@ statement ok
 SET sdb_faults = 'pause_search_commit_after_certify';
 
 
-connection first
-statement ok
-SET sdb_search_pk_certify_from_wal = true;
-
-
 # Parks past its own pre-lock pass, which found key 1 free.
 connection first
 statement async error
@@ -52,11 +47,6 @@ SET sdb_faults = '-pause_search_commit_after_certify:parked';
 
 # Takes key 1 while the parked committer is still in the generation it read,
 # so the conflicting row is written there and not into the live WAL below.
-connection second
-statement ok
-SET sdb_search_pk_certify_from_wal = true;
-
-
 connection second
 statement ok
 INSERT INTO pkwal.public.t VALUES (1, 'second');

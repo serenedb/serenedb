@@ -6,7 +6,6 @@ target_sources(
         store_stats.cpp
         search_analyzer_impl.cpp
         scorer_options.cpp
-        search_pending_delta.cpp
         wal_tail_keys.cpp
         search_table.cpp
         search_table_transaction.cpp

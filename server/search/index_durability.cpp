@@ -422,8 +422,19 @@ void IndexDurability::AwaitPendingSave(std::unique_lock<absl::Mutex>& lock,
 
 std::pair<irs::DirectoryReader, irs::SourcePosition> IndexDurability::Snapshot(
   irs::IndexWriter& writer) {
-  absl::MutexLock lock{&_refresh_mutex};
+  absl::MutexLock refresh{&_refresh_mutex};
+  absl::MutexLock positions{&_positions_mutex};
   return {writer.GetSnapshot(), _published};
+}
+
+std::pair<irs::DirectoryReader, irs::SourcePosition>
+IndexDurability::CertificationSnapshot(irs::IndexWriter& writer) {
+  irs::SourcePosition published;
+  {
+    absl::MutexLock lock{&_positions_mutex};
+    published = _published;
+  }
+  return {writer.GetSnapshot(), published};
 }
 
 void IndexDurability::SyncDirectory() {

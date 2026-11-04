@@ -32,7 +32,6 @@
 #include "connector/primary_key.h"
 #include "connector/search_key_unique.h"
 #include "search/search_table_changes.h"
-#include "search/search_unpublished.h"
 
 namespace duckdb {
 
@@ -165,21 +164,5 @@ WalTail ReadUnpublishedTail(
   duckdb::ClientContext& context, const irs::SourcePosition& from,
   std::span<const connector::primary_key::KeySlot> slots,
   duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
-
-// The WAL's side of the seam: a tail as the probe wants it. Borrows from
-// `tail`, which has to outlive the probe.
-inline UnpublishedTier Flatten(const WalTail& tail) {
-  UnpublishedTier tier;
-  tier.segments.reserve(tail.segments.size());
-  for (const auto& segment : tail.segments) {
-    tier.segments.push_back(&segment);
-  }
-  tier.keys.reserve(tail.keys.keys.size());
-  for (const auto& key : tail.keys.keys) {
-    tier.keys.push_back(&key);
-  }
-  tier.removed = tail.keys.removed;
-  return tier;
-}
 
 }  // namespace sdb::search

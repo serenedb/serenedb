@@ -77,8 +77,8 @@ size_t CompactHistorySize() {
 }
 
 uint64_t MergeRecord::EstimatedBytes() const noexcept {
-  return static_cast<uint64_t>(
-    irs::LiveBytes(stats.input_bytes, stats.input_live_docs, stats.input_docs));
+  return irs::LiveBytes(stats.input_bytes, stats.input_live_docs,
+                        stats.input_docs);
 }
 
 uint64_t MergeRegistry::Queue(uint64_t relation_id, MergeOrigin origin,

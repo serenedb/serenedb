@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <absl/numeric/int128.h>
+
 #include <span>
 #include <vector>
 
@@ -69,16 +71,15 @@ inline bool HasRemovals(const SegmentInfo& meta) noexcept {
   return meta.live_docs_count != meta.docs_count;
 }
 
-inline long double LiveBytes(uint64_t bytes, uint64_t live_docs,
-                             uint64_t docs) noexcept {
+inline uint64_t LiveBytes(uint64_t bytes, uint64_t live_docs,
+                          uint64_t docs) noexcept {
   if (docs == 0) {
     return 0;
   }
-  return static_cast<long double>(bytes) * static_cast<long double>(live_docs) /
-         static_cast<long double>(docs);
+  return static_cast<uint64_t>(absl::uint128{bytes} * live_docs / docs);
 }
 
-inline long double LiveBytes(const SegmentInfo& meta) noexcept {
+inline uint64_t LiveBytes(const SegmentInfo& meta) noexcept {
   return LiveBytes(meta.byte_size, meta.live_docs_count, meta.docs_count);
 }
 

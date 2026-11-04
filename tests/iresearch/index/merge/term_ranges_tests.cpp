@@ -228,9 +228,8 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
       const irs::FlushState adopted{.dir = &dir,
                                     .name = "final",
                                     .doc_count = 4000,
-                                    .index_features = kFeatures,
-                                    .postings = &outputs};
-      writer.Prepare(adopted);
+                                    .index_features = kFeatures};
+      writer.Prepare(adopted, std::move(outputs));
       EXPECT_EQ(nullptr, outputs.doc);
       writer.BeginField(props);
       writer.EndField();
@@ -305,13 +304,14 @@ TEST(PostingsAppendTest, PrepareCreatesOnlyTheOutputsItIsNotHanded) {
   outputs.doc->WriteData(kLead, std::size(kLead));
   {
     irs::PostingsWriter writer;
-    writer.Prepare({
-      .dir = &dir,
-      .name = "final",
-      .doc_count = 16,
-      .index_features = features,
-      .postings = &outputs,
-    });
+    writer.Prepare(
+      {
+        .dir = &dir,
+        .name = "final",
+        .doc_count = 16,
+        .index_features = features,
+      },
+      std::move(outputs));
     EXPECT_EQ(nullptr, outputs.doc);
     irs::FieldProperties props;
     props.index_features = features;

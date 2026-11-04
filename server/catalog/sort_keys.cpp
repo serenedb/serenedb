@@ -20,11 +20,14 @@
 
 #include "catalog/sort_keys.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iterator>
 
 #include "connector/column_id.h"
 
@@ -82,24 +85,28 @@ std::vector<SortKey> ResolveSortKeys(
 duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   std::span<const SortKey> keys, const duckdb::ColumnList& columns) {
   duckdb::vector<duckdb::OrderByNode> orders;
-  for (const auto& key : keys) {
-    orders.emplace_back(key.order, key.null_order,
-                        duckdb::make_uniq<duckdb::ColumnRefExpression>(
-                          columns.GetColumn(key.column).Name()));
-  }
+  orders.reserve(keys.size());
+  absl::c_transform(keys, std::back_inserter(orders), [&](const SortKey& key) {
+    return duckdb::OrderByNode{key.order, key.null_order,
+                               duckdb::make_uniq<duckdb::ColumnRefExpression>(
+                                 columns.GetColumn(key.column).Name())};
+  });
   return orders;
 }
 
 irs::SortSpec SortSpecOf(std::span<const SortKey> keys,
                          const duckdb::ColumnList& columns) {
   irs::SortSpec spec;
-  for (const auto& key : keys) {
-    spec.keys.push_back(
-      {.column = static_cast<irs::field_id>(
-         connector::TableColumnId(columns.GetColumn(key.column))),
-       .order = key.order,
-       .null_order = key.null_order});
-  }
+  spec.keys.reserve(keys.size());
+  absl::c_transform(
+    keys, std::back_inserter(spec.keys), [&](const SortKey& key) {
+      return irs::SortKey{
+        .column = static_cast<irs::field_id>(
+          connector::TableColumnId(columns.GetColumn(key.column))),
+        .order = key.order,
+        .null_order = key.null_order,
+      };
+    });
   return spec;
 }
 

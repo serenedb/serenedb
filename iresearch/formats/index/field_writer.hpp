@@ -71,7 +71,8 @@ class FieldWriter final {
   FieldWriter& operator=(const FieldWriter&) = delete;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state, uint64_t keyed_dicts);
+  void prepare(const FlushState& state, uint64_t keyed_dicts,
+               PostingsOutputs postings = {});
   void write(DictRef dict, const BasicTermReader& reader);
   PartsField BeginParts(DictRef dict, const BasicTermReader& reader,
                         std::span<const TermPart> parts, uint64_t docs);

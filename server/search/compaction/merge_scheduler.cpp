@@ -64,11 +64,9 @@ struct MergeScheduler::Entry {
 
 MergeEstimate EstimateMerge(irs::CompactionView candidates) noexcept {
   MergeEstimate estimate;
-  long double rewrite = 0;
   for (const auto* candidate : candidates) {
-    rewrite += irs::LiveBytes(candidate->Meta());
+    estimate.rewrite_bytes += irs::LiveBytes(candidate->Meta());
   }
-  estimate.rewrite_bytes = static_cast<uint64_t>(rewrite);
   const auto segments = candidates.size();
   const auto removed = segments > 1 ? segments - 1 : 1;
   estimate.score =

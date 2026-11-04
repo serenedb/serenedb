@@ -212,7 +212,7 @@ class PostingsWriter final {
 
   static void PrepareOutputs(PostingsOutputs& out, const FlushState& state);
 
-  void Prepare(const FlushState& state);
+  void Prepare(const FlushState& state, PostingsOutputs out = {});
   void BeginField(const FieldProperties& meta,
                   TermPayloadWriter* term_pay = nullptr);
 
@@ -390,11 +390,8 @@ inline void PostingsWriter::PrepareOutputs(PostingsOutputs& out,
   }
 }
 
-inline void PostingsWriter::Prepare(const FlushState& state) {
-  PostingsOutputs out;
-  if (state.postings) {
-    out = std::move(*state.postings);
-  }
+inline void PostingsWriter::Prepare(const FlushState& state,
+                                    PostingsOutputs out) {
   PrepareOutputs(out, state);
   _doc_out = std::move(out.doc);
   _pos_out = std::move(out.pos);

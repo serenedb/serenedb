@@ -37,10 +37,10 @@ std::span<const doc_id_t> SlotDocs(const ManagedVector<doc_id_t>& docs,
   if (order.Empty()) {
     return {docs.data(), docs.size()};
   }
-  remapped.clear();
-  for (const auto doc : docs) {
-    remapped.push_back(order.NewDoc(doc - doc_limits::min()));
-  }
+  remapped.resize(docs.size());
+  absl::c_transform(docs, remapped.begin(), [&](doc_id_t doc) {
+    return order.NewDoc(doc - doc_limits::min());
+  });
   absl::c_sort(remapped);
   return {remapped.data(), remapped.size()};
 }

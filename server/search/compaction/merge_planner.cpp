@@ -46,11 +46,11 @@ namespace sdb::search {
 namespace {
 
 constexpr uint64_t kOptimizeRowGroups = 4;
-constexpr long double kBase = 6;
-constexpr long double kMinBase = 2;
-constexpr long double kRelaxFrom = 10;
-constexpr long double kRelaxTo = 50;
-constexpr long double kMaxDeletedShare = 0.25;
+constexpr double kBase = 6;
+constexpr double kMinBase = 2;
+constexpr double kRelaxFrom = 10;
+constexpr double kRelaxTo = 50;
+constexpr double kMaxDeletedShare = 0.25;
 
 struct RunOptions {
   size_t max_segments = 0;
@@ -60,22 +60,22 @@ struct RunOptions {
 
 struct RunCandidate {
   const irs::SubReader* segment = nullptr;
-  long double bytes = 0;
+  uint64_t bytes = 0;
   uint64_t live_docs = 0;
-  long double deleted_share = 0;
+  double deleted_share = 0;
   bool taken = false;
 };
 
 struct Window {
   size_t begin = 0;
   size_t end = 0;
-  long double score = std::numeric_limits<long double>::max();
+  double score = std::numeric_limits<double>::max();
 };
 
 RunCandidate DescribeCandidate(const irs::SubReader& segment, bool taken) {
   const auto& meta = segment.Meta();
-  const auto live = static_cast<long double>(meta.live_docs_count) /
-                    static_cast<long double>(meta.docs_count);
+  const auto live = static_cast<double>(meta.live_docs_count) /
+                    static_cast<double>(meta.docs_count);
   return {
     .segment = &segment,
     .bytes = irs::LiveBytes(meta),
@@ -85,22 +85,22 @@ RunCandidate DescribeCandidate(const irs::SubReader& segment, bool taken) {
   };
 }
 
-long double BaseFor(const RunOptions& options, size_t run) noexcept {
+double BaseFor(const RunOptions& options, size_t run) noexcept {
   const auto relax = std::clamp(
-    (static_cast<long double>(run) - kRelaxFrom) / (kRelaxTo - kRelaxFrom),
-    0.0L, 1.0L);
+    (static_cast<double>(run) - kRelaxFrom) / (kRelaxTo - kRelaxFrom), 0.0,
+    1.0);
   return std::min(kBase - (kBase - kMinBase) * relax,
-                  static_cast<long double>(options.max_segments));
+                  static_cast<double>(options.max_segments));
 }
 
 void ConsiderRun(std::span<const RunCandidate> segments, size_t begin,
                  size_t end, const RunOptions& options, Window& best) {
   const auto base = BaseFor(options, end - begin);
-  const auto cost = static_cast<long double>(options.segment_cost);
+  const auto cost = options.segment_cost;
   for (auto first = begin; first != end; ++first) {
-    long double bytes = 0;
-    long double floored = 0;
-    long double largest = 0;
+    uint64_t bytes = 0;
+    uint64_t floored = 0;
+    uint64_t largest = 0;
     uint64_t docs = 0;
     const auto last = std::min(end, first + options.max_segments);
     for (auto next = first; next != last; ++next) {
@@ -109,16 +109,16 @@ void ConsiderRun(std::span<const RunCandidate> segments, size_t begin,
       floored += std::max(segment.bytes, cost);
       largest = std::max(largest, std::max(segment.bytes, cost));
       docs += segment.live_docs;
-      if (bytes > static_cast<long double>(options.max_bytes) ||
-          docs > irs::kMergeDocsMax) {
+      if (bytes > options.max_bytes || docs > irs::kMergeDocsMax) {
         break;
       }
       const auto count = next - first + 1;
-      const auto total = bytes + cost * static_cast<long double>(count);
-      if (count < 2 || floored < base * largest) {
+      if (count < 2 ||
+          static_cast<double>(floored) < base * static_cast<double>(largest)) {
         continue;
       }
-      const auto score = total / (static_cast<long double>(count) - 1.9L);
+      const auto score = static_cast<double>(bytes + cost * count) /
+                         (static_cast<double>(count) - 1.9);
       if (score <= best.score) {
         best = Window{.begin = first, .end = next + 1, .score = score};
       }
@@ -460,7 +460,7 @@ PlannedSegment DescribeSegment(const irs::SubReader& segment) {
 }
 
 uint64_t PlannedMerge::EstimatedOutputBytes() const noexcept {
-  return static_cast<uint64_t>(irs::LiveBytes(bytes, live_docs, docs));
+  return irs::LiveBytes(bytes, live_docs, docs);
 }
 
 uint32_t DefaultTarget(MergeMode mode, duckdb::ClientContext& context) {

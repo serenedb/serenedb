@@ -539,14 +539,15 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
     .scorer = _scorer,
     .doc_count = _segment.docs_count,
     .index_features = _index_features,
-    .postings = _term_sink ? &_term_sink->Outputs() : nullptr,
   };
   return _segment.docs_count == 0 ||
-         WritePostings(state, _doc_map, static_cast<bool>(_key_order),
-                       _field_options, _progress, _merged_norm_ids, *_idx,
-                       _cluster_readers, _term_ranges,
-                       KeyedDicts(_field_meta_map),
-                       duckdb::TaskScheduler::GetScheduler(_db), _threads);
+         WritePostings(
+           state,
+           _term_sink ? std::move(_term_sink->Outputs()) : PostingsOutputs{},
+           _doc_map, static_cast<bool>(_key_order), _field_options, _progress,
+           _merged_norm_ids, *_idx, _cluster_readers, _term_ranges,
+           KeyedDicts(_field_meta_map),
+           duckdb::TaskScheduler::GetScheduler(_db), _threads);
 }
 
 bool MergePlan::WriteIndex(MergeStepClock& clock) {

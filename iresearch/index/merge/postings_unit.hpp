@@ -26,6 +26,7 @@
 #include <memory>
 #include <span>
 
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -45,8 +46,9 @@ using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
                                       const MergedNormIdMap& merged_norm_ids);
 
-bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
-                   bool sorted, const IndexFieldOptions* field_options,
+bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
+                   const MergeDocMap& inputs, bool sorted,
+                   const IndexFieldOptions* field_options,
                    const MergeProgress& progress,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,

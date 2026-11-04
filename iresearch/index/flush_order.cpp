@@ -39,6 +39,9 @@ std::vector<uint32_t> FlushOrder(const SortSpec& spec, ColWriter& columns,
   std::vector<const ColumnWriter*> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
+  keys.reserve(spec.keys.size());
+  types.reserve(spec.keys.size());
+  modifiers.reserve(spec.keys.size());
   for (const auto& key : spec.keys) {
     auto* column = columns.StagedColumn(key.column);
     if (!column) {

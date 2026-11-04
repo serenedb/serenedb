@@ -259,7 +259,7 @@ void WriteParts(term_dict::FieldWriter& writer,
 }
 
 template<typename Postings>
-bool WriteFields(const irs::FlushState& flush_state,
+bool WriteFields(const irs::FlushState& flush_state, PostingsOutputs outputs,
                  CompoundFieldIterator<Postings>& field_itr,
                  const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
@@ -271,7 +271,8 @@ bool WriteFields(const irs::FlushState& flush_state,
   auto field_writer =
     std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
   field_writer->SetIdxWriter(idx);
-  field_writer->prepare(flush_state, keyed_dicts + extra.size());
+  field_writer->prepare(flush_state, keyed_dicts + extra.size(),
+                        std::move(outputs));
 
   std::vector<const BasicTermReader*> sorted_extra(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
@@ -358,8 +359,9 @@ FieldProperties MergedFieldProperties(field_id id, IndexFeatures features,
   return props;
 }
 
-bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
-                   bool sorted, const IndexFieldOptions* field_options,
+bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
+                   const MergeDocMap& inputs, bool sorted,
+                   const IndexFieldOptions* field_options,
                    const MergeProgress& progress,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
@@ -372,8 +374,8 @@ bool WritePostings(const FlushState& flush_state, const MergeDocMap& inputs,
     for (const auto& input : inputs) {
       fields.Add(*input.reader, input.remap);
     }
-    return WriteFields(flush_state, fields, merged_norm_ids, idx, extra, ranges,
-                       keyed_dicts, scheduler, threads);
+    return WriteFields(flush_state, std::move(outputs), fields, merged_norm_ids,
+                       idx, extra, ranges, keyed_dicts, scheduler, threads);
   };
   return sorted ? write(std::type_identity<SortedPostings>{})
                 : write(std::type_identity<CompoundPostings>{});

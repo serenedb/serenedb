@@ -165,7 +165,8 @@ void FieldWriter::TrainFsst() {
   _fsst_table.assign(reinterpret_cast<const char*>(table), table_size);
 }
 
-void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
+void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
+                          PostingsOutputs postings) {
   SDB_ASSERT(_idx);
   if (keyed_dicts > OrdinalLimit(kMaxOrdinalBytes)) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -178,7 +179,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   auto& out = _idx->BlocksOut();
   _blocks.Open(out, out.Position());
-  _pw.Prepare(state);
+  _pw.Prepare(state, std::move(postings));
 }
 
 void FieldWriter::Begin(field_id id, DictRef dict) noexcept {

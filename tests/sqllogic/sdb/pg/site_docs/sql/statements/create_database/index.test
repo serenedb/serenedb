@@ -76,6 +76,27 @@ DROP DATABASE IF EXISTS app_scratch;
 statement error db error: ERROR: cannot drop the currently open database
 DROP DATABASE app_production;
 
+# DOCS_TEST: example_007
+
+statement ok
+DROP DATABASE IF EXISTS app_reporting;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DATABASE app_reporting CONNECTION LIMIT 10;
+
+statement ok
+ALTER DATABASE app_reporting WITH CONNECTION LIMIT 20 ALLOW_CONNECTIONS FALSE;
+
+query
+SELECT datname, datconnlimit, datallowconn
+FROM pg_database
+WHERE datname = 'app_reporting';
+----
+datname	datconnlimit	datallowconn
+app_reporting	20	f
+
 # DOCS_TEST_END
 
 statement ok
@@ -86,3 +107,6 @@ DROP DATABASE app_production;
 
 statement ok
 DROP DATABASE app_archive;
+
+statement ok
+DROP DATABASE app_reporting;

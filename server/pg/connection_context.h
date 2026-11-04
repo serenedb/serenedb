@@ -58,22 +58,24 @@ inline constexpr int32_t kPgServerVersionNum = 180006;
 
 class CopyInBatches;
 
-// Outcome of the connect-time login gate. On success `role` is the id of the
-// resolved login role and `error` is default (errcode 0); on failure `role` is
-// unset and `error` carries the FATAL-worthy SqlErrorData. Returned (not
-// thrown) so the pg-wire path can write a fatal frame and the http path can
-// rethrow, each as it needs; test `role` (unset == failed).
+// Outcome of the connect-time login gate. On success `role` and `database` are
+// the ids of the resolved login role and target database and `error` is
+// default (errcode 0); on failure `role` is unset and `error` carries the
+// FATAL-worthy SqlErrorData. Returned (not thrown) so the pg-wire path can
+// write a fatal frame and the http path can rethrow, each as it needs; test
+// `role` (unset == failed).
 struct LoginCheck {
   duckdb::idx_t role;
+  duckdb::idx_t database = 0;
   bool superuser = false;
   irs::pg::SqlErrorData error;
 };
 
-// The connect-time login gate shared by the pg-wire and http sessions:
-// role exists -> may log in -> within its CONNECTION LIMIT -> holds CONNECT on
-// the target database (superuser bypasses, as in PG's InitPostgres).
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm);
+// The connect-time login gate shared by the pg-wire and http sessions, in PG's
+// InitPostgres order: role exists -> may log in -> within its CONNECTION LIMIT
+// -> database exists -> accepts connections -> holds CONNECT on it (superuser
+// bypasses) -> within the database's CONNECTION LIMIT (superuser exempt).
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname);
 
 }  // namespace sdb::pg
 namespace sdb::network {

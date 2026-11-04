@@ -1,0 +1,100 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE dco_limited CONNECTION LIMIT 2;
+
+
+statement ok
+CREATE DATABASE dco_closed ALLOW_CONNECTIONS FALSE;
+
+
+statement ok
+CREATE DATABASE dco_altered;
+
+
+statement ok
+CREATE DATABASE dco_plain;
+
+
+statement ok
+ALTER DATABASE dco_altered WITH CONNECTION LIMIT 7 ALLOW_CONNECTIONS FALSE;
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE dco_role;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+ALTER DATABASE dco_plain CONNECTION LIMIT 4;
+
+
+statement ok
+ALTER DATABASE dco_limited ALLOW_CONNECTIONS FALSE;
+
+
+statement ok
+ALTER DATABASE dco_limited ALLOW_CONNECTIONS TRUE;
+
+
+query
+SELECT datname, datconnlimit, datallowconn
+FROM pg_database
+WHERE datname LIKE 'dco%'
+ORDER BY datname;
+----
+datname	datconnlimit	datallowconn
+dco_altered	7	f
+dco_closed	-1	f
+dco_limited	2	t
+dco_plain	4	t
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT datname, datconnlimit, datallowconn
+FROM pg_database
+WHERE datname LIKE 'dco%'
+ORDER BY datname;
+----
+datname	datconnlimit	datallowconn
+dco_altered	7	f
+dco_closed	-1	f
+dco_limited	2	t
+dco_plain	4	t
+
+
+connection closed_db database=dco_closed
+statement error
+SELECT 1;
+----
+db error: FATAL: database "dco_closed" is not currently accepting connections
+
+
+connection limited_db database=dco_limited
+query
+SELECT current_database();
+----
+current_database
+dco_limited

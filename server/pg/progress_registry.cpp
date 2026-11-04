@@ -262,6 +262,13 @@ size_t ProgressRegistry::SessionsOf(duckdb::idx_t role) const {
   }));
 }
 
+size_t ProgressRegistry::SessionsIn(int64_t datid) const {
+  absl::MutexLock lock{&_mu};
+  return static_cast<size_t>(absl::c_count_if(_sources, [&](const auto& entry) {
+    return entry.second->client_backend && entry.second->datid == datid;
+  }));
+}
+
 std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
   std::vector<std::shared_ptr<ProgressSource>> sources;
   {

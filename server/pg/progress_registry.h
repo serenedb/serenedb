@@ -210,6 +210,7 @@ class ProgressRegistry {
 
   size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
   size_t SessionsOf(duckdb::idx_t role) const;
+  size_t SessionsIn(int64_t datid) const;
 
  private:
   mutable absl::Mutex _mu;

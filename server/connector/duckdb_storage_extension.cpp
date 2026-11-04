@@ -97,6 +97,17 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     owner = option->second.ToString();
     options.options.erase(option);
   }
+  duckdb::CreateDatabaseInfo database;
+  if (const auto option = options.options.find("connection_limit");
+      option != options.options.end()) {
+    database.connection_limit = option->second.GetValue<int32_t>();
+    options.options.erase(option);
+  }
+  if (const auto option = options.options.find("allow_connections");
+      option != options.options.end()) {
+    database.allow_connections = option->second.GetValue<bool>();
+    options.options.erase(option);
+  }
   if (options.recovery_mode != duckdb::RecoveryMode::DEFAULT) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -124,7 +135,6 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
                  .GetEntry(transaction, info.name);
   if (!entry) {
-    duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);

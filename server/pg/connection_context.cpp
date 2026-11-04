@@ -41,8 +41,7 @@
 
 namespace sdb::pg {
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm) {
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
   struct {
@@ -75,19 +74,50 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
               ERR_MSG("too many connections for role \"", role.name, "\""))};
   }
+  struct {
+    duckdb::idx_t oid = 0;
+    duckdb::Permissions permissions;
+    bool allow_connections = true;
+    int32_t conn_limit = -1;
+  } database;
+  if (!catalog::ReadDatabase(
+        dbname, [&](const catalog::DatabaseCatalogEntry& entry) {
+          database.oid = entry.oid;
+          database.permissions = entry.permissions;
+          database.allow_connections = entry.AllowConnections();
+          database.conn_limit = entry.ConnLimit();
+        })) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
+              ERR_MSG("database \"", dbname, "\" does not exist"))};
+  }
+  if (!database.allow_connections) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+              ERR_MSG("database \"", dbname,
+                      "\" is not currently accepting connections"))};
+  }
   const auto roles = catalog::RolesOf(nullptr);
   duckdb::RoleAccess missing;
   missing.role = role.oid;
   const auto access = roles->Access(role.oid);
   if (!(access ? *access : missing)
-         .Can(duckdb::CatalogType::DATABASE_ENTRY, perm,
+         .Can(duckdb::CatalogType::DATABASE_ENTRY, database.permissions,
               duckdb::AclMode::Connect)) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role.oid, .superuser = role.superuser};
+  if (!role.superuser && database.conn_limit >= 0 &&
+      ProgressRegistry::Instance().SessionsIn(database.oid) >=
+        static_cast<size_t>(database.conn_limit)) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+              ERR_MSG("too many connections for database \"", dbname, "\""))};
+  }
+  return {
+    .role = role.oid, .database = database.oid, .superuser = role.superuser};
 }
 
 }  // namespace sdb::pg

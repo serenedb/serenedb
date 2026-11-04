@@ -39,6 +39,8 @@
 #include <utility>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"

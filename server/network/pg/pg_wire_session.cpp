@@ -454,27 +454,14 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_IF_FAILURE("setup_connection_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  duckdb::idx_t database_id = 0;
-  duckdb::Permissions permissions;
-  if (!catalog::ReadDatabase(
-        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
-          database_id = database.oid;
-          permissions = database.permissions;
-        })) {
-    WriteFatalResponse(this->_send,
-                       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                                      ERR_MSG("database \"", DatabaseName(),
-                                              "\" is not accessible")));
-    return false;
-  }
-
   const std::string_view user = UserName();
-  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
+  auto login = sdb::pg::RequireLoginRole(user, DatabaseName());
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
   }
   const auto role = login.role;
+  const auto database_id = login.database;
   const bool superuser = login.superuser;
 
   _conn = irs::DuckDBEngine::Instance().CreateConnection();

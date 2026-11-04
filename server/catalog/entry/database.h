@@ -55,6 +55,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
     return _settings;
   }
   const duckdb::vector<std::string>* SettingsOf(duckdb::idx_t role) const;
+  int32_t ConnLimit() const { return _conn_limit; }
+  bool AllowConnections() const { return _allow_connections; }
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
@@ -62,6 +64,8 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;
   duckdb::vector<duckdb::DatabaseSetting> _settings;
+  int32_t _conn_limit;
+  bool _allow_connections;
   std::shared_ptr<DatabaseDirectory> _directory;
 };
 

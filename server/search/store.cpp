@@ -66,6 +66,20 @@
 namespace sdb::search {
 namespace {
 
+catalog::CompressionByColumn DeclaredCompression(
+  const duckdb::ColumnList& columns) {
+  catalog::CompressionByColumn compression;
+  for (const auto& column : columns.Logical()) {
+    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
+      compression.emplace(
+        column.Oid(),
+        catalog::DeclaredCodec{.type = column.CompressionType(),
+                               .compression_level = column.CompressionLevel()});
+    }
+  }
+  return compression;
+}
+
 irs::containers::FlatHashSet<irs::field_id> TableColumns(
   const duckdb::ColumnList& columns) {
   irs::containers::FlatHashSet<irs::field_id> ids;
@@ -92,20 +106,6 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
 
 }  // namespace
 
-catalog::CompressionByColumn Store::DeclaredCompression(
-  const duckdb::ColumnList& columns) {
-  catalog::CompressionByColumn compression;
-  for (const auto& column : columns.Logical()) {
-    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(
-        column.Oid(),
-        catalog::DeclaredCodec{.type = column.CompressionType(),
-                               .compression_level = column.CompressionLevel()});
-    }
-  }
-  return compression;
-}
-
 struct Store::ReplaySession {
   ReplaySession(duckdb::AttachedDatabase& db, Store& store)
     : replay{db, store} {}
@@ -118,9 +118,9 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
              bool in_memory, bool read_only, duckdb::idx_t db_id,
              duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
              const std::optional<irs::ScorerOptions>& top_k_scorer,
-             const std::vector<irs::SortKey>& sort, bool is_new)
+             std::vector<irs::SortKey> sort, bool is_new)
   : _directory{std::move(directory)},
-    _sort{sort},
+    _sort{std::move(sort)},
     _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
     _id{id},
     _db_id{db_id},
@@ -217,7 +217,7 @@ void Store::Open() {
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.segment_docs_max = _segment_docs_max;
-  SetWriterOptions(writer_options);
+  writer_options.sort = _sort;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
   IndexDurability::ManifestSource manifest;
@@ -303,7 +303,8 @@ void Store::ApplyOptions(const catalog::SearchTableOptions& options) {
   NudgeCompaction();
 }
 
-void Store::SetDeclaredCompression(catalog::CompressionByColumn compression) {
+void Store::SetDeclaredCompression(const duckdb::ColumnList& columns) {
+  auto compression = DeclaredCompression(columns);
   absl::MutexLock lock{&_layout_mutex};
   _compression = std::move(compression);
   RebuildConfig(_layout.configs, _layout.building_index);
@@ -435,10 +436,6 @@ StoreStats Store::GetStats() const {
   return stats;
 }
 
-void Store::SetWriterOptions(irs::IndexWriterOptions& options) const {
-  options.sort = _sort;
-}
-
 yaclib::Future<MergeResult> Store::RunMergeAsync(
   utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
   const irs::MergeProgress& progress,
@@ -458,30 +455,26 @@ yaclib::Future<MergeResult> Store::RunMergeAsync(
     }
     return progress();
   };
-  bool empty_compaction = false;
   bool failed = false;
   try {
     co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
                                env, executor, result.outcome);
-    if (!result.outcome) {
-      SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
-                " produced nothing: cancelled, or every document was removed");
-      empty_compaction = true;
-    } else {
-      empty_compaction = result.outcome.size == 0;
-    }
   } catch (const std::exception& e) {
     failed = true;
     result.outcome.error = irs::CompactionError::Fail;
     result.error = duckdb::ErrorData{e}.RawMessage();
   }
-  if (!failed && !result.outcome && backup.load(std::memory_order_relaxed)) {
-    result.outcome.error = irs::CompactionError::Cancelled;
-    result.backup = true;
-    co_return result;
+  if (!failed && !result.outcome) {
+    SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
+              " produced nothing: cancelled, or every document was removed");
+    if (backup.load(std::memory_order_relaxed)) {
+      result.outcome.error = irs::CompactionError::Cancelled;
+      result.backup = true;
+      co_return result;
+    }
   }
   _maintenance.RecordCompaction(
-    failed, empty_compaction,
+    failed, !result.outcome || result.outcome.size == 0,
     result.outcome.stats.profile.TotalNanos() / 1'000'000);
   co_return result;
 }
@@ -626,7 +619,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
         declared.type = options.compression;
         declared.compression_level = options.compression_level;
       }
-      declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
+      declared.hyperloglog |= options.hyperloglog;
     }
   };
   for (const auto& index : configs) {

@@ -50,7 +50,6 @@
 
 namespace duckdb {
 
-class ClientContext;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;

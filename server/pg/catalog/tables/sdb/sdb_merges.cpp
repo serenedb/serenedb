@@ -91,24 +91,17 @@ class SdbMerges final : public SystemTableScan<kSdbMergesSql> {
     kMergeInputColumns,
     Col<"estimated_bytes">([](const auto& r) { return r.EstimatedBytes(); }));
 
-  void Row(const duckdb::IndexCatalogEntry& index) {
-    if (!Allows<"relation_id">(index.oid) || !OwnsStore(index)) {
-      return;
-    }
-    Merges(index.oid);
-  }
+  void Row(const duckdb::IndexCatalogEntry& index) { Merges(index); }
 
-  void Row(const duckdb::TableCatalogEntry& table) {
-    if (!Allows<"relation_id">(table.oid) || !OwnsStore(table)) {
-      return;
-    }
-    Merges(table.oid);
-  }
+  void Row(const duckdb::TableCatalogEntry& table) { Merges(table); }
 
  private:
-  void Merges(duckdb::idx_t relation) {
+  void Merges(const auto& relation) {
+    if (!Allows<"relation_id">(relation.oid) || !OwnsStore(relation)) {
+      return;
+    }
     for (const auto& record :
-         search::GetSearchEngine().Merges().Active(relation)) {
+         search::GetSearchEngine().Merges().Active(relation.oid)) {
       Emit<kMerge>(record);
     }
   }

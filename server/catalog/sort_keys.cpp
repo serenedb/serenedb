@@ -20,14 +20,11 @@
 
 #include "catalog/sort_keys.h"
 
-#include <absl/algorithm/container.h>
-
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iterator>
 
 #include "connector/column_id.h"
 
@@ -69,15 +66,13 @@ std::vector<SortKey> ResolveSortKeys(
       }
     }
     const bool desc = order.type == duckdb::OrderType::DESCENDING;
-    keys.push_back({
-      .column = column.Logical(),
-      .order =
-        desc ? duckdb::OrderType::DESCENDING : duckdb::OrderType::ASCENDING,
-      .null_order = order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
-                      ? order.null_order
-                    : desc ? duckdb::OrderByNullType::NULLS_FIRST
-                           : duckdb::OrderByNullType::NULLS_LAST,
-    });
+    keys.emplace_back(
+      column.Logical(),
+      desc ? duckdb::OrderType::DESCENDING : duckdb::OrderType::ASCENDING,
+      order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
+        ? order.null_order
+      : desc ? duckdb::OrderByNullType::NULLS_FIRST
+             : duckdb::OrderByNullType::NULLS_LAST);
   }
   return keys;
 }
@@ -86,11 +81,11 @@ duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   std::span<const SortKey> keys, const duckdb::ColumnList& columns) {
   duckdb::vector<duckdb::OrderByNode> orders;
   orders.reserve(keys.size());
-  absl::c_transform(keys, std::back_inserter(orders), [&](const SortKey& key) {
-    return duckdb::OrderByNode{key.order, key.null_order,
-                               duckdb::make_uniq<duckdb::ColumnRefExpression>(
-                                 columns.GetColumn(key.column).Name())};
-  });
+  for (const auto& key : keys) {
+    orders.emplace_back(key.order, key.null_order,
+                        duckdb::make_uniq<duckdb::ColumnRefExpression>(
+                          columns.GetColumn(key.column).Name()));
+  }
   return orders;
 }
 
@@ -98,14 +93,11 @@ std::vector<irs::SortKey> SortSpecOf(std::span<const SortKey> keys,
                                      const duckdb::ColumnList& columns) {
   std::vector<irs::SortKey> spec;
   spec.reserve(keys.size());
-  absl::c_transform(keys, std::back_inserter(spec), [&](const SortKey& key) {
-    return irs::SortKey{
-      .column = static_cast<irs::field_id>(
-        connector::TableColumnId(columns.GetColumn(key.column))),
-      .order = key.order,
-      .null_order = key.null_order,
-    };
-  });
+  for (const auto& key : keys) {
+    spec.emplace_back(static_cast<irs::field_id>(connector::TableColumnId(
+                        columns.GetColumn(key.column))),
+                      key.order, key.null_order);
+  }
   return spec;
 }
 

@@ -268,7 +268,7 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
       options.compression = declared.type;
       options.compression_level = declared.compression_level;
     }
-    options.hyperloglog = options.hyperloglog || declared.hyperloglog;
+    options.hyperloglog |= declared.hyperloglog;
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {

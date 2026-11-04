@@ -53,4 +53,9 @@ inline duckdb::Value Bigint(uint64_t value) {
   return duckdb::Value::BIGINT(static_cast<int64_t>(value));
 }
 
+inline duckdb::Value NullIfEmpty(std::string_view value) {
+  return value.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                       : duckdb::Value{value};
+}
+
 }  // namespace sdb::connector

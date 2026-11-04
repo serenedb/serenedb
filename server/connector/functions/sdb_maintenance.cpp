@@ -45,7 +45,6 @@
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/system_compiler.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -65,26 +64,26 @@ namespace {
 
 constexpr size_t kListedNames = 8;
 
-struct CompactJob {
+struct CompactBindData final : duckdb::TableFunctionData {
+  explicit CompactBindData(MergeTarget target, MergeRequest request,
+                           search::MergeRoundPlan plan)
+    : target{std::move(target)},
+      request{std::move(request)},
+      plan{std::move(plan)} {}
+
+  bool SupportStatementCache() const final { return false; }
+
   MergeTarget target;
   MergeRequest request;
   search::MergeRoundPlan plan;
 };
 
-struct CompactBindData final : duckdb::TableFunctionData {
-  explicit CompactBindData(CompactJob job) : job{std::move(job)} {}
-
-  bool SupportStatementCache() const final { return false; }
-
-  CompactJob job;
-};
-
 struct CompactState final : duckdb::GlobalTableFunctionState {
-  CompactState(duckdb::ClientContext& context, const CompactJob& job)
-    : threads{duckdb::TaskScheduler::QueryThreads(context)},
-      compaction{job.target, job.request, context} {}
+  CompactState(duckdb::ClientContext& context, const CompactBindData& data)
+    : executor{*context.db, duckdb::TaskScheduler::QueryThreads(context)},
+      compaction{data.target, data.request, context} {}
 
-  duckdb::idx_t threads;
+  const irs::PipelineMergeExecutor executor;
   ManualCompaction compaction;
   size_t merges = 0;
   std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
@@ -153,45 +152,33 @@ uint32_t ReadTargetSegments(const duckdb::TableFunctionBindInput& input) {
     std::min<int64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
-std::vector<std::string> ResultNames() {
-  std::vector<std::string> names{
-    "merge",       "outcome", "inputs",      "input_docs",   "input_live_docs",
-    "input_bytes", "output",  "output_docs", "output_bytes", "total_ms",
-  };
-  for (const auto name : search::kMergeStepColumns) {
+void AddResultColumns(duckdb::vector<duckdb::LogicalType>& types,
+                      duckdb::vector<duckdb::Identifier>& names) {
+  const auto add = [&](std::string_view name, duckdb::LogicalType type) {
     names.emplace_back(name);
-  }
-  names.emplace_back("error");
-  return names;
-}
-
-duckdb::vector<duckdb::LogicalType> ResultTypes() {
-  duckdb::vector<duckdb::LogicalType> types{
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::VARCHAR,
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::VARCHAR,
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::BIGINT,
-    duckdb::LogicalType::DOUBLE,
+    types.emplace_back(std::move(type));
   };
-  types.insert(types.end(), irs::kMergeStepCount, duckdb::LogicalType::DOUBLE);
-  types.emplace_back(duckdb::LogicalType::VARCHAR);
-  return types;
-}
-
-std::string Bytes(uint64_t bytes) {
-  return duckdb::StringUtil::BytesToHumanReadableString(bytes);
-}
-
-std::string Duration(uint64_t nanos) {
-  return absl::StrFormat("%.1f ms", static_cast<double>(nanos) / 1e6);
+  add("merge", duckdb::LogicalType::BIGINT);
+  add("outcome", duckdb::LogicalType::VARCHAR);
+  add("inputs", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR));
+  add("input_docs", duckdb::LogicalType::BIGINT);
+  add("input_live_docs", duckdb::LogicalType::BIGINT);
+  add("input_bytes", duckdb::LogicalType::BIGINT);
+  add("output", duckdb::LogicalType::VARCHAR);
+  add("output_docs", duckdb::LogicalType::BIGINT);
+  add("output_bytes", duckdb::LogicalType::BIGINT);
+  add("total_ms", duckdb::LogicalType::DOUBLE);
+  for (const auto name : search::kMergeStepColumns) {
+    add(name, duckdb::LogicalType::DOUBLE);
+  }
+  add("error", duckdb::LogicalType::VARCHAR);
 }
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
+
+std::string Duration(uint64_t nanos) {
+  return absl::StrFormat("%.1f ms", Millis(nanos));
+}
 
 std::string InputNames(std::span<const search::PlannedSegment> inputs) {
   auto names =
@@ -215,14 +202,16 @@ void DescribeMerge(size_t number, const search::PlannedMerge& merge,
   params[absl::StrCat(key, " Docs")] =
     absl::StrCat(merge.docs, " (", merge.live_docs, " live)");
   params[absl::StrCat(key, " Bytes")] = absl::StrCat(
-    Bytes(merge.bytes), " -> est ", Bytes(merge.EstimatedOutputBytes()));
+    duckdb::StringUtil::BytesToHumanReadableString(merge.bytes), " -> est ",
+    duckdb::StringUtil::BytesToHumanReadableString(
+      merge.EstimatedOutputBytes()));
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
-  const CompactJob& job) {
-  const auto& plan = job.plan;
+  const CompactBindData& data) {
+  const auto& plan = data.plan;
   duckdb::InsertionOrderPreservingMap<std::string> params;
-  params["Table"] = job.target.Name();
+  params["Table"] = data.target.Name();
   params["Mode"] = std::string{irs::SnakeCaseName(plan.mode)};
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
@@ -232,30 +221,14 @@ duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
   return params;
 }
 
-std::string_view StepLabel(irs::MergeStep step) {
-  switch (step) {
-    case irs::MergeStep::Prepare:
-      return "Prepare";
-    case irs::MergeStep::Norms:
-      return "Norms";
-    case irs::MergeStep::Columns:
-      return "Columns";
-    case irs::MergeStep::ColumnsCommit:
-      return "Columns Commit";
-    case irs::MergeStep::Ann:
-      return "ANN";
-    case irs::MergeStep::Postings:
-      return "Postings";
-    case irs::MergeStep::Commit:
-      return "Commit";
-  }
-  SDB_UNREACHABLE();
-}
+constexpr std::string_view kStepLabels[] = {
+  "Prepare", "Norms", "Columns", "Columns Commit", "ANN", "Postings", "Commit",
+};
+static_assert(std::size(kStepLabels) == irs::kMergeStepCount);
 
 void AppendRow(duckdb::DataChunk& chunk, size_t number,
                const search::MergeResult& merge) {
   const auto& stats = merge.outcome.stats;
-  const auto& error = merge.error;
   duckdb::vector<duckdb::Value> inputs;
   inputs.reserve(stats.inputs.size());
   for (const auto& input : stats.inputs) {
@@ -265,23 +238,20 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   auto append = [&](duckdb::Value value) {
     chunk.data[column++].Append(std::move(value));
   };
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(number)));
-  append(duckdb::Value{
-    std::string{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))}});
+  append(Bigint(number));
+  append(duckdb::Value{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))});
   append(duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(inputs)));
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_docs)));
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_live_docs)));
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.input_bytes)));
-  append(stats.output.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
-                              : duckdb::Value{stats.output});
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_docs)));
-  append(duckdb::Value::BIGINT(static_cast<int64_t>(stats.output_bytes)));
+  append(Bigint(stats.input_docs));
+  append(Bigint(stats.input_live_docs));
+  append(Bigint(stats.input_bytes));
+  append(NullIfEmpty(stats.output));
+  append(Bigint(stats.output_docs));
+  append(Bigint(stats.output_bytes));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
   for (const auto step : magic_enum::enum_values<irs::MergeStep>()) {
     append(duckdb::Value::DOUBLE(Millis(stats.profile.Nanos(step))));
   }
-  append(error.empty() ? duckdb::Value{duckdb::LogicalType::VARCHAR}
-                       : duckdb::Value{std::string{error}});
+  append(NullIfEmpty(merge.error));
 }
 
 void Tally(CompactState& state, const search::MergeResult& merge) {
@@ -289,21 +259,18 @@ void Tally(CompactState& state, const search::MergeResult& merge) {
   ++state.outcomes[static_cast<size_t>(search::OutcomeOf(merge.outcome))];
   state.written += stats.output_bytes;
   state.total_nanos += stats.profile.TotalNanos();
-  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-    const auto id = static_cast<irs::MergeStep>(step);
-    state.profile.Add(id, stats.profile.Nanos(id));
+  for (const auto step : magic_enum::enum_values<irs::MergeStep>()) {
+    state.profile.Add(step, stats.profile.Nanos(step));
   }
 }
 
 bool DeterministicRendering(duckdb::ClientContext& context) {
   const auto& settings =
     duckdb::ClientConfig::GetConfig(context).profiling_renderer_settings;
-  for (const auto& [name, value] : settings) {
-    if (duckdb::StringUtil::Lower(name) == "deterministic") {
-      return value.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
-    }
-  }
-  return false;
+  const auto it = settings.find("deterministic");
+  return it != settings.end() &&
+         it->second.DefaultCastAs(duckdb::LogicalType::BOOLEAN)
+           .GetValue<bool>();
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> CompactBind(
@@ -312,7 +279,7 @@ duckdb::unique_ptr<duckdb::FunctionData> CompactBind(
   duckdb::vector<duckdb::Identifier>& names) {
   const auto relation = ReadRelation(input, "sdb_compact");
   const auto mode = ReadMode(input);
-  const auto segments = ReadSegments(input);
+  auto segments = ReadSegments(input);
   const auto target_segments = ReadTargetSegments(input);
   if (mode == search::MergeMode::Segments && segments.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -345,25 +312,19 @@ duckdb::unique_ptr<duckdb::FunctionData> CompactBind(
                          ? target_segments
                          : search::DefaultTarget(mode, context),
     .exact_target = target_segments != 0,
-    .segments = segments,
+    .segments = std::move(segments),
   };
   auto plan = target.Plan(snapshot, request, target.FieldOptions(),
                           duckdb::TaskScheduler::GetScheduler(context));
-
-  for (auto& name : ResultNames()) {
-    names.emplace_back(duckdb::Identifier{std::move(name)});
-  }
-  return_types = ResultTypes();
+  AddResultColumns(return_types, names);
   return duckdb::make_uniq<CompactBindData>(
-    CompactJob{.target = std::move(target),
-               .request = std::move(request),
-               .plan = std::move(plan)});
+    std::move(target), std::move(request), std::move(plan));
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> CompactInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   return duckdb::make_uniq<CompactState>(
-    context, input.bind_data->Cast<CompactBindData>().job);
+    context, input.bind_data->Cast<CompactBindData>());
 }
 
 void CompactExecute(duckdb::ClientContext& context,
@@ -374,9 +335,8 @@ void CompactExecute(duckdb::ClientContext& context,
   const irs::MergeProgress progress = [&context] {
     return StatementRunning(context);
   };
-  const irs::PipelineMergeExecutor executor{*context.db, state.threads};
   search::MergeResult merge;
-  if (!state.compaction.Next(progress, search::MergeOrigin::Sql, executor,
+  if (!state.compaction.Next(progress, search::MergeOrigin::Sql, state.executor,
                              merge)) {
     return;
   }
@@ -389,37 +349,39 @@ void CompactExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::NodeStatistics> CompactCardinality(
   duckdb::ClientContext&, const duckdb::FunctionData* bind_data) {
   return duckdb::make_uniq<duckdb::NodeStatistics>(
-    bind_data->Cast<CompactBindData>().job.plan.merges.size());
+    bind_data->Cast<CompactBindData>().plan.merges.size());
 }
 
 duckdb::InsertionOrderPreservingMap<std::string> CompactToString(
   duckdb::TableFunctionToStringInput& input) {
-  return ExplainParams(input.bind_data->Cast<CompactBindData>().job);
+  return ExplainParams(input.bind_data->Cast<CompactBindData>());
 }
 
 void CompactMetrics(duckdb::TableFunctionGetMetricsInput& input) {
   const auto& state = input.global_state->Cast<CompactState>();
   auto& metrics = input.operator_metrics;
   std::vector<std::string> summary;
-  for (size_t outcome = 0; outcome < state.outcomes.size(); ++outcome) {
-    if (state.outcomes[outcome] != 0) {
-      summary.emplace_back(absl::StrCat(
-        irs::SnakeCaseName(static_cast<search::MergeOutcome>(outcome)), " ",
-        state.outcomes[outcome]));
+  for (const auto outcome : magic_enum::enum_values<search::MergeOutcome>()) {
+    if (const auto count = state.outcomes[static_cast<size_t>(outcome)];
+        count != 0) {
+      summary.emplace_back(
+        absl::StrCat(irs::SnakeCaseName(outcome), " ", count));
     }
   }
   metrics.AddExtraInfo("Actual Outcome", summary.empty()
                                            ? std::string{"nothing ran"}
                                            : absl::StrJoin(summary, ", "));
-  metrics.AddExtraInfo("Actual Written", Bytes(state.written));
+  metrics.AddExtraInfo(
+    "Actual Written",
+    duckdb::StringUtil::BytesToHumanReadableString(state.written));
   const bool zero_times = DeterministicRendering(input.context);
   const auto shown = [zero_times](uint64_t nanos) {
     return Duration(zero_times ? 0 : nanos);
   };
-  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
-    const auto id = static_cast<irs::MergeStep>(step);
-    metrics.AddExtraInfo(absl::StrCat("Actual ", StepLabel(id)),
-                         shown(state.profile.Nanos(id)));
+  for (const auto step : magic_enum::enum_values<irs::MergeStep>()) {
+    metrics.AddExtraInfo(
+      absl::StrCat("Actual ", kStepLabels[static_cast<size_t>(step)]),
+      shown(state.profile.Nanos(step)));
   }
   metrics.AddExtraInfo("Actual Total", shown(state.total_nanos));
 }
@@ -435,9 +397,9 @@ duckdb::TableFunction CompactFunction() {
   const auto segments_type =
     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   function.GetSignature()
-    .AddKeywordOnly("mode", duckdb::LogicalType::VARCHAR,
-                    duckdb::Value{std::string{
-                      irs::SnakeCaseName(search::MergeMode::Background)}})
+    .AddKeywordOnly(
+      "mode", duckdb::LogicalType::VARCHAR,
+      duckdb::Value{irs::SnakeCaseName(search::MergeMode::Background)})
     .AddKeywordOnly("segments", segments_type, duckdb::Value{segments_type})
     .AddKeywordOnly("target_segments", duckdb::LogicalType::BIGINT,
                     duckdb::Value{duckdb::LogicalType::BIGINT});

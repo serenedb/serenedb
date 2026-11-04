@@ -376,8 +376,7 @@ void DispatchInverted(duckdb::ClientContext& context,
                                 duckdb::Identifier{target.object}}},
         duckdb::OnEntryNotFound::RETURN_NULL);
       const auto* inverted =
-        entry ? dynamic_cast<const catalog::InvertedIndexEntry*>(entry.get())
-              : nullptr;
+        dynamic_cast<const catalog::InvertedIndexEntry*>(entry.get());
       auto storage = inverted ? inverted->Storage() : nullptr;
       auto search = inverted ? inverted->SearchStore() : nullptr;
       if (!storage && !search) {

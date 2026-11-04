@@ -55,7 +55,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -170,22 +169,17 @@ void CollectLeafPhysicalTypes(const duckdb::LogicalType& type,
       return CollectLeafPhysicalTypes(duckdb::ArrayType::GetChildType(type),
                                       leaves);
     case duckdb::LogicalTypeId::LIST:
+    case duckdb::LogicalTypeId::MAP:
       return CollectLeafPhysicalTypes(duckdb::ListType::GetChildType(type),
                                       leaves);
-    case duckdb::LogicalTypeId::MAP:
-    case duckdb::LogicalTypeId::STRUCT: {
-      const auto& fields = duckdb::StructType::GetChildTypes(
-        type.id() == duckdb::LogicalTypeId::MAP
-          ? duckdb::ListType::GetChildType(type)
-          : type);
-      for (const auto& field : fields) {
+    case duckdb::LogicalTypeId::STRUCT:
+      for (const auto& field : duckdb::StructType::GetChildTypes(type)) {
         CollectLeafPhysicalTypes(field.second, leaves);
       }
       return;
-    }
     default:
       if (!absl::c_linear_search(leaves, type.InternalType())) {
-        leaves.push_back(type.InternalType());
+        leaves.emplace_back(type.InternalType());
       }
   }
 }
@@ -547,8 +541,7 @@ void SearchTableEntry::OnAlter(const duckdb::AlterInfo& info) {
   }
   switch (info.Cast<duckdb::AlterTableInfo>().alter_table_type) {
     case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
-      _storage->SetDeclaredCompression(
-        search::Store::DeclaredCompression(GetColumns()));
+      _storage->SetDeclaredCompression(GetColumns());
       break;
     case duckdb::AlterTableType::SET_TABLE_OPTIONS:
     case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
@@ -632,7 +625,8 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
-  auto& options = info->Cast<duckdb::CreateTableInfo>().options;
+  auto& create = info->Cast<duckdb::CreateTableInfo>();
+  auto& options = create.options;
   options.insert_or_assign(kStorageOption,
                            OptionConstant(duckdb::Value{kEngineSearch}));
   for (const auto name :
@@ -645,8 +639,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       options.insert_or_assign(name, OptionConstant(value));
     }
   }
-  info->Cast<duckdb::CreateTableInfo>().sort_orders =
-    SortOrdersOf(_sort_keys, GetColumns());
+  create.sort_orders = SortOrdersOf(_sort_keys, GetColumns());
   return info;
 }
 

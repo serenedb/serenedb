@@ -308,9 +308,19 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
                   ERR_DETAIL(detail));
 }
 
-constexpr std::string_view kObjectCacheSizeDetail =
-  "Only roles with the SUPERUSER attribute may change the size of the "
-  "server-wide object cache.";
+void SetObjectCacheSize(duckdb::ClientContext& context,
+                        const duckdb::Value& value) {
+  RequireSuperuser(context, kObjectCacheSizeSetting,
+                   "Only roles with the SUPERUSER attribute may change the "
+                   "size of the server-wide object cache.");
+  auto& cache = duckdb::DatabaseInstance::GetDatabase(context).GetObjectCache();
+  if (const auto bytes = value.GetValue<uint64_t>(); bytes != 0) {
+    cache.SetMaxMemory(bytes);
+    return;
+  }
+  cache.SetAutomaticMaxMemory(
+    duckdb::DBConfig::GetConfig(context).options.maximum_memory);
+}
 
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
 void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
@@ -1269,26 +1279,9 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Default 0. Server-global; only a superuser may change it.",
         [] { return duckdb::Value::UBIGINT(0); },
         [](duckdb::ClientContext& context, duckdb::SetScope,
-           duckdb::Value& value) {
-          RequireSuperuser(context, kObjectCacheSizeSetting,
-                           kObjectCacheSizeDetail);
-          auto& cache =
-            duckdb::DatabaseInstance::GetDatabase(context).GetObjectCache();
-          const auto bytes = value.GetValue<uint64_t>();
-          if (bytes != 0) {
-            cache.SetMaxMemory(bytes);
-            return;
-          }
-          cache.SetAutomaticMaxMemory(
-            duckdb::DBConfig::GetConfig(context).options.maximum_memory);
-        },
+           duckdb::Value& value) { SetObjectCacheSize(context, value); },
         [](duckdb::ClientContext& context, duckdb::SetScope) {
-          RequireSuperuser(context, kObjectCacheSizeSetting,
-                           kObjectCacheSizeDetail);
-          duckdb::DatabaseInstance::GetDatabase(context)
-            .GetObjectCache()
-            .SetAutomaticMaxMemory(
-              duckdb::DBConfig::GetConfig(context).options.maximum_memory);
+          SetObjectCacheSize(context, duckdb::Value::UBIGINT(0));
         },
         duckdb::SetScope::GLOBAL,
       },

@@ -211,15 +211,16 @@ void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
       continue;
     }
     const auto& name = columns.GetColumn(key.column).Name();
-    info.expressions.push_back(
+    info.expressions.emplace_back(
       duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
-    info.parsed_expressions.push_back(
+    info.parsed_expressions.emplace_back(
       duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
     info.column_opclasses.emplace_back(kIncludedKind);
     info.column_opclass_options.emplace_back(
       duckdb::case_insensitive_map_t<duckdb::Value>{});
-    info.column_orders.push_back(duckdb::OrderType::ORDER_DEFAULT);
-    info.column_null_orders.push_back(duckdb::OrderByNullType::ORDER_DEFAULT);
+    info.column_orders.emplace_back(duckdb::OrderType::ORDER_DEFAULT);
+    info.column_null_orders.emplace_back(
+      duckdb::OrderByNullType::ORDER_DEFAULT);
   }
 }
 

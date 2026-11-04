@@ -109,7 +109,7 @@ class Store final : public std::enable_shared_from_this<Store> {
         bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
         const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer,
-        const std::vector<irs::SortKey>& sort, bool is_new);
+        std::vector<irs::SortKey> sort, bool is_new);
   Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
         bool read_only, duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
@@ -119,16 +119,15 @@ class Store final : public std::enable_shared_from_this<Store> {
   Store(const Store&) = delete;
   Store& operator=(const Store&) = delete;
 
-  static catalog::CompressionByColumn DeclaredCompression(
-    const duckdb::ColumnList& columns);
-
   duckdb::idx_t GetId() const noexcept { return _id; }
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
   std::filesystem::path Path() const { return _directory->StoragePath(_id); }
   bool Absent() const noexcept { return _absent; }
   bool ReadOnly() const noexcept { return !_writer; }
-  bool IsSearchTable() const noexcept { return _table_columns.has_value(); }
+  bool IsSearchTable() const noexcept {
+    return static_cast<bool>(_table_columns);
+  }
 
   void Open();
   void OpenReader();
@@ -184,7 +183,7 @@ class Store final : public std::enable_shared_from_this<Store> {
   void StartTasks();
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
   void ApplyOptions(const catalog::SearchTableOptions& options);
-  void SetDeclaredCompression(catalog::CompressionByColumn compression);
+  void SetDeclaredCompression(const duckdb::ColumnList& columns);
 
   // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
   // inserts, CleanupUnsafe reclaims unreferenced files.
@@ -406,9 +405,7 @@ class Store final : public std::enable_shared_from_this<Store> {
       options.compaction_floor_segment_bytes;
   }
 
-  void SetWriterOptions(irs::IndexWriterOptions& options) const;
   irs::IndexReaderOptions ReaderOptions() const;
-  void OpenWriter();
   void PublishSnapshot();
   template<typename Remove>
   void CommitRemovalWith(const Remove& remove);

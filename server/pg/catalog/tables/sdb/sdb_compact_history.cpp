@@ -111,24 +111,17 @@ class SdbCompactHistory final : public SystemTableScan<kSdbCompactHistorySql> {
   static constexpr auto kMerge =
     Shape<kSql, const MergeRecord>(kMergeColumns, kMergeInputColumns);
 
-  void Row(const duckdb::IndexCatalogEntry& index) {
-    if (!Allows<"relation_id">(index.oid) || !OwnsStore(index)) {
-      return;
-    }
-    Events(index.oid);
-  }
+  void Row(const duckdb::IndexCatalogEntry& index) { Events(index); }
 
-  void Row(const duckdb::TableCatalogEntry& table) {
-    if (!Allows<"relation_id">(table.oid) || !OwnsStore(table)) {
-      return;
-    }
-    Events(table.oid);
-  }
+  void Row(const duckdb::TableCatalogEntry& table) { Events(table); }
 
  private:
-  void Events(duckdb::idx_t relation) {
+  void Events(const auto& relation) {
+    if (!Allows<"relation_id">(relation.oid) || !OwnsStore(relation)) {
+      return;
+    }
     for (const auto& record :
-         search::GetSearchEngine().Merges().History(relation)) {
+         search::GetSearchEngine().Merges().History(relation.oid)) {
       Emit<kMerge>(record);
     }
   }

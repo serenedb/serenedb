@@ -36,6 +36,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -84,24 +85,25 @@ duckdb::unique_ptr<duckdb::FunctionData> SegmentsBind(
   MergeTarget::Resolve(context, data->relation);
   const auto& columns = NamedParameter(input, "columns");
   data->columns = !columns.IsNull() && columns.GetValue<bool>();
+  const auto add = [&](std::string_view name, duckdb::LogicalType type) {
+    names.emplace_back(name);
+    return_types.emplace_back(std::move(type));
+  };
+  add("segment", duckdb::LogicalType::VARCHAR);
   if (data->columns) {
-    for (const auto* name : {"segment", "column", "type", "rows", "bytes",
-                             "codecs", "reencoded_bytes", "verdict"}) {
-      names.emplace_back(name);
-    }
-    return_types.insert(return_types.end(), 3, duckdb::LogicalType::VARCHAR);
-    return_types.insert(return_types.end(), 2, duckdb::LogicalType::BIGINT);
-    return_types.emplace_back(duckdb::LogicalType::VARCHAR);
-    return_types.emplace_back(duckdb::LogicalType::BIGINT);
-    return_types.emplace_back(duckdb::LogicalType::VARCHAR);
+    add("column", duckdb::LogicalType::VARCHAR);
+    add("type", duckdb::LogicalType::VARCHAR);
+    add("rows", duckdb::LogicalType::BIGINT);
+    add("bytes", duckdb::LogicalType::BIGINT);
+    add("codecs", duckdb::LogicalType::VARCHAR);
+    add("reencoded_bytes", duckdb::LogicalType::BIGINT);
+    add("verdict", duckdb::LogicalType::VARCHAR);
     return data;
   }
-  for (const auto* name :
-       {"segment", "docs", "live_docs", "deleted_docs", "bytes"}) {
-    names.emplace_back(name);
-  }
-  return_types.emplace_back(duckdb::LogicalType::VARCHAR);
-  return_types.insert(return_types.end(), 4, duckdb::LogicalType::BIGINT);
+  add("docs", duckdb::LogicalType::BIGINT);
+  add("live_docs", duckdb::LogicalType::BIGINT);
+  add("deleted_docs", duckdb::LogicalType::BIGINT);
+  add("bytes", duckdb::LogicalType::BIGINT);
   return data;
 }
 
@@ -160,9 +162,7 @@ void EmitColumns(SegmentsState& state, duckdb::DataChunk& output) {
     output.data[2].Append(duckdb::Value{row.type});
     output.data[3].Append(Bigint(row.rows));
     output.data[4].Append(Bigint(row.bytes));
-    output.data[5].Append(row.codecs.empty()
-                            ? duckdb::Value{duckdb::LogicalType::VARCHAR}
-                            : duckdb::Value{row.codecs});
+    output.data[5].Append(NullIfEmpty(row.codecs));
     if (row.reencoded_bytes) {
       output.data[6].Append(Bigint(*row.reencoded_bytes));
       output.data[7].Append(duckdb::Value{row.reencode ? "re-encode" : "copy"});

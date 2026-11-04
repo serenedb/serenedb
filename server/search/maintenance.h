@@ -49,9 +49,9 @@ enum class RefreshResult {
   Done,
 };
 
-// Outcome of a best-effort background tick (refresh / cleanup): the *Impl
-// worker throws, the *Unsafe wrapper converts it to a Status and the caller
-// logs + counts it. A failure is never propagated past the caller.
+// Outcome of a best-effort background tick (refresh / cleanup): the *Unsafe op
+// returns a failure as a Status and the caller logs + counts it. A failure is
+// never propagated past the caller.
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;

@@ -205,10 +205,10 @@ PlannedMerge DescribeMerge(std::string reason,
                            std::span<const irs::SubReader* const> segments) {
   PlannedMerge merge{.reason = std::move(reason)};
   for (const auto* segment : segments) {
-    const auto& input = merge.inputs.emplace_back(DescribeSegment(*segment));
-    merge.docs += input.docs;
-    merge.live_docs += input.live_docs;
-    merge.bytes += input.bytes;
+    merge.inputs.emplace_back(segment->Meta().name);
+    merge.docs += segment->docs_count();
+    merge.live_docs += segment->live_docs_count();
+    merge.bytes += segment->Meta().byte_size;
   }
   return merge;
 }
@@ -443,7 +443,7 @@ uint32_t DefaultTarget(MergeMode mode, duckdb::ClientContext& context) {
 
 MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
                               const MergeRoundRequest& request) {
-  MergeRoundPlan plan{.mode = request.mode, .segments = reader.size()};
+  MergeRoundPlan plan{.segments = reader.size()};
   switch (request.mode) {
     case MergeMode::Background:
       PlanBackground(reader, request, plan);

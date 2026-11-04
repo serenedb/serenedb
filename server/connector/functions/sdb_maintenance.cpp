@@ -180,12 +180,9 @@ std::string Duration(uint64_t nanos) {
   return absl::StrFormat("%.1f ms", Millis(nanos));
 }
 
-std::string InputNames(std::span<const search::PlannedSegment> inputs) {
+std::string InputNames(std::span<const std::string> inputs) {
   auto names =
-    absl::StrJoin(inputs.first(std::min(inputs.size(), kListedNames)), ", ",
-                  [](std::string* out, const search::PlannedSegment& input) {
-                    out->append(input.name);
-                  });
+    absl::StrJoin(inputs.first(std::min(inputs.size(), kListedNames)), ", ");
   if (inputs.size() > kListedNames) {
     absl::StrAppend(&names, ", +", inputs.size() - kListedNames, " more");
   }
@@ -212,7 +209,7 @@ duckdb::InsertionOrderPreservingMap<std::string> ExplainParams(
   const auto& plan = data.plan;
   duckdb::InsertionOrderPreservingMap<std::string> params;
   params["Table"] = data.target.Name();
-  params["Mode"] = std::string{irs::SnakeCaseName(plan.mode)};
+  params["Mode"] = std::string{irs::SnakeCaseName(data.request.mode)};
   params["Segments"] = std::to_string(plan.segments);
   params["Merges"] = std::to_string(plan.merges.size());
   for (size_t i = 0; i < plan.merges.size(); ++i) {

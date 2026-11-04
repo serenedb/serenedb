@@ -69,9 +69,7 @@ std::string QualifiedDisplayName(const duckdb::CatalogEntry& entry) {
 }
 
 bool IsInput(const search::PlannedMerge& merge, std::string_view segment) {
-  return absl::c_any_of(merge.inputs, [&](const search::PlannedSegment& input) {
-    return input.name == segment;
-  });
+  return absl::c_linear_search(merge.inputs, segment);
 }
 
 }  // namespace
@@ -329,9 +327,7 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
     }
   }
   if (stats.inputs.empty()) {
-    for (const auto& input : planned.inputs) {
-      stats.inputs.emplace_back(input.name);
-    }
+    stats.inputs = planned.inputs;
   }
   return true;
 }

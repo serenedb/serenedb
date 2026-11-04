@@ -38,7 +38,7 @@
 
 namespace {
 
-class NormColumnTest : public ::testing::TestWithParam<bool> {
+class NormColumnTest : public ::testing::Test {
  protected:
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
@@ -131,7 +131,7 @@ void AssertNormReads(const irs::NormColumnReader& col,
 
 }  // namespace
 
-TEST_P(NormColumnTest, Ctor) {
+TEST_F(NormColumnTest, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
   irs::MemoryDirectory dir;
   {
@@ -154,7 +154,7 @@ TEST_P(NormColumnTest, Ctor) {
   EXPECT_FALSE(HasCsFile(dir, "ctor_seg"));
 }
 
-TEST_P(NormColumnTest, FlushEmpty) {
+TEST_F(NormColumnTest, FlushEmpty) {
   // --- (1) Rollback path on a norm-only writer ----------------------------
   {
     irs::MemoryDirectory dir;
@@ -194,7 +194,7 @@ TEST_P(NormColumnTest, FlushEmpty) {
   }
 }
 
-TEST_P(NormColumnTest, InsertDuplicates) {
+TEST_F(NormColumnTest, InsertDuplicates) {
   // Three sub-scenarios.
   //
   // (1) All-zero stream: NonZeroCount must be 0 and Sum() = 0 even though
@@ -292,7 +292,7 @@ TEST_P(NormColumnTest, InsertDuplicates) {
   }
 }
 
-TEST_P(NormColumnTest, RareLargeValues) {
+TEST_F(NormColumnTest, RareLargeValues) {
   constexpr uint32_t kRowGroupSize = 1024;
   constexpr uint64_t kRowCount = 3000;
   std::vector<uint32_t> expected(kRowCount);
@@ -329,7 +329,7 @@ TEST_P(NormColumnTest, RareLargeValues) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(NormColumnTest, RareLargeValuesEveryRowGroup) {
+TEST_F(NormColumnTest, RareLargeValuesEveryRowGroup) {
   constexpr uint64_t kRowCount = 2048;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -363,7 +363,7 @@ TEST_P(NormColumnTest, RareLargeValuesEveryRowGroup) {
   }
 }
 
-TEST_P(NormColumnTest, CrowdedBucketOverflows) {
+TEST_F(NormColumnTest, CrowdedBucketOverflows) {
   constexpr uint64_t kRowCount = 8192;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -395,7 +395,7 @@ TEST_P(NormColumnTest, CrowdedBucketOverflows) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(NormColumnTest, WideRegions) {
+TEST_F(NormColumnTest, WideRegions) {
   constexpr uint64_t kRowCount = 4096;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < 2048; ++i) {
@@ -429,7 +429,7 @@ TEST_P(NormColumnTest, WideRegions) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(NormColumnTest, StreamedRegions) {
+TEST_F(NormColumnTest, StreamedRegions) {
   const auto value = [](uint64_t i) -> uint32_t {
     if (i < 3000) {
       return i == 1500 ? 4000 : static_cast<uint32_t>(1 + i % 100);
@@ -532,6 +532,3 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   std::array<uint32_t, 2> values{};
   EXPECT_ANY_THROW(reader->Get(docs, values));
 }
-
-INSTANTIATE_TEST_SUITE_P(NormColumn, NormColumnTest,
-                         ::testing::Values(false, true));

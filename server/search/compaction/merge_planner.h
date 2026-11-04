@@ -53,7 +53,7 @@ struct PlannedSegment {
 
 struct PlannedMerge {
   std::string reason;
-  std::vector<PlannedSegment> inputs;
+  std::vector<std::string> inputs;
   uint64_t docs = 0;
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
@@ -62,7 +62,6 @@ struct PlannedMerge {
 };
 
 struct MergeRoundPlan {
-  MergeMode mode = MergeMode::Background;
   uint64_t segments = 0;
   std::vector<PlannedMerge> merges;
   bool partial = false;

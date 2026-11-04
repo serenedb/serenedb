@@ -229,8 +229,8 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
   const std::vector<bool> all(kRows, true);
 
   irs::MemoryDirectory dir;
-  auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate, HnswWriterOptions({.keys = {{.column = kKey}}}));
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                       HnswWriterOptions({{.column = kKey}}));
   ASSERT_NE(nullptr, writer);
   for (const size_t parity : {0, 1}) {
     auto trx = writer->GetBatch();

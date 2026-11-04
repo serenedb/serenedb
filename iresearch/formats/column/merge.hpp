@@ -97,7 +97,6 @@ class ColumnMerger {
   struct LeafDictionary {
     std::vector<uint32_t> path;
     std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-    uint16_t index = 0;
   };
 
   struct ColumnSlot {
@@ -112,7 +111,7 @@ class ColumnMerger {
 
   static bool AllReady(std::span<const LeafSample> leaves);
 
-  const std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos);
+  std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos);
 
   auto& Slot(this auto& self, field_id column);
 

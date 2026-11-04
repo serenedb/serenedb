@@ -104,8 +104,8 @@ class ColWriter final {
 
   uint16_t AddColumnDictionary(field_id id, std::string_view bytes);
 
-  uint16_t AddLeafDictionary(field_id id, std::span<const uint32_t> path,
-                             std::string_view bytes);
+  void AddLeafDictionary(field_id id, std::span<const uint32_t> path,
+                         std::string_view bytes);
 
   bool AddCopiedDictionaries(
     field_id id,
@@ -165,11 +165,9 @@ class ColWriter final {
 
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
-  bool Empty() const noexcept;
 
   Directory* _dir;
   std::string _segment_name;
-  std::string _filename;
   duckdb::DatabaseInstance* _db;
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
@@ -181,8 +179,8 @@ class ColWriter final {
   absl::btree_map<field_id, std::unique_ptr<ColumnParts>> _parts;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
-  irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  std::vector<AnnEntry> _ann_writers;
+  irs::containers::FlatHashMap<field_id, size_t> _ann_by_id;
   bool _stage_all = false;
   bool _committed = false;
 };

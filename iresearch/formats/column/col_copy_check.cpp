@@ -87,10 +87,7 @@ ReencodeEstimate TrialReencode(
   if (dictionary) {
     writer.ShareLeafDictionary({}, std::move(dictionary), 1);
   }
-  auto ctx = std::make_shared<ReadContext>(reader);
-  ctx->SetMergeRead(true);
-  ctx->SetCache(cache);
-  auto state = column.InitScan(std::move(ctx));
+  auto state = column.InitScan(MergeReadContext(reader, cache));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;
   uint64_t position = 0;
@@ -155,22 +152,17 @@ void ReencodeCache::Store(field_id column, const ReencodeKey& key,
   _entries.insert_or_assign(column, Entry{.key = key, .estimate = estimate});
 }
 
-ReencodeEstimate EstimateReencode(const ColReader& reader,
-                                  const ColumnReader& column,
-                                  const IndexFieldOptions& options,
-                                  duckdb::ObjectCache* cache) {
-  const auto key = KeyOf(column, options);
-  return reader.Reencodes().Estimate(column.Id(), key, [&] {
-    return TrialReencode(reader, column, key, cache, nullptr);
-  });
-}
-
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options, duckdb::ObjectCache* cache,
   std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
-  return TrialReencode(reader, column, KeyOf(column, options), cache,
-                       std::move(dictionary));
+  const auto key = KeyOf(column, options);
+  if (dictionary) {
+    return TrialReencode(reader, column, key, cache, std::move(dictionary));
+  }
+  return reader.Reencodes().Estimate(column.Id(), key, [&] {
+    return TrialReencode(reader, column, key, cache, nullptr);
+  });
 }
 
 }  // namespace irs

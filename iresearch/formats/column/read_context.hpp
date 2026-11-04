@@ -26,6 +26,7 @@
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -135,6 +136,10 @@ class ReadContext final : public BlockManager,
   bool _streams = false;
   std::atomic<size_t> _live_handles{0};
 };
+
+std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
+                                              duckdb::ObjectCache* cache,
+                                              bool streams = false);
 
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept;

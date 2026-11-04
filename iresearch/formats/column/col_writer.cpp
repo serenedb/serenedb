@@ -181,10 +181,8 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     if (!progress()) {
       return false;
     }
-    auto& copy = out.emplace_back(ColumnBlockMeta{block.statistics.Copy()});
-    copy.tuple_count = block.tuple_count;
-    copy.byte_size = block.byte_size;
-    copy.codec = block.codec;
+    auto& copy = out.emplace_back(block.statistics.Copy(), block.tuple_count,
+                                  uint64_t{0}, block.byte_size, block.codec);
     if (block.byte_size == 0) {
       continue;
     }
@@ -222,7 +220,6 @@ ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      bool stage_all)
   : _dir{&dir},
     _segment_name{segment_name},
-    _filename{FileName(segment_name)},
     _db{&db},
     _tier{tier},
     _stage_all{stage_all} {}
@@ -237,12 +234,9 @@ void ColWriter::EnsureOut() {
   if (_file) {
     return;
   }
-  _file = std::make_unique<ColFileWriter>(_dir->create(_filename));
+  _file =
+    std::make_unique<ColFileWriter>(_dir->create(FileName(_segment_name)));
   _write_ctx = std::make_unique<WriteContext>(*_db, *_file);
-}
-
-bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _parts.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -422,9 +416,8 @@ uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
   return static_cast<uint16_t>(own);
 }
 
-uint16_t ColWriter::AddLeafDictionary(field_id id,
-                                      std::span<const uint32_t> path,
-                                      std::string_view bytes) {
+void ColWriter::AddLeafDictionary(field_id id, std::span<const uint32_t> path,
+                                  std::string_view bytes) {
   const bool added =
     PartsOf(id)
       .leaf_dictionaries
@@ -433,7 +426,6 @@ uint16_t ColWriter::AddLeafDictionary(field_id id,
                                         .byte_size = bytes.size()})
       .second;
   SDB_ASSERT(added);
-  return 1;
 }
 
 bool ColWriter::AddCopiedDictionaries(
@@ -462,7 +454,6 @@ bool ColWriter::AddCopiedDictionaries(
 
 ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
   ColumnMeta meta;
-  meta.id = id;
   for (auto& part : parts.parts) {
     SDB_ASSERT(!part.writer);
     SDB_ASSERT(part.meta.type.id() != duckdb::LogicalTypeId::INVALID,
@@ -513,7 +504,7 @@ NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
-    auto& existing = *it->second;
+    auto& existing = _ann_writers[it->second];
     SDB_ASSERT(existing.info == info && existing.column_id == column_id,
                "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
                "column ",
@@ -522,30 +513,29 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   }
   SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachAnn: column ",
              column_id, " must be opened first");
-  auto entry = std::make_unique<AnnEntry>();
-  entry->column_id = column_id;
+  std::unique_ptr<AnnWriter> writer;
   switch (info.kind) {
 #ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
-      entry->writer = std::make_unique<IvfWriter>(info);
+      writer = std::make_unique<IvfWriter>(info);
       break;
     case AnnKind::Hnsw:
-      entry->writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
+      writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
       break;
 #endif
     default:
       SDB_UNREACHABLE();
   }
-  entry->info = std::move(info);
-  auto& back = *_ann_writers.emplace_back(std::move(entry));
-  _ann_by_id.emplace(back.info.index_id, &back);
-  return *back.writer;
+  auto& entry =
+    _ann_writers.emplace_back(column_id, std::move(info), std::move(writer));
+  _ann_by_id.emplace(entry.info.index_id, _ann_writers.size() - 1);
+  return *entry.writer;
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
-    if (entry->writer) {
-      entry->writer->SetIdxWriter(idx);
+    if (entry.writer) {
+      entry.writer->SetIdxWriter(idx);
     }
   }
 }
@@ -554,8 +544,8 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
-    if (entry->writer) {
-      out.push_back(std::move(entry->writer));
+    if (entry.writer) {
+      out.push_back(std::move(entry.writer));
     }
   }
   return out;
@@ -580,9 +570,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   SDB_ASSERT(new2old.empty() || (_stage_all && new2old.size() == target_row));
   std::vector<const NormColumnWriter*> norms;
   for (auto& writer : _norms) {
-    if (writer->RowCount() < target_row) {
-      writer->PadTo(target_row);
-    }
+    writer->PadTo(target_row);
     if (_stage_all) {
       writer->Reorder(new2old);
     }
@@ -594,7 +582,7 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
       norms.push_back(writer.get());
     }
   }
-  if (Empty() && !_file && norms.empty()) {
+  if (!_file && norms.empty()) {
     _committed = true;
     return true;
   }
@@ -655,11 +643,11 @@ yaclib::Task<> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   }
   ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
-    const auto* col = reader.Column(entry->column_id);
+    const auto* col = reader.Column(entry.column_id);
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    co_await entry.writer->Compute(*col, reader.Ctx(), env);
   }
   co_return {};
 }
@@ -672,8 +660,8 @@ yaclib::Task<> ColWriter::ComputeAnn(field_id column, ColReader& reader,
     co_return {};
   }
   for (auto& entry : _ann_writers) {
-    if (entry->column_id == column) {
-      co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    if (entry.column_id == column) {
+      co_await entry.writer->Compute(*col, reader.Ctx(), env);
     }
   }
   co_return {};

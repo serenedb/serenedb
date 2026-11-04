@@ -92,14 +92,9 @@ class ReencodeCache {
   irs::containers::FlatHashMap<field_id, Entry> _entries;
 };
 
-ReencodeEstimate EstimateReencode(const ColReader& reader,
-                                  const ColumnReader& column,
-                                  const IndexFieldOptions& options,
-                                  duckdb::ObjectCache* cache);
-
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options, duckdb::ObjectCache* cache,
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary);
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary = nullptr);
 
 }  // namespace irs

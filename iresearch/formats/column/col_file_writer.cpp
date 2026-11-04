@@ -27,6 +27,7 @@
 #include <cstring>
 #include <duckdb/common/fault_points.hpp>
 #include <limits>
+#include <utility>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -91,8 +92,7 @@ void ColFileWriter::Drain() {
     _mutex.Await(absl::Condition(this, &ColFileWriter::Idle));
     rest.swap(_full);
     if (_tail.size != 0) {
-      rest.emplace_back(std::move(_tail));
-      _tail = {};
+      rest.emplace_back(std::exchange(_tail, {}));
     }
     _queued = 0;
     _writing = true;
@@ -156,8 +156,7 @@ void ColFileWriter::Stage(std::string_view bytes) {
     _tail.size += n;
     bytes.remove_prefix(n);
     if (_tail.size == kChunkSize) {
-      _full.emplace_back(std::move(_tail));
-      _tail = {};
+      _full.emplace_back(std::exchange(_tail, {}));
     }
   }
 }

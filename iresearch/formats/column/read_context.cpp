@@ -232,6 +232,16 @@ void ReadContext::WriteHeader(duckdb::QueryContext /*context*/,
 }
 duckdb::idx_t ReadContext::TotalBlocks() { return 0; }
 
+std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
+                                              duckdb::ObjectCache* cache,
+                                              bool streams) {
+  auto ctx = std::make_shared<ReadContext>(reader);
+  ctx->SetMergeRead(true);
+  ctx->SetCache(cache);
+  ctx->SetStreams(streams);
+  return ctx;
+}
+
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept {
   const auto& block = segment.GetBlockHandle();

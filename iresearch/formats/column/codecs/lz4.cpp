@@ -102,6 +102,7 @@ Lz4Hc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
   SDB_ASSERT(bytes.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   LZ4_setCompressionLevel(_stream.get(), EffectiveLevel<Lz4Hc>(level));
   LZ4_favorDecompressionSpeed(_stream.get(), 0);
+  _stream->internal_donotuse.hasWorkspace = 0;
   LZ4_loadDictHC(_stream.get(), bytes.data(), static_cast<int>(bytes.size()));
 }
 

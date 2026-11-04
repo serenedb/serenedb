@@ -23,6 +23,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/types.hpp"
@@ -44,6 +45,22 @@ class ColMapping final : public duckdb::MemoryMappedFile {
   }
   void Close() final {}
 };
+
+class PinnedColBlock final : public duckdb::Block {
+ public:
+  PinnedColBlock(duckdb::BlockAllocator& allocator, duckdb::block_id_t id,
+                 duckdb::MemoryMappedFile& bytes, uint64_t size,
+                 duckdb::BlockCachePin pin)
+    : Block{allocator, id, bytes, 0, size, /*block_header_size=*/0},
+      _pin{std::move(pin)} {}
+
+ private:
+  duckdb::BlockCachePin _pin;
+};
+
+uint64_t SectorAligned(uint64_t size) noexcept {
+  return duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(size);
+}
 
 }  // namespace
 
@@ -119,7 +136,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   _ranges.emplace_back(offset, size);
   ++_live_handles;
   auto handle = RegisterBlock(id);
-  if (Maps(offset, size)) {
+  if (Maps(offset, size) || Wraps(offset, size)) {
     handle->GetMemory().SetMemoryUsage(0);
   }
   return handle;
@@ -127,10 +144,13 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
   return _mapping && offset % 8 == 0 &&
-         offset +
-             duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
-               size) <=
-           _mapping->Size();
+         offset + SectorAligned(size) <= _mapping->Size();
+}
+
+bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
+  constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
+  return !_mapping && _file && offset % 8 == 0 &&
+         offset % kBlock + SectorAligned(size) <= kBlock;
 }
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
@@ -152,6 +172,12 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
                                             offset, size,
                                             /*block_header_size=*/0);
   }
+  if (Wraps(offset, size)) {
+    auto pinned = _file->Pin(offset, size);
+    ColMapping bytes{pinned.bytes.data(), SectorAligned(size)};
+    return duckdb::make_uniq<PinnedColBlock>(*_allocator, block_id, bytes, size,
+                                             std::move(pinned.pin));
+  }
   return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id,
                                           static_cast<duckdb::idx_t>(size),
                                           /*block_header_size=*/0);
@@ -165,6 +191,10 @@ void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
   if (Maps(offset, block.Size())) {
     block.Read(context, *_mapping, offset);
+    return;
+  }
+  if (Wraps(offset, size)) {
+    SDB_ASSERT(!block.OwnsInternalBuffer());
     return;
   }
   _in.ReadData(offset, block.InternalBuffer(), size);

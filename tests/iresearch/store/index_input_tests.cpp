@@ -27,6 +27,7 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <future>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <thread>
@@ -176,6 +177,33 @@ TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
   EXPECT_EQ(ExpectedByte(0), read.first);
 }
 #endif
+
+TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  duckdb::BlockCache cache{db};
+  auto file = cache.CreateUnbackedFile("memory://block_input_test/columns");
+  AppendBlocks(cache, file, 2);
+  const irs::InputFile blocks{cache, file};
+  auto& buffers = duckdb::BufferManager::GetBufferManager(db);
+  irs::ReadContext ctx{db, &blocks};
+  {
+    auto inside = ctx.RegisterColBlock(8, 1000);
+    EXPECT_EQ(0, inside->GetMemory().GetMemoryUsage());
+    const auto pin = buffers.Pin(inside);
+    EXPECT_EQ(blocks.Pin(8, 1000).bytes.data(), pin.Ptr());
+    for (uint64_t j = 0; j != 1000; ++j) {
+      ASSERT_EQ(ExpectedByte(8 + j), pin.Ptr()[j]) << j;
+    }
+  }
+  {
+    auto across = ctx.RegisterColBlock(kBlock - 512, 1024);
+    EXPECT_NE(0, across->GetMemory().GetMemoryUsage());
+    const auto pin = buffers.Pin(across);
+    for (uint64_t j = 0; j != 1024; ++j) {
+      ASSERT_EQ(ExpectedByte(kBlock - 512 + j), pin.Ptr()[j]) << j;
+    }
+  }
+}
 
 TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};

@@ -73,6 +73,7 @@ compaction_interval	1000	Background compaction interval (ms) for newly created i
 compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
+createrole_self_grant	(empty)	Sets whether a CREATEROLE user automatically grants the role to themselves, and with which options.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
@@ -421,6 +422,7 @@ compaction_interval	1000	Background compaction interval (ms) for newly created i
 compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
+createrole_self_grant	(empty)	Sets whether a CREATEROLE user automatically grants the role to themselves, and with which options.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.

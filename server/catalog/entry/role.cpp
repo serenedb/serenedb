@@ -237,6 +237,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     alter.grant_role_id = target->oid;
     if (!alter.grantor_id) {
       alter.grantor_id = GrantorOfMembership(context);
+      if (alter.grantor_id != pg::kRootUser) {
+        if (const auto admin =
+              RolesOf(&context)->BestAdmin(alter.grantor_id, target->oid);
+            admin.IsValid()) {
+          alter.grantor_id = admin.GetIndex();
+        }
+      }
     }
   }
   auto copy = GetInfo();
@@ -266,25 +273,43 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
                     alter.set_config, alter.reset_config,
                     alter.reset_all_config);
   if (alter.grant_role_id != 0) {
-    auto it =
-      absl::c_find_if(next.member_of, [&](const duckdb::Membership& member) {
-        return member.role == alter.grant_role_id;
-      });
-    if (alter.revoke && !alter.option_only) {
-      if (it != next.member_of.end()) {
-        next.member_of.erase(it);
+    const auto granted = [&](const duckdb::Membership& edge) {
+      return edge.role == alter.grant_role_id &&
+             (!alter.grantor_id || edge.grantor == alter.grantor_id);
+    };
+    const auto notify = [&](int errcode, std::string_view message) {
+      auto* session = connector::GetSereneDBContextPtr(context);
+      if (!session) {
+        return;
       }
-    } else if (!alter.revoke || it != next.member_of.end()) {
-      auto edge =
-        it != next.member_of.end()
-          ? *it
-          : duckdb::Membership{
-              .role = alter.grant_role_id,
-              .grantor = alter.grantor_id,
-              .admin_option = false,
-              .inherit_option = HasOption(next.options, RoleOption::Inherit),
-              .set_option = true,
-            };
+      const auto roles = RolesOf(&context);
+      session->AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(errcode),
+        ERR_MSG("role \"", name.GetIdentifierName(), "\" ", message,
+                " membership in role \"", roles->NameOf(alter.grant_role_id),
+                "\" by role \"", roles->NameOf(alter.grantor_id), "\"")));
+    };
+    auto it = absl::c_find_if(next.member_of, granted);
+    if (alter.revoke && !alter.grantor_id) {
+      std::erase_if(next.member_of, granted);
+    } else if (it == next.member_of.end()) {
+      if (alter.revoke) {
+        notify(ERRCODE_WARNING, "has not been granted");
+      } else {
+        next.member_of.push_back(duckdb::Membership{
+          .role = alter.grant_role_id,
+          .grantor = alter.grantor_id,
+          .admin_option = alter.admin_option == 1,
+          .inherit_option = alter.inherit_option == -1
+                              ? HasOption(next.options, RoleOption::Inherit)
+                              : alter.inherit_option == 1,
+          .set_option = alter.set_option != 0,
+        });
+      }
+    } else if (alter.revoke && !alter.option_only) {
+      next.member_of.erase(it);
+    } else {
+      auto edge = *it;
       if (alter.admin_option != -1) {
         edge.admin_option = alter.admin_option == 1;
       }
@@ -294,11 +319,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
       if (alter.set_option != -1) {
         edge.set_option = alter.set_option == 1;
       }
-      if (it == next.member_of.end()) {
-        next.member_of.emplace_back(edge);
-      } else {
-        *it = edge;
+      if (!alter.revoke && edge == *it) {
+        notify(ERRCODE_SUCCESSFUL_COMPLETION, "has already been granted");
       }
+      *it = edge;
     }
   }
   return duckdb::make_uniq<RoleCatalogEntry>(catalog, next);

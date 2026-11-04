@@ -21,7 +21,10 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -373,6 +376,27 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
     alter.inherit_option = false;
     alter.set_option = false;
     ApplyAlter(transaction, alter);
+    duckdb::Value self_grant;
+    context.TryGetCurrentSetting(duckdb::Identifier{"createrole_self_grant"},
+                                 self_grant);
+    bool inherit = false;
+    bool set = false;
+    for (const auto option : absl::StrSplit(
+           self_grant.IsNull() ? std::string{} : self_grant.ToString(), ',',
+           absl::SkipWhitespace())) {
+      const auto keyword = absl::StripAsciiWhitespace(option);
+      inherit |= absl::EqualsIgnoreCase(keyword, "inherit");
+      set |= absl::EqualsIgnoreCase(keyword, "set");
+    }
+    if (inherit || set) {
+      duckdb::AlterRoleInfo own{alter.GetQualifiedName().Name()};
+      own.grant_role = alter.grant_role;
+      own.grantor_id = creator;
+      own.admin_option = false;
+      own.inherit_option = inherit;
+      own.set_option = set;
+      ApplyAlter(transaction, own);
+    }
   }
   return role;
 }
@@ -448,6 +472,11 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
     duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
                                            alter.set_config);
   }
+  if (alter.revoke && !alter.grant_role.empty() &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+    RevokeMembership(transaction, alter);
+    return;
+  }
   if (!HasOption(alter.set_options | alter.clear_options,
                  RoleOption::Superuser) ||
       !transaction.HasContext() ||
@@ -465,6 +494,93 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
     roles.GetEntry(transaction, name)->Cast<RoleCatalogEntry>();
   if (role.IsSuperuser() != was_superuser) {
     FollowOwnerStatus(transaction.GetContext(), role.oid, role.IsSuperuser());
+  }
+}
+
+void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
+                                      duckdb::AlterRoleInfo& alter) {
+  auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
+  const auto granted =
+    roles.GetEntry(transaction, duckdb::Identifier{alter.grant_role});
+  const auto member =
+    roles.GetEntry(transaction, alter.GetQualifiedName().Name());
+  if (!granted || !member || !alter.grantor_id ||
+      (alter.option_only && alter.admin_option != 0)) {
+    ApplyAlter(transaction, alter);
+    return;
+  }
+  struct Grant {
+    duckdb::Identifier member;
+    duckdb::idx_t member_oid;
+    duckdb::idx_t grantor;
+    bool admin;
+  };
+  enum class Plan : uint8_t {
+    Keep,
+    RevokeAdmin,
+    Revoke,
+  };
+  std::vector<Grant> grants;
+  roles.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+    for (const auto& edge : entry.Cast<RoleCatalogEntry>().MemberOf()) {
+      if (edge.role == granted->oid) {
+        grants.push_back(
+          {entry.name, entry.oid, edge.grantor, edge.admin_option});
+      }
+    }
+  });
+  const auto target = absl::c_find_if(grants, [&](const Grant& grant) {
+    return grant.member_oid == member->oid && grant.grantor == alter.grantor_id;
+  });
+  if (target == grants.end()) {
+    ApplyAlter(transaction, alter);
+    return;
+  }
+  std::vector<Plan> plans(grants.size(), Plan::Keep);
+  const auto plan = [&](this const auto& self, size_t index,
+                        bool admin_only) -> void {
+    if (plans[index] == Plan::Revoke ||
+        (plans[index] == Plan::RevokeAdmin && admin_only)) {
+      return;
+    }
+    if (!grants[index].admin) {
+      if (!admin_only) {
+        plans[index] = Plan::Revoke;
+      }
+      return;
+    }
+    plans[index] = admin_only ? Plan::RevokeAdmin : Plan::Revoke;
+    const auto holder = grants[index].member_oid;
+    for (size_t i = 0; i < grants.size(); ++i) {
+      if (grants[i].member_oid == holder && grants[i].admin &&
+          plans[i] == Plan::Keep) {
+        return;
+      }
+    }
+    for (size_t i = 0; i < grants.size(); ++i) {
+      if (grants[i].grantor != holder || plans[i] == Plan::Revoke) {
+        continue;
+      }
+      if (!alter.cascade) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                        ERR_MSG("dependent privileges exist"),
+                        ERR_HINT("Use CASCADE to revoke them too."));
+      }
+      self(i, false);
+    }
+  };
+  const size_t revoked = target - grants.begin();
+  plan(revoked, alter.option_only);
+  ApplyAlter(transaction, alter);
+  for (size_t i = 0; i < grants.size(); ++i) {
+    if (i == revoked || plans[i] != Plan::Revoke) {
+      continue;
+    }
+    duckdb::AlterRoleInfo cascaded{grants[i].member};
+    cascaded.grant_role_id = granted->oid;
+    cascaded.grantor_id = grants[i].grantor;
+    cascaded.revoke = true;
+    ApplyAlter(transaction, cascaded);
   }
 }
 

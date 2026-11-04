@@ -307,6 +307,28 @@ void OneOf(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
              absl::StrJoin({std::string_view{Values}...}, ", "), "."));
 }
 
+void SetCreateroleSelfGrant(duckdb::ClientContext&, duckdb::SetScope,
+                            duckdb::Value& value) {
+  const auto text = value.ToString();
+  if (text.empty()) {
+    return;
+  }
+  for (const auto option : absl::StrSplit(text, ',')) {
+    const auto keyword =
+      absl::AsciiStrToLower(absl::StripAsciiWhitespace(option));
+    if (keyword == "set" || keyword == "inherit") {
+      continue;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"createrole_self_grant\": \"", text,
+              "\""),
+      ERR_DETAIL(keyword.empty() ? std::string{"List syntax is invalid."}
+                                 : absl::StrCat("Unrecognized key word: \"",
+                                                keyword, "\".")));
+  }
+}
+
 const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
                                            std::string_view name) {
   auto& cluster = catalog::ClusterOf(ctx);
@@ -1352,6 +1374,17 @@ constexpr VariableEntry kVariableDescription[] = {
       "Shows whether datetimes are integer based.",
       [] { return duckdb::Value{true}; },
       NoOverwrite<"integer_datetimes">,
+    },
+    kUserSetting,
+  },
+  {
+    "createrole_self_grant",
+    {
+      LogicalTypeId::VARCHAR,
+      "Sets whether a CREATEROLE user automatically grants the role to "
+      "themselves, and with which options.",
+      [] { return duckdb::Value{""}; },
+      SetCreateroleSelfGrant,
     },
     kUserSetting,
   },

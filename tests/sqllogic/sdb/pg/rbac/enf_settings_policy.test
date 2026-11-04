@@ -378,6 +378,7 @@ compaction_interval
 compaction_max_segments
 compaction_max_segments_bytes
 copy_csv_header_default
+createrole_self_grant
 DateStyle
 default_collation
 default_null_order

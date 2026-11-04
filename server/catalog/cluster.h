@@ -98,6 +98,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
  private:
   void ApplyAlter(duckdb::CatalogTransaction transaction,
                   duckdb::AlterInfo& info);
+  void RevokeMembership(duckdb::CatalogTransaction transaction,
+                        duckdb::AlterRoleInfo& alter);
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
 

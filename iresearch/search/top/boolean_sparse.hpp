@@ -75,8 +75,7 @@ class BooleanSparse : public Root {
       }
     }
     if (batch != 0) {
-      _fetcher.Fetch(std::span<const doc_id_t>{docs, batch});
-      _score.Score(scores, static_cast<scores_size_t>(batch));
+      FetchAndScore(_fetcher, _score, docs, scores, batch);
       _admit.AddDocs(collector, docs, batch, scores);
     }
     _admit.Flush(collector);
@@ -85,9 +84,7 @@ class BooleanSparse : public Root {
   IRS_NO_INLINE void FlushBatch(const doc_id_t* IRS_RESTRICT docs,
                                 score_t* IRS_RESTRICT scores,
                                 LoserScoreCollector& collector) {
-    _fetcher.FetchScoreBlock(
-      std::span<const doc_id_t, kScoreBlock>{docs, kScoreBlock});
-    _score.ScoreBlock(scores);
+    FetchAndScore(_fetcher, _score, docs, scores, kBatch);
     _admit.AddDocs(collector, docs, kBatch, scores);
   }
 

@@ -74,16 +74,9 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
 
   ScoreFunction PrepareScore() {
     SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
-    SDB_ASSERT(_recipe.args.scorer != nullptr);
     _provider.freq.value = _gather;
-    return _recipe.args.scorer->PrepareScorer({
-      .segment = *_recipe.segment,
-      .field = _recipe.field->meta(),
-      .doc_attrs = _provider,
-      .fetcher = *_recipe.args.fetcher,
-      .stats = _recipe.args.stats,
-      .boost = _recipe.args.boost,
-    });
+    return irs::detail::PrepareScore(_recipe.args, *_recipe.segment,
+                                     _recipe.field->meta(), _provider);
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {

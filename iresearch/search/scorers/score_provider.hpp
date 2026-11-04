@@ -52,16 +52,8 @@ inline ScoreFunction PrepareBlockScorer(const ScoreArgs& args,
                                         const FieldProperties& field,
                                         ScaleProvider& provider,
                                         score_t* block) {
-  SDB_ASSERT(args.scorer && args.fetcher);
   provider.attr.value = block;
-  return args.scorer->PrepareScorer({
-    .segment = segment,
-    .field = field,
-    .doc_attrs = provider,
-    .fetcher = *args.fetcher,
-    .stats = args.stats,
-    .boost = args.boost,
-  });
+  return PrepareScore(args, segment, field, provider);
 }
 
 struct LeafRecipe {

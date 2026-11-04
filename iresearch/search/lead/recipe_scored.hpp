@@ -71,14 +71,9 @@ class RecipeScored {
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t) noexcept {}
 
   ScoreFunction PrepareScore() {
-    return _args.scorer->PrepareScorer({
-      .segment = *_segment,
-      .field = _field != nullptr ? _field->meta() : detail::NoField(),
-      .doc_attrs = detail::NoAttributes(),
-      .fetcher = *_args.fetcher,
-      .stats = _args.stats,
-      .boost = _args.boost,
-    });
+    return detail::PrepareScore(
+      _args, *_segment, _field != nullptr ? _field->meta() : detail::NoField(),
+      detail::NoAttributes());
   }
 
   void CollectScorers(std::vector<ScoreFunction>& out) {

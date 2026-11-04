@@ -128,6 +128,8 @@ class RegexpAcceptor {
 
   Quick QuickMatch(bytes_view term) const noexcept;
 
+  bool MatchesByLiteral() const noexcept { return !_contained.empty(); }
+
   std::span<const bstring> RequiredSuffixes() const noexcept {
     return _suffixes;
   }

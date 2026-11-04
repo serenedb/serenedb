@@ -994,6 +994,15 @@ void Readahead(Cursor& cursor, ColdPlan<A>& plan, const A& a) {
 }
 
 template<typename A>
+bool MatchesByLiteral(const A& a) noexcept {
+  if constexpr (std::is_same_v<A, RegexpAcceptor>) {
+    return a.MatchesByLiteral();
+  } else {
+    return false;
+  }
+}
+
+template<typename A>
 class AcceptorIterator : public SeekTermIterator {
  public:
   using State = typename A::State;
@@ -1002,6 +1011,7 @@ class AcceptorIterator : public SeekTermIterator {
     : _a{&a},
       _k{field.KeyPrefix().size()},
       _valid{_k},
+      _by_literal{MatchesByLiteral(a)},
       _cursor{field},
       _plan{field, a},
       _filter{MakeFilter(a)} {
@@ -1286,12 +1296,20 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   IRS_NO_INLINE bool NextBlock() {
-    _cursor.Materialize();
     const auto& field = _cursor.Field();
     const auto next = _cursor.BlockIndex() + 1;
     if (next >= field.Blocks()) {
       return false;
     }
+    if (_by_literal) {
+      _cursor.Load(next);
+      _cursor.Next();
+      _filter.Restart();
+      _check = true;
+      _valid = _k;
+      return true;
+    }
+    _cursor.Materialize();
     const auto separator = field.GetRoot().Separator(next);
     size_t valid =
       std::min(_valid, CommonPrefixLength(_cursor.Key(), separator));
@@ -1389,6 +1407,7 @@ class AcceptorIterator : public SeekTermIterator {
   const A* _a;
   size_t _k;
   size_t _valid;
+  bool _by_literal;
   size_t _ranged = 0;
   bool _check = true;
   bool _last_block = false;

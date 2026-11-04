@@ -50,7 +50,7 @@ namespace irs::codecs::text {
 template<typename Codec>
 inline constexpr bool kTakesTrained =
   requires(typename Codec::Decompressor& d, const TrainedDictionary& t) {
-    d.SetTrained(t);
+    d.Decompress(nullptr, 0, nullptr, 0, t);
   };
 
 template<typename Codec>
@@ -95,33 +95,30 @@ struct BlobScan {
     char* staging = out;
     if (f >= Codec::kFirstWindowed && !dictionary.empty()) {
       staging = Window(s, dictionary);
+      dictionary = {staging - dictionary.size(), dictionary.size()};
     }
-    decoder.SetDictionary(
-      staging == out
-        ? dictionary
-        : std::string_view{staging - dictionary.size(), dictionary.size()});
-    Decompress(s, f, out, staging);
+    Decompress(s, f, out, staging, dictionary);
   }
 
   template<typename Frames>
   void InflateTrained(const Frames& s, uint32_t f, char* out) {
     if constexpr (kTakesTrained<Codec>) {
-      decoder.SetTrained(*trained);
-      Decompress(s, f, out, out);
+      Decompress(s, f, out, out, *trained);
     } else {
       const auto bytes = trained->Bytes();
       char* staging = Window(s, bytes);
-      decoder.SetDictionary({staging - bytes.size(), bytes.size()});
-      Decompress(s, f, out, staging);
+      Decompress(s, f, out, staging,
+                 std::string_view{staging - bytes.size(), bytes.size()});
     }
   }
 
   template<typename Frames>
-  void Decompress(const Frames& s, uint32_t f, char* out, char* staging) {
+  void Decompress(const Frames& s, uint32_t f, char* out, char* staging,
+                  const auto& dictionary) {
     const auto& m = s.frames[f];
-    SDB_ENSURE(
-      decoder.Decompress(s.Data() + m.comp_off, m.comp_len, staging, m.raw_len),
-      "col codec: corrupted frame");
+    SDB_ENSURE(decoder.Decompress(s.Data() + m.comp_off, m.comp_len, staging,
+                                  m.raw_len, dictionary),
+               "col codec: corrupted frame");
     if (staging != out) {
       std::memcpy(out, staging, m.raw_len);
     }
@@ -286,7 +283,6 @@ struct BlobFetch {
         dictionary = duckdb::make_unsafe_uniq_array_uninitialized<char>(
           dictionary_capacity);
       }
-      d.SetDictionary({});
       SDB_ENSURE(d.Decompress(reinterpret_cast<const char*>(base + h.off_data) +
                                 f0.comp_off,
                               f0.comp_len, dictionary.get(), f0.raw_len),
@@ -302,27 +298,28 @@ struct BlobFetch {
       std::memcpy(grown.get(), dictionary.get(), dictionary_size);
       dictionary = std::move(grown);
     }
-    const std::string_view prefix =
-      with_dictionary ? std::string_view{dictionary.get(), dictionary_size}
-                      : std::string_view{};
-    if constexpr (kTakesTrained<Codec>) {
-      if (trained) {
-        d.SetTrained(*trained);
-      } else {
-        d.SetDictionary(prefix);
-      }
-    } else {
-      d.SetDictionary(prefix);
-    }
     auto* dst =
       with_dictionary ? dictionary.get() + dictionary_size : raw.get();
     frame_data = dst;
     const auto* src =
       reinterpret_cast<const char*>(base + h.off_data) + f.comp_off;
-    const size_t got =
-      want == f.raw_len
-        ? (d.Decompress(src, f.comp_len, dst, f.raw_len) ? f.raw_len : 0)
-        : d.DecompressPrefix(src, f.comp_len, dst, want, f.raw_len);
+    const auto inflate = [&](const auto& prefix) -> size_t {
+      if (want == f.raw_len) {
+        return d.Decompress(src, f.comp_len, dst, f.raw_len, prefix) ? f.raw_len
+                                                                     : 0;
+      }
+      return d.DecompressPrefix(src, f.comp_len, dst, want, f.raw_len, prefix);
+    };
+    const auto got = [&] {
+      if constexpr (kTakesTrained<Codec>) {
+        if (trained) {
+          return inflate(*trained);
+        }
+      }
+      return inflate(with_dictionary
+                       ? std::string_view{dictionary.get(), dictionary_size}
+                       : std::string_view{});
+    }();
     SDB_ENSURE(got >= want, "col codec: corrupted frame");
     decoded = std::min<size_t>(got, f.raw_len);
     decoded_total += decoded;

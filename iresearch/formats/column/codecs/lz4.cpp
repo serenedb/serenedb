@@ -27,6 +27,7 @@
 #include <lz4hc.h>
 
 #include <limits>
+#include <type_traits>
 
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
@@ -65,35 +66,41 @@ size_t Lz4::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw_size)));
 }
 
-void Lz4::Compressor::LoadDictionary(std::string_view dictionary) {
-  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  _trained = 0;
-  const auto size = static_cast<int>(dictionary.size());
-  if (_level <= 1) {
-    if (!_dict) {
-      _dict.reset(LZ4_createStream());
-      SDB_ENSURE(_dict, "lz4: cannot create a dictionary stream");
-    }
-    LZ4_loadDict(_dict.get(), dictionary.data(), size);
+namespace {
+
+template<typename Stream>
+std::unique_ptr<Stream, Lz4Free> NewStream() {
+  std::unique_ptr<Stream, Lz4Free> stream;
+  if constexpr (std::is_same_v<Stream, LZ4_stream_t>) {
+    stream.reset(LZ4_createStream());
   } else {
-    if (!_hc_dict) {
-      _hc_dict.reset(LZ4_createStreamHC());
-      SDB_ENSURE(_hc_dict, "lz4: cannot create a dictionary stream");
-    }
-    LZ4_resetStreamHC_fast(_hc_dict.get(), _level);
-    LZ4_loadDictHC(_hc_dict.get(), dictionary.data(), size);
+    stream.reset(LZ4_createStreamHC());
   }
-  _dictionary = true;
+  SDB_ENSURE(stream, "lz4: cannot create a compression stream");
+  return stream;
 }
 
-void Lz4::Compressor::LoadTrained(const TrainedDictionary& dictionary) {
-  if (_trained == dictionary.Id() && _trained_level == _level) {
-    _dictionary = true;
+}  // namespace
+
+Lz4::Compressor::Compressor(uint8_t level, std::string_view dictionary) {
+  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
+  level = EffectiveLevel<Lz4>(level);
+  const auto size = static_cast<int>(dictionary.size());
+  if (level <= 1) {
+    auto& fast = _streams.emplace<Fast>(NewStream<LZ4_stream_t>(), nullptr);
+    if (!dictionary.empty()) {
+      fast.dictionary = NewStream<LZ4_stream_t>();
+      LZ4_loadDict(fast.dictionary.get(), dictionary.data(), size);
+    }
     return;
   }
-  LoadDictionary(dictionary.Bytes());
-  _trained = dictionary.Id();
-  _trained_level = _level;
+  auto& high =
+    _streams.emplace<High>(level, NewStream<LZ4_streamHC_t>(), nullptr);
+  if (!dictionary.empty()) {
+    high.dictionary = NewStream<LZ4_streamHC_t>();
+    LZ4_resetStreamHC_fast(high.dictionary.get(), level);
+    LZ4_loadDictHC(high.dictionary.get(), dictionary.data(), size);
+  }
 }
 
 size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
@@ -103,33 +110,26 @@ size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
   const auto src_size = static_cast<int>(size);
   const auto dst_capacity = static_cast<int>(capacity);
   int n = 0;
-  if (_level <= 1) {
-    if (!_work) {
-      _work.reset(LZ4_createStream());
-      SDB_ENSURE(_work, "lz4: cannot create a compression stream");
-    }
-    if (_dictionary) {
-      LZ4_resetStream_fast(_work.get());
-      LZ4_attach_dictionary(_work.get(), _dict.get());
-      n = LZ4_compress_fast_continue(_work.get(), src, dst, src_size,
+  if (auto* fast = std::get_if<Fast>(&_streams)) {
+    if (fast->dictionary) {
+      LZ4_resetStream_fast(fast->work.get());
+      LZ4_attach_dictionary(fast->work.get(), fast->dictionary.get());
+      n = LZ4_compress_fast_continue(fast->work.get(), src, dst, src_size,
                                      dst_capacity, 1);
     } else {
-      n = LZ4_compress_fast_extState_fastReset(_work.get(), src, dst, src_size,
-                                               dst_capacity, 1);
+      n = LZ4_compress_fast_extState_fastReset(fast->work.get(), src, dst,
+                                               src_size, dst_capacity, 1);
     }
   } else {
-    if (!_hc_work) {
-      _hc_work.reset(LZ4_createStreamHC());
-      SDB_ENSURE(_hc_work, "lz4: cannot create a compression stream");
-    }
-    if (_dictionary) {
-      LZ4_resetStreamHC_fast(_hc_work.get(), _level);
-      LZ4_attach_HC_dictionary(_hc_work.get(), _hc_dict.get());
-      n = LZ4_compress_HC_continue(_hc_work.get(), src, dst, src_size,
+    auto& high = std::get<High>(_streams);
+    if (high.dictionary) {
+      LZ4_resetStreamHC_fast(high.work.get(), high.level);
+      LZ4_attach_HC_dictionary(high.work.get(), high.dictionary.get());
+      n = LZ4_compress_HC_continue(high.work.get(), src, dst, src_size,
                                    dst_capacity);
     } else {
-      n = LZ4_compress_HC_extStateHC_fastReset(_hc_work.get(), src, dst,
-                                               src_size, dst_capacity, _level);
+      n = LZ4_compress_HC_extStateHC_fastReset(
+        high.work.get(), src, dst, src_size, dst_capacity, high.level);
     }
   }
   SDB_ENSURE(n > 0, "lz4 compression failed");
@@ -137,20 +137,21 @@ size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
 }
 
 bool Lz4::Decompressor::Decompress(const char* src, size_t size, char* dst,
-                                   size_t raw_size) noexcept {
+                                   size_t raw_size,
+                                   std::string_view dictionary) noexcept {
   if (size > static_cast<size_t>(std::numeric_limits<int>::max()) ||
       raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     return false;
   }
   const int n = LZ4_decompress_safe_usingDict(
     src, dst, static_cast<int>(size), static_cast<int>(raw_size),
-    _dictionary.data(), static_cast<int>(_dictionary.size()));
+    dictionary.data(), static_cast<int>(dictionary.size()));
   return n >= 0 && static_cast<size_t>(n) == raw_size;
 }
 
-size_t Lz4::Decompressor::DecompressPrefix(const char* src, size_t size,
-                                           char* dst, size_t want,
-                                           size_t raw_size) noexcept {
+size_t Lz4::Decompressor::DecompressPrefix(
+  const char* src, size_t size, char* dst, size_t want, size_t raw_size,
+  std::string_view dictionary) noexcept {
   SDB_ASSERT(want <= raw_size);
   if (size > static_cast<size_t>(std::numeric_limits<int>::max()) ||
       raw_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
@@ -158,8 +159,8 @@ size_t Lz4::Decompressor::DecompressPrefix(const char* src, size_t size,
   }
   const int n = LZ4_decompress_safe_partial_usingDict(
     src, dst, static_cast<int>(size), static_cast<int>(want),
-    static_cast<int>(raw_size), _dictionary.data(),
-    static_cast<int>(_dictionary.size()));
+    static_cast<int>(raw_size), dictionary.data(),
+    static_cast<int>(dictionary.size()));
   return n >= 0 && static_cast<size_t>(n) >= want ? static_cast<size_t>(n) : 0;
 }
 

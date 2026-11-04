@@ -45,6 +45,14 @@ std::string_view ZxcDictionary(std::string_view dictionary) noexcept {
            : dictionary;
 }
 
+std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
+  std::unique_ptr<zxc_cctx, ZxcFree> ctx{zxc_create_cctx()};
+  SDB_ENSURE(ctx, "zxc: cannot create a compression context");
+  const auto rc = zxc_cctx_set_param(ctx.get(), ZXC_C_LEVEL, level);
+  SDB_ENSURE(rc == ZXC_OK, "zxc: cannot set level ", level, ": ", rc);
+  return ctx;
+}
+
 }  // namespace
 
 const duckdb::CompressionFunction& ZxcFunction() {
@@ -65,33 +73,23 @@ size_t Zxc::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(zxc_compress_bound(raw_size));
 }
 
-Zxc::Compressor::Compressor() : _ctx{zxc_create_cctx()} {
-  SDB_ENSURE(_ctx, "zxc: cannot create a compression context");
-}
-
-void Zxc::Compressor::LoadDictionary(std::string_view dictionary) {
+Zxc::Compressor::Compressor(uint8_t level, std::string_view dictionary)
+  : _ctx{NewContext(EffectiveLevel<Zxc>(level))} {
   dictionary = ZxcDictionary(dictionary);
-  _dictionary = !dictionary.empty();
-  if (!_dictionary) {
+  if (dictionary.empty()) {
     return;
   }
-  if (!_block_ctx) {
-    _block_ctx.reset(zxc_create_cctx());
-    SDB_ENSURE(_block_ctx, "zxc: cannot create a compression context");
-  }
-  const auto rc = zxc_cctx_set_dict(_block_ctx.get(), dictionary.data(),
+  _blocks = NewContext(EffectiveLevel<Zxc>(level));
+  const auto rc = zxc_cctx_set_dict(_blocks.get(), dictionary.data(),
                                     dictionary.size(), nullptr);
   SDB_ENSURE(rc == ZXC_OK, "zxc: cannot load a dictionary: ", rc);
 }
 
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
                                  size_t capacity) {
-  const bool block = _dictionary && size != 0 && size <= ZXC_BLOCK_SIZE_MAX;
-  auto* ctx = block ? _block_ctx.get() : _ctx.get();
-  const auto rc = zxc_cctx_set_param(ctx, ZXC_C_LEVEL, _level);
-  SDB_ENSURE(rc == ZXC_OK, "zxc: cannot set level ", _level, ": ", rc);
-  const auto n = block ? zxc_compress_block(ctx, src, size, dst, capacity)
-                       : zxc_compress_cctx(ctx, src, size, dst, capacity);
+  const auto n = _blocks && size != 0 && size <= ZXC_BLOCK_SIZE_MAX
+                   ? zxc_compress_block(_blocks.get(), src, size, dst, capacity)
+                   : zxc_compress_cctx(_ctx.get(), src, size, dst, capacity);
   SDB_ENSURE(n > 0, "zxc compression failed: ", n);
   return static_cast<size_t>(n);
 }
@@ -100,35 +98,27 @@ Zxc::Decompressor::Decompressor() : _ctx{zxc_create_dctx()} {
   SDB_ENSURE(_ctx, "zxc: cannot create a decompression context");
 }
 
-void Zxc::Decompressor::SetDictionary(std::string_view dictionary) noexcept {
-  _dictionary = ZxcDictionary(dictionary);
-}
-
 bool Zxc::Decompressor::Decompress(const char* src, size_t size, char* dst,
-                                   size_t raw_size) noexcept {
-  if (_dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
+                                   size_t raw_size,
+                                   std::string_view dictionary) noexcept {
+  dictionary = ZxcDictionary(dictionary);
+  if (dictionary.empty() || raw_size == 0 || raw_size > ZXC_BLOCK_SIZE_MAX) {
     const auto n = zxc_decompress_dctx(_ctx.get(), src, size, dst, raw_size);
     return n >= 0 && static_cast<size_t>(n) == raw_size;
   }
-  if (!_block_ctx) {
-    _block_ctx.reset(zxc_create_dctx());
-    if (!_block_ctx) {
+  if (!_blocks) {
+    _blocks.reset(zxc_create_dctx());
+    if (!_blocks) {
       return false;
     }
   }
-  if (zxc_dctx_ref_dict(_block_ctx.get(), _dictionary.data(),
-                        _dictionary.size()) != ZXC_OK) {
+  if (zxc_dctx_ref_dict(_blocks.get(), dictionary.data(), dictionary.size()) !=
+      ZXC_OK) {
     return false;
   }
   const auto n =
-    zxc_decompress_block_safe(_block_ctx.get(), src, size, dst, raw_size);
+    zxc_decompress_block_safe(_blocks.get(), src, size, dst, raw_size);
   return n >= 0 && static_cast<size_t>(n) == raw_size;
-}
-
-size_t Zxc::Decompressor::DecompressPrefix(const char* src, size_t size,
-                                           char* dst, size_t,
-                                           size_t raw_size) noexcept {
-  return Decompress(src, size, dst, raw_size) ? raw_size : 0;
 }
 
 }  // namespace irs::codecs

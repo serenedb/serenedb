@@ -549,8 +549,7 @@ TEST(ZstdTest, ShortPeriodRepeatsRoundTrip) {
     }
   }
   for (const uint8_t level : kLevels) {
-    irs::codecs::Zstd::Compressor compressor;
-    compressor.SetLevel(level);
+    irs::codecs::Zstd::Compressor compressor{level};
     std::string compressed(irs::codecs::Zstd::Bound(raw.size()), '\0');
     compressed.resize(compressor.Compress(
       raw.data(), raw.size(), compressed.data(), compressed.size()));

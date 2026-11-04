@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <string_view>
+#include <variant>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
@@ -52,40 +53,35 @@ struct Lz4 {
 
   class Compressor {
    public:
-    void SetLevel(uint8_t level) noexcept {
-      _level = EffectiveLevel<Lz4>(level);
-      _dictionary = false;
-    }
-
-    void LoadDictionary(std::string_view dictionary);
-    void LoadTrained(const TrainedDictionary& dictionary);
+    explicit Compressor(uint8_t level, std::string_view dictionary = {});
+    Compressor(uint8_t level, const TrainedDictionary& dictionary)
+      : Compressor{level, dictionary.Bytes()} {}
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
-    uint8_t _level = kDefaultLevel;
-    bool _dictionary = false;
-    uint64_t _trained = 0;
-    uint8_t _trained_level = 0;
-    std::unique_ptr<LZ4_stream_t, Lz4Free> _dict;
-    std::unique_ptr<LZ4_stream_t, Lz4Free> _work;
-    std::unique_ptr<LZ4_streamHC_t, Lz4Free> _hc_dict;
-    std::unique_ptr<LZ4_streamHC_t, Lz4Free> _hc_work;
+    struct Fast {
+      std::unique_ptr<LZ4_stream_t, Lz4Free> work;
+      std::unique_ptr<LZ4_stream_t, Lz4Free> dictionary;
+    };
+
+    struct High {
+      int level;
+      std::unique_ptr<LZ4_streamHC_t, Lz4Free> work;
+      std::unique_ptr<LZ4_streamHC_t, Lz4Free> dictionary;
+    };
+
+    std::variant<Fast, High> _streams;
   };
 
   class Decompressor {
    public:
-    void SetDictionary(std::string_view dictionary) noexcept {
-      _dictionary = dictionary;
-    }
-
-    bool Decompress(const char* src, size_t size, char* dst,
-                    size_t raw_size) noexcept;
-    size_t DecompressPrefix(const char* src, size_t size, char* dst,
-                            size_t want, size_t raw_size) noexcept;
-
-   private:
-    std::string_view _dictionary;
+    static bool Decompress(const char* src, size_t size, char* dst,
+                           size_t raw_size,
+                           std::string_view dictionary = {}) noexcept;
+    static size_t DecompressPrefix(const char* src, size_t size, char* dst,
+                                   size_t want, size_t raw_size,
+                                   std::string_view dictionary = {}) noexcept;
   };
 };
 

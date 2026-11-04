@@ -42,47 +42,40 @@ struct Zstd {
 
   class Compressor {
    public:
-    Compressor() : _ctx{ZSTD_createCCtx()} {}
-
-    void SetLevel(uint8_t level) noexcept {
-      _level = EffectiveLevel<Zstd>(level);
-      _active = nullptr;
-    }
-
-    void LoadDictionary(std::string_view dictionary);
-    void LoadTrained(const TrainedDictionary& dictionary);
+    explicit Compressor(uint8_t level, std::string_view dictionary = {});
+    Compressor(uint8_t level, const TrainedDictionary& dictionary);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
-    uint8_t _level = kDefaultLevel;
+    int _level;
     std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
-    std::unique_ptr<ZSTD_CDict, ZstdFree> _cdict;
-    std::unique_ptr<ZSTD_CDict, ZstdFree> _trained_cdict;
-    const ZSTD_CDict* _active = nullptr;
-    uint64_t _trained = 0;
-    uint8_t _trained_level = 0;
+    std::unique_ptr<ZSTD_CDict, ZstdFree> _dictionary;
   };
 
   class Decompressor {
    public:
     Decompressor() : _ctx{ZSTD_createDCtx()} {}
 
-    void SetDictionary(std::string_view dictionary);
-    void SetTrained(const TrainedDictionary& dictionary) noexcept {
-      _active = dictionary.ZstdDictionary();
+    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
+                    std::string_view dictionary = {});
+    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
+                    const TrainedDictionary& dictionary) noexcept {
+      return Run(src, size, dst, raw_size, dictionary.ZstdDictionary());
     }
 
-    bool Decompress(const char* src, size_t size, char* dst,
-                    size_t raw_size) noexcept;
-    size_t DecompressPrefix(const char* src, size_t size, char* dst,
-                            size_t want, size_t raw_size) noexcept;
+    size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
+                            size_t raw_size, const auto& dictionary) {
+      return Decompress(src, size, dst, raw_size, dictionary) ? raw_size : 0;
+    }
 
    private:
+    bool Run(const char* src, size_t size, char* dst, size_t raw_size,
+             const ZSTD_DDict* dictionary) noexcept;
+
     std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;
-    std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
-    const ZSTD_DDict* _active = nullptr;
-    std::string_view _loaded;
+    std::unique_ptr<ZSTD_DDict, ZstdFree> _raw;
+    std::string_view _raw_bytes;
   };
 };
 

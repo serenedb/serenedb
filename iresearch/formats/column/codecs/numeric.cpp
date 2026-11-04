@@ -168,18 +168,17 @@ class Leaves {
     }
     const auto* in = reinterpret_cast<const char*>(src);
     if (leaf == NumericLeaf::Lz4) {
-      _lz4.SetLevel(kLeafLevel);
-      return _lz4.Compress(in, size, _out.data(), _out.size());
+      auto& lz4 = _lz4 ? *_lz4 : _lz4.emplace(kLeafLevel);
+      return lz4.Compress(in, size, _out.data(), _out.size());
     }
-    auto& zstd = _zstd ? *_zstd : _zstd.emplace();
-    zstd.SetLevel(kLeafLevel);
+    auto& zstd = _zstd ? *_zstd : _zstd.emplace(kLeafLevel);
     return zstd.Compress(in, size, _out.data(), _out.size());
   }
 
   const char* Out() const noexcept { return _out.data(); }
 
  private:
-  Lz4::Compressor _lz4;
+  std::optional<Lz4::Compressor> _lz4;
   std::optional<Zstd::Compressor> _zstd;
   ScratchVector<char> _out;
 };

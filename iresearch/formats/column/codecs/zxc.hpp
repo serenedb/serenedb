@@ -48,39 +48,30 @@ struct Zxc {
 
   class Compressor {
    public:
-    Compressor();
-
-    void SetLevel(uint8_t level) noexcept {
-      _level = EffectiveLevel<Zxc>(level);
-      _dictionary = false;
-    }
-
-    void LoadDictionary(std::string_view dictionary);
+    explicit Compressor(uint8_t level, std::string_view dictionary = {});
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
    private:
-    uint8_t _level = kDefaultLevel;
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
-    std::unique_ptr<zxc_cctx, ZxcFree> _block_ctx;
-    bool _dictionary = false;
+    std::unique_ptr<zxc_cctx, ZxcFree> _blocks;
   };
 
   class Decompressor {
    public:
     Decompressor();
 
-    void SetDictionary(std::string_view dictionary) noexcept;
-
-    bool Decompress(const char* src, size_t size, char* dst,
-                    size_t raw_size) noexcept;
-    size_t DecompressPrefix(const char* src, size_t size, char* dst,
-                            size_t want, size_t raw_size) noexcept;
+    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
+                    std::string_view dictionary = {}) noexcept;
+    size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
+                            size_t raw_size,
+                            std::string_view dictionary = {}) noexcept {
+      return Decompress(src, size, dst, raw_size, dictionary) ? raw_size : 0;
+    }
 
    private:
     std::unique_ptr<zxc_dctx, ZxcFree> _ctx;
-    std::unique_ptr<zxc_dctx, ZxcFree> _block_ctx;
-    std::string_view _dictionary;
+    std::unique_ptr<zxc_dctx, ZxcFree> _blocks;
   };
 };
 

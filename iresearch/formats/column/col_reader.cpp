@@ -51,9 +51,13 @@ IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
   return dir.open(filename, advice);
 }
 
+bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
+  return size <= end && offset <= end - size;
+}
+
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  SDB_ENSURE(m.file_offset + m.byte_size <= footer_offset,
+  SDB_ENSURE(InRange(m.file_offset, m.byte_size, footer_offset),
              ".col reader: column data on column id ", id,
              " out of range (offset ", m.file_offset, ", size ", m.byte_size,
              ")");
@@ -67,10 +71,10 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
     CheckBlockRange(m, meta.id, footer_offset);
   }
   for (const auto& d : meta.dictionaries) {
-    SDB_ENSURE(d.byte_size != 0 && d.file_offset + d.byte_size <= footer_offset,
-               ".col reader: dictionary on column id ", meta.id,
-               " out of range (offset ", d.file_offset, ", size ", d.byte_size,
-               ")");
+    SDB_ENSURE(
+      d.byte_size != 0 && InRange(d.file_offset, d.byte_size, footer_offset),
+      ".col reader: dictionary on column id ", meta.id,
+      " out of range (offset ", d.file_offset, ", size ", d.byte_size, ")");
   }
   for (const auto& c : meta.children) {
     CheckColumnMetaRanges(c, footer_offset);
@@ -105,8 +109,7 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  SDB_ENSURE(r.file_offset + slots >= r.file_offset &&
-               r.file_offset + slots <= footer_offset,
+  SDB_ENSURE(InRange(r.file_offset, slots, footer_offset),
              ".col reader: norm data on column id ", id,
              " out of range (offset ", r.file_offset, ")");
   r.exceptions =
@@ -123,8 +126,7 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
                (r.exception_bytes == 2 || r.exception_bytes == 4),
              ".col reader: norm exceptions on column id ", id, " are corrupt");
   const auto table = NormTableSize(r);
-  SDB_ENSURE(r.table_offset + table >= r.table_offset &&
-               r.table_offset + table <= footer_offset,
+  SDB_ENSURE(InRange(r.table_offset, table, footer_offset),
              ".col reader: norm exceptions on column id ", id,
              " out of range (offset ", r.table_offset, ")");
   return r;

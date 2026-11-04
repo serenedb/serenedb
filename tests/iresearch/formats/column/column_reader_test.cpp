@@ -49,6 +49,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -3455,6 +3456,88 @@ TEST_F(ColumnReaderTest, CorruptedListEndsAreRejected) {
 TEST_F(ColumnReaderTest, ListEndsPastTheElementsAreRejected) {
   constexpr uint64_t kEnds[] = {2, 4, 6, 8, 10};
   ScanCorruptedLists(Db(), "pseg", kEnds, 4, 1000, "corrupted list ends");
+}
+
+void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
+                             auto corrupt) {
+  constexpr irs::field_id kId = 1;
+  constexpr duckdb::idx_t kRows = 100;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "fseg", db};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+    for (duckdb::idx_t i = 0; i < kRows; ++i) {
+      data[i] = static_cast<int64_t>(i);
+    }
+    duckdb::FlatVector::SetSize(v, kRows);
+    cw.Append(v, kRows);
+    w.Commit(kRows);
+  }
+  const auto file = irs::FileName("fseg");
+  std::string bytes;
+  std::vector<irs::ColumnMeta> metas;
+  {
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    const auto stored = irs::format_utils::ReadFooter(
+      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+        footer.Set<duckdb::DatabaseInstance&>(db);
+        footer.ReadOptionalList(
+          irs::kColFieldColumns, "columns",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+              metas.emplace_back(irs::DeserializeColumnMeta(obj));
+            });
+          });
+        footer.Unset<duckdb::DatabaseInstance>();
+      });
+    bytes.resize(stored.data_len);
+    in->ReadData(0, reinterpret_cast<irs::byte_type*>(bytes.data()),
+                 bytes.size());
+  }
+  ASSERT_EQ(metas.size(), 1);
+  corrupt(metas.front());
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
+      footer.WriteList(
+        irs::kColFieldColumns, "columns", metas.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            irs::SerializeColumnMeta(obj, metas[i]);
+          });
+        });
+    });
+  }
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH((irs::ColReader{dir, "fseg", db, irs::IOAdvice::SEQUENTIAL}),
+               error);
+#else
+  EXPECT_ANY_THROW(
+    (irs::ColReader{dir, "fseg", db, irs::IOAdvice::SEQUENTIAL}));
+#endif
+}
+
+TEST_F(ColumnReaderTest, FooterBlockRangesThatWrapAreRejected) {
+  OpenWithCorruptedFooter(
+    Db(), "column data on column id 1 out of range", [](irs::ColumnMeta& meta) {
+      auto& block = meta.data.front();
+      block.file_offset =
+        std::numeric_limits<uint64_t>::max() - block.byte_size + 1;
+    });
+}
+
+TEST_F(ColumnReaderTest, FooterDictionaryRangesThatWrapAreRejected) {
+  OpenWithCorruptedFooter(
+    Db(), "dictionary on column id 1 out of range", [](irs::ColumnMeta& meta) {
+      meta.dictionaries.emplace_back(std::numeric_limits<uint64_t>::max(), 2);
+    });
 }
 
 TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {

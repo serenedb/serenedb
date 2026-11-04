@@ -201,8 +201,7 @@ uint32_t SiftByFill(Leaf& leaf, const doc_id_t* in, uint32_t n, doc_id_t* out) {
       const auto offset = doc - min;
       out[kept] = doc;
       kept += static_cast<uint32_t>(
-        (((words[offset / kWindowBits] >> (offset % kWindowBits)) & 1) != 0) ==
-        Keep);
+        CheckBit(words[offset / kWindowBits], offset % kWindowBits) == Keep);
     } while (++i != n && in[i] < max);
   }
   return kept;

@@ -296,9 +296,8 @@ class PrunedConjunction : public Root {
     _joined.Restrict(min, max, _mask);
     const auto members = keep([&](doc_id_t member) IRS_FORCE_INLINE {
       const auto offset = member - min;
-      return ((_mask[offset / irs::detail::kWindowBits] >>
-               (offset % irs::detail::kWindowBits)) &
-              1) != 0 &&
+      return CheckBit(_mask[offset / irs::detail::kWindowBits],
+                      offset % irs::detail::kWindowBits) &&
              included(member);
     });
     irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));

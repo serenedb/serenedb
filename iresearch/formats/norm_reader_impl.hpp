@@ -113,6 +113,8 @@ class NormReaderBase : public NormReader {
  public:
   score_t GetAvg() const noexcept final { return _avg; }
 
+  uint32_t SlotBytes() const noexcept final { return _bytes; }
+
  protected:
   explicit NormReaderBase(const NormColumnReader& column) noexcept
     : _column{&column},
@@ -485,6 +487,17 @@ class PersistedNormReader : public NormReaderBase {
     }
     Touched(&doc, 1);
     return ReadOne(doc);
+  }
+
+  void Prefetch(std::span<const doc_id_t> docs) const noexcept final {
+    for (const auto doc : docs) {
+      if constexpr (Multi) {
+        if (doc < _region->first_doc || doc >= _region->end_doc) {
+          continue;
+        }
+      }
+      __builtin_prefetch(At(doc));
+    }
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,

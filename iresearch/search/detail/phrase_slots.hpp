@@ -292,6 +292,16 @@ class PhraseSlots {
     }
   }
 
+  uint64_t LeadDocs() noexcept { return EstimateOf(LeavesOf(_leaves.Lead())); }
+
+  std::span<const doc_id_t> LeadUpcoming() noexcept {
+    if constexpr (kVariadic) {
+      return {};
+    } else {
+      return _leaves.Lead().Upcoming();
+    }
+  }
+
   uint32_t Freq() const noexcept { return _matcher.GetFreq(); }
 
   static constexpr bool kOffsets = Leaf::kOffsets;

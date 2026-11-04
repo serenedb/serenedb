@@ -293,6 +293,52 @@ TEST_P(NormTestCase, StackedTokensCountOnce) {
                              {{1, 2}, {2, 3}, {3, 4}, {4, 683}});
 }
 
+TEST_P(NormTestCase, SlotsAreAsWideAsTheirValues) {
+  struct Expected {
+    std::string_view name;
+    uint32_t step;
+    uint32_t bytes;
+  };
+  constexpr Expected kFields[] = {
+    {"narrow", 1, 1},
+    {"wide", 1000, 2},
+    {"same", 0, 0},
+  };
+  std::vector<tests::Document> docs(4);
+  for (size_t i = 0; i != docs.size(); ++i) {
+    for (const auto& field : kFields) {
+      docs[i].insert(std::make_shared<NormField>(
+        std::string{field.name}, "x",
+        field.step == 0 ? 7 : (i + 1) * field.step));
+    }
+  }
+
+  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  for (const auto& doc : docs) {
+    ASSERT_TRUE(Insert(*writer, doc.indexed.begin(), doc.indexed.end()));
+  }
+  writer->RefreshCommit();
+
+  auto reader = open_reader(irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto& segment = reader[0];
+  constexpr irs::doc_id_t kDocs[] = {1, 2, 3, 4};
+  for (const auto& field : kFields) {
+    SCOPED_TRACE(field.name);
+    const auto* meta = segment.field(FieldIdFor(field.name));
+    ASSERT_NE(nullptr, meta);
+    const auto* column = segment.GetColReader()->NormColumn(meta->meta().norm);
+    ASSERT_NE(nullptr, column);
+    const auto norms = irs::MakePersistedNormReader(*column);
+    EXPECT_EQ(field.bytes, norms->SlotBytes());
+    norms->Prefetch(kDocs);
+    for (const auto doc : kDocs) {
+      EXPECT_EQ(field.step == 0 ? 7 : doc * field.step, norms->Get(doc));
+    }
+  }
+}
+
 TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   constexpr std::string_view kName = "long";
   constexpr std::string_view kKey = "key";

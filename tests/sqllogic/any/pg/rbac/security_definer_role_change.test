@@ -23,6 +23,14 @@ DROP FUNCTION IF EXISTS sdr_invoker;
 
 
 statement ok
+DROP FUNCTION IF EXISTS sdr_own;
+
+
+statement ok
+DROP FUNCTION IF EXISTS sdr_own_echo;
+
+
+statement ok
 DROP ROLE IF EXISTS sdr_target;
 
 
@@ -143,6 +151,31 @@ RESET ROLE;
 
 
 statement ok
+CREATE FUNCTION sdr_own() RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT set_config('role', 'sdr_target', false) $$;
+
+
+statement error
+SELECT sdr_own();
+----
+db error: ERROR: cannot set parameter "role" within security-definer function
+
+
+statement ok
+CREATE FUNCTION sdr_own_echo(value text) RETURNS text LANGUAGE sql SECURITY DEFINER AS $$ SELECT value $$;
+
+
+query
+SELECT sdr_own_echo(set_config('role', 'sdr_target', false)) AS value;
+----
+value
+sdr_target
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
 CREATE FUNCTION sdr_invoker() RETURNS text LANGUAGE sql AS $$ SELECT set_config('role', 'sdr_target', false) $$;
 
 
@@ -186,6 +219,14 @@ DROP FUNCTION sdr_echo;
 
 statement ok
 DROP FUNCTION sdr_invoker;
+
+
+statement ok
+DROP FUNCTION sdr_own;
+
+
+statement ok
+DROP FUNCTION sdr_own_echo;
 
 
 statement ok

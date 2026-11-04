@@ -107,22 +107,6 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
     duckdb::ArrayVector::GetChildMutable(out));
 }
 
-namespace {
-
-VectorPrefilter PrefilterOf(const SubReader& segment, const PrepareContext& ctx,
-                            const VectorFilterOptions& opts,
-                            QueryBuilder::ptr&& inner) {
-  VectorPrefilter prefilter{.inner = std::move(inner), .dual = opts.dual};
-  if (opts.dual) {
-    [[maybe_unused]] const bool prepared =
-      PrepareInnerFilter(opts.index_only, segment, ctx, prefilter.index_only);
-    SDB_ASSERT(prepared);
-  }
-  return prefilter;
-}
-
-}  // namespace
-
 QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        const VectorFilterOptions& opts,
@@ -146,7 +130,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
 
   auto query = memory::make_tracked<KnnVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
-    opts.metric, ctx.boost, PrefilterOf(segment, ctx, opts, std::move(inner)));
+    opts.metric, ctx.boost,
+    PrefilterOf(std::move(inner), opts.index_only, opts.dual, segment, ctx));
   query->SetStats(ctx.Record());
   return query;
 }
@@ -168,7 +153,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
   auto query = memory::make_tracked<RangeVectorQuery>(
     ctx.memory, segment, std::move(state), std::span<const float>{opts.query},
     opts.metric, radius, inclusive, ctx.boost,
-    PrefilterOf(segment, ctx, opts, std::move(inner)));
+    PrefilterOf(std::move(inner), opts.index_only, opts.dual, segment, ctx));
   query->SetStats(ctx.Record());
   return query;
 }

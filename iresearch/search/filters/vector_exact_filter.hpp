@@ -39,6 +39,8 @@ struct ByVectorExactOptions {
   float radius = std::numeric_limits<float>::max();
   bool inclusive = false;
   std::shared_ptr<const Filter> inner;
+  std::shared_ptr<const Filter> index_only;
+  bool dual = false;
 
   bool operator==(const ByVectorExactOptions& rhs) const noexcept = default;
 };

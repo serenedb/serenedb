@@ -37,15 +37,14 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   ExactVectorQuery(const SubReader& segment, const ColumnReader& column,
                    const ColReader& columns, std::vector<float> query,
                    VectorMetric metric, score_t boost,
-                   QueryBuilder::ptr&& inner = nullptr,
-                   AnnExactCodes codes = {},
+                   VectorPrefilter&& prefilter, AnnExactCodes codes = {},
                    std::optional<score_t> threshold = {},
                    bool inclusive = false)
     : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
                        QueryKind::Ann},
       _column{&column},
       _columns{&columns},
-      _inner{std::move(inner)},
+      _prefilter{std::move(prefilter)},
       _codes{std::move(codes)},
       _query{std::move(query)},
       _metric{metric},
@@ -57,7 +56,11 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   const ColReader& Columns() const noexcept { return *_columns; }
   std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
-  const QueryBuilder* Inner() const noexcept { return _inner.get(); }
+  const QueryBuilder* Inner() const noexcept { return _prefilter.inner.get(); }
+  const QueryBuilder* IndexOnly() const noexcept {
+    return _prefilter.index_only.get();
+  }
+  bool Dual() const noexcept { return _prefilter.dual; }
   const AnnExactCodes& Codes() const noexcept { return _codes; }
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
@@ -71,7 +74,7 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
  private:
   const ColumnReader* _column;
   const ColReader* _columns;
-  QueryBuilder::ptr _inner;
+  VectorPrefilter _prefilter;
   AnnExactCodes _codes;
   std::vector<float> _query;
   VectorMetric _metric;

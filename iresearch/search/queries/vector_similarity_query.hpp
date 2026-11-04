@@ -27,17 +27,12 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/detail/estimate.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/vector_state.hpp"
 
 namespace irs {
-
-struct VectorPrefilter {
-  QueryBuilder::ptr inner;
-  QueryBuilder::ptr index_only;
-  bool dual = false;
-};
 
 class VectorQueryBase {
  public:

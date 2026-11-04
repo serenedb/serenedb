@@ -673,6 +673,8 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     o->inner = std::move(inner);
+    o->index_only = std::move(index_only);
+    o->dual = dual;
     return f;
   }
   if (vs.radius != std::numeric_limits<float>::max()) {

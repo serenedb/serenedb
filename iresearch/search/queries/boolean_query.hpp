@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -38,6 +39,8 @@
 namespace irs {
 
 struct TermReader;
+
+inline constexpr uint64_t kAllDocsWordPostings = 4;
 
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
@@ -76,7 +79,11 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     _estimate_matches = estimate_matches;
     _postings = 0;
     _leaves = 0;
+    const uint64_t words =
+      (segment.docs_count() + (detail::BitsetStorage::kBits - 1)) /
+      detail::BitsetStorage::kBits;
     for (const auto& bucket : _clauses) {
+      _postings += bucket.all_docs.size() * kAllDocsWordPostings * words;
       for (const auto& posting : bucket.postings) {
         _postings += posting.state.cookie.docs_count;
       }

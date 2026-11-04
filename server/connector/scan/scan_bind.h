@@ -252,7 +252,7 @@ struct ScanBindData final : duckdb::FunctionData {
   }
   bool KeepsColumnForms() const noexcept {
     return score.vector &&
-           (score.vector->kind == irs::AnnKind::Ivf ||
+           (score.vector->exact || score.vector->kind == irs::AnnKind::Ivf ||
             score.vector->radius == std::numeric_limits<float>::max());
   }
   bool IsMatchAll() const noexcept {

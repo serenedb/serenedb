@@ -18,10 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
+
+#include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
+#include <future>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <thread>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -88,6 +96,86 @@ TEST_F(IndexInputTest, pins_outlive_evictions) {
     ASSERT_EQ(ExpectedByte(kBlock - 10 + j), across.bytes[j]) << j;
   }
 }
+
+#ifdef SDB_FAULT_INJECTION
+void AwaitParked(std::string_view fault) {
+  while (!duckdb::FaultPoints::Disarm(absl::StrCat(fault, ":parked"))) {
+    std::this_thread::yield();
+  }
+}
+
+struct ReadWhileParked {
+  bool waited = false;
+  irs::byte_type first = 0;
+};
+
+ReadWhileParked ReadWhileParkedAt(const irs::InputFile& file, uint64_t block,
+                                  std::string_view fault) {
+  auto reader = std::async(std::launch::async, [&] {
+    const irs::IndexInput in{file};
+    return in.Pin(block * kBlock, kRead).bytes[0];
+  });
+  ReadWhileParked result;
+  result.waited = reader.wait_for(std::chrono::milliseconds(200)) ==
+                  std::future_status::timeout;
+  EXPECT_TRUE(duckdb::FaultPoints::Arm(absl::StrCat(fault, ":release")));
+  EXPECT_NO_THROW(result.first = reader.get());
+  return result;
+}
+
+TEST_F(IndexInputTest, reads_wait_for_an_eviction_writing_a_temporary_copy) {
+  duckdb::DBConfig config;
+  config.options.maximum_memory = 4 * kBlock;
+  config.options.temporary_directory = (test_dir() / "spill").string();
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::BlockCache cache{*db.instance};
+  auto file = cache.CreateUnbackedFile("memory://block_input_test/unloading");
+  AppendBlocks(cache, file, 2);
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("block_unload_before_temporary_write"));
+  auto& buffer_manager = duckdb::BufferManager::GetBufferManager(*db.instance);
+  auto evictor = std::async(std::launch::async, [&] {
+    return buffer_manager.Allocate(duckdb::MemoryTag::IN_MEMORY_TABLE,
+                                   2 * kBlock);
+  });
+  AwaitParked("block_unload_before_temporary_write");
+  const uint64_t victim = cache.TryPinRange(*file, 0, kBlock).empty() ? 0 : 1;
+  ASSERT_TRUE(cache.TryPinRange(*file, victim * kBlock, kBlock).empty());
+  const irs::InputFile blocks{cache, file};
+  const auto read =
+    ReadWhileParkedAt(blocks, victim, "block_unload_before_temporary_write");
+  EXPECT_TRUE(evictor.get().IsValid());
+  EXPECT_TRUE(read.waited);
+  EXPECT_EQ(ExpectedByte(victim * kBlock), read.first);
+}
+
+TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
+  duckdb::DBConfig config;
+  config.options.maximum_memory = 4 * kBlock;
+  config.options.temporary_directory = (test_dir() / "spill").string();
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::BlockCache cache{*db.instance};
+  auto file = cache.CreateUnbackedFile("memory://block_input_test/loading");
+  AppendBlocks(cache, file, 2);
+  duckdb::BufferManager::GetBufferManager(*db.instance).SetMemoryLimit(kBlock);
+  cache.Pin(file, 1);
+  ASSERT_TRUE(cache.TryPinRange(*file, 0, kBlock).empty());
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("block_load_before_loaded"));
+  const irs::InputFile blocks{cache, file};
+  auto loader = std::async(std::launch::async, [&] {
+    const irs::IndexInput in{blocks};
+    return in.Pin(0, kRead).bytes[0];
+  });
+  AwaitParked("block_load_before_loaded");
+  const auto read = ReadWhileParkedAt(blocks, 0, "block_load_before_loaded");
+  irs::byte_type loaded = 0;
+  EXPECT_NO_THROW(loaded = loader.get());
+  EXPECT_EQ(ExpectedByte(0), loaded);
+  EXPECT_TRUE(read.waited);
+  EXPECT_EQ(ExpectedByte(0), read.first);
+}
+#endif
 
 TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};

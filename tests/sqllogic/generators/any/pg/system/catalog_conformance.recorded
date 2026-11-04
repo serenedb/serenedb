@@ -1,4 +1,4 @@
-3e011eb0f0a38418
+5cb7161db209d7bd
 	rel	col	coltype	not_null
 	pg_aggregate	aggfnoid	regproc	t
 	pg_aggregate	aggkind	"char"	t
@@ -1414,7 +1414,7 @@
 	pg_wait_events	type	text	f
 	pg_wait_events	name	text	f
 	pg_wait_events	description	text	f
-08f4d7fade81c153
+85db52fd259d57c7
 	rel	col	coltype	not_null
 	pg_replication_origin_status	remote_lsn	pg_lsn	f
 	pg_replication_origin_status	local_lsn	pg_lsn	f
@@ -1425,7 +1425,7 @@
 	pg_stat_subscription	received_lsn	pg_lsn	f
 	pg_stat_subscription	latest_end_lsn	pg_lsn	f
 	pg_stat_wal	wal_bytes	numeric	f
-2f950a71faef2f55
+553c1e9bc5ec04c7
 	rel	col	coltype	not_null
 	pg_replication_origin_status	remote_lsn	text	f
 	pg_replication_origin_status	local_lsn	text	f
@@ -1436,7 +1436,7 @@
 	pg_stat_subscription	received_lsn	text	f
 	pg_stat_subscription	latest_end_lsn	text	f
 	pg_stat_wal	wal_bytes	bigint	f
-a3be8dcd6f8ca24e
+272fc1c77cea0da9
 	rel	col	coltype	not_null
 	_pg_foreign_data_wrappers	oid	oid	f
 	_pg_foreign_data_wrappers	fdwowner	oid	f
@@ -2134,7 +2134,7 @@ a3be8dcd6f8ca24e
 	views	is_trigger_updatable	information_schema.yes_or_no	f
 	views	is_trigger_deletable	information_schema.yes_or_no	f
 	views	is_trigger_insertable_into	information_schema.yes_or_no	f
-a836261cc8d6dff0
+d211d39f69f1ad84
 	nsp	rel	oid	relkind	relnatts	relisshared	relpersistence	rowtype	typtype	linked	array_type
 	information_schema	_pg_foreign_data_wrappers	NULL	v	7	f	p	_pg_foreign_data_wrappers	c	t	__pg_foreign_data_wrappers
 	information_schema	_pg_foreign_servers	NULL	v	9	f	p	_pg_foreign_servers	c	t	__pg_foreign_servers
@@ -2349,7 +2349,7 @@ a836261cc8d6dff0
 	pg_catalog	pg_user_mappings	NULL	v	6	f	p	pg_user_mappings	c	t	_pg_user_mappings
 	pg_catalog	pg_views	NULL	v	4	f	p	pg_views	c	t	_pg_views
 	pg_catalog	pg_wait_events	NULL	v	3	f	p	pg_wait_events	c	t	_pg_wait_events
-7efac5336ae4483e
+7ad52c04c1682383
 	nsp	rel	some_columns
 	information_schema	_pg_foreign_data_wrappers	f
 	information_schema	_pg_foreign_servers	f
@@ -2374,12 +2374,12 @@ a836261cc8d6dff0
 	pg_catalog	pg_statistic_ext_data	f
 	pg_catalog	pg_subscription	t
 	pg_catalog	pg_user_mapping	f
-81e851d2d10d566b
+aa95d757bedfdf4d
 	nsp	rel	some_columns
-e988433e6c74aa79
+d18779de31fab2e0
 	nsp	rel	some_columns
 	pg_catalog	pg_foreign_server	f
-a84d63e33388b4cb
+1a5525b63a1ef0cd
 	nsp	rel	col
 	pg_catalog	pg_subscription	subconninfo
 3e48d2449eaf9302

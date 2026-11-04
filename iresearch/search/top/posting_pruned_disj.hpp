@@ -187,14 +187,15 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       const auto n = std::min<uint32_t>(count - begin, kScoreBlock);
       const auto* const chunk = &cand_docs[begin];
       Members(chunk, n,
-              [&](uint32_t i, bool hit, uint32_t freq) IRS_FORCE_INLINE {
-                if (hit) {
-                  docs[hits] = chunk[i];
-                  slots[hits] = begin + i;
-                  freqs[hits] = freq;
-                  ++hits;
-                }
-              });
+              [&](uint32_t i, doc_id_t doc, bool hit, uint32_t freq)
+                IRS_FORCE_INLINE {
+                  if (hit) {
+                    docs[hits] = doc;
+                    slots[hits] = begin + i;
+                    freqs[hits] = freq;
+                    ++hits;
+                  }
+                });
       if (hits >= kScoreBlock) {
         flush(kScoreBlock);
         hits -= kScoreBlock;

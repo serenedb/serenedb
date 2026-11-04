@@ -99,10 +99,9 @@ struct EntryFrames {
     auto& dict_data = dictionary->data;
     values = duckdb::FlatVector::GetDataMutable<string_t>(dict_data);
     if (!streams) {
-      const auto heap_bytes =
-        std::max<idx_t>(header.raw_bytes, string_t::INLINE_LENGTH + 1);
-      heap = duckdb::StringVector::EmptyString(dict_data, heap_bytes)
-               .GetDataWriteable();
+      heap = duckdb::char_ptr_cast(
+        duckdb::StringVector::GetStringAllocator(dict_data).Allocate(
+          header.raw_bytes));
     }
     duckdb::StringVector::AddAuxiliaryData(
       dict_data, duckdb::make_uniq<ImmutablePayloads>());

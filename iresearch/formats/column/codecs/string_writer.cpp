@@ -53,7 +53,6 @@ using text::Config;
 using text::DedupScratch;
 using text::FsstChainEncoder;
 using text::kDriftMinFraction;
-using text::Packed;
 using text::Profile;
 using text::Segment;
 using text::SegmentBuilder;
@@ -546,24 +545,20 @@ void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {
-  duckdb::UnifiedVectorFormat vdata;
-  input.ToUnifiedFormat(vdata);
-  const auto* strings = duckdb::UnifiedVectorFormat::GetData<string_t>(vdata);
-  const auto count = input.size();
   const auto base = codes.size();
-  codes.resize(base + count);
+  codes.resize(base + input.size());
   auto* out = codes.data() + base;
-  for (idx_t i = 0; i < count; ++i) {
-    const auto idx = vdata.sel->get_index(i);
-    if (!vdata.validity.RowIsValid(idx)) {
-      out[i] = 0;
+  for (const auto entry : input.Values<string_t>()) {
+    auto& code = out[entry.GetIndex()];
+    if (!entry.IsValid()) {
+      code = 0;
       ++null_count;
       continue;
     }
-    const auto& value = strings[idx];
+    const auto& value = entry.GetValue();
     const std::string_view sv{value.GetData(), value.GetSize()};
     if (_dedup && _last_code != 0 && value == _last) {
-      out[i] = _last_code;
+      code = _last_code;
       continue;
     }
     const auto next = static_cast<uint32_t>(entries.size() + 1);
@@ -571,12 +566,12 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       const auto [it, inserted] = _map.try_emplace(sv, next);
       _last = value;
       _last_code = it->second;
-      out[i] = it->second;
+      code = it->second;
       if (!inserted) {
         continue;
       }
     } else {
-      out[i] = next;
+      code = next;
     }
     entries.emplace_back(sv);
   }

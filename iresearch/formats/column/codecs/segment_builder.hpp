@@ -50,8 +50,6 @@ inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
 inline constexpr uint64_t kDriftMinFraction = 4;
 
-uint64_t Packed(uint64_t count, uint32_t max_value) noexcept;
-
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
                     const NumericTuning& tuning) noexcept;
 

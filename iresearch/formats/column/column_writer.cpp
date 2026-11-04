@@ -895,7 +895,6 @@ void ColumnWriter::SealRowGroup() {
     }
     for (auto& chunk : chunks) {
       duckdb::VectorOperations::Hash(chunk.data, _hll_hashes, chunk.count);
-      duckdb::FlatVector::SetSize(_hll_hashes, chunk.count);
       _meta.hyperloglog->Update(chunk.data, _hll_hashes);
     }
   }

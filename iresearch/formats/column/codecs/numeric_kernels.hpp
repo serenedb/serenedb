@@ -27,7 +27,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <duckdb/common/helper.hpp>
 #include <type_traits>
 #include <utility>
 
@@ -72,8 +72,7 @@ IRS_FORCE_INLINE decltype(auto) ResolveStored(uint8_t stored, F&& f) {
 template<typename S, typename F>
 void NarrowAs(size_t n, uint8_t* out, F value) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    const auto s = static_cast<S>(value(i));
-    std::memcpy(out + i * sizeof(S), &s, sizeof(S));
+    duckdb::Store(static_cast<S>(value(i)), out + i * sizeof(S));
   }
 }
 
@@ -85,9 +84,7 @@ void Narrow(size_t n, uint8_t stored, uint8_t* out, F value) noexcept {
 template<typename U, typename S>
 void WidenAs(const uint8_t* in, size_t n, U* out) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    S s;
-    std::memcpy(&s, in + i * sizeof(S), sizeof(S));
-    out[i] = static_cast<U>(s);
+    out[i] = static_cast<U>(duckdb::Load<S>(in + i * sizeof(S)));
   }
 }
 
@@ -193,9 +190,8 @@ inline void Unshuffle(const uint8_t* in, size_t n, uint8_t stored,
 template<typename U, typename S>
 void WidenAddAs(const uint8_t* in, size_t n, U base, U* out) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    S s;
-    std::memcpy(&s, in + i * sizeof(S), sizeof(S));
-    out[i] = static_cast<U>(static_cast<U>(s) + base);
+    out[i] = static_cast<U>(
+      static_cast<U>(duckdb::Load<S>(in + i * sizeof(S))) + base);
   }
 }
 
@@ -210,8 +206,7 @@ template<typename U, typename S, bool kWrite>
 U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
                    U* out) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    S s;
-    std::memcpy(&s, in + i * sizeof(S), sizeof(S));
+    const auto s = duckdb::Load<S>(in + i * sizeof(S));
     acc = static_cast<U>(acc + static_cast<U>(static_cast<U>(s) + offset));
     if constexpr (kWrite) {
       out[i] = acc;
@@ -376,13 +371,10 @@ U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
   const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +
                              index % kLanes<U>)*sizeof(Word);
   const unsigned shift = bit % kWordBits;
-  Word lo;
-  std::memcpy(&lo, at, sizeof(Word));
-  Word v = lo >> shift;
+  Word v = duckdb::Load<Word>(at) >> shift;
   if (shift + bits > kWordBits) {
-    Word hi;
-    std::memcpy(&hi, at + kLanes<U> * sizeof(Word), sizeof(Word));
-    v |= hi << (kWordBits - shift);
+    v |= duckdb::Load<Word>(at + kLanes<U> * sizeof(Word))
+         << (kWordBits - shift);
   }
   const Word mask =
     bits == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << bits) - 1);

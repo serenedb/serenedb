@@ -49,11 +49,6 @@ uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
 
 }  // namespace
 
-uint64_t Packed(uint64_t count, uint32_t max_value) noexcept {
-  return BitpackingPrimitives::GetRequiredSize(
-    count, BitpackingPrimitives::MinimumBitWidth<uint32_t>(max_value));
-}
-
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
                     const NumericTuning& tuning) noexcept {
   return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;

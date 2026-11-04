@@ -58,7 +58,7 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
     capacity += (e == first ? 0 : lcps.At(e)) +
                 uint64_t{lengths.At(e)} * kFsstMaxExpansion;
   }
-  return std::max<uint64_t>(capacity, duckdb::string_t::INLINE_LENGTH + 1);
+  return capacity;
 }
 
 inline uint64_t DecodeSuffix(const FsstDecoder& fsst, const char* in,
@@ -231,8 +231,9 @@ struct FsstScan {
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
     const auto capacity = ChainCapacity(s.length_reader, lcps, first, end);
     group_heap_bytes += capacity;
-    char* out = duckdb::StringVector::EmptyString(s.dictionary->data, capacity)
-                  .GetDataWriteable();
+    char* out = duckdb::char_ptr_cast(
+      duckdb::StringVector::GetStringAllocator(s.dictionary->data)
+        .Allocate(capacity));
     WalkChain(decoder, s.Data(), s.length_reader, lcps, first, end,
               groups.Offset(s.length_reader, s.frames[f], f, g),
               s.header.data_size, out, capacity,

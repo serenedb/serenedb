@@ -385,10 +385,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
                                        const duckdb::SelectionVector& rows,
                                        idx_t row_count) {
     UnpackCodes(start, span);
-    auto* codes = code_sel->data();
-    for (idx_t i = 0; i < row_count; ++i) {
-      codes[i] = codes[rows.get_index(i)];
-    }
+    code_sel->SliceInPlace(rows, row_count);
     return *code_sel;
   }
 

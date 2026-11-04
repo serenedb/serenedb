@@ -82,7 +82,7 @@ void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t count,
                     irs::containers::FlatHashSet<uint64_t>& seen,
                     std::string& window, size_t cap = kSampleWindowBytes) {
   duckdb::UnifiedVectorFormat format;
-  values.ToUnifiedFormat(count, format);
+  values.ToUnifiedFormat(format);
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
   for (duckdb::idx_t i = 0; i < count && window.size() < cap; ++i) {
@@ -185,7 +185,7 @@ void VisitLeaf(const duckdb::Vector& values, duckdb::idx_t count,
                 visit);
       return;
     case duckdb::PhysicalType::ARRAY:
-      VisitLeaf(duckdb::ArrayVector::GetEntry(values),
+      VisitLeaf(duckdb::ArrayVector::GetChild(values),
                 count * duckdb::ArrayType::GetSize(values.GetType()),
                 path.subspan(1), visit);
       return;
@@ -400,10 +400,10 @@ bool ColumnMerger::VisitRows(field_id column, uint64_t begin, uint64_t end,
     }
     SDB_ASSERT(col->Type() == type);
     const uint64_t skip = lo - source_begin;
-    auto state = col->InitScan(
-      ctxs.empty()
-        ? MergeReadContext(*s.col_reader, _cache, StreamsFrames(type))
-        : ctxs[si]);
+    auto state =
+      col->InitScan(ctxs.empty() ? MergeReadContext(*s.col_reader, _cache,
+                                                    StreamsFrames(type))
+                                 : ctxs[si]);
     const uint64_t total = col->RowCount();
     if (!HasRemovals(s.reader->Meta())) {
       const uint64_t stop = std::min(skip + (hi - lo), total);
@@ -568,7 +568,7 @@ bool ColumnMerger::SampleRowGroups(
         [&](size_t, uint64_t at, const duckdb::Vector& values,
             duckdb::idx_t count) {
           duckdb::UnifiedVectorFormat format;
-          values.ToUnifiedFormat(count, format);
+          values.ToUnifiedFormat(format);
           const auto* data =
             duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
           for (duckdb::idx_t i = 0; i < count; ++i) {
@@ -980,9 +980,8 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
                              const MergeProgress& progress) {
   const auto& source = _sources[input];
   const auto& col = *ColumnOf(source, column);
-  const auto estimate =
-    EstimateReencode(*source.col_reader, col, *_field_options, _cache,
-                     Slot(column).dictionary);
+  const auto estimate = EstimateReencode(
+    *source.col_reader, col, *_field_options, _cache, Slot(column).dictionary);
   if (ReencodePays(estimate)) {
     return MergeRange(column, part, begin, end, output, progress);
   }

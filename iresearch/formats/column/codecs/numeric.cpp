@@ -230,7 +230,7 @@ class Blocks {
         const size_t g = first + b;
         const uint64_t stored_base = _base[g];
         std::memset(meta, 0, kFforBlockMetaBytes);
-        std::memcpy(meta, &stored_base, sizeof(stored_base));
+        duckdb::Store(stored_base, meta);
         meta[sizeof(stored_base)] = _bits[g];
         const size_t begin = g * numeric::kBlockValues;
         const size_t n = std::min(numeric::kBlockValues, v.size() - begin);
@@ -272,18 +272,13 @@ class TypedSealer final : public NumericSealer {
       _codes_only{true} {}
 
   void Add(const duckdb::Vector& input) final {
-    duckdb::UnifiedVectorFormat vdata;
-    input.ToUnifiedFormat(vdata);
-    const auto* data = duckdb::UnifiedVectorFormat::GetData<T>(vdata);
-    const auto count = input.size();
-    for (idx_t i = 0; i < count; ++i) {
-      const auto idx = vdata.sel->get_index(i);
-      if (!vdata.validity.RowIsValid(idx)) {
+    for (const auto value : input.Values<T>()) {
+      if (!value.IsValid()) {
         _stats.SetHasNull();
         _owned.push_back(_last);
         continue;
       }
-      const T v = data[idx];
+      const T v = value.GetValue();
       _stats.Update(v);
       const auto bits = std::bit_cast<U>(v);
       if (!_any_valid) {
@@ -1125,18 +1120,18 @@ std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
   }
 }
 
-uint64_t Packed(uint64_t count, uint64_t max_value) noexcept {
-  return duckdb::BitpackingPrimitives::GetRequiredSize(
-    count, duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(
-             static_cast<uint32_t>(max_value)));
-}
-
 uint64_t CodesBound(uint64_t rows, uint64_t entries, uint64_t runs) noexcept {
   return std::min(Packed(rows, entries),
                   Packed(runs, entries) + Packed(runs, rows));
 }
 
 }  // namespace
+
+uint64_t Packed(uint64_t count, uint64_t max_value) noexcept {
+  return duckdb::BitpackingPrimitives::GetRequiredSize(
+    count, duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(
+             static_cast<uint32_t>(max_value)));
+}
 
 uint64_t EstimateCodes(const NumericTuning& tuning, uint64_t rows,
                        uint64_t entries, uint64_t runs) noexcept {

@@ -112,7 +112,7 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
   if (n == 0) {
     return;
   }
-  if (s.sel.data() == nullptr) {
+  if (!s.sel.IsSet()) {
     s.sel.Initialize(STANDARD_VECTOR_SIZE);
   }
   const auto anchor = static_cast<uint64_t>(rows[0]);

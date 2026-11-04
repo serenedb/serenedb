@@ -61,6 +61,7 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -221,11 +222,7 @@ std::vector<MergePlan::ColumnRange> MergePlan::RangesOf(
       return;
     }
     const auto pooled =
-      pooled_rows == 0
-        ? 0
-        : static_cast<uint64_t>(static_cast<double>(pooled_bytes) *
-                                static_cast<double>(end - row - placed_rows) /
-                                static_cast<double>(pooled_rows));
+      Share(pooled_bytes, end - row - placed_rows, pooled_rows);
     out.push_back({
       .begin = row,
       .end = end,
@@ -270,9 +267,9 @@ std::vector<MergePlan::ColumnRange> MergePlan::SplitStretches(
       continue;
     }
     const uint64_t rows = range.end - range.begin;
-    const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
+    const uint64_t row_groups = math::DivCeil64(rows, row_group_size);
     const uint64_t parts =
-      std::min((range.cost + target - 1) / target, row_groups);
+      std::min(math::DivCeil64(range.cost, target), row_groups);
     const auto part_begin = [&](uint64_t part) {
       return range.begin +
              std::min(rows, part * row_groups / parts * row_group_size);

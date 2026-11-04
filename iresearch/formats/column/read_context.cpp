@@ -153,7 +153,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
 }
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
-  return _mapping && offset % 8 == 0 &&
+  return _mapping && duckdb::ValueIsAligned(offset) &&
          offset +
              duckdb::AlignValue<duckdb::idx_t, duckdb::Storage::SECTOR_SIZE>(
                size) <=

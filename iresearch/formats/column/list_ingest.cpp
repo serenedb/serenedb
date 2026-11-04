@@ -66,7 +66,7 @@ std::vector<WriteChunk> UbigintChunks::Take() {
 void ListKeys::Node::Assign(const duckdb::Vector& vec) {
   vec.ToUnifiedFormat(format);
   flat = !format.sel->IsSet();
-  all_valid = format.validity.AllValid();
+  all_valid = format.validity.CannotHaveNull();
   const auto& type = vec.GetType();
   switch (type.InternalType()) {
     case duckdb::PhysicalType::STRUCT: {
@@ -86,7 +86,7 @@ void ListKeys::Node::Assign(const duckdb::Vector& vec) {
       kind = Kind::Array;
       width = duckdb::ArrayType::GetSize(type);
       children.resize(1);
-      children[0].Assign(duckdb::ArrayVector::GetEntry(vec));
+      children[0].Assign(duckdb::ArrayVector::GetChild(vec));
       break;
     case duckdb::PhysicalType::VARCHAR:
       kind = Kind::String;

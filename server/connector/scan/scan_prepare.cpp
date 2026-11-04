@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/count/make.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/assert.hpp>
 
@@ -64,11 +65,15 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    g.queries[seg_idx] = PrepareSegmentQuery(
-      g, seg_idx,
-      {.collector = collector,
-       .thread = collector != nullptr ? l.thread_slot : 0,
-       .needs_terms = g.needs_terms});
+    g.queries[seg_idx] =
+      PrepareSegmentQuery(g, seg_idx,
+                          {.collector = collector,
+                           .thread = collector != nullptr ? l.thread_slot : 0,
+                           .needs_terms = g.needs_terms});
+    if (g.shape == ScanShape::Count &&
+        work.claim.load(std::memory_order_relaxed) == SegmentWork::kSplit) {
+      work.fold = irs::count::FoldTerms(*g.queries[seg_idx]);
+    }
     work.prepare.store(SegmentWork::kReady, std::memory_order_release);
     work.prepare.notify_all();
     return *g.queries[seg_idx];

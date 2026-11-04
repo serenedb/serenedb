@@ -237,11 +237,6 @@ void NativeIndexSource::BindFiles(
                              return candidate.index == file_col_idx;
                            });
   };
-  const auto is_derived = [&](duckdb::idx_t file_col_idx) {
-    return reader_bind.filename_idx == file_col_idx ||
-           reader_bind.file_row_number_idx == file_col_idx ||
-           partition_of(file_col_idx) != partitions.end();
-  };
   auto& column_ids = _source->GetMutableColumnIds();
   duckdb::idx_t column = 0;
   InitProjection(
@@ -265,14 +260,8 @@ void NativeIndexSource::BindFiles(
       return multi_bd.types[file_col_idx];
     });
   if (column_ids.empty() && HasDerivedColumns()) {
-    for (duckdb::idx_t file_col_idx = 0; file_col_idx < multi_bd.types.size();
-         ++file_col_idx) {
-      if (!is_derived(file_col_idx)) {
-        _lookup_columns.push_back(duckdb::DConstants::INVALID_INDEX);
-        column_ids.emplace_back(file_col_idx);
-        break;
-      }
-    }
+    _lookup_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+    column_ids.emplace_back(duckdb::COLUMN_IDENTIFIER_EMPTY);
   }
 }
 

@@ -920,7 +920,7 @@ TEST(classify_block_test, ByteSetFinderAgainstScalar) {
   };
   irs::byte_type block[kBlock];
   for (size_t variant = 0; variant < 200; ++variant) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     const size_t count = 1 + next() % 40;
     for (size_t i = 0; i < count; ++i) {
       bytes.Add(static_cast<irs::byte_type>(variant % 2 == 0 ? next() % 128
@@ -954,7 +954,7 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
     return static_cast<size_t>(seed >> 33);
   };
   irs::byte_type block[kBlock];
-  const auto check = [&](const irs::analysis::classify::ByteSet& bytes,
+  const auto check = [&](const irs::ByteSet& bytes,
                          const std::array<bool, 256>& members, size_t variant) {
     for (size_t first = 0; first < 256; first += kBlock) {
       const size_t rotate = next();
@@ -966,8 +966,7 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
         for (size_t i = 0; i < kBlock; ++i) {
           expect |= static_cast<uint32_t>(members[block[i]]) << i;
         }
-        ASSERT_EQ(expect,
-                  irs::analysis::classify::ClassifyByteSet16(block, bytes))
+        ASSERT_EQ(expect, irs::ClassifyByteSet16(block, bytes))
           << "variant=" << variant << " first=" << first;
         for (size_t i = 0; i < kBlock; ++i) {
           block[i] = static_cast<irs::byte_type>(next() % 256);
@@ -976,14 +975,14 @@ TEST(classify_block_test, ByteSet16AgainstScalar) {
     }
   };
   for (size_t member = 0; member < 256; ++member) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     std::array<bool, 256> members{};
     bytes.Add(static_cast<irs::byte_type>(member));
     members[member] = true;
     check(bytes, members, member);
   }
   for (size_t variant = 0; variant < 400; ++variant) {
-    irs::analysis::classify::ByteSet bytes;
+    irs::ByteSet bytes;
     std::array<bool, 256> members{};
     const size_t count = variant % 2 == 0 ? next() % 24 : next() % 512;
     for (size_t i = 0; i < count; ++i) {

@@ -25,6 +25,7 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -271,7 +272,7 @@ class SuffixFilter {
   std::span<const RegexpAcceptor::ExemptKey> _exempt;
   std::vector<uint64_t> _words;
   std::array<uint8_t, kLabels + 1> _starts{};
-  analysis::classify::ByteSet _tails;
+  ByteSet _tails;
   std::array<Match, kLabels> _last{};
   bool _coded = false;
 };
@@ -281,7 +282,7 @@ class InfixFilter {
   explicit InfixFilter(bytes_view infix)
     : _infix{infix}, _finder{ViewCast<char>(infix)} {
     SDB_ASSERT(infix.size() >= kMinInfix && infix.size() <= kMaxInfix);
-    BuildBytes();
+    BuildLiterals();
   }
 
   bool Off() const noexcept { return _off; }
@@ -295,7 +296,7 @@ class InfixFilter {
 
   IRS_FORCE_INLINE bool Rejects(Cursor& cursor) {
     const bool found =
-      _end <= _lcp || (_checked ? Contains(cursor) : Confirm(cursor));
+      _end <= _lcp || (_checked ? Contains(cursor) : Landed(cursor));
     _checked = true;
     _lcp = kNone;
     if (_checks != kInfixProbe) {
@@ -353,28 +354,8 @@ class InfixFilter {
   static constexpr uint32_t kInfixProbe = 256;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
-  void BuildBytes() {
+  void BuildLiterals() {
     const size_t m = _infix.size();
-    std::array<uint8_t, kMaxInfix> fail{};
-    for (size_t i = 1, k = 0; i != m; ++i) {
-      while (k != 0 && _infix[i] != _infix[k]) {
-        k = fail[k - 1];
-      }
-      k += _infix[i] == _infix[k];
-      fail[i] = static_cast<uint8_t>(k);
-    }
-    _bytes.resize(m * kLabels);
-    for (size_t state = 0; state != m; ++state) {
-      for (size_t label = 0; label != kLabels; ++label) {
-        uint8_t next = 0;
-        if (label == _infix[state]) {
-          next = static_cast<uint8_t>(state + 1);
-        } else if (state != 0) {
-          next = _bytes[fail[state - 1] * kLabels + label];
-        }
-        _bytes[state * kLabels + label] = next;
-      }
-    }
     for (size_t label = 0; label != kLabels; ++label) {
       const auto byte = static_cast<byte_type>(label);
       _literals[label] = Pieces({&byte, 1});
@@ -411,7 +392,7 @@ class InfixFilter {
     for (size_t at = 0; at < codes.size(); at += kRestartInterval) {
       const auto count = static_cast<uint32_t>(
         std::min<size_t>(kRestartInterval, codes.size() - at));
-      if ((analysis::classify::ClassifyByteSet16(codes.data() + at, _anchors) &
+      if ((ClassifyByteSet16(codes.data() + at, _anchors) &
            analysis::classify::LowBits(count)) != 0) {
         return true;
       }
@@ -531,6 +512,14 @@ class InfixFilter {
     return _hit != _hits.size() && _hits[_hit] < to;
   }
 
+  IRS_NO_INLINE bool Landed(Cursor& cursor) {
+    if (!cursor.Pending() && !cursor.View().fixed &&
+        cursor.Entry() % kRestartInterval == 0) {
+      return RestartContains(cursor);
+    }
+    return Confirm(cursor);
+  }
+
   IRS_NO_INLINE bool Confirm(Cursor& cursor) {
     cursor.Materialize();
     return Verify(cursor.Key());
@@ -540,15 +529,17 @@ class InfixFilter {
     const size_t m = _infix.size();
     const size_t from = _lcp >= m ? _lcp - m + 1 : 0;
     _end = kNone;
-    uint8_t state = 0;
-    for (size_t i = from; i < key.size(); ++i) {
-      state = _bytes[state * kLabels + key[i]];
-      if (state == m) {
-        _end = i + 1;
-        return true;
-      }
+    if (from >= key.size()) {
+      return false;
     }
-    return false;
+    const auto* text = reinterpret_cast<const char*>(key.data());
+    const auto* hit =
+      _finder.Find(ViewCast<char>(_infix), text + from, text + key.size());
+    if (!hit) {
+      return false;
+    }
+    _end = static_cast<size_t>(hit - text) + m;
+    return true;
   }
 
   IRS_NO_INLINE bool RestartContains(Cursor& cursor) {
@@ -613,10 +604,9 @@ class InfixFilter {
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
   std::vector<uint32_t> _hits;
-  analysis::classify::ByteSet _anchors;
+  ByteSet _anchors;
   bstring _decoded;
   bytes_view _infix;
-  std::vector<uint8_t> _bytes;
   re2::LiteralFinder _finder;
   std::array<uint64_t, kLabels> _literals{};
   std::array<uint64_t, kLabels> _before{};
@@ -1350,6 +1340,20 @@ class AcceptorIterator : public SeekTermIterator {
       }
       _cursor.Materialize();
       const auto key = _cursor.Key();
+      if constexpr (std::is_same_v<A, RegexpAcceptor>) {
+        const auto quick = _a->QuickMatch(key.substr(_k));
+        if (quick == RegexpAcceptor::Quick::Accept) {
+          _position = Position::At;
+          _term.value = key.substr(_k);
+          return true;
+        }
+        if (quick == RegexpAcceptor::Quick::Reject) {
+          if (!Advance()) {
+            return End();
+          }
+          continue;
+        }
+      }
       size_t depth = StepAlong(key, _valid);
       _valid = depth;
       if (depth != key.size()) {

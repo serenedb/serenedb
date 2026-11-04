@@ -66,7 +66,7 @@ class RegexpConjunction {
   using Parts = std::array<RegexpAcceptor::State, kMaxPatterns>;
 
   struct Row {
-    RegexpAcceptor::Mask loop{};
+    RegexpAcceptor::Mask loop;
     Parts parts{};
     std::atomic_bool built{false};
     bool accept{false};

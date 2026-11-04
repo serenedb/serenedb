@@ -43,8 +43,8 @@ namespace irs::analysis::delim {
 
 inline constexpr size_t kLongNeedleThreshold = 8;
 
-inline classify::ByteSet FirstBytes(const std::vector<bstring>& delimiters) {
-  classify::ByteSet set;
+inline ByteSet FirstBytes(const std::vector<bstring>& delimiters) {
+  ByteSet set;
   for (const auto& d : delimiters) {
     SDB_ASSERT(!d.empty());
     set.Add(d.front());
@@ -75,7 +75,7 @@ struct OneCharFinder {
 struct ManyCharsFinder {
   static constexpr size_t kMaxBlockDelims = 8;
 
-  explicit ManyCharsFinder(const classify::ByteSet& set) : bytes{set} {
+  explicit ManyCharsFinder(const ByteSet& set) : bytes{set} {
     for (int b = 0; b < 256; ++b) {
       if (!set.Contains(static_cast<byte_type>(b))) {
         continue;
@@ -109,7 +109,7 @@ struct ManyCharsFinder {
       [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
 
-  classify::ByteSet bytes;
+  ByteSet bytes;
   re2::ByteSetFinder nibbles;
   bool nibbled = false;
   std::array<byte_type, kMaxBlockDelims> delims{};
@@ -119,7 +119,7 @@ struct ManyCharsFinder {
 struct ByteRangesFinder {
   static constexpr size_t kMaxBlockRanges = 8;
 
-  explicit ByteRangesFinder(const classify::ByteSet& set)
+  explicit ByteRangesFinder(const ByteSet& set)
     : bytes{set}, nibbled{nibbles.Build(set.words.data())} {
     int prev = -2;
     for (int b = 0; b < 256; ++b) {
@@ -161,7 +161,7 @@ struct ByteRangesFinder {
       [&](size_t pos) IRS_FORCE_INLINE { on_delim(pos, size_t{1}); });
   }
 
-  classify::ByteSet bytes;
+  ByteSet bytes;
   re2::ByteSetFinder nibbles;
   bool nibbled;
   std::array<classify::ByteRange, kMaxBlockRanges> ranges{};
@@ -483,7 +483,7 @@ inline Finder FinderFor(bstring&& delimiter) {
   return OneStringFinder{std::move(delimiter)};
 }
 
-inline Finder FinderFor(const classify::ByteSet& set) {
+inline Finder FinderFor(const ByteSet& set) {
   ManyCharsFinder chars{set};
   if (chars.ndelims == 0) {
     return {};

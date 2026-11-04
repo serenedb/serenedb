@@ -20,6 +20,9 @@
 
 #include "iresearch/utils/regexp_acceptor.hpp"
 
+#include <absl/algorithm/container.h>
+#include <simdutf.h>
+
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -872,6 +875,24 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
   return re2::Regexp::Concat(parts, count, kWildcardFlags);
 }
 
+bstring ContainedLiteral(bytes_view pattern) {
+  if (pattern.size() < 3 || pattern.front() != WildcardMatch::kAnyStr ||
+      pattern.back() != WildcardMatch::kAnyStr) {
+    return {};
+  }
+  const auto literal = pattern.substr(1, pattern.size() - 2);
+  const bool plain = !absl::c_any_of(literal, [](byte_type c) {
+    return c == WildcardMatch::kAnyStr || c == WildcardMatch::kAnyChr ||
+           c == WildcardMatch::kEscape;
+  });
+  if (!plain ||
+      !simdutf::validate_utf8(reinterpret_cast<const char*>(literal.data()),
+                              literal.size())) {
+    return {};
+  }
+  return bstring{literal};
+}
+
 constexpr std::string_view kTooComplex = "regular expression is too complex";
 
 re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax,
@@ -973,9 +994,25 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     re->Decref();
     if (!_prog) {
       _error = kTooComplex;
+    } else if (wildcard) {
+      _contained = ContainedLiteral(pattern);
+      _contained_finder =
+        re2::LiteralFinder{ViewCast<char>(bytes_view{_contained})};
     }
   }
   Setup();
+}
+
+RegexpAcceptor::Quick RegexpAcceptor::QuickMatch(
+  bytes_view term) const noexcept {
+  const auto* text = reinterpret_cast<const char*>(term.data());
+  if (_contained.empty() || !simdutf::validate_utf8(text, term.size())) {
+    return Quick::Unknown;
+  }
+  return _contained_finder.Find(ViewCast<char>(bytes_view{_contained}), text,
+                                text + term.size())
+           ? Quick::Accept
+           : Quick::Reject;
 }
 
 void RegexpAcceptor::CompileParts(std::span<const Part> parts,
@@ -1134,7 +1171,7 @@ void RegexpAcceptor::Setup() {
     _unknown->unknown = true;
     _unknown->lo = 0;
     _unknown->hi = kMaxLabel;
-    _unknown->loop.fill(~bitset::word_t{0});
+    _unknown->loop.words.fill(~uint64_t{0});
     for (uint32_t c = 0; c != _classes; ++c) {
       _dead->Next()[c].store(_dead, std::memory_order_relaxed);
       _unknown->Next()[c].store(_unknown, std::memory_order_relaxed);
@@ -1237,7 +1274,7 @@ void RegexpAcceptor::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;

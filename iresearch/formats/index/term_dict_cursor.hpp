@@ -610,17 +610,15 @@ class Cursor {
   }
 
   template<typename Reject>
-  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix,
-                                      const analysis::classify::ByteSet& tails,
+  IRS_FORCE_INLINE uint32_t SkipTails(size_t prefix, const ByteSet& tails,
                                       Reject&& reject) {
     const auto [first, end] = SkipSpan();
     if (first >= end) {
       return kNoSkip;
     }
     SDB_ASSERT(end - first <= kRestartInterval);
-    uint32_t candidates =
-      analysis::classify::ClassifyByteSet16(_view.tails + first, tails) &
-      analysis::classify::LowBits(end - first);
+    uint32_t candidates = ClassifyByteSet16(_view.tails + first, tails) &
+                          analysis::classify::LowBits(end - first);
     const auto* sp = _sp;
     uint32_t entry = first;
     uint32_t lcp = kNoSkip;

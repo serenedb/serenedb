@@ -215,7 +215,7 @@ void BmClassifyEq(benchmark::State& state) {
 
 void BmClassifyNibble(benchmark::State& state) {
   const auto n = static_cast<size_t>(state.range(0));
-  irs::analysis::classify::ByteSet set;
+  irs::ByteSet set;
   for (const char c : kDelimChars.substr(0, n)) {
     set.Add(static_cast<irs::byte_type>(c));
   }

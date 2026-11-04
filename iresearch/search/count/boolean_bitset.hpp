@@ -34,6 +34,34 @@
 
 namespace irs::count {
 
+struct BitWindow {
+  uint64_t lo;
+  uint64_t hi;
+};
+
+inline BitWindow WindowOf(const detail::BitsetStorage& set, doc_id_t min,
+                          doc_id_t max) noexcept {
+  constexpr auto kMin = detail::BitsetStorage::kMin;
+  const auto bits = uint64_t{set.WordCount()} * detail::BitsetStorage::kBits;
+  return {
+    .lo = uint64_t{min} - kMin,
+    .hi = std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits),
+  };
+}
+
+class FoldWindow : public Root {
+ public:
+  explicit FoldWindow(const detail::BitsetStorage& set) noexcept : _set{&set} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    const auto [lo, hi] = WindowOf(*_set, min, max);
+    return lo < hi ? detail::CountBitRange(_set->Words(), lo, hi) : 0;
+  }
+
+ private:
+  const detail::BitsetStorage* _set;
+};
+
 template<typename Table>
 class BooleanBitset : public Root {
  public:
@@ -51,10 +79,7 @@ class BooleanBitset : public Root {
       _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
       _built = true;
     }
-    const auto bits = uint64_t{_set.WordCount()} * kBits;
-    const auto lo = uint64_t{min} - kMin;
-    const auto hi =
-      std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
+    const auto [lo, hi] = WindowOf(_set, min, max);
     if (lo >= hi) {
       return 0;
     }

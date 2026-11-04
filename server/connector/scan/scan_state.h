@@ -38,6 +38,7 @@
 #include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/ann/collector.hpp>
 #include <iresearch/search/ann/shared_floor.hpp>
+#include <iresearch/search/detail/bitset_storage.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -124,6 +125,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
   std::unique_ptr<OrderedUnits> ordered;
+  irs::detail::BitsetStorage fold;
 };
 
 class ScanBarrier {

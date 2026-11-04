@@ -241,6 +241,10 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
     // (e.g. sdb_faults toggling global fault-point state) are re-applied.
     duckdb::ExtensionOption ext;
     if (!db_config.TryGetExtensionOption(setting, ext)) {
+      if (duckdb::Settings::IsValidCustomName(key)) {
+        _client_ctx.config.custom_settings[key] =
+          is_reset ? duckdb::Value{std::string{}} : std::move(value);
+      }
       return;
     }
     // Only session/local SETs are tracked (setting_change_handler skips

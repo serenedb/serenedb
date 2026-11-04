@@ -92,6 +92,19 @@ When not specified, the default scope for the configuration option is used; the 
 
 Only a superuser may change an option at the `GLOBAL` scope, whether written explicitly or taken as the option's default; anyone else gets `permission denied to set parameter "<name>"`. The [Configuration Reference](../../../configuration/overview.md#configuration-reference) lists the options that require a superuser at every scope.
 
+## Custom parameters
+
+A name of two or more simple identifiers separated by dots, such as `app.tenant` or `request.jwt.claims`, that no configuration option has is a custom parameter. Applications use custom parameters to pass context, such as the current tenant or request, to the SQL they run. Any role may set one with `SET`, `SET LOCAL` or `set_config()` and read it with `SHOW` or `current_setting()`; the value is text, and every session has its own:
+
+<SqlLogicTest id="sql/statements/set/index/example_013" />
+
+- Before a session first sets a custom parameter, `current_setting('app.region')` and `SHOW app.region` fail with `unrecognized configuration parameter "app.region"`, and `current_setting('app.region', true)` returns `NULL`.
+- Once set, the parameter keeps existing for the rest of the session. `RESET`, `RESET ALL`, `DISCARD ALL` and `SET ... TO DEFAULT` set it to an empty string. A rolled back `SET` and the end of a `SET LOCAL` restore its previous value, an empty string if it had none.
+- `SET GLOBAL` refuses custom parameters, and `pg_settings` does not list them.
+- `ALTER ROLE` and `ALTER DATABASE ... SET` store a custom parameter for the sessions that log in as the role or to the database. Storing one requires a superuser or `GRANT SET ON PARAMETER name`; anyone else gets `permission denied to set parameter "name"`.
+- A name with a dot whose parts are not simple identifiers, such as `app..tenant`, fails with `invalid configuration parameter name`.
+- `SET` takes a single value for a custom parameter; more fail with `SET name takes only one argument`.
+
 ## Configuration
 
 See the [Configuration](../../../configuration/overview.md) page for the full list of configuration options.

@@ -1,0 +1,58 @@
+statement error
+SET GLOBAL csc.tenant = 'acme';
+----
+db error: ERROR: option "csc.tenant" cannot be set globally
+
+
+statement error
+RESET GLOBAL csc.tenant;
+----
+db error: ERROR: option "csc.tenant" cannot be set globally
+
+
+query
+SELECT current_setting('csc.tenant', true) IS NULL AS unset;
+----
+unset
+t
+
+
+statement ok
+SET SESSION csc.tenant = 'acme';
+
+
+query
+SELECT count(*) AS listed FROM duckdb_settings() WHERE name = 'csc.tenant';
+----
+listed
+0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL csc.tenant = 'globex';
+
+
+statement ok
+RESET ALL;
+
+
+query
+SELECT current_setting('csc.tenant') = '' AS reset;
+----
+reset
+t
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW csc.tenant;
+----
+csc.tenant
+acme

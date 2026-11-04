@@ -54,6 +54,10 @@ The second form grants role membership — `doc_staff` now inherits everything g
 
 Only the unquoted keyword means every role: a quoted `"PUBLIC"` names a role called `PUBLIC`.
 
+`WITH GRANT OPTION` can only be granted to roles: granting it to `PUBLIC`, with `GRANT` or `ALTER DEFAULT PRIVILEGES`, reports `grant options can only be granted to roles`.
+
+In `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES`, a grantee may be written `GROUP name`, which means the same as `name`.
+
 Wherever a role is named, as a grantee, after `GRANTED BY`, as the member of a role, in `ALTER ROLE` and `ALTER DEFAULT PRIVILEGES FOR ROLE`, `CURRENT_USER` and `CURRENT_ROLE` stand for the role the session acts as and `SESSION_USER` for the role it logged in as (or set with `SET SESSION AUTHORIZATION`). As with `PUBLIC`, a quoted `"current_user"` names a role.
 
 Granting to a role that does not exist is an error:

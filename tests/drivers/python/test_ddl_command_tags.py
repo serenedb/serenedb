@@ -44,6 +44,8 @@ def test_ddl_command_tags():
                 (f"REVOKE SELECT ON {prefix}_t FROM {prefix}_r", "REVOKE"),
                 (f"GRANT {prefix}_r TO {prefix}_u", "GRANT ROLE"),
                 (f"REVOKE {prefix}_r FROM {prefix}_u", "REVOKE ROLE"),
+                (f"ALTER GROUP {prefix}_r ADD USER {prefix}_u", "ALTER ROLE"),
+                (f"ALTER GROUP {prefix}_r DROP USER {prefix}_u", "ALTER ROLE"),
                 (f"ALTER ROLE {prefix}_r WITH LOGIN", "ALTER ROLE"),
                 (f"ANALYZE {prefix}_t", "ANALYZE"),
                 (f"VACUUM ANALYZE {prefix}_t", "VACUUM"),

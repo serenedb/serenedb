@@ -98,6 +98,46 @@ grantor	grantee	privilege_type	is_grantable	with_hierarchy
 postgres	PUBLIC	SELECT	NO	YES
 
 
+statement error
+GRANT SELECT ON isp_iceberg TO PUBLIC WITH GRANT OPTION;
+----
+db error: ERROR: grant options can only be granted to roles
+
+
+statement error
+GRANT UPDATE ON isp_iceberg TO isp_negaimorit, PUBLIC WITH GRANT OPTION;
+----
+db error: ERROR: grant options can only be granted to roles
+
+
+statement error
+GRANT SELECT (id) ON isp_iceberg TO PUBLIC WITH GRANT OPTION;
+----
+db error: ERROR: grant options can only be granted to roles
+
+
+statement error
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO PUBLIC WITH GRANT OPTION;
+----
+db error: ERROR: grant options can only be granted to roles
+
+
+statement ok
+CREATE SCHEMA isp_empty;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA isp_empty TO PUBLIC WITH GRANT OPTION;
+
+
+statement ok
+DROP SCHEMA isp_empty;
+
+
+statement ok
+REVOKE GRANT OPTION FOR SELECT ON isp_iceberg FROM PUBLIC;
+
+
 # The full non-owner grantee set on this table, sorted: PUBLIC sorts before the
 # named roles (uppercase). One INSERT-to-PUBLIC adds a second PUBLIC row.
 statement ok

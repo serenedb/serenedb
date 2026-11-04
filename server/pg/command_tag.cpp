@@ -155,7 +155,7 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "DROP OWNED";
     case ALTER_ROLE: {
       const auto& role = info.Cast<duckdb::AlterRoleInfo>();
-      if (role.grant_role.empty()) {
+      if (role.grant_role.empty() || role.alter_group) {
         return "ALTER ROLE";
       }
       return role.revoke ? "REVOKE ROLE" : "GRANT ROLE";

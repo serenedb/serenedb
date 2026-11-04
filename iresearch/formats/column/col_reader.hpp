@@ -87,8 +87,9 @@ class ColReader final {
   mutable ReencodeCache _reencodes;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
-  std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
-  irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
+  irs::containers::FlatHashMap<field_id,
+                               std::unique_ptr<const NormColumnReader>>
+    _norm_by_id;
 };
 
 }  // namespace irs

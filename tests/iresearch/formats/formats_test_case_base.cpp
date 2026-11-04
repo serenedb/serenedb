@@ -2027,7 +2027,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       const auto* col = r.Column(3);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+      EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
       // Pass 1: not-cached random reads.
       {
@@ -2160,7 +2160,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+    EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
     EXPECT_GE(col->DataRgCount(), 2u);  // at least 2 row groups
 
     // Probes spanning row-group boundaries (511/512/513 etc).
@@ -2984,7 +2984,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
       const auto* col = r.Column(13);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+      EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
       // Pass 1: per-row point read.
       {
@@ -3110,7 +3110,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+    EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
     EXPECT_GE(col->DataRgCount(), 2u);
 
     // Per-row check across the rg-boundary gap.
@@ -3221,7 +3221,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         EXPECT_EQ(col->RowCount(), kRowCount);
         // Nulls live either in a real validity stream or inside the data
         // codec (NO_VALIDITY_REQUIRED, e.g. dict_fsst) -- both are valid.
-        EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+        EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
         // Point-read.
         irs::ColumnReader::BlobPointReader pr{r, *col};

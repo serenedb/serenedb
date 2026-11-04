@@ -188,15 +188,6 @@ class ListColumnReader final : public ColumnReader {
     return true;
   }
 
-  static bool Consecutive(std::span<const uint64_t> codes) noexcept {
-    for (size_t i = 1; i < codes.size(); ++i) {
-      if (codes[i] != codes[0] + i) {
-        return false;
-      }
-    }
-    return true;
-  }
-
   [[gnu::noinline]] bool DirectRun(const ScanState& s, uint64_t first,
                                    duckdb::idx_t count) const noexcept {
     if (first < _children[1]->GatherCursor(s.child_states[2])) {
@@ -371,7 +362,8 @@ class ListColumnReader final : public ColumnReader {
       duckdb::FlatVector::GetData<uint64_t>(codes_vec), scan_count};
     const uint64_t child_base =
       result_offset != 0 ? duckdb::ListVector::GetListSize(result) : 0;
-    if (Consecutive(codes) && DirectRun(s, codes[0], scan_count)) {
+    if (ConsecutiveRunLength(codes, 0) == codes.size() &&
+        DirectRun(s, codes[0], scan_count)) {
       ReadLists(
         s, codes[0], scan_count, result,
         duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +

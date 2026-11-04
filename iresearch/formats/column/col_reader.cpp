@@ -20,17 +20,9 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
-#include <absl/strings/str_cat.h>
-
-#include <algorithm>
 #include <atomic>
-#include <cstdio>
-#include <cstdlib>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
-#include <map>
 #include <utility>
 #include <vector>
 
@@ -38,7 +30,6 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -85,9 +76,7 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
     CheckColumnMetaRanges(c, footer_offset);
   }
   for (const auto& rg : meta.variant_rgs) {
-    if (rg.unshredded) {
-      CheckColumnMetaRanges(*rg.unshredded, footer_offset);
-    }
+    CheckColumnMetaRanges(*rg.unshredded, footer_offset);
     if (rg.shredded) {
       CheckColumnMetaRanges(*rg.shredded, footer_offset);
     }
@@ -189,9 +178,9 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto column = std::make_unique<NormColumnReader>(
               id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
-            const bool ok = _norm_by_id.emplace(id, column.get()).second;
+            const bool ok =
+              _norm_by_id.try_emplace(id, std::move(column)).second;
             SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
-            _norm_columns.push_back(std::move(column));
           });
         });
       footer.Unset<duckdb::DatabaseInstance>();
@@ -215,7 +204,7 @@ const ColumnReader* ColReader::Column(field_id id) const noexcept {
 
 const NormColumnReader* ColReader::NormColumn(field_id id) const noexcept {
   auto it = _norm_by_id.find(id);
-  return it == _norm_by_id.end() ? nullptr : it->second;
+  return it == _norm_by_id.end() ? nullptr : it->second.get();
 }
 
 }  // namespace irs

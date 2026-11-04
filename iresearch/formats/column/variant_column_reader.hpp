@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 
@@ -87,34 +89,23 @@ class VariantColumnReader final : public ColumnReader {
   void ReleaseLeavesBefore(ScanState& s, uint64_t row) const;
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
-    uint64_t begin, end;
-    VariantRgSpan(row, begin, end);
-    return end;
+    return VariantRgSpan(row).end;
   }
 
-  size_t VariantRgSpan(uint64_t row, uint64_t& begin, uint64_t& end) const {
-    const auto it =
-      std::upper_bound(_variant_offsets.begin(), _variant_offsets.end(), row);
+  BlockWindow VariantRgSpan(uint64_t row) const {
+    const auto it = absl::c_upper_bound(_variant_offsets, row);
     const auto rg = static_cast<size_t>(it - _variant_offsets.begin()) - 1;
-    begin = _variant_offsets[rg];
-    end = _variant_offsets[rg + 1];
-    return rg;
+    return {rg, _variant_offsets[rg], _variant_offsets[rg + 1]};
   }
 
   template<typename Fn>
   void ForEachVariantRun(uint64_t start_row, duckdb::idx_t count,
                          Fn&& fn) const {
-    duckdb::idx_t done = 0;
-    while (done < count) {
+    for (duckdb::idx_t done = 0; done < count;) {
       const uint64_t row = start_row + done;
-      const auto it =
-        std::upper_bound(_variant_offsets.begin(), _variant_offsets.end(), row);
-      const auto rg = static_cast<size_t>(it - _variant_offsets.begin()) - 1;
-      const uint64_t rg_begin = _variant_offsets[rg];
-      const uint64_t rg_end = _variant_offsets[rg + 1];
-      const auto run = std::min<duckdb::idx_t>(
-        count - done, static_cast<duckdb::idx_t>(rg_end - row));
-      fn(rg, static_cast<duckdb::idx_t>(row - rg_begin), run, done);
+      const auto rg = VariantRgSpan(row);
+      const auto run = std::min<duckdb::idx_t>(count - done, rg.end - row);
+      fn(rg.block, static_cast<duckdb::idx_t>(row - rg.begin), run, done);
       done += run;
     }
   }
@@ -143,8 +134,6 @@ class VariantColumnReader final : public ColumnReader {
   void ReconstructVariantRun(ScanState& s, size_t rg, duckdb::idx_t local_start,
                              duckdb::idx_t run, duckdb::Vector& result,
                              duckdb::idx_t out_off) const;
-  static duckdb::Vector& ScratchVector(VariantScanState& vs,
-                                       const duckdb::LogicalType& type);
   static const ColumnReader* FindShreddedLeaf(
     const ColumnReader& node, std::span<const std::string_view> path);
   std::vector<VariantRg> _variant_rgs;

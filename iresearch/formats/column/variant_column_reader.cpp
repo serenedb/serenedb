@@ -46,6 +46,10 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   for (auto& rg : rgs) {
     VariantRg vrg;
     vrg.unshredded = Make(std::move(*rg.unshredded), file_id);
+    auto rg_s = duckdb::VariantStats::CreateEmpty(_type);
+    duckdb::VariantStats::SetUnshreddedStats(
+      rg_s, vrg.unshredded->MergedStatistics());
+    _row_group_columns.emplace_back(*vrg.unshredded, 1, _row_count);
     if (rg.shredded) {
       vrg.shredded = Make(std::move(*rg.shredded), file_id);
       duckdb::child_list_t<duckdb::LogicalType> intermediate_children;
@@ -53,21 +57,13 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
       intermediate_children.emplace_back("shredded", vrg.shredded->Type());
       vrg.intermediate_type =
         duckdb::LogicalType::STRUCT(std::move(intermediate_children));
-    }
-    auto rg_s = duckdb::VariantStats::CreateEmpty(_type);
-    duckdb::VariantStats::SetUnshreddedStats(
-      rg_s, vrg.unshredded->MergedStatistics());
-    if (vrg.shredded) {
       duckdb::VariantStats::SetShreddedStats(rg_s,
                                              vrg.shredded->MergedStatistics());
+      _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
     }
     // Like duckdb's checkpoint stats, an unshredded row group stays
     // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
     stats.Merge(rg_s);
-    _row_group_columns.emplace_back(*vrg.unshredded, 1, _row_count);
-    if (vrg.shredded) {
-      _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
-    }
     _row_count += rg.row_count;
     _variant_offsets.push_back(_row_count);
     _variant_rgs.push_back(std::move(vrg));
@@ -164,7 +160,7 @@ bool VariantColumnReader::ResolveUniformShreddedLeaf(
     const auto& rg = _variant_rgs[i];
     const ColumnReader* leaf =
       rg.shredded ? FindShreddedLeaf(*rg.shredded, path) : nullptr;
-    if (!leaf || leaf->Type().IsNested()) {
+    if (!leaf) {
       continue;
     }
     if (!have) {
@@ -202,14 +198,6 @@ void VariantColumnReader::ReleaseLeavesBefore(ScanState& s,
   }
 }
 
-duckdb::Vector& VariantColumnReader::ScratchVector(
-  VariantScanState& vs, const duckdb::LogicalType& type) {
-  if (!vs.scratch) {
-    vs.scratch = std::make_unique<VectorScratch>(type);
-  }
-  return vs.scratch->Reset();
-}
-
 void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
                                                 duckdb::idx_t local_start,
                                                 duckdb::idx_t run,
@@ -223,16 +211,13 @@ void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
   if (!rg_meta.shredded) {
     rg_meta.unshredded->ScanCount(*vstate.unshredded, result, run, out_off);
   } else {
-    if (!vstate.intermediate) {
-      vstate.intermediate =
-        std::make_unique<VectorScratch>(rg_meta.intermediate_type);
-    }
-    auto& intermediate = vstate.intermediate->Reset();
+    auto& intermediate =
+      ResetScratch(vstate.intermediate, rg_meta.intermediate_type);
     auto& entries = duckdb::StructVector::GetEntries(intermediate);
     rg_meta.unshredded->ScanCount(*vstate.unshredded, entries[0], run, 0);
     rg_meta.shredded->ScanCount(*vstate.shredded, entries[1], run, 0);
     duckdb::FlatVector::SetSize(intermediate, run);
-    auto& scratch = ScratchVector(vs, result.GetType());
+    auto& scratch = ResetScratch(vs.scratch, result.GetType());
     duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
     duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
   }

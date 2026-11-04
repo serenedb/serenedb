@@ -62,6 +62,7 @@
 #include <thread>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
 #include "index/index_tests.hpp"
 
@@ -290,7 +291,7 @@ TEST_F(ColumnReaderTest, DictFsstValidityAbsorbed) {
   ASSERT_NE(cs, nullptr);
   // dict_fsst self-carries nulls -> validity absorbed to EMPTY; NullsInData()
   // reports it so readers scan the data (not the empty validity) for nullness.
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
 
   auto state = cs->InitScan(r.Ctx());
   uint64_t pos = 0;
@@ -390,7 +391,7 @@ TEST_F(ColumnReaderTest, DictFsstReusedBatchAcrossChunks) {
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
   auto state = cs->InitScan(r.Ctx());
   duckdb::Vector batch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
   batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
@@ -4733,7 +4734,7 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
   auto state = cs->InitScan(r.Ctx());
   duckdb::Vector result{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
   cs->ScanCount(state, result, 4, /*result_offset=*/0);

@@ -267,8 +267,16 @@ std::optional<RelationAccess> RelationByOid(
     return std::nullopt;
   }
   if (relation->system) {
-    return RelationAccess{
-      {*relation}, &SystemPermissions(relation->system->SuperuserOnly())};
+    const auto* permissions =
+      &SystemPermissions(relation->system->SuperuserOnly());
+    if (session.context && session.context->security && session.database) {
+      const auto& security = session.context->security;
+      if (const auto overridden = security->RelationPermissions(
+            session.database->GetName().GetIdentifierName(), oid)) {
+        permissions = overridden.get();
+      }
+    }
+    return RelationAccess{{*relation}, permissions};
   }
   if (relation->view) {
     auto schema =
@@ -286,7 +294,8 @@ std::optional<RelationAccess> RelationByOid(
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
+    return RelationAccess{{*relation},
+                          &PrivilegePermissions(*session.context, *entry)};
   }
   if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
     const auto table_oid =
@@ -295,15 +304,20 @@ std::optional<RelationAccess> RelationByOid(
                          ? TemporaryEntryByOid(session, table_oid)
                          : EntryByOid(session, table_oid);
     return RelationAccess{
-      {*relation}, &PrivilegePermissions(owner ? *owner : *relation->entry)};
+      {*relation},
+      &PrivilegePermissions(*session.context,
+                            owner ? *owner : *relation->entry)};
   }
-  return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
+  return RelationAccess{
+    {*relation}, &PrivilegePermissions(*session.context, *relation->entry)};
 }
 
 const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry) {
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& entry) {
   static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
-  return duckdb::IsUnowned(entry) ? kUnowned : entry.permissions;
+  return duckdb::IsUnowned(entry)
+           ? kUnowned
+           : duckdb::EffectivePermissions(context, entry);
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,

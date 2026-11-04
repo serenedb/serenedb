@@ -307,7 +307,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
  private:
   bool Visible(const duckdb::CatalogEntry& relation) const {
-    const auto& permissions = PrivilegePermissions(relation);
+    const auto& permissions = PrivilegePermissions(Context(), relation);
     return permissions.owner == kInvalidOid ||
            _role.CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
                         kAnyColumnPrivilege);

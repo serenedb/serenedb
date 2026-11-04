@@ -442,10 +442,11 @@ struct RelationPrivileges : ObjectPrivileges<F> {
                                                std::string_view name,
                                                Rest... rest) {
     if (const auto entry = AttachedRelation(session, name)) {
-      return F::Target(session,
-                       RelationAccess{{entry, nullptr, nullptr, nullptr},
-                                      &PrivilegePermissions(*entry)},
-                       rest...);
+      return F::Target(
+        session,
+        RelationAccess{{entry, nullptr, nullptr, nullptr},
+                       &PrivilegePermissions(*session.context, *entry)},
+        rest...);
     }
     const auto oid = Resolve(session, name);
     return Find(session, oid, EntryByOid(session, oid), rest...);
@@ -594,7 +595,7 @@ struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
       return ObjectTarget{&SchemaPermissions()};
     }
     if (const auto schema = SchemaByOid(session, oid)) {
-      return ObjectTarget{&PrivilegePermissions(*schema)};
+      return ObjectTarget{&PrivilegePermissions(*session.context, *schema)};
     }
     return std::nullopt;
   }
@@ -632,7 +633,7 @@ struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
     const Session& session, uint64_t oid,
     duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (entry && CatalogClassOid(entry->type) == kPgProcTable) {
-      return ObjectTarget{&PrivilegePermissions(*entry)};
+      return ObjectTarget{&PrivilegePermissions(*session.context, *entry)};
     }
     if (!GetBuiltinFunctions(*session.context)->Find(oid)) {
       return std::nullopt;
@@ -652,13 +653,13 @@ struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
   }
 
   static std::optional<ObjectTarget> Find(
-    const Session&, uint64_t oid,
+    const Session& session, uint64_t oid,
     duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (entry) {
       if (entry->type != CatalogType::TYPE_ENTRY) {
         return std::nullopt;
       }
-      return ObjectTarget{&PrivilegePermissions(*entry)};
+      return ObjectTarget{&PrivilegePermissions(*session.context, *entry)};
     }
     if (oid >= kMaxSystem || !FindBuiltinType(static_cast<int32_t>(oid))) {
       return std::nullopt;
@@ -688,7 +689,7 @@ struct DatabasePrivileges : ObjectPrivileges<DatabasePrivileges> {
     if (!database) {
       return std::nullopt;
     }
-    return ObjectTarget{&PrivilegePermissions(*database)};
+    return ObjectTarget{&PrivilegePermissions(*session.context, *database)};
   }
 };
 
@@ -709,12 +710,12 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
   }
 
   static std::optional<ObjectTarget> Find(
-    const Session&, uint64_t,
+    const Session& session, uint64_t,
     duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (!entry || entry->type != CatalogType::FOREIGN_SERVER_ENTRY) {
       return std::nullopt;
     }
-    return ObjectTarget{&PrivilegePermissions(*entry)};
+    return ObjectTarget{&PrivilegePermissions(*session.context, *entry)};
   }
 };
 

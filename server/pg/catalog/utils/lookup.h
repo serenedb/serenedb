@@ -165,7 +165,7 @@ struct RelationAccess : Relation {
 };
 
 const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry);
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& entry);
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid);

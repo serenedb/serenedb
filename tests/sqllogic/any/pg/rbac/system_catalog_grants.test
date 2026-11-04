@@ -1,0 +1,105 @@
+statement ok
+DROP ROLE IF EXISTS scg_monitor;
+
+
+statement ok
+CREATE ROLE scg_monitor;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scg_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+authid	class
+f	t
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_authid TO scg_monitor;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+t
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE oid = 'pg_catalog.pg_authid'::regclass;
+----
+acl
+postgres=arwdDxtm/postgres,scg_monitor=r/postgres
+
+
+statement ok
+REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+class
+f
+
+
+statement ok
+SET ROLE scg_monitor;
+
+
+query
+SELECT count(*) > 0 AS has_rows FROM pg_catalog.pg_authid;
+----
+has_rows
+t
+
+
+statement error
+SELECT count(*) FROM pg_catalog.pg_class;
+----
+db error: ERROR: permission denied for table pg_class
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_class TO PUBLIC;
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+acl
+postgres=arwdDxtm/postgres,=r/postgres
+
+
+skipif serenedb
+statement error
+DROP ROLE scg_monitor;
+----
+db error: ERROR: role "scg_monitor" cannot be dropped because some objects depend on it
+DETAIL: privileges for table pg_authid
+
+
+onlyif serenedb
+statement error
+DROP ROLE scg_monitor;
+----
+db error: ERROR: Cannot drop entry "scg_monitor" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP OWNED BY scg_monitor;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+f
+
+
+statement ok
+DROP ROLE scg_monitor;

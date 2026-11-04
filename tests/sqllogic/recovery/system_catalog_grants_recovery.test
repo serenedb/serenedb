@@ -1,0 +1,51 @@
+control substitution on
+
+statement ok
+CREATE ROLE scgr_monitor;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_authid TO scgr_monitor;
+
+
+statement ok
+REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+authid	class
+t	f
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+authid	class
+t	f
+
+
+connection after_crash
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname IN ('pg_authid', 'pg_class') ORDER BY relname;
+----
+acl
+postgres=arwdDxtm/postgres,scgr_monitor=r/postgres
+postgres=arwdDxtm/postgres

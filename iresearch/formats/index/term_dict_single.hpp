@@ -67,7 +67,6 @@ class SingleTermReader final : public TermReader {
     visit({&term, 1});
   }
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
-  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
                                TermPostings::ptr reuse) const;

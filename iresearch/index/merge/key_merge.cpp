@@ -204,7 +204,7 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
                        duckdb::TaskScheduler& scheduler, size_t threads) {
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
-  for (const auto& key : _spec.keys) {
+  for (const auto& key : _spec) {
     for (const auto& input : _doc_map) {
       const auto* cs = input.reader->GetColReader();
       const auto* col = cs ? cs->Column(key.column) : nullptr;

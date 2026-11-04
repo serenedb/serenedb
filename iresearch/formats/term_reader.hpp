@@ -30,7 +30,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -49,8 +48,10 @@ struct PostingsHandles {
   const IndexInput* pay = nullptr;
 };
 
-struct TermReader : public AttributeProvider {
+struct TermReader {
   using ptr = std::unique_ptr<TermReader>;
+
+  virtual ~TermReader() = default;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
   using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
   using TermAt = absl::FunctionRef<bytes_view(size_t)>;

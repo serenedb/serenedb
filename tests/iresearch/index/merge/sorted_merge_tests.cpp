@@ -91,12 +91,12 @@ irs::SortSpec RandomSpec(Generator& gen) {
   irs::SortSpec spec;
   const auto keys = gen.Uniform(1, 3);
   for (size_t k = 0; k != keys; ++k) {
-    spec.keys.push_back(
-      {.column = kKeys[gen.Uniform(0, std::size(kKeys) - 1)],
-       .order = gen.Coin(0.3) ? duckdb::OrderType::DESCENDING
-                              : duckdb::OrderType::ASCENDING,
-       .null_order = gen.Coin(0.5) ? duckdb::OrderByNullType::NULLS_FIRST
-                                   : duckdb::OrderByNullType::NULLS_LAST});
+    spec.push_back({.column = kKeys[gen.Uniform(0, std::size(kKeys) - 1)],
+                    .order = gen.Coin(0.3) ? duckdb::OrderType::DESCENDING
+                                           : duckdb::OrderType::ASCENDING,
+                    .null_order = gen.Coin(0.5)
+                                    ? duckdb::OrderByNullType::NULLS_FIRST
+                                    : duckdb::OrderByNullType::NULLS_LAST});
   }
   return spec;
 }
@@ -151,8 +151,8 @@ TEST_P(SortedMergeOracleTest, RandomSortedSegmentSets) {
   }
   std::shuffle(inputs.begin(), inputs.end(), std::mt19937_64{seed});
   SCOPED_TRACE(absl::StrCat("seed ", seed, ", ", threads, " threads, ",
-                            inputs.size(), " input segments, ",
-                            spec.keys.size(), " keys"));
+                            inputs.size(), " input segments, ", spec.size(),
+                            " keys"));
 
   const auto expected = ExpectedSortedMerge(inputs, spec);
   for (const bool shuffled : {false, true}) {
@@ -202,7 +202,7 @@ TEST_P(SortedFlushOracleTest, FlushedSegmentsComeOutInKeyOrder) {
   const auto plain_segments = Segments(plain_reader);
   const auto sorted_segments = Segments(sorted_reader);
   SCOPED_TRACE(absl::StrCat("seed ", seed, ", ", shape.docs, " docs, ",
-                            spec.keys.size(), " keys"));
+                            spec.size(), " keys"));
   ASSERT_EQ(plain_segments.size(), sorted_segments.size());
   for (size_t i = 0; i != plain_segments.size(); ++i) {
     const std::vector<const irs::SubReader*> input{plain_segments[i]};

@@ -99,9 +99,6 @@ class MockPostingsField final : public irs::TermReader {
       _docs_count{docs_count},
       _has_score_bounds{has_score_bounds} {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-    return nullptr;
-  }
   irs::SeekTermIterator::ptr iterator() const final {
     return irs::SeekTermIterator::empty();
   }

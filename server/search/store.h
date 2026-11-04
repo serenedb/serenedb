@@ -228,7 +228,7 @@ class Store final : public std::enable_shared_from_this<Store> {
 
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
 
-  bool Sorted() const noexcept { return !_sort.Empty(); }
+  bool Sorted() const noexcept { return !_sort.empty(); }
   size_t MergeInputsMax() const noexcept {
     return Sorted() ? irs::kSortedMergeInputsMax
                     : std::numeric_limits<size_t>::max();

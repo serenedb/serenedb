@@ -28,6 +28,7 @@
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
@@ -73,23 +74,25 @@ size_t Zxc::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(zxc_compress_bound(raw_size));
 }
 
-Zxc::Compressor::Compressor(uint8_t level, std::string_view dictionary)
+Zxc::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
   : _ctx{NewContext(EffectiveLevel<Zxc>(level))} {
-  dictionary = ZxcDictionary(dictionary);
-  if (dictionary.empty()) {
-    return;
-  }
-  _blocks = NewContext(EffectiveLevel<Zxc>(level));
-  const auto rc = zxc_cctx_set_dict(_blocks.get(), dictionary.data(),
-                                    dictionary.size(), nullptr);
+  bytes = ZxcDictionary(bytes);
+  SDB_ASSERT(!bytes.empty());
+  const auto rc =
+    zxc_cctx_set_dict(_ctx.get(), bytes.data(), bytes.size(), nullptr);
   SDB_ENSURE(rc == ZXC_OK, "zxc: cannot load a dictionary: ", rc);
 }
 
+Zxc::Compressor::Compressor(uint8_t level)
+  : _ctx{NewContext(EffectiveLevel<Zxc>(level))} {}
+
 size_t Zxc::Compressor::Compress(const char* src, size_t size, char* dst,
-                                 size_t capacity) {
-  const auto n = _blocks && size != 0 && size <= ZXC_BLOCK_SIZE_MAX
-                   ? zxc_compress_block(_blocks.get(), src, size, dst, capacity)
-                   : zxc_compress_cctx(_ctx.get(), src, size, dst, capacity);
+                                 size_t capacity,
+                                 const Dictionary* dictionary) {
+  const auto n =
+    dictionary && size != 0 && size <= ZXC_BLOCK_SIZE_MAX
+      ? zxc_compress_block(dictionary->Context(), src, size, dst, capacity)
+      : zxc_compress_cctx(_ctx.get(), src, size, dst, capacity);
   SDB_ENSURE(n > 0, "zxc compression failed: ", n);
   return static_cast<size_t>(n);
 }

@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/col_writer.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -34,7 +33,6 @@
 #include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <iterator>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -64,12 +62,6 @@ constexpr uint64_t SlotsOf(uint64_t claims) noexcept {
 
 constexpr uint64_t OwnOf(uint64_t claims) noexcept {
   return claims >> kOwnShift;
-}
-
-uint64_t NewColFileId() {
-  absl::BitGen gen;
-  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, uint64_t{1} << 63,
-                                 std::numeric_limits<uint64_t>::max());
 }
 
 uint64_t BlockRows(const std::vector<ColumnBlockMeta>& blocks) {
@@ -652,7 +644,6 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
           });
         });
     }
-    footer.WriteProperty<uint64_t>(kColFieldFileId, "file_id", NewColFileId());
   });
   _committed = true;
   return true;

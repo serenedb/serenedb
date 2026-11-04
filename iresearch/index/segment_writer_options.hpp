@@ -24,6 +24,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace duckdb {
@@ -35,7 +36,6 @@ namespace irs {
 
 class IndexFieldOptions;
 struct AnnBuildEnv;
-struct SortSpec;
 
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;

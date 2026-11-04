@@ -73,29 +73,28 @@ std::unique_ptr<ZSTD_CDict, ZstdFree> NewDictionary(std::string_view bytes,
 
 }  // namespace
 
-Zstd::Compressor::Compressor(uint8_t level, std::string_view dictionary)
-  : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
-  SDB_ENSURE(_ctx, "zstd: cannot create a compression context");
-  if (!dictionary.empty()) {
-    _dictionary = NewDictionary(dictionary, ZSTD_dct_rawContent, _level,
-                                kZstdDictionaryFrameBytes);
-  }
-}
+Zstd::Dictionary::Dictionary(uint8_t level, std::string_view bytes)
+  : _dictionary{NewDictionary(bytes, ZSTD_dct_rawContent,
+                              EffectiveLevel<Zstd>(level),
+                              kZstdDictionaryFrameBytes)} {}
 
-Zstd::Compressor::Compressor(uint8_t level, const TrainedDictionary& dictionary)
-  : _level{EffectiveLevel<Zstd>(level)},
-    _ctx{ZSTD_createCCtx()},
-    _dictionary{NewDictionary(dictionary.Bytes(), ZSTD_dct_auto, _level,
-                              kTrainedFrameBytes)} {
+Zstd::Dictionary::Dictionary(uint8_t level, const TrainedDictionary& dictionary)
+  : _dictionary{NewDictionary(dictionary.Bytes(), ZSTD_dct_auto,
+                              EffectiveLevel<Zstd>(level),
+                              kTrainedFrameBytes)} {}
+
+Zstd::Compressor::Compressor(uint8_t level)
+  : _level{EffectiveLevel<Zstd>(level)}, _ctx{ZSTD_createCCtx()} {
   SDB_ENSURE(_ctx, "zstd: cannot create a compression context");
 }
 
 size_t Zstd::Compressor::Compress(const char* src, size_t size, char* dst,
-                                  size_t capacity) {
+                                  size_t capacity,
+                                  const Dictionary* dictionary) {
   const auto n =
-    _dictionary
+    dictionary
       ? ZSTD_compress_usingCDict(_ctx.get(), dst, capacity, src, size,
-                                 _dictionary.get())
+                                 dictionary->Get())
       : ZSTD_compressCCtx(_ctx.get(), dst, capacity, src, size, _level);
   SDB_ENSURE(!ZSTD_isError(n),
              "zstd compression failed: ", ZSTD_getErrorName(n));

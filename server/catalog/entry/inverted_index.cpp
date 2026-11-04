@@ -562,7 +562,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
 
 duckdb::vector<duckdb::OrderByNode> InvertedIndexEntry::SortOrders() const {
   duckdb::vector<duckdb::OrderByNode> orders;
-  for (const auto& key : _config->sort.keys) {
+  for (const auto& key : _config->sort) {
     const auto* found = _config->FindKey(_config->TermField(key.column));
     SDB_ASSERT(found && found->column_id == key.column);
     const auto at = static_cast<size_t>(found - _config->keys.data());

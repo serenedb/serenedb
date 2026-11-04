@@ -46,15 +46,25 @@ struct Zxc {
 
   static size_t Bound(size_t raw_size) noexcept;
 
-  class Compressor {
+  class Dictionary {
    public:
-    explicit Compressor(uint8_t level, std::string_view dictionary = {});
+    Dictionary(uint8_t level, std::string_view bytes);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+    zxc_cctx* Context() const noexcept { return _ctx.get(); }
 
    private:
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
-    std::unique_ptr<zxc_cctx, ZxcFree> _blocks;
+  };
+
+  class Compressor {
+   public:
+    explicit Compressor(uint8_t level);
+
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
+                    const Dictionary* dictionary = nullptr);
+
+   private:
+    std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
   };
 
   class Decompressor {

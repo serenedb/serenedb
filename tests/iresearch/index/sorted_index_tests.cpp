@@ -263,13 +263,13 @@ class SortedIndexTestCase : public tests::IndexTestBase {
   static void ExpectSorted(const irs::SubReader& segment,
                            const irs::SortSpec& spec) {
     std::vector<std::vector<duckdb::Value>> keys;
-    for (const auto& key : spec.keys) {
+    for (const auto& key : spec) {
       keys.push_back(LiveValues(segment, key.column));
     }
     for (size_t row = 1; row < segment.live_docs_count(); ++row) {
       for (size_t k = 0; k != keys.size(); ++k) {
         const auto cmp =
-          CompareKeyValues(keys[k][row - 1], keys[k][row], spec.keys[k]);
+          CompareKeyValues(keys[k][row - 1], keys[k][row], spec[k]);
         ASSERT_LE(cmp, 0) << "row " << row;
         if (cmp != 0) {
           break;

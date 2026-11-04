@@ -189,7 +189,7 @@ std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
 void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
               const irs::SortSpec& spec) {
   std::vector<std::optional<size_t>> slots;
-  for (const auto& key : spec.keys) {
+  for (const auto& key : spec) {
     const auto it = std::ranges::find_if(
       shape.columns, [&](size_t c) { return kFirstColumn + c == key.column; });
     slots.push_back(it == shape.columns.end()
@@ -201,9 +201,8 @@ void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
     return slot && doc.values[*slot] ? *doc.values[*slot] : duckdb::Value{};
   };
   std::ranges::stable_sort(docs, [&](const auto& lhs, const auto& rhs) {
-    for (size_t k = 0; k != spec.keys.size(); ++k) {
-      const auto cmp =
-        CompareKeyValues(value(lhs, k), value(rhs, k), spec.keys[k]);
+    for (size_t k = 0; k != spec.size(); ++k) {
+      const auto cmp = CompareKeyValues(value(lhs, k), value(rhs, k), spec[k]);
       if (cmp != 0) {
         return cmp < 0;
       }

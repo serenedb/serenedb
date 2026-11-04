@@ -1634,7 +1634,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
     }
   }
 
-  auto maps = MergeMaps(candidates, doc_map, *pending_reader, !_sort.Empty());
+  auto maps = MergeMaps(candidates, doc_map, *pending_reader, !_sort.empty());
   if (!pending) {
     if (changed) {
       DocumentMaskBuilder carried;
@@ -1911,7 +1911,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
-    .sort = _sort.Empty() ? nullptr : &_sort,
+    .sort = _sort.empty() ? nullptr : &_sort,
     .hnsw_bases = _hnsw_bases.get(),
   };
 }

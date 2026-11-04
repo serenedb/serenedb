@@ -97,16 +97,15 @@ duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
 irs::SortSpec SortSpecOf(std::span<const SortKey> keys,
                          const duckdb::ColumnList& columns) {
   irs::SortSpec spec;
-  spec.keys.reserve(keys.size());
-  absl::c_transform(
-    keys, std::back_inserter(spec.keys), [&](const SortKey& key) {
-      return irs::SortKey{
-        .column = static_cast<irs::field_id>(
-          connector::TableColumnId(columns.GetColumn(key.column))),
-        .order = key.order,
-        .null_order = key.null_order,
-      };
-    });
+  spec.reserve(keys.size());
+  absl::c_transform(keys, std::back_inserter(spec), [&](const SortKey& key) {
+    return irs::SortKey{
+      .column = static_cast<irs::field_id>(
+        connector::TableColumnId(columns.GetColumn(key.column))),
+      .order = key.order,
+      .null_order = key.null_order,
+    };
+  });
   return spec;
 }
 

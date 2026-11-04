@@ -59,27 +59,10 @@ std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                      IOAdvice::SEQUENTIAL);
 }
 
-uint64_t ColFileId(const Directory& dir, std::string_view segment_name,
-                   duckdb::DatabaseInstance& db) {
-  const auto name = FileName(segment_name);
-  auto in = dir.open(name, IOAdvice::RANDOM);
-  SDB_ASSERT(in);
-  uint64_t file_id = 0;
-  format_utils::ReadFooter(
-    *in, name, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
-      footer.Set<duckdb::DatabaseInstance&>(db);
-      footer.ReadOptionalList(
-        kColFieldColumns, "columns",
-        [](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          list.ReadObject([](duckdb::BinaryDeserializer& obj) {
-            DeserializeColumnMeta(obj);
-          });
-        });
-      file_id = footer.ReadPropertyWithExplicitDefault<uint64_t>(
-        kColFieldFileId, "file_id", 0);
-      footer.Unset<duckdb::DatabaseInstance>();
-    });
-  return file_id;
+uint64_t ColFileId(ColReader& reader, const ColumnReader& col) {
+  ReadContext ctx{reader};
+  const auto segment = col.OpenSegment(col.Locate(0, BlockWindow{}).block, ctx);
+  return CacheSlotOf(*segment).file_id;
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

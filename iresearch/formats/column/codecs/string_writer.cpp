@@ -112,7 +112,7 @@ class SegmentWriter {
     while (row < _acc.row_count) {
       const auto cutter = Cutter();
       auto* seg = Acquire();
-      const auto end = With(cutter.choice.leaf, [&](auto& enc) {
+      const auto end = With(cutter, [&](auto& enc) {
         _builder.Begin(cutter.choice.shape, cutter.level, cutter.layout, row);
         enc.Begin(cutter.choice.shape, cutter.level, cutter.layout);
         const auto stop = _builder.Cut(enc, _params.segment_target);
@@ -391,7 +391,7 @@ class SegmentWriter {
       return seg->Size();
     }
     Measure(config.choice.shape);
-    const auto bytes = With(config.choice.leaf, [&](auto& enc) -> uint64_t {
+    const auto bytes = With(config, [&](auto& enc) -> uint64_t {
       if constexpr (std::remove_reference_t<decltype(enc)>::kCodec ==
                     ByteCodec::Fsst) {
         SDB_UNREACHABLE();
@@ -429,7 +429,7 @@ class SegmentWriter {
       return seg;
     }
     auto* seg = Acquire();
-    With(config.choice.leaf, [&](auto& enc) {
+    With(config, [&](auto& enc) {
       _builder.Begin(config.choice.shape, config.level, config.layout, _begin);
       enc.Begin(config.choice.shape, config.level, config.layout);
       _builder.AddUntil(enc, _end);
@@ -486,9 +486,13 @@ class SegmentWriter {
   }
 
   template<typename F>
-  std::invoke_result_t<F&, BlobEncoder<Lz4>&> With(ByteCodec leaf, F&& f) {
-    switch (leaf) {
+  std::invoke_result_t<F&, BlobEncoder<Lz4>&> With(const Config& config,
+                                                   F&& f) {
+    switch (config.choice.leaf) {
       case ByteCodec::Lz4:
+        if (EffectiveLevel<Lz4>(config.level) > 1) {
+          return f(Get<BlobEncoder<Lz4Hc>>());
+        }
         return f(Get<BlobEncoder<Lz4>>());
       case ByteCodec::Zstd:
         return f(Get<BlobEncoder<Zstd>>());
@@ -531,8 +535,9 @@ class SegmentWriter {
   StringTuning& _tuning;
   DedupScratch _dedup;
   SegmentBuilder _builder{_acc, _type, _dedup, _tuning.codes};
-  std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Zstd>>,
-             std::optional<BlobEncoder<Zxc>>, std::optional<FsstChainEncoder>>
+  std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
+             std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
+             std::optional<FsstChainEncoder>>
     _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

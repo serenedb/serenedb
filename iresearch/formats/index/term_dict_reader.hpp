@@ -114,7 +114,6 @@ class TermReaderImpl final : public TermReader {
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
-  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
   const FieldReader& Owner() const noexcept { return *_owner; }
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,

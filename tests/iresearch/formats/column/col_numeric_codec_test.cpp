@@ -413,9 +413,9 @@ class ColNumericCodecTest : public TestBase {
   }
 
   template<typename F>
-  void ForEachFrameKey(const irs::Directory& dir, const irs::ColumnReader& col,
+  void ForEachFrameKey(irs::ColReader& reader, const irs::ColumnReader& col,
                        F&& f) {
-    const auto file_id = irs::tests::ColFileId(dir, kSeg, Db());
+    const auto file_id = irs::tests::ColFileId(reader, col);
     std::string key;
     for (const auto& block : col.DataBlocks()) {
       const auto segment =
@@ -428,10 +428,10 @@ class ColNumericCodecTest : public TestBase {
   }
 
   std::vector<duckdb::shared_ptr<irs::codecs::DecodedFrame>> CachedFrames(
-    const irs::Directory& dir, const irs::ColumnReader& col) {
+    irs::ColReader& reader, const irs::ColumnReader& col) {
     auto& cache = Db().GetObjectCache();
     std::vector<duckdb::shared_ptr<irs::codecs::DecodedFrame>> out;
-    ForEachFrameKey(dir, col, [&](const std::string& key) {
+    ForEachFrameKey(reader, col, [&](const std::string& key) {
       if (auto frame = cache.Get<irs::codecs::DecodedFrame>(key)) {
         out.emplace_back(std::move(frame));
       }
@@ -439,10 +439,9 @@ class ColNumericCodecTest : public TestBase {
     return out;
   }
 
-  uint64_t CachedBytes(const irs::Directory& dir,
-                       const irs::ColumnReader& col) {
+  uint64_t CachedBytes(irs::ColReader& reader, const irs::ColumnReader& col) {
     uint64_t bytes = 0;
-    for (const auto& frame : CachedFrames(dir, col)) {
+    for (const auto& frame : CachedFrames(reader, col)) {
       bytes += frame->Bytes().size();
     }
     return bytes;
@@ -769,12 +768,12 @@ TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {
     }
   };
   lookups();
-  EXPECT_TRUE(CachedFrames(dir, *col).empty());
+  EXPECT_TRUE(CachedFrames(r, *col).empty());
   lookups();
-  const auto admitted = CachedFrames(dir, *col);
+  const auto admitted = CachedFrames(r, *col);
   EXPECT_FALSE(admitted.empty());
   lookups();
-  EXPECT_EQ(CachedFrames(dir, *col), admitted);
+  EXPECT_EQ(CachedFrames(r, *col), admitted);
 }
 
 TEST_F(ColNumericCodecTest, PointReadsInDescendingOrder) {
@@ -831,12 +830,12 @@ TEST_F(ColNumericCodecTest, ScansCacheDecodedFrames) {
     }
   };
   scan();
-  EXPECT_TRUE(CachedFrames(dir, *col).empty());
+  EXPECT_TRUE(CachedFrames(r, *col).empty());
   scan();
-  const auto admitted = CachedFrames(dir, *col);
+  const auto admitted = CachedFrames(r, *col);
   ASSERT_FALSE(admitted.empty());
   scan();
-  EXPECT_EQ(CachedFrames(dir, *col), admitted);
+  EXPECT_EQ(CachedFrames(r, *col), admitted);
 }
 
 TEST_F(ColNumericCodecTest, ScansLeaveHalfTheFrameCacheToPointReads) {
@@ -869,15 +868,14 @@ TEST_F(ColNumericCodecTest, ScansLeaveHalfTheFrameCacheToPointReads) {
   };
   scan();
   scan();
-  ASSERT_GT(CachedFrames(dir, *col).size(), 2u);
-  const auto frames = CachedBytes(dir, *col);
+  ASSERT_GT(CachedFrames(r, *col).size(), 2u);
+  const auto frames = CachedBytes(r, *col);
   auto& cache = Db().GetObjectCache();
-  ForEachFrameKey(dir, *col,
-                  [&](const std::string& key) { cache.Delete(key); });
-  ASSERT_EQ(CachedBytes(dir, *col), 0u);
+  ForEachFrameKey(r, *col, [&](const std::string& key) { cache.Delete(key); });
+  ASSERT_EQ(CachedBytes(r, *col), 0u);
   cache.SetMaxMemory(2 * cache.GetCurrentMemory() + frames);
   scan();
-  EXPECT_GT(CachedBytes(dir, *col), 0u);
+  EXPECT_GT(CachedBytes(r, *col), 0u);
   EXPECT_LE(cache.GetCurrentMemory(), cache.GetMaxMemory() / 2);
   lookups();
   EXPECT_GT(cache.GetCurrentMemory(), cache.GetMaxMemory() / 2);

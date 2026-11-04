@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/enums/compression_type.hpp>
@@ -42,6 +43,8 @@
 
 namespace irs {
 namespace {
+
+constinit std::atomic<uint64_t> gNextFileId{1};
 
 IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
                             IOAdvice advice) {
@@ -166,7 +169,6 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   }
   auto fin = _ctx.In().Dup();
   std::vector<ColumnMeta> metas;
-  uint64_t file_id = 0;
   format_utils::ReadFooter(
     *fin, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
@@ -192,10 +194,9 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             _norm_columns.push_back(std::move(column));
           });
         });
-      file_id = footer.ReadPropertyWithExplicitDefault<uint64_t>(
-        kColFieldFileId, "file_id", 0);
       footer.Unset<duckdb::DatabaseInstance>();
     });
+  const auto file_id = gNextFileId.fetch_add(1, std::memory_order_relaxed);
   for (auto& meta : metas) {
     auto col = ColumnReader::Make(std::move(meta), file_id);
     const auto id = col->Id();

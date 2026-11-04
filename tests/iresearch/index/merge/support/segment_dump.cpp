@@ -430,10 +430,10 @@ SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs) {
 SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
                                 const irs::SortSpec& spec) {
   auto expected = ExpectedMerge(inputs);
-  std::vector<std::vector<duckdb::Value>> keys(spec.keys.size());
+  std::vector<std::vector<duckdb::Value>> keys(spec.size());
   for (const auto* input : inputs) {
-    for (size_t k = 0; k != spec.keys.size(); ++k) {
-      auto values = LiveValues(*input, spec.keys[k].column);
+    for (size_t k = 0; k != spec.size(); ++k) {
+      auto values = LiveValues(*input, spec[k].column);
       keys[k].insert(keys[k].end(), std::make_move_iterator(values.begin()),
                      std::make_move_iterator(values.end()));
     }
@@ -441,9 +441,8 @@ SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
   std::vector<size_t> order(expected.docs);
   std::iota(order.begin(), order.end(), size_t{0});
   std::ranges::stable_sort(order, [&](size_t lhs, size_t rhs) {
-    for (size_t k = 0; k != spec.keys.size(); ++k) {
-      const auto cmp =
-        CompareKeyValues(keys[k][lhs], keys[k][rhs], spec.keys[k]);
+    for (size_t k = 0; k != spec.size(); ++k) {
+      const auto cmp = CompareKeyValues(keys[k][lhs], keys[k][rhs], spec[k]);
       if (cmp != 0) {
         return cmp < 0;
       }
@@ -460,12 +459,12 @@ SegmentDump AlignTies(SegmentDump expected, const SegmentDump& actual,
     return expected;
   }
   std::vector<std::vector<duckdb::Value>> keys;
-  for (const auto& key : spec.keys) {
+  for (const auto& key : spec) {
     keys.push_back(LiveValues(segment, key.column));
   }
   const auto tied = [&](size_t lhs, size_t rhs) {
     for (size_t k = 0; k != keys.size(); ++k) {
-      if (CompareKeyValues(keys[k][lhs], keys[k][rhs], spec.keys[k]) != 0) {
+      if (CompareKeyValues(keys[k][lhs], keys[k][rhs], spec[k]) != 0) {
         return false;
       }
     }

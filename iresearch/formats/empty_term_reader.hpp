@@ -63,8 +63,6 @@ class EmptyTermReader final : public irs::TermReader {
 
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }
 
-  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-
   // total number of terms
   size_t size() const noexcept final {
     return 0;  // no terms in reader

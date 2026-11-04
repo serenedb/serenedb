@@ -1316,7 +1316,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
     config->sort = catalog::SortSpecOf(
       catalog::ResolveSortKeys(columns, sort_orders), columns);
   }
-  SDB_ASSERT(absl::c_all_of(config->sort.keys, [&](const irs::SortKey& key) {
+  SDB_ASSERT(absl::c_all_of(config->sort, [&](const irs::SortKey& key) {
     const auto* field = config->FindEntry(key.column);
     return field && field->IsStored();
   }));

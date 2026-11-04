@@ -105,7 +105,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _ann_env{options.ann_env},
     _sort{options.sort},
     _hnsw_bases{options.hnsw_bases} {
-  SDB_ASSERT(!_sort || !_sort->Empty());
+  SDB_ASSERT(!_sort || !_sort->empty());
 }
 
 void SegmentWriter::FlushFields(FlushState& state,

@@ -174,7 +174,7 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
     _hnsw_bases{hnsw_bases},
     _key_order{sort ? std::make_unique<KeyOrder>(doc_map, *sort, &_cache)
                     : nullptr} {
-  SDB_ASSERT(!sort || !sort->Empty());
+  SDB_ASSERT(!sort || !sort->empty());
 }
 
 size_t MergePlan::AddUnit(MergeUnit unit) {

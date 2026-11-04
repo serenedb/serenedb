@@ -40,17 +40,27 @@ struct Zstd {
 
   static size_t Bound(size_t raw_size) noexcept;
 
+  class Dictionary {
+   public:
+    Dictionary(uint8_t level, std::string_view bytes);
+    Dictionary(uint8_t level, const TrainedDictionary& dictionary);
+
+    const ZSTD_CDict* Get() const noexcept { return _dictionary.get(); }
+
+   private:
+    std::unique_ptr<ZSTD_CDict, ZstdFree> _dictionary;
+  };
+
   class Compressor {
    public:
-    explicit Compressor(uint8_t level, std::string_view dictionary = {});
-    Compressor(uint8_t level, const TrainedDictionary& dictionary);
+    explicit Compressor(uint8_t level);
 
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
+    size_t Compress(const char* src, size_t size, char* dst, size_t capacity,
+                    const Dictionary* dictionary = nullptr);
 
    private:
     int _level;
     std::unique_ptr<ZSTD_CCtx, ZstdFree> _ctx;
-    std::unique_ptr<ZSTD_CDict, ZstdFree> _dictionary;
   };
 
   class Decompressor {

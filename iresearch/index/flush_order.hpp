@@ -25,13 +25,13 @@
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 class ColWriter;
-struct SortSpec;
 
 struct DocOrder {
   std::vector<uint32_t> new2old;

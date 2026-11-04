@@ -87,7 +87,7 @@ class BlobEncoder {
       .frames = _frames,
       .max_length = rows.MaxLen(),
       .flags = Flags(),
-      .dictionary = _trained != 0 ? _tuning.dictionary_id : uint16_t{0},
+      .dictionary = Trained() ? _tuning.dictionary_id : uint16_t{0},
     };
   }
 
@@ -103,7 +103,7 @@ class BlobEncoder {
       data += CompressFrame(_price_dictionary);
       if (frame_shape.dictionary != 0 && !_price_dictionary.empty() &&
           _spans.size() > 1) {
-        _chained.emplace(level, _price_dictionary);
+        _active = &_first.emplace(level, _price_dictionary);
       }
       const size_t rest = _spans.size() - 1;
       if (rest <= kPriceFrames) {
@@ -183,29 +183,23 @@ class BlobEncoder {
   }
 
   FrameShape Configure(uint8_t level, FrameLayout layout) {
-    _chained.reset();
-    const TrainedDictionary* trained = nullptr;
+    _active = nullptr;
+    _first.reset();
+    if (!_codec || _level != level) {
+      _trained.reset();
+      _codec.emplace(level);
+      _level = level;
+    }
     if constexpr (Trainable(kCodec)) {
       if (layout == FrameLayout::Dictionary && _tuning.dictionary) {
-        trained = _tuning.dictionary.get();
-      }
-    }
-    const uint64_t id = trained ? trained->Id() : 0;
-    if (!_first || _level != level || _trained != id) {
-      _first.reset();
-      _level = level;
-      _trained = id;
-      if constexpr (Trainable(kCodec)) {
-        if (trained) {
-          _first.emplace(level, *trained);
+        const auto& trained = *_tuning.dictionary;
+        if (!_trained || _trained_id != trained.Id()) {
+          _trained.emplace(level, trained);
+          _trained_id = trained.Id();
         }
+        _active = &*_trained;
+        return {kTrainedFrameBytes, 0};
       }
-      if (!_first) {
-        _first.emplace(level);
-      }
-    }
-    if (trained) {
-      return {kTrainedFrameBytes, 0};
     }
     if (layout == FrameLayout::Wide) {
       return {kFrameRawBytes, 0};
@@ -213,12 +207,10 @@ class BlobEncoder {
     return DictionaryShape();
   }
 
-  typename Codec::Compressor& Active() noexcept {
-    return _chained ? *_chained : *_first;
-  }
+  bool Trained() const noexcept { return _trained && _active == &*_trained; }
 
   FrameDictionary Flags() const noexcept {
-    if (_trained != 0) {
+    if (Trained()) {
       return FrameDictionary::Trained;
     }
     return !_dictionary.empty() && _frames.size() > 1
@@ -231,8 +223,8 @@ class BlobEncoder {
     const auto comp_off = _data.size();
     size_t n = 0;
     _data.resize_and_overwrite(comp_off + bound, [&](char* buf, size_t) {
-      n =
-        Active().Compress(_frame.data(), _frame.size(), buf + comp_off, bound);
+      n = _codec->Compress(_frame.data(), _frame.size(), buf + comp_off, bound,
+                           _active);
       return comp_off + n;
     });
     _frames.push_back(
@@ -243,7 +235,7 @@ class BlobEncoder {
     hist.comp += n;
     if (_frames.size() == 1 && _layout.dictionary != 0 && !_frame.empty()) {
       _dictionary.swap(_frame);
-      _chained.emplace(_level, _dictionary);
+      _active = &_first.emplace(_level, _dictionary);
     }
     _frame.clear();
     _frame_entries = 0;
@@ -287,7 +279,7 @@ class BlobEncoder {
     const auto bound = Codec::Bound(frame.size());
     size_t n = 0;
     _price_out.resize_and_overwrite(bound, [&](char* buf, size_t) {
-      n = Active().Compress(frame.data(), frame.size(), buf, bound);
+      n = _codec->Compress(frame.data(), frame.size(), buf, bound, _active);
       return n;
     });
     return n;
@@ -295,10 +287,12 @@ class BlobEncoder {
 
   const StringTuning& _tuning;
   RatioHistory* _history;
-  std::optional<typename Codec::Compressor> _first;
-  std::optional<typename Codec::Compressor> _chained;
+  std::optional<typename Codec::Compressor> _codec;
+  std::optional<typename Codec::Dictionary> _trained;
+  std::optional<typename Codec::Dictionary> _first;
+  const typename Codec::Dictionary* _active = nullptr;
   uint8_t _level = 0;
-  uint64_t _trained = 0;
+  uint64_t _trained_id = 0;
   Shape _shape = Shape::Dedup;
   FrameShape _layout{kFrameRawBytes, 0};
   std::string _frame;

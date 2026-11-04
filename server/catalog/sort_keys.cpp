@@ -94,9 +94,9 @@ duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   return orders;
 }
 
-irs::SortSpec SortSpecOf(std::span<const SortKey> keys,
-                         const duckdb::ColumnList& columns) {
-  irs::SortSpec spec;
+std::vector<irs::SortKey> SortSpecOf(std::span<const SortKey> keys,
+                                     const duckdb::ColumnList& columns) {
+  std::vector<irs::SortKey> spec;
   spec.reserve(keys.size());
   absl::c_transform(keys, std::back_inserter(spec), [&](const SortKey& key) {
     return irs::SortKey{

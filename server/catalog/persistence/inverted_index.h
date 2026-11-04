@@ -78,7 +78,7 @@ struct InvertedIndexData {
   std::vector<KeyRecord> keys;
   irs::containers::NodeHashMap<irs::field_id, FieldRecord> fields;
   std::optional<irs::ScorerOptions> top_k_scorer;
-  irs::SortSpec sort;
+  std::vector<irs::SortKey> sort;
 };
 
 }  // namespace sdb::catalog::persistence

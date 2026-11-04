@@ -277,7 +277,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // set.
   const IndexFieldOptions* _fallback_field_options = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
-  const SortSpec* _sort = nullptr;
+  const std::vector<SortKey>* _sort = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;

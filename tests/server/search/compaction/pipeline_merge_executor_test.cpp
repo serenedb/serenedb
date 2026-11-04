@@ -166,7 +166,7 @@ class PipelineMergeExecutorTest : public ::testing::Test {
 
   void TearDown() override { _writer.reset(); }
 
-  void Reopen(irs::SortSpec sort) {
+  void Reopen(std::vector<irs::SortKey> sort) {
     _writer.reset();
     irs::IndexWriterOptions options;
     options.db = &TestDb();
@@ -438,7 +438,7 @@ TEST_F(PipelineMergeExecutorTest, StopAtAnyPointFailsTheMerge) {
 }
 
 TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
-  Reopen(irs::SortSpec{{{.column = kGeneratedPKId}}});
+  Reopen(std::vector<irs::SortKey>{{{.column = kGeneratedPKId}}});
   for (int64_t segment = 0; segment != 4; ++segment) {
     std::vector<int64_t> rowids(3000);
     for (size_t i = 0; i != rowids.size(); ++i) {
@@ -461,7 +461,7 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
 }
 
 TEST_F(PipelineMergeExecutorTest, SortedMergesPartitionOnTheirScheduler) {
-  Reopen(irs::SortSpec{{{.column = kGeneratedPKId}}});
+  Reopen(std::vector<irs::SortKey>{{{.column = kGeneratedPKId}}});
   for (int64_t segment = 0; segment != 6; ++segment) {
     std::vector<int64_t> rowids(3000);
     for (size_t i = 0; i != rowids.size(); ++i) {
@@ -485,7 +485,7 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesPartitionOnTheirScheduler) {
 }
 
 TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
-  const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
+  const std::vector<irs::SortKey> spec{{{.column = kGeneratedPKId}}};
   Reopen({});
   Insert(std::vector<int64_t>{1, 3, 5, 7});
   Insert(std::vector<int64_t>{6, 4, 2, 0});
@@ -509,7 +509,7 @@ TEST_F(PipelineMergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
   const absl::Cleanup remove = [] {
     duckdb::FaultPoints::Disarm("irs::KeyOrder::Finish");
   };
-  const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
+  const std::vector<irs::SortKey> spec{{{.column = kGeneratedPKId}}};
   Reopen(spec);
   Insert(std::vector<int64_t>{0, 2, 4, 6});
   Insert(std::vector<int64_t>{1, 3, 5, 7});

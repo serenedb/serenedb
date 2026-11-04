@@ -98,14 +98,14 @@ std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
                                        size_t& next_id);
 
 void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
-              const irs::SortSpec& spec);
+              const std::vector<irs::SortKey>& spec);
 
 void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
                 std::span<const GeneratedDoc> docs);
 
 void WriteSegment(irs::IndexWriter& writer, Generator& gen,
                   const SegmentShape& shape, size_t& next_id,
-                  const irs::SortSpec* sort = nullptr);
+                  const std::vector<irs::SortKey>* sort = nullptr);
 
 SegmentShape RandomShape(Generator& gen);
 

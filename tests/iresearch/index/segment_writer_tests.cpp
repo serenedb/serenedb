@@ -75,7 +75,7 @@ struct KeyField {
   mutable irs::KeywordTokenizer _stream;
 };
 
-irs::SegmentWriterOptions SortedOptions(const irs::SortSpec* spec) {
+irs::SegmentWriterOptions SortedOptions(const std::vector<irs::SortKey>* spec) {
   return {.db = &::irs::DuckDBEngine::Instance().instance(), .sort = spec};
 }
 
@@ -318,7 +318,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 }
 
 TEST_F(SegmentWriterTests, memory_store_sorted_field) {
-  const irs::SortSpec spec{{{.column = kKeyColumn}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
@@ -349,7 +349,7 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
 }
 
 TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kKeyColumn, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory dir;
   auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
@@ -399,7 +399,7 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
 }
 
 TEST_F(SegmentWriterTests, memory_store_field_sorted) {
-  const irs::SortSpec spec{{{.column = kKeyColumn}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
@@ -445,7 +445,7 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
 }
 
 TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
-  const irs::SortSpec spec{{{.column = kKeyColumn}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   irs::MemoryDirectory dir;
   auto sorted = irs::SegmentWriter::make(dir, SortedOptions(&spec));
   auto unsorted = irs::SegmentWriter::make(dir, SortedOptions(nullptr));
@@ -474,7 +474,7 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
 }
 
 TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
-  const irs::SortSpec spec{{{.column = kKeyColumn}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   irs::MemoryDirectory dir;
   auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
   irs::SegmentMeta segment;
@@ -516,7 +516,7 @@ TEST_F(SegmentWriterTests, reorder) {
     {0, 1, 2, 3, 4}, {2, 3, 1, 4, 0}, {3, 0, 4, 1, 2},
     {4, 0, 3, 2, 1}, {2, 0, 1, 4, 3},
   };
-  const irs::SortSpec spec{{{.column = kKeyColumn}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const auto& inserted : cases) {
     SCOPED_TRACE(absl::StrJoin(inserted, ","));
     irs::MemoryDirectory dir;

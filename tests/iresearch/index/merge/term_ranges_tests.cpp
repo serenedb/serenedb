@@ -423,7 +423,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 class TermRangeMergeTest : public ::testing::Test {
  protected:
-  void Open(irs::SortSpec sort = {}) {
+  void Open(std::vector<irs::SortKey> sort = {}) {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = SketchedColumns;
     options.sort = std::move(sort);
@@ -473,7 +473,7 @@ class TermRangeMergeTest : public ::testing::Test {
 
   irs::MergePlan MakePlan(irs::Directory& out,
                           std::span<const irs::SubReader* const> inputs,
-                          const irs::SortSpec* spec,
+                          const std::vector<irs::SortKey>* spec,
                           const irs::MergeProgress& progress = {},
                           irs::ScorerPtr scorer = nullptr) {
     _doc_map.clear();
@@ -520,8 +520,8 @@ class TermRangeMergeOracleTest
 
 TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
   const auto [sorted, threads, shuffled] = GetParam();
-  const irs::SortSpec spec{{{.column = kKey}}};
-  Open(sorted ? spec : irs::SortSpec{});
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
+  Open(sorted ? spec : std::vector<irs::SortKey>{});
   AddSegments(12);
   const auto inputs = Snapshot();
   ASSERT_EQ(12, inputs.size());

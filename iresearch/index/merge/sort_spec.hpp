@@ -33,6 +33,4 @@ struct SortKey {
   duckdb::OrderByNullType null_order = duckdb::OrderByNullType::NULLS_LAST;
 };
 
-using SortSpec = std::vector<SortKey>;
-
 }  // namespace irs

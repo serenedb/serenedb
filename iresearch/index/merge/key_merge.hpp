@@ -48,7 +48,7 @@ class KeyOrder {
     duckdb::LogicalType type;
   };
 
-  KeyOrder(MergeDocMap& doc_map, const SortSpec& spec,
+  KeyOrder(MergeDocMap& doc_map, const std::vector<SortKey>& spec,
            duckdb::ObjectCache* cache)
     : _doc_map{doc_map}, _spec{spec}, _cache{cache} {}
 
@@ -93,7 +93,7 @@ class KeyOrder {
   void Finish();
 
   MergeDocMap& _doc_map;
-  const SortSpec& _spec;
+  const std::vector<SortKey>& _spec;
   duckdb::ObjectCache* _cache;
   std::vector<KeyColumn> _keys;
   std::vector<uint64_t> _isolated;

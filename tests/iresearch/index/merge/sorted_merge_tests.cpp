@@ -76,7 +76,7 @@ irs::ColumnOptions PlainColumns(irs::field_id) { return {}; }
 
 irs::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
                                  irs::ColumnOptionsProvider columns,
-                                 irs::SortSpec sort = {},
+                                 std::vector<irs::SortKey> sort = {},
                                  irs::AnnFieldsByColumn anns = {}) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = std::move(columns);
@@ -86,9 +86,9 @@ irs::IndexWriter::ptr MakeWriter(irs::Directory& dir, uint32_t row_group_size,
   return irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
 }
 
-irs::SortSpec RandomSpec(Generator& gen) {
+std::vector<irs::SortKey> RandomSpec(Generator& gen) {
   constexpr irs::field_id kKeys[] = {kBigint, kDouble, kText, kFlag, kBlob};
-  irs::SortSpec spec;
+  std::vector<irs::SortKey> spec;
   const auto keys = gen.Uniform(1, 3);
   for (size_t k = 0; k != keys; ++k) {
     spec.push_back({.column = kKeys[gen.Uniform(0, std::size(kKeys) - 1)],
@@ -103,7 +103,7 @@ irs::SortSpec RandomSpec(Generator& gen) {
 
 std::shared_ptr<const irs::SegmentReaderImpl> SortedMerge(
   irs::Directory& out, std::span<const irs::SubReader* const> inputs,
-  const irs::SortSpec* spec, uint32_t row_group_size,
+  const std::vector<irs::SortKey>* spec, uint32_t row_group_size,
   irs::ColumnOptionsProvider columns, bool& flushed, size_t threads = 1,
   irs::ScorerPtr scorer = nullptr, irs::SegmentMeta* written = nullptr,
   irs::AnnFieldsByColumn anns = {}) {
@@ -265,7 +265,7 @@ class SortedMergeTest : public ::testing::Test {
 
   irs::MergePlan MakePlan(irs::Directory& out,
                           std::span<const irs::SubReader* const> inputs,
-                          const irs::SortSpec& spec,
+                          const std::vector<irs::SortKey>& spec,
                           const irs::MergeProgress& progress = {}) {
     _doc_map.clear();
     for (const auto* input : inputs) {
@@ -285,7 +285,7 @@ class SortedMergeTest : public ::testing::Test {
 
   std::string MergedDifference(irs::Directory& out,
                                std::span<const irs::SubReader* const> inputs,
-                               const irs::SortSpec& spec) {
+                               const std::vector<irs::SortKey>& spec) {
     const auto merged = irs::SegmentReaderImpl::Open(
       out, _meta, irs::tests::DefaultReaderOptions());
     if (merged == nullptr) {
@@ -323,7 +323,7 @@ TEST_F(SortedMergeTest, InputsWithDisjointKeysCopyTheirBlocks) {
   AddSegment(Keys(3000, 1, 3000));
   AddSegment(Keys(0, 1, 3000));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -337,7 +337,7 @@ TEST_F(SortedMergeTest, InterleavedInputsAreGathered) {
   AddSegment(Keys(2046, -2, 1024));
   AddSegment(Keys(2047, -2, 1024));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
@@ -374,7 +374,7 @@ TEST_F(SortedMergeTest, ContiguousInputsThatCannotBeCopiedCostTheirOwnBytes) {
   const auto inputs = Snapshot();
   ASSERT_EQ(4, inputs.size());
   ASSERT_LT(inputs[3]->live_docs_count(), inputs[3]->docs_count());
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -416,7 +416,7 @@ TEST_F(SortedMergeTest, UnsortedInputsFailTheMerge) {
   AddSegment(first);
   AddSegment(Keys(1, 2, 300));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_SQL_ERROR(plan.Prepare(4), ERRCODE_INDEX_CORRUPTED);
@@ -428,7 +428,7 @@ TEST_F(SortedMergeTest, AnUnsortedInputThatLooksApartFailsTheMerge) {
   AddSegment(unsorted);
   AddSegment(Keys(0, 1, 3000));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_SQL_ERROR(plan.Prepare(1), ERRCODE_INDEX_CORRUPTED);
@@ -445,7 +445,7 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   }
   RemoveTerms(*_writer, kIdField, removed);
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MergeDocMap serial_map{{irs::IResourceManager::gNoop}};
   irs::MergeDocMap split_map{{irs::IResourceManager::gNoop}};
   irs::MergeDocMap stopped_map{{irs::IResourceManager::gNoop}};
@@ -504,7 +504,7 @@ TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
   add(1, false);
   add(2, true);
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -522,7 +522,7 @@ TEST_F(SortedMergeTest, AnIncompleteOrderFailsTheMerge) {
   AddSegment(Keys(0, 2, 300));
   AddSegment(Keys(1, 2, 300));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_SQL_ERROR(plan.Prepare(1), ERRCODE_INTERNAL_ERROR);
@@ -534,7 +534,7 @@ TEST_F(SortedMergeTest, EqualKeysKeepTheInputOrder) {
   AddSegment(std::vector<int64_t>(300, 5));
   AddSegment(Keys(4, 1, 3));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -546,7 +546,7 @@ TEST_F(SortedMergeTest, KeysNoInputHasKeepTheInputOrder) {
   AddSegment(Keys(10, -1, 10));
   AddSegment(Keys(0, 1, 10));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kFirstColumn + 50}}};
+  const std::vector<irs::SortKey> spec{{{.column = kFirstColumn + 50}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -577,7 +577,7 @@ TEST_F(SortedMergeTest, FullyDeletedInputsAddNoRows) {
                                                         inputs.front()};
   for (const auto column : {kBigint, irs::field_id{kFirstColumn + 50}}) {
     SCOPED_TRACE(column);
-    const irs::SortSpec spec{{{.column = column}}};
+    const std::vector<irs::SortKey> spec{{{.column = column}}};
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, with_deleted, spec);
     ASSERT_TRUE(plan.Prepare(1));
@@ -585,7 +585,7 @@ TEST_F(SortedMergeTest, FullyDeletedInputsAddNoRows) {
     EXPECT_EQ("", MergedDifference(out, with_deleted, spec));
   }
   const std::vector<const irs::SubReader*> only_deleted{deleted.get()};
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, only_deleted, spec);
   ASSERT_TRUE(plan.Prepare(1));
@@ -612,7 +612,7 @@ TEST_F(SortedMergeTest, LargeInputsSpanWindowsAndCheckpoints) {
     live += input->live_docs_count();
   }
   ASSERT_LT(DEFAULT_ROW_GROUP_SIZE, live);
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   for (const size_t threads : {1, 4}) {
     SCOPED_TRACE(threads);
     irs::MemoryDirectory out;
@@ -662,7 +662,7 @@ TEST_F(SortedMergeTest, ListsReferencedFarApartMergeIntact) {
   const auto reader = writer->GetSnapshot();
   const auto inputs = Segments(reader);
   ASSERT_EQ(kInputs, inputs.size());
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   for (const size_t threads : {1, 4}) {
     SCOPED_TRACE(threads);
     irs::MemoryDirectory out;
@@ -680,7 +680,7 @@ TEST_F(SortedMergeTest, EveryCancellationStopsTheMerge) {
   AddSegment(Keys(0, 2, 9000), true, true, false);
   AddSegment(Keys(1, 2, 9000), true, true, false);
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   size_t refused = 0;
   size_t stopped = 0;
   for (size_t fail_at = 1;; ++fail_at) {
@@ -705,7 +705,7 @@ TEST_F(SortedMergeTest, DocMapsThatCannotBeChargedRefuseTheMerge) {
   AddSegment(Keys(0, 2, 10));
   AddSegment(Keys(1, 2, 10));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   SimpleMemoryAccounter refusing;
   refusing.result = false;
   irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
@@ -730,7 +730,7 @@ TEST_F(SortedMergeTest, AnOrderThatCannotBeChargedRefusesTheMerge) {
   AddSegment(Keys(0, 2, 10));
   AddSegment(Keys(1, 2, 10));
   const auto inputs = Snapshot();
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   SimpleMemoryAccounter refusing;
   irs::MergeDocMap doc_map{{refusing}};
   for (const auto* input : inputs) {
@@ -756,7 +756,7 @@ TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {
   AddSegment(Keys(1, 2, 300), true);
   const auto inputs = Snapshot();
   const WithoutColumnStore storeless{*inputs[1]};
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kBigint, .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   for (const auto& mixed :
        {std::vector<const irs::SubReader*>{inputs[0], &storeless},
@@ -776,7 +776,7 @@ TEST_F(SortedMergeTest, MoreInputsThanAByteNamesAreInterleaved) {
   }
   const auto inputs = Snapshot();
   ASSERT_EQ(kInputs, inputs.size());
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   for (const size_t threads : {1, 4}) {
     SCOPED_TRACE(threads);
     irs::MemoryDirectory out;
@@ -824,7 +824,7 @@ TEST_F(SortedMergeTest, WideMergesReadInputsInSmallerBatches) {
   const auto reader = writer->GetSnapshot();
   const auto inputs = Segments(reader);
   ASSERT_EQ(kInputs, inputs.size());
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   bool flushed = false;
   const auto merged = SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE,
@@ -840,7 +840,7 @@ TEST_F(SortedMergeTest, MoreInputsThanTheFanInAreRefused) {
   const auto inputs = Snapshot();
   const std::vector<const irs::SubReader*> many(irs::kSortedMergeInputsMax + 1,
                                                 inputs.front());
-  const irs::SortSpec spec{{{.column = kBigint}}};
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, many, spec);
   EXPECT_FALSE(plan.Prepare(1));
@@ -906,7 +906,7 @@ TEST(SortedMergeAnnTest, IvfClustersCoverTheSortedDocs) {
   const auto inputs = Segments(reader);
   ASSERT_EQ(2, inputs.size());
 
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory out;
   bool flushed = false;
@@ -948,7 +948,7 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
   for (const uint64_t seed : {11, 12, 13}) {
     SCOPED_TRACE(seed);
     Generator gen{seed};
-    const irs::SortSpec spec{
+    const std::vector<irs::SortKey> spec{
       {{.column = kText},
        {.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
     SegmentShape shape;
@@ -985,7 +985,7 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
       SegmentDump dump;
     };
     const auto merge = [&](std::span<const irs::SubReader* const> segments,
-                           const irs::SortSpec* sort) {
+                           const std::vector<irs::SortKey>* sort) {
       irs::MemoryDirectory out;
       bool flushed = false;
       irs::SegmentMeta meta;
@@ -1062,7 +1062,7 @@ TEST_P(SortedMergeListTest, RepeatedListsKeepTheirValues) {
   const auto reader = writer->GetSnapshot();
   const auto inputs = Segments(reader);
   ASSERT_EQ(2, inputs.size());
-  const irs::SortSpec spec{{{.column = kKey}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   irs::MemoryDirectory out;
   bool flushed = false;
   const auto merged = SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE,

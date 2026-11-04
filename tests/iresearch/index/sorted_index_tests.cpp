@@ -71,7 +71,7 @@ constexpr irs::field_id kTypedColumn = 2000;
 const auto kFullMerge =
   tests::MakePolicy(tests::CompactionCount{std::numeric_limits<size_t>::max()});
 
-const irs::SortSpec kByNameDesc{
+const std::vector<irs::SortKey> kByNameDesc{
   {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
 
 int64_t RemovalKey(std::string_view key) {
@@ -154,7 +154,7 @@ void StoreEuroparl(irs::IndexWriter::Document& doc,
 
 class SortedIndexTestCase : public tests::IndexTestBase {
  protected:
-  irs::IndexWriter::ptr OpenSorted(const irs::SortSpec& spec) {
+  irs::IndexWriter::ptr OpenSorted(const std::vector<irs::SortKey>& spec) {
     auto options = tests::CsDefaultWriterOptions();
     options.column_options = SketchedColumns;
     options.sort = spec;
@@ -207,7 +207,7 @@ class SortedIndexTestCase : public tests::IndexTestBase {
 
   static void ExpectSortedFlushes(const irs::IndexWriter& plain,
                                   const irs::IndexWriter& sorted,
-                                  const irs::SortSpec& spec) {
+                                  const std::vector<irs::SortKey>& spec) {
     const auto expected = plain.GetSnapshot();
     const auto actual = sorted.GetSnapshot();
     ASSERT_EQ(expected.size(), actual.size());
@@ -248,7 +248,8 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     return shape;
   }
 
-  void CompactAndCheck(irs::IndexWriter& writer, const irs::SortSpec& spec) {
+  void CompactAndCheck(irs::IndexWriter& writer,
+                       const std::vector<irs::SortKey>& spec) {
     const auto before = writer.GetSnapshot();
     const auto inputs = Segments(before);
     ASSERT_LT(1, inputs.size());
@@ -261,7 +262,7 @@ class SortedIndexTestCase : public tests::IndexTestBase {
   }
 
   static void ExpectSorted(const irs::SubReader& segment,
-                           const irs::SortSpec& spec) {
+                           const std::vector<irs::SortKey>& spec) {
     std::vector<std::vector<duckdb::Value>> keys;
     for (const auto& key : spec) {
       keys.push_back(LiveValues(segment, key.column));
@@ -278,7 +279,8 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     }
   }
 
-  void RemoveDuringCompaction(const irs::SortSpec& spec, double null_ratio) {
+  void RemoveDuringCompaction(const std::vector<irs::SortKey>& spec,
+                              double null_ratio) {
     auto writer = OpenSorted(spec);
     Generator gen{7};
     size_t next_id = 0;
@@ -346,7 +348,7 @@ const auto kTestValuesSorted = ::testing::Combine(
 }  // namespace
 
 TEST_P(SortedIndexTestCase, simple_sequential) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
@@ -413,7 +415,7 @@ TEST_P(SortedIndexTestCase, reader_components) {
 }
 
 TEST_P(SortedIndexTestCase, simple_sequential_compact) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kText, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kKey}}};
   irs::MemoryDirectory plain_dir;
@@ -437,7 +439,8 @@ TEST_P(SortedIndexTestCase, simple_sequential_compact) {
 }
 
 TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
-  const irs::SortSpec spec{{{.column = kSameColumn}, {.column = kSeqColumn}}};
+  const std::vector<irs::SortKey> spec{
+    {{.column = kSameColumn}, {.column = kSeqColumn}}};
   irs::MemoryDirectory plain_dir;
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
@@ -451,7 +454,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
 }
 
 TEST_P(SortedIndexTestCase, europarl) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kDateColumn, .order = duckdb::OrderType::DESCENDING},
      {.column = kTitleColumn}}};
   irs::MemoryDirectory plain_dir;
@@ -464,7 +467,7 @@ TEST_P(SortedIndexTestCase, europarl) {
 }
 
 TEST_P(SortedIndexTestCase, europarl_docs_batched) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kTitleColumn,
       .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kDateColumn}}};
@@ -482,7 +485,7 @@ TEST_P(SortedIndexTestCase, europarl_docs_batched) {
 }
 
 TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kList, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kStruct, .order = duckdb::OrderType::DESCENDING},
      {.column = kKey}}};
@@ -500,7 +503,7 @@ TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
 }
 
 TEST_P(SortedIndexTestCase, check_document_order_after_compaction_dense) {
-  const irs::SortSpec spec{{{.column = kKey}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   auto writer = OpenSorted(spec);
   Generator gen{1};
   size_t next_id = 0;
@@ -512,7 +515,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_compaction_dense) {
 
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_dense_with_removals) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kKey, .order = duckdb::OrderType::DESCENDING}}};
   {
     auto writer = OpenSorted(spec);
@@ -527,7 +530,7 @@ TEST_P(SortedIndexTestCase,
 }
 
 TEST_P(SortedIndexTestCase, sorted_flush_of_every_column_kind) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kTypedColumn, .order = duckdb::OrderType::DESCENDING},
      {.column = kTypedColumn + 5,
       .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
@@ -641,7 +644,7 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx_flush) {
 
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_sparse_with_gaps) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kKey, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kText}}};
   auto writer = OpenSorted(spec);
@@ -655,7 +658,7 @@ TEST_P(SortedIndexTestCase,
 }
 
 TEST_P(SortedIndexTestCase, check_document_order_after_compaction_sparse) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kText, .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};
   auto writer = OpenSorted(spec);
   Generator gen{4};
@@ -668,7 +671,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_compaction_sparse) {
 
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_sparse_already_sorted) {
-  const irs::SortSpec spec{{{.column = kKey}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   auto writer = OpenSorted(spec);
   Generator gen{5};
   size_t next_id = 0;
@@ -689,7 +692,7 @@ TEST_P(SortedIndexTestCase,
 
 TEST_P(SortedIndexTestCase,
        check_document_order_after_compaction_sparse_with_removals) {
-  const irs::SortSpec spec{
+  const std::vector<irs::SortKey> spec{
     {{.column = kText,
       .order = duckdb::OrderType::DESCENDING,
       .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};

@@ -86,10 +86,11 @@ SegmentDump Concat(std::span<const SegmentDump> inputs);
 SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs);
 
 SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
-                                const irs::SortSpec& spec);
+                                const std::vector<irs::SortKey>& spec);
 
 SegmentDump AlignTies(SegmentDump expected, const SegmentDump& actual,
-                      const irs::SubReader& segment, const irs::SortSpec& spec);
+                      const irs::SubReader& segment,
+                      const std::vector<irs::SortKey>& spec);
 
 std::string Describe(const SegmentDump& dump);
 

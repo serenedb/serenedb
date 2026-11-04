@@ -107,7 +107,8 @@ class MergePlan {
             ScorerPtr scorer, duckdb::DatabaseInstance& db,
             const IndexFieldOptions* field_options,
             const MergeProgress& progress, const AnnBuildEnv* env,
-            const SortSpec* sort = nullptr, HnswBases* hnsw_bases = nullptr);
+            const std::vector<SortKey>* sort = nullptr,
+            HnswBases* hnsw_bases = nullptr);
 
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;

@@ -168,7 +168,7 @@ struct IndexWriterOptions : public SegmentOptions {
 
   field_id key_column = field_limits::invalid();
 
-  SortSpec sort;
+  std::vector<SortKey> sort;
 
   IndexWriterOptions() {}
 };
@@ -864,7 +864,7 @@ class IndexWriter : private util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
   field_id _key_column = field_limits::invalid();
-  SortSpec _sort;
+  std::vector<SortKey> _sort;
   std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;

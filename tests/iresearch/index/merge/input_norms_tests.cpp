@@ -221,7 +221,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
   std::shared_ptr<const irs::SegmentReaderImpl> _merged;
   irs::field_id _column = irs::field_limits::invalid();
   std::vector<irs::MergeSource> _sources;
-  const irs::SortSpec _sort{{{.column = kFirstColumn}}};
+  const std::vector<irs::SortKey> _sort{{{.column = kFirstColumn}}};
   irs::MergeDocMap _order_map{{irs::IResourceManager::gNoop}};
   std::unique_ptr<irs::KeyOrder> _order;
 };

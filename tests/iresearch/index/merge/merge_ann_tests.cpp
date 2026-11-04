@@ -62,7 +62,7 @@ constexpr size_t kK = 10;
 
 using Vectors = std::vector<std::vector<float>>;
 
-irs::IndexWriterOptions HnswWriterOptions(irs::SortSpec sort = {}) {
+irs::IndexWriterOptions HnswWriterOptions(std::vector<irs::SortKey> sort = {}) {
   auto opts = irs::tests::DefaultWriterOptions();
   opts.column_options = [](irs::field_id id) {
     irs::ColumnOptions col;

@@ -208,7 +208,8 @@ void BM_Flush(benchmark::State& state) {
   const auto order = static_cast<Order>(state.range(0));
   const bool sorted = state.range(1) != 0;
   const auto& rows = RowsOf(order);
-  const irs::SortSpec spec{{{.column = kService}, {.column = kTimestamp}}};
+  const std::vector<irs::SortKey> spec{
+    {{.column = kService}, {.column = kTimestamp}}};
   uint64_t insert_nanos = 0;
   uint64_t flush_nanos = 0;
   uint64_t peak_kb = 0;

@@ -34,8 +34,8 @@
 
 namespace irs {
 
-std::vector<uint32_t> FlushOrder(const SortSpec& spec, ColWriter& columns,
-                                 uint64_t rows) {
+std::vector<uint32_t> FlushOrder(const std::vector<SortKey>& spec,
+                                 ColWriter& columns, uint64_t rows) {
   std::vector<const ColumnWriter*> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;

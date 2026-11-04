@@ -428,7 +428,7 @@ SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs) {
 }
 
 SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
-                                const irs::SortSpec& spec) {
+                                const std::vector<irs::SortKey>& spec) {
   auto expected = ExpectedMerge(inputs);
   std::vector<std::vector<duckdb::Value>> keys(spec.size());
   for (const auto* input : inputs) {
@@ -454,7 +454,7 @@ SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
 
 SegmentDump AlignTies(SegmentDump expected, const SegmentDump& actual,
                       const irs::SubReader& segment,
-                      const irs::SortSpec& spec) {
+                      const std::vector<irs::SortKey>& spec) {
   if (expected.docs != actual.docs) {
     return expected;
   }

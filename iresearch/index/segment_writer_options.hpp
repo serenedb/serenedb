@@ -49,7 +49,7 @@ struct SegmentWriterOptions {
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
-  const SortSpec* sort = nullptr;
+  const std::vector<SortKey>* sort = nullptr;
   HnswBases* hnsw_bases = nullptr;
 };
 

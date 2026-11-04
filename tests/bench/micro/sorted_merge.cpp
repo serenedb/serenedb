@@ -229,7 +229,7 @@ void BM_Merge(benchmark::State& state) {
     },
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  const irs::SortSpec spec{{{.column = kKey}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   const irs::PipelineMergeExecutor executor{
     irs::DuckDBEngine::Instance().instance(), threads};
   for (auto _ : state) {
@@ -611,7 +611,7 @@ BENCHMARK(BM_ReadKeys)
 
 void BM_KeyOrder(benchmark::State& state) {
   const auto& inputs = InputsOf(static_cast<Layout>(state.range(0)));
-  const irs::SortSpec spec{{{.column = kKey}}};
+  const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   const irs::MergeProgress proceed = [] { return true; };
   for (auto _ : state) {
     irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};

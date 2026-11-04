@@ -52,8 +52,8 @@ struct DocOrder {
   void MaskRows(DocumentMaskBuilder& mask, size_t from, size_t to) const;
 };
 
-std::vector<uint32_t> FlushOrder(const SortSpec& spec, ColWriter& columns,
-                                 uint64_t rows);
+std::vector<uint32_t> FlushOrder(const std::vector<SortKey>& spec,
+                                 ColWriter& columns, uint64_t rows);
 
 DocOrder MakeDocOrder(std::vector<uint32_t> new2old);
 

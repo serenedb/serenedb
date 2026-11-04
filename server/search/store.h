@@ -109,11 +109,11 @@ class Store final : public std::enable_shared_from_this<Store> {
         bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
         const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer,
-        const irs::SortSpec& sort, bool is_new);
+        const std::vector<irs::SortKey>& sort, bool is_new);
   Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
         bool read_only, duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
-        const duckdb::ColumnList& columns, irs::SortSpec sort);
+        const duckdb::ColumnList& columns, std::vector<irs::SortKey> sort);
   ~Store();
 
   Store(const Store&) = delete;
@@ -430,7 +430,7 @@ class Store final : public std::enable_shared_from_this<Store> {
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   std::atomic<bool> _dropped{false};
-  const irs::SortSpec _sort;
+  const std::vector<irs::SortKey> _sort;
   const std::shared_ptr<MergeScheduler::Relation> _merge_relation;
   std::atomic<uint32_t> _stale_pressure{0};
   duckdb::idx_t _id;

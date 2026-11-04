@@ -2484,7 +2484,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
     irs::tests::MakeNormColumnIdProvider(),
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  const irs::SortSpec sort{
+  const std::vector<irs::SortKey> sort{
     {{.column = kDocStringId,
       .order = duckdb::OrderType::DESCENDING,
       .null_order = duckdb::OrderByNullType::NULLS_FIRST}}};

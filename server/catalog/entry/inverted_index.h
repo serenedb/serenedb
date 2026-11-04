@@ -192,7 +192,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
-  irs::SortSpec sort;
+  std::vector<irs::SortKey> sort;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();

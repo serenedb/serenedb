@@ -155,7 +155,7 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
                      ScorerPtr scorer, duckdb::DatabaseInstance& db,
                      const IndexFieldOptions* field_options,
                      const MergeProgress& progress, const AnnBuildEnv* env,
-                     const SortSpec* sort, HnswBases* hnsw_bases)
+                     const std::vector<SortKey>* sort, HnswBases* hnsw_bases)
   : _col_dir{dir},
     _idx_dir{dir},
     _doc_map{doc_map},

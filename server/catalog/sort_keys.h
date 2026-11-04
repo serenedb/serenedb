@@ -42,7 +42,7 @@ std::vector<SortKey> ResolveSortKeys(
 duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
   std::span<const SortKey> keys, const duckdb::ColumnList& columns);
 
-irs::SortSpec SortSpecOf(std::span<const SortKey> keys,
-                         const duckdb::ColumnList& columns);
+std::vector<irs::SortKey> SortSpecOf(std::span<const SortKey> keys,
+                                     const duckdb::ColumnList& columns);
 
 }  // namespace sdb::catalog

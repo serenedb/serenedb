@@ -187,7 +187,7 @@ std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
 }
 
 void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
-              const irs::SortSpec& spec) {
+              const std::vector<irs::SortKey>& spec) {
   std::vector<std::optional<size_t>> slots;
   for (const auto& key : spec) {
     const auto it = std::ranges::find_if(
@@ -254,7 +254,7 @@ void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
 
 void WriteSegment(irs::IndexWriter& writer, Generator& gen,
                   const SegmentShape& shape, size_t& next_id,
-                  const irs::SortSpec* sort) {
+                  const std::vector<irs::SortKey>* sort) {
   auto docs = GenerateDocs(gen, shape, next_id);
   std::vector<std::string> keys;
   keys.reserve(docs.size());

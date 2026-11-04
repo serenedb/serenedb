@@ -77,6 +77,8 @@ std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
 std::string BuiltinFunctionKey(const BuiltinFunction& function);
 duckdb::optional_ptr<const duckdb::Permissions> BuiltinFunctionGrant(
   duckdb::ClientContext& context, const BuiltinFunction& function);
+duckdb::optional_ptr<const duckdb::Permissions> BuiltinTypeGrant(
+  duckdb::ClientContext& context, duckdb::idx_t type);
 std::string BuiltinFunctionKey(const duckdb::CatalogEntry& function,
                                duckdb::idx_t overload);
 std::string BuiltinSignatureKey(

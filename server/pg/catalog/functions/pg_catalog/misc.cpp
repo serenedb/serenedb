@@ -143,6 +143,24 @@ duckdb::optional<duckdb::string_t> Comment(duckdb::Vector& result,
   return duckdb::StringVector::AddString(result, text);
 }
 
+struct DescribedObject {
+  duckdb::idx_t classoid;
+  const duckdb::Value& comment;
+};
+
+std::optional<DescribedObject> Described(const Session& session, uint64_t oid) {
+  if (auto entry = EntryByOid(session, oid);
+      entry && CatalogClassOid(entry->type) != kPgProcTable) {
+    return DescribedObject{CatalogClassOid(entry->type), entry->comment};
+  }
+  const auto found = FindMacro(session, oid);
+  if (!found.macro) {
+    return std::nullopt;
+  }
+  return DescribedObject{kPgProcTable,
+                         found.entry->OverloadComment(*found.macro)};
+}
+
 void ObjDescription2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
@@ -154,12 +172,11 @@ void ObjDescription2Function(duckdb::DataChunk& args,
         duckdb::string_t catalog) -> duckdb::optional<duckdb::string_t> {
       const auto* table =
         GetSystemTable(irs::StaticStrings::kPgCatalogSchema, AsView(catalog));
-      auto entry = EntryByOid(session, oid);
-      if (!table || !entry ||
-          CatalogClassOid(entry->type) != table->Sql().oid) {
+      const auto described = Described(session, oid);
+      if (!table || !described || described->classoid != table->Sql().oid) {
         return duckdb::nullopt;
       }
-      return Comment(result, entry->comment);
+      return Comment(result, described->comment);
     });
 }
 
@@ -195,11 +212,11 @@ void ObjDescription1Function(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
-      auto entry = EntryByOid(session, oid);
-      if (!entry || CatalogClassOid(entry->type) == kInvalidOid) {
+      const auto described = Described(session, oid);
+      if (!described || described->classoid == kInvalidOid) {
         return duckdb::nullopt;
       }
-      return Comment(result, entry->comment);
+      return Comment(result, described->comment);
     });
 }
 

@@ -690,10 +690,27 @@ struct TypePrivileges : ObjectPrivileges<TypePrivileges> {
       }
       return ObjectTarget{&PrivilegePermissions(*session.context, *entry)};
     }
-    if (oid >= kMaxSystem || !FindBuiltinType(static_cast<int32_t>(oid))) {
+    if (oid & kRowTypeOidBit) {
+      const auto relation = EntryByOid(session, RowTypeRelation(oid));
+      if (!relation || CatalogClassOid(relation->type) != kPgClassTable) {
+        return std::nullopt;
+      }
+      return ObjectTarget{&kBuiltinPermissions};
+    }
+    if (oid >= kMaxSystem) {
+      const auto element = ArrayElementOid(session, oid);
+      if (element == kInvalidOid) {
+        return std::nullopt;
+      }
+      return Find(session, element, EntryByOid(session, element));
+    }
+    const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
+    if (!builtin) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    const auto granted = BuiltinTypeGrant(
+      *session.context, builtin->IsArray() ? builtin->elem : builtin->oid);
+    return ObjectTarget{granted ? granted.get() : &kBuiltinPermissions};
   }
 };
 

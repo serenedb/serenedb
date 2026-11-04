@@ -166,3 +166,40 @@ reporting_team	read-only reporting users
 
 statement ok
 DROP ROLE reporting_team;
+
+# DOCS_TEST: example_019
+
+statement ok
+DROP FUNCTION IF EXISTS describe_price(integer);
+
+statement ok
+DROP FUNCTION IF EXISTS describe_price(text);
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION describe_price(cents INTEGER) RETURNS TEXT LANGUAGE SQL AS 'SELECT (cents / 100.0)::TEXT';
+
+statement ok
+CREATE FUNCTION describe_price(label TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT label';
+
+statement ok
+COMMENT ON FUNCTION describe_price(integer) IS 'price in cents';
+
+query
+SELECT oid::regprocedure::text AS function, obj_description(oid, 'pg_proc') AS comment
+FROM pg_proc
+WHERE proname = 'describe_price'
+ORDER BY 1;
+----
+function	comment
+describe_price(integer)	price in cents
+describe_price(text)	NULL
+
+# DOCS_TEST_END
+
+statement ok
+DROP FUNCTION describe_price(integer);
+
+statement ok
+DROP FUNCTION describe_price(text);

@@ -29,8 +29,6 @@ To unset a comment, set it to `NULL`, e.g.:
 <SqlLogicTest id="sql/statements/comment_on/index/example_009" />
 
 
-Commenting on other catalog objects — views, indexes, sequences, types and macros — is not yet supported and currently returns an error.
-
 Commenting on a `VIEW`:
 
 <SqlLogicTest id="sql/statements/comment_on/index/example_003" />
@@ -59,6 +57,14 @@ Commenting on a `MACRO`:
 Commenting on a `MACRO TABLE`:
 
 <SqlLogicTest id="sql/statements/comment_on/index/example_008" />
+
+## Functions and procedures
+
+`COMMENT ON FUNCTION`, `COMMENT ON PROCEDURE` and `COMMENT ON ROUTINE` comment on the overload the argument list after the name names, or on the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Each overload keeps its own comment, which `obj_description(oid, 'pg_proc')` reads back:
+
+<SqlLogicTest id="sql/statements/comment_on/index/example_019" />
+
+Commenting on an overload takes its owner.
 
 
 ## Databases and roles

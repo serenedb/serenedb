@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "pg/catalog/builtin/builtin.h"
+#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/lookup.h"
@@ -191,7 +192,12 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typtypmod">(&BuiltinType::typmod),
     Col<"typnotnull">(&BuiltinType::notnull),
     Col<"typdefault">(
-      [](const auto& type) { return NonEmpty(type.default_text); }));
+      [](const auto& type) { return NonEmpty(type.default_text); }),
+    Col<"typacl">([](const auto& type, SystemScan& scan) -> const auto& {
+      static const duckdb::vector<duckdb::AclItem> kDefault;
+      const auto granted = BuiltinTypeGrant(scan.Context(), type.oid);
+      return granted ? granted->acl : kDefault;
+    }));
 
   static constexpr auto kEnumType = Shape<kSql, const UserType>(
     kUserTypeColumns, kTypeTraits, Col<"typlen">([](const auto&) { return 4; }),

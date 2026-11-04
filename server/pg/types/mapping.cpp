@@ -33,6 +33,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/types/geometric.h"
 #include "pg/types/range.h"
@@ -475,6 +476,17 @@ uint32_t Type2Oid(const duckdb::LogicalType& type) {
 
 uint32_t CatalogTypeOid(const duckdb::LogicalType& type) {
   return CatalogLogical2Pg(type).oid;
+}
+
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type,
+                             std::string& name) {
+  const auto* builtin = FindBuiltinType(CatalogTypeOid(type));
+  if (!builtin) {
+    return 0;
+  }
+  const auto sql_name = SqlTypeName(builtin->oid);
+  name = sql_name.empty() ? builtin->name : sql_name;
+  return builtin->oid;
 }
 
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {

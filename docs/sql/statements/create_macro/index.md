@@ -130,7 +130,7 @@ An `OUT` parameter is a column of the result and an `INOUT` parameter is both an
 
 It is possible to overload a macro based on the types or the number of its parameters; this works for both scalar and table macros.
 
-`ALTER FUNCTION`, `ALTER PROCEDURE` and `ALTER ROUTINE` rename a function with `RENAME TO` and change its owner with `OWNER TO`. They take an argument list after the name, as in PostgreSQL, but apply to every overload of the name.
+`ALTER FUNCTION`, `ALTER PROCEDURE` and `ALTER ROUTINE` rename a function with `RENAME TO` and change its owner with `OWNER TO`, for the overload the argument list after the name names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. A renamed overload joins the overloads of its new name, and `RENAME TO` fails with `function name(...) already exists in schema "..."` when the new name has an overload with the same arguments. The only overload of a name renamed to an unused name keeps its `oid`; an overload renamed away from other overloads of its name, or to a name that has overloads, gets a new `oid`.
 
 They also change `SECURITY DEFINER` or `SECURITY INVOKER`, `IMMUTABLE`, `STABLE` or `VOLATILE`, and `SET search_path` (`RESET search_path` or `RESET ALL` removes it), for the overload the argument list names, or for the function's only overload when the list is left out; with several overloads and no list, the statement fails with `function name "..." is not unique`. Only the function's owner or a superuser may do it. `COST`, `ROWS`, `PARALLEL` and `LEAKPROOF` are accepted and ignored, and `STRICT` or `CALLED ON NULL INPUT` may only restate what the function already is.
 

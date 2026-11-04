@@ -411,6 +411,16 @@ duckdb::optional_ptr<const duckdb::Permissions> BuiltinFunctionGrant(
                                        BuiltinFunctionKey(function));
 }
 
+duckdb::optional_ptr<const duckdb::Permissions> BuiltinTypeGrant(
+  duckdb::ClientContext& context, duckdb::idx_t type) {
+  const auto& security = context.security;
+  if (!security || !security->HasTypeGrants()) {
+    return nullptr;
+  }
+  const auto database = duckdb::DatabaseManager::TryGetDefaultDatabase(context);
+  return security->TypePermissions(database.GetIdentifierName(), type);
+}
+
 std::string BuiltinSignatureKey(
   const duckdb::CatalogEntry& function,
   const duckdb::vector<duckdb::LogicalType>& arguments) {

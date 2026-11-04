@@ -233,7 +233,7 @@ db error: ERROR: Could not rename "pudge_view" to "pudge_view": another entry wi
 statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
 ----
-db error: ERROR: Could not rename "clickclack" to "clickclack": another entry with this name already exists!
+db error: ERROR: function clickclack() already exists in schema "public"
 
 
 statement error

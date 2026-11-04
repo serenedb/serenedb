@@ -32,6 +32,14 @@ statement ok
 GRANT EXECUTE ON FUNCTION lower(text) TO scgr_monitor;
 
 
+statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO scgr_monitor;
+
+
 query
 SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
        has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
@@ -108,3 +116,15 @@ WHERE oid = 'lower(text)'::regprocedure;
 ----
 acl	monitor	other
 postgres=X/postgres,scgr_monitor=X/postgres	t	f
+
+
+connection after_crash
+query
+SELECT array_to_string(typacl, ',') AS acl,
+       has_type_privilege('scgr_monitor', 'integer', 'USAGE') AS monitor,
+       has_type_privilege('pg_database_owner', 'integer[]', 'USAGE') AS other
+FROM pg_type
+WHERE oid = 'integer'::regtype;
+----
+acl	monitor	other
+postgres=U/postgres,scgr_monitor=U/postgres	t	f

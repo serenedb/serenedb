@@ -1,0 +1,140 @@
+statement ok
+CREATE FUNCTION rof_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x + 1';
+
+
+statement ok
+CREATE FUNCTION rof_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x || x';
+
+
+statement error
+ALTER FUNCTION rof_f RENAME TO rof_g;
+----
+db error: ERROR: function name "rof_f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement ok
+CREATE TABLE rof_oids AS SELECT oid::regprocedure::text AS f, oid FROM pg_proc WHERE proname = 'rof_f';
+
+
+statement ok
+ALTER FUNCTION rof_f(integer) RENAME TO rof_g;
+
+
+query
+SELECT oid::regprocedure::text AS f FROM pg_proc WHERE proname IN ('rof_f', 'rof_g') ORDER BY 1;
+----
+f
+rof_f(text)
+rof_g(integer)
+
+
+# PostgreSQL keeps the oid of a renamed overload; SereneDB gives an overload
+# that moves to another name a new one.
+onlyif postgres
+query
+SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
+----
+was	now
+rof_f(integer)	rof_g(integer)
+rof_f(text)	rof_f(text)
+
+
+skipif postgres
+query
+SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
+----
+was	now
+rof_f(text)	rof_f(text)
+
+
+query
+SELECT rof_g(1) AS g, rof_f('a') AS f;
+----
+g	f
+2	aa
+
+
+statement ok
+ALTER FUNCTION rof_f(text) RENAME TO rof_g;
+
+
+query
+SELECT oid::regprocedure::text AS f FROM pg_proc WHERE proname IN ('rof_f', 'rof_g') ORDER BY 1;
+----
+f
+rof_g(integer)
+rof_g(text)
+
+
+onlyif postgres
+query
+SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
+----
+was	now
+rof_f(integer)	rof_g(integer)
+rof_f(text)	rof_g(text)
+
+
+skipif postgres
+query
+SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
+----
+was	now
+
+
+query
+SELECT rof_g(1) AS g, rof_g('a') AS t;
+----
+g	t
+2	aa
+
+
+statement ok
+ALTER FUNCTION rof_g(text) RENAME TO rof_t;
+
+
+statement ok
+ALTER FUNCTION rof_t RENAME TO rof_u;
+
+
+query
+SELECT oid::regprocedure::text AS f FROM pg_proc WHERE proname IN ('rof_g', 'rof_t', 'rof_u') ORDER BY 1;
+----
+f
+rof_g(integer)
+rof_u(text)
+
+
+statement ok
+CREATE FUNCTION rof_h(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+onlyif postgres
+statement error
+ALTER FUNCTION rof_g(integer) RENAME TO rof_h;
+----
+db error: ERROR: function rof_h(integer) already exists in schema "public"
+
+
+skipif postgres
+statement error
+ALTER FUNCTION rof_g(integer) RENAME TO rof_h;
+----
+db error: ERROR: function rof_h(INTEGER) already exists in schema "public"
+
+
+statement ok
+DROP FUNCTION rof_h(integer);
+
+
+statement ok
+DROP FUNCTION rof_g(integer);
+
+
+statement ok
+DROP FUNCTION rof_u(text);
+
+
+statement ok
+DROP TABLE rof_oids;

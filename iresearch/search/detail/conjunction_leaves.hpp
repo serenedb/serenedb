@@ -68,9 +68,9 @@ class ConjunctionLeaves {
 
   doc_id_t Next() { return Agree(Lead().Next()); }
 
-  template<typename Admit>
-  doc_id_t Next(doc_id_t end, Admit&& admit) {
-    return Agree(Lead().Next(), end, admit);
+  template<typename Consult>
+  doc_id_t Next(doc_id_t end, Consult& consult) {
+    return Agree(Lead().Next(), end, consult);
   }
 
   IRS_FORCE_INLINE doc_id_t ProbeRest(doc_id_t target) {
@@ -167,24 +167,28 @@ class ConjunctionLeaves {
     return doc;
   }
 
-  template<typename Admit>
-  doc_id_t Agree(doc_id_t doc, doc_id_t end, Admit& admit) {
+  template<typename Consult>
+  doc_id_t Agree(doc_id_t doc, doc_id_t end, Consult& consult) {
+    const auto size = _leaves.size();
     while (doc < end) {
-      auto it = _leaves.begin() + 1;
-      const auto stop = _leaves.end();
-      for (; it != stop; ++it) {
-        if (!it->Covers(doc) && !admit(doc, it)) {
+      size_t i = 1;
+      for (; i != size; ++i) {
+        auto& leaf = _leaves[i];
+        const bool consulted = !leaf.Covers(doc);
+        if (consulted && !consult.Admits(doc, i)) {
           doc = Lead().Next();
           break;
         }
-        if (const auto probe =
-              ProbeOf(*it, doc, static_cast<size_t>(it - _leaves.begin()));
-            probe != doc) {
+        const auto probe = ProbeOf(leaf, doc, i);
+        if (consulted) {
+          consult.Probed(i, probe == doc);
+        }
+        if (probe != doc) {
           doc = Lead().Seek(probe);
           break;
         }
       }
-      if (it == stop) {
+      if (i == size) {
         return doc;
       }
     }

@@ -126,16 +126,36 @@ inline double DocsEmitCost(double docs, double words) noexcept {
   return kEmitWordCost * words * (1.0 - std::exp(-docs / words));
 }
 
-inline constexpr double kLeafReadCost =
+inline constexpr double kLeafDocsReadCost =
   kStepBaseCost + kStepJumpCost +
-  2.0 * static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
+  static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
+inline constexpr double kLeafReadCost =
+  kLeafDocsReadCost + static_cast<double>(doc_limits::kBlockSize) * kDecodeCost;
 inline constexpr double kBoundCheckCost = kStepJumpCost + kHitCost;
 
-inline double LeadProbeCost(uint64_t lead_docs, uint64_t docs) noexcept {
-  const auto per_lead = static_cast<double>(docs) /
-                        static_cast<double>(std::max<uint64_t>(lead_docs, 1));
-  return std::min(1.0, per_lead) * kStepBaseCost +
-         per_lead / static_cast<double>(doc_limits::kBlockSize) * kLeafReadCost;
+inline double LeadLocateCost(uint64_t lead_docs, uint64_t docs) noexcept {
+  return std::min(1.0,
+                  static_cast<double>(docs) /
+                    static_cast<double>(std::max<uint64_t>(lead_docs, 1))) *
+         kStepBaseCost;
+}
+
+inline double LeadLeafReads(uint64_t lead_docs, uint64_t docs) noexcept {
+  return static_cast<double>(docs) /
+         static_cast<double>(std::max<uint64_t>(lead_docs, 1)) /
+         static_cast<double>(doc_limits::kBlockSize);
+}
+
+inline double BoundCheckSaving(double share, double read, double locate,
+                               double pass, double match) noexcept {
+  const auto admitted = share * pass;
+  const auto none = std::exp(-admitted);
+  const auto checked = admitted > 0 ? (1.0 - none) / admitted : 1.0;
+  const auto unread =
+    share > 0 ? (none - std::exp(-share)) / share : 1.0 - pass;
+  return read * unread +
+         checked * ((1.0 - pass) * (locate + match * kStepBaseCost) -
+                    (1.0 - match) * kBoundCheckCost - match * kHitCost);
 }
 
 inline ClauseCost TermClauseCost(uint64_t docs, doc_id_t docs_count) noexcept {

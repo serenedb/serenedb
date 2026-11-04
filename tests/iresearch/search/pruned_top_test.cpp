@@ -515,6 +515,33 @@ TEST(PrunedExcludeCosts, sparse_term_under_a_dense_lead_is_probed) {
   EXPECT_EQ(costs.Probed(true), irs::detail::ExcludeForm::Probes);
 }
 
+TEST(PrunedPhraseGate, bound_checks_pay_when_checked_docs_reach_the_bound) {
+  EXPECT_GT(
+    irs::detail::BoundCheckSaving(7.28, irs::detail::kLeafReadCost,
+                                  irs::detail::kStepBaseCost, 0.36, 0.97),
+    0);
+  EXPECT_GT(
+    irs::detail::BoundCheckSaving(8.02, irs::detail::kLeafDocsReadCost,
+                                  irs::detail::kStepBaseCost, 0.03, 0.45),
+    0);
+}
+
+TEST(PrunedPhraseGate, bound_checks_cost_when_cold_leaves_are_read_anyway) {
+  EXPECT_LT(
+    irs::detail::BoundCheckSaving(6.54, irs::detail::kLeafDocsReadCost,
+                                  irs::detail::kStepBaseCost, 0.5, 0.13),
+    0);
+  EXPECT_LT(
+    irs::detail::BoundCheckSaving(4.78, irs::detail::kLeafDocsReadCost,
+                                  irs::detail::kStepBaseCost, 0.7, 0.53),
+    0);
+}
+
+TEST(PrunedPhraseGate, union_checks_pay_while_they_reject_term_probes) {
+  EXPECT_GT(irs::detail::BoundCheckSaving(0, 2.6, 30.1, 0.38, 0.54), 0);
+  EXPECT_LT(irs::detail::BoundCheckSaving(0, 2.6, 30.1, 0.9, 0.54), 0);
+}
+
 TEST_P(PrunedTopTest, conjunctions_with_nested_disjunctions) {
   Build();
   for (const auto& shape : std::vector<Shape>{

@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
@@ -211,17 +212,28 @@ class PhraseSlots {
     return Collect() ? _matcher.DocFreqBound() : 0;
   }
 
-  template<typename Gates>
-  void Gate(Gates&& gates) {
+  void Gate() {
     const auto lead = EstimateOf(LeavesOf(_leaves.Lead()));
     for (size_t i = 1; i != _leaves.Size(); ++i) {
-      const auto leaves = LeavesOf(_leaves.begin()[i]);
-      if (!gates(lead, leaves)) {
+      auto& slot = _leaves.begin()[i];
+      const auto leaves = LeavesOf(slot);
+      double reads = 0;
+      double locate = 0;
+      for (const auto& leaf : leaves) {
+        reads += LeadLeafReads(lead, leaf.Estimate());
+        locate += LeadLocateCost(lead, leaf.Estimate());
+      }
+      if (locate + reads * kLeafReadCost <= kBoundCheckCost) {
         continue;
       }
-      const auto docs = EstimateOf(leaves);
-      _gates[i].share = static_cast<double>(lead) * doc_limits::kBlockSize /
-                        static_cast<double>(std::max<uint64_t>(docs, 1));
+      auto& gate = _gates[i];
+      gate.locate = locate;
+      if (leaves.size() == 1) {
+        gate.share = 1.0 / reads;
+        gate.read = ReadCostOf(slot);
+      } else {
+        gate.read = reads * kLeafReadCost;
+      }
       _gating = true;
     }
   }
@@ -232,24 +244,32 @@ class PhraseSlots {
   doc_id_t Next(doc_id_t, doc_id_t end, Admit&& admit)
     requires(kHasFreqBound)
   {
-    return _leaves.Next(end, [&](doc_id_t candidate, Slot* cold) {
-      auto& gate = _gates[static_cast<size_t>(cold - _leaves.begin())];
-      if (gate.share == 0) {
-        return true;
+    struct Consult {
+      IRS_FORCE_INLINE bool Admits(doc_id_t candidate, size_t cold) {
+        auto& gate = slots._gates[cold];
+        if (!gate.Armed() || gate.Skips()) {
+          return true;
+        }
+        auto* slot = slots._leaves.begin();
+        const auto* const stop = slot + cold;
+        auto freq = DocFreqOf(*slot);
+        while (++slot != stop) {
+          freq = std::min(freq, DocFreqOf(*slot));
+        }
+        const bool admitted =
+          admit(candidate, slots._matcher.FreqBoundOf(freq));
+        gate.Checked(admitted);
+        return admitted;
       }
-      if (gate.skip != 0) {
-        --gate.skip;
-        return true;
+
+      IRS_FORCE_INLINE void Probed(size_t cold, bool matched) noexcept {
+        slots._gates[cold].Probed(matched);
       }
-      auto* slot = _leaves.begin();
-      auto freq = DocFreqOf(*slot);
-      while (++slot != cold) {
-        freq = std::min(freq, DocFreqOf(*slot));
-      }
-      const bool admitted = admit(candidate, _matcher.FreqBoundOf(freq));
-      gate.Observe(admitted);
-      return admitted;
-    });
+
+      PhraseSlots& slots;
+      Admit& admit;
+    } consult{*this, admit};
+    return _leaves.Next(end, consult);
   }
 
   bool MatchOrdered(doc_id_t)
@@ -299,28 +319,63 @@ class PhraseSlots {
   using Leaves = ConjunctionLeaves<Slot, N>;
 
   static constexpr uint32_t kGateWindow = 64;
+  static constexpr uint32_t kGateSkip = 2 * kGateWindow;
+  static constexpr uint32_t kGateBackoff = 6;
+
+  static double ReadCostOf(Slot& slot) noexcept {
+    if constexpr (kDeferrable) {
+      if (slot.Deferred()) {
+        return kLeafDocsReadCost;
+      }
+    }
+    return kLeafReadCost;
+  }
 
   struct SlotGate {
-    void Observe(bool admitted) noexcept {
+    bool Armed() const noexcept { return locate != 0; }
+
+    bool Skips() noexcept {
+      if (skip == 0) {
+        return false;
+      }
+      --skip;
+      return true;
+    }
+
+    void Probed(bool matched) noexcept {
+      ++probes;
+      matches += static_cast<uint32_t>(matched);
+    }
+
+    IRS_FORCE_INLINE void Checked(bool admitted) noexcept {
       admits += static_cast<uint32_t>(admitted);
-      if (++checks != kGateWindow) {
-        return;
+      if (++checks == kGateWindow) [[unlikely]] {
+        Decide();
       }
-      const auto passes = admits * share;
-      const bool read = passes >= checks;
-      if (read && read_before) {
-        skip = static_cast<uint32_t>(passes);
+    }
+
+    IRS_NO_INLINE void Decide() noexcept {
+      const auto pass = static_cast<double>(admits) / checks;
+      const auto match = (matches + 1.0) / (probes + 2.0);
+      if (BoundCheckSaving(share, read, locate, pass, match) > 0) {
+        backoff /= 2;
+      } else {
+        skip = kGateSkip << backoff;
+        backoff = std::min(backoff + 1, kGateBackoff);
       }
-      read_before = read;
       checks = 0;
       admits = 0;
     }
 
     double share = 0;
+    double read = 0;
+    double locate = 0;
     uint32_t checks = 0;
     uint32_t admits = 0;
+    uint32_t probes = 0;
+    uint32_t matches = 0;
     uint32_t skip = 0;
-    bool read_before = false;
+    uint32_t backoff = 0;
   };
 
   static std::span<Leaf> LeavesOf(Slot& slot) noexcept {

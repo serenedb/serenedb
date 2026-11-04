@@ -24,11 +24,12 @@ CREATE TABLE __docs_noop_index_storage_001 (i INTEGER);
 query
 SELECT name
 FROM duckdb_settings()
-WHERE name IN ('enable_external_file_cache', 'external_file_cache_spill_size', 'memory_limit', 'max_temp_directory_size', 'temp_directory')
+WHERE name IN ('enable_external_file_cache', 'external_file_cache_min_memory', 'external_file_cache_spill_size', 'memory_limit', 'max_temp_directory_size', 'temp_directory')
 ORDER BY name;
 ----
 name
 enable_external_file_cache
+external_file_cache_min_memory
 external_file_cache_spill_size
 max_temp_directory_size
 memory_limit

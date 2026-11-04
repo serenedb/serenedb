@@ -351,6 +351,7 @@ Local paths, remote object stores and the external file cache.
 | `enable_fsst_vectors` | Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
 | `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
+| `external_file_cache_min_memory` | The memory that external file cache blocks of remote files keep when queries need memory (e.g. 1GB), by default 5% of memory_limit; below it, queries spill to the temporary directory first. | `VARCHAR` | `GLOBAL` | 5% of `memory_limit` |
 | `external_file_cache_spill_size` | The disk space in the temporary directory that copies of evicted external file cache blocks of remote files may take (e.g. 50GB), by default half of max_temp_directory_size; 0 drops evicted blocks instead. | `VARCHAR` | `GLOBAL` | half of `max_temp_directory_size` |
 | `extra_http_headers` | Extra HTTP headers added to every request. | `MAP(VARCHAR, VARCHAR)` | `GLOBAL` | `{}` |
 | `file_search_path` | A comma separated list of directories to search for input files | `VARCHAR` | `SESSION` |  |

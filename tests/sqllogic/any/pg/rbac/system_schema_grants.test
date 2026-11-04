@@ -1,0 +1,153 @@
+statement ok
+DROP ROLE IF EXISTS ssg_reader, ssg_other;
+
+
+statement ok
+CREATE ROLE ssg_reader;
+
+
+statement ok
+CREATE ROLE ssg_other;
+
+
+statement ok
+GRANT USAGE ON SCHEMA pg_catalog TO ssg_reader;
+
+
+query
+SELECT array_to_string(nspacl, ',') AS acl FROM pg_namespace WHERE nspname = 'pg_catalog';
+----
+acl
+postgres=UC/postgres,=U/postgres,ssg_reader=U/postgres
+
+
+query
+SELECT has_schema_privilege('ssg_reader', 'pg_catalog', 'USAGE') AS usage,
+       has_schema_privilege('ssg_reader', 'pg_catalog', 'CREATE') AS create;
+----
+usage	create
+t	f
+
+
+query
+SELECT refobjid::regrole::text AS role, deptype
+FROM pg_shdepend
+WHERE classid = 'pg_namespace'::regclass AND objid = (SELECT oid FROM pg_namespace WHERE nspname = 'pg_catalog');
+----
+role	deptype
+ssg_reader	a
+
+
+statement ok
+REVOKE USAGE ON SCHEMA information_schema FROM PUBLIC;
+
+
+query
+SELECT array_to_string(nspacl, ',') AS acl FROM pg_namespace WHERE nspname = 'information_schema';
+----
+acl
+postgres=UC/postgres
+
+
+query
+SELECT has_schema_privilege('ssg_reader', 'information_schema', 'USAGE') AS usage;
+----
+usage
+f
+
+
+statement ok
+SET ROLE ssg_reader;
+
+
+statement error
+SELECT count(*) > 0 AS listed FROM information_schema.schemata;
+----
+db error: ERROR: permission denied for schema information_schema
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON SCHEMA information_schema TO PUBLIC;
+
+
+query
+SELECT array_to_string(nspacl, ',') AS acl FROM pg_namespace WHERE nspname = 'information_schema';
+----
+acl
+postgres=UC/postgres,=U/postgres
+
+
+statement ok
+REVOKE USAGE ON SCHEMA pg_catalog FROM PUBLIC;
+
+
+statement ok
+SET ROLE ssg_reader;
+
+
+query
+SELECT count(*) > 0 AS listed FROM pg_catalog.pg_class;
+----
+listed
+t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE ssg_other;
+
+
+statement error
+SELECT count(*) > 0 AS listed FROM pg_catalog.pg_class;
+----
+db error: ERROR: permission denied for schema pg_catalog
+
+
+query
+SELECT count(*) > 0 AS listed FROM pg_class;
+----
+listed
+t
+
+
+statement error
+SELECT pg_catalog.lower('A');
+----
+db error: ERROR: permission denied for schema pg_catalog
+
+
+query
+SELECT lower('A') AS v;
+----
+v
+a
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON SCHEMA pg_catalog TO PUBLIC;
+
+
+statement ok
+DROP OWNED BY ssg_reader;
+
+
+query
+SELECT array_to_string(nspacl, ',') AS acl FROM pg_namespace WHERE nspname = 'pg_catalog';
+----
+acl
+postgres=UC/postgres,=U/postgres
+
+
+statement ok
+DROP ROLE ssg_reader, ssg_other;

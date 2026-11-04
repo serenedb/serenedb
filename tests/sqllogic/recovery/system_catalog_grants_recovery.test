@@ -16,6 +16,14 @@ statement ok
 GRANT SELECT (relname, relkind) ON pg_catalog.pg_class TO scgr_monitor;
 
 
+statement ok
+GRANT USAGE ON SCHEMA information_schema TO scgr_monitor;
+
+
+statement ok
+REVOKE USAGE ON SCHEMA information_schema FROM PUBLIC;
+
+
 query
 SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
        has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
@@ -68,3 +76,15 @@ SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname IN ('pg_a
 acl
 postgres=arwdDxtm/postgres,scgr_monitor=r/postgres
 postgres=arwdDxtm/postgres
+
+
+connection after_crash
+query
+SELECT array_to_string(nspacl, ',') AS acl,
+       has_schema_privilege('scgr_monitor', 'information_schema', 'USAGE') AS monitor,
+       has_schema_privilege('pg_database_owner', 'information_schema', 'USAGE') AS other
+FROM pg_namespace
+WHERE nspname = 'information_schema';
+----
+acl	monitor	other
+postgres=UC/postgres,scgr_monitor=U/postgres	t	f

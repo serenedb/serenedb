@@ -599,7 +599,13 @@ struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
   static std::optional<ObjectTarget> Find(const Session& session,
                                           uint64_t oid) {
     if (FindSystemObject(kSystemNamespaces, oid)) {
-      return ObjectTarget{&SchemaPermissions()};
+      const auto& security = session.context->security;
+      const auto granted =
+        security && session.database
+          ? security->RelationPermissions(
+              session.database->GetName().GetIdentifierName(), oid)
+          : nullptr;
+      return ObjectTarget{granted ? granted.get() : &SchemaPermissions()};
     }
     if (const auto schema = SchemaByOid(session, oid)) {
       return ObjectTarget{&PrivilegePermissions(*session.context, *schema)};

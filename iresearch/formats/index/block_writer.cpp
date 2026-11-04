@@ -207,11 +207,6 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
 
 }  // namespace
 
-void FsstEncoderDelete::operator()(
-  duckdb_fsst_encoder_t* encoder) const noexcept {
-  duckdb_fsst_destroy(encoder);
-}
-
 BlockWriter::BlockWriter(uint64_t inline_base) noexcept
   : _out{&_pages_out}, _inline_base{inline_base} {}
 

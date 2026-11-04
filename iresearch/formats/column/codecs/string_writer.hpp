@@ -87,7 +87,6 @@ class StringAccumulator {
   void Reserve(uint64_t rows, uint64_t distinct);
   void Add(const duckdb::Vector& input);
 
-  uint64_t row_count = 0;
   uint64_t null_count = 0;
   std::vector<std::string_view> entries;
   ScratchVector<uint32_t> codes;

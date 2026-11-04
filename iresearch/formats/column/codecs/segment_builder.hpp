@@ -146,13 +146,24 @@ class SegmentBuilder {
       _dedup{dedup},
       _codes_tuning{codes_tuning} {}
 
-  void Begin(Shape shape, uint8_t level, FrameLayout layout, uint64_t begin);
+  template<typename Leaf>
+  void Begin(Leaf& leaf, const Config& config, uint64_t begin) {
+    _shape = config.choice.shape;
+    _level = config.level;
+    _layout = config.layout;
+    _next = begin;
+    if (_shape == Shape::Dedup) {
+      _dedup.Begin(_acc.entries.size());
+    }
+    leaf.Begin(_shape, _level, _layout);
+  }
 
   template<typename Leaf>
   uint64_t Cut(Leaf& leaf, uint32_t target) {
     const uint64_t step = target / kEstimateSteps;
+    const uint64_t end = _acc.codes.size();
     uint64_t estimated_raw = _raw;
-    while (_next < _acc.row_count) {
+    while (_next < end) {
       AddRow(leaf, _next++);
       if (_rows % kEstimateEvery != 0 && _raw - estimated_raw < step) {
         continue;

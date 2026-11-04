@@ -71,17 +71,6 @@ void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
   h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
 }
 
-void SegmentBuilder::Begin(Shape shape, uint8_t level, FrameLayout layout,
-                           uint64_t begin) {
-  _shape = shape;
-  _level = level;
-  _layout = layout;
-  _next = begin;
-  if (shape == Shape::Dedup) {
-    _dedup.Begin(_acc.entries.size());
-  }
-}
-
 uint64_t SegmentBuilder::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
          CodesBytes(_shape, _rows, _entries.size(), _runs, _codes_tuning);

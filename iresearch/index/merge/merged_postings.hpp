@@ -169,13 +169,13 @@ class SortedPostings : public TermPostings {
   std::vector<Cursor> _cursors;
   std::vector<uint32_t> _heap;
   ProgressTracker _progress;
-  size_t _input[doc_limits::kBlockSize];
+  uint32_t _input[doc_limits::kBlockSize];
   uint32_t _freq[doc_limits::kBlockSize];
   uint64_t _skip[doc_limits::kBlockSize];
   uint32_t _recorded = 0;
   uint32_t _walked = 0;
   uint64_t _left = 0;
-  size_t _current = 0;
+  uint32_t _current = 0;
   bool _has_freq = false;
   bool _has_pos = false;
 };

@@ -113,12 +113,11 @@ class SegmentWriter {
     uint64_t row = 0;
     bool first = true;
     const bool due = !_named && (!_tuning.choice || _tuning.clock.Due());
-    while (row < _acc.row_count) {
+    while (row < _acc.codes.size()) {
       const auto cutter = Cutter();
       auto* seg = Acquire();
       const auto end = With(cutter, [&](auto& enc) {
-        _builder.Begin(cutter.choice.shape, cutter.level, cutter.layout, row);
-        enc.Begin(cutter.choice.shape, cutter.level, cutter.layout);
+        _builder.Begin(enc, cutter, row);
         const auto stop = _builder.Cut(enc, _params.segment_target);
         _builder.Finish(enc, *seg);
         return stop;
@@ -126,7 +125,7 @@ class SegmentWriter {
       if (!_named) {
         const bool scheduled = first && due;
         const bool drift =
-          !scheduled && Drifted(*seg, first || end < _acc.row_count);
+          !scheduled && Drifted(*seg, first || end < _acc.codes.size());
         const bool retune = drift && !first;
         if (retune) {
           if (auto& fsst =
@@ -171,7 +170,7 @@ class SegmentWriter {
       };
     }
     const bool repeats =
-      Repeats(_acc.entries.size(), _acc.row_count - _acc.null_count);
+      Repeats(_acc.entries.size(), _acc.codes.size() - _acc.null_count);
     return {
       .choice = {repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
       .level = kLz4Fast,
@@ -425,8 +424,7 @@ class SegmentWriter {
     }
     auto* seg = Acquire();
     With(config, [&](auto& enc) {
-      _builder.Begin(config.choice.shape, config.level, config.layout, _begin);
-      enc.Begin(config.choice.shape, config.level, config.layout);
+      _builder.Begin(enc, config, _begin);
       _builder.AddUntil(enc, _end);
       _builder.Finish(enc, *seg);
       return _end;
@@ -582,7 +580,6 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     }
     entries.emplace_back(sv);
   }
-  row_count += count;
 }
 
 bool TrainsDictionary(const StringChoice* named,
@@ -623,7 +620,6 @@ SealOutcome SealSegments(const StringAccumulator& acc,
                          const ColCodecParams& params,
                          const duckdb::LogicalType& type, StringTuning& tuning,
                          SegmentSink sink) {
-  SDB_ASSERT(acc.codes.size() == acc.row_count);
   return SegmentWriter{acc, named, params, type, tuning}.Run(sink);
 }
 

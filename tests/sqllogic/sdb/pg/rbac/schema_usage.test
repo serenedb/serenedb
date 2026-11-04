@@ -51,7 +51,7 @@ query
 SELECT nspacl FROM pg_namespace WHERE nspname = 'public';
 ----
 nspacl
-{postgres=UC/postgres,=U/postgres}
+{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}
 
 
 connection su user=su_reader password=su_reader_pw

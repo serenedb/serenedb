@@ -551,7 +551,7 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.SetQualifiedName(duckdb::QualifiedName(
     {duckdb::Identifier{irs::StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions = pg::SchemaPermissions();
+  info.permissions = pg::PublicSchemaPermissions();
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);

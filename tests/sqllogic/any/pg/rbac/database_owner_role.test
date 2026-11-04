@@ -79,6 +79,26 @@ SELECT count(*) FROM dor_s.dor_t;
 db error: ERROR: permission denied for schema dor_s
 
 
+connection c_owner_db user=dor_owner password=dor_pw database=dor_db
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'public';
+----
+owner
+pg_database_owner
+
+
+connection c_owner_db user=dor_owner password=dor_pw database=dor_db
+statement ok
+CREATE TABLE public.dor_owned (id INTEGER);
+
+
+connection c_other_db user=dor_other password=dor_pw database=dor_db
+statement error
+CREATE TABLE public.dor_denied (id INTEGER);
+----
+db error: ERROR: permission denied for schema public
+
+
 connection c_owner_here user=dor_owner password=dor_pw
 query
 SELECT pg_has_role('pg_database_owner', 'MEMBER') AS member;

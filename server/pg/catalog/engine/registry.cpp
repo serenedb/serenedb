@@ -360,6 +360,18 @@ const duckdb::Permissions& SchemaPermissions() {
   return kPermissions;
 }
 
+const duckdb::Permissions& PublicSchemaPermissions() {
+  static const duckdb::Permissions kPermissions{
+    .owner = kPgDatabaseOwnerRole,
+    .acl = {{.grantee = kPgDatabaseOwnerRole,
+             .grantor = kPgDatabaseOwnerRole,
+             .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
+            {.grantee = kPublicGrantee,
+             .grantor = kPgDatabaseOwnerRole,
+             .privs = duckdb::AclMode::Usage}}};
+  return kPermissions;
+}
+
 void VisitSystemTables(std::string_view schema,
                        absl::FunctionRef<void(const SystemTable&)> visitor) {
   for (const auto* table : gTables) {

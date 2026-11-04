@@ -69,7 +69,8 @@ catalog::CompressionByColumn DeclaredCompression(
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.Oid(), column.CompressionType());
+      compression.emplace(connector::TableColumnId(column),
+                          column.CompressionType());
     }
   }
   return compression;
@@ -328,9 +329,13 @@ ResultWithTime Store::RefreshUnsafe(bool wait,
                                     RefreshResult& code) {
   SDB_ASSERT(_writer);
   const auto begin = std::chrono::steady_clock::now();
+  const auto enabled = [&] {
+    return _tasks_settings.refresh_interval_msec.load() != 0;
+  };
+  const RefreshGate scheduled{_settings_mutex, enabled};
   auto result = _durability.Refresh(
     *_writer, wait, progress, code, [&] { PublishSnapshot(); },
-    [&] { PublishSnapshot(); });
+    [&] { PublishSnapshot(); }, wait ? nullptr : &scheduled);
   const auto time_ms = MillisSince(begin);
   SDB_IF_FAILURE("Search::FailOnCommit") {
     result = absl::InternalError("debug failure point");
@@ -611,7 +616,6 @@ std::vector<irs::KeyRemoval> Store::TakeDeleteLog() {
 }
 
 void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  SDB_ASSERT(BuildInFlight());
   _writers.Drain(context);
 }
 
@@ -727,6 +731,56 @@ void Store::ReleaseLayout(duckdb::transaction_t owner) noexcept {
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
   _layout.owner = kNoLayoutOwner;
+  if (auto undo = std::exchange(_layout.schema_undo, std::nullopt)) {
+    _schema_epoch.store(undo->epoch);
+    _table_columns = std::move(undo->table_columns);
+    _compression = std::move(undo->compression);
+    RebuildConfig(_layout.configs, _layout.building_index);
+  }
+}
+
+uint64_t Store::BeginSchemaChange(duckdb::transaction_t owner) {
+  absl::MutexLock lock{&_layout_mutex};
+  SDB_ASSERT(_layout.owner == owner);
+  const auto epoch = _schema_epoch.load();
+  if (!_layout.schema_undo) {
+    _layout.schema_undo = SchemaUndo{
+      .epoch = epoch,
+      .table_columns = *_table_columns,
+      .compression = _compression,
+    };
+  }
+  _schema_epoch.store(epoch + 1);
+  return epoch + 1;
+}
+
+void Store::KeepSchemaChange(duckdb::transaction_t owner) noexcept {
+  absl::MutexLock lock{&_layout_mutex};
+  SDB_ASSERT(_layout.owner == owner);
+  _layout.schema_undo.reset();
+}
+
+void Store::AddTableColumns(const duckdb::ColumnList& columns) {
+  absl::MutexLock lock{&_layout_mutex};
+  _table_columns->merge(TableColumns(columns));
+  _compression.merge(DeclaredCompression(columns));
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::SetTableColumns(const duckdb::ColumnList& columns) {
+  absl::MutexLock lock{&_layout_mutex};
+  _table_columns = TableColumns(columns);
+  _compression = DeclaredCompression(columns);
+  RebuildConfig(_layout.configs, _layout.building_index);
+}
+
+void Store::SyncPublished() {
+  if (!_durability.SyncPublished()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("search store ", _id,
+              " cannot persist its rows, so its table cannot be altered"));
+  }
 }
 
 Store::BuildClaim Store::BeginIndexBuild(

@@ -1,0 +1,41 @@
+statement ok
+CREATE TABLE prt (a INTEGER);
+
+
+statement ok
+INSERT INTO prt VALUES (1);
+
+
+statement ok
+PREPARE prt_all AS SELECT * FROM prt;
+
+
+statement ok
+PREPARE prt_one(int) AS SELECT * FROM prt WHERE a = $1;
+
+
+query
+EXECUTE prt_one(1);
+----
+a
+1
+
+
+statement ok
+ALTER TABLE prt ADD COLUMN b TEXT;
+
+
+statement error
+EXECUTE prt_all;
+----
+db error: ERROR: cached plan must not change result type
+
+
+statement error
+EXECUTE prt_one(1);
+----
+db error: ERROR: cached plan must not change result type
+
+
+statement ok
+DEALLOCATE ALL;

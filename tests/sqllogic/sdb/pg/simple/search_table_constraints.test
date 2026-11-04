@@ -1,0 +1,403 @@
+control substitution on
+
+statement ok
+CREATE TABLE sc_nn (id INT, b TEXT NOT NULL) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX sc_nn_b ON sc_nn USING inverted (b);
+
+
+statement ok
+INSERT INTO sc_nn VALUES (1, 'x'), (2, 'y');
+
+
+statement error
+INSERT INTO sc_nn VALUES (3, NULL);
+----
+db error: ERROR: NOT NULL constraint failed: sc_nn.b
+
+
+statement error
+INSERT INTO sc_nn (id) VALUES (3);
+----
+db error: ERROR: NOT NULL constraint failed: sc_nn.b
+
+
+statement error
+INSERT INTO sc_nn
+SELECT i, CASE WHEN i = 3000 THEN NULL ELSE 'v' END FROM range(10, 5000) t(i);
+----
+db error: ERROR: NOT NULL constraint failed: sc_nn.b
+
+
+statement ok
+COPY (SELECT 3 AS id, NULL AS b) TO '${__TEST_DIR__}/sc_nn.csv' (HEADER);
+
+
+statement error
+COPY sc_nn FROM '${__TEST_DIR__}/sc_nn.csv' (HEADER);
+----
+db error: ERROR: NOT NULL constraint failed: sc_nn.b
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_nn;
+
+
+statement error
+UPDATE sc_nn SET b = NULL WHERE id = 2;
+----
+db error: ERROR: NOT NULL constraint failed: sc_nn.b
+
+
+query
+SELECT id, b FROM sc_nn ORDER BY id;
+----
+id	b
+1	x
+2	y
+
+
+query
+SELECT id FROM sc_nn WHERE NOT (b = 'x') ORDER BY id;
+----
+id
+2
+
+
+statement ok
+CREATE TABLE sc_ck (a INT, CONSTRAINT sc_ck_pos CHECK (a > 0)) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO sc_ck VALUES (1), (2);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_ck;
+
+
+statement error
+INSERT INTO sc_ck VALUES (3), (-3);
+----
+db error: ERROR: CHECK constraint failed on table "sc_ck" with expression CHECK((a > 0))
+
+
+statement error
+UPDATE sc_ck SET a = -a WHERE a = 2;
+----
+db error: ERROR: CHECK constraint failed on table "sc_ck" with expression CHECK((a > 0))
+
+
+statement ok
+INSERT INTO sc_ck VALUES (NULL);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_ck;
+
+
+query
+SELECT a FROM sc_ck ORDER BY a;
+----
+a
+1
+2
+NULL
+
+
+statement ok
+CREATE TABLE sc_alter (id INT PRIMARY KEY, b TEXT, n INT)
+WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+INSERT INTO sc_alter (id, b, n) VALUES (1, 'x', 1), (2, NULL, -2);
+
+
+statement error
+ALTER TABLE sc_alter ALTER COLUMN b SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: sc_alter.b
+
+
+statement error
+ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_n CHECK (n > 0);
+----
+db error: ERROR: CHECK constraint failed on table "sc_alter" with expression CHECK((n > 0))
+
+
+statement ok
+INSERT INTO sc_alter (id, b, n) VALUES (3, NULL, -3);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_alter;
+
+
+statement ok
+DELETE FROM sc_alter WHERE b IS NULL OR n <= 0;
+
+
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN b SET NOT NULL;
+
+
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN b SET NOT NULL;
+
+
+statement ok
+ALTER TABLE sc_alter ADD CONSTRAINT sc_alter_n CHECK (n > 0);
+
+
+statement error
+INSERT INTO sc_alter (id, b, n) VALUES (4, NULL, 4);
+----
+db error: ERROR: NOT NULL constraint failed: sc_alter.b
+
+
+statement error
+INSERT INTO sc_alter (id, b, n) VALUES (4, 'z', -4);
+----
+db error: ERROR: CHECK constraint failed on table "sc_alter" with expression CHECK((n > 0))
+
+
+statement error
+UPDATE sc_alter SET b = NULL;
+----
+db error: ERROR: NOT NULL constraint failed: sc_alter.b
+
+
+statement ok
+INSERT INTO sc_alter (id, b, n) VALUES (4, 'z', 4);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_alter;
+
+
+query
+SELECT id, b, n FROM sc_alter ORDER BY id;
+----
+id	b	n
+1	x	1
+4	z	4
+
+
+query
+SELECT attname, attnotnull FROM pg_attribute
+WHERE attrelid = 'sc_alter'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	attnotnull
+id	t
+b	t
+n	f
+
+
+statement error
+ALTER TABLE sc_alter ALTER COLUMN id DROP NOT NULL;
+----
+db error: ERROR: column "id" is in a primary key
+
+
+statement ok
+CREATE TABLE sc_gen (n INT, g INT GENERATED ALWAYS AS (n + 1) VIRTUAL)
+WITH (storage = 'search');
+
+
+statement error
+ALTER TABLE sc_gen ALTER COLUMN g SET NOT NULL;
+----
+db error: ERROR: Unsupported constraint for generated column!
+
+
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN b DROP NOT NULL;
+
+
+statement ok
+INSERT INTO sc_alter (id, b, n) VALUES (5, NULL, 5);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO sc_alter (id, b, n) VALUES (6, 'w', 6);
+
+
+statement error
+ALTER TABLE sc_alter ALTER COLUMN n SET NOT NULL;
+----
+db error: ERROR: ALTER TABLE on a search-backed table cannot run in a transaction that has already written to "sc_alter"
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sc_alter ALTER COLUMN n SET NOT NULL;
+
+
+statement error
+INSERT INTO sc_alter (id, b) VALUES (6, 'w');
+----
+db error: ERROR: NOT NULL constraint failed: sc_alter.n
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+INSERT INTO sc_alter (id, b) VALUES (6, 'w');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sc_alter;
+
+
+query
+SELECT id, b, n FROM sc_alter ORDER BY id;
+----
+id	b	n
+1	x	1
+4	z	4
+5	NULL	5
+6	w	NULL
+
+
+statement ok
+CREATE TABLE sc_rle (id INT, n INT) WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+INSERT INTO sc_rle VALUES (1, NULL), (2, 2), (3, 3);
+
+
+statement error
+ALTER TABLE sc_rle ALTER COLUMN n SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: sc_rle.n
+
+
+statement ok
+CREATE TABLE sc_race (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+INSERT INTO sc_race VALUES (1, NULL);
+
+
+connection s2
+statement async error
+ALTER TABLE sc_race ALTER COLUMN b SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: sc_race.b
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+wait
+
+
+connection s2
+statement ok
+DELETE FROM sc_race;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+ALTER TABLE sc_race ALTER COLUMN b SET NOT NULL;
+
+
+connection s1
+statement error
+INSERT INTO sc_race VALUES (2, 'x');
+----
+db error: ERROR: search table "sc_race" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection s1
+statement ok
+DELETE FROM sc_race;
+
+
+connection s2
+statement ok
+ROLLBACK;
+
+
+connection s1
+statement ok
+INSERT INTO sc_race VALUES (3, NULL);
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+ALTER TABLE sc_race ADD CONSTRAINT sc_race_id CHECK (id >= 3);
+
+
+connection s2
+statement ok
+INSERT INTO sc_race VALUES (4, NULL);
+
+
+connection s2
+statement ok
+COMMIT;
+
+
+connection s1
+statement error
+INSERT INTO sc_race VALUES (2, 'x');
+----
+db error: ERROR: CHECK constraint failed on table "sc_race" with expression CHECK((id >= 3))
+
+
+connection s1
+statement ok
+INSERT INTO sc_race VALUES (5, NULL);
+
+
+connection s1
+statement ok
+VACUUM (REFRESH_TABLE) sc_race;
+
+
+connection s1
+query
+SELECT id, b FROM sc_race ORDER BY id;
+----
+id	b
+3	NULL
+4	NULL
+5	NULL

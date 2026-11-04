@@ -67,6 +67,8 @@ Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused 
 
 `ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 
+`CREATE INDEX` and an `ALTER TABLE` that changes the table's columns (renaming, adding or dropping one, or changing its type) conflict when they run in concurrent transactions: whichever commits second fails at `COMMIT` with `Catalog write-write conflict`. Other `ALTER TABLE` forms, such as `COMMENT ON COLUMN` or `SET (...)`, don't conflict with `CREATE INDEX`.
+
 ## Example
 
 We illustrate the use of transactions through a simple example.

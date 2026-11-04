@@ -1,0 +1,66 @@
+statement ok
+CREATE TABLE spd (id BIGINT, body TEXT) WITH (storage = 'search', refresh_interval = 0);
+
+statement ok
+CREATE TABLE spd_other (a INTEGER);
+
+statement ok
+CREATE INDEX spd_ids ON spd USING inverted (id);
+
+statement ok
+INSERT INTO spd VALUES (1, 'a'), (6000000001, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) spd;
+
+statement ok
+PREPARE spd_q(BIGINT) AS SELECT count(*) FROM spd WHERE id >= $1;
+
+query
+EXECUTE spd_q(6000000000);
+----
+count
+1
+
+statement ok
+INSERT INTO spd VALUES (6000000002, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) spd;
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SELECT count(*) FROM spd_other;
+----
+count
+0
+
+connection spd_ddl
+statement ok
+DROP INDEX spd_ids;
+
+query
+EXECUTE spd_q(6000000000);
+----
+count
+2
+
+query
+EXECUTE spd_q(6000000002);
+----
+count
+1
+
+statement ok
+COMMIT;
+
+query
+EXECUTE spd_q(6000000000);
+----
+count
+2
+
+statement ok
+DEALLOCATE ALL;

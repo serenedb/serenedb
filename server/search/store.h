@@ -239,6 +239,13 @@ class Store final : public std::enable_shared_from_this<Store>,
                                    std::string_view name);
   void ReleaseLayout(duckdb::transaction_t owner) noexcept;
 
+  uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
+  uint64_t BeginSchemaChange(duckdb::transaction_t owner);
+  void KeepSchemaChange(duckdb::transaction_t owner) noexcept;
+  void AddTableColumns(const duckdb::ColumnList& columns);
+  void SetTableColumns(const duckdb::ColumnList& columns);
+  void SyncPublished();
+
   class [[nodiscard]] BuildClaim {
    public:
     BuildClaim() noexcept = default;
@@ -339,8 +346,14 @@ class Store final : public std::enable_shared_from_this<Store>,
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct SchemaUndo {
+    uint64_t epoch = 0;
+    irs::containers::FlatHashSet<irs::field_id> table_columns;
+    catalog::CompressionByColumn compression;
+  };
   struct Layout {
     duckdb::transaction_t owner = kNoLayoutOwner;
+    std::optional<SchemaUndo> schema_undo;
     std::vector<IndexConfig> configs;
     std::vector<IndexConfig> retired;
     std::optional<duckdb::idx_t> building_index;
@@ -401,6 +414,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   catalog::CompressionByColumn _compression;
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
+  std::atomic<uint64_t> _schema_epoch{0};
   WriterGenerations _writers;
   absl::Mutex _truncate_mutex;
   irs::SourcePosition _build_truncate ABSL_GUARDED_BY(_truncate_mutex);

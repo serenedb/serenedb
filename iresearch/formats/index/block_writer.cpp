@@ -210,9 +210,9 @@ void Serialize(const BlockBuilder& block, DataOutput& out) {
 BlockWriter::BlockWriter(uint64_t inline_base) noexcept
   : _out{&_pages_out}, _inline_base{inline_base} {}
 
-void BlockWriter::Open(DataOutput& out, uint64_t position) noexcept {
+void BlockWriter::Open(IndexOutput& out) noexcept {
   _out = &out;
-  _position = position;
+  _position = out.Position();
 }
 
 void BlockWriter::SetFsst(duckdb_fsst_encoder_t* fsst) {
@@ -396,7 +396,7 @@ void BlockWriter::Cut() {
   StringOutput{_inline_starts}.WriteV64(_inline_start - _inline_last);
   _inline_last = _inline_start;
   _inline_start = _inline.size();
-  _last.assign(KeyAt(_block, _block.ends.size() - 1));
+  _last.assign(LastKey());
   Clear(_block);
 }
 

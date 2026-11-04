@@ -25,23 +25,16 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
-namespace {
-
-bool Has(IndexFeatures features, IndexFeatures feature) noexcept {
-  return IndexFeatures::None != (features & feature);
-}
-
-}  // namespace
 
 TermPartWriter::TermPartWriter(IndexFeatures features) noexcept
-  : _has_freq{Has(features, IndexFeatures::Freq)},
-    _has_pos{Has(features, IndexFeatures::Pos)},
-    _has_offs{Has(features, IndexFeatures::Offs)} {}
+  : _has_freq{IsSubsetOf(IndexFeatures::Freq, features)},
+    _has_pos{IsSubsetOf(IndexFeatures::Pos, features)},
+    _has_offs{IsSubsetOf(IndexFeatures::Offs, features)} {}
 
 void TermPartWriter::Add(bytes_view term, const PostingMeta& meta) {
   SDB_ASSERT(meta.docs_count != 0);
   SDB_ASSERT(_count == 0 || bytes_view{_last} < term);
-  SDB_ASSERT(meta.doc_start >= _prev.doc_start);
+  SDB_ASSERT(meta.doc_start >= _prev.doc);
   const auto shared =
     static_cast<uint32_t>(absl::c_mismatch(_last, term).first - _last.begin());
   _out.WriteV32(shared);
@@ -57,34 +50,41 @@ void TermPartWriter::Add(bytes_view term, const PostingMeta& meta) {
   if (meta.inline_size != 0) {
     _out.WriteData(meta.inline_data, meta.inline_size);
   }
-  _out.WriteV64(meta.doc_start - _prev.doc_start);
+  _out.WriteV64(meta.doc_start - _prev.doc);
   if (_has_pos) {
-    SDB_ASSERT(meta.pos_start >= _prev.pos_start);
-    _out.WriteV64(meta.pos_start - _prev.pos_start);
+    SDB_ASSERT(meta.pos_start >= _prev.pos);
+    _out.WriteV64(meta.pos_start - _prev.pos);
     _out.WriteV32(meta.pos_offset);
     _out.WriteV32(meta.pos_extent);
     if (_has_offs) {
-      SDB_ASSERT(meta.pay_start >= _prev.pay_start);
-      _out.WriteV64(meta.pay_start - _prev.pay_start);
+      SDB_ASSERT(meta.pay_start >= _prev.pay);
+      _out.WriteV64(meta.pay_start - _prev.pay);
       _out.WriteV32(meta.pay_extent);
     }
   }
   _last.assign(term);
-  _prev.doc_start = meta.doc_start;
-  _prev.pos_start = meta.pos_start;
-  _prev.pay_start = meta.pay_start;
+  _prev = {
+    .doc = meta.doc_start,
+    .pos = meta.pos_start,
+    .pay = meta.pay_start,
+  };
   _total_doc_freq += meta.docs_count;
   _total_term_freq += meta.freq;
   _inline_bytes += meta.inline_size;
   ++_count;
 }
 
-TermPartReader::TermPartReader(bytes_view terms,
-                               IndexFeatures features) noexcept
+TermPartReader::TermPartReader(bytes_view terms, IndexFeatures features,
+                               PostingBases bases) noexcept
   : _in{terms},
-    _has_freq{Has(features, IndexFeatures::Freq)},
-    _has_pos{Has(features, IndexFeatures::Pos)},
-    _has_offs{Has(features, IndexFeatures::Offs)} {}
+    _meta{
+      .doc_start = bases.doc,
+      .pos_start = bases.pos,
+      .pay_start = bases.pay,
+    },
+    _has_freq{IsSubsetOf(IndexFeatures::Freq, features)},
+    _has_pos{IsSubsetOf(IndexFeatures::Pos, features)},
+    _has_offs{IsSubsetOf(IndexFeatures::Offs, features)} {}
 
 bool TermPartReader::Next() {
   if (_in.IsEOF()) {

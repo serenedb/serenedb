@@ -79,10 +79,10 @@ class RangeWriter final {
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);
+  void AppendRecord(Level& range, const PostingMeta& meta);
 
   std::array<Level, kMaxRangeLevels> _levels;
   PostingsWriter* _pw = nullptr;
-  RecordEncoder _encoder;
   RecordOutput _record;
   IndexFeatures _features = IndexFeatures::None;
   uint64_t _heavy = 0;

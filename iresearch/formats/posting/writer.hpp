@@ -165,6 +165,27 @@ struct DocTee {
   size_t limit = 0;
 };
 
+class PostingFeatures {
+ public:
+  void Reset(IndexFeatures features) noexcept {
+    _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
+    _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
+    _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
+    _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
+  }
+
+  bool HasFrequency() const noexcept { return _has_freq; }
+  bool HasPosition() const noexcept { return _has_pos; }
+  bool HasOffset() const noexcept { return _has_offs; }
+  bool HasVector() const noexcept { return _has_vec; }
+
+ private:
+  bool _has_freq{};
+  bool _has_pos{};
+  bool _has_offs{};
+  bool _has_vec{};
+};
+
 class RecordEncoder final {
  public:
   explicit RecordEncoder(
@@ -173,10 +194,7 @@ class RecordEncoder final {
   }
 
   void Reset(IndexFeatures features) noexcept {
-    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
-    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
-    _has_offs = IndexFeatures::None != (features & IndexFeatures::Offs);
-    _has_vec = IndexFeatures::None != (features & IndexFeatures::Vec);
+    _features.Reset(features);
     _last.clear();
   }
 
@@ -184,19 +202,9 @@ class RecordEncoder final {
 
   void Encode(BufferedOutput& out, const PostingMeta& meta);
 
-  void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
-    const auto last = _last;
-    _last.clear();
-    Encode(out, meta);
-    _last = last;
-  }
-
  private:
   PostingMeta _last;
-  bool _has_freq = false;
-  bool _has_pos = false;
-  bool _has_offs = false;
-  bool _has_vec = false;
+  PostingFeatures _features;
 };
 
 class PostingsWriter final {
@@ -238,27 +246,6 @@ class PostingsWriter final {
   void End();
 
  private:
-  class Features {
-   public:
-    void Reset(IndexFeatures features) noexcept {
-      _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
-      _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
-      _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-      _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
-    }
-
-    bool HasFrequency() const noexcept { return _has_freq; }
-    bool HasPosition() const noexcept { return _has_pos; }
-    bool HasOffset() const noexcept { return _has_offs; }
-    bool HasVector() const noexcept { return _has_vec; }
-
-   private:
-    bool _has_freq{};
-    bool _has_pos{};
-    bool _has_offs{};
-    bool _has_vec{};
-  };
-
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -297,6 +284,16 @@ class PostingsWriter final {
     }
   }
 
+  void FlushTails() {
+    if (_pos.size != 0) {
+      FlushTailPos();
+    }
+    if (_pay.size != 0) {
+      FlushTailPay();
+    }
+    FlushGroups();
+  }
+
   template<typename Func>
   void ApplyToWriter(Func&& func) {
     if (_valid_writer) {
@@ -318,7 +315,7 @@ class PostingsWriter final {
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
-  Features _features;                 // Features supported by current field
+  PostingFeatures _features;          // Features supported by current field
   // Per-term payload writer for IndexFeatures::Vec fields (e.g. IVF codes).
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
@@ -416,23 +413,25 @@ inline void PostingsWriter::Prepare(const FlushState& state,
 
 inline void RecordEncoder::Encode(BufferedOutput& out,
                                   const PostingMeta& meta) {
-  SDB_ASSERT(!_has_vec || (!_has_pos && !_has_offs));
+  SDB_ASSERT(!_features.HasVector() ||
+             (!_features.HasPosition() && !_features.HasOffset()));
 
   const bool inlined = meta.inline_size != 0;
   const bool single = meta.docs_count == 1;
   SDB_ASSERT(meta.docs_count != 0);
   SDB_ASSERT(!single || !inlined);
-  const bool same_freq = _has_freq && meta.freq == meta.docs_count;
+  const bool same_freq =
+    _features.HasFrequency() && meta.freq == meta.docs_count;
   const uint64_t next = uint64_t{_last.pos_offset} + _last.freq;
   const bool follows =
-    _has_pos && _last.docs_count != 0 &&
+    _features.HasPosition() && _last.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
     (next >= PosGroup::kPositions || meta.pos_start == _last.pos_start);
   const uint64_t flags = uint64_t{follows} << 2 | uint64_t{same_freq} << 1;
   out.WriteV64(single ? uint64_t{meta.doc_delta} << 3 | flags | 1
                       : uint64_t{meta.docs_count} << 4 |
                           uint64_t{inlined} << 3 | flags);
-  if (_has_freq && !same_freq) {
+  if (_features.HasFrequency() && !same_freq) {
     SDB_ASSERT(meta.freq > meta.docs_count);
     out.WriteV32(meta.freq - meta.docs_count - 1);
   }
@@ -443,19 +442,19 @@ inline void RecordEncoder::Encode(BufferedOutput& out,
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
-  if (_has_pos) {
+  if (_features.HasPosition()) {
     if (!follows || next >= PosGroup::kPositions) {
       out.WriteV64(meta.pos_start - _last.pos_start);
-      if (_has_offs) {
+      if (_features.HasOffset()) {
         out.WriteV64(meta.pay_start - _last.pay_start);
       }
     } else {
-      SDB_ASSERT(!_has_offs || meta.pay_start == _last.pay_start);
+      SDB_ASSERT(!_features.HasOffset() || meta.pay_start == _last.pay_start);
     }
     if (!follows) {
       out.WriteV32(meta.pos_offset);
     }
-  } else if (_has_vec) {
+  } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last.pay_start);
     out.WriteV32(meta.pos_offset);
   }
@@ -464,9 +463,9 @@ inline void RecordEncoder::Encode(BufferedOutput& out,
     out.WriteV32(meta.doc_delta);
   }
 
-  if (_has_pos && pos_limits::kBlockSize < meta.freq) {
+  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
     out.WriteV32(meta.pos_extent);
-    if (_has_offs) {
+    if (_features.HasOffset()) {
       out.WriteV32(meta.pay_extent);
     }
   }
@@ -782,59 +781,34 @@ inline void PostingsWriter::FlushDocBlock(const PostingMeta& meta) {
 }
 
 inline void PostingsWriter::End() {
+  FlushTails();
+
   block_io::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
   if (_pos_out) {
-    if (_pos.size != 0) {
-      FlushTailPos();
-    }
-    if (!_pos_group.Empty()) {
-      _pos_group.Flush(*_pos_out);
-    }
     block_io::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
     _pos_out.reset();  // ensure stream is closed
-  } else {
-    SDB_ASSERT(_pos.size == 0);
   }
 
   // ".pay" may be open for offsets (with positions) and/or for fixed-width
   // per-document payloads (IndexFeatures::Vec, no positions).
   if (_pay_out) {
-    if (_pay.size != 0) {
-      FlushTailPay();
-    }
-    if (!_pay_group.Empty()) {
-      _pay_group.Flush(*_pay_out);
-    }
     block_io::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
     _pay_out.reset();  // ensure stream is closed
-  } else {
-    SDB_ASSERT(_pay.size == 0);
   }
 }
 
 inline void PostingsWriter::FinishPart() {
+  FlushTails();
   if (_pos_out) {
-    if (_pos.size != 0) {
-      FlushTailPos();
-    }
-    if (!_pos_group.Empty()) {
-      _pos_group.Flush(*_pos_out);
-    }
     _pos_out->Flush();
     _pos_out.reset();
   }
   if (_pay_out) {
-    if (_pay.size != 0) {
-      FlushTailPay();
-    }
-    if (!_pay_group.Empty()) {
-      _pay_group.Flush(*_pay_out);
-    }
     _pay_out->Flush();
     _pay_out.reset();
   }

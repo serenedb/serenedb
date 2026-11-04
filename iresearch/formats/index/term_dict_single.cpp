@@ -21,7 +21,6 @@
 #include "iresearch/formats/index/term_dict_single.hpp"
 
 #include <cstring>
-#include <limits>
 #include <string_view>
 #include <utility>
 

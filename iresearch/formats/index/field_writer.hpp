@@ -41,7 +41,6 @@ namespace irs::term_dict {
 
 struct PartsField {
   field_id id = field_limits::invalid();
-  DictRef dict;
   FieldProperties props;
   std::span<const TermPart> parts;
   std::vector<uint64_t> inline_bases;

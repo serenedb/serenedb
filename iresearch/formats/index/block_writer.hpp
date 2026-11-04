@@ -73,7 +73,7 @@ class BlockWriter final {
   BlockWriter(const BlockWriter&) = delete;
   BlockWriter& operator=(const BlockWriter&) = delete;
 
-  void Open(DataOutput& out, uint64_t position) noexcept;
+  void Open(IndexOutput& out) noexcept;
   void SetFsst(duckdb_fsst_encoder_t* fsst);
   void Recode();
   void BeginField(uint32_t width, bool encode, IndexFeatures features) noexcept;

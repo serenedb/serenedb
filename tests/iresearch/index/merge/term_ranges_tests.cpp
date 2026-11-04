@@ -393,7 +393,8 @@ TEST_P(TermPartsTest, StreamsReadBackWhatTheyWrote) {
   EXPECT_EQ(doc_freq, writer.TotalDocFreq());
   EXPECT_EQ(term_freq, writer.TotalTermFreq());
 
-  irs::TermPartReader reader{writer.Terms(), features};
+  const auto encoded = std::move(writer).TakeTerms();
+  irs::TermPartReader reader{encoded, features, {}};
   for (size_t i = 0; i != terms.size(); ++i) {
     SCOPED_TRACE(i);
     ASSERT_TRUE(reader.Next());

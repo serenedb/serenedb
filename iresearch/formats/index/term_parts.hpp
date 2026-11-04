@@ -48,7 +48,6 @@ class TermPartWriter {
 
   void Add(bytes_view term, const PostingMeta& meta);
 
-  bytes_view Terms() const noexcept { return _terms; }
   bstring TakeTerms() && noexcept { return std::move(_terms); }
   uint64_t Count() const noexcept { return _count; }
   uint64_t TotalDocFreq() const noexcept { return _total_doc_freq; }
@@ -59,7 +58,7 @@ class TermPartWriter {
   bstring _terms;
   BytesOutput _out{_terms};
   bstring _last;
-  PostingMeta _prev;
+  PostingBases _prev;
   uint64_t _count = 0;
   uint64_t _total_doc_freq = 0;
   uint64_t _total_term_freq = 0;
@@ -71,7 +70,8 @@ class TermPartWriter {
 
 class TermPartReader {
  public:
-  TermPartReader(bytes_view terms, IndexFeatures features) noexcept;
+  TermPartReader(bytes_view terms, IndexFeatures features,
+                 PostingBases bases) noexcept;
 
   bool Next();
 

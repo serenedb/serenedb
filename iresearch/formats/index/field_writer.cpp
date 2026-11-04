@@ -32,7 +32,6 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -78,13 +77,9 @@ void AddPrefix(std::vector<uint32_t>& prefixes, uint32_t prefix) {
 template<typename Visitor>
 void VisitPart(const TermPart& part, IndexFeatures features,
                Visitor&& visitor) {
-  TermPartReader terms{part.terms, features};
+  TermPartReader terms{part.terms, features, part.bases};
   while (terms.Next()) {
-    auto meta = terms.Meta();
-    meta.doc_start += part.bases.doc;
-    meta.pos_start += part.bases.pos;
-    meta.pay_start += part.bases.pay;
-    visitor(terms.Term(), meta);
+    visitor(terms.Term(), terms.Meta());
   }
 }
 
@@ -177,8 +172,7 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
   Reset();
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
-  auto& out = _idx->BlocksOut();
-  _blocks.Open(out, out.Position());
+  _blocks.Open(_idx->BlocksOut());
   _pw.Prepare(state, std::move(postings));
 }
 
@@ -314,7 +308,6 @@ PartsField FieldWriter::BeginParts(DictRef dict, const BasicTermReader& reader,
   Begin(id, dict);
   PartsField field{
     .id = id,
-    .dict = dict,
     .props = reader.properties(),
     .first_inline = _blocks.InlineEnd(),
     .docs = docs,
@@ -322,17 +315,15 @@ PartsField FieldWriter::BeginParts(DictRef dict, const BasicTermReader& reader,
   const auto features = field.props.index_features;
   _pw.BeginField(field.props);
   BeginTerms(reader, field.props);
-  for (const auto& part : parts) {
-    SDB_ASSERT((part.ranges != nullptr) == _ranges.Active());
-    if (part.ranges) {
-      _ranges.Append(*part.ranges, part.bases.doc);
-    }
-  }
 
   const bool freq_exists =
     IndexFeatures::None != (features & IndexFeatures::Freq);
   uint64_t terms = 0;
   for (const auto& part : parts) {
+    SDB_ASSERT((part.ranges != nullptr) == _ranges.Active());
+    if (part.ranges) {
+      _ranges.Append(*part.ranges, part.bases.doc);
+    }
     field.total_freq +=
       freq_exists ? part.total_term_freq : part.total_doc_freq;
     terms += part.term_count;

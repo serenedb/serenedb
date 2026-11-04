@@ -1020,6 +1020,29 @@ def test_missing_privilege_is_forbidden(index):
             pg.execute(f"DROP ROLE {role}")
 
 
+def test_role_connection_limit_is_too_many_requests(index):
+    import http.client
+
+    role = "drv_es_limited"
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        pg.execute(f"DROP ROLE IF EXISTS {role}")
+        pg.execute(
+            f"CREATE ROLE {role} LOGIN PASSWORD 'drv_es_pw' CONNECTION LIMIT 0")
+    client = http.client.HTTPConnection(HOST, PORT, timeout=600)
+    try:
+        credentials = base64.b64encode(f"{role}:drv_es_pw".encode()).decode()
+        client.request("GET", f"/{index}/_mapping",
+                       headers={"Authorization": f"Basic {credentials}"})
+        response = client.getresponse()
+        body = json.loads(response.read())
+        assert response.status == 429, body
+        assert body["error"]["type"] == "es_rejected_execution_exception", body
+    finally:
+        client.close()
+        with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+            pg.execute(f"DROP ROLE {role}")
+
+
 def test_cat_count(conn, index):
     conn.request("GET", "/_cat/count")
     r = conn.getresponse()

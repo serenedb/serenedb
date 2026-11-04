@@ -44,7 +44,7 @@ Attributes control a role's server-level abilities. They are set at creation or 
 | `INHERIT` / `NOINHERIT` | Does the role automatically use privileges of roles it is a member of? Default `INHERIT`. |
 | `PASSWORD '...'` | Stores a SCRAM-SHA-256 verifier for password authentication. `PASSWORD NULL` clears it. |
 | `VALID UNTIL '<timestamp>'` | The password stops working after this time — enforced at login. |
-| `CONNECTION LIMIT <n>` | Accepted and stored for PostgreSQL compatibility; not currently enforced. |
+| `CONNECTION LIMIT <n>` | How many sessions the role may have open at once, over the PostgreSQL protocol and the HTTP APIs together; `-1` (the default) means no limit. A login beyond it fails with `too many connections for role`. Superusers are not limited. |
 
 A role that grants management powers with `CREATEROLE` gets them, but bounded like PostgreSQL: a `CREATEROLE` role cannot hand out an attribute it does not itself hold (so it cannot create a `SUPERUSER`), and it can only alter or drop roles it administers — i.e. roles it created, on which it automatically receives `ADMIN OPTION`:
 

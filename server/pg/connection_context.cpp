@@ -27,6 +27,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -34,6 +35,7 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/pg/wire_frames.h"
+#include "pg/progress_registry.h"
 #include "query/transaction.h"
 #include "server/utils/app_server.h"
 
@@ -47,11 +49,15 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     duckdb::idx_t oid = 0;
     bool can_login = false;
     bool superuser = false;
+    int32_t conn_limit = -1;
+    std::string name;
   } role;
   if (!catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
         role.oid = entry.oid;
         role.can_login = entry.CanLogin();
         role.superuser = entry.IsSuperuser();
+        role.conn_limit = entry.ConnLimit();
+        role.name = entry.name.GetIdentifierName();
       })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -61,6 +67,13 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
+  }
+  if (!role.superuser && role.conn_limit >= 0 &&
+      ProgressRegistry::Instance().SessionsOf(role.oid) >=
+        static_cast<size_t>(role.conn_limit)) {
+    return {.error = SQL_ERROR_DATA(
+              ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+              ERR_MSG("too many connections for role \"", role.name, "\""))};
   }
   const auto roles = catalog::RolesOf(nullptr);
   duckdb::RoleAccess missing;

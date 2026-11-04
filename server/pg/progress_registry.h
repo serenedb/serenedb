@@ -138,6 +138,7 @@ struct ProgressSource {
   int32_t pid{0};
   int64_t datid{0};
   bool client_backend{false};
+  duckdb::idx_t role{0};
   std::string user;
   std::string database;
   int64_t backend_start_us{0};
@@ -208,6 +209,7 @@ class ProgressRegistry {
   void ForgetDatabase(int64_t datid);
 
   size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
+  size_t SessionsOf(duckdb::idx_t role) const;
 
  private:
   mutable absl::Mutex _mu;

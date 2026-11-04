@@ -49,7 +49,7 @@ Role names are unique across the server:
 ## Notes
 
 - `SUPERUSER` roles bypass all permission checks. Only a superuser can create another superuser.
-- `CONNECTION LIMIT` is accepted and stored (visible in `pg_roles.rolconnlimit`) but is not currently enforced at connect time.
+- `CONNECTION LIMIT` caps the sessions the role may have open at once, over the PostgreSQL protocol and the HTTP APIs together (`pg_roles.rolconnlimit`); a login beyond it fails with `too many connections for role`. Superusers are not limited.
 - `REPLICATION`, `BYPASSRLS`, and `SYSID` are accepted for PostgreSQL compatibility and have no effect.
 
 ## See also

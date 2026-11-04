@@ -75,6 +75,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
   source->client_backend = client_backend;
+  source->role = registered._connection_ctx->GetLoginRoleId();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
   registered.progress_source = std::move(source);

@@ -49,7 +49,7 @@ Altering a role that does not exist is an error:
 - Changing role attributes requires the `CREATEROLE` attribute (or superuser); only a superuser can grant or remove `SUPERUSER`.
 - Granting or removing `SUPERUSER` reconnects the [foreign servers](../create_server/index.md#servers-owned-by-roles-without-superuser) the role owns under the rules for their new owner, and fails if one of them breaks those rules or cannot connect under them.
 - `PASSWORD NULL` removes the stored password, disabling password authentication for the role.
-- `CONNECTION LIMIT` is accepted and stored but is not currently enforced at connect time.
+- A new `CONNECTION LIMIT` applies to the logins that follow; sessions already open stay open.
 - `SET name = value` stores a parameter default that every new session of the role starts with, before the parameters its client sends; `SET name FROM CURRENT` stores the value the parameter has in the current session; `RESET name`, `SET name TO DEFAULT` and `RESET ALL` remove stored defaults. A role may store defaults for itself and a role with `CREATEROLE` and the `ADMIN` option for the roles it administers, but only a superuser may store or `RESET` a parameter that only a superuser may change, and `RESET ALL` by any other role removes only the defaults that role may change. A session applies each default as if the role ran `SET` itself: a default the role may not set, or whose value is not valid, is skipped with a warning.
 
 ## See also

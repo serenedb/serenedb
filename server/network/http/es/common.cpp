@@ -91,6 +91,10 @@ void WriteSqlError(HttpResponseWriter& writer, const duckdb::ErrorData& error,
       WriteError(writer, HttpStatus::Forbidden, "security_exception",
                  data.errmsg);
       return;
+    case ERRCODE_TOO_MANY_CONNECTIONS:
+      WriteError(writer, HttpStatus::TooManyRequests,
+                 "es_rejected_execution_exception", data.errmsg);
+      return;
     default:
       WriteError(writer, HttpStatus::InternalError, "exception", data.errmsg);
       return;

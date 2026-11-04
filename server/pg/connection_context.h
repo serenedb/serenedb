@@ -70,8 +70,8 @@ struct LoginCheck {
 };
 
 // The connect-time login gate shared by the pg-wire and http sessions:
-// role exists -> may log in -> holds CONNECT on the target database
-// (superuser bypasses, as in PG's InitPostgres).
+// role exists -> may log in -> within its CONNECTION LIMIT -> holds CONNECT on
+// the target database (superuser bypasses, as in PG's InitPostgres).
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
                             const duckdb::Permissions& perm);
 

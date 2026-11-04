@@ -195,3 +195,115 @@ SELECT
 ----
 dense	full_range	negated	dense_filtered
 287369775	379800000	52897500	2565
+
+
+# The scan hands count(*) the counts it computed instead of one empty row per
+# match: several count(*) in one aggregate, an aggregate over nothing, and the
+# aggregates that still need the rows (FILTER, GROUP BY, count(column)) agree
+# with the table.
+query
+SELECT count(*) AS c, count(*) + 1 AS c1,
+  count(*) FILTER (WHERE id % 2 = 0) AS even
+FROM csv_t WHERE v BETWEEN 10 AND 4000
+----
+c	c1	even
+17955	17956	7980
+
+
+query
+SELECT count(*) AS c, count(*) + 1 AS c1,
+  count(*) FILTER (WHERE id % 2 = 0) AS even
+FROM csv_idx WHERE v BETWEEN 10 AND 4000
+----
+c	c1	even
+17955	17956	7980
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_t WHERE v > 100000) AS none,
+  (SELECT count(*) FROM csv_t WHERE v IS NULL) AS nulls,
+  (SELECT count(v) FROM csv_t WHERE v BETWEEN 10 AND 4000) AS non_null,
+  (SELECT count(*) FROM (SELECT * FROM csv_t WHERE v < 50 LIMIT 7)) AS limited
+----
+none	nulls	non_null	limited
+0	2599	17955	7
+
+
+query
+SELECT
+  (SELECT count(*) FROM csv_idx WHERE v > 100000) AS none,
+  (SELECT count(*) FROM csv_idx WHERE v IS NULL) AS nulls,
+  (SELECT count(v) FROM csv_idx WHERE v BETWEEN 10 AND 4000) AS non_null,
+  (SELECT count(*) FROM (SELECT * FROM csv_idx WHERE v < 50 LIMIT 7)) AS limited
+----
+none	nulls	non_null	limited
+0	2599	17955	7
+
+
+query
+SELECT v % 3 AS r, count(*) AS c FROM csv_t WHERE v BETWEEN 10 AND 4000
+GROUP BY r ORDER BY r
+----
+r	c
+0	5985
+1	5985
+2	5985
+
+
+query
+SELECT v % 3 AS r, count(*) AS c FROM csv_idx WHERE v BETWEEN 10 AND 4000
+GROUP BY r ORDER BY r
+----
+r	c
+0	5985
+1	5985
+2	5985
+
+
+query
+EXPLAIN SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: csv_idx           │
+│ Index Filter:            │
+│ ╭─ Granular Range ────╮  │
+│ │ Field: v(numeric)   │  │
+│ │ Range: >=10, <=4000 │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ ~5,199 rows              │
+╰──────────────────────────╯
+
+
+statement ok
+SET threads = 1
+
+
+# One worker hands its whole count over in one row.
+query
+EXPLAIN ANALYZE SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: <slt:ignore>s │
+╰─────────────────────╯
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ 1 row                0µs │
+╰─────────────┒┎───────────╯
+╭─ TABLE_SCAN ┚┖───────────╮
+│ Index: csv_idx           │
+│ Index Filter:            │
+│ ╭─ Granular Range ────╮  │
+│ │ Field: v(numeric)   │  │
+│ │ Range: >=10, <=4000 │  │
+│ ╰─────────────────────╯  │
+│ Output: row-count only   │
+│ 1 row                0µs │
+╰──────────────────────────╯

@@ -494,6 +494,7 @@ inline ScoreEmit ScoreEmitOf(const ScanGlobalState& g) noexcept {
 
 void RunCountScan(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output);
+uint64_t TakeCount(ScanGlobalState& g, CountLocalState& l);
 
 void RunColScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
                 ScanGlobalState& g, ColScanLocalState& l,

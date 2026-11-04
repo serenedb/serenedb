@@ -422,26 +422,10 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   return result;
 }
 
-void IResearchScanFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output) {
-  auto& g = data.global_state->Cast<ScanGlobalState>();
-  if (g.empty_answer) {
-    return;
-  }
-  const bool reorder = !g.output_projection_ids.empty();
-  auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
-  if (reorder) {
-    if (base.scan_chunk.ColumnCount() == 0) {
-      base.scan_chunk.Initialize(context, g.projected_types);
-    }
-    base.scan_chunk.Reset();
-  }
-  auto& out = reorder ? base.scan_chunk : output;
+namespace {
+
+void RunShape(duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
+              ScanGlobalState& g, duckdb::DataChunk& out) {
   switch (g.shape) {
     case ScanShape::TsDict:
       RunTsDictScan(context, g, *data.local_state, out);
@@ -466,10 +450,69 @@ void IResearchScanFunction(duckdb::ClientContext& context,
                     data.local_state->Cast<StreamLocalState>(), out);
       break;
   }
+}
+
+duckdb::DataChunk& ScanChunk(duckdb::ClientContext& context,
+                             const ScanGlobalState& g, ScanLocalState& base) {
+  if (base.scan_chunk.ColumnCount() == 0) {
+    base.scan_chunk.Initialize(context, g.projected_types);
+  }
+  base.scan_chunk.Reset();
+  return base.scan_chunk;
+}
+
+void EmitRowCount(duckdb::ClientContext& context,
+                  duckdb::TableFunctionInput& data, ScanGlobalState& g,
+                  ScanLocalState& base, duckdb::DataChunk& output) {
+  uint64_t rows = 0;
+  if (g.shape == ScanShape::Count) {
+    rows = TakeCount(g, data.local_state->Cast<CountLocalState>());
+  } else {
+    auto& out = ScanChunk(context, g, base);
+    RunShape(context, data, g, out);
+    rows = out.size();
+  }
+  base.produced_rows += rows;
+  if (rows == 0) {
+    output.SetChildCardinality(0);
+    return;
+  }
+  duckdb::FlatVector::GetDataMutable<int64_t>(output.data[0])[0] =
+    static_cast<int64_t>(rows);
+  output.SetChildCardinality(1);
+}
+
+}  // namespace
+
+void IResearchScanFunction(duckdb::ClientContext& context,
+                           duckdb::TableFunctionInput& data,
+                           duckdb::DataChunk& output) {
+  auto& g = data.global_state->Cast<ScanGlobalState>();
+  if (g.empty_answer) {
+    return;
+  }
+  auto& base = data.local_state->Cast<ScanLocalState>();
+  if (base.parked_on) {
+    base.parked_on->Resume();
+    base.parked_on = nullptr;
+  }
+  if (g.Bind().emits_counts) {
+    EmitRowCount(context, data, g, base, output);
+    return;
+  }
+  const bool reorder = !g.output_projection_ids.empty();
+  auto& out = reorder ? ScanChunk(context, g, base) : output;
+  RunShape(context, data, g, out);
   base.produced_rows += out.size();
   if (reorder) {
     output.ReferenceColumns(out, g.output_projection_ids);
   }
+}
+
+bool IResearchConsumeCount(duckdb::ClientContext&,
+                           duckdb::FunctionData& bind_data) {
+  bind_data.Cast<ScanBindData>().emits_counts = true;
+  return true;
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
@@ -669,6 +712,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
   func.consume_top_n = &IResearchConsumeTopN;
+  func.consume_count = &IResearchConsumeCount;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
   func.statistics_extended = &IResearchScanStatistics;

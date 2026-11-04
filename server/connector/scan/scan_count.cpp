@@ -37,10 +37,7 @@ void FinishRoot(CountLocalState& l) {
   }
 }
 
-}  // namespace
-
-void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
-                  CountLocalState& l, duckdb::DataChunk& output) {
+void CountUnits(ScanGlobalState& g, CountLocalState& l) {
   while (NextLiveUnit(g, l)) {
     const auto& unit = l.unit;
     const auto& sub = (*g.reader)[unit.seg];
@@ -67,6 +64,20 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
     FinishUnit(g, l);
   }
   FinishRoot(l);
+}
+
+}  // namespace
+
+uint64_t TakeCount(ScanGlobalState& g, CountLocalState& l) {
+  CountUnits(g, l);
+  const auto rows = l.local_count - l.local_emitted;
+  l.local_emitted = l.local_count;
+  return rows;
+}
+
+void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
+                  CountLocalState& l, duckdb::DataChunk& output) {
+  CountUnits(g, l);
   if (l.local_emitted >= l.local_count) {
     output.SetChildCardinality(0);
     return;

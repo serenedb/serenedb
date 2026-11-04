@@ -60,9 +60,10 @@ class FileOutput final : public IndexOutput {
   void Release() noexcept;
   void Overflow(const byte_type* data, size_t size) final;
   void SetWindow(duckdb::FileWriteWindow window) noexcept;
+  void NextWindow();
+  void UseBuffer();
   void CommitWindow();
   void WriteHandle(const byte_type* b, size_t len);
-  void CacheBytes(const byte_type* b, size_t len) noexcept;
   void FinishCache(bool published) noexcept;
 
   static constexpr size_t kBufferSize = 64 * 1024;

@@ -24,7 +24,9 @@
 
 #include <atomic>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/query_context.hpp>
+#include <new>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
@@ -63,18 +65,17 @@ FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
   SDB_ASSERT(_handle);
   if (memory && &_handle->file_system == memory) {
     _memory = memory;
-    SetWindow(_memory->GetWriteWindow(*_handle));
+  }
+  if (_remote) {
+    gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
+    if (cache && cache->IsEnabled()) {
+      _cached.emplace(*cache, cache->CreateWrittenFile(_handle->GetPath()));
+    }
+  }
+  if (_memory || _cached) {
+    NextWindow();
   } else {
-    _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
-    _begin = _pos = _buf.get();
-    _end = _begin + kBufferSize;
-  }
-  if (!_remote) {
-    return;
-  }
-  gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
-  if (cache && cache->IsEnabled()) {
-    _cached.emplace(*cache, cache->CreateWrittenFile(_handle->GetPath()));
+    UseBuffer();
   }
 }
 
@@ -108,14 +109,40 @@ void FileOutput::SetWindow(duckdb::FileWriteWindow window) noexcept {
   _end = window.data + window.size;
 }
 
+void FileOutput::NextWindow() {
+  if (_memory) {
+    SetWindow(_memory->GetWriteWindow(*_handle));
+    return;
+  }
+  try {
+    SDB_IF_FAILURE("FileOutput::CacheWindow") { throw std::bad_alloc{}; }
+    SetWindow(_cached->Window());
+    return;
+  } catch (...) {
+    FinishCache(false);
+  }
+  UseBuffer();
+}
+
+void FileOutput::UseBuffer() {
+  _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
+  _begin = _pos = _buf.get();
+  _end = _begin + kBufferSize;
+}
+
 void FileOutput::CommitWindow() {
   const auto size = static_cast<size_t>(_pos - _begin);
   if (size == 0) {
     return;
   }
-  _crc.process_bytes(_begin, size);
-  _memory->CommitWriteWindow(*_handle, size);
-  _offset += size;
+  if (_memory) {
+    _crc.process_bytes(_begin, size);
+    _memory->CommitWriteWindow(*_handle, size);
+    _offset += size;
+  } else {
+    WriteHandle(_begin, size);
+    _cached->Commit(size);
+  }
   _begin = _pos;
 }
 
@@ -164,7 +191,10 @@ void FileOutput::Overflow(const byte_type* data, size_t size) {
         return;
       }
       CommitWindow();
-      SetWindow(_memory->GetWriteWindow(*_handle));
+      NextWindow();
+      if (_buf) {
+        return WriteData(data, size);
+      }
       SDB_ASSERT(_begin != _end);
     }
   }
@@ -209,9 +239,6 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   _handle->Write(duckdb::QueryContext{}, const_cast<byte_type*>(b), len,
                  _offset);
   _crc.process_bytes(b, len);
-  if (_cached) {
-    CacheBytes(b, len);
-  }
   if (_remote) {
     gUploadingBytes.fetch_add(len, std::memory_order_relaxed);
   }
@@ -221,12 +248,6 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
     _handle->HintWriteback(_offset - _unhinted, _unhinted);
     _unhinted = 0;
   }
-}
-
-void FileOutput::CacheBytes(const byte_type* b, size_t len) noexcept try {
-  _cached->Append(b, len);
-} catch (...) {
-  FinishCache(false);
 }
 
 void FileOutput::FinishCache(bool published) noexcept {

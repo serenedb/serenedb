@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/main/connection.hpp>
@@ -37,6 +38,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/store/directory.hpp>
+#include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <string_view>
@@ -602,5 +604,90 @@ TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
   in.ReadData(3 * kBlock - 1, buf.data(), buf.size());
   EXPECT_EQ(kBlocks / 2 + 1, tests::ObjectStore().Requests().get);
 }
+
+constexpr uint64_t kValues = 100000;
+constexpr uint64_t kChunkEvery = 25000;
+
+const irs::bstring& Chunk() {
+  static const irs::bstring chunk(2 * kBlock + 100, irs::byte_type{0x5A});
+  return chunk;
+}
+
+void WriteValues(irs::IndexOutput& out, uint64_t from, uint64_t to) {
+  for (uint64_t i = from; i != to; ++i) {
+    out.WriteV64(i * 2654435761);
+    out.WriteU32(static_cast<uint32_t>(i));
+    out.WriteByte(static_cast<irs::byte_type>(i));
+    if (i % kChunkEvery == 0) {
+      out.WriteData(Chunk().data(), Chunk().size());
+    }
+  }
+}
+
+void ReadValues(const irs::Directory& dir, uint32_t checksum) {
+  const auto file = dir.Open("values", duckdb::MappedFileAccess::NORMAL);
+  irs::IndexInput in{*file};
+  irs::bstring read(Chunk().size(), irs::byte_type{0});
+  for (uint64_t i = 0; i != kValues; ++i) {
+    ASSERT_EQ(i * 2654435761, in.ReadV64());
+    ASSERT_EQ(static_cast<int32_t>(i), in.ReadI32());
+    ASSERT_EQ(static_cast<irs::byte_type>(i), in.ReadByte());
+    if (i % kChunkEvery == 0) {
+      in.ReadData(read.data(), read.size());
+      ASSERT_EQ(Chunk(), read);
+    }
+  }
+  const auto body = in.Position();
+  ASSERT_EQ(static_cast<int64_t>(kValues), in.ReadI64());
+  ASSERT_EQ(in.Length(), in.Position());
+  irs::IndexInput whole{*file};
+  irs::bstring bytes(body, irs::byte_type{0});
+  whole.ReadData(bytes.data(), bytes.size());
+  irs::Crc32c crc;
+  crc.process_bytes(bytes.data(), bytes.size());
+  EXPECT_EQ(crc.checksum(), checksum);
+}
+
+TEST(ObjectStoreIndexTest, written_files_read_back_from_their_cache_blocks) {
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  uint32_t checksum = 0;
+  {
+    auto out = dir.Create("values");
+    WriteValues(*out, 0, kValues);
+    checksum = out->Checksum();
+    out->WriteU64(kValues);
+    out->Close();
+  }
+  tests::ObjectStore().ResetRequests();
+  ReadValues(dir, checksum);
+  EXPECT_EQ(0, tests::ObjectStore().Requests().get);
+
+  duckdb::BlockCache::Get(Db()).Clear();
+  ReadValues(dir, checksum);
+  EXPECT_NE(0, tests::ObjectStore().Requests().get);
+}
+
+#ifdef SDB_FAULT_INJECTION
+TEST(ObjectStoreIndexTest, a_write_short_of_cache_blocks_uploads_every_byte) {
+  tests::ObjectStore();
+  const irs::Directory dir{Db(), Root()};
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  uint32_t checksum = 0;
+  {
+    auto out = dir.Create("values");
+    WriteValues(*out, 0, kValues / 2);
+    ASSERT_TRUE(duckdb::FaultPoints::Arm("FileOutput::CacheWindow"));
+    WriteValues(*out, kValues / 2, kValues);
+    checksum = out->Checksum();
+    out->WriteU64(kValues);
+    out->Close();
+  }
+  duckdb::FaultPoints::Clear();
+  tests::ObjectStore().ResetRequests();
+  ReadValues(dir, checksum);
+  EXPECT_NE(0, tests::ObjectStore().Requests().get);
+}
+#endif
 
 }  // namespace

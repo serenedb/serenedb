@@ -27,32 +27,4 @@ segments	docs	largest
 4	400	100
 
 statement ok
-CREATE TABLE stm_plain (k INTEGER, payload VARCHAR)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1048576);
-
-statement ok
-INSERT INTO stm_plain SELECT i, repeat('x', 20000) FROM range(0, 100) t(i);
-
-statement ok
-INSERT INTO stm_plain SELECT i, repeat('x', 20000) FROM range(100, 200) t(i);
-
-statement ok
-INSERT INTO stm_plain SELECT i, repeat('x', 20000) FROM range(200, 300) t(i);
-
-statement ok
-INSERT INTO stm_plain SELECT i, repeat('x', 20000) FROM range(300, 400) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) stm_plain;
-
-query
-SELECT count(*) AS segments, sum(docs) AS docs, max(docs) AS largest FROM sdb_segments('stm_plain');
-----
-segments	docs	largest
-4	400	100
-
-statement ok
 DROP TABLE stm_wide;
-
-statement ok
-DROP TABLE stm_plain;

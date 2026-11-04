@@ -196,6 +196,17 @@ has_rows
 t
 
 
+query
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'pg_catalog' AND table_name = 'pg_authid'
+ORDER BY column_name;
+----
+column_name
+rolname
+rolsuper
+
+
 statement error
 SELECT rolname, rolpassword FROM pg_catalog.pg_authid;
 ----

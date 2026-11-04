@@ -121,11 +121,7 @@ List comments on `MACRO TABLE`s:
 
 ## Limitations
 
-The `COMMENT ON` statement currently has the following limitations:
-
--   Comments are only supported on tables and columns. Comments on views, indexes, sequences, types and macros are not yet supported.
--   It is not possible to comment on schemas.
--   It is not possible to comment on things that have a dependency (e.g., a table with an index).
+It is not possible to comment on schemas.
 
 ## Syntax
 

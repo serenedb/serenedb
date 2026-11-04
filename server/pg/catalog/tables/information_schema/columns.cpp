@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 
@@ -258,8 +259,13 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
+    const auto column_acls =
+      visible ? nullptr : duckdb::EffectiveColumnAcls(Context(), table);
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!visible && (_role.HeldModes(column.Acl()) & kAnyColumnPrivilege) ==
+      const auto acl = column_acls
+                         ? duckdb::FindColumnAcl(*column_acls, column.Name())
+                         : std::span<const duckdb::AclItem>{column.Acl()};
+      if (!visible && (_role.HeldModes(acl) & kAnyColumnPrivilege) ==
                         duckdb::AclMode::NoRights) {
         continue;
       }

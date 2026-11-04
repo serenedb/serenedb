@@ -1,0 +1,274 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE ROLE jrb_r;
+
+
+statement ok
+CREATE ROLE jrb_r2;
+
+
+statement ok
+CREATE ROLE jrb_g;
+
+
+statement ok
+CREATE TABLE jrb_t (a INT, b INT);
+
+
+statement ok
+CREATE TABLE jrb_t2 (a INT);
+
+
+statement ok
+CREATE JOB jrb_01 AFTER 1 HOUR SUSPENDED AS GRANT SELECT ON jrb_t TO jrb_r WITH GRANT OPTION;
+
+
+statement ok
+CREATE JOB jrb_02 AFTER 1 HOUR SUSPENDED AS REVOKE GRANT OPTION FOR SELECT ON jrb_t FROM jrb_r;
+
+
+statement ok
+CREATE JOB jrb_03 AFTER 1 HOUR SUSPENDED AS GRANT jrb_g TO jrb_r WITH ADMIN OPTION;
+
+
+statement ok
+CREATE JOB jrb_04 AFTER 1 HOUR SUSPENDED AS REVOKE ADMIN OPTION FOR jrb_g FROM jrb_r;
+
+
+statement ok
+CREATE JOB jrb_05 AFTER 1 HOUR SUSPENDED AS CREATE ROLE jrb_r3 LOGIN CREATEDB CONNECTION LIMIT 3 IN ROLE jrb_g;
+
+
+statement ok
+CREATE JOB jrb_06 AFTER 1 HOUR SUSPENDED AS GRANT SELECT, INSERT ON jrb_t, jrb_t2 TO jrb_r, jrb_r2;
+
+
+statement ok
+CREATE JOB jrb_07 AFTER 1 HOUR SUSPENDED AS GRANT ALL PRIVILEGES ON jrb_t2 TO jrb_r2;
+
+
+statement ok
+CREATE JOB jrb_08 AFTER 1 HOUR SUSPENDED AS GRANT SELECT ON ALL TABLES IN SCHEMA public TO jrb_r;
+
+
+statement ok
+CREATE JOB jrb_09 AFTER 1 HOUR SUSPENDED AS GRANT CONNECT ON DATABASE ${__DATABASE__} TO jrb_r;
+
+
+statement ok
+CREATE JOB jrb_10 AFTER 1 HOUR SUSPENDED AS ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO jrb_r;
+
+
+statement ok
+CREATE JOB jrb_11 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jrb_r LOGIN NOINHERIT CONNECTION LIMIT 5 VALID UNTIL '2030-01-02 03:04:05+00';
+
+
+statement ok
+CREATE JOB jrb_12 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jrb_r2 RENAME TO jrb_r4;
+
+
+statement ok
+CREATE JOB jrb_13 AFTER 1 HOUR SUSPENDED AS GRANT SELECT (a), UPDATE (a, b) ON jrb_t TO jrb_r2;
+
+
+statement ok
+CREATE JOB jrb_14 AFTER 1 HOUR SUSPENDED AS REVOKE SELECT ON jrb_t FROM jrb_r CASCADE;
+
+
+statement ok
+CREATE JOB jrb_15 AFTER 1 HOUR SUSPENDED AS GRANT jrb_g TO jrb_r2 WITH INHERIT FALSE, SET TRUE GRANTED BY postgres;
+
+
+statement ok
+CREATE JOB jrb_16 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jrb_r SET work_mem = '64MB';
+
+
+statement ok
+CREATE JOB jrb_17 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jrb_r IN DATABASE ${__DATABASE__} RESET ALL;
+
+
+statement ok
+CREATE JOB jrb_18 AFTER 1 HOUR SUSPENDED AS ALTER GROUP jrb_g ADD USER jrb_r, jrb_r2;
+
+
+statement ok
+CREATE JOB jrb_19 AFTER 1 HOUR SUSPENDED AS ALTER TABLE jrb_t2 OWNER TO jrb_r;
+
+
+statement ok
+CREATE JOB jrb_20 AFTER 1 HOUR SUSPENDED AS REASSIGN OWNED BY jrb_r TO CURRENT_USER;
+
+
+statement ok
+CREATE JOB jrb_21 AFTER 1 HOUR SUSPENDED AS DROP OWNED BY jrb_r, jrb_r2 CASCADE;
+
+
+statement ok
+CREATE JOB jrb_22 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON SCHEMA public TO PUBLIC;
+
+
+query
+SELECT job_name, replace(body, current_database(), 'DB') AS body FROM sdb_jobs() WHERE starts_with(job_name, 'jrb_') ORDER BY job_name;
+----
+job_name	body
+jrb_01	GRANT SELECT ON TABLE jrb_t TO jrb_r WITH GRANT OPTION;
+jrb_02	REVOKE GRANT OPTION FOR SELECT ON TABLE jrb_t FROM jrb_r;
+jrb_03	GRANT jrb_g TO jrb_r WITH ADMIN TRUE;
+jrb_04	REVOKE ADMIN OPTION FOR jrb_g FROM jrb_r;
+jrb_05	CREATE ROLE jrb_r3 WITH NOSUPERUSER CREATEDB NOCREATEROLE INHERIT LOGIN NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 IN ROLE jrb_g;
+jrb_06	GRANT SELECT, INSERT ON TABLE jrb_t, jrb_t2 TO jrb_r, jrb_r2;
+jrb_07	GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE jrb_t2 TO jrb_r2;
+jrb_08	GRANT SELECT ON ALL TABLES IN SCHEMA public TO jrb_r;
+jrb_09	GRANT CONNECT ON DATABASE DB TO jrb_r;
+jrb_10	ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO jrb_r;
+jrb_11	ALTER ROLE jrb_r WITH NOINHERIT LOGIN CONNECTION LIMIT 5 VALID UNTIL '2030-01-02 03:04:05+00';
+jrb_12	ALTER ROLE jrb_r2 RENAME TO jrb_r4;
+jrb_13	GRANT SELECT (a), UPDATE (a, b) ON TABLE jrb_t TO jrb_r2;
+jrb_14	REVOKE SELECT ON TABLE jrb_t FROM jrb_r CASCADE;
+jrb_15	GRANT jrb_g TO jrb_r2 WITH INHERIT FALSE, SET TRUE GRANTED BY postgres;
+jrb_16	ALTER ROLE jrb_r SET work_mem TO '64MB';
+jrb_17	ALTER ROLE jrb_r IN DATABASE DB RESET ALL;
+jrb_18	ALTER GROUP jrb_g ADD USER jrb_r, jrb_r2;
+jrb_19	ALTER TABLE jrb_t2 OWNER TO jrb_r;
+jrb_20	REASSIGN OWNED BY jrb_r TO CURRENT_USER;
+jrb_21	DROP OWNED BY jrb_r, jrb_r2 CASCADE;
+jrb_22	GRANT USAGE ON SCHEMA public TO PUBLIC;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection r1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT job_name, replace(body, current_database(), 'DB') AS body FROM sdb_jobs() WHERE starts_with(job_name, 'jrb_') ORDER BY job_name;
+----
+job_name	body
+jrb_01	GRANT SELECT ON TABLE jrb_t TO jrb_r WITH GRANT OPTION;
+jrb_02	REVOKE GRANT OPTION FOR SELECT ON TABLE jrb_t FROM jrb_r;
+jrb_03	GRANT jrb_g TO jrb_r WITH ADMIN TRUE;
+jrb_04	REVOKE ADMIN OPTION FOR jrb_g FROM jrb_r;
+jrb_05	CREATE ROLE jrb_r3 WITH NOSUPERUSER CREATEDB NOCREATEROLE INHERIT LOGIN NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 IN ROLE jrb_g;
+jrb_06	GRANT SELECT, INSERT ON TABLE jrb_t, jrb_t2 TO jrb_r, jrb_r2;
+jrb_07	GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE jrb_t2 TO jrb_r2;
+jrb_08	GRANT SELECT ON ALL TABLES IN SCHEMA public TO jrb_r;
+jrb_09	GRANT CONNECT ON DATABASE DB TO jrb_r;
+jrb_10	ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO jrb_r;
+jrb_11	ALTER ROLE jrb_r WITH NOINHERIT LOGIN CONNECTION LIMIT 5 VALID UNTIL '2030-01-02 03:04:05+00';
+jrb_12	ALTER ROLE jrb_r2 RENAME TO jrb_r4;
+jrb_13	GRANT SELECT (a), UPDATE (a, b) ON TABLE jrb_t TO jrb_r2;
+jrb_14	REVOKE SELECT ON TABLE jrb_t FROM jrb_r CASCADE;
+jrb_15	GRANT jrb_g TO jrb_r2 WITH INHERIT FALSE, SET TRUE GRANTED BY postgres;
+jrb_16	ALTER ROLE jrb_r SET work_mem TO '64MB';
+jrb_17	ALTER ROLE jrb_r IN DATABASE DB RESET ALL;
+jrb_18	ALTER GROUP jrb_g ADD USER jrb_r, jrb_r2;
+jrb_19	ALTER TABLE jrb_t2 OWNER TO jrb_r;
+jrb_20	REASSIGN OWNED BY jrb_r TO CURRENT_USER;
+jrb_21	DROP OWNED BY jrb_r, jrb_r2 CASCADE;
+jrb_22	GRANT USAGE ON SCHEMA public TO PUBLIC;
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_01;
+
+
+connection r1
+query
+SELECT has_table_privilege('jrb_r', 'jrb_t', 'SELECT WITH GRANT OPTION') AS with_option;
+----
+with_option
+t
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_02;
+
+
+connection r1
+query
+SELECT has_table_privilege('jrb_r', 'jrb_t', 'SELECT') AS plain, has_table_privilege('jrb_r', 'jrb_t', 'SELECT WITH GRANT OPTION') AS with_option;
+----
+plain	with_option
+t	f
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_03;
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_04;
+
+
+connection r1
+query
+SELECT admin_option FROM pg_auth_members WHERE roleid = 'jrb_g'::regrole AND member = 'jrb_r'::regrole;
+----
+admin_option
+f
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_05;
+
+
+connection r1
+query
+SELECT rolcanlogin, rolcreatedb, rolconnlimit, pg_has_role('jrb_r3', 'jrb_g', 'MEMBER') AS member FROM pg_roles WHERE rolname = 'jrb_r3';
+----
+rolcanlogin	rolcreatedb	rolconnlimit	member
+t	t	3	t
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_06;
+
+
+connection r1
+query
+SELECT has_table_privilege('jrb_r2', 'jrb_t2', 'INSERT') AS r2_t2, has_table_privilege('jrb_r', 'jrb_t2', 'SELECT') AS r_t2;
+----
+r2_t2	r_t2
+t	t
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_11;
+
+
+connection r1
+query
+SELECT rolcanlogin, rolinherit, rolconnlimit, rolvaliduntil = '2030-01-02 03:04:05+00'::TIMESTAMPTZ AS valid FROM pg_roles WHERE rolname = 'jrb_r';
+----
+rolcanlogin	rolinherit	rolconnlimit	valid
+t	f	5	t
+
+
+connection r1
+statement ok
+EXECUTE JOB jrb_13;
+
+
+connection r1
+query
+SELECT has_column_privilege('jrb_r2', 'jrb_t', 'b', 'UPDATE') AS update_b, has_table_privilege('jrb_r2', 'jrb_t', 'UPDATE') AS update_table;
+----
+update_b	update_table
+t	f

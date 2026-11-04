@@ -114,31 +114,8 @@ class PrunedConjunction : public Root {
           continue;
         }
         _span = 1;
-        const auto ratio = (threshold - others_max) / lead_max;
-        auto& bucket = _buckets[std::min<uint32_t>(
-          kBuckets - 1, static_cast<uint32_t>(ratio * kBuckets))];
-        const uint64_t range = last - doc + 1;
-        _others.TakeReads();
-        if (!ScoreFirstPays(bucket) && ++bucket.ticks < bucket.interval) {
-          doc = Walk(doc, last, std::numeric_limits<score_t>::max(), collector);
-          bucket.doc_reads = bucket.doc_reads / 2 + _others.TakeReads();
-          bucket.doc_range = bucket.doc_range / 2 + range;
-          continue;
-        }
-        FlushBatch(collector);
-        const auto [seen, dropped] = ScoreFirst(last, others_max, collector);
-        bucket.sf_seen = bucket.sf_seen / 2 + seen;
-        bucket.sf_dropped =
-          bucket.sf_dropped / 2 + dropped + _others.TakeDropped();
-        bucket.sf_reads = bucket.sf_reads / 2 + _others.TakeReads();
-        bucket.sf_range = bucket.sf_range / 2 + range;
-        if (bucket.ticks != 0) {
-          bucket.ticks = 0;
-          bucket.interval = ScoreFirstPays(bucket)
-                              ? kScoreFirstSample
-                              : std::min(bucket.interval * 2, kMaxInterval);
-        }
-        doc = _lead.Value();
+        doc =
+          ScoreOrWalk(doc, last, threshold, lead_max, others_max, collector);
         continue;
       }
       ScoreFirst(last, others_max, collector);
@@ -185,6 +162,35 @@ class PrunedConjunction : public Root {
     const auto sf_reads = bucket.sf_reads * bucket.doc_range;
     return doc_reads > sf_reads && (doc_reads - sf_reads) * kDocsPerSavedRead >=
                                      bucket.sf_seen * bucket.doc_range;
+  }
+
+  doc_id_t ScoreOrWalk(doc_id_t doc, doc_id_t last, score_t threshold,
+                       score_t lead_max, score_t others_max,
+                       LoserScoreCollector& collector) {
+    const auto ratio = (threshold - others_max) / lead_max;
+    auto& bucket = _buckets[std::min<uint32_t>(
+      kBuckets - 1, static_cast<uint32_t>(ratio * kBuckets))];
+    const uint64_t range = last - doc + 1;
+    _others.TakeReads();
+    if (!ScoreFirstPays(bucket) && ++bucket.ticks < bucket.interval) {
+      doc = Walk(doc, last, std::numeric_limits<score_t>::max(), collector);
+      bucket.doc_reads = bucket.doc_reads / 2 + _others.TakeReads();
+      bucket.doc_range = bucket.doc_range / 2 + range;
+      return doc;
+    }
+    FlushBatch(collector);
+    const auto [seen, dropped] = ScoreFirst(last, others_max, collector);
+    bucket.sf_seen = bucket.sf_seen / 2 + seen;
+    bucket.sf_dropped = bucket.sf_dropped / 2 + dropped + _others.TakeDropped();
+    bucket.sf_reads = bucket.sf_reads / 2 + _others.TakeReads();
+    bucket.sf_range = bucket.sf_range / 2 + range;
+    if (bucket.ticks != 0) {
+      bucket.ticks = 0;
+      bucket.interval = ScoreFirstPays(bucket)
+                          ? kScoreFirstSample
+                          : std::min(bucket.interval * 2, kMaxInterval);
+    }
+    return _lead.Value();
   }
 
   doc_id_t SkipLead(doc_id_t target, doc_id_t max, score_t threshold) {
@@ -237,64 +243,66 @@ class PrunedConjunction : public Root {
   doc_id_t WindowFirst(doc_id_t doc, doc_id_t last, score_t stop,
                        LoserScoreCollector& collector) {
     while (doc <= last) {
-      const auto min = doc;
-      const auto max = static_cast<doc_id_t>(std::min<uint64_t>(
-        uint64_t{last} + 1, uint64_t{min} + irs::detail::kWindowDocs));
-      uint32_t n = 0;
-      _lead.ForEachDocs(max, [&](const doc_id_t* docs, const uint32_t* freqs,
-                                 uint32_t len) IRS_FORCE_INLINE {
-        std::copy_n(docs, len, _window_docs + n);
-        std::copy_n(freqs, len, _window_freqs + n);
-        n += len;
-      });
-      if (n < irs::detail::kSparseWindow) {
-        for (uint32_t i = 0; i != n; ++i) {
-          const auto member = _window_docs[i];
-          if constexpr (kExcludes) {
-            if (irs::detail::IsExcluded(_excludes, member)) {
-              continue;
-            }
-          }
-          if (_others.Probe(member) == member) {
-            Batch(member, _window_freqs[i], collector);
-          }
-        }
-        doc = _lead.Value();
-        if (collector.ScoreThreshold() > stop) {
-          return doc;
-        }
-        continue;
-      }
-      for (uint32_t i = 0; i != n; ++i) {
-        const auto offset = _window_docs[i] - min;
-        SetBit(_mask[offset / irs::detail::kWindowBits],
-               offset % irs::detail::kWindowBits);
-      }
-      _joined.Restrict(min, max, _mask);
+      const auto n = WindowMembers(doc, last);
       for (uint32_t i = 0; i != n; ++i) {
         const auto member = _window_docs[i];
-        const auto offset = member - min;
-        if (((_mask[offset / irs::detail::kWindowBits] >>
-              (offset % irs::detail::kWindowBits)) &
-             1) == 0) {
-          continue;
-        }
-        if constexpr (kExcludes) {
-          if (irs::detail::IsExcluded(_excludes, member)) {
-            continue;
-          }
-        }
         if (_others.Probe(member) == member) {
           Batch(member, _window_freqs[i], collector);
         }
       }
-      irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));
       doc = _lead.Value();
       if (collector.ScoreThreshold() > stop) {
         return doc;
       }
     }
     return doc;
+  }
+
+  uint32_t WindowMembers(doc_id_t min, doc_id_t last) {
+    const auto max = static_cast<doc_id_t>(std::min<uint64_t>(
+      uint64_t{last} + 1, uint64_t{min} + irs::detail::kWindowDocs));
+    uint32_t n = 0;
+    _lead.ForEachDocs(max, [&](const doc_id_t* docs, const uint32_t* freqs,
+                               uint32_t len) IRS_FORCE_INLINE {
+      std::copy_n(docs, len, _window_docs + n);
+      std::copy_n(freqs, len, _window_freqs + n);
+      n += len;
+    });
+    const auto keep = [&](auto&& admits) IRS_FORCE_INLINE {
+      uint32_t members = 0;
+      for (uint32_t i = 0; i != n; ++i) {
+        const auto member = _window_docs[i];
+        _window_docs[members] = member;
+        _window_freqs[members] = _window_freqs[i];
+        members += static_cast<uint32_t>(admits(member));
+      }
+      return members;
+    };
+    const auto included = [&](doc_id_t member) IRS_FORCE_INLINE {
+      if constexpr (kExcludes) {
+        return !irs::detail::IsExcluded(_excludes, member);
+      } else {
+        return true;
+      }
+    };
+    if (uint64_t{n} * irs::detail::kSparseInverse < max - min) {
+      return kExcludes ? keep(included) : n;
+    }
+    for (uint32_t i = 0; i != n; ++i) {
+      const auto offset = _window_docs[i] - min;
+      SetBit(_mask[offset / irs::detail::kWindowBits],
+             offset % irs::detail::kWindowBits);
+    }
+    _joined.Restrict(min, max, _mask);
+    const auto members = keep([&](doc_id_t member) IRS_FORCE_INLINE {
+      const auto offset = member - min;
+      return ((_mask[offset / irs::detail::kWindowBits] >>
+               (offset % irs::detail::kWindowBits)) &
+              1) != 0 &&
+             included(member);
+    });
+    irs::detail::Clear(_mask, irs::detail::WindowWords(min, max));
+    return members;
   }
 
   IRS_FORCE_INLINE void Batch(doc_id_t doc, uint32_t freq,

@@ -69,13 +69,7 @@ class PrunedPhrase : public Root {
       .stats = args.stats,
       .boost = args.boost,
     });
-    _slots.Gate([](uint64_t lead, auto leaves) {
-      double cost = 0;
-      for (const auto& leaf : leaves) {
-        cost += irs::detail::LeadProbeCost(lead, leaf.Estimate());
-      }
-      return cost > irs::detail::kBoundCheckCost;
-    });
+    _slots.Gate();
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {

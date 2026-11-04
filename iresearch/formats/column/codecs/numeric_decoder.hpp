@@ -58,11 +58,10 @@ class FrameDecoder {
 
  public:
   FrameDecoder(duckdb::const_data_ptr_t base, const NumericHeader& header,
-               duckdb::ObjectCache* cache = nullptr,
                const ReadContext::CacheSlot& slot = {})
     : _base{base},
       _h{header},
-      _cache{slot.touched ? cache : nullptr},
+      _cache{slot.touched ? slot.cache : nullptr},
       _slot{slot} {
     SDB_ENSURE(_h.width == sizeof(T), "numeric codec: width mismatch");
     if (Blocked()) {
@@ -80,12 +79,6 @@ class FrameDecoder {
     SDB_ENSURE(
       _per_frame == 0 || uint64_t{_h.frame_count} * _per_frame >= _h.row_count,
       "numeric codec: corrupted frame table");
-    if (_h.leaf == NumericLeaf::Lz4) {
-      _lz4.emplace();
-    }
-    if constexpr (std::is_integral_v<T>) {
-      _scale = static_cast<U>(_h.scale);
-    }
   }
 
   uint32_t FrameOf(uint64_t row) const noexcept {
@@ -145,10 +138,11 @@ class FrameDecoder {
       Prefetch(next);
       return ReadAlone(row);
     }
-    if (T value{}; ReadSource(row, value)) {
-      return value;
+    if (_h.Shuffled() || (_h.transform == NumericTransform::Raw &&
+                          _h.leaf == NumericLeaf::None)) {
+      return Get(row);
     }
-    return Get(row);
+    return ReadSource(row);
   }
 
  private:
@@ -156,7 +150,7 @@ class FrameDecoder {
   static constexpr uint64_t kScanCacheDivisor = 2;
 
   void Seek(uint64_t row) {
-    if (row >= _begin && row < _end) {
+    if (Holds(row)) {
       return;
     }
     if (Blocked()) {
@@ -168,10 +162,8 @@ class FrameDecoder {
   }
 
   T At(uint64_t row) noexcept {
-    U v;
     if (!Runs(_h.transform)) {
-      std::memcpy(&v, _view + (row - _begin) * sizeof(T), sizeof(T));
-      return Scaled(v);
+      return Scaled(duckdb::Load<U>(_view + (row - _begin) * sizeof(T)));
     }
     const auto r = RunOf(static_cast<uint32_t>(row - _begin));
     _hint = r;
@@ -195,18 +187,8 @@ class FrameDecoder {
 
   T ReadAlone(uint64_t row) {
     if (Blocked()) {
-      if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
-          f != _ffor_frame) {
-        OpenFfor(f);
-      }
-      const auto in_frame = row % kFforFrameRows;
-      const auto block = in_frame / numeric::kBlockValues;
-      const auto* meta = _ffor_src + block * kFforBlockMetaBytes;
-      const auto* packed = _ffor_src + _ffor_offsets[block];
-      const unsigned bits = meta[sizeof(uint64_t)];
-      const auto index =
-        static_cast<uint32_t>(in_frame % numeric::kBlockValues);
-      const auto base = duckdb::Load<uint64_t>(meta);
+      const auto [packed, base, bits] = BlockAt(row);
+      const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
       if (_h.transform == NumericTransform::DictFfor) {
         return Entry(numeric::UnpackValue<uint32_t>(
           packed, bits, index, static_cast<uint32_t>(base)));
@@ -221,65 +203,50 @@ class FrameDecoder {
     return Entry(code);
   }
 
-  bool ReadSource(uint64_t row, T& out) {
-    if (_h.Shuffled() || (_h.transform == NumericTransform::Raw &&
-                          _h.leaf == NumericLeaf::None)) {
-      return false;
-    }
+  T ReadSource(uint64_t row) {
     const auto f = FrameOf(row);
-    const auto at = static_cast<uint32_t>(
-      row - (f == _source_frame ? _source_first : FirstRow(f)));
+    const auto at = static_cast<uint32_t>(row - uint64_t{f} * _per_frame);
     const size_t need = (size_t{at} + 1) * _h.stored;
     if (f != _source_frame || need > _source_len) {
       OpenSource(f, Meta(f), need, false);
     }
     if (_h.transform != NumericTransform::Delta) {
-      out = Item(_source, at);
-      return true;
+      return Item(_source, at);
     }
     if (at + 1 < _summed) {
       _summed = 0;
     }
     if (_summed == 0) {
-      _sum = _source_base;
+      _sum = static_cast<U>(MetaAt(f).base);
     }
     _sum = numeric::WidenPrefixSum<false>(
       _source + size_t{_summed} * _h.stored, size_t{at} + 1 - _summed,
       _h.stored, _sum, static_cast<U>(_h.base), static_cast<U*>(nullptr));
     _summed = at + 1;
-    out = Scaled(_sum);
-    return true;
+    return Scaled(_sum);
   }
 
   void OpenSource(uint32_t f, const NumericFrameMeta& m, size_t need,
                   bool scan) {
-    const bool prefix = _lz4 && f != _source_frame && need < m.frame.raw_len;
+    const bool prefix = _h.leaf == NumericLeaf::Lz4 && f != _source_frame &&
+                        need < m.frame.raw_len &&
+                        m.frame.comp_len != m.frame.raw_len && !Admitted();
     _summed = 0;
-    _source_first = m.frame.first_entry;
-    _source_base = static_cast<U>(m.base);
-    _source_len = m.frame.raw_len;
+    _source_len = prefix ? need : m.frame.raw_len;
     _source_held.reset();
-    if (m.frame.comp_len == m.frame.raw_len) {
-      _source = Data(m);
-    } else if (const auto* cached =
-                 _cache && Admitted()
-                   ? Lookup(FrameKey(f), m.frame.raw_len, _source_held)
-                   : nullptr) {
-      _source = cached;
-    } else if (prefix && !Admitted()) {
+    _scan = scan;
+    if (prefix) {
       if (_raw.size() < m.frame.raw_len) {
         _raw.resize(m.frame.raw_len);
       }
-      SDB_ENSURE(_lz4->DecompressPrefix(reinterpret_cast<const char*>(Data(m)),
-                                        m.frame.comp_len,
-                                        reinterpret_cast<char*>(_raw.data()),
-                                        need, m.frame.raw_len) != 0,
+      SDB_ENSURE(Lz4::Decompressor::DecompressPrefix(
+                   reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
+                   reinterpret_cast<char*>(_raw.data()), need,
+                   m.frame.raw_len) != 0,
                  "numeric codec: corrupted frame");
       _source = _raw.data();
-      _source_len = need;
     } else {
-      _scan = scan;
-      _source = Inflate(m, nullptr, _source_held);
+      _source = Inflated(m, nullptr, f, _source_held);
     }
     _source_frame = f;
   }
@@ -357,8 +324,8 @@ class FrameDecoder {
 
   T Scaled(U v) const noexcept {
     if constexpr (std::is_integral_v<T>) {
-      if (_scale > 1) {
-        numeric::MultiplyBy(&v, 1, _scale);
+      if (const auto scale = static_cast<U>(_h.scale); scale > 1) {
+        numeric::MultiplyBy(&v, 1, scale);
       }
     }
     return std::bit_cast<T>(v);
@@ -366,8 +333,8 @@ class FrameDecoder {
 
   void Rescale(T* out, uint64_t count) const noexcept {
     if constexpr (std::is_integral_v<T>) {
-      if (_scale > 1) {
-        numeric::MultiplyBy(reinterpret_cast<U*>(out), count, _scale);
+      if (const auto scale = static_cast<U>(_h.scale); scale > 1) {
+        numeric::MultiplyBy(reinterpret_cast<U*>(out), count, scale);
       }
     }
   }
@@ -432,7 +399,7 @@ class FrameDecoder {
   }
 
   uint64_t DecodeDirect(uint64_t row, uint64_t count, U* out) {
-    if ((row >= _begin && row < _end) || Runs(_h.transform)) {
+    if (Holds(row) || Runs(_h.transform)) {
       return 0;
     }
     if (Blocked()) {
@@ -462,13 +429,10 @@ class FrameDecoder {
   }
 
   bool Streams(uint64_t row, uint32_t f) const noexcept {
-    if (_h.Shuffled()) {
-      return false;
-    }
-    return _h.transform == NumericTransform::For ||
-           _h.transform == NumericTransform::Dict ||
-           (_h.transform == NumericTransform::Delta &&
-            (row == _delta_end || row == FirstRow(f)));
+    return !_h.Shuffled() && (_h.transform == NumericTransform::For ||
+                              _h.transform == NumericTransform::Dict ||
+                              (_h.transform == NumericTransform::Delta &&
+                               (row == _delta_end || row == FirstRow(f))));
   }
 
   void DecodeRange(uint32_t f, const NumericFrameMeta& m, uint64_t row,
@@ -522,18 +486,11 @@ class FrameDecoder {
     if (m.frame.comp_len == m.frame.raw_len) {
       return Data(m);
     }
+    ScratchVector<uint8_t> admitted;
     if (_cache && Admitted()) {
       if (const auto* cached = Lookup(FrameKey(frame), m.frame.raw_len, held)) {
         return cached;
       }
-    }
-    return Inflate(m, dst, held);
-  }
-
-  const uint8_t* Inflate(const NumericFrameMeta& m, uint8_t* dst,
-                         duckdb::shared_ptr<DecodedFrame>& held) {
-    ScratchVector<uint8_t> admitted;
-    if (_cache && Admitted()) {
       const auto room = _scan ? _cache->GetMaxMemoryRacy() / kScanCacheDivisor
                               : _cache->GetMaxMemoryRacy();
       if (_cache->GetCurrentMemoryRacy() + m.frame.raw_len <= room) {
@@ -551,10 +508,12 @@ class FrameDecoder {
     const auto* in = reinterpret_cast<const char*>(Data(m));
     auto* out = reinterpret_cast<char*>(dst);
     const bool ok =
-      _lz4 ? _lz4->Decompress(in, m.frame.comp_len, out, m.frame.raw_len)
-           : _h.leaf == NumericLeaf::Zstd &&
-               (_zstd ? *_zstd : _zstd.emplace())
-                 .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
+      _h.leaf == NumericLeaf::Lz4
+        ? Lz4::Decompressor::Decompress(in, m.frame.comp_len, out,
+                                        m.frame.raw_len)
+        : _h.leaf == NumericLeaf::Zstd &&
+            (_zstd ? *_zstd : _zstd.emplace())
+              .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     SDB_ENSURE(ok, "numeric codec: corrupted frame");
     if (!admitted.empty()) {
       held = duckdb::make_shared_ptr<DecodedFrame>(std::move(admitted));
@@ -586,36 +545,49 @@ class FrameDecoder {
     _ffor_frame = f;
   }
 
-  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    using Word = numeric::LaneWord<U>;
-    if (const auto f = static_cast<uint32_t>(first / kFforFrameRows);
+  struct PackedBlock {
+    const uint8_t* packed;
+    uint64_t base;
+    unsigned bits;
+  };
+
+  IRS_FORCE_INLINE PackedBlock BlockAt(uint64_t row) {
+    if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
         f != _ffor_frame) {
       OpenFfor(f);
     }
-    const auto b = (first % kFforFrameRows) / numeric::kBlockValues;
+    const auto b = row % kFforFrameRows / numeric::kBlockValues;
     const auto* meta = _ffor_src + b * kFforBlockMetaBytes;
-    const unsigned bits = meta[sizeof(uint64_t)];
-    const auto* packed = _ffor_src + _ffor_offsets[b];
+    return {
+      .packed = _ffor_src + _ffor_offsets[b],
+      .base = duckdb::Load<uint64_t>(meta),
+      .bits = meta[sizeof(uint64_t)],
+    };
+  }
+
+  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
+    using Word = numeric::LaneWord<U>;
+    const auto [packed, base, bits] = BlockAt(first);
     if (_h.transform == NumericTransform::DictFfor) {
       if (_codes.size() < numeric::kBlockValues) {
         _codes.resize(numeric::kBlockValues);
       }
-      const auto code_base = duckdb::Load<uint64_t>(meta);
       numeric::kUnpack<uint32_t>[bits](Words<uint32_t>(packed, bits),
                                        _codes.data(),
-                                       static_cast<uint32_t>(code_base));
-      const auto largest = code_base + (uint64_t{1} << bits) - 1;
-      Gather(_codes.data(), rows, out, largest >= _h.dict_count);
+                                       static_cast<uint32_t>(base));
+      const auto largest = base + (uint64_t{1} << bits) - 1;
+      Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
+                       static_cast<uint32_t>(rows), out,
+                       largest >= _h.dict_count);
       return;
     }
-    const auto base = static_cast<U>(duckdb::Load<uint64_t>(meta));
     const auto* words = Words<Word>(packed, bits);
     if (rows == numeric::kBlockValues) {
-      numeric::kUnpack<U>[bits](words, out, base);
+      numeric::kUnpack<U>[bits](words, out, static_cast<U>(base));
       return;
     }
     _block.resize(numeric::kBlockValues);
-    numeric::kUnpack<U>[bits](words, _block.data(), base);
+    numeric::kUnpack<U>[bits](words, _block.data(), static_cast<U>(base));
     std::memcpy(out, _block.data(), rows * sizeof(U));
   }
 
@@ -669,25 +641,15 @@ class FrameDecoder {
     }
   }
 
-  void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) {
-    if (_h.stored == sizeof(uint8_t)) {
-      GatherNarrow<uint8_t>(src, rows, out);
-      return;
-    }
-    if (_h.stored == sizeof(uint16_t)) {
-      GatherNarrow<uint16_t>(src, rows, out);
-      return;
-    }
-    if (_codes.size() < rows) {
-      _codes.resize(rows);
-    }
-    numeric::Widen(src, rows, _h.stored, _codes.data());
-    Gather(_codes.data(), rows, out);
+  void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) const {
+    numeric::ResolveStored(_h.stored,
+                           [&]<typename C> { Gather<C>(src, rows, out); });
   }
 
   template<typename C>
-  void GatherNarrow(const uint8_t* src, uint32_t rows, U* out) const {
-    if (_h.dict_count <= std::numeric_limits<C>::max()) {
+  void Gather(const uint8_t* src, uint32_t rows, U* out,
+              bool checked = true) const {
+    if (checked && _h.dict_count <= std::numeric_limits<C>::max()) {
       C worst = 0;
       for (uint32_t i = 0; i < rows; ++i) {
         worst = std::max(worst, duckdb::Load<C>(src + size_t{i} * sizeof(C)));
@@ -698,21 +660,6 @@ class FrameDecoder {
     for (uint32_t i = 0; i < rows; ++i) {
       const auto code = duckdb::Load<C>(src + size_t{i} * sizeof(C));
       out[i] = duckdb::Load<U>(dict + size_t{code} * sizeof(U));
-    }
-  }
-
-  void Gather(const uint32_t* codes, uint64_t rows, U* out,
-              bool checked = true) const {
-    if (checked) {
-      uint32_t worst = 0;
-      for (uint64_t i = 0; i < rows; ++i) {
-        worst = std::max(worst, codes[i]);
-      }
-      SDB_ENSURE(worst < _h.dict_count, "numeric codec: corrupted codes");
-    }
-    const auto* dict = _base + _h.off_dict;
-    for (uint64_t i = 0; i < rows; ++i) {
-      out[i] = duckdb::Load<U>(dict + size_t{codes[i]} * sizeof(U));
     }
   }
 
@@ -833,11 +780,8 @@ class FrameDecoder {
   size_t _source_len = 0;
   const uint8_t* _source = nullptr;
   duckdb::shared_ptr<DecodedFrame> _source_held;
-  uint64_t _source_first = 0;
-  U _source_base = 0;
   uint32_t _summed = 0;
   U _sum = 0;
-  U _scale = 0;
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint64_t _next = 0;
@@ -857,9 +801,8 @@ class FrameDecoder {
   ScratchVector<uint64_t> _words64;
   ScratchVector<U> _block;
   const uint8_t* _ffor_src = nullptr;
-  uint32_t _ffor_frame = std::numeric_limits<uint32_t>::max();
+  uint32_t _ffor_frame = kNoFrame;
   std::array<uint32_t, kFforFrameRows / numeric::kBlockValues> _ffor_offsets{};
-  std::optional<Lz4::Decompressor> _lz4;
   std::optional<Zstd::Decompressor> _zstd;
 };
 

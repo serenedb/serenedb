@@ -53,7 +53,6 @@
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -153,7 +152,6 @@ struct Candidate {
   std::span<const uint8_t> lengths;
   std::span<const uint32_t> run_rows;
   std::span<const uint8_t> dict;
-  uint32_t dict_count = 0;
 
   uint32_t ItemBytes() const noexcept { return stored + run_width; }
 };
@@ -287,8 +285,7 @@ class TypedSealer final : public NumericSealer {
       }
       const T v = data[idx];
       _stats.Update(v);
-      U bits;
-      std::memcpy(&bits, &v, sizeof(bits));
+      const auto bits = std::bit_cast<U>(v);
       if (!_any_valid) {
         absl::c_fill(_owned, bits);
         _any_valid = true;
@@ -328,88 +325,95 @@ class TypedSealer final : public NumericSealer {
       const auto* c = Find(*tuning.pick);
       const auto option = absl::c_find_if(
         plan, [&](const auto& o) { return o.leaf == tuning.pick->leaf; });
-      std::optional<NumericSegment> out;
-      bool drift = true;
       if (c && option != plan.end()) {
-        out = Emit(*c, *option);
-        const auto bytes = out->bytes.size();
-        drift = tuning.Drifted(static_cast<double>(bytes), rows);
-        if (rival_bytes != kNoRival &&
-            option->Price(bytes) >= static_cast<double>(rival_bytes)) {
-          out.reset();
+        auto out = Emit(*c, *option);
+        const auto bytes = out.bytes.size();
+        const bool drift = tuning.Drifted(static_cast<double>(bytes), rows);
+        const bool keep =
+          rival_bytes == kNoRival
+            ? !drift
+            : option->Price(bytes) < static_cast<double>(rival_bytes);
+        if (keep) {
+          if (drift) {
+            tuning.clock.Restart();
+          }
+          return out;
         }
       }
-      if (rival_bytes == kNoRival && (!out || drift)) {
+      if (rival_bytes == kNoRival) {
         tuning.clock.Restart();
         return NoSegment();
       }
-      if (!out) {
-        return SealWith(plan, rival_bytes, tuning, true);
-      }
-      if (drift) {
-        tuning.clock.Restart();
-      }
-      return std::move(*out);
     }
 
     BuildCandidates(nullptr);
     double best_price = static_cast<double>(rival_bytes);
-    uint64_t best_bytes = rival_bytes;
     const Candidate* best = nullptr;
     LeafOption best_leaf{NumericLeaf::None, 0};
     for (const auto& option : plan) {
       for (const auto& c : _candidates) {
-        if (c.shuffled && option.leaf == NumericLeaf::None) {
+        if (option.leaf == NumericLeaf::None ? c.shuffled
+                                             : BitPacked(c.transform)) {
           continue;
         }
-        if (BitPacked(c.transform) && option.leaf != NumericLeaf::None) {
-          continue;
-        }
-        const auto bytes = Estimate(c, option);
-        const auto price = option.Price(bytes);
-        if (price < best_price) {
+        if (const auto price = option.Price(Estimate(c, option));
+            price < best_price) {
           best_price = price;
-          best_bytes = bytes;
           best = &c;
           best_leaf = option;
         }
       }
     }
-    std::optional<NumericSegment> out;
+    const auto calibrate = [&](std::optional<NumericChoice> pick,
+                               uint64_t bytes) {
+      tuning.clock.Settle(tuning.calibrated && tuning.pick == pick);
+      tuning.calibrated = true;
+      tuning.pick = pick;
+      tuning.bytes_per_row = static_cast<double>(bytes) / rows;
+    };
     if (best) {
-      out = Emit(*best, best_leaf);
-      const auto bytes = out->bytes.size();
-      if (best_leaf.Price(bytes) >= static_cast<double>(rival_bytes)) {
-        out.reset();
-        best = nullptr;
-        best_bytes = rival_bytes;
-      } else {
-        best_bytes = bytes;
+      auto out = Emit(*best, best_leaf);
+      if (const auto bytes = out.bytes.size();
+          best_leaf.Price(bytes) < static_cast<double>(rival_bytes)) {
+        calibrate(
+          NumericChoice{best->transform, best_leaf.leaf, best->shuffled},
+          bytes);
+        return out;
       }
     }
-    std::optional<NumericChoice> pick;
-    if (best) {
-      pick = NumericChoice{best->transform, best_leaf.leaf, best->shuffled};
-    }
-    const bool kept = tuning.calibrated && tuning.pick == pick;
-    tuning.clock.Settle(kept);
-    tuning.calibrated = true;
-    tuning.pick = pick;
-    tuning.bytes_per_row = static_cast<double>(best_bytes) / rows;
-    if (!out) {
-      return NoSegment();
-    }
-    return std::move(*out);
+    calibrate(std::nullopt, rival_bytes);
+    return NoSegment();
   }
 
  private:
-  static constexpr uint8_t FrameLog2(const Candidate& c,
-                                     const LeafOption& option) noexcept {
-    if (BitPacked(c.transform)) {
-      return kFforFrameLog2;
+  struct Geometry {
+    uint8_t log2;
+    uint32_t per;
+    uint32_t frames;
+    uint64_t off_data;
+  };
+
+  static Geometry GeometryOf(const Candidate& c,
+                             const LeafOption& option) noexcept {
+    const bool packed = BitPacked(c.transform);
+    uint8_t log2 = kFforFrameLog2;
+    uint32_t per = c.transform == NumericTransform::RleFfor ? kRleFforFrameRuns
+                                                            : kFforFrameRows;
+    if (!packed) {
+      log2 = option.leaf == NumericLeaf::None ? kNumericFrameLog2
+                                              : kNumericLeafFrameLog2;
+      per = (uint32_t{1} << log2) / c.ItemBytes();
     }
-    return option.leaf == NumericLeaf::None ? kNumericFrameLog2
-                                            : kNumericLeafFrameLog2;
+    const uint32_t frames = (c.items + per - 1) / per;
+    const uint64_t off = kNumericHeaderSize +
+                         uint64_t{frames} * kNumericFrameMetaSize +
+                         c.dict.size();
+    return {
+      .log2 = log2,
+      .per = per,
+      .frames = frames,
+      .off_data = packed ? duckdb::AlignValue<uint64_t, 8>(off) : off,
+    };
   }
 
   const Candidate* Find(const NumericChoice& choice) const noexcept {
@@ -420,9 +424,7 @@ class TypedSealer final : public NumericSealer {
   }
 
   NumericSegment Emit(const Candidate& c, const LeafOption& leaf) {
-    NumericSegment out{
-      .stats = duckdb::BaseStatistics::CreateEmpty(_type),
-    };
+    auto out = NoSegment();
     _stats.Merge(out.stats);
     Write(c, leaf, out.bytes);
     return out;
@@ -501,13 +503,13 @@ class TypedSealer final : public NumericSealer {
     _candidates.clear();
     const std::span<const uint8_t> raw{
       reinterpret_cast<const uint8_t*>(_values.data()), size_t{n} * kWidth};
-    Candidate c;
-    c.items = n;
-    c.transform = NumericTransform::Raw;
-    c.stored = kWidth;
-    c.values = raw;
     if (wanted(NumericTransform::Raw)) {
-      AddWithShuffle(c);
+      AddWithShuffle({
+        .transform = NumericTransform::Raw,
+        .stored = kWidth,
+        .items = n,
+        .values = raw,
+      });
     }
 
     if (wanted(NumericTransform::For) && for_stored < kWidth) {
@@ -516,22 +518,23 @@ class TypedSealer final : public NumericSealer {
                       [v = _values.data(), lo](size_t i) {
                         return static_cast<U>(v[i] - lo);
                       });
-      c.transform = NumericTransform::For;
-      c.stored = for_stored;
-      c.base = lo;
-      c.values = _for;
-      AddWithShuffle(c);
+      AddWithShuffle({
+        .transform = NumericTransform::For,
+        .stored = for_stored,
+        .base = lo,
+        .items = n,
+        .values = _for,
+      });
     }
 
     if constexpr (std::is_integral_v<T>) {
       if (wanted(NumericTransform::Ffor)) {
         _ffor.Plan(_values, Less);
-        c.transform = NumericTransform::Ffor;
-        c.stored = kWidth;
-        c.base = 0;
-        c.values = raw;
-        c.shuffled = false;
-        _candidates.push_back(c);
+        _candidates.push_back({
+          .transform = NumericTransform::Ffor,
+          .stored = kWidth,
+          .items = n,
+        });
       }
     }
 
@@ -542,22 +545,21 @@ class TypedSealer final : public NumericSealer {
                       [v = _values.data(), delta_offset](size_t i) {
                         return static_cast<U>(v[i + 1] - v[i] - delta_offset);
                       });
-      c.transform = NumericTransform::Delta;
-      c.stored = delta_stored;
-      c.base = delta_offset;
-      c.values = _delta;
-      AddWithShuffle(c);
+      AddWithShuffle({
+        .transform = NumericTransform::Delta,
+        .stored = delta_stored,
+        .base = delta_offset,
+        .items = n,
+        .values = _delta,
+      });
     }
 
     if ((wanted(NumericTransform::Rle) || wanted(NumericTransform::RleFfor)) &&
         runs * 2 <= n) {
       BuildRuns(runs);
       if (wanted(NumericTransform::Rle)) {
-        uint32_t longest = 0;
-        for (const auto length : _run_lengths) {
-          longest = std::max(longest, length);
-        }
-        const auto run_width = numeric::BytesFor(longest);
+        const auto run_width =
+          numeric::BytesFor(std::ranges::max(_run_lengths));
         _rle_values.resize(size_t{runs} * for_stored);
         _rle_lengths.resize(size_t{runs} * run_width);
         numeric::Narrow(runs, for_stored, _rle_values.data(),
@@ -566,28 +568,28 @@ class TypedSealer final : public NumericSealer {
                         });
         numeric::Narrow(runs, run_width, _rle_lengths.data(),
                         [l = _run_lengths.data()](size_t r) { return l[r]; });
-        Candidate r;
-        r.transform = NumericTransform::Rle;
-        r.stored = for_stored;
-        r.run_width = run_width;
-        r.base = lo;
-        r.items = runs;
-        r.values = _rle_values;
-        r.lengths = _rle_lengths;
-        r.run_rows = _run_rows;
-        _candidates.push_back(r);
+        _candidates.push_back({
+          .transform = NumericTransform::Rle,
+          .stored = for_stored,
+          .run_width = run_width,
+          .base = lo,
+          .items = runs,
+          .values = _rle_values,
+          .lengths = _rle_lengths,
+          .run_rows = _run_rows,
+        });
       }
       if (wanted(NumericTransform::RleFfor) &&
           (!_codes_only || runs * kPackedCodeRunRows <= n)) {
         _run_blocks.Plan(std::span<const U>{_run_values}, Less);
         _length_blocks.Plan(std::span<const uint32_t>{_run_lengths},
                             std::less<uint32_t>{});
-        Candidate r;
-        r.transform = NumericTransform::RleFfor;
-        r.stored = kWidth;
-        r.items = runs;
-        r.run_rows = _run_rows;
-        _candidates.push_back(r);
+        _candidates.push_back({
+          .transform = NumericTransform::RleFfor,
+          .stored = kWidth,
+          .items = runs,
+          .run_rows = _run_rows,
+        });
       }
     }
 
@@ -597,11 +599,9 @@ class TypedSealer final : public NumericSealer {
       const uint32_t cap = for_stored >= 4 ? kNumericDictMax : 256;
       if (BuildDictionary(cap)) {
         const auto dict_count = static_cast<uint32_t>(_dict.size());
-        Candidate d;
-        d.items = n;
-        d.dict = {reinterpret_cast<const uint8_t*>(_dict.data()),
-                  size_t{dict_count} * kWidth};
-        d.dict_count = dict_count;
+        const std::span<const uint8_t> dict{
+          reinterpret_cast<const uint8_t*>(_dict.data()),
+          size_t{dict_count} * kWidth};
         if (wanted(NumericTransform::Dict)) {
           const auto code_width = numeric::BytesFor(dict_count - 1);
           if (code_width < for_stored) {
@@ -609,20 +609,24 @@ class TypedSealer final : public NumericSealer {
             numeric::Narrow(
               n, code_width, _codes.data(),
               [k = _code_values.data()](size_t i) { return k[i]; });
-            d.transform = NumericTransform::Dict;
-            d.stored = code_width;
-            d.values = _codes;
-            AddWithShuffle(d);
+            AddWithShuffle({
+              .transform = NumericTransform::Dict,
+              .stored = code_width,
+              .items = n,
+              .values = _codes,
+              .dict = dict,
+            });
           }
         }
         if (wanted(NumericTransform::DictFfor)) {
           _code_blocks.Plan(std::span<const uint32_t>{_code_values},
                             std::less<uint32_t>{});
-          d.transform = NumericTransform::DictFfor;
-          d.stored = kWidth;
-          d.values = {};
-          d.shuffled = false;
-          _candidates.push_back(d);
+          _candidates.push_back({
+            .transform = NumericTransform::DictFfor,
+            .stored = kWidth,
+            .items = n,
+            .dict = dict,
+          });
         }
       }
     }
@@ -684,18 +688,14 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  uint64_t PackedSize(const Candidate& c, uint32_t frames) const noexcept {
-    const uint64_t bytes =
-      kNumericHeaderSize + uint64_t{frames} * kNumericFrameMetaSize;
+  uint64_t PackedBlocks(const Candidate& c) const noexcept {
     switch (c.transform) {
       case NumericTransform::Ffor:
-        return bytes + _ffor.Bytes();
+        return _ffor.Bytes();
       case NumericTransform::RleFfor:
-        return bytes + _run_blocks.Bytes() + _length_blocks.Bytes();
+        return _run_blocks.Bytes() + _length_blocks.Bytes();
       default:
-        return duckdb::AlignValue<uint32_t, 8>(
-                 static_cast<uint32_t>(bytes + c.dict.size())) +
-               _code_blocks.Bytes();
+        return _code_blocks.Bytes();
     }
   }
 
@@ -730,7 +730,6 @@ class TypedSealer final : public NumericSealer {
   }
 
   void AddWithShuffle(Candidate c) {
-    c.shuffled = false;
     _candidates.push_back(c);
     if (c.stored > 1) {
       c.shuffled = true;
@@ -738,25 +737,9 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  static uint32_t ItemsPerFrame(const Candidate& c, uint8_t log2) noexcept {
-    if (c.transform == NumericTransform::RleFfor) {
-      return kRleFforFrameRuns;
-    }
-    if (BitPacked(c.transform)) {
-      return kFforFrameRows;
-    }
-    return (uint32_t{1} << log2) / c.ItemBytes();
-  }
-
-  static uint32_t FrameCount(const Candidate& c, uint8_t log2) noexcept {
-    const auto per = ItemsPerFrame(c, log2);
-    return (c.items + per - 1) / per;
-  }
-
   std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f,
-                                    uint8_t log2) {
+                                    uint32_t per) {
     SDB_ASSERT(!BitPacked(c.transform));
-    const auto per = ItemsPerFrame(c, log2);
     const auto begin = f * per;
     const auto k = std::min(c.items - begin, per);
     const auto* values = c.values.data() + size_t{begin} * c.stored;
@@ -777,35 +760,29 @@ class TypedSealer final : public NumericSealer {
   }
 
   uint64_t Estimate(const Candidate& c, const LeafOption& option) {
-    const auto log2 = FrameLog2(c, option);
-    const auto frames = FrameCount(c, log2);
+    const auto g = GeometryOf(c, option);
     if (BitPacked(c.transform)) {
-      return PackedSize(c, frames);
+      return g.off_data + PackedBlocks(c);
     }
-    const uint64_t overhead = kNumericHeaderSize +
-                              uint64_t{frames} * kNumericFrameMetaSize +
-                              c.dict.size();
     const uint64_t total = uint64_t{c.items} * c.ItemBytes();
     if (option.leaf == NumericLeaf::None) {
-      return overhead + total;
+      return g.off_data + total;
     }
     uint64_t raw = 0;
     uint64_t comp = 0;
-    const auto samples = std::min<uint32_t>(frames, kSampleFrames);
+    const auto samples = std::min<uint32_t>(g.frames, kSampleFrames);
     for (uint32_t k = 0; k < samples; ++k) {
-      const auto f = static_cast<uint32_t>(uint64_t{k} * frames / samples);
-      const auto bytes = FrameRaw(c, f, log2);
+      const auto f = static_cast<uint32_t>(uint64_t{k} * g.frames / samples);
+      const auto bytes = FrameRaw(c, f, g.per);
       const auto n = _leaves.Compress(option.leaf, bytes.data(), bytes.size());
       raw += bytes.size();
       comp += std::min<uint64_t>(n, bytes.size());
     }
-    return overhead + (raw == 0 ? 0 : total * comp / raw);
+    return g.off_data + (raw == 0 ? 0 : total * comp / raw);
   }
 
   void Write(const Candidate& c, const LeafOption& option, std::string& out) {
-    const auto log2 = FrameLog2(c, option);
-    const auto frames = FrameCount(c, log2);
-    const auto per = ItemsPerFrame(c, log2);
+    const auto [log2, per, frames, off_data] = GeometryOf(c, option);
     NumericHeader h;
     h.width = kWidth;
     h.transform = c.transform;
@@ -817,22 +794,18 @@ class TypedSealer final : public NumericSealer {
     h.frame_log2 = log2;
     h.row_count = static_cast<uint32_t>(_values.size());
     h.frame_count = frames;
-    h.dict_count = c.dict_count;
+    h.dict_count = static_cast<uint32_t>(c.dict.size() / kWidth);
     h.off_frames = kNumericHeaderSize;
     h.off_dict = h.off_frames + frames * kNumericFrameMetaSize;
-    h.off_data = h.off_dict + static_cast<uint32_t>(c.dict.size());
-    if (BitPacked(c.transform)) {
-      h.off_data = duckdb::AlignValue<uint32_t, 8>(h.off_data);
-    }
+    h.off_data = static_cast<uint32_t>(off_data);
     h.base = c.base;
     h.raw_bytes = uint64_t{c.items} * c.ItemBytes();
     h.scale = _scale > 1 ? _scale : 0;
 
     const bool direct = option.leaf == NumericLeaf::None && !c.shuffled;
-    out.clear();
     if (direct) {
-      out.reserve(BitPacked(c.transform) ? PackedSize(c, frames)
-                                         : h.off_data + h.raw_bytes);
+      out.reserve(h.off_data +
+                  (BitPacked(c.transform) ? PackedBlocks(c) : h.raw_bytes));
     }
     out.resize(h.off_data);
     if (!c.dict.empty()) {
@@ -858,7 +831,7 @@ class TypedSealer final : public NumericSealer {
         m.frame.comp_len = m.frame.raw_len;
         continue;
       }
-      const auto bytes = FrameRaw(c, f, log2);
+      const auto bytes = FrameRaw(c, f, per);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
         const auto n =
@@ -940,7 +913,7 @@ struct ScanState final : duckdb::SegmentScanState {
     : handle{std::move(handle_p)},
       frames{handle.Ptr() + segment.GetBlockOffset(),
              SegmentHeader(handle.Ptr() + segment.GetBlockOffset(), segment),
-             CacheSlotOf(segment).cache, CacheSlotOf(segment)} {}
+             CacheSlotOf(segment)} {}
 
   duckdb::BufferHandle handle;
   FrameDecoder<T> frames;
@@ -993,21 +966,20 @@ duckdb::FilterPropagateResult FramesVerdict(
     scan.filter_stats->SetHasNoNullFast();
   }
   auto& stats = *scan.filter_stats;
-  auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
-  bool first = true;
-  const auto last = scan.frames.FrameOf(end - 1);
-  for (auto f = scan.frames.FrameOf(begin); f <= last; ++f) {
+  const auto check = [&](uint32_t f) {
     duckdb::NumericStats::SetMin<T>(stats, scan.frames.FrameMin(f));
     duckdb::NumericStats::SetMax<T>(stats, scan.frames.FrameMax(f));
-    const auto frame = checker.Check(stats, nullptr);
-    if (first) {
-      verdict = frame;
-      first = false;
-    } else if (frame != verdict) {
+    return checker.Check(stats, nullptr);
+  };
+  const auto first = scan.frames.FrameOf(begin);
+  const auto last = scan.frames.FrameOf(end - 1);
+  const auto verdict = check(first);
+  for (auto f = first + 1;
+       f <= last &&
+       verdict != duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+       ++f) {
+    if (check(f) != verdict) {
       return duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
-    }
-    if (verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE) {
-      break;
     }
   }
   return verdict;
@@ -1063,7 +1035,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
     cache.frames.emplace(base, SegmentHeader(base, segment),
-                         CacheSlotOf(segment).cache, CacheSlotOf(segment));
+                         CacheSlotOf(segment));
     cache.block = block;
   }
   auto& frames = *cache.frames;

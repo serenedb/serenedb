@@ -123,6 +123,7 @@ void SegmentWriter::FlushFields(FlushState& state,
 
 void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
                           DocOrder& order) {
+  SDB_ASSERT(order.Empty());
   auto& meta = segment.meta;
 
   FlushState state{
@@ -141,10 +142,8 @@ void SegmentWriter::flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
     _fields.FinalizeNorms();
     if (_sort) {
       order = MakeDocOrder(FlushOrder(*_sort, *_col_writer, buffered_docs()));
-      _col_writer->Commit(buffered_docs(), order.new2old);
-    } else {
-      _col_writer->Commit(buffered_docs());
     }
+    _col_writer->Commit(buffered_docs(), order.new2old);
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
     } else {

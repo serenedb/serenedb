@@ -49,8 +49,8 @@ size_t FindStructFieldIndex(const duckdb::LogicalType& struct_type,
 }
 
 duckdb::Vector& GatherScratch(
-  const duckdb::LogicalType& type,
-  std::unique_ptr<irs::ColumnReader::VectorScratch>& slot) {
+  std::unique_ptr<irs::ColumnReader::VectorScratch>& slot,
+  const duckdb::LogicalType& type) {
   auto& scratch = ResetScratch(slot, type);
   duckdb::FlatVector::ValidityMutable(scratch).Reset();
   return scratch;
@@ -225,7 +225,7 @@ void ExtractBinding::ExtractLeaf(const Rows& rows, duckdb::Vector& out_vec,
     }
     return;
   }
-  auto& scratch = GatherScratch(leaf.Type(), _scratch);
+  auto& scratch = GatherScratch(_scratch, leaf.Type());
   if (fastpath) {
     leaf.Scan(leaf_state, scratch, n);
   } else {
@@ -315,14 +315,14 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
           irs::column_internal::GatherRows(*leaf, *leaf_scan, local, out_vec,
                                            out_off, entire_group);
         } else {
-          auto& scratch = GatherScratch(leaf_type, _scratch);
+          auto& scratch = GatherScratch(_scratch, leaf_type);
           irs::column_internal::GatherRows(*leaf, *leaf_scan, local, scratch, 0,
                                            /*whole_output=*/true);
           PlaceCast(scratch, scan_type, out_vec, out_off, glen, _casted,
                     entire_group);
         }
       } else {
-        auto& variant = GatherScratch(VariantType(), _variant);
+        auto& variant = GatherScratch(_variant, VariantType());
         irs::column_internal::GatherRows(variant_col, variant_state,
                                          Sub(rows, i, glen), variant, 0,
                                          /*whole_output=*/true);
@@ -337,7 +337,7 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
     return;
   }
 
-  auto& variant = GatherScratch(VariantType(), _variant);
+  auto& variant = GatherScratch(_variant, VariantType());
   irs::column_internal::GatherRows(variant_col, variant_state, rows, variant,
                                    0);
 

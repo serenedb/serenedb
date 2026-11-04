@@ -199,8 +199,7 @@ struct ColCodecParams {
   uint32_t segment_target = kDefaultColSegmentTarget;
   WriteTier tier = WriteTier::Merge;
 
-  friend bool operator==(const ColCodecParams&,
-                         const ColCodecParams&) = default;
+  bool operator==(const ColCodecParams&) const = default;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;

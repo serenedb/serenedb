@@ -28,7 +28,6 @@
 #include <bit>
 #include <duckdb/common/bswap.hpp>
 #include <functional>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -103,14 +102,14 @@ IRS_FORCE_INLINE uint32_t Get(uint32_t* const* blocks, uint64_t i) noexcept {
                [i & ScatterScratch::kBlockMask];
 }
 
-template<typename T, typename DocOf, typename Less>
+template<typename T, typename DocOf>
 void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
-               doc_id_t max_doc, DocOf doc_of, Less less) {
+               doc_id_t max_doc, DocOf doc_of) {
   constexpr uint32_t kRadixBits = 11;
   constexpr uint32_t kRadixMask = (uint32_t{1} << kRadixBits) - 1;
   constexpr size_t kComparisonSortMax = 256;
   if (items.size() <= kComparisonSortMax) {
-    absl::c_sort(items, less);
+    absl::c_sort(items);
     return;
   }
   spare.resize(items.size());
@@ -158,11 +157,10 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
       auto& keys = _s->doc_keys;
       keys.clear();
       for (auto i = begin; i != end; ++i) {
-        keys.push_back(Get(docs, i));
+        keys.emplace_back(Get(docs, i));
       }
-      SortByDoc(
-        keys, _s->doc_keys_alt, max_doc,
-        [](uint32_t doc) noexcept { return doc; }, std::less<>{});
+      SortByDoc(keys, _s->doc_keys_alt, max_doc,
+                [](uint32_t doc) noexcept { return doc; });
       for (auto i = begin; const auto doc : keys) {
         Put(docs, i++, doc);
       }
@@ -170,42 +168,33 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
       auto& pairs = _s->doc_pos;
       pairs.clear();
       for (auto i = begin; i != end; ++i) {
-        pairs.push_back(uint64_t{Get(docs, i)} << 32 | Get(positions, i));
+        pairs.emplace_back(uint64_t{Get(docs, i)} << 32 | Get(positions, i));
       }
-      SortByDoc(
-        pairs, _s->doc_pos_alt, max_doc,
-        [](uint64_t pair) noexcept {
-          return static_cast<uint32_t>(pair >> 32);
-        },
-        std::less<>{});
+      SortByDoc(pairs, _s->doc_pos_alt, max_doc, [](uint64_t pair) noexcept {
+        return static_cast<uint32_t>(pair >> 32);
+      });
       for (auto i = begin; const auto pair : pairs) {
         Put(docs, i, static_cast<uint32_t>(pair >> 32));
         Put(positions, i++, static_cast<uint32_t>(pair));
       }
     } else {
+      auto* const* offs_start = _s->offs_start.data();
+      auto* const* offs_end = _s->offs_end.data();
       auto& occurrences = _s->occurrences;
       occurrences.clear();
       for (auto i = begin; i != end; ++i) {
-        occurrences.push_back({.doc = Get(docs, i),
-                               .pos = Get(positions, i),
-                               .offs_start = Get(_s->offs_start.data(), i),
-                               .offs_end = Get(_s->offs_end.data(), i)});
+        occurrences.emplace_back(Get(docs, i), Get(positions, i),
+                                 Get(offs_start, i), Get(offs_end, i));
       }
-      SortByDoc(
-        occurrences, _s->occurrences_alt, max_doc,
-        [](const ScatterScratch::Occurrence& occurrence) noexcept {
-          return occurrence.doc;
-        },
-        [](const ScatterScratch::Occurrence& l,
-           const ScatterScratch::Occurrence& r) noexcept {
-          return std::tie(l.doc, l.pos, l.offs_start, l.offs_end) <
-                 std::tie(r.doc, r.pos, r.offs_start, r.offs_end);
-        });
+      SortByDoc(occurrences, _s->occurrences_alt, max_doc,
+                [](const ScatterScratch::Occurrence& occurrence) noexcept {
+                  return occurrence.doc;
+                });
       for (auto i = begin; const auto& occurrence : occurrences) {
         Put(docs, i, occurrence.doc);
         Put(positions, i, occurrence.pos);
-        Put(_s->offs_start.data(), i, occurrence.offs_start);
-        Put(_s->offs_end.data(), i++, occurrence.offs_end);
+        Put(offs_start, i, occurrence.offs_start);
+        Put(offs_end, i++, occurrence.offs_end);
       }
     }
   }
@@ -213,7 +202,6 @@ void ScatteredField::RemapLogDocs(const DocOrder& order) {
 
 void ScatteredField::Reset(const FieldInverter& field, const DocOrder& order) {
   _field = &field;
-  _remapped = !order.Empty();
   if (field.Log().Size() > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
     ThrowDesyncedLog(field.Meta().id, "occurrence count overflows u32");
   }
@@ -235,7 +223,7 @@ void ScatteredField::Reset(const FieldInverter& field, const DocOrder& order) {
     } else {
       Scatter<false>(log, nocc);
     }
-    if (_remapped) {
+    if (!order.Empty()) {
       RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(order);
     }
   });

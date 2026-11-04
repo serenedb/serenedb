@@ -109,12 +109,10 @@ struct FlushedSegmentContext {
                                              : order.OldRow(doc));
   }
 
-  void RemoveAll(uint64_t tick);
+  void RemoveAll(uint64_t tick) {
+    flushed.order.MaskRows(flushed.docs_mask, 0, flushed.docs.UpperBound(tick));
+  }
 };
-
-void FlushedSegmentContext::RemoveAll(uint64_t tick) {
-  flushed.order.MaskRows(flushed.docs_mask, 0, flushed.docs.UpperBound(tick));
-}
 
 uint64_t SegmentId(const SubReader& segment) {
   return utils::downCast<SegmentReader>(segment).GetImpl()->Id();
@@ -210,6 +208,17 @@ bool BelowFloor(std::string_view name, uint64_t floor) noexcept {
   return ParseSegmentId(name, id) && id <= floor;
 }
 
+void Unregister(SegmentNames& reserved,
+                IndexWriter::MergeTicket::State& state) noexcept {
+  if (!state.registered) {
+    return;
+  }
+  for (const auto* candidate : state.candidates) {
+    reserved.erase(candidate->Meta().name);
+  }
+  state.registered = false;
+}
+
 uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.visit([&max_id](std::string_view name) {
@@ -228,10 +237,11 @@ struct PublishedSegment {
   size_t place = 0;
 };
 
-size_t IncomingPlace(const DirectoryReaderImpl& committed, const auto& entry) {
+size_t IncomingPlace(const DirectoryReaderImpl& committed,
+                     std::span<const SegmentReader> inputs) {
   const auto& readers = committed.GetReaders();
   size_t place = readers.size();
-  for (const auto& input : entry.compaction_ctx.inputs) {
+  for (const auto& input : inputs) {
     const std::span before{readers.data(), place};
     place = static_cast<size_t>(
       absl::c_find_if(before,
@@ -434,7 +444,7 @@ PublishResult AddIncoming(auto& incoming_segments,
     result.segments.emplace_back(
       std::move(incoming.segment), SegmentReader{std::move(reader)},
       SyncOf(incoming.compaction_ctx.candidates.empty(), docs_mask_modified),
-      IncomingPlace(committed, incoming));
+      IncomingPlace(committed, incoming.compaction_ctx.inputs));
     result.modified = true;
   }
   return result;
@@ -1020,7 +1030,7 @@ void IndexWriter::SwapDocMaps(FlushContext& flushed) noexcept {
 
 void IndexWriter::FlushContext::Absorb(std::vector<DocMap>&& maps) {
   for (auto& map : maps) {
-    doc_maps[map.source].push_back(std::move(map));
+    doc_maps[map.source].emplace_back(std::move(map));
   }
 }
 
@@ -1417,17 +1427,6 @@ void IndexWriter::MergeTicket::Release::operator()(
   std::default_delete<State>{}(state);
 }
 
-CompactionView IndexWriter::MergeTicket::Candidates() const noexcept {
-  if (!_state) {
-    return {};
-  }
-  return _state->candidates;
-}
-
-bool IndexWriter::MergeTicket::Revoked() const noexcept {
-  return _state && _state->revoked.load(std::memory_order_relaxed);
-}
-
 IndexWriter::MergeTicket::State& IndexWriter::MergeTicket::Get(
   ConstructToken, const IndexWriter& writer) const noexcept {
   SDB_ASSERT(_state.get_deleter().writer == &writer);
@@ -1507,25 +1506,16 @@ std::vector<IndexWriter::MergeTicket> IndexWriter::ReserveLocked(
 
 void IndexWriter::ReleaseTicket(MergeTicket::State& state) noexcept {
   absl::MutexLock lock{&_compacting.lock};
-  if (state.registered) {
-    for (const auto* candidate : state.candidates) {
-      _compacting.segments.erase(candidate->Meta().name);
-    }
-    state.registered = false;
-  }
+  Unregister(_compacting.segments, state);
   _compacting.tickets.erase(&state);
 }
 
 void IndexWriter::RevokeTicketsLocked() noexcept {
   for (auto* state : _compacting.tickets) {
     state->revoked.store(true, std::memory_order_relaxed);
-    if (!state->registered || state->running) {
-      continue;
+    if (!state->running) {
+      Unregister(_compacting.segments, *state);
     }
-    for (const auto* candidate : state->candidates) {
-      _compacting.segments.erase(candidate->Meta().name);
-    }
-    state->registered = false;
   }
 }
 

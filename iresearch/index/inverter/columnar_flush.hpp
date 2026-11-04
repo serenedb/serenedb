@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <compare>
 #include <limits>
 #include <span>
 
@@ -44,6 +45,8 @@ struct ScatterScratch {
     uint32_t pos;
     uint32_t offs_start;
     uint32_t offs_end;
+
+    auto operator<=>(const Occurrence&) const = default;
   };
 
   explicit ScatterScratch(IResourceManager& rm)
@@ -153,7 +156,6 @@ class ScatteredField : util::Noncopyable {
   const FieldInverter* _field = nullptr;
   uint64_t _term_bytes = 0;
   uint32_t _width = kNoWidth;
-  bool _remapped = false;
 };
 
 }  // namespace irs

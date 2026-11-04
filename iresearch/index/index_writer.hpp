@@ -125,7 +125,7 @@ struct CompactionResult {
 
   CompactionError error{CompactionError::Fail};
 
-  MergeStats stats{};
+  MergeStats stats;
 
   operator bool() const noexcept {
     return error != CompactionError::Fail &&
@@ -451,8 +451,12 @@ class IndexWriter : private util::Noncopyable {
     explicit MergeTicket(ConstructToken, IndexWriter& writer,
                          std::unique_ptr<State> state) noexcept;
 
-    CompactionView Candidates() const noexcept;
-    bool Revoked() const noexcept;
+    CompactionView Candidates() const noexcept {
+      return _state ? CompactionView{_state->candidates} : CompactionView{};
+    }
+    bool Revoked() const noexcept {
+      return _state && _state->revoked.load(std::memory_order_relaxed);
+    }
 
     State& Get(ConstructToken, const IndexWriter& writer) const noexcept;
 

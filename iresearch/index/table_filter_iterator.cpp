@@ -947,11 +947,9 @@ void LiveRowGroups(const ColReader& col_reader,
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
-    zonemaps.push_back({
-      .reader = reader,
-      .expr = &spec.filter->Cast<duckdb::ExpressionFilter>(),
-      .state = &states.State(context, *spec.filter),
-    });
+    zonemaps.emplace_back(reader,
+                          &spec.filter->Cast<duckdb::ExpressionFilter>(),
+                          &states.State(context, *spec.filter));
   }
   const auto dead = [](const Zonemap& z, uint64_t begin, uint64_t end) {
     if (end > z.reader->RowCount()) {
@@ -971,7 +969,7 @@ void LiveRowGroups(const ColReader& col_reader,
     const auto end = std::min(rows, begin + rg_size);
     if (absl::c_none_of(
           zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
-      live.push_back(static_cast<uint32_t>(begin / rg_size));
+      live.emplace_back(static_cast<uint32_t>(begin / rg_size));
     }
   }
 }

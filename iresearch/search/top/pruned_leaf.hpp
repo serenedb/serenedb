@@ -102,14 +102,8 @@ class PrunedLeafBase {
 
     auto source = args.scorer->PrepareScoreBoundSource();
     if (source) {
-      _bound_func = args.scorer->PrepareScorer({
-        .segment = segment,
-        .field = field.meta(),
-        .doc_attrs = *source,
-        .fetcher = *args.fetcher,
-        .stats = args.stats,
-        .boost = args.boost,
-      });
+      _bound_func =
+        irs::detail::PrepareScore(args, segment, field.meta(), *source);
       _bound_source = std::move(source);
     } else {
       _bound_func =
@@ -117,14 +111,7 @@ class PrunedLeafBase {
       _bound_source = std::make_unique<NoBoundSource>();
     }
 
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
 
     _cursor.Disarm();
     _cached.fill(kNoBlock);

@@ -61,15 +61,7 @@ class PrunedPhrase : public Root {
       _fetcher{*args.fetcher},
       _admit{table} {
     _provider.freq.value = _freqs;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
     _slots.Gate();
     _prefetch = _slots.LeadDocs() * ABSL_CACHELINE_SIZE <=
                 segment.docs_count() * _fetcher.SlotBytes();
@@ -138,8 +130,7 @@ class PrunedPhrase : public Root {
       _docs[_batch] = doc;
       _freqs[_batch] = _slots.Freq();
       if (++_batch == kScoreBlock) {
-        _fetcher.FetchScoreBlock(std::span<const doc_id_t, kScoreBlock>{_docs});
-        _score.ScoreBlock(_scores);
+        FetchAndScore(_fetcher, _score, _docs, _scores, kScoreBlock);
         _admit.AddDocs(collector, _docs, kScoreBlock, _scores);
         _batch = 0;
       }
@@ -235,8 +226,7 @@ class PrunedPhrase : public Root {
 
   void FlushBatch(LoserScoreCollector& collector) {
     if (_batch != 0) {
-      _fetcher.Fetch(std::span<const doc_id_t>{_docs, _batch});
-      _score.Score(_scores, _batch);
+      FetchAndScore(_fetcher, _score, _docs, _scores, _batch);
       _admit.AddDocs(collector, _docs, _batch, _scores);
       _batch = 0;
     }

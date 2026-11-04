@@ -163,12 +163,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     _provider.freq.value = freqs;
     uint32_t out = 0;
     const auto flush = [&](uint32_t hits) {
-      _fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
-      if (hits == kScoreBlock) {
-        _score.ScoreBlock(scores);
-      } else {
-        _score.Score(scores, static_cast<scores_size_t>(hits));
-      }
+      FetchAndScore(*_fetcher, _score, docs, scores, hits);
       if (required) {
         for (uint32_t j = 0; j != hits; ++j) {
           cand_docs[out] = docs[j];

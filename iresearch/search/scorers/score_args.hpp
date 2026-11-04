@@ -68,6 +68,21 @@ struct ScoreRecipe {
   }
 };
 
+inline ScoreFunction PrepareScore(const ScoreArgs& args,
+                                  const NormProvider& segment,
+                                  const FieldProperties& field,
+                                  const AttributeProvider& attrs) {
+  SDB_ASSERT(args.scorer != nullptr && args.fetcher != nullptr);
+  return args.scorer->PrepareScorer({
+    .segment = segment,
+    .field = field,
+    .doc_attrs = attrs,
+    .fetcher = *args.fetcher,
+    .stats = args.stats,
+    .boost = args.boost,
+  });
+}
+
 inline void AppendScorer(std::vector<ScoreFunction>& out,
                          ScoreFunction&& score) {
   if (!score.IsDefault()) {

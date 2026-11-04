@@ -197,15 +197,7 @@ class PostingBatch {
     static_assert(Scored);
     _provider.freq.value = _freqs.data;
     _score.fetcher = args.fetcher;
-    SDB_ASSERT(args.scorer != nullptr);
-    _score.score = args.scorer->PrepareScorer({
-      .segment = segment,
-      .field = field.meta(),
-      .doc_attrs = _provider,
-      .fetcher = *args.fetcher,
-      .stats = args.stats,
-      .boost = args.boost,
-    });
+    _score.score = PrepareScore(args, segment, field.meta(), _provider);
   }
 
   IRS_FORCE_INLINE void SkipFreqs(uint32_t len) {

@@ -44,6 +44,10 @@ struct NormReader : public memory::Managed {
 
   virtual uint32_t Get(doc_id_t doc) = 0;
 
+  virtual void Prefetch(std::span<const doc_id_t> docs) const noexcept = 0;
+
+  virtual uint32_t SlotBytes() const noexcept = 0;
+
   virtual score_t GetAvg() const noexcept {
     SDB_ASSERT(false);
     return {};

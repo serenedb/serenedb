@@ -115,6 +115,10 @@ class PostingPos {
 
   bool Covers(doc_id_t target) const noexcept { return target <= _max_in_leaf; }
 
+  std::span<const doc_id_t> Upcoming() const noexcept {
+    return {std::cend(_docs) - _left_in_leaf, _left_in_leaf};
+  }
+
   Position& Positions() noexcept { return _pos; }
 
   const BlockIndex* Blocks() {

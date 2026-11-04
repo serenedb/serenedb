@@ -150,6 +150,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "INVALID_GRANT_OPERATION") {
     return ERRCODE_INVALID_GRANT_OPERATION;
   }
+  if (subtype == "AMBIGUOUS_FUNCTION") {
+    return ERRCODE_AMBIGUOUS_FUNCTION;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

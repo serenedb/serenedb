@@ -59,6 +59,7 @@ struct Attribute {
 struct TableAttribute : Attribute {
   const duckdb::ColumnDefinition& column;
   const std::vector<bool>& not_null;
+  std::span<const duckdb::AclItem> acl;
 };
 
 struct ViewAttribute : Attribute {
@@ -115,8 +116,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       [](const auto& row) { return row.not_null[row.column.Logical().index]; }),
     Col<"atthasdef">([](const auto& row) { return HasAttrdef(row.column); }),
     Col<"attgenerated">([](const auto& row) { return Generated(row.column); }),
-    Col<"attacl">(
-      [](const auto& row) -> const auto& { return row.column.Acl(); }));
+    Col<"attacl">(&TableAttribute::acl));
 
   static constexpr auto kViewColumn = Shape<kSql, const ViewAttribute>(
     kAttribute, Col<"attname">(&Attribute::name),
@@ -142,6 +142,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       const auto not_null =
         Reads<"attnotnull">() ? NotNullColumns(table) : std::vector<bool>{};
       const auto system = SystemColumns(table);
+      const auto column_acls = duckdb::EffectiveColumnAcls(Context(), table);
       for (const auto& column : table.GetColumns().Logical()) {
         Emit<kTableColumn>(
           {{table.oid,
@@ -150,7 +151,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
             column.Type(),
             system.empty() ? nullptr : &system[column.Logical().index]},
            column,
-           not_null});
+           not_null,
+           column_acls ? duckdb::FindColumnAcl(*column_acls, column.Name())
+                       : std::span<const duckdb::AclItem>{column.Acl()}});
       }
     }
     for (const auto& key : KeyIndexes(table)) {

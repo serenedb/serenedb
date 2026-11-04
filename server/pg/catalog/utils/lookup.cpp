@@ -269,14 +269,19 @@ std::optional<RelationAccess> RelationByOid(
   if (relation->system) {
     const auto* permissions =
       &SystemPermissions(relation->system->SuperuserOnly());
+    const duckdb::vector<duckdb::ColumnAcl>* column_acls = nullptr;
     if (session.context && session.context->security && session.database) {
       const auto& security = session.context->security;
-      if (const auto overridden = security->RelationPermissions(
-            session.database->GetName().GetIdentifierName(), oid)) {
+      const auto& database = session.database->GetName().GetIdentifierName();
+      if (const auto overridden =
+            security->RelationPermissions(database, oid)) {
         permissions = overridden.get();
       }
+      if (const auto columns = security->RelationColumns(database, oid)) {
+        column_acls = columns.get();
+      }
     }
-    return RelationAccess{{*relation}, permissions};
+    return RelationAccess{{*relation}, permissions, column_acls};
   }
   if (relation->view) {
     auto schema =
@@ -310,6 +315,14 @@ std::optional<RelationAccess> RelationByOid(
   }
   return RelationAccess{
     {*relation}, &PrivilegePermissions(*session.context, *relation->entry)};
+}
+
+std::span<const duckdb::AclItem> ColumnAclOf(
+  const RelationAccess& relation, const duckdb::ColumnDefinition& column) {
+  if (relation.column_acls) {
+    return duckdb::FindColumnAcl(*relation.column_acls, column.Name());
+  }
+  return column.Acl();
 }
 
 const duckdb::Permissions& PrivilegePermissions(

@@ -1,0 +1,191 @@
+control substitution on
+
+statement ok
+CREATE ROLE fopr_a;
+
+
+statement ok
+CREATE ROLE fopr_b;
+
+
+statement ok
+CREATE ROLE fopr_c;
+
+
+statement ok
+CREATE FUNCTION fopr_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION fopr_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION fopr_f(x INT, y INT) RETURNS INT LANGUAGE SQL AS 'SELECT x + y';
+
+
+statement ok
+ALTER FUNCTION fopr_f(TEXT) OWNER TO fopr_a;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION fopr_f(INT, INT) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION fopr_f(INT, INT) TO fopr_b;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner, array_to_string(proacl, ',') AS acl
+FROM pg_proc
+WHERE proname = 'fopr_f'
+ORDER BY 1;
+----
+f	owner	acl
+fopr_f(integer)	postgres	NULL
+fopr_f(integer,integer)	postgres	postgres=X/postgres,fopr_b=X/postgres
+fopr_f(text)	fopr_a	NULL
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner, array_to_string(proacl, ',') AS acl
+FROM pg_proc
+WHERE proname = 'fopr_f'
+ORDER BY 1;
+----
+f	owner	acl
+fopr_f(integer)	postgres	NULL
+fopr_f(integer,integer)	postgres	postgres=X/postgres,fopr_b=X/postgres
+fopr_f(text)	fopr_a	NULL
+
+
+connection after_crash
+statement ok
+CREATE TABLE fopr_t (a INT, b INT, c INT, d INT, e INT, f INT);
+
+
+connection after_crash
+query
+SELECT oid::regprocedure::text AS f, oid = 'fopr_t'::regclass::oid AS collides
+FROM pg_proc
+WHERE proname = 'fopr_f'
+ORDER BY 1;
+----
+f	collides
+fopr_f(integer)	f
+fopr_f(integer,integer)	f
+fopr_f(text)	f
+
+
+connection after_crash
+query
+SELECT has_function_privilege('fopr_b', 'fopr_f(int, int)', 'EXECUTE') AS b_pair,
+       has_function_privilege('fopr_c', 'fopr_f(int, int)', 'EXECUTE') AS c_pair,
+       has_function_privilege('fopr_c', 'fopr_f(int)', 'EXECUTE') AS c_int;
+----
+b_pair	c_pair	c_int
+t	f	t
+
+
+connection after_crash
+statement ok
+CREATE TABLE fopr_oids AS SELECT oid::regprocedure::text AS f, oid FROM pg_proc WHERE proname = 'fopr_f';
+
+
+connection after_crash
+statement ok
+FORCE CHECKPOINT;
+
+
+connection after_crash
+statement ok
+GRANT EXECUTE ON FUNCTION fopr_f(TEXT) TO fopr_c;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_checkpoint
+query
+SELECT o.f, p.oid::regprocedure::text AS now, p.proowner::regrole::text AS owner, array_to_string(p.proacl, ',') AS acl
+FROM fopr_oids o
+JOIN pg_proc p ON p.oid = o.oid
+ORDER BY 1;
+----
+f	now	owner	acl
+fopr_f(integer)	fopr_f(integer)	postgres	NULL
+fopr_f(integer,integer)	fopr_f(integer,integer)	postgres	postgres=X/postgres,fopr_b=X/postgres
+fopr_f(text)	fopr_f(text)	fopr_a	=X/fopr_a,fopr_a=X/fopr_a,fopr_c=X/fopr_a
+
+
+connection after_checkpoint
+statement ok
+CREATE TABLE fopr_t2 (a INT, b INT, c INT, d INT, e INT, f INT);
+
+
+connection after_checkpoint
+query
+SELECT oid::regprocedure::text AS f, oid = 'fopr_t2'::regclass::oid AS collides
+FROM pg_proc
+WHERE proname = 'fopr_f'
+ORDER BY 1;
+----
+f	collides
+fopr_f(integer)	f
+fopr_f(integer,integer)	f
+fopr_f(text)	f
+
+
+connection after_checkpoint
+statement ok
+DROP OWNED BY fopr_c;
+
+
+connection after_checkpoint
+query
+SELECT oid::regprocedure::text AS f, array_to_string(proacl, ',') AS acl
+FROM pg_proc
+WHERE proname = 'fopr_f'
+ORDER BY 1;
+----
+f	acl
+fopr_f(integer)	NULL
+fopr_f(integer,integer)	postgres=X/postgres,fopr_b=X/postgres
+fopr_f(text)	=X/fopr_a,fopr_a=X/fopr_a
+
+
+connection after_checkpoint
+statement ok
+DROP FUNCTION fopr_f(TEXT);
+
+
+connection after_checkpoint
+statement ok
+DROP ROLE fopr_a, fopr_c;

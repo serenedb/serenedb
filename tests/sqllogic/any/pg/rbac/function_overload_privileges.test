@@ -1,0 +1,350 @@
+statement ok
+DROP ROLE IF EXISTS fop_a, fop_b, fop_c, fop_d;
+
+
+statement ok
+CREATE ROLE fop_a;
+
+
+statement ok
+CREATE ROLE fop_b;
+
+
+statement ok
+CREATE ROLE fop_c;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO fop_a, fop_b;
+
+
+statement ok
+SET ROLE fop_a;
+
+
+statement ok
+CREATE FUNCTION fop_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE fop_b;
+
+
+statement ok
+CREATE FUNCTION fop_f(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	owner
+fop_f(integer)	fop_a
+fop_f(text)	fop_b
+
+
+query
+SELECT count(DISTINCT oid) AS oids FROM pg_proc WHERE proname = 'fop_f';
+----
+oids
+2
+
+
+statement ok
+CREATE ROLE fop_d;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO fop_d;
+
+
+statement ok
+SET ROLE fop_d;
+
+
+statement ok
+CREATE FUNCTION fop_g(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE fop_b;
+
+
+statement ok
+CREATE FUNCTION fop_g(x TEXT) RETURNS TEXT LANGUAGE SQL AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE fop_d;
+
+
+statement ok
+DROP FUNCTION fop_g(INT);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fop_d;
+
+
+statement ok
+DROP ROLE fop_d;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner FROM pg_proc WHERE proname = 'fop_g' ORDER BY 1;
+----
+f	owner
+fop_g(text)	fop_b
+
+
+statement ok
+DROP FUNCTION fop_g(TEXT);
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION fop_f(INT) FROM PUBLIC;
+
+
+query
+SELECT has_function_privilege('fop_c', 'fop_f(int)', 'EXECUTE') AS int_exec,
+       has_function_privilege('fop_c', 'fop_f(text)', 'EXECUTE') AS text_exec;
+----
+int_exec	text_exec
+f	t
+
+
+query
+SELECT oid::regprocedure::text AS f, has_function_privilege('fop_c', oid, 'EXECUTE') AS exec FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	exec
+fop_f(integer)	f
+fop_f(text)	t
+
+
+query
+SELECT oid::regprocedure::text AS f, array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	acl
+fop_f(integer)	fop_a=X/fop_a
+fop_f(text)	NULL
+
+
+statement ok
+SET ROLE fop_c;
+
+
+statement error
+SELECT fop_f(1);
+----
+db error: ERROR: permission denied for function fop_f
+
+
+query
+SELECT fop_f('a') AS v;
+----
+v
+a
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION fop_f(INT) TO fop_c;
+
+
+statement ok
+SET ROLE fop_c;
+
+
+query
+SELECT fop_f(1) AS v;
+----
+v
+1
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT objid::regprocedure::text AS f, refobjid::regrole::text AS role, deptype FROM pg_shdepend WHERE classid = 'pg_proc'::regclass AND objid IN (SELECT oid FROM pg_proc WHERE proname = 'fop_f') ORDER BY 1, 2;
+----
+f	role	deptype
+fop_f(integer)	fop_a	o
+fop_f(integer)	fop_c	a
+fop_f(text)	fop_b	o
+
+
+statement ok
+DROP OWNED BY fop_c;
+
+
+query
+SELECT oid::regprocedure::text AS f, array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	acl
+fop_f(integer)	fop_a=X/fop_a
+fop_f(text)	NULL
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION fop_f(INT) TO fop_c;
+
+
+statement error
+GRANT EXECUTE ON FUNCTION fop_f TO fop_c;
+----
+db error: ERROR: function name "fop_f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement error
+DROP FUNCTION fop_f;
+----
+db error: ERROR: function name "fop_f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement ok
+SET ROLE fop_b;
+
+
+statement error
+DROP FUNCTION fop_f(INT);
+----
+db error: ERROR: must be owner of function fop_f
+
+
+statement error
+ALTER FUNCTION fop_f(INT) OWNER TO fop_b;
+----
+db error: ERROR: must be owner of function fop_f
+
+
+statement error
+ALTER FUNCTION fop_f(INT) STABLE;
+----
+db error: ERROR: must be owner of function fop_f
+
+
+statement ok
+ALTER FUNCTION fop_f(TEXT) STABLE;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION fop_f(x TEXT) RETURNS TEXT LANGUAGE SQL STABLE AS 'SELECT x || x';
+
+
+statement error
+CREATE OR REPLACE FUNCTION fop_f(x INT) RETURNS INT LANGUAGE SQL AS 'SELECT x + 1';
+----
+db error: ERROR: must be owner of function fop_f
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT oid::regprocedure::text AS f, provolatile FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	provolatile
+fop_f(integer)	v
+fop_f(text)	s
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fop_b;
+
+
+onlyif postgres
+statement error
+DROP ROLE fop_b;
+----
+db error: ERROR: role "fop_b" cannot be dropped because some objects depend on it
+DETAIL: owner of function fop_f(text)
+
+
+skipif postgres
+statement error
+DROP ROLE fop_b;
+----
+db error: ERROR: Cannot drop entry "fop_b" because there are entries that depend on it.
+macro function "fop_f" depends on role "fop_b".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+ALTER FUNCTION fop_f(INT) OWNER TO fop_c;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	owner
+fop_f(integer)	fop_c
+fop_f(text)	fop_b
+
+
+statement ok
+REASSIGN OWNED BY fop_c TO fop_a;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	owner
+fop_f(integer)	fop_a
+fop_f(text)	fop_b
+
+
+statement ok
+DROP OWNED BY fop_b;
+
+
+query
+SELECT oid::regprocedure::text AS f, proowner::regrole::text AS owner FROM pg_proc WHERE proname = 'fop_f' ORDER BY 1;
+----
+f	owner
+fop_f(integer)	fop_a
+
+
+query
+SELECT fop_f(2) AS v;
+----
+v
+2
+
+
+statement ok
+DROP FUNCTION fop_f(INT);
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM fop_a;
+
+
+statement ok
+DROP ROLE fop_a, fop_b, fop_c;

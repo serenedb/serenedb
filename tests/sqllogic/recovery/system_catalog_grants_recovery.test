@@ -12,12 +12,17 @@ statement ok
 REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC;
 
 
+statement ok
+GRANT SELECT (relname, relkind) ON pg_catalog.pg_class TO scgr_monitor;
+
+
 query
 SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
-       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relkind', 'SELECT') AS relkind;
 ----
-authid	class
-t	f
+authid	class	relkind
+t	f	t
 
 
 statement ok
@@ -36,10 +41,24 @@ SELECT 1;
 connection after_crash
 query
 SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
-       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relkind', 'SELECT') AS relkind,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relacl', 'SELECT') AS relacl;
 ----
-authid	class
-t	f
+authid	class	relkind	relacl
+t	f	t	f
+
+
+connection after_crash
+query
+SELECT attname, array_to_string(attacl, ',') AS acl
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_class'::regclass AND cardinality(attacl) > 0
+ORDER BY attnum;
+----
+attname	acl
+relname	scgr_monitor=r/postgres
+relkind	scgr_monitor=r/postgres
 
 
 connection after_crash

@@ -87,7 +87,9 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
   }
 
   void Row(const duckdb::MacroCatalogEntry& macro) {
-    Comment(kPgProcTable, macro.oid, 0, macro.comment);
+    for (const auto& overload : macro.macros) {
+      Comment(kPgProcTable, macro.OverloadOid(*overload), 0, macro.comment);
+    }
   }
 
   void Row(const catalog::TokenizerCatalogEntry& tokenizer) {

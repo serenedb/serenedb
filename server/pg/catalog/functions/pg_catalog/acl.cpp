@@ -30,6 +30,7 @@
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -490,6 +491,11 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
                         RelationRights(relation)};
     if (!target.owner_only) {
       target.any_column = TableColumns(relation);
+      if (relation.column_acls) {
+        for (const auto& column : *relation.column_acls) {
+          target.columns.emplace_back(column.acl);
+        }
+      }
       if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
         for (const auto& acl :
              relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls) {
@@ -519,7 +525,7 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
     } else if (const auto* columns = TableColumns(relation)) {
       if (columns->ColumnExists(name)) {
         return ObjectTarget{relation.permissions,
-                            {columns->GetColumn(name).Acl()}};
+                            {ColumnAclOf(relation, columns->GetColumn(name))}};
       }
     } else if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
       if (absl::c_linear_search(kSequenceColumns, AsView(column))) {
@@ -557,7 +563,8 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       }
       return ObjectTarget{
         relation.permissions,
-        {columns->GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl()}};
+        {ColumnAclOf(relation,
+                     columns->GetColumn(duckdb::LogicalIndex(attnum - 1)))}};
     }
     duckdb::idx_t count = 0;
     if (RelationType(relation) == CatalogType::SEQUENCE_ENTRY) {
@@ -632,10 +639,20 @@ struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
   static std::optional<ObjectTarget> Find(
     const Session& session, uint64_t oid,
     duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
-    if (entry && CatalogClassOid(entry->type) == kPgProcTable) {
-      return ObjectTarget{&PrivilegePermissions(*session.context, *entry)};
+    MacroOverload found;
+    if (!entry) {
+      found = FindMacro(session, oid);
+    } else if (CatalogClassOid(entry->type) == kPgProcTable) {
+      const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
+      found = {.entry = &macro, .macro = macro.FindOverload(oid).get()};
     }
-    if (!GetBuiltinFunctions(*session.context)->Find(oid)) {
+    if (found.macro) {
+      return ObjectTarget{
+        duckdb::IsUnowned(*found.entry)
+          ? &PrivilegePermissions(*session.context, *found.entry)
+          : &found.entry->OverloadPermissions(*found.macro)};
+    }
+    if (found.entry || !GetBuiltinFunctions(*session.context)->Find(oid)) {
       return std::nullopt;
     }
     return ObjectTarget{&kBuiltinPermissions};

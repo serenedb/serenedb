@@ -202,12 +202,12 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
     kind = builtin->kind;
     schema = FindSystemObject(kSystemNamespaces, builtin->nsp)->name;
   } else {
-    const auto* macro = FindMacro(session, oid);
-    if (!macro) {
+    const auto found = FindMacro(session, oid);
+    if (!found.entry) {
       return Missing("routine");
     }
-    kind = macro->macros.front()->is_procedure ? 'p' : 'f';
-    schema = NameOf(*session.transaction, *macro).schema;
+    kind = found.macro->is_procedure ? 'p' : 'f';
+    schema = NameOf(*session.transaction, *found.entry).schema;
   }
   std::string_view type = "function";
   if (kind == 'a') {
@@ -454,12 +454,17 @@ std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
       return relation->permissions->acl;
     }
     if (const auto* column = TableColumn(*relation, objsubid)) {
-      return column->Acl();
+      return ColumnAclOf(*relation, *column);
     }
     return std::nullopt;
   }
-  if (classid == kPgProcTable || classid == kPgTypeTable ||
-      classid == kPgNamespaceTable) {
+  if (classid == kPgProcTable) {
+    if (const auto found = FindMacro(session, objid); found.entry) {
+      return found.entry->OverloadPermissions(*found.macro).acl;
+    }
+    return std::nullopt;
+  }
+  if (classid == kPgTypeTable || classid == kPgNamespaceTable) {
     if (const auto entry = ObjectEntry(session, objid);
         entry && CatalogClassOid(entry->type) == classid) {
       return entry->permissions.acl;

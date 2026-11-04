@@ -179,13 +179,15 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     }));
 
   static constexpr auto kMacro = Shape<kSql, const Macro>(
-    Col<"oid">([](const auto& row) { return row.entry.oid; }),
+    Col<"oid">(
+      [](const auto& row) { return row.entry.OverloadOid(row.macro); }),
     Col<"proname">(
       [](const auto& row) -> const auto& { return row.entry.name; }),
     Col<"pronamespace">(
       [](const auto& row) { return row.entry.ParentSchemaOid(); }),
-    Col<"proowner">(
-      [](const auto& row) { return row.entry.permissions.owner; }),
+    Col<"proowner">([](const auto& row) {
+      return row.entry.OverloadPermissions(row.macro).owner;
+    }),
     Col<"prolang">([](const auto&) { return kPgSqlLanguage; }),
     Col<"procost">([](const auto&) { return 100.0F; }),
     Col<"prorows">(
@@ -245,7 +247,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
                                       : std::optional{row.macro.config};
     }),
     Col<"proacl">([](const auto& row) -> const auto& {
-      return row.entry.permissions.acl;
+      return row.entry.OverloadPermissions(row.macro).acl;
     }));
 
   void Row(const BuiltinFunction& function) {
@@ -254,7 +256,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
 
   void Row(const duckdb::MacroCatalogEntry& entry) {
     for (const auto& macro : entry.macros) {
-      Emit<kMacro>({entry, *macro}, Visible(entry.oid));
+      Emit<kMacro>({entry, *macro}, Visible(entry.OverloadOid(*macro)));
     }
   }
 };

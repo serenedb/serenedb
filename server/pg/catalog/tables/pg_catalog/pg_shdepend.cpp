@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
@@ -119,6 +120,15 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
         if (Names(relation.acl, role.oid)) {
           Depend(entry->oid, kPgClassTable, relation.oid, 0, role.oid, 'a');
         }
+        const auto* system = FindSystemTable(relation.oid);
+        for (const auto& column : relation.columns) {
+          if (system && Names(column.acl, role.oid) &&
+              system->Columns().ColumnExists(column.column)) {
+            Depend(entry->oid, kPgClassTable, relation.oid,
+                   Attnum(system->Columns().GetColumn(column.column)), role.oid,
+                   'a');
+          }
+        }
       }
     }
   }
@@ -157,6 +167,18 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
     if (classid == kInvalidOid ||
         entry.type == duckdb::CatalogType::INDEX_ENTRY ||
         entry.type == duckdb::CatalogType::ROLE_ENTRY) {
+      return;
+    }
+    if (classid == kPgProcTable) {
+      const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+      for (const auto& overload : macro.macros) {
+        const auto& permissions = macro.OverloadPermissions(*overload);
+        if (permissions.owner == role) {
+          Depend(database, classid, macro.OverloadOid(*overload), 0, role, 'o');
+        } else if (Names(permissions.acl, role)) {
+          Depend(database, classid, macro.OverloadOid(*overload), 0, role, 'a');
+        }
+      }
       return;
     }
     if (entry.permissions.owner == role) {

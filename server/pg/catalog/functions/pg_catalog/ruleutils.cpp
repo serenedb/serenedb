@@ -581,11 +581,12 @@ Definition FunctionResult(const Session& session,
 }
 
 Definition FunctionDefinition(const Session& session, int64_t oid) {
-  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!entry) {
+  const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+  if (!found.entry) {
     return std::nullopt;
   }
-  const auto& macro = *entry->macros.front();
+  const auto* entry = found.entry;
+  const auto& macro = *found.macro;
   const bool typed =
     absl::c_none_of(macro.types, [](const duckdb::LogicalType& type) {
       return type.id() == duckdb::LogicalTypeId::UNKNOWN;
@@ -673,9 +674,9 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
     duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
       args.data[0], result, args.size(), [&](int64_t oid) {
         Definition definition;
-        if (const auto* macro =
-              FindMacro(session, static_cast<uint64_t>(oid))) {
-          definition = macro_renderer(session, *macro->macros.front());
+        if (const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+            found.entry) {
+          definition = macro_renderer(session, *found.macro);
         } else if (oid > 0) {
           if (!builtins) {
             builtins = GetBuiltinFunctions(state.GetContext());
@@ -692,11 +693,11 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
 
 Definition FunctionArgDefault(const Session& session, int64_t oid,
                               int64_t argument) {
-  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!entry || argument < 1) {
+  const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+  if (!found.entry || argument < 1) {
     return std::nullopt;
   }
-  const auto& macro = *entry->macros.front();
+  const auto& macro = *found.macro;
   auto index = static_cast<duckdb::idx_t>(argument - 1);
   if (const auto& modes = macro.parameter_modes; !modes.empty()) {
     if (index >= modes.size() || modes[index] == 'o') {

@@ -228,13 +228,22 @@ uint64_t ResolveRelation(const Session& session,
   return kInvalidOid;
 }
 
-const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
-                                           uint64_t oid) {
-  const auto entry = EntryByOid(session, oid);
-  if (!entry || CatalogClassOid(entry->type) != kPgProcTable) {
-    return nullptr;
+MacroOverload FindMacro(const Session& session, uint64_t oid) {
+  if (!session.database || oid == kInvalidOid) {
+    return {};
   }
-  return &entry->Cast<duckdb::MacroCatalogEntry>();
+  const auto entry = session.database->GetOidIndex().GetVisibleOwner(
+    oid, session.transaction->view);
+  if (!entry || entry->internal ||
+      CatalogClassOid(entry->type) != kPgProcTable) {
+    return {};
+  }
+  const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
+  const auto overload = macro.FindOverload(oid);
+  if (!overload) {
+    return {};
+  }
+  return {.entry = &macro, .macro = overload.get()};
 }
 
 namespace {
@@ -1215,9 +1224,9 @@ void CollectProcs(const Session& session, const BuiltinFunctions& builtins,
   for (const auto type : {duckdb::CatalogType::MACRO_ENTRY,
                           duckdb::CatalogType::TABLE_MACRO_ENTRY}) {
     if (auto entry = FindInSchema(session, schema, type, name)) {
-      for (const auto& macro :
-           entry->Cast<duckdb::MacroCatalogEntry>().macros) {
-        add(entry->oid, entry->ParentSchemaOid(),
+      const auto& macro_entry = entry->Cast<duckdb::MacroCatalogEntry>();
+      for (const auto& macro : macro_entry.macros) {
+        add(macro_entry.OverloadOid(*macro), entry->ParentSchemaOid(),
             ProcArgs{.macro = MacroArgs(*macro)});
       }
     }
@@ -1259,15 +1268,15 @@ std::optional<ProcInfo> FindProc(const Session& session,
     }
     return std::nullopt;
   }
-  const auto* macro = FindMacro(session, oid);
-  if (!macro) {
+  const auto found = FindMacro(session, oid);
+  if (!found.entry) {
     return std::nullopt;
   }
-  const auto object = NameOf(*session.transaction, *macro);
-  return ProcInfo{.nsp = macro->ParentSchemaOid(),
+  const auto object = NameOf(*session.transaction, *found.entry);
+  return ProcInfo{.nsp = found.entry->ParentSchemaOid(),
                   .schema = object.schema,
                   .name = object.name,
-                  .args = {.macro = MacroArgs(*macro->macros.front())}};
+                  .args = {.macro = MacroArgs(*found.macro)}};
 }
 
 bool ProcVisible(const Session& session, const BuiltinFunctions& builtins,

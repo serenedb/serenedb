@@ -460,6 +460,36 @@ def test_binder_error_sqlstates():
         c.close()
 
 
+def test_function_overload_error_sqlstates():
+    """A name with several overloads and no argument list is ambiguous_function
+    (42725), and an argument list no overload has is undefined_function
+    (42883), like PG.
+    """
+    function = f"rfq_fn_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cur.execute(f"CREATE FUNCTION \"{function}\"(x int) RETURNS int LANGUAGE SQL AS 'SELECT x'")
+            cur.execute(f"CREATE FUNCTION \"{function}\"(x text) RETURNS text LANGUAGE SQL AS 'SELECT x'")
+            cases = [
+                (f'DROP FUNCTION "{function}"', "42725"),
+                (f'GRANT EXECUTE ON FUNCTION "{function}" TO PUBLIC', "42725"),
+                (f'ALTER FUNCTION "{function}" STABLE', "42725"),
+                (f'DROP FUNCTION "{function}"(boolean)', "42883"),
+                (f'GRANT EXECUTE ON FUNCTION "{function}"(boolean) TO PUBLIC', "42883"),
+                (f'ALTER FUNCTION "{function}"(boolean) STABLE', "42883"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP FUNCTION IF EXISTS "{function}"(int)')
+            cur.execute(f'DROP FUNCTION IF EXISTS "{function}"(text)')
+        c.close()
+
+
 def test_job_error_sqlstates():
     job = f"rfq_job_{os.getpid()}"
     c = psycopg.connect(**conn_kwargs(), autocommit=True)

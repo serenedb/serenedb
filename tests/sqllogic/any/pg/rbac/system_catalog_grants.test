@@ -137,3 +137,112 @@ f
 
 statement ok
 DROP ROLE scg_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_columns;
+
+
+statement ok
+CREATE ROLE scg_columns;
+
+
+statement error
+GRANT SELECT (no_such_column) ON pg_catalog.pg_authid TO scg_columns;
+----
+db error: ERROR: column "no_such_column" of relation "pg_authid" does not exist
+
+
+statement ok
+GRANT SELECT (rolname, rolsuper) ON pg_catalog.pg_authid TO scg_columns;
+
+
+query
+SELECT has_table_privilege('scg_columns', 'pg_catalog.pg_authid', 'SELECT') AS whole,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolpassword', 'SELECT') AS rolpassword,
+       has_any_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'SELECT') AS any_column;
+----
+whole	rolname	rolpassword	any_column
+f	t	f	t
+
+
+query
+SELECT attname, array_to_string(attacl, ',') AS acl
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_authid'::regclass AND cardinality(attacl) > 0
+ORDER BY attnum;
+----
+attname	acl
+rolname	scg_columns=r/postgres
+rolsuper	scg_columns=r/postgres
+
+
+statement ok
+SET ROLE scg_columns;
+
+
+query
+SELECT rolname, rolsuper FROM pg_catalog.pg_authid WHERE rolname = 'scg_columns';
+----
+rolname	rolsuper
+scg_columns	f
+
+
+query
+SELECT count(*) > 0 AS has_rows FROM pg_catalog.pg_authid;
+----
+has_rows
+t
+
+
+statement error
+SELECT rolname, rolpassword FROM pg_catalog.pg_authid;
+----
+db error: ERROR: permission denied for table pg_authid
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE SELECT (rolsuper) ON pg_catalog.pg_authid FROM scg_columns;
+
+
+query
+SELECT has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolsuper', 'SELECT') AS rolsuper;
+----
+rolname	rolsuper
+t	f
+
+
+skipif serenedb
+statement error
+DROP ROLE scg_columns;
+----
+db error: ERROR: role "scg_columns" cannot be dropped because some objects depend on it
+DETAIL: privileges for column rolname of table pg_authid
+
+
+onlyif serenedb
+statement error
+DROP ROLE scg_columns;
+----
+db error: ERROR: Cannot drop entry "scg_columns" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP OWNED BY scg_columns;
+
+
+query
+SELECT has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname;
+----
+rolname
+f
+
+
+statement ok
+DROP ROLE scg_columns;

@@ -1,0 +1,70 @@
+statement ok
+DROP ROLE IF EXISTS ado_user;
+
+
+statement ok
+CREATE ROLE ado_user;
+
+
+statement ok
+CREATE FUNCTION ado_f() RETURNS INT LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION ado_f() TO ado_user;
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'ado_f';
+----
+acl
+=X/postgres,postgres=X/postgres,ado_user=X/postgres
+
+
+statement ok
+CREATE TYPE ado_t AS ENUM ('a');
+
+
+statement ok
+GRANT USAGE ON TYPE ado_t TO ado_user;
+
+
+query
+SELECT array_to_string(typacl, ',') AS acl FROM pg_type WHERE typname = 'ado_t';
+----
+acl
+=U/postgres,postgres=U/postgres,ado_user=U/postgres
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ado_user REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+query
+SELECT array_to_string(defaclacl, ',') AS acl FROM pg_default_acl WHERE defaclrole = 'ado_user'::regrole;
+----
+acl
+ado_user=X/ado_user
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE ado_user GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+
+
+query
+SELECT count(*) AS rows FROM pg_default_acl WHERE defaclrole = 'ado_user'::regrole;
+----
+rows
+0
+
+
+statement ok
+DROP FUNCTION ado_f();
+
+
+statement ok
+DROP TYPE ado_t;
+
+
+statement ok
+DROP ROLE ado_user;

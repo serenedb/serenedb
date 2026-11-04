@@ -28,6 +28,7 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -121,7 +122,13 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
     case ALTER_SEQUENCE:
     case CHANGE_OWNERSHIP:
       return "ALTER SEQUENCE";
-    case ALTER_SCALAR_FUNCTION:
+    case ALTER_SCALAR_FUNCTION: {
+      const auto& function = info.Cast<duckdb::AlterScalarFunctionInfo>();
+      if (!function.include_procedures) {
+        return "ALTER FUNCTION";
+      }
+      return function.include_functions ? "ALTER ROUTINE" : "ALTER PROCEDURE";
+    }
     case ALTER_TABLE_FUNCTION:
       return "ALTER FUNCTION";
     case SET_COMMENT:

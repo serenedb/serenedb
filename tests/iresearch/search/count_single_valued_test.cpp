@@ -362,6 +362,24 @@ TEST_P(CountSingleValuedTest, dense_ranges_visit_the_documents_they_match) {
   check();
 }
 
+TEST_P(CountSingleValuedTest, dense_ranges_estimate_their_exact_count) {
+  auto writer = open_writer(irs::kOmCreate);
+  Build(*writer);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  constexpr std::pair<int64_t, int64_t> kRanges[]{{10, 8990}, {3000, 9000}};
+  for (const auto [lo, hi] : kRanges) {
+    SCOPED_TRACE(absl::StrCat(lo, "..", hi));
+    auto query = irs::PrepareMasked(*Range(kSingle, lo, hi), reader[0], {});
+    ASSERT_NE(nullptr, query);
+    ASSERT_EQ(irs::QueryKind::Boolean, query->Kind());
+    const auto expected = SingleIn(lo, hi);
+    EXPECT_EQ(expected, query->EstimateMin());
+    EXPECT_EQ(expected, query->EstimateMax());
+    EXPECT_EQ(expected, query->EstimateMatches());
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(count_single_valued_test, CountSingleValuedTest,
                          ::testing::Combine(::testing::Values(
                            &tests::Directory<&tests::MemoryDirectory>)),

@@ -33,6 +33,12 @@
 
 namespace irs {
 
+struct VectorPrefilter {
+  QueryBuilder::ptr inner;
+  QueryBuilder::ptr index_only;
+  bool dual = false;
+};
+
 class VectorQueryBase {
  public:
   const VectorState& State() const noexcept { return _state; }
@@ -41,7 +47,13 @@ class VectorQueryBase {
 
   VectorMetric Metric() const noexcept { return _metric; }
 
-  const QueryBuilder* Inner() const noexcept { return _inner.get(); }
+  const QueryBuilder* Inner() const noexcept { return _prefilter.inner.get(); }
+
+  const QueryBuilder* IndexOnly() const noexcept {
+    return _prefilter.index_only.get();
+  }
+
+  bool Dual() const noexcept { return _prefilter.dual; }
 
   bool Rescored() const noexcept {
     return _state.quant != VectorQuantization::None &&
@@ -50,15 +62,15 @@ class VectorQueryBase {
 
  protected:
   VectorQueryBase(VectorState&& state, std::span<const float> query,
-                  VectorMetric metric, QueryBuilder::ptr&& inner) noexcept
+                  VectorMetric metric, VectorPrefilter&& prefilter) noexcept
     : _state{std::move(state)},
       _query{query},
-      _inner{std::move(inner)},
+      _prefilter{std::move(prefilter)},
       _metric{metric} {}
 
   VectorState _state;
   std::span<const float> _query;
-  QueryBuilder::ptr _inner;
+  VectorPrefilter _prefilter;
   VectorMetric _metric;
 };
 
@@ -67,10 +79,10 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
  public:
   KnnVectorQuery(const SubReader& segment, VectorState&& state,
                  std::span<const float> query, VectorMetric metric,
-                 score_t boost, QueryBuilder::ptr&& inner = nullptr)
+                 score_t boost, VectorPrefilter&& prefilter)
     : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
                        QueryKind::Ann},
-      VectorQueryBase{std::move(state), query, metric, std::move(inner)},
+      VectorQueryBase{std::move(state), query, metric, std::move(prefilter)},
       _boost{boost} {}
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
@@ -93,10 +105,10 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   RangeVectorQuery(const SubReader& segment, VectorState&& state,
                    std::span<const float> query, VectorMetric metric,
                    float radius, bool inclusive, score_t boost,
-                   QueryBuilder::ptr&& inner = nullptr)
+                   VectorPrefilter&& prefilter)
     : QueryBuilderImpl{segment, ClampEstimate(state.estimation, segment),
                        QueryKind::Ann},
-      VectorQueryBase{std::move(state), query, metric, std::move(inner)},
+      VectorQueryBase{std::move(state), query, metric, std::move(prefilter)},
       _radius{radius},
       _boost{boost},
       _inclusive{inclusive} {}

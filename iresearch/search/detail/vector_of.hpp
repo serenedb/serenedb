@@ -109,8 +109,7 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
 }
 
 template<typename Query>
-probe::Node::ptr InnerProbe(const Query& query) {
-  const auto* inner = query.Inner();
+probe::Node::ptr InnerProbe(const Query& query, const QueryBuilder* inner) {
   if (inner == nullptr) {
     return {};
   }
@@ -131,7 +130,7 @@ typename Family::Result MakeVectorDocs(const Query& query,
                                        const typename Family::DocsContext& ctx,
                                        score_t edge) {
   using Result = typename Family::Result;
-  auto inner = InnerProbe(query);
+  auto inner = InnerProbe(query, query.Inner());
   if (query.Inner() != nullptr && !inner) {
     return {};
   }
@@ -148,10 +147,11 @@ typename Family::Result MakeVectorDocs(const Query& query,
 
 template<typename Family, typename Gate, typename Query>
 typename Family::Result MakeVectorScored(
-  const Query& query, const typename Family::ScoredContext& ctx, score_t edge) {
+  const Query& query, const typename Family::ScoredContext& ctx, score_t edge,
+  const QueryBuilder* prefilter) {
   using Result = typename Family::Result;
-  auto inner = InnerProbe(query);
-  if (query.Inner() != nullptr && !inner) {
+  auto inner = InnerProbe(query, prefilter);
+  if (prefilter != nullptr && !inner) {
     return {};
   }
   const auto& scoring = Family::Scoring(ctx);
@@ -172,14 +172,28 @@ typename Family::Result MakeVectorScored(
   });
 }
 
+template<typename Family, typename Gate, typename Query>
+typename Family::Result MakeVectorScored(
+  const Query& query, const typename Family::ScoredContext& ctx, score_t edge) {
+  return MakeVectorScored<Family, Gate>(query, ctx, edge, query.Inner());
+}
+
 inline score_t Unbounded() noexcept {
   return std::numeric_limits<score_t>::lowest();
 }
 
 template<typename Family, typename Ctx>
 typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
+                                      const Ctx& ctx,
+                                      const QueryBuilder* prefilter) {
+  return MakeVectorScored<Family, AcceptAll>(query, ctx, Unbounded(),
+                                             prefilter);
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeKnnVector(const KnnVectorQuery& query,
                                       const Ctx& ctx) {
-  return MakeVectorScored<Family, AcceptAll>(query, ctx, Unbounded());
+  return MakeKnnVector<Family>(query, ctx, query.Inner());
 }
 
 }  // namespace irs::detail

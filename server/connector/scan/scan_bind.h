@@ -161,7 +161,6 @@ struct DeferredColumn {
 
 struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
-  std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
   std::set<irs::field_id> analyzed_fields;
 };
@@ -252,8 +251,9 @@ struct ScanBindData final : duckdb::FunctionData {
     return offsets.requests.empty() && !score.vector;
   }
   bool KeepsColumnForms() const noexcept {
-    return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
-           score.vector->radius == std::numeric_limits<float>::max();
+    return score.vector &&
+           (score.vector->kind == irs::AnnKind::Ivf ||
+            score.vector->radius == std::numeric_limits<float>::max());
   }
   bool IsMatchAll() const noexcept {
     return search.MatchAll() && !score.vector.has_value();
@@ -322,7 +322,6 @@ struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
   std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
-  std::vector<DeferredColumnFilter> column_filters;
   std::vector<DeferredColumnFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };

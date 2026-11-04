@@ -26,6 +26,7 @@
 #include <iterator>
 #include <utility>
 
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/detail/estimate.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -539,7 +540,12 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     if (must.all_docs.empty() && should.all_docs.empty()) {
       return QueryBuilder::Empty();
     }
-    estimate = docs - std::min(docs, MaxEstimate(must_not));
+    const uint64_t excluded =
+      must_not.filters.empty() && count::Disjoint(must_not.postings)
+        ? SumEstimate(must_not)
+        : MaxEstimate(must_not);
+    estimate =
+      docs - static_cast<uint32_t>(std::min<uint64_t>(docs, excluded));
   }
   if (!must_not.empty()) {
     const auto excluded = SumEstimate(must_not);

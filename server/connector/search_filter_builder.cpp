@@ -897,118 +897,6 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
   return absl::OkStatus();
 }
 
-inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
-
-std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
-                                 double hi) {
-  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
-    return std::nullopt;
-  }
-  const auto number = [&](const duckdb::Value& value) {
-    double out = 0;
-    WithNumericValue(info.logical_type.id(), value,
-                     [&](auto v) { out = static_cast<double>(v); });
-    return out;
-  };
-  const auto min = number(duckdb::NumericStats::Min(*info.stats));
-  const auto max = number(duckdb::NumericStats::Max(*info.stats));
-  if (!(max > min)) {
-    return std::nullopt;
-  }
-  const auto from = std::max(lo, min);
-  const auto to = std::min(hi, max);
-  const double one = info.logical_type.IsIntegral() ? 1 : 0;
-  return to < from ? 0.0 : (to - from + one) / (max - min + one);
-}
-
-}  // namespace
-
-std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
-                                   double hi) {
-  if (!info.column_stored || !info.logical_type.IsIntegral()) {
-    return std::nullopt;
-  }
-  if (const auto share = RangeShare(info, lo, hi)) {
-    return *share <= kMaxIndexRangeShare;
-  }
-  return std::nullopt;
-}
-
-std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr) {
-  using duckdb::ExpressionType;
-  const auto integer =
-    [](const duckdb::Expression& e) -> std::optional<double> {
-    if (e.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
-      return std::nullopt;
-    }
-    const auto& value = e.Cast<duckdb::BoundConstantExpression>().GetValue();
-    if (value.IsNull() || !value.type().IsIntegral()) {
-      return std::nullopt;
-    }
-    return value.GetValue<double>();
-  };
-  constexpr auto kInf = std::numeric_limits<double>::infinity();
-  if (expr.GetExpressionType() == ExpressionType::COMPARE_BETWEEN &&
-      expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& between = expr.Cast<duckdb::BoundFunctionExpression>();
-    const auto& input = duckdb::BoundBetweenExpression::Input(between);
-    const auto lo =
-      integer(duckdb::BoundBetweenExpression::LowerBound(between));
-    const auto hi =
-      integer(duckdb::BoundBetweenExpression::UpperBound(between));
-    if (input.GetExpressionClass() !=
-          duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-        !lo || !hi) {
-      return std::nullopt;
-    }
-    return ColumnRange{&input.Cast<duckdb::BoundColumnRefExpression>(), *lo,
-                       *hi};
-  }
-  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    return std::nullopt;
-  }
-  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto* left = &duckdb::BoundComparisonExpression::Left(cmp);
-  const auto* right = &duckdb::BoundComparisonExpression::Right(cmp);
-  auto op = expr.GetExpressionType();
-  if (left->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    std::swap(left, right);
-    op = duckdb::FlipComparisonExpression(op);
-  }
-  const auto value = integer(*right);
-  if (left->GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF ||
-      !value) {
-    return std::nullopt;
-  }
-  const auto* column = &left->Cast<duckdb::BoundColumnRefExpression>();
-  switch (op) {
-    case ExpressionType::COMPARE_GREATERTHAN:
-    case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-      return ColumnRange{column, *value, kInf};
-    case ExpressionType::COMPARE_LESSTHAN:
-    case ExpressionType::COMPARE_LESSTHANOREQUALTO:
-      return ColumnRange{column, -kInf, *value};
-    default:
-      return std::nullopt;
-  }
-}
-
-namespace {
-
-bool RangeTooWide(const SearchColumnInfo& info, double value, ComparisonOp op) {
-  constexpr auto kInf = std::numeric_limits<double>::infinity();
-  const bool lower = op == ComparisonOp::Ge || op == ComparisonOp::Gt;
-  const auto share =
-    RangeShare(info, lower ? value : -kInf, lower ? kInf : value);
-  return share && *share > kMaxIndexRangeShare;
-}
-
-absl::Status DeclineWideRange() {
-  return absl::UnimplementedError(
-    "wide numeric range on a stored column: the vector search checks it on "
-    "the rows it reaches");
-}
-
 template<bool GenericVersion>
 absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
@@ -1117,17 +1005,6 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
         SDB_UNREACHABLE();
     }
   } else if (term_dict::IsNumeric(type_id)) {
-    if (column_info->column_stored && ctx.wide_ranges != WideRanges::Build) {
-      bool wide = ctx.wide_ranges == WideRanges::DeclineAll;
-      if (!wide) {
-        WithNumericValue(type_id, *const_val, [&](auto v) {
-          wide = RangeTooWide(*column_info, static_cast<double>(v), op);
-        });
-      }
-      if (wide) {
-        return DeclineWideRange();
-      }
-    }
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
     WithNumericValue(type_id, *const_val, [&](auto v) {
       irs::SetGranularNumericTerm(setup_base_filter(range_filter), v);
@@ -1174,21 +1051,6 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
   FilterContext sub_ctx = ctx;
   sub_ctx.negated = false;
   sub_ctx.boost = irs::kNoBoost;
-  if (ctx.wide_ranges == WideRanges::DeclineWide && !ctx.negated &&
-      !lower_val->IsNull() && !upper_val->IsNull()) {
-    const auto* column_info = FindColumnInfoForExpr(ctx, between_input);
-    if (column_info && column_info->column_stored &&
-        column_info->logical_type.IsNumeric()) {
-      if (const auto share =
-            RangeShare(*column_info, lower_val->GetValue<double>(),
-                       upper_val->GetValue<double>())) {
-        if (*share > kMaxIndexRangeShare) {
-          return DeclineWideRange();
-        }
-        sub_ctx.wide_ranges = WideRanges::Build;
-      }
-    }
-  }
 
   const auto group =
     AddGroup(filter, ctx.negated ? irs::Occur::Should : irs::Occur::Must);
@@ -1806,7 +1668,7 @@ bool TryDispatchSqlBoostCast(BoolTarget filter, const FilterContext& ctx,
   // ::boost is only meaningful inside an inverted-index match, so a child
   // predicate the index cannot claim is a user error even when building
   // speculatively.
-  if (auto s = FromExpression(filter, ctx.WithBoost(factor).Claimed(), *child);
+  if (auto s = FromExpression(filter, ctx.WithBoost(factor), *child);
       !s.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2027,8 +1889,7 @@ std::unique_ptr<irs::BooleanFilter> BuildSqlModifierScope(
   const FilterContext& ctx, const duckdb::Expression& child,
   std::string_view modifier, std::string_view hint) {
   auto scope = OpenScope();
-  if (auto s = FromExpression(ScopeTarget(scope), ctx.Claimed(), child);
-      !s.ok()) {
+  if (auto s = FromExpression(ScopeTarget(scope), ctx, child); !s.ok()) {
     ThrowUnclaimedModifier(modifier, s, hint);
   }
   return scope;
@@ -2994,8 +2855,7 @@ absl::Status MakeSearchFilter(
   irs::BooleanFilter& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   irs::KeywordTokenizer identity;
   duckdb::column_binding_map_t<SearchColumnInfo> column_cache;
   ExprCache expr_cache;
@@ -3014,7 +2874,6 @@ absl::Status MakeSearchFilter(
     .client_context = context,
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
-    .wide_ranges = wide_ranges,
   };
 
   for (const auto& expr : conjuncts) {
@@ -3031,12 +2890,10 @@ absl::Status MakeSearchFilter(
 std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
-  const ExpressionGetter& expr_getter, FilterScorers* scorers,
-  WideRanges wide_ranges) {
+  const ExpressionGetter& expr_getter, FilterScorers* scorers) {
   auto node = std::make_unique<irs::BooleanFilter>();
-  const auto status =
-    MakeSearchFilter(*node, {&conjunct, 1}, column_getter, context, expr_getter,
-                     scorers, wide_ranges);
+  const auto status = MakeSearchFilter(*node, {&conjunct, 1}, column_getter,
+                                       context, expr_getter, scorers);
   if (!status.ok() || node->Empty()) {
     return nullptr;
   }

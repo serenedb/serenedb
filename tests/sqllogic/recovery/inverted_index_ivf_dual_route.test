@@ -1,0 +1,96 @@
+# A range on an indexed column of a search table that an IVF search checks on
+# its candidates is read from the columns when the index would decode more
+# postings than the probed clusters hold candidates, and taken from the index
+# when it admits few rows. Two probed lists keep the candidates few. The fault
+# point fails the query the moment a segment picks the columns.
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE MACRO ivf_route_vec(i) AS
+  list_transform(range(16), lambda j: ((hash(i * 16 + j) % 10000) / 10000.0)::FLOAT)::FLOAT[16];
+
+
+statement ok
+CREATE TABLE ivf_route (id INTEGER PRIMARY KEY, n INTEGER, emb FLOAT[16])
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX ivf_route_l2 ON ivf_route
+  USING inverted(id, n, emb ivf (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO ivf_route
+SELECT i, (hash(i) % 100000)::INTEGER, ivf_route_vec(i)
+FROM range(100000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_route;
+
+
+statement ok
+SET sdb_ivf_search_nprobe = 2;
+
+
+statement ok
+SET sdb_faults = 'irs::IvfReadsColumns';
+
+
+statement error
+SELECT id FROM ivf_route WHERE n BETWEEN 0 AND 49999
+  ORDER BY emb <-> ivf_route_vec(123456) LIMIT 5;
+----
+db error: ERROR: intentional debug error
+
+
+query
+SELECT count(*) FROM (
+  SELECT id FROM ivf_route WHERE n BETWEEN 5000 AND 5999
+    ORDER BY emb <-> ivf_route_vec(123456) LIMIT 5) t;
+----
+count
+5
+
+
+statement ok
+SET sdb_faults = '-irs::IvfReadsColumns';
+
+
+statement ok
+DELETE FROM ivf_route WHERE id % 3 = 0;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_route;
+
+
+# Either way the rows returned pass the range and none of them is deleted.
+query
+SELECT count(*) AS rows,
+  count(*) FILTER (WHERE n BETWEEN 0 AND 49999 AND id % 3 <> 0) AS kept
+FROM (
+  SELECT id, n FROM ivf_route WHERE n BETWEEN 0 AND 49999
+    ORDER BY emb <-> ivf_route_vec(123456) LIMIT 50) t;
+----
+rows	kept
+50	50
+
+
+query
+SELECT count(*) AS rows,
+  count(*) FILTER (WHERE n BETWEEN 5000 AND 5999 AND id % 3 <> 0) AS kept
+FROM (
+  SELECT id, n FROM ivf_route WHERE n BETWEEN 5000 AND 5999
+    ORDER BY emb <-> ivf_route_vec(123456) LIMIT 50) t;
+----
+rows	kept
+50	50
+
+
+statement ok
+RESET sdb_faults;

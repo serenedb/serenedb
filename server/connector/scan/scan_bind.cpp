@@ -262,7 +262,8 @@ float AnnRescoreWidth(duckdb::ClientContext& context,
 
 template<typename AnnFilter>
 std::unique_ptr<AnnFilter> MakeAnnFilter(
-  const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner) {
+  const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner,
+  std::shared_ptr<const irs::Filter> index_only, bool dual) {
   auto f = std::make_unique<AnnFilter>();
   *f->mutable_field_id() = vs.field_id;
   auto* o = f->mutable_options();
@@ -272,6 +273,8 @@ std::unique_ptr<AnnFilter> MakeAnnFilter(
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->inner = std::move(inner);
+  o->index_only = std::move(index_only);
+  o->dual = dual;
   return f;
 }
 
@@ -571,7 +574,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
   DeferredBuild out;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> index_only;
-  conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
+  conjuncts.reserve(claim.conjuncts.size());
   const bool keeps_columns = scan.KeepsColumnForms();
   const auto keep_column_form = [&](const duckdb::Expression& conjunct) {
     const auto* ref = optimizer::SoleColumn(conjunct);
@@ -604,102 +607,13 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     if (it == claim.columns->end()) {
       return std::nullopt;
     }
-    auto info = optimizer::ResolveSearchColumnById(
+    return optimizer::ResolveSearchColumnById(
       context, scan, it->second.column, it->second.column_stored);
-    if (info && info->column_stored) {
-      info->stats = snapshot.reader.GetColumnStats(it->second.column);
-    }
-    return info;
   };
   const ExpressionGetter expr_getter =
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
-  struct WideColumn {
-    duckdb::LogicalType type;
-    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
-  };
-  std::map<ColumnId, WideColumn> wide;
-  const auto to_column = [&](duckdb::unique_ptr<duckdb::Expression> range) {
-    const duckdb::BoundColumnRefExpression* ref = nullptr;
-    duckdb::ExpressionIterator::VisitExpression<
-      duckdb::BoundColumnRefExpression>(
-      *range, [&](const duckdb::BoundColumnRefExpression& r) { ref = &r; });
-    SDB_ENSURE(ref, "a deferred range reads one column");
-    const auto it = claim.columns->find(MakeBindingKey(ref->Binding()));
-    SDB_ENSURE(it != claim.columns->end(),
-               "a deferred range's column was resolved at plan time");
-    auto& [type, parts] = wide[it->second.column];
-    type = ref->GetReturnType();
-    if (range->GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
-      using duckdb::BoundBetweenExpression;
-      const auto& between = range->Cast<duckdb::BoundFunctionExpression>();
-      parts.push_back(duckdb::BoundComparisonExpression::Create(
-        BoundBetweenExpression::LowerComparisonType(between),
-        BoundBetweenExpression::Input(between).Copy(),
-        BoundBetweenExpression::LowerBound(between).Copy()));
-      parts.push_back(duckdb::BoundComparisonExpression::Create(
-        BoundBetweenExpression::UpperComparisonType(between),
-        BoundBetweenExpression::Input(between).Copy(),
-        BoundBetweenExpression::UpperBound(between).Copy()));
-    } else {
-      parts.push_back(std::move(range));
-    }
-  };
-  const auto probe_wide =
-    [&](const duckdb::unique_ptr<duckdb::Expression>& range) {
-      auto probe = std::make_unique<irs::BooleanFilter>();
-      std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&range, 1};
-      FilterScorers probe_scorers;
-      return !MakeSearchFilter(*probe, single, getter, context, expr_getter,
-                               &probe_scorers, WideRanges::DeclineWide)
-                .ok();
-    };
-  ColumnIntervals<duckdb::unique_ptr<duckdb::Expression>> intervals;
-  for (const auto& e : claim.ranges) {
-    auto range = bound(e);
-    const auto bounds = ColumnRangeOf(*range);
-    if (!bounds) {
-      if (probe_wide(range)) {
-        to_column(std::move(range));
-      } else {
-        to_index(std::move(range));
-      }
-      continue;
-    }
-    AddColumnRange(intervals, *bounds, getter, std::move(range));
-  }
-  for (auto& [key, interval] : intervals) {
-    const auto fits = IntervalFitsIndex(interval);
-    for (auto& range : interval.members) {
-      if (fits ? !*fits : probe_wide(range)) {
-        to_column(std::move(range));
-      } else {
-        to_index(std::move(range));
-      }
-    }
-  }
-  for (auto& [column, typed] : wide) {
-    auto& [type, parts] = typed;
-    for (auto& part : parts) {
-      part = optimizer::ColumnFormOf(std::move(part));
-    }
-    duckdb::unique_ptr<duckdb::Expression> expr;
-    if (parts.size() == 1) {
-      expr = std::move(parts[0]);
-    } else {
-      auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
-        duckdb::ExpressionType::CONJUNCTION_AND);
-      for (auto& part : parts) {
-        conjunction->GetChildrenMutable().push_back(std::move(part));
-      }
-      expr = std::move(conjunction);
-    }
-    out.column_filters.push_back(
-      {.column = column,
-       .type = std::move(type),
-       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr))});
-  }
   if (conjuncts.empty()) {
     return out;
   }
@@ -762,13 +676,15 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     return f;
   }
   if (vs.radius != std::numeric_limits<float>::max()) {
-    auto f = MakeAnnFilter<irs::ByRadius>(vs, std::move(inner));
+    auto f = MakeAnnFilter<irs::ByRadius>(vs, std::move(inner),
+                                          std::move(index_only), dual);
     auto* o = f->mutable_options();
     o->radius = radius;
     o->inclusive = vs.radius_inclusive;
     return f;
   }
-  auto f = MakeAnnFilter<irs::ByVectorSimilarity>(vs, std::move(inner));
+  auto f = MakeAnnFilter<irs::ByVectorSimilarity>(vs, std::move(inner),
+                                                  std::move(index_only), dual);
   auto* o = f->mutable_options();
   o->nprobe = vs.nprobe;
   o->min_search_fanout = vs.min_search_fanout;
@@ -780,8 +696,6 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->rescore_width = vs.rescore_all || vs.top_k == 0 ? 0.f : vs.rescore_width;
   o->hnsw_filter_mode = vs.hnsw_filter_mode;
   o->hnsw_column_filter = vs.hnsw_column_filter;
-  o->index_only = std::move(index_only);
-  o->dual = dual;
   return f;
 }
 

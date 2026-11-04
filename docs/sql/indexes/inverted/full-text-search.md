@@ -162,6 +162,8 @@ Numeric, temporal, boolean, text and `BLOB` columns support range matching. On a
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_015" />
 
+On a numeric or temporal column other than an array, `count(*)` of a range, of an `IN` list, or of either `OR`ed with `IS NULL` is answered from the index's statistics without reading the matching rows, except in segments with deleted rows. A range that admits most of a column's values costs about as much as the values it leaves out.
+
 See the [Range Queries](../../../cookbook/search/range-queries.md) recipe for lexicographic ordering details.
 
 ## PostgreSQL-compatible query parsers

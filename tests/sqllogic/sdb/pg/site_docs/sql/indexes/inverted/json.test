@@ -239,3 +239,46 @@ ORDER BY id;
 ----
 id	name
 1	Laptop
+
+# DOCS_TEST: example_008
+
+statement ok
+CREATE TABLE readings (
+    id INTEGER PRIMARY KEY,
+    doc JSON
+);
+
+statement ok
+INSERT INTO readings VALUES
+    (1, '{"v": 42}'),
+    (2, '{"v": 42.4}'),
+    (3, '{"v": "42"}');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY readings_kw AS keyword();
+
+statement ok
+CREATE INDEX readings_idx ON readings
+    USING inverted (id, (doc -> 'v') readings_kw, ((doc -> 'v')::INTEGER));
+
+query
+SELECT id
+FROM readings_idx
+WHERE (doc -> 'v')::DOUBLE = 42
+ORDER BY id;
+----
+id
+1
+
+query
+SELECT id
+FROM readings_idx
+WHERE (doc -> 'v')::INTEGER = 42
+ORDER BY id;
+----
+id
+1
+2
+3

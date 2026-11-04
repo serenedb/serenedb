@@ -1,0 +1,75 @@
+statement ok
+DROP ROLE IF EXISTS bfgs_admin;
+
+
+statement ok
+CREATE ROLE bfgs_admin;
+
+
+statement ok
+SET ROLE bfgs_admin;
+
+
+statement error
+SELECT count(*) >= 0 AS listed FROM duckdb_secrets();
+----
+db error: ERROR: permission denied for function duckdb_secrets
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION duckdb_secrets() TO bfgs_admin;
+
+
+query
+SELECT has_function_privilege('bfgs_admin', 'duckdb_secrets()', 'EXECUTE') AS exec;
+----
+exec
+t
+
+
+statement ok
+SET ROLE bfgs_admin;
+
+
+query
+SELECT count(*) >= 0 AS listed FROM duckdb_secrets();
+----
+listed
+t
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION duckdb_secrets() FROM bfgs_admin;
+
+
+query
+SELECT has_function_privilege('bfgs_admin', 'duckdb_secrets()', 'EXECUTE') AS exec;
+----
+exec
+f
+
+
+statement ok
+SET ROLE bfgs_admin;
+
+
+statement error
+SELECT count(*) >= 0 AS listed FROM duckdb_secrets();
+----
+db error: ERROR: permission denied for function duckdb_secrets
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE bfgs_admin;

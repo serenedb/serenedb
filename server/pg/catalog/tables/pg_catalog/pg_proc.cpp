@@ -176,6 +176,11 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     Col<"proargtypes">(&BuiltinFunction::argtypes),
     Col<"prosrc">([](const auto& function) -> std::string_view {
       return function.src.empty() ? function.name : function.src;
+    }),
+    Col<"proacl">([](const auto& function, SystemScan& scan) -> const auto& {
+      static const duckdb::vector<duckdb::AclItem> kDefault;
+      const auto granted = BuiltinFunctionGrant(scan.Context(), function);
+      return granted ? granted->acl : kDefault;
     }));
 
   static constexpr auto kMacro = Shape<kSql, const Macro>(

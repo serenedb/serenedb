@@ -1,0 +1,48 @@
+statement ok
+DROP ROLE IF EXISTS bfga_user;
+
+
+statement ok
+CREATE ROLE bfga_user;
+
+
+statement ok
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_catalog TO bfga_user;
+
+
+query
+SELECT count(*) > 1000 AS many
+FROM pg_proc
+WHERE pronamespace = 'pg_catalog'::regnamespace AND 'bfga_user=X/postgres' = ANY (proacl::text[]);
+----
+many
+t
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE oid = 'lower(text)'::regprocedure;
+----
+acl
+=X/postgres,postgres=X/postgres,bfga_user=X/postgres
+
+
+query
+SELECT has_function_privilege('bfga_user', 'upper(text)', 'EXECUTE') AS exec;
+----
+exec
+t
+
+
+statement ok
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA pg_catalog FROM bfga_user;
+
+
+query
+SELECT count(*) AS remaining FROM pg_proc WHERE 'bfga_user=X/postgres' = ANY (proacl::text[]);
+----
+remaining
+0
+
+
+statement ok
+DROP ROLE bfga_user;

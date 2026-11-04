@@ -189,7 +189,7 @@ RESET ROLE;
 
 
 query
-SELECT objid::regprocedure::text AS f, refobjid::regrole::text AS role, deptype FROM pg_shdepend WHERE classid = 'pg_proc'::regclass AND objid IN (SELECT oid FROM pg_proc WHERE proname = 'fop_f') ORDER BY 1, 2;
+SELECT objid::regprocedure::text AS f, refobjid::regrole::text AS role, deptype FROM pg_shdepend WHERE classid = 'pg_proc'::regclass AND objid IN (SELECT oid FROM pg_proc WHERE proname = 'fop_f') AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY 1, 2;
 ----
 f	role	deptype
 fop_f(integer)	fop_a	o

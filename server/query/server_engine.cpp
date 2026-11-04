@@ -56,6 +56,7 @@
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
+#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
@@ -236,6 +237,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::VisitSystemViews("pg_catalog", [&](const pg::StaticView& view) {
     config.builtin_relations.emplace(view.name);
   });
+  config.builtin_function_key = &pg::BuiltinFunctionKey;
+  config.builtin_signature_key = &pg::BuiltinSignatureKey;
   for (const auto& wrapper : pg::kForeignDataWrappers) {
     config.foreign_data_wrappers.emplace(
       wrapper.name,

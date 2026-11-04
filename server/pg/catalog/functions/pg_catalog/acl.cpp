@@ -658,10 +658,16 @@ struct FunctionPrivileges : ObjectPrivileges<FunctionPrivileges> {
           ? &PrivilegePermissions(*session.context, *found.entry)
           : &found.entry->OverloadPermissions(*found.macro)};
     }
-    if (found.entry || !GetBuiltinFunctions(*session.context)->Find(oid)) {
+    if (found.entry) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    const auto builtins = GetBuiltinFunctions(*session.context);
+    const auto* builtin = builtins->Find(oid);
+    if (!builtin) {
+      return std::nullopt;
+    }
+    const auto granted = BuiltinFunctionGrant(*session.context, *builtin);
+    return ObjectTarget{granted ? granted.get() : &kBuiltinPermissions};
   }
 };
 

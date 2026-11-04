@@ -24,6 +24,14 @@ statement ok
 REVOKE USAGE ON SCHEMA information_schema FROM PUBLIC;
 
 
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO scgr_monitor;
+
+
 query
 SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
        has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
@@ -88,3 +96,15 @@ WHERE nspname = 'information_schema';
 ----
 acl	monitor	other
 postgres=UC/postgres,scgr_monitor=U/postgres	t	f
+
+
+connection after_crash
+query
+SELECT array_to_string(proacl, ',') AS acl,
+       has_function_privilege('scgr_monitor', 'lower(text)', 'EXECUTE') AS monitor,
+       has_function_privilege('pg_database_owner', 'lower(text)', 'EXECUTE') AS other
+FROM pg_proc
+WHERE oid = 'lower(text)'::regprocedure;
+----
+acl	monitor	other
+postgres=X/postgres,scgr_monitor=X/postgres	t	f

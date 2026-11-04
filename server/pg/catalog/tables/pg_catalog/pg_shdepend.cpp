@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "catalog/cluster.h"
+#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/acl.h"
@@ -121,6 +122,12 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
           Depend(entry->oid, kPgNamespaceTable, schema.oid, 0, role.oid, 'a');
         }
       }
+      for (const auto& function : entry->permissions.functions) {
+        if (Names(function.acl, role.oid)) {
+          Depend(entry->oid, kPgProcTable, BuiltinOid(function.name), 0,
+                 role.oid, 'a');
+        }
+      }
       for (const auto& relation : entry->permissions.relations) {
         if (Names(relation.acl, role.oid)) {
           Depend(entry->oid, kPgClassTable, relation.oid, 0, role.oid, 'a');
@@ -139,6 +146,17 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
   }
 
  private:
+  duckdb::idx_t BuiltinOid(std::string_view key) {
+    if (!_builtins) {
+      _builtins = GetBuiltinFunctions(Context());
+      for (const auto& function : _builtins->All()) {
+        _builtin_oids.try_emplace(BuiltinFunctionKey(function), function.oid);
+      }
+    }
+    const auto it = _builtin_oids.find(key);
+    return it == _builtin_oids.end() ? kInvalidOid : it->second;
+  }
+
   std::span<duckdb::CatalogEntry* const> Referencing(duckdb::idx_t role) {
     if (!_scanned) {
       _scanned = true;
@@ -225,6 +243,8 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
   irs::containers::FlatHashMap<duckdb::idx_t,
                                std::vector<duckdb::CatalogEntry*>>
     _referencing;
+  std::shared_ptr<const BuiltinFunctions> _builtins;
+  irs::containers::FlatHashMap<std::string, duckdb::idx_t> _builtin_oids;
 };
 
 }  // namespace

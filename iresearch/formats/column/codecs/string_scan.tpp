@@ -73,8 +73,7 @@ struct EntryFrames {
       header{Header::Parse(base, segment.SegmentSize())},
       type{segment.GetType()},
       length_reader{base + header.off_lengths, header.length_width},
-      streams{CacheSlotOf(segment).streams},
-      file_offset{CacheSlotOf(segment).file_offset} {
+      streams{CacheSlotOf(segment).streams} {
     SDB_ENSURE(header.shape == S && header.codec == Leaf::kCodec &&
                  header.row_count == segment.count &&
                  uint64_t{header.entry_count} <=
@@ -112,12 +111,11 @@ struct EntryFrames {
 
   void LoadFrames() {
     frames.resize(header.frame_count);
-    frame_off.resize(header.frame_count + 1);
+    frame_off.resize(header.frame_count);
     decoded.assign(header.frame_count, 0);
     uint64_t raw = 0;
     for (uint32_t i = 0; i < header.frame_count; ++i) {
-      const auto f =
-        duckdb::Load<FrameMeta>(base + header.off_frames + i * kFrameMetaSize);
+      const auto f = FrameAt(base + header.off_frames, i);
       SDB_ENSURE(
         (i == 0 ? f.first_entry == kFirstEntry
                 : f.first_entry > frames[i - 1].first_entry) &&
@@ -129,7 +127,6 @@ struct EntryFrames {
       frame_off[i] = raw;
       raw += f.raw_len;
     }
-    frame_off[header.frame_count] = raw;
     SDB_ENSURE(raw == header.raw_bytes &&
                  (header.frame_count != 0 || header.entry_count == kFirstEntry),
                "col codec: corrupted frame table");
@@ -181,10 +178,8 @@ struct EntryFrames {
   }
 
   std::string_view FirstFrame() const noexcept {
-    return {heap ? heap + frame_off[0] : first, frames[0].raw_len};
+    return {heap ? heap : first, frames[0].raw_len};
   }
-
-  bool Streams() const noexcept { return streams; }
 
   void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
     if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
@@ -231,8 +226,7 @@ struct EntryFrames {
   }
 
   void ReferenceHeap(duckdb::Vector& result) {
-    ReferenceOnce(heap_reference,
-                  dictionary->data.GetBufferRef()->GetAuxiliaryData(), result);
+    ReferenceOnce(heap_reference, dictionary->data, result);
   }
 
   HeapReference heap_reference;
@@ -242,7 +236,6 @@ struct EntryFrames {
   duckdb::LogicalType type;
   PackedReader length_reader;
   bool streams;
-  uint64_t file_offset;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
@@ -276,18 +269,8 @@ struct FetchFrames {
                              bool batched) {
     SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
     const auto* table = base + header.off_frames;
-    uint32_t lo = 0;
-    uint32_t hi = header.frame_count;
-    while (hi - lo > 1) {
-      const auto mid = lo + (hi - lo) / 2;
-      if (duckdb::Load<FrameMeta>(table + mid * kFrameMetaSize).first_entry <=
-          entry) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    const auto f = duckdb::Load<FrameMeta>(table + lo * kFrameMetaSize);
+    const auto lo = FrameOfEntry(table, header.frame_count, entry);
+    const auto f = FrameAt(table, lo);
     SDB_ENSURE(f.first_entry <= entry, "col codec: corrupted frame table");
     leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
               batched);
@@ -327,21 +310,19 @@ void ScanVector(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
 }
 
 template<typename Scan>
-void Select(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
+void Select(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             const duckdb::SelectionVector& sel, idx_t sel_count) {
-  SDB_ASSERT(!CacheSlotOf(segment).streams);
   state.scan_state->Cast<Scan>().Select(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count);
 }
 
 template<typename Scan>
-void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
+void Filter(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
             idx_t vector_count, duckdb::Vector& result,
             duckdb::SelectionVector& sel, idx_t& sel_count,
             const duckdb::TableFilter& filter,
             duckdb::TableFilterState& filter_state) {
-  SDB_ASSERT(!CacheSlotOf(segment).streams);
   state.scan_state->Cast<Scan>().Filter(result, state.GetPositionInSegment(),
                                         vector_count, sel, sel_count, filter,
                                         filter_state);
@@ -371,7 +352,7 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     segment, [] { return duckdb::make_uniq<Fetch>(); });
   auto& frames = fetch.frames;
   if (frames.Switch(segment, base, Scan::kShape)) {
-    fetch.Reset(segment, base);
+    fetch.Reset(segment);
   }
   if (count == 1) {
     const auto at = result_offset + result_sel.get_index(0);

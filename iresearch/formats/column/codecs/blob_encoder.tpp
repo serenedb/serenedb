@@ -20,8 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <cstdint>
-#include <duckdb/common/bitpacking.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -56,7 +57,8 @@ class BlobEncoder {
   }
 
   void Append(std::string_view sv, uint32_t entry) {
-    if (_frame_entries != 0 && _frame.size() + sv.size() > FrameLimit()) {
+    if (_frame_entries != 0 &&
+        _frame.size() + sv.size() > Limit(_layout, _frames.empty())) {
       CloseFrame();
     }
     if (_frame_entries == 0) {
@@ -78,10 +80,9 @@ class BlobEncoder {
     if (_frame_entries != 0) {
       CloseFrame();
     }
-    const auto entries = rows.Entries();
-    for (size_t i = 0; i < entries.size(); ++i) {
-      lengths[i] = static_cast<uint32_t>(entries[i].size());
-    }
+    absl::c_transform(rows.Entries(), lengths.begin(), [](std::string_view e) {
+      return static_cast<uint32_t>(e.size());
+    });
     return {
       .codec = kCodec,
       .frames = _frames,
@@ -144,13 +145,9 @@ class BlobEncoder {
     const auto entry_count =
       p.entries.size() + (p.shape == Shape::Dedup ? 1 : 0);
     Header h;
-    LayOut(
-      h, _spans.size(),
-      duckdb::BitpackingPrimitives::GetRequiredSize(
-        entry_count,
-        duckdb::BitpackingPrimitives::MinimumBitWidth<uint32_t>(p.max_len)),
-      0, CodesBytes(p.shape, p.rows, p.entries.size(), p.runs, _tuning.codes),
-      0);
+    LayOut(h, _spans.size(), Packed(entry_count, p.max_len), 0,
+           CodesBytes(p.shape, p.rows, p.entries.size(), p.runs, _tuning.codes),
+           0);
     return h.off_data + data;
   }
 
@@ -219,14 +216,8 @@ class BlobEncoder {
   }
 
   void CloseFrame() {
-    const auto bound = Codec::Bound(_frame.size());
     const auto comp_off = _data.size();
-    size_t n = 0;
-    _data.resize_and_overwrite(comp_off + bound, [&](char* buf, size_t) {
-      n = _codec->Compress(_frame.data(), _frame.size(), buf + comp_off, bound,
-                           _active);
-      return comp_off + n;
-    });
+    const auto n = AppendCompressed(_frame, _data);
     _frames.push_back(
       FrameMeta{_frame_first, static_cast<uint32_t>(_frame.size()),
                 static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)});
@@ -241,9 +232,8 @@ class BlobEncoder {
     _frame_entries = 0;
   }
 
-  size_t FrameLimit() const noexcept {
-    return _frames.empty() && _layout.dictionary != 0 ? _layout.dictionary
-                                                      : _layout.frame;
+  static size_t Limit(const FrameShape& shape, bool first) noexcept {
+    return first && shape.dictionary != 0 ? shape.dictionary : shape.frame;
   }
 
   void SplitFrames(const Profile& p, const FrameShape& frame_shape) {
@@ -251,9 +241,7 @@ class BlobEncoder {
     uint64_t first = 0;
     uint64_t raw = 0;
     for (uint64_t i = 0; i < p.entries.size(); ++i) {
-      const auto limit = _spans.empty() && frame_shape.dictionary != 0
-                           ? frame_shape.dictionary
-                           : frame_shape.frame;
+      const auto limit = Limit(frame_shape, _spans.empty());
       const auto len = p.entries[i].size();
       if (i != first && raw + len > limit) {
         _spans.push_back(Span{first, i, raw});
@@ -275,12 +263,19 @@ class BlobEncoder {
     }
   }
 
-  uint64_t CompressFrame(const std::string& frame) {
+  uint64_t CompressFrame(std::string_view frame) {
+    _price_out.clear();
+    return AppendCompressed(frame, _price_out);
+  }
+
+  size_t AppendCompressed(std::string_view frame, std::string& out) {
     const auto bound = Codec::Bound(frame.size());
+    const auto at = out.size();
     size_t n = 0;
-    _price_out.resize_and_overwrite(bound, [&](char* buf, size_t) {
-      n = _codec->Compress(frame.data(), frame.size(), buf, bound, _active);
-      return n;
+    out.resize_and_overwrite(at + bound, [&](char* buf, size_t) {
+      n =
+        _codec->Compress(frame.data(), frame.size(), buf + at, bound, _active);
+      return at + n;
     });
     return n;
   }

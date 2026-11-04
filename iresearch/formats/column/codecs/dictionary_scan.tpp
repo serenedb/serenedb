@@ -53,6 +53,7 @@
 #include "iresearch/formats/column/codecs/string_scan.tpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -60,9 +61,9 @@ namespace irs::codecs::text {
 
 template<typename Leaf>
 struct DictionaryFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment& segment, data_ptr_t) {
+  void Reset(duckdb::ColumnSegment& segment) {
     code_frames.reset();
-    frames.decoded = CachedDictionary(segment);
+    frames.decoded = CachedDictionary(CacheSlotOf(segment));
   }
 
   void Read(data_ptr_t base, const idx_t* rows, idx_t count,
@@ -74,20 +75,19 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
     auto* out = order.data();
     auto& validity = duckdb::FlatVector::ValidityMutable(result);
     idx_t kept = 0;
-    const auto keep = [&](idx_t i, uint32_t code) {
-      const auto at = offset + sel.get_index(i);
-      if (code == 0) {
-        validity.SetInvalid(at);
-        return;
-      }
-      SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
-      out[kept++] = {.entry = code, .at = at};
-    };
     auto& numeric = Numeric(base);
     for (idx_t i = 0; i < count; ++i) {
       SDB_ENSURE(rows[i] < h.row_count, "col codec: row out of range");
-      keep(i, numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
-                            i + 1 == count ? kNoRow : rows[i + 1]));
+      const uint32_t code =
+        numeric.Fetch(rows[i], i == 0 ? kNoRow : rows[i - 1],
+                      i + 1 == count ? kNoRow : rows[i + 1]);
+      const auto at = offset + sel.get_index(i);
+      if (code == 0) {
+        validity.SetInvalid(at);
+        continue;
+      }
+      SDB_ENSURE(code < h.entry_count, "col codec: corrupted row codes");
+      out[kept++] = {.entry = code, .at = at};
     }
     order.resize(kept);
   }
@@ -128,10 +128,9 @@ struct DictionaryFetch final : duckdb::SegmentScanState {
   std::optional<FrameDecoder<uint32_t>> code_frames;
 };
 
-template<typename L>
+template<typename Leaf>
 struct DictionaryScan final : duckdb::SegmentScanState {
-  using Leaf = L;
-  using Fetch = DictionaryFetch<L>;
+  using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dedup;
   static constexpr auto kValidity =
     duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
@@ -141,29 +140,22 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   static constexpr uint8_t kPending = 3;
 
   DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle)
-    : DictionaryScan{segment, std::move(handle), CachedDictionary(segment)} {}
+    : DictionaryScan{segment, std::move(handle),
+                     CachedDictionary(CacheSlotOf(segment))} {}
 
   DictionaryScan(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
-      code_frames{
-        entries.base + entries.header.off_codes,
-        CodesHeader(entries.base, entries.header), nullptr,
-        ReadContext::CacheSlot{
-          .file_offset = entries.file_offset + entries.header.off_codes,
-        }} {
-    if (const auto& slot = CacheSlotOf(segment); slot.touched) {
-      cache = slot.cache;
-      cache_slot = slot;
-    }
+      cache_slot{CacheSlotOf(segment)},
+      code_frames{entries.base + entries.header.off_codes,
+                  CodesHeader(entries.base, entries.header)} {
     if (cached) {
       AdoptDictionary(*cached);
-    } else {
-      entries.values[0] = string_t{};
-      duckdb::FlatVector::ValidityMutable(entries.dictionary->data)
-        .SetInvalid(0);
-      full = entries.frames.empty();
+      return;
     }
+    entries.values[0] = string_t{};
+    duckdb::FlatVector::ValidityMutable(entries.dictionary->data).SetInvalid(0);
+    full = entries.frames.empty();
   }
 
   void AdoptDictionary(const DecodedDictionary& cached) {
@@ -191,12 +183,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (full) {
       return;
     }
-    if (cache && Touched(cache_slot)) {
-      if (const auto cached = cache->Get<DecodedDictionary>(
-            DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset))) {
-        AdoptDictionary(*cached);
-        return;
-      }
+    if (const auto cached = CachedDictionary(cache_slot)) {
+      AdoptDictionary(*cached);
+      return;
     }
     entries.DecodeAll();
     Admit();
@@ -204,12 +193,13 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   void Admit() {
     full = true;
-    if (!cache || !SecondTouch(cache_slot)) {
+    if (!cache_slot.touched || !SecondTouch(cache_slot)) {
       return;
     }
+    auto& cache = *cache_slot.cache;
     const auto bytes = entries.CacheBytes();
-    if (cache->GetCurrentMemoryRacy() + bytes <= cache->GetMaxMemoryRacy()) {
-      cache->Put(
+    if (cache.GetCurrentMemoryRacy() + bytes <= cache.GetMaxMemoryRacy()) {
+      cache.Put(
         DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
         duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));
     }
@@ -235,17 +225,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (!full) {
       return entries.leaf->Bound(entries, before);
     }
-    uint32_t lo = 1;
-    uint32_t hi = entries.header.entry_count;
-    while (lo < hi) {
-      const auto mid = lo + (hi - lo) / 2;
-      if (before(View(entries.values[mid]))) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo;
+    return static_cast<uint32_t>(PartitionIndex(
+      1, entries.header.entry_count,
+      [&](size_t e) { return before(View(entries.values[e])); }));
   }
 
   uint32_t Lower(std::string_view key) {
@@ -279,15 +261,14 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         }
         switch (op.GetExpressionType()) {
           case duckdb::ExpressionType::OPERATOR_IS_NULL:
-            if (children.size() != 1) {
-              return std::nullopt;
-            }
-            return EntryRanges{{0, 1}};
           case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL:
             if (children.size() != 1) {
               return std::nullopt;
             }
-            return Normalize({{1, n}});
+            return op.GetExpressionType() ==
+                       duckdb::ExpressionType::OPERATOR_IS_NULL
+                     ? EntryRanges{{0, 1}}
+                     : Normalize({{1, n}});
           case duckdb::ExpressionType::COMPARE_IN:
             if constexpr (Sorted(Leaf::kCodec)) {
               return ResolveIn(children);
@@ -428,13 +409,15 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   void ScanFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
                 idx_t count) {
-    if (entries.Streams()) {
-      Stream(result, result_offset, start, count);
-      return;
-    }
     const auto& codes = Codes(start, count);
     if (!full) {
-      if (count * 2 >= STANDARD_VECTOR_SIZE) {
+      if (entries.streams) {
+        if constexpr (Sorted(Leaf::kCodec)) {
+          EnsureDictionary();
+        } else {
+          EnsureThrough(batch_max);
+        }
+      } else if (count * 2 >= STANDARD_VECTOR_SIZE) {
         EnsureDictionary();
       } else {
         EnsureCodes(codes, count);
@@ -444,27 +427,12 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {
-    if (count != STANDARD_VECTOR_SIZE || entries.Streams()) {
+    if (count != STANDARD_VECTOR_SIZE || entries.streams) {
       ScanFlat(result, 0, start, count);
       return;
     }
     EnsureDictionary();
     result.Dictionary(entries.dictionary, Codes(start, count), count);
-  }
-
-  void Stream(duckdb::Vector& result, idx_t result_offset, idx_t start,
-              idx_t count) {
-    SDB_ASSERT(start >= streamed);
-    streamed = start + count;
-    const auto& codes = Codes(start, count);
-    if (!full) {
-      if constexpr (Sorted(Leaf::kCodec)) {
-        EnsureDictionary();
-      } else {
-        EnsureThrough(batch_max);
-      }
-    }
-    WriteCodes(result, result_offset, codes, count);
   }
 
   void EnsureThrough(uint32_t code) {
@@ -484,7 +452,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
 
   void Select(duckdb::Vector& result, idx_t start, idx_t vector_count,
               const duckdb::SelectionVector& sel, idx_t sel_count) {
-    SDB_ASSERT(!entries.Streams());
+    SDB_ASSERT(!entries.streams);
     if (!full && sel_count * 4 < vector_count) {
       const auto& codes = Codes(start, vector_count, sel, sel_count);
       EnsureCodes(codes, sel_count);
@@ -500,7 +468,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
               duckdb::SelectionVector& sel, idx_t& sel_count,
               const duckdb::TableFilter& filter,
               duckdb::TableFilterState& filter_state) {
-    SDB_ASSERT(!entries.Streams());
+    SDB_ASSERT(!entries.streams);
     const auto dict_count = entries.header.entry_count;
     if (verdicts.empty()) {
       if (const auto ranges = ResolveFilter(filter)) {
@@ -527,19 +495,7 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     if (lazy_filter) {
       JudgeLazily(codes, sel, sel_count, filter_state);
     } else if (filter_match_count != dict_count) {
-      const auto* matches = verdicts.data();
-      idx_t kept = 0;
-      while (kept < sel_count &&
-             matches[codes.get_index(sel.get_index(kept))] == kAccepted) {
-        ++kept;
-      }
-      for (idx_t i = kept + 1; i < sel_count; ++i) {
-        const auto row = sel.get_index(i);
-        if (matches[codes.get_index(row)] == kAccepted) {
-          sel.set_index(kept++, row);
-        }
-      }
-      sel_count = kept;
+      sel_count = KeepAccepted(codes, sel, sel_count);
     }
     if (!full && filter_match_count * 4 >= dict_count) {
       EnsureDictionary();
@@ -626,28 +582,34 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       }
       judged += pending.size();
     }
-    idx_t out = 0;
-    for (idx_t i = 0; i < count; ++i) {
-      const auto row = rows.get_index(i);
-      if (verdicts[codes.get_index(row)] == kAccepted) {
-        rows.set_index(out++, row);
-      }
-    }
-    count = out;
+    count = KeepAccepted(codes, rows, count);
     if (judged * 2 >= entries.header.entry_count) {
       JudgeAll(filter_state);
     }
   }
 
-  void ReserveCodes(idx_t count) {
+  idx_t KeepAccepted(const duckdb::SelectionVector& codes,
+                     duckdb::SelectionVector& rows, idx_t count) const {
+    const auto* matches = verdicts.data();
+    idx_t kept = 0;
+    while (kept < count &&
+           matches[codes.get_index(rows.get_index(kept))] == kAccepted) {
+      ++kept;
+    }
+    for (idx_t i = kept + 1; i < count; ++i) {
+      const auto row = rows.get_index(i);
+      if (matches[codes.get_index(row)] == kAccepted) {
+        rows.set_index(kept++, row);
+      }
+    }
+    return kept;
+  }
+
+  void UnpackCodes(idx_t start, idx_t count) {
     if (!code_sel || code_sel_size < count) {
       code_sel_size = count;
       code_sel = duckdb::make_buffer<duckdb::SelectionVector>(count);
     }
-  }
-
-  void UnpackCodes(idx_t start, idx_t count) {
-    ReserveCodes(count);
     auto* codes = code_sel->data();
     code_frames.Read(start, count, codes);
     duckdb::sel_t max_code = 0;
@@ -660,11 +622,9 @@ struct DictionaryScan final : duckdb::SegmentScanState {
   }
 
   EntryFrames<Shape::Dedup, Leaf> entries;
-  duckdb::ObjectCache* cache = nullptr;
   ReadContext::CacheSlot cache_slot;
   duckdb::sel_t batch_max = 0;
   uint32_t next_frame = 0;
-  idx_t streamed = 0;
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;

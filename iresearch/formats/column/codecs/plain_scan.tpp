@@ -38,7 +38,7 @@ namespace irs::codecs::text {
 
 template<typename Leaf>
 struct PlainFetch final : duckdb::SegmentScanState {
-  void Reset(duckdb::ColumnSegment&, data_ptr_t) noexcept {}
+  void Reset(duckdb::ColumnSegment&) noexcept {}
 
   void Read(data_ptr_t, const idx_t* rows, idx_t count, duckdb::Vector&,
             const duckdb::SelectionVector& sel, idx_t offset) {
@@ -70,10 +70,9 @@ struct PlainFetch final : duckdb::SegmentScanState {
   FetchFrames<Leaf> frames;
 };
 
-template<typename L>
+template<typename Leaf>
 struct PlainScan final : duckdb::SegmentScanState {
-  using Leaf = L;
-  using Fetch = PlainFetch<L>;
+  using Fetch = PlainFetch<Leaf>;
   static constexpr Shape kShape = Shape::Plain;
   static constexpr auto kValidity =
     duckdb::CompressionValidity::REQUIRES_VALIDITY;
@@ -85,17 +84,12 @@ struct PlainScan final : duckdb::SegmentScanState {
 
   void ScanFlat(duckdb::Vector& result, idx_t result_offset, idx_t start,
                 idx_t count) {
-    if (entries.Streams()) {
+    if (entries.streams) {
       Stream(result, result_offset, start, count);
       return;
     }
-    entries.EnsureEach(count, [&](idx_t i) { return start + i; });
-    entries.ReferenceHeap(result);
-    auto writer =
-      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
-    for (idx_t i = 0; i < count; ++i) {
-      writer.WriteStringRef(entries.values[start + i]);
-    }
+    WriteEntries(result, result_offset, count,
+                 [&](idx_t i) { return start + i; });
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {
@@ -104,19 +98,25 @@ struct PlainScan final : duckdb::SegmentScanState {
 
   void Select(duckdb::Vector& result, idx_t start, idx_t,
               const duckdb::SelectionVector& rows, idx_t count) {
-    SDB_ASSERT(!entries.Streams());
-    entries.EnsureEach(count,
-                       [&](idx_t i) { return start + rows.get_index(i); });
+    SDB_ASSERT(!entries.streams);
+    WriteEntries(result, 0, count,
+                 [&](idx_t i) { return start + rows.get_index(i); });
+  }
+
+  template<typename Entry>
+  void WriteEntries(duckdb::Vector& result, idx_t result_offset, idx_t count,
+                    Entry entry_at) {
+    entries.EnsureEach(count, entry_at);
     entries.ReferenceHeap(result);
-    auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
+    auto writer =
+      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
     for (idx_t i = 0; i < count; ++i) {
-      writer.WriteStringRef(entries.values[start + rows.get_index(i)]);
+      writer.WriteStringRef(entries.values[entry_at(i)]);
     }
   }
 
   void Stream(duckdb::Vector& result, idx_t result_offset, idx_t start,
               idx_t count) {
-    SDB_ASSERT(start >= streamed);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
     const auto stop = static_cast<uint32_t>(start + count);
@@ -135,7 +135,6 @@ struct PlainScan final : duckdb::SegmentScanState {
         writer.WriteStringRef(string_t{data + from, ends[k] - from});
       }
     }
-    streamed = stop;
   }
 
   void Open(uint32_t f) {
@@ -170,7 +169,6 @@ struct PlainScan final : duckdb::SegmentScanState {
   duckdb::shared_ptr<const FrameBytes> frame_zero;
   ScratchVector<uint32_t> ends;
   FrameLink link;
-  idx_t streamed = 0;
 };
 
 }  // namespace irs::codecs::text

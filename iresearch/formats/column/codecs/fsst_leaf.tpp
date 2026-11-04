@@ -38,10 +38,39 @@
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text {
+
+inline constexpr size_t kFsstMaxExpansion = 8;
+
+struct ChainEnd {
+  uint64_t written;
+  uint64_t enc_off;
+};
+
+inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
+                              uint32_t first, uint32_t end) {
+  uint64_t capacity = 0;
+  for (auto e = first; e < end; ++e) {
+    capacity += (e == first ? 0 : lcps.At(e)) +
+                uint64_t{lengths.At(e)} * kFsstMaxExpansion;
+  }
+  return std::max<uint64_t>(capacity, duckdb::string_t::INLINE_LENGTH + 1);
+}
+
+inline uint64_t DecodeSuffix(const FsstDecoder& fsst, const char* in,
+                             uint64_t enc, uint64_t lcp, std::string& buf) {
+  if (const auto need = lcp + enc * kFsstMaxExpansion; buf.size() < need) {
+    buf.resize(std::max<uint64_t>(need, buf.size() * 2));
+  }
+  const auto room = buf.size() - lcp;
+  const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, buf.data() + lcp, room);
+  SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+  return lcp + dec;
+}
 
 template<typename Visit>
 ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
@@ -83,14 +112,7 @@ uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
     const uint64_t enc = lengths.At(e);
     SDB_ENSURE(lcp <= len && enc_off + enc <= enc_end,
                "col codec: corrupted front coding");
-    if (const auto need = lcp + enc * kFsstMaxExpansion; buf.size() < need) {
-      buf.resize(std::max<uint64_t>(need, buf.size() * 2));
-    }
-    const auto room = buf.size() - lcp;
-    const auto dec =
-      enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, buf.data() + lcp, room);
-    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-    len = lcp + dec;
+    len = DecodeSuffix(fsst, in + enc_off, enc, lcp, buf);
     if (!visit(e, std::string_view{buf.data(), len})) {
       return e;
     }
@@ -164,37 +186,35 @@ struct FsstScan {
     group_decoded.assign(groups.Count(), 0);
   }
 
-  template<typename Frames>
-  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+  template<typename Frames, typename Visit>
+  void WalkFrame(Frames& s, uint32_t f, char* out, Visit&& visit) {
     const auto& m = s.frames[f];
-    const auto end = s.FrameEnd(f);
     const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
-    const auto chain = WalkChain(
-      decoder, s.Data(), s.length_reader, lcps, m.first_entry, end, m.comp_off,
-      enc_end, out, m.raw_len, [&](uint32_t e, std::string_view v) {
-        SDB_ASSERT(
-          !Frames::kDedup || e == m.first_entry || View(s.values[e - 1]) < v,
-          "col codec: dictionary entries out of order");
-        s.Keep(e, v);
-      });
+    const auto chain =
+      WalkChain(decoder, s.Data(), s.length_reader, lcps, m.first_entry,
+                s.FrameEnd(f), m.comp_off, enc_end, out, m.raw_len, visit);
     SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
                "col codec: corrupted frame");
   }
 
   template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    const auto first = s.frames[f].first_entry;
+    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) {
+      SDB_ASSERT(!Frames::kDedup || e == first || View(s.values[e - 1]) < v,
+                 "col codec: dictionary entries out of order");
+      s.Keep(e, v);
+    });
+  }
+
+  template<typename Frames>
   void Stream(Frames& s, uint32_t f, char* out, std::string_view,
               uint32_t* ends) {
-    const auto& m = s.frames[f];
-    const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
-    const auto chain = WalkChain(
-      decoder, s.Data(), s.length_reader, lcps, m.first_entry, s.FrameEnd(f),
-      m.comp_off, enc_end, out, m.raw_len, [&](uint32_t, std::string_view v) {
-        if (ends) {
-          *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
-        }
-      });
-    SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
-               "col codec: corrupted frame");
+    WalkFrame(s, f, out, [&](uint32_t, std::string_view v) {
+      if (ends) {
+        *ends++ = static_cast<uint32_t>(v.data() + v.size() - out);
+      }
+    });
   }
 
   template<typename Frames>
@@ -241,31 +261,17 @@ struct FsstScan {
     if (s.frames.empty()) {
       return s.header.entry_count;
     }
-    uint32_t lo = 0;
-    uint32_t hi = static_cast<uint32_t>(s.frames.size());
-    while (lo < hi) {
-      const auto mid = lo + (hi - lo) / 2;
-      if (before(DecodeHead(s, mid, 0))) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
+    const auto lo = PartitionIndex(0, s.frames.size(), [&](size_t f) {
+      return before(DecodeHead(s, static_cast<uint32_t>(f), 0));
+    });
     if (lo == 0) {
       return s.frames[0].first_entry;
     }
-    const uint32_t f = lo - 1;
-    uint32_t glo = 1;
-    uint32_t ghi = groups.Groups(f);
-    while (glo < ghi) {
-      const auto mid = glo + (ghi - glo) / 2;
-      if (before(DecodeHead(s, f, mid))) {
-        glo = mid + 1;
-      } else {
-        ghi = mid;
-      }
-    }
-    const uint32_t g = glo - 1;
+    const auto f = static_cast<uint32_t>(lo - 1);
+    const auto glo = PartitionIndex(1, groups.Groups(f), [&](size_t i) {
+      return before(DecodeHead(s, f, static_cast<uint32_t>(i)));
+    });
+    const auto g = static_cast<uint32_t>(glo - 1);
     const auto first = s.frames[f].first_entry + g * kChainRestart;
     const auto end = std::min<uint32_t>(first + kChainRestart, s.FrameEnd(f));
     if (s.decoded[f] || group_decoded[groups.Base(f) + g]) {
@@ -293,11 +299,10 @@ struct FsstScan {
 };
 
 struct FsstFetch {
-  void Reset(const Header& h, duckdb::const_data_ptr_t base) {
+  void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
     groups.Clear();
-    lcps = PackedReader{const_cast<duckdb::data_ptr_t>(base) + h.off_lcps,
-                        h.lcp_width};
+    lcps = PackedReader{base + h.off_lcps, h.lcp_width};
     walked = 0;
   }
 
@@ -348,18 +353,9 @@ struct FsstFetch {
     uint64_t len = 0;
     while (count != 0) {
       const auto i = used[--count];
-      const uint64_t enc = off[i + 1] - off[i];
       SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
-      if (const auto want = lcp[i] + enc * kFsstMaxExpansion;
-          chain.size() < want) {
-        chain.resize(std::max<uint64_t>(want, chain.size() * 2));
-      }
-      const auto room = chain.size() - lcp[i];
-      const auto dec = enc == 0 ? 0
-                                : decoder->Decode(in + off[i], enc,
-                                                  chain.data() + lcp[i], room);
-      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
-      len = lcp[i] + dec;
+      len =
+        DecodeSuffix(*decoder, in + off[i], off[i + 1] - off[i], lcp[i], chain);
       ++walked;
     }
     return {chain.data(), len};
@@ -372,16 +368,11 @@ struct FsstFetch {
         decoder->Import(std::string_view{
           reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size}),
       "col codec: corrupted symbol table");
-    const auto* frames = base + h.off_frames;
+    const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
-      const auto first =
-        duckdb::Load<FrameMeta>(frames + i * kFrameMetaSize).first_entry;
-      const auto end =
-        i + 1 < h.frame_count
-          ? duckdb::Load<FrameMeta>(frames + (i + 1) * kFrameMetaSize)
-              .first_entry
-          : h.entry_count;
-      return std::pair{first, end};
+      return std::pair{FrameAt(table, i).first_entry,
+                       i + 1 < h.frame_count ? FrameAt(table, i + 1).first_entry
+                                             : h.entry_count};
     });
   }
 

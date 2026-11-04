@@ -42,19 +42,8 @@ namespace irs::codecs::text {
 
 using duckdb::string_t;
 
-uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
-                       uint32_t first, uint32_t end) {
-  uint64_t capacity = 0;
-  for (auto e = first; e < end; ++e) {
-    capacity += (e == first ? 0 : lcps.At(e)) +
-                uint64_t{lengths.At(e)} * kFsstMaxExpansion;
-  }
-  return std::max<uint64_t>(capacity, string_t::INLINE_LENGTH + 1);
-}
-
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
-  duckdb::ColumnSegment& segment) {
-  const auto& slot = CacheSlotOf(segment);
+  const ReadContext::CacheSlot& slot) {
   if (!slot.touched || !Touched(slot)) {
     return nullptr;
   }
@@ -130,45 +119,32 @@ const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
 
 uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
                       std::span<const EntryAt> order) {
-  const auto* frames = base + h.off_frames;
-  const auto meta = [&](uint32_t f) {
-    return duckdb::Load<FrameMeta>(frames + f * kFrameMetaSize);
-  };
+  const auto* table = base + h.off_frames;
   uint64_t bytes = 0;
   uint32_t counted = h.frame_count;
   for (const auto& [entry, at] : order) {
-    if (h.frame_count == 0 ||
-        (counted != h.frame_count && meta(counted).first_entry <= entry)) {
+    if (h.frame_count == 0 || (counted != h.frame_count &&
+                               FrameAt(table, counted).first_entry <= entry)) {
       continue;
     }
-    uint32_t lo = 0;
-    uint32_t hi = counted;
-    while (hi - lo > 1) {
-      const auto mid = lo + (hi - lo) / 2;
-      if (meta(mid).first_entry <= entry) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    bytes += meta(lo).raw_len;
-    counted = lo;
+    counted = FrameOfEntry(table, counted, entry);
+    bytes += FrameAt(table, counted).raw_len;
   }
   return bytes;
 }
 
-void ReferenceOnce(HeapReference& reference,
-                   const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& source,
+void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result) {
+  const auto& heap = source.GetBufferRef()->GetAuxiliaryData();
   const auto& target = result.GetBufferRef()->GetAuxiliaryData();
   if (target && target.get() == reference.target.lock().get() &&
-      source.get() == reference.source.lock().get()) {
+      heap.get() == reference.source.lock().get()) {
     return;
   }
   duckdb::StringVector::AddAuxiliaryData(
-    result, duckdb::ImmutableStrings::Reference(source));
+    result, duckdb::ImmutableStrings::Reference(heap));
   reference.target = result.GetBufferRef()->GetAuxiliaryData();
-  reference.source = source;
+  reference.source = heap;
 }
 
 void ReferenceFrame(FrameLink& link,
@@ -189,8 +165,7 @@ void EmitDecoded(const DecodedDictionary& decoded,
                  std::span<const EntryAt> order, duckdb::Vector& result,
                  HeapReference& reference) {
   const auto& dictionary = decoded.Dictionary()->data;
-  ReferenceOnce(reference, dictionary.GetBufferRef()->GetAuxiliaryData(),
-                result);
+  ReferenceOnce(reference, dictionary, result);
   const auto* values = duckdb::FlatVector::GetData<string_t>(dictionary);
   auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
   for (size_t i = 0; i < order.size(); ++i) {
@@ -206,14 +181,14 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   auto& buffer_manager =
     duckdb::BufferManager::GetBufferManager(segment.GetDatabase());
   auto handle = buffer_manager.Pin(segment.GetBlockHandle());
-  const auto h = Header::Parse(handle.Ptr() + segment.GetBlockOffset(),
-                               segment.SegmentSize());
+  const auto* base = handle.Ptr() + segment.GetBlockOffset();
+  const auto h = Header::Parse(base, segment.SegmentSize());
   duckdb::InsertionOrderPreservingMap<std::string> info;
   info["shape"] = std::string{SnakeCaseName(h.shape)};
   info["codec"] = std::string{SnakeCaseName(h.codec)};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   if (h.shape == Shape::Dedup) {
-    const auto codes = CodesHeader(handle.Ptr() + segment.GetBlockOffset(), h);
+    const auto codes = CodesHeader(base, h);
     info["codes_transform"] = std::string{SnakeCaseName(codes.transform)};
   }
   info["entries"] = absl::StrCat(h.entry_count);

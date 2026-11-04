@@ -102,13 +102,17 @@ class SegmentWriter {
   SegmentWriter(const StringAccumulator& acc, const StringChoice* named,
                 const ColCodecParams& params, const duckdb::LogicalType& type,
                 StringTuning& tuning)
-    : _acc{acc}, _named{named}, _params{params}, _type{type}, _tuning{tuning} {}
+    : _acc{acc},
+      _named{named},
+      _params{params},
+      _tuning{tuning},
+      _builder{acc, type, _dedup, tuning.codes} {}
 
   SealOutcome Run(SegmentSink sink) {
     SealOutcome outcome{.sealed = true};
     uint64_t row = 0;
     bool first = true;
-    const bool due = !_named && CalibrationDue();
+    const bool due = !_named && (!_tuning.choice || _tuning.clock.Due());
     while (row < _acc.row_count) {
       const auto cutter = Cutter();
       auto* seg = Acquire();
@@ -175,10 +179,6 @@ class SegmentWriter {
     };
   }
 
-  bool CalibrationDue() noexcept {
-    return !_tuning.choice || _tuning.clock.Due();
-  }
-
   Segment* Calibrate(Segment* cut, bool retune, bool drift) {
     _begin = cut->begin;
     _end = cut->begin + cut->rows;
@@ -194,7 +194,8 @@ class SegmentWriter {
       .layout = layout,
     });
     Segment* plain = nullptr;
-    if (PlainMayWin(*dedup)) {
+    if (PlainWins(*dedup, kHeaderSize + Packed(dedup->rows, dedup->max_len) +
+                            dedup->input / kLz4MaxRatio)) {
       plain = Trial({
         .choice = {Shape::Plain, ByteCodec::Lz4},
         .level = kLz4Fast,
@@ -202,7 +203,7 @@ class SegmentWriter {
       });
     }
     const auto shape =
-      plain && PlainWins(*dedup, *plain) ? Shape::Plain : Shape::Dedup;
+      plain && PlainWins(*dedup, plain->Size()) ? Shape::Plain : Shape::Dedup;
     const bool tune = retune && dedup->entries >= kTuneMinEntries;
     _measured = false;
     _smallest = {.bytes = std::numeric_limits<uint64_t>::max()};
@@ -288,27 +289,21 @@ class SegmentWriter {
         ++rung;
       }
       bytes = prices[rung];
-      const auto wide = PriceOf({
-        .choice = {shape, leaf},
-        .level = ladder[rung],
-        .layout = FrameLayout::Wide,
-      });
-      if (static_cast<double>(wide) <
-          static_cast<double>(*bytes) * (1.0 - kWideFramesGain)) {
-        layout = FrameLayout::Wide;
-        bytes = wide;
-      }
-      if (Trainable(leaf) && _tuning.dictionary) {
-        const auto first = PriceOf({
+      const auto prefer = [&](FrameLayout candidate, double gain) {
+        const auto price = PriceOf({
           .choice = {shape, leaf},
           .level = ladder[rung],
-          .layout = FrameLayout::FirstFrame,
+          .layout = candidate,
         });
-        if (static_cast<double>(first) <
-            static_cast<double>(*bytes) * (1.0 - kUntrainedGain)) {
-          layout = FrameLayout::FirstFrame;
-          bytes = first;
+        if (static_cast<double>(price) <
+            static_cast<double>(*bytes) * (1.0 - gain)) {
+          layout = candidate;
+          bytes = price;
         }
+      };
+      prefer(FrameLayout::Wide, kWideFramesGain);
+      if (Trainable(leaf) && _tuning.dictionary) {
+        prefer(FrameLayout::FirstFrame, kUntrainedGain);
       }
       tuned_layout = layout;
     }
@@ -448,20 +443,11 @@ class SegmentWriter {
     return Repeats(dedup.entries, dedup.rows - dedup.nulls);
   }
 
-  static bool PlainMayWin(const Segment& dedup) noexcept {
-    const auto floor = kHeaderSize + Packed(dedup.rows, dedup.max_len) +
-                       dedup.input / kLz4MaxRatio;
+  static bool PlainWins(const Segment& dedup, uint64_t plain) noexcept {
     if (Repeats(dedup)) {
-      return SavesEnough(dedup.Size(), floor);
+      return SavesEnough(dedup.Size(), plain);
     }
-    return floor <= dedup.Size();
-  }
-
-  static bool PlainWins(const Segment& dedup, const Segment& plain) noexcept {
-    if (Repeats(dedup)) {
-      return SavesEnough(dedup.Size(), plain.Size());
-    }
-    return plain.Size() <= dedup.Size();
+    return plain <= dedup.Size();
   }
 
   static bool SavesEnough(uint64_t dedup, uint64_t plain) noexcept {
@@ -531,10 +517,9 @@ class SegmentWriter {
   const StringAccumulator& _acc;
   const StringChoice* _named;
   const ColCodecParams& _params;
-  const duckdb::LogicalType& _type;
   StringTuning& _tuning;
   DedupScratch _dedup;
-  SegmentBuilder _builder{_acc, _type, _dedup, _tuning.codes};
+  SegmentBuilder _builder;
   std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
              std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
              std::optional<FsstChainEncoder>>

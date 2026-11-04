@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <duckdb/common/bitpacking.hpp>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -38,6 +39,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
@@ -45,7 +47,6 @@
 
 namespace irs::codecs::text {
 
-inline constexpr size_t kFsstMaxExpansion = 8;
 inline constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 inline constexpr duckdb::idx_t kSparseEntries = 64;
 inline constexpr uint32_t kLazyFilterEntries = 4096;
@@ -73,16 +74,26 @@ struct PackedReader {
   uint32_t values[kGroup];
 };
 
-uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
-                       uint32_t first, uint32_t end);
+inline FrameMeta FrameAt(duckdb::const_data_ptr_t table, uint32_t f) noexcept {
+  return duckdb::Load<FrameMeta>(table + f * kFrameMetaSize);
+}
 
-struct ChainEnd {
-  uint64_t written;
-  uint64_t enc_off;
-};
+inline uint32_t FrameOfEntry(duckdb::const_data_ptr_t table, uint32_t hi,
+                             uint32_t entry) noexcept {
+  uint32_t lo = 0;
+  while (hi - lo > 1) {
+    const auto mid = lo + (hi - lo) / 2;
+    if (FrameAt(table, mid).first_entry <= entry) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
-  duckdb::ColumnSegment& segment);
+  const ReadContext::CacheSlot& slot);
 
 NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h);
 
@@ -114,8 +125,7 @@ struct HeapReference {
   duckdb::weak_ptr<duckdb::AuxiliaryDataSet> target;
 };
 
-void ReferenceOnce(HeapReference& reference,
-                   const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& source,
+void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result);
 
 struct FrameBytes {

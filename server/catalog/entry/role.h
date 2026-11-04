@@ -39,7 +39,8 @@ constexpr bool IsPredefinedRole(duckdb::idx_t oid) {
 }
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name);
-std::string StoredPassword(std::string_view password);
+std::string StoredPassword(duckdb::ClientContext& context,
+                           std::string_view role, std::string_view password);
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context);
 
 class RoleCatalogEntry final : public duckdb::RoleEntry {

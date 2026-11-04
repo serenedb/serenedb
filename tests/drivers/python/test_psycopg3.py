@@ -14,6 +14,7 @@ not on whether psycopg3 happened to materialise a `datetime.date`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import struct
@@ -844,6 +845,30 @@ def test_engine_warning_reaches_the_client_as_a_notice():
         assert "profiling_mode setting is deprecated" in diags[0][1], diags
     finally:
         c.close()
+
+
+def test_client_side_password_hash_and_md5_rename_notice():
+    role = f"pw_client_{os.getpid()}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[tuple] = []
+    admin.add_notice_handler(lambda d: notices.append((d.severity, d.message_primary)))
+    try:
+        admin.execute(f"CREATE ROLE {role} LOGIN")
+        verifier = admin.pgconn.encrypt_password(b"pw_client_secret", role.encode()).decode()
+        assert verifier.startswith("SCRAM-SHA-256$"), verifier
+        admin.execute(f"ALTER ROLE {role} PASSWORD '{verifier}'")
+        with psycopg.connect(**{**conn_kwargs(), "user": role, "password": "pw_client_secret"}) as c:
+            assert c.execute("SELECT current_user").fetchone() == (role,)
+        admin.execute("SET password_encryption = 'md5'")
+        md5 = admin.pgconn.encrypt_password(b"pw_client_secret", role.encode()).decode()
+        assert md5 == "md5" + hashlib.md5(b"pw_client_secret" + role.encode()).hexdigest(), md5
+        admin.execute(f"ALTER ROLE {role} PASSWORD '{md5}'")
+        admin.execute(f"ALTER ROLE {role} RENAME TO {role}_r")
+        assert ("NOTICE", "MD5 password cleared because of role rename") in notices, notices
+    finally:
+        admin.execute(f"DROP ROLE IF EXISTS {role}")
+        admin.execute(f"DROP ROLE IF EXISTS {role}_r")
+        admin.close()
 
 
 def test_vacuum_walk_warns_only_about_tables_the_role_can_see():

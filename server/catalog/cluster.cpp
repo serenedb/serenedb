@@ -334,15 +334,18 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
   if (!IsPredefinedRole(info.oid)) {
     RequireUnreservedRoleName(info.GetQualifiedName().Name());
   }
-  if (!info.password.empty()) {
-    info.password = StoredPassword(info.password);
-  }
   return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   DeclareModified(transaction, *this);
+  auto& context = transaction.GetContext();
+  if (!info.password.empty()) {
+    info.password = StoredPassword(
+      context, info.GetQualifiedName().Name().GetIdentifierName(),
+      info.password);
+  }
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
   const auto grant = [&](const duckdb::Identifier& member,
                          const duckdb::Identifier& granted, bool admin) {
@@ -360,7 +363,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   for (const auto& name : info.admin_members) {
     grant(name, role->name, true);
   }
-  auto& context = transaction.GetContext();
   if (const auto creator = GrantorOfMembership(context);
       creator != pg::kRootUser) {
     duckdb::AlterRoleInfo alter{

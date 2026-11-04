@@ -300,6 +300,7 @@ Authentication, authorization and what the server is allowed to reach.
 | `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc) | `BOOLEAN` | `GLOBAL` | `true` |
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
+| `password_encryption` | How `CREATE ROLE` and `ALTER ROLE` store a password given in cleartext: `scram-sha-256` stores a SCRAM-SHA-256 verifier, `md5` an MD5 hash, which only `md5` authentication accepts. A password given already hashed is stored as it is. | `VARCHAR` | `SESSION` | `scram-sha-256` |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
 | `secret_directory` | Set the directory to which persistent secrets are stored | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
 

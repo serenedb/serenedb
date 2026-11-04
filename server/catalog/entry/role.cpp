@@ -36,6 +36,7 @@
 #include "network/credentials.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
 namespace {
@@ -67,6 +68,14 @@ duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
   }
 }
 
+bool HashesEmptyPassword(std::string_view role, std::string_view password) {
+  if (network::IsMd5Verifier(password)) {
+    return network::VerifyCleartextAgainstMd5(password, role, "");
+  }
+  const auto verifier = network::ParseScramVerifier(password);
+  return verifier && network::VerifyCleartextAgainstScram(*verifier, "");
+}
+
 }  // namespace
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name) {
@@ -83,9 +92,21 @@ void RequireUnreservedRoleName(const duckdb::Identifier& name) {
   }
 }
 
-std::string StoredPassword(std::string_view password) {
+std::string StoredPassword(duckdb::ClientContext& context,
+                           std::string_view role, std::string_view password) {
+  if (auto* session = connector::GetSereneDBContextPtr(context);
+      session && (password.empty() || HashesEmptyPassword(role, password))) {
+    session->AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+      ERR_MSG("empty string is not a valid password, clearing password")));
+    return {};
+  }
   if (network::IsScramVerifier(password) || network::IsMd5Verifier(password)) {
     return std::string{password};
+  }
+  constexpr std::string_view kMethods[] = {"scram-sha-256", "md5"};
+  if (GetEnumSetting(context, "password_encryption", kMethods) == 1) {
+    return network::BuildMd5Verifier(role, password);
   }
   auto verifier = network::BuildScramVerifierString(password);
   if (!verifier) {
@@ -190,9 +211,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
                 "\" because it is required by the database system"));
     }
   }
-  if (alter.set_password) {
+  if (alter.set_password && !alter.null_password) {
     alter.password =
-      alter.null_password ? std::string{} : StoredPassword(alter.password);
+      StoredPassword(context, name.GetIdentifierName(), alter.password);
+    alter.null_password = alter.password.empty();
   }
   if (!alter.grant_role.empty() && alter.grant_role_id == 0) {
     const duckdb::Identifier granted{alter.grant_role};
@@ -231,6 +253,14 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   }
   if (!alter.new_name.empty()) {
     next.SetName(alter.new_name);
+    if (network::IsMd5Verifier(next.password)) {
+      next.password.clear();
+      if (auto* session = connector::GetSereneDBContextPtr(context)) {
+        session->AddNotice(SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+          ERR_MSG("MD5 password cleared because of role rename")));
+      }
+    }
   }
   ApplyConfigChange(alter.all_roles ? next.all_roles_config : next.config,
                     alter.set_config, alter.reset_config,

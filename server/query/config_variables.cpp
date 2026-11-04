@@ -291,17 +291,20 @@ void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
     kName, value.ToString(), static_cast<double>(UnitlessMs)))};
 }
 
-void SetReplicationRole(duckdb::ClientContext&, duckdb::SetScope,
-                        duckdb::Value& value) {
-  const auto role = absl::AsciiStrToLower(value.ToString());
-  if (role != "origin" && role != "replica" && role != "local") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value for parameter "
-                            "\"session_replication_role\": \"",
-                            value.ToString(), "\""),
-                    ERR_HINT("Available values: origin, replica, local."));
+template<irs::utils::detail::FixedString Name,
+         irs::utils::detail::FixedString... Values>
+void OneOf(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+  auto chosen = absl::AsciiStrToLower(value.ToString());
+  if (((chosen == std::string_view{Values}) || ...)) {
+    value = duckdb::Value{std::move(chosen)};
+    return;
   }
-  value = duckdb::Value{role};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("invalid value for parameter \"", std::string_view{Name}, "\": \"",
+            value.ToString(), "\""),
+    ERR_HINT("Available values: ",
+             absl::StrJoin({std::string_view{Values}...}, ", "), "."));
 }
 
 const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
@@ -1353,6 +1356,16 @@ constexpr VariableEntry kVariableDescription[] = {
     kUserSetting,
   },
   {
+    "password_encryption",
+    {
+      LogicalTypeId::VARCHAR,
+      "Chooses the algorithm for encrypting passwords.",
+      [] { return duckdb::Value{"scram-sha-256"}; },
+      OneOf<"password_encryption", "md5", "scram-sha-256">,
+    },
+    kUserSetting,
+  },
+  {
     "scram_iterations",
     {
       LogicalTypeId::INTEGER,
@@ -1481,7 +1494,7 @@ constexpr VariableEntry kVariableDescription[] = {
       LogicalTypeId::VARCHAR,
       "Sets the session's behavior for triggers and rewrite rules.",
       [] { return duckdb::Value{"origin"}; },
-      SetReplicationRole,
+      OneOf<"session_replication_role", "origin", "replica", "local">,
     },
   },
   {

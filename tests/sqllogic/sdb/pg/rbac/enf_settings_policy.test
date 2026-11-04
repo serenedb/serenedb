@@ -422,6 +422,7 @@ order_by_non_integer_literal
 ordered_aggregate_threshold
 partitioned_write_flush_threshold
 partitioned_write_max_open_files
+password_encryption
 perfect_ht_threshold
 pivot_filter_threshold
 pivot_limit

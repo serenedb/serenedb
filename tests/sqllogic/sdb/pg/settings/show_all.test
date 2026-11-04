@@ -203,6 +203,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -550,6 +551,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.

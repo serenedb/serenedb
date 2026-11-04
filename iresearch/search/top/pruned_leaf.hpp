@@ -487,7 +487,7 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
       _doc = _leaf.Find(std::begin(_docs), _base, doc);
       const bool hit = _doc == doc;
       DecodeLazyFreqs(hit);
-      visit(i, hit, _freqs.data[_leaf.Index()]);
+      visit(i, doc, hit, _freqs.data[_leaf.Index()]);
       return i + 1;
     });
   }

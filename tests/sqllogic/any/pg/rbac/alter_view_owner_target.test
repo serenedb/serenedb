@@ -1,0 +1,64 @@
+statement ok
+DROP ROLE IF EXISTS avo_r;
+
+
+statement ok
+CREATE ROLE avo_r;
+
+
+statement ok
+CREATE TABLE avo_t (a int);
+
+
+statement ok
+CREATE VIEW avo_v AS SELECT 1 AS a;
+
+
+statement ok
+ALTER VIEW avo_v OWNER TO avo_r;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner
+FROM pg_class
+WHERE relname IN ('avo_t', 'avo_v')
+ORDER BY relname;
+----
+relname	owner
+avo_t	postgres
+avo_v	avo_r
+
+
+statement error
+ALTER VIEW avo_t OWNER TO avo_r;
+----
+db error: ERROR: "avo_t" is not a view
+
+
+statement error
+ALTER VIEW avo_missing OWNER TO avo_r;
+----
+db error: ERROR: relation "avo_missing" does not exist
+
+
+statement ok
+ALTER TABLE avo_v OWNER TO postgres;
+
+
+query
+SELECT pg_get_userbyid(relowner) AS owner FROM pg_class WHERE relname = 'avo_v';
+----
+owner
+postgres
+
+
+statement ok
+DROP VIEW avo_v;
+
+
+statement ok
+DROP TABLE avo_t;
+
+
+statement ok
+DROP ROLE avo_r;

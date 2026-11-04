@@ -155,7 +155,14 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
         return "ALTER DEFAULT PRIVILEGES";
       }
       if (!permissions.new_owner.empty()) {
-        return TagsOf(permissions.entry_catalog_type, false).alter;
+        if (permissions.entry_catalog_type ==
+              duckdb::CatalogType::MACRO_ENTRY &&
+            permissions.include_functions && permissions.include_procedures) {
+          return "ALTER ROUTINE";
+        }
+        return TagsOf(permissions.entry_catalog_type,
+                      !permissions.include_functions)
+          .alter;
       }
       return permissions.revoke ? "REVOKE" : "GRANT";
     }

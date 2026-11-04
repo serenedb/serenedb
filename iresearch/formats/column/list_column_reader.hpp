@@ -34,7 +34,9 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs {
 
@@ -100,16 +102,6 @@ class ListColumnReader final : public ColumnReader {
     }
   }
 
-  static duckdb::Vector& Scratch(std::unique_ptr<VectorScratch>& scratch,
-                                 duckdb::idx_t count) {
-    if (!scratch || scratch->cache.GetCapacity().GetIndex() < count) {
-      scratch = std::make_unique<VectorScratch>(
-        duckdb::LogicalType::UBIGINT,
-        std::max<duckdb::idx_t>(count, STANDARD_VECTOR_SIZE));
-    }
-    return scratch->Reset();
-  }
-
   duckdb::buffer_ptr<duckdb::DictionaryEntry> NewLists(const ScanState& s,
                                                        uint64_t count) const {
     const auto n = static_cast<duckdb::idx_t>(count + 1);
@@ -147,7 +139,8 @@ class ListColumnReader final : public ColumnReader {
     const uint64_t from = chained ? first : first - 1;
     SeekChild(s, 1, from);
     const uint64_t end_count = first + count - from;
-    auto& ends_vec = Scratch(s.list_ends, end_count);
+    auto& ends_vec =
+      ResetScratch(s.list_ends, duckdb::LogicalType::UBIGINT, end_count);
     _children[1]->ScanCount(s.child_states[2], ends_vec,
                             static_cast<duckdb::idx_t>(end_count), 0);
     auto* ends = duckdb::FlatVector::GetDataMutable<uint64_t>(ends_vec);
@@ -188,8 +181,8 @@ class ListColumnReader final : public ColumnReader {
     return true;
   }
 
-  [[gnu::noinline]] bool DirectRun(const ScanState& s, uint64_t first,
-                                   duckdb::idx_t count) const noexcept {
+  IRS_NO_INLINE bool DirectRun(const ScanState& s, uint64_t first,
+                               duckdb::idx_t count) const noexcept {
     if (first < _children[1]->GatherCursor(s.child_states[2])) {
       return false;
     }
@@ -200,9 +193,8 @@ class ListColumnReader final : public ColumnReader {
     return !(d.lists && first >= d.begin && first + count - 1 < d.end);
   }
 
-  [[gnu::noinline]] bool WidenToBlock(ListDictionary& d, uint64_t lo,
-                                      uint64_t hi, uint64_t& first,
-                                      uint64_t& last) const {
+  IRS_NO_INLINE bool WidenToBlock(ListDictionary& d, uint64_t lo, uint64_t hi,
+                                  uint64_t& first, uint64_t& last) const {
     const auto w = _children[1]->Locate(lo);
     const uint64_t key = w.block + 1;
     if (hi >= w.end || w.end - w.begin > kWholeBlockLists ||
@@ -229,7 +221,7 @@ class ListColumnReader final : public ColumnReader {
     return absl::c_all_of(
       codes, [begin = d.begin, words = d.decoded.data()](uint64_t code) {
         const uint64_t off = code - begin;
-        return ((words[off / 64] >> (off % 64)) & 1) != 0;
+        return CheckBit(words[off / 64], off % 64);
       });
   }
 
@@ -254,13 +246,13 @@ class ListColumnReader final : public ColumnReader {
   static void SetBits(std::vector<uint64_t>& bits, uint64_t from,
                       uint64_t to) noexcept {
     for (; from < to && from % 64 != 0; ++from) {
-      bits[from / 64] |= uint64_t{1} << (from % 64);
+      SetBit(bits[from / 64], from % 64);
     }
     for (; from + 64 <= to; from += 64) {
       bits[from / 64] = ~uint64_t{0};
     }
     for (; from < to; ++from) {
-      bits[from / 64] |= uint64_t{1} << (from % 64);
+      SetBit(bits[from / 64], from % 64);
     }
   }
 
@@ -272,7 +264,7 @@ class ListColumnReader final : public ColumnReader {
     auto* words = bits.data();
     for (const auto code : codes) {
       const uint64_t off = code - lo;
-      words[off / 64] |= uint64_t{1} << (off % 64);
+      SetBit(words[off / 64], off % 64);
     }
     const uint64_t limit = bits.size() * 64;
     for (uint64_t from = NextBit(bits, 0, true), prev = from; from < limit;) {
@@ -344,7 +336,8 @@ class ListColumnReader final : public ColumnReader {
     if (count == 0) {
       return 0;
     }
-    auto& codes_vec = Scratch(s.list_codes, count);
+    auto& codes_vec =
+      ResetScratch(s.list_codes, duckdb::LogicalType::UBIGINT, count);
     const uint64_t row = GatherCursor(s);
     const auto scan_count =
       ScanVector(s, codes_vec, count, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
@@ -371,6 +364,16 @@ class ListColumnReader final : public ColumnReader {
         child_base, kAnyElems);
       return scan_count;
     }
+    FromDictionary<kDictionary>(s, result, codes, result_offset, child_base);
+    return scan_count;
+  }
+
+  template<bool kDictionary>
+  IRS_NO_INLINE void FromDictionary(ScanState& s, duckdb::Vector& result,
+                                    std::span<const uint64_t> codes,
+                                    duckdb::idx_t result_offset,
+                                    uint64_t child_base) const {
+    const duckdb::idx_t scan_count = codes.size();
     const auto [lo, hi] = std::ranges::minmax(codes);
     SDB_ENSURE(hi < _children[1]->RowCount(),
                "list column: corrupted list codes");
@@ -385,67 +388,23 @@ class ListColumnReader final : public ColumnReader {
         ReferencedLists(s, d, codes, lo, hi);
       }
     }
+    auto& sel = s.list_sel;
+    if (sel.Capacity() < scan_count || sel.sel_data().use_count() != 1) {
+      sel.Initialize(std::max<duckdb::idx_t>(scan_count, STANDARD_VECTOR_SIZE));
+    }
     const auto& validity = duckdb::FlatVector::Validity(result);
-    const auto emit = [&](auto index) {
-      if constexpr (kDictionary) {
-        auto& sel = s.list_sel;
-        if (sel.Capacity() < scan_count || sel.sel_data().use_count() != 1) {
-          sel.Initialize(
-            std::max<duckdb::idx_t>(scan_count, STANDARD_VECTOR_SIZE));
-        }
-        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-          sel.set_index(i, validity.RowIsValid(i)
-                             ? static_cast<duckdb::idx_t>(index(codes[i]))
-                             : 0);
-        }
-        result.Dictionary(d.lists, sel, scan_count);
-      } else {
-        const auto* lists =
-          duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
-        auto* entries =
-          duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
-          result_offset;
-        uint64_t total = 0;
-        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-          if (validity.RowIsValid(result_offset + i)) {
-            total += lists[index(codes[i])].length;
-          }
-        }
-        duckdb::ListVector::Reserve(
-          result, static_cast<duckdb::idx_t>(child_base + total));
-        auto& picked = s.list_picked;
-        if (picked.size() < total) {
-          picked.resize(total);
-        }
-        uint64_t pos = 0;
-        for (duckdb::idx_t i = 0; i < scan_count; ++i) {
-          if (!validity.RowIsValid(result_offset + i)) {
-            entries[i] = duckdb::list_entry_t{child_base + pos, 0};
-            continue;
-          }
-          const auto& list = lists[index(codes[i])];
-          entries[i] = duckdb::list_entry_t{child_base + pos, list.length};
-          for (uint64_t k = 0; k < list.length; ++k) {
-            picked[pos++] = static_cast<duckdb::sel_t>(list.offset + k);
-          }
-        }
-        if (total != 0) {
-          duckdb::ImmutableStrings::Copy(
-            duckdb::ListVector::GetChild(d.lists->data),
-            duckdb::ListVector::GetChildMutable(result),
-            duckdb::SelectionVector{picked.data(),
-                                    static_cast<duckdb::idx_t>(total)},
-            static_cast<duckdb::idx_t>(total), 0,
-            static_cast<duckdb::idx_t>(child_base));
-        }
-        duckdb::ListVector::SetListSize(
-          result, static_cast<duckdb::idx_t>(child_base + total));
+    const duckdb::idx_t first = kDictionary ? 0 : result_offset;
+    const auto pick = [&](auto index) {
+      for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+        sel.set_index(i, validity.RowIsValid(first + i)
+                           ? static_cast<duckdb::idx_t>(index(codes[i]))
+                           : 0);
       }
     };
     if (d.decoded.empty()) {
-      emit([begin = d.begin](uint64_t code) { return code - begin + 1; });
+      pick([begin = d.begin](uint64_t code) { return code - begin + 1; });
     } else {
-      emit([begin = d.begin, words = d.decoded.data(),
+      pick([begin = d.begin, words = d.decoded.data(),
             ranks = d.ranks.data()](uint64_t code) {
         const uint64_t off = code - begin;
         const auto below = words[off / 64] & ((uint64_t{1} << (off % 64)) - 1);
@@ -453,7 +412,45 @@ class ListColumnReader final : public ColumnReader {
                static_cast<uint64_t>(std::popcount(below));
       });
     }
-    return scan_count;
+    if constexpr (kDictionary) {
+      result.Dictionary(d.lists, sel, scan_count);
+      return;
+    }
+    const auto* picks = sel.data();
+    const auto* lists =
+      duckdb::FlatVector::GetData<duckdb::list_entry_t>(d.lists->data);
+    auto* entries =
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result) +
+      result_offset;
+    uint64_t total = 0;
+    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+      total += lists[picks[i]].length;
+    }
+    duckdb::ListVector::Reserve(result,
+                                static_cast<duckdb::idx_t>(child_base + total));
+    auto& picked = s.list_picked;
+    if (picked.size() < total) {
+      picked.resize(total);
+    }
+    uint64_t pos = 0;
+    for (duckdb::idx_t i = 0; i < scan_count; ++i) {
+      const auto& list = lists[picks[i]];
+      entries[i] = duckdb::list_entry_t{child_base + pos, list.length};
+      for (uint64_t k = 0; k < list.length; ++k) {
+        picked[pos++] = static_cast<duckdb::sel_t>(list.offset + k);
+      }
+    }
+    if (total != 0) {
+      duckdb::ImmutableStrings::Copy(
+        duckdb::ListVector::GetChild(d.lists->data),
+        duckdb::ListVector::GetChildMutable(result),
+        duckdb::SelectionVector{picked.data(),
+                                static_cast<duckdb::idx_t>(total)},
+        static_cast<duckdb::idx_t>(total), 0,
+        static_cast<duckdb::idx_t>(child_base));
+    }
+    duckdb::ListVector::SetListSize(
+      result, static_cast<duckdb::idx_t>(child_base + total));
   }
 
   std::vector<ListPart> _parts;

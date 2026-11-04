@@ -22,6 +22,7 @@
 
 #include <absl/base/call_once.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
@@ -483,10 +484,11 @@ class ColumnReader {
 };
 
 inline duckdb::Vector& ResetScratch(
-  std::unique_ptr<ColumnReader::VectorScratch>& slot,
-  const duckdb::LogicalType& type) {
-  if (!slot) {
-    slot = std::make_unique<ColumnReader::VectorScratch>(type);
+  std::unique_ptr<ColumnReader::VectorScratch>& slot, const auto& type,
+  duckdb::idx_t capacity = STANDARD_VECTOR_SIZE) {
+  if (!slot || slot->cache.GetCapacity().GetIndex() < capacity) {
+    slot = std::make_unique<ColumnReader::VectorScratch>(
+      type, std::max<duckdb::idx_t>(capacity, STANDARD_VECTOR_SIZE));
   }
   return slot->Reset();
 }

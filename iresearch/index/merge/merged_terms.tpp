@@ -33,7 +33,7 @@ namespace irs {
 template<typename Postings>
 void CompoundTermIterator<Postings>::Add(const TermReader& reader,
                                          const DocRemap& remap) {
-  auto it = reader.ReadOnceIterator();
+  auto it = reader.iterator();
   SDB_ASSERT(it);
   _term_iterators.emplace_back(std::move(it), &remap);
   _keys.emplace_back(duckdb::make_shared_ptr<TermKeys>(reader));

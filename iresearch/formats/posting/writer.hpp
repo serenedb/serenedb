@@ -165,6 +165,40 @@ struct DocTee {
   size_t limit = 0;
 };
 
+class RecordEncoder final {
+ public:
+  explicit RecordEncoder(
+    IndexFeatures features = IndexFeatures::None) noexcept {
+    Reset(features);
+  }
+
+  void Reset(IndexFeatures features) noexcept {
+    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
+    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
+    _has_offs = IndexFeatures::None != (features & IndexFeatures::Offs);
+    _has_vec = IndexFeatures::None != (features & IndexFeatures::Vec);
+    _last.clear();
+  }
+
+  void BeginBlock() noexcept { _last.clear(); }
+
+  void Encode(BufferedOutput& out, const PostingMeta& meta);
+
+  void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
+    const auto last = _last;
+    _last.clear();
+    Encode(out, meta);
+    _last = last;
+  }
+
+ private:
+  PostingMeta _last;
+  bool _has_freq = false;
+  bool _has_pos = false;
+  bool _has_offs = false;
+  bool _has_vec = false;
+};
+
 class PostingsWriter final {
  public:
   static constexpr std::string_view kDocExt = "doc";
@@ -185,22 +219,6 @@ class PostingsWriter final {
   void Write(TermPostings& docs, PostingMeta& meta, DocTee tee = {});
   void WritePostings(const PostingRows& postings, PostingMeta& meta,
                      DocTee tee = {});
-
-  void BeginBlock() noexcept {
-    // clear state in order to write
-    // absolute address of the first
-    // entry in the block
-    _last_state.clear();
-  }
-
-  void Encode(BufferedOutput& out, const PostingMeta& meta);
-
-  void EncodeAbsolute(BufferedOutput& out, const PostingMeta& meta) {
-    const auto last = _last_state;
-    _last_state.clear();
-    Encode(out, meta);
-    _last_state = last;
-  }
 
   FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
@@ -288,7 +306,6 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   bstring _tail;
-  PostingMeta _last_state;    // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
   IndexOutput::ptr _pos_out;  // Positions
@@ -400,52 +417,49 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-inline void PostingsWriter::Encode(BufferedOutput& out,
-                                   const PostingMeta& meta) {
-  SDB_ASSERT(!_features.HasVector() ||
-             (!_features.HasPosition() && !_features.HasOffset()));
+inline void RecordEncoder::Encode(BufferedOutput& out,
+                                  const PostingMeta& meta) {
+  SDB_ASSERT(!_has_vec || (!_has_pos && !_has_offs));
 
   const bool inlined = meta.inline_size != 0;
   const bool single = meta.docs_count == 1;
   SDB_ASSERT(meta.docs_count != 0);
   SDB_ASSERT(!single || !inlined);
-  const bool same_freq =
-    _features.HasFrequency() && meta.freq == meta.docs_count;
-  const uint64_t next = uint64_t{_last_state.pos_offset} + _last_state.freq;
+  const bool same_freq = _has_freq && meta.freq == meta.docs_count;
+  const uint64_t next = uint64_t{_last.pos_offset} + _last.freq;
   const bool follows =
-    _features.HasPosition() && _last_state.docs_count != 0 &&
+    _has_pos && _last.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
-    (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
+    (next >= PosGroup::kPositions || meta.pos_start == _last.pos_start);
   const uint64_t flags = uint64_t{follows} << 2 | uint64_t{same_freq} << 1;
   out.WriteV64(single ? uint64_t{meta.doc_delta} << 3 | flags | 1
                       : uint64_t{meta.docs_count} << 4 |
                           uint64_t{inlined} << 3 | flags);
-  if (_features.HasFrequency() && !same_freq) {
+  if (_has_freq && !same_freq) {
     SDB_ASSERT(meta.freq > meta.docs_count);
     out.WriteV32(meta.freq - meta.docs_count - 1);
   }
 
-  const auto doc_start = _last_state.doc_start;
+  const auto doc_start = _last.doc_start;
   if (inlined) {
     out.WriteByte(meta.inline_size);
   } else if (!single) {
     out.WriteV64(meta.doc_start - doc_start);
   }
-  if (_features.HasPosition()) {
+  if (_has_pos) {
     if (!follows || next >= PosGroup::kPositions) {
-      out.WriteV64(meta.pos_start - _last_state.pos_start);
-      if (_features.HasOffset()) {
-        out.WriteV64(meta.pay_start - _last_state.pay_start);
+      out.WriteV64(meta.pos_start - _last.pos_start);
+      if (_has_offs) {
+        out.WriteV64(meta.pay_start - _last.pay_start);
       }
     } else {
-      SDB_ASSERT(!_features.HasOffset() ||
-                 meta.pay_start == _last_state.pay_start);
+      SDB_ASSERT(!_has_offs || meta.pay_start == _last.pay_start);
     }
     if (!follows) {
       out.WriteV32(meta.pos_offset);
     }
-  } else if (_features.HasVector()) {
-    out.WriteV64(meta.pay_start - _last_state.pay_start);
+  } else if (_has_vec) {
+    out.WriteV64(meta.pay_start - _last.pay_start);
     out.WriteV32(meta.pos_offset);
   }
 
@@ -453,16 +467,16 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
     out.WriteV32(meta.doc_delta);
   }
 
-  if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
+  if (_has_pos && pos_limits::kBlockSize < meta.freq) {
     out.WriteV32(meta.pos_extent);
-    if (_features.HasOffset()) {
+    if (_has_offs) {
       out.WriteV32(meta.pay_extent);
     }
   }
 
-  _last_state = meta;
+  _last = meta;
   if (inlined || single) {
-    _last_state.doc_start = doc_start;
+    _last.doc_start = doc_start;
   }
 }
 
@@ -625,7 +639,6 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta,
   _features.Reset(meta.index_features);
   PrepareWriters(meta);
   _docs.clear();
-  _last_state.clear();
 
   // It's needed because offsets block should be aligned with positions block.
   // But it's possible that fields have different features set.
@@ -835,7 +848,9 @@ inline void PostingsWriter::FinishPart() {
 inline PostingBases AppendPostings(PostingsOutputs& out, IndexInput* doc,
                                    IndexInput* pos, IndexInput* pay) {
   SDB_ASSERT(out.doc);
-  BlockIndex::WritePad(*out.doc);
+  for (auto pad = BlockIndex::Pad(out.doc->Position()); pad != 0; --pad) {
+    out.doc->WriteByte(0);
+  }
   const PostingBases bases{
     .doc = out.doc->Position(),
     .pos = out.pos ? out.pos->Position() : 0,

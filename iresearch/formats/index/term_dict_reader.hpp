@@ -83,7 +83,6 @@ class TermReaderImpl final : public TermReader {
                  IndexInput& in, const Separators& separators);
 
   SeekTermIterator::ptr iterator() const final;
-  SeekTermIterator::ptr ReadOnceIterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;

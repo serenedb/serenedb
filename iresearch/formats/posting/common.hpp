@@ -116,24 +116,6 @@ inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
            : 2 * (PosGroup::kHeaderBytes + 2 * block_codec::kMaxBlockBytes);
 }
 
-inline uint64_t PosEnd(const PostingMeta& meta) noexcept {
-  if (pos_limits::kBlockSize < meta.freq) {
-    return meta.pos_start + meta.pos_extent;
-  }
-  const uint64_t blocks = meta.pos_offset / pos_limits::kBlockSize + 2;
-  return meta.pos_start + 2 * PosGroup::kHeaderBytes +
-         blocks * block_codec::kMaxBlockBytes;
-}
-
-inline uint64_t PayEnd(const PostingMeta& meta) noexcept {
-  if (pos_limits::kBlockSize < meta.freq) {
-    return meta.pay_start + meta.pay_extent;
-  }
-  const uint64_t blocks = meta.pos_offset / pos_limits::kBlockSize + 2;
-  return meta.pay_start + 2 * PosGroup::kHeaderBytes +
-         2 * blocks * block_codec::kMaxBlockBytes;
-}
-
 template<typename Input>
 void PrefetchDocs(const Input& in, const PostingMeta& meta) noexcept {
   if (const auto extent = DocExtent(meta); extent > file_utils::kPage) {

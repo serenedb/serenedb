@@ -243,15 +243,15 @@ void WriteParts(term_dict::FieldWriter& writer,
                 const term_dict::PartsField& field,
                 duckdb::TaskScheduler& scheduler, size_t threads) {
   const auto count = field.parts.size();
-  std::vector<std::unique_ptr<term_dict::FieldWriter>> built(count);
+  std::vector<std::unique_ptr<term_dict::PartBlocks>> built(count);
   absl::Mutex mutex;
   size_t appended = 0;
   ForEachPartition(count, scheduler, threads, [&](size_t part) {
-    auto run = std::make_unique<term_dict::FieldWriter>(field, part);
+    auto run = std::make_unique<term_dict::PartBlocks>(field, part);
     absl::MutexLock lock{&mutex};
     built[part] = std::move(run);
     for (; appended != count && built[appended]; ++appended) {
-      writer.AppendPart(field, appended, *built[appended]);
+      writer.AppendPart(*built[appended]);
       built[appended].reset();
     }
   });

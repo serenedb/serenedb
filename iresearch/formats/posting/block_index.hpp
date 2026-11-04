@@ -100,12 +100,6 @@ class BlockIndex {
     return static_cast<uint32_t>(-offset & (sizeof(uint32_t) - 1));
   }
 
-  static void WritePad(IndexOutput& out) {
-    for (auto pad = Pad(out.Position()); pad != 0; --pad) {
-      out.WriteByte(0);
-    }
-  }
-
   static constexpr uint32_t EndBytes(uint8_t flags) noexcept {
     return (flags & kWideEnd) != 0 ? sizeof(uint32_t) : sizeof(uint16_t);
   }
@@ -521,7 +515,9 @@ class BlockIndexWriter {
     SDB_ASSERT(!shape.bounds || _run_bound.size() == 2 * size_t{r});
     const auto flags = Flags();
     out.WriteByte(flags);
-    BlockIndex::WritePad(out);
+    for (auto pad = BlockIndex::Pad(out.Position()); pad != 0; --pad) {
+      out.WriteByte(0);
+    }
     if (shape.bounds) {
       out.WriteU32(_root[0]);
       out.WriteU32(_root[1]);

@@ -219,7 +219,6 @@ bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
     } else {
       copy.file_offset = sink.AppendAligned({&view, 1});
     }
-    ctx.Release(block.file_offset, block.byte_size);
   }
   return true;
 }

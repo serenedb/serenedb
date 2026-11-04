@@ -160,8 +160,11 @@ class RangeWalk {
 
 }  // namespace
 
-void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
+                        IndexFeatures features) noexcept {
   _pw = &pw;
+  _features = features;
+  _encoder.Reset(features);
   _heavy = std::max(kHeavyDocs, docs / kTopPieces);
 }
 
@@ -264,7 +267,7 @@ void RangeWriter::Release(size_t level) {
     piece.meta.inline_data = piece.inline_bytes.data();
   }
   _record.Clear();
-  _pw->EncodeAbsolute(_record, piece.meta);
+  _encoder.EncodeAbsolute(_record, piece.meta);
   range.records.append(_record.View());
   range.records.append(piece.meta.Inline());
   range.ends.push_back(static_cast<uint32_t>(range.records.size()));
@@ -295,8 +298,7 @@ void RangeWriter::Seal() {
   }
 }
 
-void RangeWriter::Append(const RangeWriter& part, uint64_t doc_base,
-                         IndexFeatures features) {
+void RangeWriter::Append(const RangeWriter& part, uint64_t doc_base) {
   std::array<uint32_t, kMaxRangeLevels> counts;
   for (size_t level = 0; level != kMaxRangeLevels; ++level) {
     counts[level] = _levels[level].count;
@@ -318,10 +320,10 @@ void RangeWriter::Append(const RangeWriter& part, uint64_t doc_base,
       const auto* record = from.records.data() + begin;
       PostingMeta meta;
       meta.inline_data =
-        record + PostingsReader::decode(record, features, meta);
+        record + PostingsReader::decode(record, _features, meta);
       meta.doc_start += doc_base;
       _record.Clear();
-      _pw->EncodeAbsolute(_record, meta);
+      _encoder.EncodeAbsolute(_record, meta);
       to.records.append(_record.View());
       to.records.append(meta.Inline());
       to.ends.push_back(static_cast<uint32_t>(to.records.size()));

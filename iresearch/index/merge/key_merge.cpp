@@ -85,7 +85,7 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
         auto ctx = std::make_shared<ReadContext>(*_cs);
         ctx->SetMergeRead(true);
         ctx->SetCache(_cache);
-        ctx->SetUnmap(ReadOnceUnmap(column.type));
+        ctx->SetStreams(StreamsFrames(column.type));
         column.state = column.reader->InitScan(std::move(ctx));
         column.scanning = true;
       }

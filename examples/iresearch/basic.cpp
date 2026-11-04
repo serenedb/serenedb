@@ -32,7 +32,6 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/index/norm.hpp>
@@ -421,23 +420,18 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   auto before = writer.GetSnapshot();
   std::cout << "Before compaction: " << before.size() << " segment(s)\n";
 
+  // Merge every segment into one.
+  const auto everything = [](const irs::IndexReader& index,
+                             const irs::CompactingSegments&,
+                             irs::MergeGroups& groups) {
+    auto& group = groups.emplace_back();
+    for (const auto& segment : index) {
+      group.emplace_back(&segment);
+    }
+  };
   bool busy = false;
-  auto tickets = writer.ReserveMerges(
-    [](const irs::IndexReader& index, const irs::CompactingSegments& compacting,
-       irs::MergeGroups& groups) {
-      auto& group = groups.emplace_back();
-      for (const auto& segment : index) {
-        if (!compacting.contains(segment.Meta().name)) {
-          group.emplace_back(&segment);
-        }
-      }
-      if (group.size() == 1 && !irs::HasRemovals(group.front()->Meta())) {
-        group.clear();
-      }
-    },
-    busy);
   const irs::PipelineMergeExecutor executor{Db(), 1};
-  for (auto& ticket : tickets) {
+  for (auto& ticket : writer.ReserveMerges(everything, busy)) {
     irs::CompactionResult result;
     irs::GetReady(writer.RunMerge(std::move(ticket), nullptr, {}, nullptr,
                                   executor, result));

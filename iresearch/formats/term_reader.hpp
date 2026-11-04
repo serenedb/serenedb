@@ -59,8 +59,6 @@ struct TermReader : public AttributeProvider {
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
 
-  virtual SeekTermIterator::ptr ReadOnceIterator() const { return iterator(); }
-
   virtual SeekTermIterator::ptr IteratorUntil(bytes_view) const {
     return iterator();
   }

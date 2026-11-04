@@ -151,7 +151,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         CodesHeader(entries.base, entries.header), nullptr,
         ReadContext::CacheSlot{
           .file_offset = entries.file_offset + entries.header.off_codes,
-          .read_once = entries.read_once,
         }} {
     if (const auto& slot = CacheSlotOf(segment); slot.touched) {
       cache = slot.cache;
@@ -463,11 +462,6 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         EnsureDictionary();
       } else {
         EnsureThrough(batch_max);
-      }
-      if (full) {
-        const auto& h = entries.header;
-        entries.Release(h.off_lengths, h.off_codes);
-        entries.Release(h.off_symtab, uint64_t{h.off_data} + h.data_size);
       }
     }
     WriteCodes(result, result_offset, codes, count);

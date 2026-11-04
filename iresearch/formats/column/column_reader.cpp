@@ -381,7 +381,6 @@ const codecs::TrainedDictionaries* ColumnReader::Dictionaries(
       std::string bytes(d.byte_size, '\0');
       ctx.Read(d.file_offset,
                reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), d.byte_size);
-      ctx.Release(d.file_offset, d.byte_size);
       loaded.push_back(
         std::make_shared<const codecs::TrainedDictionary>(std::move(bytes)));
     }
@@ -477,9 +476,7 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
       slot.touched = &_touched[w.block];
       slot.cache = cache;
     }
-    if (ctx.ReadOnce()) {
-      slot.read_once = &ctx.In();
-    }
+    slot.streams = ctx.Streams();
     slot.dictionaries = Dictionaries(ctx);
   }
   auto handle = ctx.RegisterColBlock(m.file_offset, byte_size, slot);

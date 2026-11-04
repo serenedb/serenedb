@@ -36,7 +36,6 @@ class SingleTermReader final : public TermReader {
   SingleTermReader(FieldReader& owner, const FieldHead& head);
 
   SeekTermIterator::ptr iterator() const final;
-  SeekTermIterator::ptr ReadOnceIterator() const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;

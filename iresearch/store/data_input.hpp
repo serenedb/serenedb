@@ -124,8 +124,6 @@ class IndexInput : public DataInput {
 
   virtual void Evict(uint64_t, uint64_t) const noexcept {}
 
-  virtual void Unmap(uint64_t, uint64_t) const noexcept {}
-
   virtual bool Resident(uint64_t, uint64_t) const noexcept { return false; }
 
   virtual uint64_t Warm(uint64_t, uint64_t) const noexcept { return 0; }

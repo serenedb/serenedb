@@ -280,7 +280,7 @@ std::shared_ptr<ReadContext> MergeContext(const ColReader& reader,
                                           const duckdb::LogicalType& type,
                                           duckdb::ObjectCache& cache) {
   auto ctx = SampleContext(reader, cache);
-  ctx->SetUnmap(ReadOnceUnmap(type));
+  ctx->SetStreams(StreamsFrames(type));
   return ctx;
 }
 
@@ -1053,7 +1053,7 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
   ReadContext ctx{*source.col_reader};
   ctx.SetMergeRead(true);
   ctx.SetCache(_cache);
-  ctx.SetUnmap(Unmap::EachBlock);
+  ctx.SetStreams(true);
   std::span<const std::shared_ptr<const codecs::TrainedDictionary>> trained;
   if (!col.DictionaryMetas().empty()) {
     trained = *col.Dictionaries(ctx);

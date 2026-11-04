@@ -25,13 +25,11 @@
 #include <array>
 #include <cstring>
 #include <limits>
-#include <memory>
 #include <span>
 #include <string_view>
 #include <utility>
 
 #include "iresearch/formats/index/field_reader.hpp"
-#include "iresearch/formats/index/read_once_trail.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -112,12 +110,6 @@ class TermIteratorImpl : public SeekTermIterator {
     _cursor.ReadaheadUntil(end, true);
   }
 
-  void ReadOnce() {
-    const auto& field = _cursor.Field();
-    _trail = std::make_unique<ReadOnceTrail>(
-      field.Owner().Input(), field.Handles(), field.meta().index_features);
-  }
-
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<TermAttr>::id() ? &_term : nullptr;
   }
@@ -156,30 +148,11 @@ class TermIteratorImpl : public SeekTermIterator {
 
   TermPostings::ptr ReusePostings(IndexFeatures features,
                                   TermPostings::ptr reuse) const final {
-    if (_trail) {
-      Trail();
-    }
     return _cursor.Field().PostingsOf(features, _cursor.Meta(),
                                       std::move(reuse));
   }
 
  private:
-  void Trail() const noexcept {
-    const auto& field = _cursor.Field();
-    const auto& meta = _cursor.Meta();
-    if (!field.Small()) {
-      const auto block = _cursor.BlockIndex();
-      _trail->Block(field.BlockOffset(block), field.BlockOffset(block + 1));
-      if (meta.inline_size != 0) {
-        _trail->Inline(field.InlineBegin() +
-                         static_cast<uint64_t>(meta.inline_data -
-                                               field.Owner().InlineRegion()),
-                       meta.inline_size);
-      }
-    }
-    _trail->Postings(meta);
-  }
-
   SeekResult Seek(bytes_view term, bool prefetch) {
     const auto result = _cursor.SeekGe(term, prefetch);
     if (result == SeekResult::End) {
@@ -200,7 +173,6 @@ class TermIteratorImpl : public SeekTermIterator {
   mutable Cursor _cursor;
   TermAttr _term;
   Position _position = Position::Before;
-  std::unique_ptr<ReadOnceTrail> _trail;
 };
 
 }  // namespace
@@ -395,12 +367,6 @@ void TermReaderImpl::PrefetchLookup(uint32_t block) const {
 
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
   return memory::make_managed<TermIteratorImpl>(*this);
-}
-
-SeekTermIterator::ptr TermReaderImpl::ReadOnceIterator() const {
-  auto it = memory::make_managed<TermIteratorImpl>(*this);
-  it->ReadOnce();
-  return it;
 }
 
 SeekTermIterator::ptr TermReaderImpl::IteratorUntil(bytes_view upper) const {

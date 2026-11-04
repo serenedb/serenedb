@@ -98,7 +98,7 @@ class RangeWriter {
     _writer.Prepare(state);
     _writer.BeginField(props);
     if (_ranges) {
-      _ranges->Begin(_writer, target.doc_count);
+      _ranges->Begin(_writer, target.doc_count, props.index_features);
     }
   }
 
@@ -148,7 +148,7 @@ class RangeWriter {
                  " continues at row ", row, " instead of ", input.next);
       return;
     }
-    input.it = _sources[i].terms->ReadOnceIterator();
+    input.it = _sources[i].terms->iterator();
     input.remap = _sources[i].remap;
     _keys[i]->SeekBefore(*input.it, row);
     input.next = row;
@@ -354,6 +354,7 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
   part.total_term_freq = terms.TotalTermFreq();
   part.inline_bytes = terms.InlineBytes();
   part.terms = std::move(terms).TakeTerms();
+  part.terms.shrink_to_fit();
   const auto& docs = writer.Docs();
   absl::MutexLock lock{&_target.sink->Mutex()};
   SDB_ASSERT(docs.words() <= _docs.size());

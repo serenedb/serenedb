@@ -365,7 +365,8 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     const uint64_t expected_has_score_bounds =
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
-    tests::WriteRecord(writer, *out, posting_meta);
+    irs::RecordEncoder encoder{features};
+    tests::WriteRecord(encoder, *out, posting_meta);
     writer.End();
   }
 

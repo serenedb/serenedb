@@ -34,11 +34,11 @@ class RangeWriter final {
  public:
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
+  void Begin(PostingsWriter& pw, uint64_t docs,
+             IndexFeatures features) noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Seal();
-  void Append(const RangeWriter& part, uint64_t doc_base,
-              IndexFeatures features);
+  void Append(const RangeWriter& part, uint64_t doc_base);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,
              std::vector<uint64_t>& counts) const;
@@ -82,7 +82,9 @@ class RangeWriter final {
 
   std::array<Level, kMaxRangeLevels> _levels;
   PostingsWriter* _pw = nullptr;
+  RecordEncoder _encoder;
   RecordOutput _record;
+  IndexFeatures _features = IndexFeatures::None;
   uint64_t _heavy = 0;
   size_t _height = 0;
 };

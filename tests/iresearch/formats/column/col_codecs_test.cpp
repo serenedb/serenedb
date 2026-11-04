@@ -2812,10 +2812,10 @@ TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
 
 namespace {
 
-std::shared_ptr<irs::ReadContext> ReadOnceContext(const irs::ColReader& r) {
+std::shared_ptr<irs::ReadContext> StreamingContext(const irs::ColReader& r) {
   auto ctx = std::make_shared<irs::ReadContext>(r);
   ctx->SetMergeRead(true);
-  ctx->SetUnmap(irs::Unmap::EachBlock);
+  ctx->SetStreams(true);
   return ctx;
 }
 
@@ -2943,11 +2943,11 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
           layouts.insert(info["dictionary"]);
         }
       }
-      for (const bool read_once : {false, true}) {
-        SCOPED_TRACE(read_once ? "read once" : "block");
+      for (const bool streams : {false, true}) {
+        SCOPED_TRACE(streams ? "streaming" : "block");
         const auto context = [&] {
-          return read_once ? ReadOnceContext(r)
-                           : std::make_shared<irs::ReadContext>(r);
+          return streams ? StreamingContext(r)
+                         : std::make_shared<irs::ReadContext>(r);
         };
         std::vector<std::unique_ptr<duckdb::Vector>> batches;
         uint64_t framed = 0;
@@ -2962,7 +2962,7 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
             VisitFrames(out, [&](const auto& frame) {
               framed += frame.GetAllocationSize();
             });
-            if (!read_once) {
+            if (!streams) {
               out.Flatten(take);
             }
           }
@@ -2976,7 +2976,7 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
             ExpectRow(*batches[b], k, pos + k, value);
           }
         }
-        if (!read_once) {
+        if (!streams) {
           EXPECT_EQ(framed, 0u);
         } else if (codec.plain && data.value != &kAllNull) {
           EXPECT_GT(framed, 0u);
@@ -3029,7 +3029,7 @@ TEST_F(ColCodecsTest, StreamingPlainScanHoldsOnlyItsBatchesFrames) {
     ASSERT_LT(1u, col->DataBlocks().size());
     std::vector<duckdb::weak_ptr<const irs::codecs::text::FrameBytes>> seen;
     uint64_t largest = 0;
-    auto state = col->InitScan(ReadOnceContext(r));
+    auto state = col->InitScan(StreamingContext(r));
     irs::ColumnReader::VectorScratch scratch{duckdb::LogicalType::VARCHAR};
     for (uint64_t pos = 0; pos < kRows; pos += kBatch) {
       const auto take = std::min<uint64_t>(kRows - pos, kBatch);

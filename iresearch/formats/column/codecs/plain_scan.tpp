@@ -159,7 +159,6 @@ struct PlainScan final : duckdb::SegmentScanState {
   duckdb::shared_ptr<FrameBytes> Inflate(uint32_t f,
                                          std::string_view dictionary,
                                          uint32_t* frame_ends) {
-    entries.Trail(f);
     auto out = duckdb::make_shared_ptr<FrameBytes>(entries.frames[f].raw_len);
     entries.leaf->Stream(entries, f, out->data.get(), dictionary, frame_ends);
     return out;

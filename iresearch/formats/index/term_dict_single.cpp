@@ -22,12 +22,10 @@
 
 #include <cstring>
 #include <limits>
-#include <memory>
 #include <string_view>
 #include <utility>
 
 #include "iresearch/formats/index/field_reader.hpp"
-#include "iresearch/formats/index/read_once_trail.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -44,11 +42,6 @@ class SingleIterator : public SeekTermIterator {
     if constexpr (HasPayload) {
       _pay.value = {&_payload, sizeof(_payload)};
     }
-  }
-
-  void ReadOnce(const IndexInput& terms) {
-    _trail = std::make_unique<ReadOnceTrail>(terms, _field->Handles(),
-                                             _field->meta().index_features);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -94,9 +87,6 @@ class SingleIterator : public SeekTermIterator {
 
   TermPostings::ptr ReusePostings(IndexFeatures features,
                                   TermPostings::ptr reuse) const final {
-    if (_trail) {
-      _trail->Postings(_field->SingleMeta());
-    }
     return _field->PostingsOf(features, _field->SingleMeta(), std::move(reuse));
   }
 
@@ -112,7 +102,6 @@ class SingleIterator : public SeekTermIterator {
   PayAttr _pay;
   byte_type _payload;
   Position _position = Position::Before;
-  std::unique_ptr<ReadOnceTrail> _trail;
 };
 
 template<typename A>
@@ -160,12 +149,6 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
 
 SeekTermIterator::ptr SingleTermReader::iterator() const {
   return memory::make_managed<SingleIterator<false>>(*this);
-}
-
-SeekTermIterator::ptr SingleTermReader::ReadOnceIterator() const {
-  auto it = memory::make_managed<SingleIterator<false>>(*this);
-  it->ReadOnce(_owner->Input());
-  return it;
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator(

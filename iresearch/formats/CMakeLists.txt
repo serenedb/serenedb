@@ -26,6 +26,7 @@ target_sources(
         column/read_context.cpp
         column/variant_column_reader.cpp
         format_utils.cpp
+        index/block_writer.cpp
         index/field_reader.cpp
         index/field_writer.cpp
         index/idx_reader.cpp

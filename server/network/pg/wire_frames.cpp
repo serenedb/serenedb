@@ -174,7 +174,8 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (kind.find("Function") != std::string_view::npos) {
       return dup ? ERRCODE_DUPLICATE_FUNCTION : ERRCODE_UNDEFINED_FUNCTION;
     }
-    if (kind == "Type" || kind == "Role") {
+    if (kind == "Type" || kind == "Role" || kind == "Language" ||
+        kind == "Foreign Data Wrapper") {
       return dup ? ERRCODE_DUPLICATE_OBJECT : ERRCODE_UNDEFINED_OBJECT;
     }
     if (kind == "prepared statement") {

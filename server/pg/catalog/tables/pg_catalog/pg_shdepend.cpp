@@ -110,6 +110,11 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
                  role.oid, 'a');
         }
       }
+      for (const auto& language : entry->permissions.languages) {
+        if (Names(language.acl, role.oid)) {
+          Depend(entry->oid, kPgLanguageTable, language.oid, 0, role.oid, 'a');
+        }
+      }
     }
   }
 

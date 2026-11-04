@@ -35,6 +35,7 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 | `TYPE` | `USAGE` |
 | `FOREIGN SERVER` | `USAGE` |
 | `FOREIGN DATA WRAPPER` | `USAGE` |
+| `LANGUAGE` | `USAGE` |
 | `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
@@ -44,6 +45,8 @@ A statement's table and column privileges are checked once it is fully analyzed,
 `USAGE` on a schema is needed to use any object in it: a role with `SELECT` on `s.t` but no `USAGE` on `s` gets `permission denied for schema s`. As in PostgreSQL, `public` grants `USAGE` to everyone, and a view reads its sources with its owner's privileges, so reading through a view needs `USAGE` only on the view's own schema. The expressions a table stores, its column defaults, `CHECK` constraints and generated columns, need no `USAGE` on the schemas they name from a role that inserts or updates rows; that role still needs `USAGE` or `UPDATE` on a sequence a default advances and `EXECUTE` on the functions they call.
 
 `USAGE` on a [foreign server](../sql/statements/create_server/index.md#privileges) is checked whenever a query reads through it, in any database. Creating a server needs `USAGE` on its foreign-data wrapper in the database the session is connected to, which only superusers hold until one grants it with `GRANT USAGE ON FOREIGN DATA WRAPPER`. Such a grant lets the role create `postgres_fdw` and `clickhouse_fdw` servers that connect wherever their options point, with a password of their own and no secrets or server files; the [rules for servers owned by roles without `SUPERUSER`](../sql/statements/create_server/index.md#servers-owned-by-roles-without-superuser) list what such a server may set.
+
+`USAGE` on a language lets a role create functions, procedures and macros in it; a function or macro written without a `LANGUAGE` clause is in `sql`. Each database keeps its own grants on its languages: `GRANT ... ON LANGUAGE` changes those of the current database, and creating a function checks those of the database the function goes into. `PUBLIC` holds `USAGE` on `sql` until it is revoked, for example with `REVOKE USAGE ON LANGUAGE sql FROM PUBLIC`; from then on only roles granted it, such as with `GRANT USAGE ON LANGUAGE sql TO dev`, may create functions, and anyone else gets `permission denied for language sql`. `internal` is untrusted: only superusers create functions in it, and `GRANT` and `REVOKE` refuse it with `language "internal" is not trusted`. `pg_language.lanacl` shows a language's grants and `has_language_privilege` checks them. `DROP OWNED` revokes them, and a role that holds one cannot be dropped.
 
 `SET` on a parameter lets a role change a parameter that only superusers may change, for its session, and `ALTER SYSTEM` lets it change the parameter's server-wide value with `SET GLOBAL`. A grant names a parameter that exists, such as `GRANT SET ON PARAMETER session_replication_role TO etl`; `pg_parameter_acl` lists the parameters that have grants and `has_parameter_privilege` checks them. `DROP OWNED` revokes them, and a role that holds one cannot be dropped.
 

@@ -241,6 +241,12 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
       wrapper.name,
       duckdb::ForeignDataWrapper{.oid = wrapper.oid, .owner = pg::kRootUser});
   }
+  for (const auto& language : pg::kSystemLanguages) {
+    config.languages.emplace(language.name,
+                             duckdb::Language{.oid = language.oid,
+                                              .owner = pg::kRootUser,
+                                              .trusted = language.trusted});
+  }
 }
 
 }  // namespace sdb::server::query

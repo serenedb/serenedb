@@ -413,6 +413,27 @@ def test_unknown_guc_sqlstate():
         c.close()
 
 
+def test_custom_parameter_and_object_sqlstates():
+    """A malformed custom parameter name is invalid_name (42602); an unknown
+    custom parameter, language or foreign-data wrapper is undefined_object
+    (42704), like PG.
+    """
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            for sql, sqlstate in (
+                ("SELECT set_config('app..tenant', 'x', false)", "42602"),
+                ("SELECT current_setting('app.never_set_by_psycopg')", "42704"),
+                ("GRANT USAGE ON LANGUAGE no_such_language TO PUBLIC", "42704"),
+                ("GRANT USAGE ON FOREIGN DATA WRAPPER no_such_wrapper TO PUBLIC", "42704"),
+            ):
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == sqlstate, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_binder_error_sqlstates():
     """BINDER errors get distinct SQLSTATEs, not a blanket undefined_column:
     ambiguous column -> 42702, grouping -> 42803, genuinely-missing -> 42703.

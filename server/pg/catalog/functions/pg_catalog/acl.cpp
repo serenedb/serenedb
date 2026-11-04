@@ -786,9 +786,30 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
 
 struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
   static constexpr std::string_view kName = "has_language_privilege";
-  static constexpr CatalogType kType = CatalogType::TYPE_ENTRY;
+  static constexpr CatalogType kType = CatalogType::LANGUAGE_ENTRY;
   static constexpr AclMode kModes = AclMode::Usage;
   static constexpr bool kSuperuserFirst = true;
+
+  struct Scope : ObjectScope {
+    std::array<duckdb::Permissions, kSystemLanguages.size()> languages;
+  };
+
+  static Scope Begin(duckdb::ClientContext& context) {
+    Scope scope{ObjectPrivileges::Begin(context)};
+    const auto database = FindDatabase(
+      context,
+      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName());
+    for (size_t i = 0; i < kSystemLanguages.size(); ++i) {
+      auto& language = scope.languages[i];
+      language.owner = kRootUser;
+      if (database) {
+        const auto acl =
+          database->permissions.LanguageAcl(kSystemLanguages[i].oid);
+        language.acl.assign(acl.begin(), acl.end());
+      }
+    }
+    return scope;
+  }
 
   static uint64_t Resolve(const Session&, std::string_view name) {
     if (const auto* language = FindSystemObject(kSystemLanguages, name)) {
@@ -797,11 +818,12 @@ struct LanguagePrivileges : ObjectPrivileges<LanguagePrivileges> {
     ThrowUndefinedObject("language", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
-    if (!FindSystemObject(kSystemLanguages, oid)) {
+  static std::optional<ObjectTarget> Find(const Scope& scope, uint64_t oid) {
+    const auto* language = FindSystemObject(kSystemLanguages, oid);
+    if (!language) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    return ObjectTarget{&scope.languages[language - kSystemLanguages.data()]};
   }
 };
 

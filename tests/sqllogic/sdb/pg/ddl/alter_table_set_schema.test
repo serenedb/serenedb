@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 CREATE SCHEMA mrbeast;
 
@@ -220,6 +222,104 @@ ALTER TYPE mrbeast.tier SET SCHEMA feastables;
 db error: ERROR: Cannot alter entry "tier" because there are entries that depend on it.
 table "fans" depends on type "tier".
 Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TYPE mrbeast.int4 AS ENUM ('six', 'seven');
+
+
+statement error
+ALTER TYPE mrbeast.int4 SET SCHEMA main;
+----
+db error: ERROR: type "int4" already exists in schema "main"
+
+
+statement ok
+CREATE TABLE mrbeast.drops (n INT);
+
+
+statement ok
+CREATE TABLE mrbeast.drop_log (what TEXT);
+
+
+statement ok
+CREATE TRIGGER drops_log AFTER INSERT ON mrbeast.drops FOR EACH STATEMENT INSERT INTO mrbeast.drop_log VALUES ('drop');
+
+
+statement ok
+ALTER TABLE mrbeast.drops SET SCHEMA feastables;
+
+
+statement ok
+INSERT INTO feastables.drops VALUES (67);
+
+
+query
+SELECT what FROM mrbeast.drop_log;
+----
+what
+drop
+
+
+query
+SELECT tgname, tgrelid::regclass::text AS rel FROM pg_trigger WHERE tgname = 'drops_log';
+----
+tgname	rel
+drops_log	feastables.drops
+
+
+statement ok
+CREATE TABLE mrbeast.tally (n INT);
+
+
+statement ok
+CREATE TRIGGER tally_log AFTER INSERT ON mrbeast.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT count(*)::TEXT FROM mrbeast.tally;
+
+
+statement error
+ALTER TABLE mrbeast.tally SET SCHEMA feastables;
+----
+db error: ERROR: Cannot alter entry "tally" because there are entries that depend on it.
+trigger "tally_log" on table "tally" depends on table "tally".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement error
+ALTER VIEW pg_catalog.pg_tables SET SCHEMA feastables;
+----
+db error: ERROR: Cannot alter entry "pg_tables" because it is an internal system entry
+
+
+statement ok
+CREATE DATABASE atss_far_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE atss_far_${__DATABASE__}.public.chocolate (bars INT);
+
+
+statement ok
+CREATE VIEW mrbeast.far_bars AS SELECT bars FROM atss_far_${__DATABASE__}.public.chocolate;
+
+
+statement ok
+ALTER VIEW mrbeast.far_bars SET SCHEMA feastables;
+
+
+statement error
+DROP TABLE atss_far_${__DATABASE__}.public.chocolate;
+----
+db error: ERROR: Cannot drop entry "chocolate" because there are entries that depend on it.
+view "far_bars" depends on table "chocolate".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW feastables.far_bars;
+
+
+statement ok
+DROP DATABASE atss_far_${__DATABASE__};
 
 
 statement ok

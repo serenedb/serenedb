@@ -199,6 +199,24 @@ TEST(WildcardNGramFilterOptionsTest, equality_different_has_pos) {
   EXPECT_FALSE(a == b);
 }
 
+TEST(WildcardNGramFilterOptionsTest, equality_different_bytes) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  irs::ByWildcardNGramOptions text{"foo%bar", analyzer, true};
+  irs::ByWildcardNGramOptions bytes{"foo%bar", analyzer, true, true};
+  ASSERT_EQ(text.pattern, bytes.pattern);
+  EXPECT_FALSE(text == bytes);
+}
+
+TEST(WildcardNGramFilterOptionsTest, equality_different_store_field) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+
+  irs::ByWildcardNGramOptions a{"foo%bar", analyzer, true};
+  irs::ByWildcardNGramOptions b{"foo%bar", analyzer, true};
+  b.store_field_id = 7;
+  EXPECT_FALSE(a == b);
+}
+
 TEST(WildcardNGramFilterOptionsTest, equality_different_gram_size) {
   irs::analysis::WildcardTokenizer trigrams{nullptr, 3};
   irs::analysis::WildcardTokenizer pentagrams{nullptr, 5};

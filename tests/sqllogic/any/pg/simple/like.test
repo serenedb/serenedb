@@ -783,6 +783,17 @@ literal_percent	escaped_prefix	escaped_suffix	escaped_contains	escape_prefix	no_
 
 
 query
+SELECT s, s LIKE p ESCAPE '' AS matched, s NOT LIKE p ESCAPE '' AS unmatched
+FROM (VALUES ('a\b', 'a\%'), ('ab', 'a\%'), ('zz', 'z_')) AS t(s, p)
+ORDER BY s
+----
+s	matched	unmatched
+a\\b	t	f
+ab	f	t
+zz	t	f
+
+
+query
 SELECT id FROM like_rewrites WHERE s LIKE 'a#_b%' ESCAPE '#' ORDER BY id
 ----
 id
@@ -891,6 +902,13 @@ SELECT like('beast'::bytea, 'b%') AS l,
 ----
 l	n	f
 t	f	t
+
+
+query
+SELECT 'beast'::bytea LIKE NULL::bytea AS l, 'beast'::bytea NOT LIKE NULL::bytea AS n
+----
+l	n
+NULL	NULL
 
 
 skipif serenedb

@@ -319,8 +319,7 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
     const auto tokenizer =
       found.bind_data->relation.ResolveTokenizers(context).Acquire(
         index->TermField(col_id));
-    const auto output = tokenizer.analyzer ? tokenizer.analyzer->Traits().output
-                                           : duckdb::LogicalTypeId::VARCHAR;
+    const auto output = tokenizer.analyzer->Traits().output;
     if (output != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG(fn, "(): column has no text term dictionary"),

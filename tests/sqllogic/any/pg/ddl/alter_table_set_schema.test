@@ -72,6 +72,52 @@ db error: ERROR: relation "videos" already exists in schema "feastables"
 
 
 statement ok
+CREATE VIEW mrbeast.clips AS SELECT 1 AS n
+
+
+statement ok
+CREATE VIEW feastables.clips AS SELECT 2 AS n
+
+
+statement error
+ALTER VIEW mrbeast.clips SET SCHEMA feastables
+----
+db error: ERROR: relation "clips" already exists in schema "feastables"
+
+
+statement ok
+CREATE SEQUENCE mrbeast.subs
+
+
+statement ok
+CREATE SEQUENCE feastables.subs
+
+
+statement error
+ALTER SEQUENCE mrbeast.subs SET SCHEMA feastables
+----
+db error: ERROR: relation "subs" already exists in schema "feastables"
+
+
+statement ok
+CREATE TABLE mrbeast.merch (id INT)
+
+
+statement ok
+CREATE INDEX merch_id_idx ON mrbeast.merch (id)
+
+
+statement ok
+CREATE TABLE feastables.merch_id_idx (id INT)
+
+
+statement error
+ALTER TABLE mrbeast.merch SET SCHEMA feastables
+----
+db error: ERROR: relation "merch_id_idx" already exists in schema "feastables"
+
+
+statement ok
 BEGIN
 
 statement ok
@@ -276,6 +322,9 @@ GRANT CREATE ON SCHEMA feastables TO atss_mrbeast
 
 statement ok
 SET ROLE atss_mrbeast
+
+statement error beastland.*does not exist
+ALTER TABLE mrbeast.chocolate SET SCHEMA beastland
 
 statement ok
 ALTER TABLE mrbeast.chocolate SET SCHEMA feastables

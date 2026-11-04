@@ -210,6 +210,56 @@ WHERE v @@ ts_like('%beast') OR v @@ ts_like('b_ea_st') OR v @@ ts_regexp('..')
 ids
 {1,2,3,5}
 
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+ORDER BY src
+----
+src	ids
+keyword	{5}
+wild	{5}
+wild_pos	{5}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('beast%')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('beast%')
+ORDER BY src
+----
+src	ids
+keyword	{1,2,4,5,6}
+wild	{1,2,4,5,6}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+ORDER BY src
+----
+src	ids
+keyword	{2}
+wild	{2}
+wild_pos	{2}
+
+query
+EXPLAIN SELECT id FROM bp_kw_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('%beast')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: bp_kw_idx                             │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Automaton ──────────────────────────────╮ │
+│ │ Field: v(string)                         │ │
+│ │ Pattern: (?:mr.beast)|(?:b.ea.st)|%beast │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
 statement ok
 DROP TABLE bp
 

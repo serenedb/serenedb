@@ -330,7 +330,7 @@ class Extractor {
   // Nested concatenations and literal runs are flattened into one list of
   // pieces, so that `ConcatAll` sees every exact neighbour.
   void Pieces(re2::Regexp* re, size_t depth, std::vector<Info>& pieces) {
-    if (depth == kMaxDepth || ++_visits > kMaxVisits || Latin1(re) != _bytes) {
+    if (depth == kMaxDepth || ++_visits > kMaxVisits) {
       _poisoned = true;
     }
     if (_poisoned) {
@@ -696,7 +696,7 @@ class LikeShape {
   };
 
   bool Collect(re2::Regexp* re, size_t depth) {
-    if (depth == kMaxDepth || Latin1(re) != _bytes) {
+    if (depth == kMaxDepth) {
       return false;
     }
     switch (re->op()) {

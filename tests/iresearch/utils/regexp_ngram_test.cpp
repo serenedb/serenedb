@@ -193,6 +193,39 @@ TEST(RegexpNGramTest, code_points) {
   EXPECT_NE(zhuk.children.end(), absl::c_find(zhuk.children, lower));
 }
 
+TEST(RegexpNGramTest, bytes) {
+  const auto bytes = [](std::string_view pattern, irs::RegexpSyntax syntax) {
+    return irs::ToString(
+      irs::ExtractGramQuery(Bytes(pattern), syntax, 3, kBoundary, {}, true)
+        .query);
+  };
+  EXPECT_EQ(R"("\xffmr\xffbeast\xff")", bytes("mr\xFF"
+                                              "beast",
+                                              irs::RegexpSyntax::Perl));
+  EXPECT_EQ(R"(And("\xffmr", "beast\xff"))",
+            bytes("mr.beast", irs::RegexpSyntax::PosixEre));
+  EXPECT_EQ(R"(Or("\xffmr\xffbeast\xff", "\xffms\xffbeast\xff"))",
+            bytes("(mr|ms)\xFF"
+                  "beast",
+                  irs::RegexpSyntax::Perl));
+}
+
+TEST(RegexpNGramTest, nesting_and_size_limits) {
+  const auto nested =
+    absl::StrCat(std::string(300, '('), "abc", std::string(300, ')'));
+  EXPECT_EQ("ALL", Extract(nested));
+
+  std::string pairs;
+  for (int i = 0; i != 120000; ++i) {
+    pairs += "(?:a|bc)";
+  }
+  EXPECT_EQ("ALL", Extract(pairs));
+}
+
+TEST(RegexpNGramTest, surrogates) {
+  EXPECT_EQ("ALL", Extract(R"(ab[\x{D800}-\x{D802}]cd)"));
+}
+
 TEST(RegexpNGramTest, case_folding) {
   static constexpr Case kCases[]{
     {"(?i)abc",

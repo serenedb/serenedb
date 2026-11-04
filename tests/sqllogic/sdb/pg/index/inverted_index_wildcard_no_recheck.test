@@ -11,6 +11,10 @@ CREATE TEXT SEARCH DICTIONARY wc_nr_pos_dict AS
     WITH (frequency, position)
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY wc_nr_bin_dict AS
+    generate_wildcard_ngrams([split_text_csv(' '), collate_tokens('en')], 3)
+
+statement ok
 CREATE TABLE wc_nr_t (id BIGINT PRIMARY KEY, b VARCHAR)
 
 statement ok
@@ -26,6 +30,9 @@ CREATE INDEX wc_nr_idx ON wc_nr_t USING inverted(id, b wc_nr_dict)
 
 statement ok
 CREATE INDEX wc_nr_pos_idx ON wc_nr_t USING inverted(id, b wc_nr_pos_dict)
+
+statement ok
+CREATE INDEX wc_nr_bin_idx ON wc_nr_t USING inverted(id, b wc_nr_bin_dict)
 
 statement ok
 VACUUM (REFRESH_TABLE) wc_nr_t
@@ -140,8 +147,74 @@ FROM (SELECT BM25(wc_nr_idx.tableoid) AS score
 distinct_scores	total_matches
 1	4
 
+query
+EXPLAIN SELECT id FROM wc_nr_idx WHERE b @@ ts_like('%ai%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: wc_nr_idx            │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Wildcard NGram ────────╮ │
+│ │ Field: b(string)        │ │
+│ │ Pattern: (?s)\\A.*ai.*\\z │ │
+│ │ Syntax: perl            │ │
+│ │ Has Pos: false          │ │
+│ │ Query: "ai"             │ │
+│ │ Verify: false           │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
+query
+SELECT id FROM wc_nr_bin_idx WHERE b @@ ts_like('%ai%') ORDER BY id
+----
+id
+2
+5
+
+query
+SELECT id FROM wc_nr_bin_idx WHERE b @@ ts_like('%ear%') ORDER BY id
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id FROM wc_nr_bin_idx WHERE b @@ ts_like('%ai%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: wc_nr_bin_idx        │
+│ Lookup: table               │
+│ Index Filter:               │
+│ ╭─ Wildcard NGram ────────╮ │
+│ │ Field: b(string)        │ │
+│ │ Pattern: (?s)\\A.*ai.*\\z │ │
+│ │ Syntax: perl            │ │
+│ │ Has Pos: false          │ │
+│ │ Query: "ai"             │ │
+│ │ Verify: false           │ │
+│ ╰─────────────────────────╯ │
+│ Table Filter:               │
+│ ╭─ Wildcard NGram ────────╮ │
+│ │ Field: b(string)        │ │
+│ │ Pattern: (?s)\\A.*ai.*\\z │ │
+│ │ Syntax: perl            │ │
+│ │ Has Pos: false          │ │
+│ │ Query: "ai"             │ │
+│ │ Verify: table filter    │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
+
 statement ok
 DROP TABLE wc_nr_t
+
+statement ok
+DROP TEXT SEARCH DICTIONARY wc_nr_bin_dict
 
 statement ok
 DROP TEXT SEARCH DICTIONARY wc_nr_pos_dict

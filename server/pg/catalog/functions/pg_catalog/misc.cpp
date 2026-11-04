@@ -592,6 +592,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   }
 }
 
+template<bool kSecurityDefinerBody>
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
@@ -600,6 +601,16 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
+      if constexpr (kSecurityDefinerBody) {
+        for (const std::string_view guarded :
+             {"role", "session_authorization"}) {
+          if (absl::EqualsIgnoreCase(AsView(name), guarded)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                            ERR_MSG("cannot set parameter \"", guarded,
+                                    "\" within security-definer function"));
+          }
+        }
+      }
       const duckdb::Identifier setting{AsView(name)};
       duckdb::PhysicalSet::SetVariable(
         context, setting,
@@ -612,6 +623,14 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
         result,
         duckdb::Settings::FormatDisplayValue(context, current).ToString());
     });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindSetConfig(
+  duckdb::BindScalarFunctionInput& input) {
+  if (input.HasBinder() && input.GetBinder().security_definer_body) {
+    input.GetBoundFunction().SetFunctionCallback(SetConfigFunction<true>);
+  }
+  return nullptr;
 }
 
 void VersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -1540,7 +1559,8 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunction function{
-      {text, text, boolean}, text, SetConfigFunction};
+      {text, text, boolean}, text, SetConfigFunction<false>};
+    function.SetBindCallback(BindSetConfig);
     function.SetFallible();
     function.SetRequiresOrderedExecution(true);
     RegisterScalar(loader, main, "set_config", VOLATILE, nullptr, {function});

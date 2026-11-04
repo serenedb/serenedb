@@ -466,6 +466,18 @@ TEST_P(PrunedTopTest, conjunctions_with_exclusions) {
   }
 }
 
+TEST_P(PrunedTopTest, windowed_conjunctions_join_windows_narrowed_to_a_block) {
+  Build();
+  for (const auto& shape : std::vector<Shape>{
+         {{"mid", "holes"}, {}},
+         {{"cluster", "mid", "holes"}, {}},
+         {{"cluster", "mid", "dense"}, {"sparse"}},
+         {{"mid", "holes", "half"}, {"rare", "run"}},
+       }) {
+    Check(shape);
+  }
+}
+
 TEST_P(PrunedTopTest,
        single_terms_score_frequencies_that_can_beat_the_threshold) {
   Build();

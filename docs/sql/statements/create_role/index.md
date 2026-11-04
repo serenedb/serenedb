@@ -12,6 +12,8 @@ The `CREATE ROLE` statement adds a new role. Roles are cluster-wide: one role ex
 
 `CREATE USER` is the same statement, except the new role gets `LOGIN` by default; `CREATE ROLE` defaults to `NOLOGIN`.
 
+`CREATE GROUP` is another name for `CREATE ROLE`, and `USER` a name for its `ROLE` list of members. `DROP GROUP` is `DROP ROLE`, `ALTER GROUP name RENAME TO new_name` renames the role, and `ALTER GROUP name ADD USER member, ...` and `ALTER GROUP name DROP USER member, ...` grant and revoke membership in it, as `GRANT name TO member` and `REVOKE name FROM member` do.
+
 ## Examples
 
 Create a role. By default it cannot log in — a plain role is a bundle of privileges to grant to others:

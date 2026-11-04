@@ -1,0 +1,96 @@
+statement ok
+DROP GROUP IF EXISTS lgs_group;
+
+
+statement ok
+DROP GROUP IF EXISTS lgs_renamed;
+
+
+statement ok
+DROP ROLE IF EXISTS lgs_member;
+
+
+statement ok
+DROP ROLE IF EXISTS lgs_other;
+
+
+statement ok
+CREATE ROLE lgs_member;
+
+
+statement ok
+CREATE ROLE lgs_other;
+
+
+statement ok
+CREATE GROUP lgs_group WITH USER lgs_member;
+
+
+query
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'lgs_group';
+----
+rolname	rolcanlogin
+lgs_group	f
+
+
+query
+SELECT m.rolname AS member
+FROM pg_auth_members a
+JOIN pg_roles r ON r.oid = a.roleid
+JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = 'lgs_group'
+ORDER BY member;
+----
+member
+lgs_member
+
+
+statement ok
+ALTER GROUP lgs_group ADD USER lgs_other;
+
+
+query
+SELECT m.rolname AS member
+FROM pg_auth_members a
+JOIN pg_roles r ON r.oid = a.roleid
+JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = 'lgs_group'
+ORDER BY member;
+----
+member
+lgs_member
+lgs_other
+
+
+statement ok
+ALTER GROUP lgs_group DROP USER lgs_member;
+
+
+statement ok
+ALTER GROUP lgs_group RENAME TO lgs_renamed;
+
+
+query
+SELECT groname, array_length(grolist, 1) AS members FROM pg_group WHERE groname = 'lgs_renamed';
+----
+groname	members
+lgs_renamed	1
+
+
+statement ok
+DROP GROUP lgs_renamed;
+
+
+query
+SELECT count(*) AS left_over FROM pg_roles WHERE rolname IN ('lgs_group', 'lgs_renamed');
+----
+left_over
+0
+
+
+statement ok
+DROP ROLE lgs_member;
+
+
+statement ok
+DROP ROLE lgs_other;

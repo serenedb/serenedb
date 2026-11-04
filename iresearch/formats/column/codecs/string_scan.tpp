@@ -155,7 +155,7 @@ struct EntryFrames {
     }
   }
 
-  void DecodeFrame(uint32_t f) {
+  IRS_NO_INLINE void DecodeFrame(uint32_t f) {
     SDB_ASSERT(!decoded[f]);
     leaf->DecodeFrame(*this, f, FrameOut(f));
     decoded[f] = 1;
@@ -181,7 +181,7 @@ struct EntryFrames {
     return {heap ? heap : first, frames[0].raw_len};
   }
 
-  void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
+  IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
     if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
       f = FrameOf(e);
     }

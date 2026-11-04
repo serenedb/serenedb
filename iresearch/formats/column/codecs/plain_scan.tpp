@@ -104,8 +104,9 @@ struct PlainScan final : duckdb::SegmentScanState {
   }
 
   template<typename Entry>
-  void WriteEntries(duckdb::Vector& result, idx_t result_offset, idx_t count,
-                    Entry entry_at) {
+  IRS_FORCE_INLINE void WriteEntries(duckdb::Vector& result,
+                                     idx_t result_offset, idx_t count,
+                                     Entry entry_at) {
     entries.EnsureEach(count, entry_at);
     entries.ReferenceHeap(result);
     auto writer =

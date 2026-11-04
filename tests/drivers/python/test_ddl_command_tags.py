@@ -20,6 +20,10 @@ def test_ddl_command_tags():
             cur.execute(f"CREATE ROLE {prefix}_u")
             for statement, tag in (
                 (f"CREATE DATABASE {database}", "CREATE DATABASE"),
+                (f"ALTER DATABASE {database} WITH CONNECTION LIMIT 5", "ALTER DATABASE"),
+                (f"ALTER DATABASE {database} SET search_path = public", "ALTER DATABASE"),
+                (f"ALTER ROLE {prefix}_r IN DATABASE {database} SET search_path = public", "ALTER ROLE"),
+                (f"ALTER ROLE ALL IN DATABASE {database} RESET search_path", "ALTER ROLE"),
                 (f"CREATE TABLE {prefix}_t (id INT)", "CREATE TABLE"),
                 (f"CREATE TABLE {prefix}_log (id INT)", "CREATE TABLE"),
                 (f"CREATE TRIGGER {prefix}_trg AFTER INSERT ON {prefix}_t FOR EACH ROW "

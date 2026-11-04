@@ -135,8 +135,12 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
     case SET_COLUMN_COMMENT:
       return "COMMENT";
     case ALTER_DATABASE:
-    case ALTER_DATABASE_SETTINGS:
       return "ALTER DATABASE";
+    case ALTER_DATABASE_SETTINGS: {
+      const auto& settings = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
+      return settings.role.empty() && !settings.all_roles ? "ALTER DATABASE"
+                                                          : "ALTER ROLE";
+    }
     case ALTER_SCHEMA:
       return "ALTER SCHEMA";
     case ALTER_INDEX:

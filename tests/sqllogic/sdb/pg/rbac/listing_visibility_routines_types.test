@@ -58,6 +58,38 @@ functions	types
 
 
 statement ok
+CREATE TABLE lvrt_t (a integer);
+
+
+statement ok
+CREATE INDEX lvrt_idx ON lvrt_t (a);
+
+
+connection c_user user=lvrt_user password=lvrt_pw
+query
+SELECT count(*) AS indexes FROM duckdb_indexes() WHERE index_name = 'lvrt_idx';
+----
+indexes
+0
+
+
+statement ok
+GRANT SELECT ON lvrt_t TO lvrt_user;
+
+
+connection c_user user=lvrt_user password=lvrt_pw
+query
+SELECT count(*) AS indexes FROM duckdb_indexes() WHERE index_name = 'lvrt_idx';
+----
+indexes
+1
+
+
+statement ok
+DROP TABLE lvrt_t;
+
+
+statement ok
 DROP TYPE lvrt_ty;
 
 

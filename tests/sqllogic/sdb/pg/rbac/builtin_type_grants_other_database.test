@@ -1,0 +1,71 @@
+control substitution on
+
+
+statement ok
+DROP ROLE IF EXISTS btgod_r;
+
+
+statement ok
+CREATE ROLE btgod_r;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO btgod_r;
+
+
+statement ok
+CREATE DATABASE btgod_${__DATABASE__};
+
+
+statement ok
+USE btgod_${__DATABASE__};
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+query
+SELECT has_type_privilege('btgod_r', 'integer', 'USAGE') AS usage;
+----
+usage
+f
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+query
+SELECT has_type_privilege('btgod_r', 'integer', 'USAGE') AS usage;
+----
+usage
+t
+
+
+statement ok
+SET ROLE btgod_r;
+
+
+statement ok
+CREATE TABLE btgod_t (a integer);
+
+
+statement ok
+DROP TABLE btgod_t;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP DATABASE btgod_${__DATABASE__};
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM btgod_r;
+
+
+statement ok
+DROP ROLE btgod_r;

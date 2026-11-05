@@ -208,4 +208,33 @@ REVOKE EXECUTE ON FUNCTION upper(text) FROM bfg_other;
 
 
 statement ok
+REVOKE EXECUTE ON FUNCTION abs(integer) FROM PUBLIC;
+
+
+statement ok
+SET ROLE bfg_other;
+
+
+statement error
+SELECT abs(-1);
+----
+db error: ERROR: permission denied for function abs
+
+
+query
+SELECT abs(-1.5) AS v;
+----
+v
+1.5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION abs(integer) TO PUBLIC;
+
+
+statement ok
 DROP ROLE bfg_user, bfg_other;

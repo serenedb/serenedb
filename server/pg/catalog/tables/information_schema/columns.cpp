@@ -287,7 +287,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
   void Row(duckdb::ViewCatalogEntry& view) {
     const bool visible = Visible(view);
-    if (!visible && view.column_acls.empty()) {
+    const auto column_acls = duckdb::EffectiveColumnAcls(Context(), view);
+    if (!visible && view.column_acls.empty() && !column_acls) {
       return;
     }
     const auto columns = ViewColumns(Context(), view);
@@ -296,8 +297,9 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      if (!visible && (_role.HeldModes(view.ColumnAcl(i)) &
-                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+      if (!visible &&
+          (_role.HeldModes(duckdb::ColumnAclAt(view, column_acls, i)) &
+           kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
         continue;
       }
       Emit<kViewColumn>({.scan = *this,

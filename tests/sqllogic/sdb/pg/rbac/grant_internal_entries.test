@@ -18,6 +18,31 @@ name_select	table_select
 t	f
 
 
+query
+SELECT array_to_string(attacl, ',') AS acl FROM pg_attribute
+WHERE attrelid = 'information_schema._pg_foreign_data_wrappers'::regclass AND attname = 'foreign_data_wrapper_name';
+----
+acl
+gie_r=r/postgres
+
+
+statement ok
+SET ROLE gie_r;
+
+
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'information_schema' AND table_name = '_pg_foreign_data_wrappers'
+ORDER BY column_name;
+----
+column_name
+foreign_data_wrapper_name
+
+
+statement ok
+RESET ROLE;
+
+
 statement error
 GRANT SELECT (no_such_column) ON information_schema._pg_foreign_data_wrappers TO gie_r;
 ----

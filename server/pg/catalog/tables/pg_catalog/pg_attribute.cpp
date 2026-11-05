@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <limits>
@@ -173,10 +174,11 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     if (!columns) {
       return;
     }
+    const auto column_acls = duckdb::EffectiveColumnAcls(Context(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
       Emit<kViewColumn>({{view.oid, columns->names[i].GetIdentifierName(),
                           static_cast<int16_t>(i + 1), columns->types[i]},
-                         view.ColumnAcl(i)});
+                         duckdb::ColumnAclAt(view, column_acls, i)});
     }
   }
 

@@ -652,6 +652,9 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
   if (ss.ts_dict.Active()) {
     return ScanShape::TsDict;
   }
+  if (ss.OrdersByValue()) {
+    return ScanShape::ValueTopK;
+  }
   const bool score_filter = absl::c_any_of(
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });

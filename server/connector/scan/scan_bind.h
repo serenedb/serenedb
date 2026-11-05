@@ -25,6 +25,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/table_filter.hpp>
+#include <duckdb/storage/table/row_group_order_options.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -82,6 +83,7 @@ struct SearchSpec {
   std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
     acquire_snapshot;
   std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
+  bool table_filtered = false;
 
   bool MatchAll() const noexcept { return !filter; }
 };
@@ -107,6 +109,17 @@ struct ScanOrderSpec {
   duckdb::OrderByNullType null_order;
   duckdb::OrderByStatistics order_by;
   duckdb::OrderByColumnType column_type;
+};
+
+struct ValueOrderSpec {
+  ColumnId column = kInvalidColumnId;
+  irs::field_id field = irs::field_limits::invalid();
+  irs::bstring from;
+  irs::bstring to;
+  uint64_t limit = 0;
+  bool descending = false;
+  bool nulls_first = false;
+  bool nulls = true;
 };
 
 struct OffsetsRequest {
@@ -228,6 +241,7 @@ struct ScanBindData final : duckdb::FunctionData {
   SearchSpec search;
   ScoreSpec score;
   std::optional<ScanOrderSpec> scan_order;
+  std::optional<ValueOrderSpec> value_order;
   OffsetsSpec offsets;
   TsDictSpec ts_dict;
   PlanCacheSpec plan_cache;
@@ -247,6 +261,9 @@ struct ScanBindData final : duckdb::FunctionData {
   }
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
+  bool OrdersByValue() const noexcept {
+    return value_order && score.top_n_consumed;
+  }
   bool DefersChecks() const noexcept {
     return offsets.requests.empty() && !score.vector;
   }
@@ -297,6 +314,10 @@ duckdb::TableFunction BindSearchTableScan(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 bool LooksUpByPk(const ScanBindData& bind);
+
+std::optional<ValueOrderSpec> ValueOrderOf(
+  duckdb::ClientContext& context, const ScanBindData& bind, ColumnId column,
+  const duckdb::RowGroupOrderOptions& options);
 
 duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
                                   duckdb::idx_t storage_index);

@@ -96,6 +96,8 @@ class TermReaderImpl final : public TermReader {
   }
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;
+  void VisitDocsInOrder(bytes_view from, bytes_view to, bool descending,
+                        TermDoc visit) const final;
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;

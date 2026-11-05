@@ -56,6 +56,7 @@ struct TermReader : public AttributeProvider {
     absl::FunctionRef<void(bytes_view, const PostingMeta&, bool)>;
   using TermAt = absl::FunctionRef<bytes_view(size_t)>;
   using FoundTerm = absl::FunctionRef<void(size_t, const PostingMeta&)>;
+  using TermDoc = absl::FunctionRef<bool(bytes_view, doc_id_t)>;
 
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator() const = 0;
@@ -84,6 +85,9 @@ struct TermReader : public AttributeProvider {
 
   virtual void VisitRange(bytes_view from, bytes_view to,
                           RangeVisitor visit) const = 0;
+
+  virtual void VisitDocsInOrder(bytes_view from, bytes_view to, bool descending,
+                                TermDoc visit) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;

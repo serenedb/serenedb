@@ -59,6 +59,9 @@ class EmptyTermReader final : public irs::TermReader {
   void LookupBatch(size_t, TermAt, FoundTerm) const noexcept final {}
   void VisitRange(bytes_view, bytes_view, RangeVisitor) const noexcept final {}
 
+  void VisitDocsInOrder(bytes_view, bytes_view, bool,
+                        TermDoc) const noexcept final {}
+
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
 
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }

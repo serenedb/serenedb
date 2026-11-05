@@ -125,6 +125,13 @@ duckdb::TableFilterPushdown IResearchSupportsPushdownFilter(
   if (col_id == kInvertedIndexScoreId) {
     return HandleScoreFilter(bind, filter);
   }
+  if (duckdb::ExpressionFilter::IsOptionalFilter(filter)) {
+    if (bind.OrdersByValue()) {
+      return duckdb::TableFilterPushdown::Drop;
+    }
+  } else {
+    bind.search.table_filtered = true;
+  }
   if (col_id > kMaxRealColumnIdValue) {
     return bind.relation.StoresExpression(col_id)
              ? duckdb::TableFilterPushdown::BeforeLimit

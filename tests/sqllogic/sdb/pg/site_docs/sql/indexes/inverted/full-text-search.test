@@ -578,3 +578,58 @@ ORDER BY id;
 id
 1
 2
+
+
+# DOCS_TEST: numeric_top_k
+
+statement ok
+CREATE TABLE readings (id INTEGER PRIMARY KEY, sensor INTEGER, reading DOUBLE);
+
+statement ok
+CREATE INDEX readings_idx ON readings USING inverted (id, sensor, reading);
+
+statement ok
+INSERT INTO readings VALUES
+    (1, 7, 21.5),
+    (2, 7, 19.0),
+    (3, 8, NULL),
+    (4, 8, 23.25),
+    (5, 9, 18.75);
+
+statement ok
+VACUUM (REFRESH_TABLE) readings;
+
+# DOCS_TEST_BODY
+
+query
+SELECT reading
+FROM readings_idx
+WHERE reading >= 19
+ORDER BY reading DESC
+LIMIT 2;
+----
+reading
+23.25
+21.5
+
+query
+EXPLAIN SELECT reading
+FROM readings_idx
+WHERE reading >= 19
+ORDER BY reading DESC
+LIMIT 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: readings_idx            │
+│ Lookup: table                  │
+│ Index Filter:                  │
+│ ╭─ Granular Range ────────╮    │
+│ │ Field: reading(numeric) │    │
+│ │ Range: >=19             │    │
+│ ╰─────────────────────────╯    │
+│ Top: 2                         │
+│ Order: reading DESC NULLS LAST │
+│ Projections: reading           │
+│ ~1 row                         │
+╰────────────────────────────────╯

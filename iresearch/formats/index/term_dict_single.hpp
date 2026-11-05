@@ -50,6 +50,13 @@ class SingleTermReader final : public TermReader {
   }
   void VisitRange(bytes_view from, bytes_view to,
                   RangeVisitor visit) const final;
+  void VisitDocsInOrder(bytes_view from, bytes_view to, bool,
+                        TermDoc visit) const final {
+    if ((from.empty() || from <= _term) && (to.empty() || _term < to)) {
+      ReadPostingDocs(*this, _single,
+                      [&](doc_id_t doc) { return visit(_term, doc); });
+    }
+  }
 
   std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;

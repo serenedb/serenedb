@@ -2389,6 +2389,76 @@ TEST_P(TermDictTest, infix_walks_skip_empty_blocks_and_keep_split_matches) {
   }
 }
 
+TEST_P(TermDictTest, ordered_doc_walks_visit_terms_in_order) {
+  const Field fields[]{
+    {.id = 1, .entries = Ladder("az")},
+    {.id = 2, .entries = MakeEntries(Words(6000, 41))},
+    {.id = 3, .entries = MakeEntries({Bytes("solo")})},
+    {.id = 4, .entries = Ladder("az0000")},
+  };
+  Write(fields);
+  using Visit = std::pair<irs::bstring, irs::doc_id_t>;
+  const auto expected = [](const Field& field, irs::bytes_view from,
+                           irs::bytes_view to, bool descending) {
+    std::vector<const Entry*> picked;
+    for (const auto& entry : field.entries) {
+      if ((from.empty() || from <= irs::bytes_view{entry.key}) &&
+          (to.empty() || irs::bytes_view{entry.key} < to)) {
+        picked.push_back(&entry);
+      }
+    }
+    if (descending) {
+      absl::c_reverse(picked);
+    }
+    std::vector<Visit> visits;
+    for (const auto* entry : picked) {
+      for (const auto& [doc, freq] : entry->docs) {
+        visits.emplace_back(entry->key, doc);
+      }
+    }
+    return visits;
+  };
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    const auto& entries = field.entries;
+    std::vector<irs::bstring> keys{{}, Bytes("\x01"), Bytes("\xff")};
+    for (const size_t i : {size_t{0}, size_t{1}, entries.size() / 3,
+                           entries.size() / 2, entries.size() - 1}) {
+      const auto& key = entries[std::min(i, entries.size() - 1)].key;
+      keys.push_back(key);
+      keys.push_back(key + irs::bstring(1, 0));
+    }
+    for (const auto& from : keys) {
+      for (const auto& to : keys) {
+        for (const bool descending : {false, true}) {
+          SCOPED_TRACE(testing::Message("bounds ")
+                       << from.size() << ":" << to.size() << " descending "
+                       << descending);
+          const auto want = expected(field, from, to, descending);
+          std::vector<Visit> got;
+          reader->VisitDocsInOrder(
+            from, to, descending, [&](irs::bytes_view term, irs::doc_id_t doc) {
+              got.emplace_back(term, doc);
+              return true;
+            });
+          ASSERT_EQ(want, got);
+          const size_t stop = std::min<size_t>(7, want.size());
+          got.clear();
+          reader->VisitDocsInOrder(
+            from, to, descending, [&](irs::bytes_view term, irs::doc_id_t doc) {
+              got.emplace_back(term, doc);
+              return got.size() < stop;
+            });
+          ASSERT_EQ(stop, got.size());
+          ASSERT_TRUE(std::equal(got.begin(), got.end(), want.begin()));
+        }
+      }
+    }
+  }
+}
+
 TEST_P(TermDictTest, suffix_walks_match_coded_and_raw_blocks) {
   const auto keys = Words(4000, 17);
   auto escaped = keys;

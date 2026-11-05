@@ -57,7 +57,9 @@ t.write()
 ```
 
 `same_rows(actual, expected)` checks that two queries return the same rows and
-records how many they return; `same_scores(actual, expected)` checks that two
+records how many they return; `same_list(actual, expected)` checks that two
+one-column queries return the same values in the same order;
+`same_scores(actual, expected)` checks that two
 queries give each `id` the same `s`; `query(sql)` checks any query by its
 whole recorded answer, header and rows, or by its error;
 `query(sql, columns, rows)` by its recorded answer of `rows` rows under that

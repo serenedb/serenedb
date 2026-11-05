@@ -170,6 +170,14 @@ On a numeric, `UUID` or temporal column other than an array, `count(*)` of a ran
 
 See the [Range Queries](../../../cookbook/search/range-queries.md) recipe for lexicographic ordering details.
 
+## Sorting by a numeric column {#numeric-top-k}
+
+`ORDER BY` one indexed numeric or temporal column with a constant `LIMIT`, and an optional `OFFSET`, reads the rows in the column's order from the index and stops once it has the `LIMIT` plus `OFFSET` rows it needs, so its cost does not grow with the table. `ASC`, `DESC`, `NULLS FIRST` and `NULLS LAST` all qualify, and so does a `WHERE` made only of ranges, equalities and `IS NOT NULL` on the same column. `EXPLAIN` shows the limit and the order on the scan, with no `TOP_N` above it:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/numeric_top_k" />
+
+A query reads and sorts every matching row instead when it orders by a second key or by an expression of the column, filters on another column, uses an `IN` list, takes its `LIMIT` from a parameter, orders by a `UUID` or `TIMETZ` column, or runs with [`sdb_disable_top_k_optimization`](./maintenance.md#session-settings) on.
+
 ## PostgreSQL-compatible query parsers
 
 For compatibility with PostgreSQL full-text search, SereneDB accepts the familiar parser functions. They produce a `TSQUERY` from a single string. Note these are SereneDB inverted-index queries, not PG `tsvector`/`tsquery`.

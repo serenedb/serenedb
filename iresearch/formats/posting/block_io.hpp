@@ -369,6 +369,17 @@ IRS_FORCE_INLINE void ReadTail(uint32_t len, InputType& in, uint32_t* buf,
       Codec::DecodeValuesTail<Add>(begin, len, out + (kBlock - len)));
 }
 
+template<uint32_t Add = 0>
+IRS_FORCE_INLINE void DecodeTail(const byte_type* in, uint32_t len,
+                                 uint32_t* out) {
+  SDB_ASSERT(1 <= len && len <= kBlock);
+  if (len == kBlock) {
+    Codec::DecodeValuesBlock<Add>(in, out);
+    return;
+  }
+  Codec::DecodeValuesTail<Add>(in, len, out + (kBlock - len));
+}
+
 template<typename InputType>
 IRS_FORCE_INLINE void SkipBlock(InputType& in) {
   if (auto* view = View(in)) {

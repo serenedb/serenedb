@@ -469,8 +469,7 @@ class PostingLeaf {
     if (hits != 0) {
       score_t scores[kBlock];
       _provider.freq.value = freqs;
-      _score.fetcher->Fetch(std::span<const doc_id_t>{docs, hits});
-      _score.score.Score(scores, static_cast<scores_size_t>(hits));
+      FetchAndScore(*_score.fetcher, _score.score, docs, scores, hits);
       _provider.freq.value = _freqs.data;
       for (uint32_t i = 0; i != hits; ++i) {
         irs::Merge<MergeType>(window[offsets[i]], scores[i]);

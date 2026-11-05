@@ -288,11 +288,7 @@ class PrunedConjunction : public Root {
     if (uint64_t{n} * irs::detail::kSparseInverse < max - min) {
       return kExcludes ? keep(included) : n;
     }
-    for (uint32_t i = 0; i != n; ++i) {
-      const auto offset = _window_docs[i] - min;
-      SetBit(_mask[offset / irs::detail::kWindowBits],
-             offset % irs::detail::kWindowBits);
-    }
+    irs::detail::PutDocs(min, _window_docs, n, _mask);
     _joined.Restrict(min, max, _mask);
     const auto members = keep([&](doc_id_t member) IRS_FORCE_INLINE {
       const auto offset = member - min;

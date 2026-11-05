@@ -33,8 +33,9 @@
 
 namespace irs::top {
 
-template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
+template<irs::detail::PhraseMatch M, typename Result, typename Query,
+         typename Make>
+Result BuildPrunedPhrase(const Query& query, const Context& ctx, Make&& make) {
   static_assert(M != irs::detail::PhraseMatch::Slop);
   if (!query.state.boosts.empty() || !query.state.reader) {
     return {};
@@ -48,32 +49,28 @@ Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return irs::detail::BuildPhrase<M, true, false, false>(
-    query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
-      return MakeShape<PrunedPhrase, Slots>(
-        ctx, query.Segment(), *query.state.reader, args,
+    query, [&]<typename Slots>(auto&&... rest) -> Result {
+      return make.template operator()<Slots>(
+        query.Segment(), *query.state.reader, args,
         std::forward<decltype(rest)>(rest)...);
     });
 }
 
 template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
+  return BuildPrunedPhrase<M, Root::ptr>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+      return MakeShape<PrunedPhrase, Slots>(
+        ctx, std::forward<decltype(args)>(args)...);
+    });
+}
+
+template<irs::detail::PhraseMatch M, typename Query>
 UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx) {
-  static_assert(M != irs::detail::PhraseMatch::Slop);
-  if (!query.state.boosts.empty() || !query.state.reader) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  if (!record.stats) {
-    return {};
-  }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                                    .stats = record.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = query.Boost()};
-  return irs::detail::BuildPhrase<M, true, false, false>(
-    query, [&]<typename Slots>(auto&&... rest) -> UnionMember::ptr {
+  return BuildPrunedPhrase<M, UnionMember::ptr>(
+    query, ctx, []<typename Slots>(auto&&... args) -> UnionMember::ptr {
       auto member = memory::make_managed<PhraseUnionMember<Slots>>(
-        query.Segment(), *query.state.reader, args,
-        std::forward<decltype(rest)>(rest)...);
+        std::forward<decltype(args)>(args)...);
       if (!member->Bounded()) {
         return {};
       }
@@ -83,23 +80,10 @@ UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx) {
 
 template<irs::detail::PhraseMatch M, typename Query>
 PrunedClause::ptr MakePhraseClause(const Query& query, const Context& ctx) {
-  static_assert(M != irs::detail::PhraseMatch::Slop);
-  if (!query.state.boosts.empty() || !query.state.reader) {
-    return {};
-  }
-  const auto record = query.Stats(ScoredOf(ctx));
-  if (!record.stats) {
-    return {};
-  }
-  const irs::detail::ScoreArgs args{.scorer = record.scorer,
-                                    .stats = record.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = query.Boost()};
-  return irs::detail::BuildPhrase<M, true, false, false>(
-    query, [&]<typename Slots>(auto&&... rest) -> PrunedClause::ptr {
+  return BuildPrunedPhrase<M, PrunedClause::ptr>(
+    query, ctx, []<typename Slots>(auto&&... args) -> PrunedClause::ptr {
       return memory::make_managed<PrunedClauseImpl<PhrasePrunedClause<Slots>>>(
-        query.Segment(), *query.state.reader, args,
-        std::forward<decltype(rest)>(rest)...);
+        std::forward<decltype(args)>(args)...);
     });
 }
 

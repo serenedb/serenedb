@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/search/detail/posting_leaf.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -156,27 +157,19 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
       return;
     }
     Mask();
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[2 * kScoreBlock];
-    ABSL_CACHELINE_ALIGNED uint32_t slots[2 * kScoreBlock];
-    ABSL_CACHELINE_ALIGNED uint32_t freqs[2 * kScoreBlock];
+    ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t slots[kScoreBlock];
+    ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
     ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
     _provider.freq.value = freqs;
     uint32_t out = 0;
-    const auto flush = [&](uint32_t hits) {
-      FetchAndScore(*_fetcher, _score, docs, scores, hits);
-      if (required) {
-        for (uint32_t j = 0; j != hits; ++j) {
-          cand_docs[out] = docs[j];
-          cand_scores[out] = cand_scores[slots[j]] + scores[j];
-          ++out;
-        }
-      } else {
-        for (uint32_t j = 0; j != hits; ++j) {
-          cand_scores[slots[j]] += scores[j];
-        }
-      }
-    };
     uint32_t hits = 0;
+    const auto flush = [&] {
+      FetchAndScore(*_fetcher, _score, docs, scores, hits);
+      detail::MergeHits(required, docs, slots, scores, hits, cand_docs,
+                        cand_scores, out);
+      hits = 0;
+    };
     for (uint32_t begin = 0; begin < count && !doc_limits::eof(_doc);
          begin += kScoreBlock) {
       const auto n = std::min<uint32_t>(count - begin, kScoreBlock);
@@ -188,19 +181,14 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
                     docs[hits] = doc;
                     slots[hits] = begin + i;
                     freqs[hits] = freq;
-                    ++hits;
+                    if (++hits == kScoreBlock) {
+                      flush();
+                    }
                   }
                 });
-      if (hits >= kScoreBlock) {
-        flush(kScoreBlock);
-        hits -= kScoreBlock;
-        std::copy_n(docs + kScoreBlock, hits, docs);
-        std::copy_n(slots + kScoreBlock, hits, slots);
-        std::copy_n(freqs + kScoreBlock, hits, freqs);
-      }
     }
     if (hits != 0) {
-      flush(hits);
+      flush();
     }
     _provider.freq.value = _freqs.data;
     if (required) {

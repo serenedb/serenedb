@@ -79,10 +79,7 @@ class TermUnionMember : public UnionMember {
   }
 
   void ForEachScoredBlock(doc_id_t max, Visit visit) final {
-    _leaf.ForEachScoredBlock(
-      max, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
-        visit(docs, len, scores);
-      });
+    _leaf.ForEachScoredBlock(max, visit);
     _doc = _leaf.Value();
   }
 

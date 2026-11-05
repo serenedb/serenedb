@@ -24,12 +24,13 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/detail/posting_leaf.hpp"
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/phrase_bound.hpp"
 #include "iresearch/search/top/union_member.hpp"
-#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -87,12 +88,8 @@ class PhraseUnionMember : public UnionMember {
 
   void Fill(doc_id_t min, doc_id_t max, uint64_t* mask, score_t* window) final {
     ForEachScoredBlock(max, [&](doc_id_t* docs, uint32_t len, score_t* scores) {
-      static constexpr auto kBits = BitsRequired<uint64_t>();
-      for (uint32_t i = 0; i != len; ++i) {
-        const size_t offset = docs[i] - min;
-        SetBit(mask[offset / kBits], offset % kBits);
-        window[offset] += scores[i];
-      }
+      irs::detail::AddWhole<ScoreMergeType::Sum, false>(
+        docs, docs + len, scores, min, nullptr, mask, window);
     });
   }
 
@@ -103,15 +100,8 @@ class PhraseUnionMember : public UnionMember {
     uint32_t out = 0;
     const auto flush = [&] {
       ScoreBatch(hits);
-      for (uint32_t j = 0; j != hits; ++j) {
-        if (required) {
-          docs[out] = docs[slots[j]];
-          scores[out] = scores[slots[j]] + _scores[j];
-          ++out;
-        } else {
-          scores[slots[j]] += _scores[j];
-        }
-      }
+      irs::detail::MergeHits(required, _docs, slots, _scores, hits, docs,
+                             scores, out);
       hits = 0;
     };
     for (uint32_t i = 0; i != count && !doc_limits::eof(_doc); ++i) {

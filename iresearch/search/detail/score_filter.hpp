@@ -148,4 +148,22 @@ inline IRS_FORCE_INLINE uint32_t FilterMatches(doc_id_t* IRS_RESTRICT docs,
   return out;
 }
 
+template<typename Docs, typename Scores>
+IRS_FORCE_INLINE void MergeHits(bool required, const doc_id_t* hit_docs,
+                                const uint32_t* slots,
+                                const score_t* hit_scores, uint32_t hits,
+                                Docs& docs, Scores& scores, uint32_t& out) {
+  if (required) {
+    for (uint32_t j = 0; j != hits; ++j) {
+      docs[out] = hit_docs[j];
+      scores[out] = scores[slots[j]] + hit_scores[j];
+      ++out;
+    }
+  } else {
+    for (uint32_t j = 0; j != hits; ++j) {
+      scores[slots[j]] += hit_scores[j];
+    }
+  }
+}
+
 }  // namespace irs::detail

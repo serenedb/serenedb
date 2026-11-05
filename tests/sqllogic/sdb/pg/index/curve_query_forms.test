@@ -62,6 +62,12 @@ db error: ERROR: ts_between: bound HUGEINT does not match coordinate 1 of type I
 
 
 statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(1::UHUGEINT, 0), ROW(3::UHUGEINT, 1), true, true);
+----
+db error: ERROR: ts_between: bound UHUGEINT does not match coordinate 1 of type INTEGER; cast the bound explicitly
+
+
+statement error
 SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_phrase('a', 'b');
 ----
 db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
@@ -202,6 +208,12 @@ ids
 
 query
 SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::HUGEINT <= 5000000000000000000000 AND x BETWEEN 1 AND 1 AND y = 1;
+----
+ids
+{1,16,31,46}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::DOUBLE >= 0.5 AND x BETWEEN 1 AND 1 AND y = 1;
 ----
 ids
 {1,16,31,46}

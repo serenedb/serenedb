@@ -3,19 +3,26 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
-SERENED_BIN="${CURVE_BENCH_BIN:-${ROOT}/build_bench/bin/serened}"
+SERENED_BIN="${CURVE_BENCH_BIN:-${ROOT}/build_perf/bin/serened}"
 ROWS="${CURVE_BENCH_ROWS:-1000000}"
-REPS="${CURVE_BENCH_REPS:-7}"
+BOXES="${CURVE_BENCH_BOXES:-50}"
+PASSES="${CURVE_BENCH_PASSES:-3}"
+SEED="${CURVE_BENCH_SEED:-1099}"
+THREADS="${CURVE_BENCH_THREADS:-0 1}"
+TABLES="${CURVE_BENCH_TABLES:-ind cor}"
+INDEXES="${CURVE_BENCH_INDEXES:-granular curve curve32 norm32}"
 PORT="${CURVE_BENCH_PORT:-6471}"
 SEGMENT_MEMORY_MAX="${CURVE_BENCH_SEGMENT_MEMORY_MAX:-}"
 if [[ ! -x "${SERENED_BIN}" ]]; then
 	echo "missing ${SERENED_BIN}; set CURVE_BENCH_BIN" >&2
 	exit 1
 fi
-if [[ ! "${ROWS}" =~ ^[1-9][0-9]*$ ]]; then
-	echo "CURVE_BENCH_ROWS must be a positive integer" >&2
-	exit 1
-fi
+for value in "${ROWS}" "${BOXES}" "${PASSES}" "${SEED}"; do
+	if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+		echo "CURVE_BENCH_ROWS, _BOXES, _PASSES and _SEED must be positive integers" >&2
+		exit 1
+	fi
+done
 INDEX_OPTIONS=""
 if [[ -n "${SEGMENT_MEMORY_MAX}" ]]; then
 	if [[ ! "${SEGMENT_MEMORY_MAX}" =~ ^[1-9][0-9]*$ ]]; then
@@ -24,6 +31,12 @@ if [[ -n "${SEGMENT_MEMORY_MAX}" ]]; then
 	fi
 	INDEX_OPTIONS=" WITH (segment_memory_max = ${SEGMENT_MEMORY_MAX})"
 fi
+
+declare -A CALLS=(
+	[curve]="curve(ROW(x, y, z))"
+	[curve32]="curve(ROW(x, y, z), max_level := 32)"
+	[norm32]="curve(ROW(x, y, z), max_level := 32, lower := ROW(-1, -1, -1), upper := ROW(1001, 1001, 1001))"
+)
 
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/curve-bench-XXXXXX")"
 LOG="${DATA_DIR}.log"
@@ -63,13 +76,6 @@ seconds() {
 	awk -v ns="$((end - start))" 'BEGIN { printf "%.2f", ns / 1e9 }'
 }
 
-median_ms() {
-	sql "$1" >/dev/null
-	for _ in $(seq 1 "${REPS}"); do
-		"${PSQL[@]}" -At -c '\timing on' -c "$1" | awk '/^Time: /{print $2}'
-	done | sort -g | awk '{v[NR] = $1} END {print v[int((NR + 1) / 2)]}'
-}
-
 coprime_modulus() {
 	local modulus a b remainder
 	modulus=$((ROWS + $1))
@@ -89,16 +95,114 @@ coprime_modulus() {
 	done
 }
 
-check() {
-	local expected
-	expected=$(sql "SELECT count(*), max(id) $1")
-	for query in "${@:2}"; do
-		if [[ "$(sql "SELECT count(*), max(id) ${query}")" != "${expected}" ]]; then
-			echo "result mismatch: ${query}" >&2
+unsettled() {
+	sql "SELECT count(*) FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+		WHERE c.relname LIKE '$1_%' AND (m.metric = 'num_segments' AND m.value > 1
+		OR m.metric IN ('compaction_active', 'compaction_pending') AND m.value > 0)"
+}
+
+compact() {
+	sql "VACUUM (COMPACT_TABLE) $1" >/dev/null
+	while [[ "$(unsettled "$1")" != 0 ]]; do
+		sleep 1
+		sql "VACUUM (COMPACT_TABLE) $1" >/dev/null
+	done
+}
+
+boxes() {
+	awk -v table="$1" -v half="$2" -v axes="$3" -v seed="$4" -v count="${BOXES}" 'BEGIN {
+		srand(seed + 10 * half + axes)
+		for (i = 0; i < count; i++) {
+			x = 100 + rand() * 800
+			y = table == "cor" ? x : 100 + rand() * 800
+			z = table == "cor" ? x : 100 + rand() * 800
+			if (axes == 1) {
+				printf "%.3f NULL NULL %.3f NULL NULL\n", x - half, x + half
+			} else {
+				printf "%.3f %.3f %.3f %.3f %.3f %.3f\n", x - half, y - half, z - half, x + half, y + half, z + half
+			}
+		}
+	}'
+}
+
+statements() {
+	local kind where
+	while read -r x0 y0 z0 x1 y1 z1; do
+		where="x BETWEEN ${x0} AND ${x1}"
+		if [[ "${y0}" != NULL ]]; then
+			where+=" AND y BETWEEN ${y0} AND ${y1} AND z BETWEEN ${z0} AND ${z1}"
+		fi
+		printf 'table\tSELECT %s FROM %s WHERE %s;\n' "$2" "$1" "${where}"
+		for kind in ${INDEXES}; do
+			if [[ "${kind}" == granular ]]; then
+				printf 'granular\tSELECT %s FROM %s_granular WHERE %s;\n' "$2" "$1" "${where}"
+			else
+				printf '%s\tSELECT %s FROM %s_%s WHERE %s @@ ts_between(ROW(%s, %s, %s), ROW(%s, %s, %s), true, true);\n' \
+					"${kind}" "$2" "$1" "${kind}" "${CALLS[${kind}]}" "${x0}" "${y0}" "${z0}" "${x1}" "${y1}" "${z1}"
+			fi
+		done
+	done <<<"$3"
+}
+
+timed() {
+	local shuffled
+	shuffled=$(shuf --random-source=<(yes "$1") <<<"$3")
+	paste <(cut -f1 <<<"${shuffled}") <({
+		if [[ "$2" != 0 ]]; then
+			echo "SET threads = $2;"
+		fi
+		echo '\timing on'
+		cut -f2 <<<"${shuffled}"
+	} | "${PSQL[@]}" -At | awk '/^Time: /{print $2}')
+}
+
+summary() {
+	sort -k1,1 -k2,2g | awk '
+		function flush() {
+			if (n) {
+				printf " %s %.3f/%.3f", kind, sum / n, v[int((n + 1) / 2)]
+			}
+		}
+		$1 != kind {
+			flush()
+			kind = $1
+			n = 0
+			sum = 0
+		}
+		{
+			v[++n] = $2
+			sum += $2
+		}
+		END {
+			flush()
+		}
+	'
+}
+
+verify() {
+	local list expected kind
+	list=$(statements "$1" 'count(*), max(id)' "$3")
+	expected=$(awk -F'\t' '$1 == "table" {print $2}' <<<"${list}" | "${PSQL[@]}" -At)
+	for kind in ${INDEXES}; do
+		if [[ "$(awk -F'\t' -v kind="${kind}" '$1 == kind {print $2}' <<<"${list}" | "${PSQL[@]}" -At)" != "${expected}" ]]; then
+			echo "result mismatch: $1 ${kind} $2" >&2
 			exit 1
 		fi
 	done
-	echo "${expected%%|*}"
+	awk -F'|' '{print $1}' <<<"${expected}"
+}
+
+measure() {
+	local t=$1 half=$2 axes=$3 threads=$4 label=$5 pass list times all="" rows=""
+	timed "${SEED}" "${threads}" "$(statements "${t}" 'max(id)' "$(boxes "${t}" "${half}" "${axes}" "${SEED}")")" >/dev/null
+	for pass in $(seq 1 "${PASSES}"); do
+		list=$(boxes "${t}" "${half}" "${axes}" "$((SEED + pass))")
+		times=$(timed "$((SEED + pass))" "${threads}" "$(statements "${t}" 'max(id)' "${list}")")
+		all+="${times}"$'\n'
+		echo "pass ${pass} ${t} ${label} threads ${threads}:$(summary <<<"${times}")"
+		rows+="$(verify "${t}" "${label}" "${list}")"$'\n'
+	done
+	echo "query ${t} ${label} threads ${threads}: mean rows $(awk 'NF {sum += $1; n++} END {printf "%.0f", sum / n}' <<<"${rows}"), mean/median ms$(sed '/^$/d' <<<"${all}" | summary)"
 }
 
 X_MOD=$(coprime_modulus 3 48271)
@@ -110,50 +214,42 @@ sql "CREATE TABLE ind(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
 sql "INSERT INTO ind SELECT i, ((i*48271)%${X_MOD})::DOUBLE/${SCALE},
 	((i*69621+123)%${Y_MOD})::DOUBLE/${SCALE}, ((i*40699+321)%${Z_MOD})::DOUBLE/${SCALE}
 	FROM generate_series(1::BIGINT, ${ROWS}::BIGINT) g(i)"
-sql "CREATE TABLE cor(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
-sql "INSERT INTO cor SELECT id, x, x+(id%7-3)*0.1, x+(id%11-5)*0.1 FROM ind"
+if [[ " ${TABLES} " == *" cor "* ]]; then
+	sql "CREATE TABLE cor(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
+	sql "INSERT INTO cor SELECT id, x, x+(id%7-3)*0.1, x+(id%11-5)*0.1 FROM ind"
+fi
 
-CURVE="curve(ROW(x, y, z))"
-CURVE32="curve(ROW(x, y, z), max_level := 32)"
-NORM32="curve(ROW(x, y, z), max_level := 32, lower := ROW(-1, -1, -1), upper := ROW(1001, 1001, 1001))"
-
-for t in ind cor; do
-	g=$(seconds "CREATE INDEX ${t}_granular ON ${t} USING inverted(id, x, y, z)${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}")
-	c=$(seconds "CREATE INDEX ${t}_curve ON ${t} USING inverted(id, (${CURVE})) INCLUDE (x, y, z)${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}")
-	d=$(seconds "CREATE INDEX ${t}_curve32 ON ${t} USING inverted(id, (${CURVE32})) INCLUDE (x, y, z)${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}")
-	n=$(seconds "CREATE INDEX ${t}_norm32 ON ${t} USING inverted(id, (${NORM32})) INCLUDE (x, y, z)${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}")
-	echo "build ${t}: granular ${g} s, curve ${c} s, curve max_level=32 ${d} s, normalized max_level=32 ${n} s"
-done
-
-for t in ind cor; do
-	for half in 0.5 5 25 50 100; do
-		lo=$(awk -v h="${half}" 'BEGIN {print 500 - h}')
-		hi=$(awk -v h="${half}" 'BEGIN {print 500 + h}')
-		between="x BETWEEN ${lo} AND ${hi} AND y BETWEEN ${lo} AND ${hi} AND z BETWEEN ${lo} AND ${hi}"
-		box="ts_between(ROW(${lo}, ${lo}, ${lo}), ROW(${hi}, ${hi}, ${hi}), true, true)"
-		s="FROM ${t} WHERE ${between}"
-		g="FROM ${t}_granular WHERE ${between}"
-		c="FROM ${t}_curve WHERE ${CURVE} @@ ${box}"
-		d="FROM ${t}_curve32 WHERE ${CURVE32} @@ ${box}"
-		n="FROM ${t}_norm32 WHERE ${NORM32} @@ ${box}"
-		rows=$(check "${s}" "${g}" "${c}" "${d}" "${n}")
-		echo "query ${t} box ±${half}: rows ${rows}, max(id) ms table $(median_ms "SELECT max(id) ${s}") granular $(median_ms "SELECT max(id) ${g}") curve $(median_ms "SELECT max(id) ${c}") curve max_level=32 $(median_ms "SELECT max(id) ${d}") normalized max_level=32 $(median_ms "SELECT max(id) ${n}")"
+for t in ${TABLES}; do
+	line="build ${t}:"
+	for kind in ${INDEXES}; do
+		if [[ "${kind}" == granular ]]; then
+			keys="id, x, y, z)"
+		else
+			keys="id, (${CALLS[${kind}]})) INCLUDE (x, y, z)"
+		fi
+		line+=" ${kind} $(seconds "CREATE INDEX ${t}_${kind} ON ${t} USING inverted(${keys}${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}") s"
 	done
-	box="ts_between(ROW(495, NULL, NULL), ROW(505, NULL, NULL), true, true)"
-	s="FROM ${t} WHERE x BETWEEN 495 AND 505"
-	g="FROM ${t}_granular WHERE x BETWEEN 495 AND 505"
-	c="FROM ${t}_curve WHERE ${CURVE} @@ ${box}"
-	d="FROM ${t}_curve32 WHERE ${CURVE32} @@ ${box}"
-	n="FROM ${t}_norm32 WHERE ${NORM32} @@ ${box}"
-	rows=$(check "${s}" "${g}" "${c}" "${d}" "${n}")
-	echo "query ${t} one axis: rows ${rows}, max(id) ms table $(median_ms "SELECT max(id) ${s}") granular $(median_ms "SELECT max(id) ${g}") curve $(median_ms "SELECT max(id) ${c}") curve max_level=32 $(median_ms "SELECT max(id) ${d}") normalized max_level=32 $(median_ms "SELECT max(id) ${n}")"
+	echo "${line}"
 done
 
-for t in ind cor; do
-	sql "VACUUM (COMPACT_TABLE) ${t}" >/dev/null
+start=$(date +%s)
+for t in ${TABLES}; do
+	compact "${t}"
 done
-for index in ind_granular ind_curve ind_curve32 ind_norm32 cor_granular cor_curve cor_curve32 cor_norm32; do
-	size=$(sql "SELECT round(m.value / 1048576.0)::BIGINT FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
-		WHERE c.relname = '${index}' AND m.metric = 'index_size'")
-	echo "size ${index}: ${size} MB"
+echo "compact: $(($(date +%s) - start)) s"
+for t in ${TABLES}; do
+	for kind in ${INDEXES}; do
+		size=$(sql "SELECT round(m.value / 1048576.0)::BIGINT FROM sdb_metrics m JOIN pg_class c ON c.oid = m.relation_id
+			WHERE c.relname = '${t}_${kind}' AND m.metric = 'index_size'")
+		echo "size ${t}_${kind}: ${size} MB"
+	done
+done
+
+for threads in ${THREADS}; do
+	for t in ${TABLES}; do
+		for half in 0.5 5 25 50 100; do
+			measure "${t}" "${half}" 3 "${threads}" "box ±${half}"
+		done
+		measure "${t}" 5 1 "${threads}" "one axis"
+	done
 done

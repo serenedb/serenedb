@@ -787,7 +787,7 @@ static InsertionOrderPreservingMap<string> ClickHouseScanToString(TableFunctionT
 ClickHouseScanFunction::ClickHouseScanFunction()
     : TableFunction("clickhouse_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
                     ClickHouseScan, ClickHouseBind, ClickHouseInitGlobalState) {
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 	serialize = ClickHouseScanSerialize;
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;
@@ -800,7 +800,7 @@ ClickHouseScanFunction::ClickHouseScanFunction()
 ClickHouseScanFunctionFilterPushdown::ClickHouseScanFunctionFilterPushdown()
     : TableFunction("clickhouse_scan_pushdown", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
                     ClickHouseScan, ClickHouseBind, ClickHouseInitGlobalStateFilterPushdown) {
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 	serialize = ClickHouseScanSerialize;
 	deserialize = ClickHouseScanDeserialize;
 	get_bind_info = ClickHouseGetBindInfo;

@@ -298,7 +298,7 @@ void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader) {
                                       OriginStatusScan,
                                       OriginStatusBind,
                                       OriginStatusInit};
-  origin_status.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  origin_status.required_capability = duckdb::RoleCapability::Superuser;
   RegisterTable(loader, pg_catalog, std::move(origin_status));
 }
 

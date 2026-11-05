@@ -509,7 +509,7 @@ void Register(duckdb::ExtensionLoader& loader, const char* name,
     scalar.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   }
   scalar.SetVolatile();
-  scalar.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  scalar.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(scalar);
 }
 

@@ -242,7 +242,7 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
     function.function_info =
       duckdb::make_shared_ptr<SystemFunctionInfo>(*table);
     if (table->SuperuserOnly()) {
-      function.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+      function.required_capability = duckdb::RoleCapability::Superuser;
     }
     duckdb::CreateTableFunctionInfo info{std::move(function)};
     info.SetSchema(duckdb::Identifier{table->Sql().schema});

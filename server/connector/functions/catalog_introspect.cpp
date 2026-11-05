@@ -251,14 +251,14 @@ void RegisterCatalogIntrospectFunctions(duckdb::DatabaseInstance& db) {
                                  DeferredCatalogExecute,
                                  DeferredCatalogBind,
                                  OneRowState::Init};
-  deferred.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  deferred.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(deferred);
   duckdb::TableFunction catalog_sets{"sdb_catalog_sets",
                                      {},
                                      CatalogSetsExecute,
                                      CatalogSetsBind,
                                      CatalogSetsState::Init};
-  catalog_sets.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  catalog_sets.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(catalog_sets);
 }
 

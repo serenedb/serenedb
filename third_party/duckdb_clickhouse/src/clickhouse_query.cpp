@@ -132,7 +132,7 @@ ClickHouseQueryFunction::ClickHouseQueryFunction()
 	deserialize = scan_function.deserialize;
 	to_string = scan_function.to_string;
 	projection_pushdown = true;
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 }
 
 ClickHouseLookupFunction::ClickHouseLookupFunction()
@@ -140,7 +140,7 @@ ClickHouseLookupFunction::ClickHouseLookupFunction()
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	in_out_function = ClickHouseLookupScan;
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 }
 
 //===--------------------------------------------------------------------===//
@@ -200,7 +200,7 @@ static void ClickHouseExecuteFunc(ClientContext &context, TableFunctionInput &da
 ClickHouseExecuteFunction::ClickHouseExecuteFunction()
     : TableFunction("clickhouse_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ClickHouseExecuteFunc,
                     ClickHouseExecuteBind, ClickHouseExecuteInit) {
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 }
 
 //===--------------------------------------------------------------------===//
@@ -247,7 +247,7 @@ static void ClickHouseClearCacheFunc(ClientContext &context, TableFunctionInput 
 
 ClickHouseClearCacheFunction::ClickHouseClearCacheFunction()
     : TableFunction("clickhouse_clear_cache", {}, ClickHouseClearCacheFunc, ClickHouseClearCacheBind) {
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 }
 
 } // namespace duckdb

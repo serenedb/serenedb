@@ -184,7 +184,7 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
     .AddParameter("fast", duckdb::LogicalType::BOOLEAN,
                   duckdb::Value::BOOLEAN(false));
   start.SetVolatile();
-  start.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  start.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(std::move(start));
   duckdb::TableFunction stop{duckdb::Identifier{kPgBackupStop},
                              {},
@@ -194,7 +194,7 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
   stop.GetSignature().AddParameter("wait_for_archive",
                                    duckdb::LogicalType::BOOLEAN,
                                    duckdb::Value::BOOLEAN(true));
-  stop.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  stop.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(std::move(stop));
   const auto record =
     duckdb::LogicalType::STRUCT({{"lsn", pg::PG_LSN()},
@@ -206,7 +206,7 @@ void RegisterBackupFunctions(duckdb::DatabaseInstance& db) {
                                           duckdb::LogicalType::BOOLEAN,
                                           duckdb::Value::BOOLEAN(true));
   stop_record.SetVolatile();
-  stop_record.SetRequiredCapability(duckdb::RoleCapability::Superuser);
+  stop_record.required_capability = duckdb::RoleCapability::Superuser;
   loader.RegisterFunction(std::move(stop_record));
   loader.RegisterFunction(
     duckdb::ScalarFunction{duckdb::Identifier{kPgWalfileName},

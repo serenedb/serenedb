@@ -228,7 +228,7 @@ static void ConfigurePoolFunction(ClientContext &context, TableFunctionInput &in
 ClickHouseConfigurePoolFunction::ClickHouseConfigurePoolFunction()
     : TableFunction("clickhouse_configure_pool", vector<LogicalType>(), ConfigurePoolFunction, ConfigurePoolBind,
                     ConfigurePoolInitGlobalState, ConfigurePoolInitLocalState) {
-	SetRequiredCapability(RoleCapability::Superuser);
+	required_capability = RoleCapability::Superuser;
 	GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("catalog_name", LogicalType::VARCHAR)
 		    .Add("acquire_mode", LogicalType::VARCHAR)

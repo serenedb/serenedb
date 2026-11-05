@@ -43,6 +43,10 @@ struct IndexedExpression {
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
+duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context);
+
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      duckdb::DataChunk& chunk,
                                      duckdb::idx_t table_id,

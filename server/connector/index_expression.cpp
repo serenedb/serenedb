@@ -71,6 +71,8 @@ void ClearSource(duckdb::Expression& expr) {
   }
 }
 
+}  // namespace
+
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
@@ -90,8 +92,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
     });
   return copy;
 }
-
-}  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context) {

@@ -1,0 +1,101 @@
+statement ok
+CREATE TABLE curve_option_identity(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_option_identity VALUES (1,1,1), (2,NULL,1);
+
+statement ok
+CREATE INDEX curve_option_identity_idx ON curve_option_identity USING inverted(id,(curve(ROW(x,y)))) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_option_identity;
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),kind := 'MORTON') @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),kind := NULL) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),level_step := 3) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_level := 64) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := 16) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := NULL) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+statement error
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := 64) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+db error: ERROR: curve() @@ needs an index on the same curve() call
+HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
+
+
+query
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),lower := ROW(NULL,NULL),upper := ROW(NULL,NULL)) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+statement ok
+PREPARE curve_option_identity_query AS SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),kind := upper('morton'),level_step := 1+2,max_cells := 8+8) @@ ts_between(ROW($1::BIGINT,0),ROW($2::BIGINT,2),true,true);
+
+query
+EXECUTE curve_option_identity_query(0,2);
+----
+id
+1
+
+statement ok
+DEALLOCATE curve_option_identity_query;
+
+statement ok
+CREATE INDEX curve_option_identity_normalized ON curve_option_identity USING inverted(id,(curve(ROW(x,y),lower := ROW(0,0),upper := ROW(10,10)))) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_option_identity;
+
+query
+SELECT id FROM curve_option_identity_normalized WHERE curve(ROW(x,y),lower := ROW(0,0),upper := ROW(10,10)) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+id
+1
+
+statement error
+SELECT id FROM curve_option_identity_normalized WHERE curve(ROW(x,y),lower := ROW(0::BIGINT,0::SMALLINT),upper := ROW(10::BIGINT,10::SMALLINT)) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+db error: ERROR: curve() @@ needs an index on the same curve() call
+HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
+
+
+statement error
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_level := 63) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+----
+db error: ERROR: curve() @@ needs an index on the same curve() call
+HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
+
+
+statement ok
+DROP TABLE curve_option_identity;

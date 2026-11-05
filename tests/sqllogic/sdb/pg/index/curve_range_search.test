@@ -1,0 +1,389 @@
+statement ok
+CREATE TABLE curve_ranges(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, t TIMESTAMP);
+
+statement ok
+INSERT INTO curve_ranges VALUES
+ (1, -5, -0.0, '2026-01-01'),
+ (2, 0, 0, '2026-01-02'),
+ (3, 5, 5, '2026-01-03'),
+ (4, 10, 10, '2026-01-04'),
+ (5, NULL, 5, '2026-01-03'),
+ (6, 5, NULL, '2026-01-03'),
+ (7, 9007199254740993, 5, '2026-01-03'),
+ (8, 5, 'NaN', '2026-01-03'),
+ (9, 5, 'Infinity', '2026-01-03'),
+ (10, 5, '-Infinity', '2026-01-03');
+
+statement ok
+CREATE INDEX curve_ranges_idx ON curve_ranges USING inverted(
+ id, (curve(ROW(x, y, t), max_cells := 16))) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_ranges_hilbert ON curve_ranges USING inverted(
+ id, (curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1))) INCLUDE (x, y, t);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_ranges;
+
+query
+SELECT id FROM curve_ranges_idx WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
+ AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03' ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x >= 0 AND x <= 5 AND y >= 0 AND y <= 5
+  AND t >= TIMESTAMP '2026-01-02' AND t <= TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x >= 0 AND x <= 5 AND y >= 0 AND y <= 5
+  AND t >= TIMESTAMP '2026-01-02' AND t <= TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x > -5 AND x < 10 AND y > 0 AND y < 10
+  AND t > TIMESTAMP '2026-01-01' AND t < TIMESTAMP '2026-01-04') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x > -5 AND x < 10 AND y > 0 AND y < 10
+  AND t > TIMESTAMP '2026-01-01' AND t < TIMESTAMP '2026-01-04') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x = 5 AND y = 5 AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x = 5 AND y = 5 AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE 0 <= x AND 5 >= x AND 0 < y AND 10 > y
+  AND TIMESTAMP '2026-01-02' <= t AND TIMESTAMP '2026-01-03' >= t) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE 0 <= x AND 5 >= x AND 0 < y AND 10 > y
+  AND TIMESTAMP '2026-01-02' <= t AND TIMESTAMP '2026-01-03' >= t) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN -5 AND 10 AND x >= 0 AND x <= 5
+  AND y >= -10 AND y BETWEEN 0 AND 10 AND y < 6
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04' AND t >= TIMESTAMP '2026-01-02') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN -5 AND 10 AND x >= 0 AND x <= 5
+  AND y >= -10 AND y BETWEEN 0 AND 10 AND y < 6
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04' AND t >= TIMESTAMP '2026-01-02') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_hilbert WHERE x BETWEEN 0::SMALLINT AND 5::BIGINT
+  AND y BETWEEN (1 - 1) AND (2 + 3) AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0::SMALLINT AND 5::BIGINT
+  AND y BETWEEN (1 - 1) AND (2 + 3) AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x = 9007199254740993::BIGINT AND y = 5 AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x = 9007199254740993::BIGINT AND y = 5 AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND 10
+  AND y BETWEEN '-Infinity'::DOUBLE AND 'Infinity'::DOUBLE AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 10
+  AND y BETWEEN '-Infinity'::DOUBLE AND 'Infinity'::DOUBLE AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x = 5 AND y = 'NaN'::DOUBLE AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x = 5 AND y = 'NaN'::DOUBLE AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN -5 AND 0 AND y = -0.0::DOUBLE
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-02') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN -5 AND 0 AND y = -0.0::DOUBLE
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-02') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN NULL::BIGINT AND 5 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN NULL::BIGINT AND 5 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 5 AND 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 5 AND 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x >= 5 AND x <= 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x >= 5 AND x <= 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x > 5 AND x <= 5 AND y = 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x > 5 AND x <= 5 AND y = 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x >= 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x >= 0 AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE
+  (x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03') OR id = 4) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE
+  (x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03') OR id = 4) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE
+  NOT (x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03')) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE
+  NOT (x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03')) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND id AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND id AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0.1::DOUBLE AND 5.9::DOUBLE AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0.1::DOUBLE AND 5.9::DOUBLE AND y BETWEEN 0 AND 5
+  AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND 10 AND y BETWEEN 0 AND 10
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04'
+  AND curve(ROW(x, y, t), max_cells := 16) @@ ts_between(ROW(5, 5, TIMESTAMP '2026-01-03'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true)) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 10 AND y BETWEEN 0 AND 10
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04'
+  AND x = 5 AND y = 5 AND t = TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+statement ok
+PREPARE curve_range_query AS SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN $1::BIGINT AND $2::BIGINT
+  AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN $1::BIGINT AND $2::BIGINT
+  AND y BETWEEN 0 AND 5 AND t = TIMESTAMP '2026-01-03') AS equal;
+
+query
+EXECUTE curve_range_query(0, 5);
+----
+equal
+t
+
+query
+EXECUTE curve_range_query(5, 10);
+----
+equal
+t
+
+statement ok
+DEALLOCATE curve_range_query;
+
+statement ok
+CREATE INDEX curve_ranges_expr ON curve_ranges USING inverted(
+ id, (curve(ROW(x + 1, y * 2)))) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_ranges_multi ON curve_ranges USING inverted(
+ id, (curve(ROW(x, y))), (curve(ROW(y, t), kind := 'hilbert'))) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_ranges_dup ON curve_ranges USING inverted(
+ id, (curve(ROW(x, x)))) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_ranges_term ON curve_ranges USING inverted(
+ id, x, (curve(ROW(x, y)))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_ranges;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_expr WHERE x + 1 BETWEEN 1 AND 6 AND y * 2 BETWEEN 0 AND 10) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x + 1 BETWEEN 1 AND 6 AND y * 2 BETWEEN 0 AND 10) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_expr WHERE 1 + x BETWEEN 1 AND 6 AND y * 2 BETWEEN 0 AND 10) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE 1 + x BETWEEN 1 AND 6 AND y * 2 BETWEEN 0 AND 10) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_multi WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_multi WHERE y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE y BETWEEN 0 AND 5
+  AND t BETWEEN TIMESTAMP '2026-01-02' AND TIMESTAMP '2026-01-03') AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_dup WHERE x BETWEEN 0 AND 5) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 5) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_term WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 5 AND y BETWEEN 0 AND 5) AS equal;
+----
+equal
+t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_ranges_term WHERE x > 0 AND x < 10 AND y BETWEEN 0 AND 5) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x > 0 AND x < 10 AND y BETWEEN 0 AND 5) AS equal;
+----
+equal
+t
+
+statement ok
+DROP TABLE curve_ranges;
+
+statement ok
+CREATE TABLE curve_range_types(id INTEGER PRIMARY KEY, s SMALLINT, u UBIGINT, f FLOAT, d DATE, t TIMESTAMP, z TIMESTAMPTZ);
+
+statement ok
+INSERT INTO curve_range_types VALUES
+ (1, 1, 1, 1, '2026-01-01', '2026-01-01', '2026-01-01 00:00:00+00'),
+ (2, 2, 18446744073709551615::UBIGINT, 2, '2026-01-02', '2026-01-02', '2026-01-02 00:00:00+00'),
+ (3, NULL, NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+CREATE INDEX curve_range_types_idx ON curve_range_types USING inverted(
+ id, (curve(ROW(s, u, f, d, t, z)))) INCLUDE (s, u, f, d, t, z);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_range_types;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_range_types_idx WHERE s BETWEEN 1::BIGINT AND 2::SMALLINT
+  AND u BETWEEN 1::USMALLINT AND 18446744073709551615::UBIGINT AND f BETWEEN 1::DOUBLE AND 2::FLOAT
+  AND d BETWEEN DATE '2026-01-01' AND DATE '2026-01-02'
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-02'
+  AND z BETWEEN TIMESTAMPTZ '2026-01-01 00:00:00+00' AND TIMESTAMPTZ '2026-01-02 00:00:00+00') IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_range_types WHERE s BETWEEN 1::BIGINT AND 2::SMALLINT
+  AND u BETWEEN 1::USMALLINT AND 18446744073709551615::UBIGINT AND f BETWEEN 1::DOUBLE AND 2::FLOAT
+  AND d BETWEEN DATE '2026-01-01' AND DATE '2026-01-02'
+  AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-02'
+  AND z BETWEEN TIMESTAMPTZ '2026-01-01 00:00:00+00' AND TIMESTAMPTZ '2026-01-02 00:00:00+00') AS equal;
+----
+equal
+t
+
+statement ok
+DROP TABLE curve_range_types;

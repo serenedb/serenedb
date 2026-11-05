@@ -1,0 +1,490 @@
+control substitution on
+
+statement ok
+CREATE TABLE curve_strict_signed(id INTEGER PRIMARY KEY, a TINYINT, b SMALLINT, c INTEGER, d BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_signed VALUES
+ (1,-128,-32768,-2147483648,-9223372036854775808,0),
+ (2,-1,-1,-1,-1,0),
+ (3,0,0,0,0,0),
+ (4,1,1,1,1,0),
+ (5,127,32767,2147483647,9223372036854775807,0),
+ (6,NULL,NULL,NULL,NULL,0);
+
+statement ok
+CREATE INDEX curve_strict_signed_idx ON curve_strict_signed USING inverted(
+ id, (curve(ROW(a, y))), (curve(ROW(b, y))), (curve(ROW(c, y))), (curve(ROW(d, y)))) INCLUDE (a,b,c,d,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_signed;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed_idx WHERE a > -128::BIGINT AND a < 127::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed WHERE a > -128::BIGINT AND a < 127::BIGINT AND y = 0) AS tiny,
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed_idx WHERE b > -32768::BIGINT AND b < 32767::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed WHERE b > -32768::BIGINT AND b < 32767::BIGINT AND y = 0) AS small,
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed_idx WHERE c > -2147483648::BIGINT AND c < 2147483647::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed WHERE c > -2147483648::BIGINT AND c < 2147483647::BIGINT AND y = 0) AS integer,
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed_idx WHERE d > (-9223372036854775808)::BIGINT AND d < 9223372036854775807::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed WHERE d > (-9223372036854775808)::BIGINT AND d < 9223372036854775807::BIGINT AND y = 0) AS big;
+----
+tiny	small	integer	big
+t	t	t	t
+
+query
+SELECT
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE a > 127::BIGINT AND a <= 128::BIGINT AND y = 0) AS tiny_upper,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE a >= -129::BIGINT AND a < -128::BIGINT AND y = 0) AS tiny_lower,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE b > 32767::BIGINT AND b <= 32768::BIGINT AND y = 0) AS small_upper,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE b >= -32769::BIGINT AND b < -32768::BIGINT AND y = 0) AS small_lower,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE c > 2147483647::BIGINT AND c <= 2147483648::BIGINT AND y = 0) AS integer_upper,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE c >= -2147483649::BIGINT AND c < -2147483648::BIGINT AND y = 0) AS integer_lower,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE d > 9223372036854775807::BIGINT AND d <= 9223372036854775807::BIGINT AND y = 0) AS big_upper,
+ (SELECT count(*) FROM curve_strict_signed_idx WHERE d >= (-9223372036854775808)::BIGINT AND d < (-9223372036854775808)::BIGINT AND y = 0) AS big_lower;
+----
+tiny_upper	tiny_lower	small_upper	small_lower	integer_upper	integer_lower	big_upper	big_lower
+0	0	0	0	0	0	0	0
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed_idx WHERE -1::BIGINT < d AND 127::BIGINT > d AND d >= 0 AND d <= 1 AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_signed WHERE -1::BIGINT < d AND 127::BIGINT > d AND d >= 0 AND d <= 1 AND y = 0) AS equal;
+----
+equal
+t
+
+statement ok
+DROP TABLE curve_strict_signed;
+
+statement ok
+CREATE TABLE curve_strict_unsigned(id INTEGER PRIMARY KEY, a UTINYINT, b USMALLINT, c UINTEGER, d UBIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_unsigned VALUES
+ (1,0,0,0,0,0),
+ (2,1,1,1,1,0),
+ (3,255,65535,4294967295,18446744073709551615::UBIGINT,0),
+ (4,NULL,NULL,NULL,NULL,0);
+
+statement ok
+CREATE INDEX curve_strict_unsigned_idx ON curve_strict_unsigned USING inverted(
+ id, (curve(ROW(a, y))), (curve(ROW(b, y))), (curve(ROW(c, y))), (curve(ROW(d, y)))) INCLUDE (a,b,c,d,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_unsigned;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned_idx WHERE a > 0::UBIGINT AND a < 255::UBIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned WHERE a > 0::UBIGINT AND a < 255::UBIGINT AND y = 0) AS tiny,
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned_idx WHERE b > 0::UBIGINT AND b < 65535::UBIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned WHERE b > 0::UBIGINT AND b < 65535::UBIGINT AND y = 0) AS small,
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned_idx WHERE c > 0::UBIGINT AND c < 4294967295::UBIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned WHERE c > 0::UBIGINT AND c < 4294967295::UBIGINT AND y = 0) AS integer,
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned_idx WHERE d > 0::UBIGINT AND d < 18446744073709551615::UBIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_unsigned WHERE d > 0::UBIGINT AND d < 18446744073709551615::UBIGINT AND y = 0) AS big;
+----
+tiny	small	integer	big
+t	t	t	t
+
+query
+SELECT
+ (SELECT count(*) FROM curve_strict_unsigned_idx WHERE a > 255::UBIGINT AND a <= 256::UBIGINT AND y = 0) AS tiny_upper,
+ (SELECT count(*) FROM curve_strict_unsigned_idx WHERE b > 65535::UBIGINT AND b <= 65536::UBIGINT AND y = 0) AS small_upper,
+ (SELECT count(*) FROM curve_strict_unsigned_idx WHERE c > 4294967295::UBIGINT AND c <= 4294967296::UBIGINT AND y = 0) AS integer_upper,
+ (SELECT count(*) FROM curve_strict_unsigned_idx WHERE d > 18446744073709551615::UBIGINT AND d <= 18446744073709551615::UBIGINT AND y = 0) AS big_upper,
+ (SELECT count(*) FROM curve_strict_unsigned_idx WHERE d >= 0::UBIGINT AND d < 0::UBIGINT AND y = 0) AS lower;
+----
+tiny_upper	small_upper	integer_upper	big_upper	lower
+0	0	0	0	0
+
+statement ok
+DROP TABLE curve_strict_unsigned;
+
+statement ok
+CREATE TABLE curve_strict_time(id INTEGER PRIMARY KEY, d DATE, t TIMESTAMP, z TIMESTAMPTZ, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_time VALUES
+ (1,'-infinity','-infinity','-infinity',0),
+ (2,'2026-01-01','2026-01-01','2026-01-01 00:00:00+00',0),
+ (3,'2026-01-02','2026-01-01 00:00:00.000001','2026-01-01 00:00:00.000001+00',0),
+ (4,'infinity','infinity','infinity',0),
+ (5,NULL,NULL,NULL,0);
+
+statement ok
+INSERT INTO curve_strict_time VALUES
+ (6,NULL,make_timestamp((-9223372036854775808)::BIGINT),NULL,0);
+
+statement ok
+CREATE INDEX curve_strict_time_idx ON curve_strict_time USING inverted(
+ id, (curve(ROW(d, y))), (curve(ROW(t, y))), (curve(ROW(z, y)))) INCLUDE (d,t,z,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_time;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE d > DATE '-infinity' AND d < DATE 'infinity' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE d > DATE '-infinity' AND d < DATE 'infinity' AND y = 0) AS date,
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE t > TIMESTAMP '-infinity' AND t < TIMESTAMP 'infinity' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE t > TIMESTAMP '-infinity' AND t < TIMESTAMP 'infinity' AND y = 0) AS timestamp,
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE z > TIMESTAMPTZ '-infinity' AND z < TIMESTAMPTZ 'infinity' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE z > TIMESTAMPTZ '-infinity' AND z < TIMESTAMPTZ 'infinity' AND y = 0) AS timestamptz;
+----
+date	timestamp	timestamptz
+t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE d > DATE '2026-01-01' AND d <= DATE '2026-01-02' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE d > DATE '2026-01-01' AND d <= DATE '2026-01-02' AND y = 0) AS date,
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE t > TIMESTAMP '2026-01-01' AND t <= TIMESTAMP '2026-01-01 00:00:00.000001' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE t > TIMESTAMP '2026-01-01' AND t <= TIMESTAMP '2026-01-01 00:00:00.000001' AND y = 0) AS timestamp,
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE z > TIMESTAMPTZ '2026-01-01 00:00:00+00' AND z <= TIMESTAMPTZ '2026-01-01 00:00:00.000001+00' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE z > TIMESTAMPTZ '2026-01-01 00:00:00+00' AND z <= TIMESTAMPTZ '2026-01-01 00:00:00.000001+00' AND y = 0) AS timestamptz;
+----
+date	timestamp	timestamptz
+t	t	t
+
+query
+SELECT
+ (SELECT count(*) FROM curve_strict_time_idx WHERE d > DATE 'infinity' AND d <= DATE 'infinity' AND y = 0) AS date_upper,
+ (SELECT count(*) FROM curve_strict_time_idx WHERE d >= DATE '-infinity' AND d < DATE '-infinity' AND y = 0) AS date_lower,
+ (SELECT count(*) FROM curve_strict_time_idx WHERE t > TIMESTAMP 'infinity' AND t <= TIMESTAMP 'infinity' AND y = 0) AS timestamp_upper,
+ (SELECT count(*) FROM curve_strict_time_idx WHERE t >= TIMESTAMP '-infinity' AND t < TIMESTAMP '-infinity' AND y = 0) AS timestamp_lower,
+ (SELECT count(*) FROM curve_strict_time_idx WHERE z > TIMESTAMPTZ 'infinity' AND z <= TIMESTAMPTZ 'infinity' AND y = 0) AS timestamptz_upper,
+ (SELECT count(*) FROM curve_strict_time_idx WHERE z >= TIMESTAMPTZ '-infinity' AND z < TIMESTAMPTZ '-infinity' AND y = 0) AS timestamptz_lower;
+----
+date_upper	date_lower	timestamp_upper	timestamp_lower	timestamptz_upper	timestamptz_lower
+0	0	0	0	0	0
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_time_idx WHERE t >= make_timestamp((-9223372036854775808)::BIGINT) AND t < TIMESTAMP '-infinity' AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_time WHERE t >= make_timestamp((-9223372036854775808)::BIGINT) AND t < TIMESTAMP '-infinity' AND y = 0) AS timestamp;
+----
+timestamp
+t
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_strict_time_idx
+ WHERE t >= make_timestamp((-9223372036854775808)::BIGINT) AND t < TIMESTAMP '-infinity' AND y = 0;
+----
+ids
+{6}
+
+statement ok
+DROP TABLE curve_strict_time;
+
+statement ok
+CREATE TABLE curve_strict_float(id INTEGER PRIMARY KEY, f FLOAT, d DOUBLE, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_float VALUES
+ (1,'-Infinity','-Infinity',0),
+ (2,-3.4028234663852886e38,-1.7976931348623157e308,0),
+ (3,-1.401298464324817e-45,-4.9406564584124654e-324,0),
+ (4,-0.0,-0.0,0),
+ (5,0.0,0.0,0),
+ (6,1.401298464324817e-45,4.9406564584124654e-324,0),
+ (7,1,1,0),
+ (8,1.0000001192092896,1.0000000000000002,0),
+ (9,9007199254740992,9007199254740992,0),
+ (10,9007199254740994,9007199254740994,0),
+ (11,3.4028234663852886e38,1.7976931348623157e308,0),
+ (12,'Infinity','Infinity',0),
+ (13,'NaN','NaN',0),
+ (14,NULL,NULL,0);
+
+statement ok
+CREATE INDEX curve_strict_float_idx ON curve_strict_float USING inverted(
+ id, (curve(ROW(f, y))), (curve(ROW(d, y)))) INCLUDE (f,d,y);
+
+statement ok
+CREATE INDEX curve_strict_float_h ON curve_strict_float USING inverted(
+ id, (curve(ROW(f, y), kind := 'hilbert')), (curve(ROW(d, y), kind := 'hilbert'))) INCLUDE (f,d,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_float;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > -0.0::DOUBLE AND f <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > -0.0::DOUBLE AND f <= 'Infinity'::DOUBLE AND y = 0) AS float_positive,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d > -0.0::DOUBLE AND d <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > -0.0::DOUBLE AND d <= 'Infinity'::DOUBLE AND y = 0) AS double_positive,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f >= '-Infinity'::DOUBLE AND f < 0::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f >= '-Infinity'::DOUBLE AND f < 0::DOUBLE AND y = 0) AS float_negative,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d >= '-Infinity'::DOUBLE AND d < 0::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d >= '-Infinity'::DOUBLE AND d < 0::DOUBLE AND y = 0) AS double_negative;
+----
+float_positive	double_positive	float_negative	double_negative
+t	t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > 1::FLOAT AND f <= 1.0000001192092896::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 1::FLOAT AND f <= 1.0000001192092896::DOUBLE AND y = 0) AS float_adjacent,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d > 1::DOUBLE AND d <= 1.0000000000000002::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > 1::DOUBLE AND d <= 1.0000000000000002::DOUBLE AND y = 0) AS double_adjacent,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > 0 AND f < 2 AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 0 AND f < 2 AND y = 0) AS float_integer,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > 9007199254740993::BIGINT AND f <= 9007199254740994::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 9007199254740993::BIGINT AND f <= 9007199254740994::BIGINT AND y = 0) AS float_bigint,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d > 9007199254740993::BIGINT AND d <= 9007199254740994::BIGINT AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > 9007199254740993::BIGINT AND d <= 9007199254740994::BIGINT AND y = 0) AS double_integer;
+----
+float_adjacent	double_adjacent	float_integer	float_bigint	double_integer
+t	t	t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > 18446744073709551615::UBIGINT AND f <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 18446744073709551615::UBIGINT AND f <= 'Infinity'::DOUBLE AND y = 0) AS float_unsigned,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d > 18446744073709551615::UBIGINT AND d <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > 18446744073709551615::UBIGINT AND d <= 'Infinity'::DOUBLE AND y = 0) AS double_unsigned,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_h WHERE f >= '-Infinity'::DOUBLE AND f < -3.4028234663852886e38::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f >= '-Infinity'::DOUBLE AND f < -3.4028234663852886e38::DOUBLE AND y = 0) AS float_min,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_h WHERE d >= '-Infinity'::DOUBLE AND d < -1.7976931348623157e308::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d >= '-Infinity'::DOUBLE AND d < -1.7976931348623157e308::DOUBLE AND y = 0) AS double_min;
+----
+float_unsigned	double_unsigned	float_min	double_min
+t	t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > '-Infinity'::DOUBLE AND f < 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > '-Infinity'::DOUBLE AND f < 'Infinity'::DOUBLE AND y = 0) AS float_finite,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE d > '-Infinity'::DOUBLE AND d < 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > '-Infinity'::DOUBLE AND d < 'Infinity'::DOUBLE AND y = 0) AS double_finite,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_h WHERE f > 3.4028234663852886e38::DOUBLE AND f <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 3.4028234663852886e38::DOUBLE AND f <= 'Infinity'::DOUBLE AND y = 0) AS float_max,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_h WHERE d > 1.7976931348623157e308::DOUBLE AND d <= 'Infinity'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE d > 1.7976931348623157e308::DOUBLE AND d <= 'Infinity'::DOUBLE AND y = 0) AS double_max;
+----
+float_finite	double_finite	float_max	double_max
+t	t	t	t
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_strict_float_idx
+ WHERE d > 'Infinity'::DOUBLE AND d <= 'NaN'::DOUBLE AND y = 0;
+----
+ids
+{13}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_strict_float_idx
+ WHERE d >= 'Infinity'::DOUBLE AND d < 'NaN'::DOUBLE AND y = 0;
+----
+ids
+{12}
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f > 'Infinity'::DOUBLE AND f <= 'NaN'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f > 'Infinity'::DOUBLE AND f <= 'NaN'::DOUBLE AND y = 0) AS float_nan,
+ (SELECT list(id ORDER BY id) FROM curve_strict_float_idx WHERE f >= 'Infinity'::DOUBLE AND f < 'NaN'::DOUBLE AND y = 0) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_strict_float WHERE f >= 'Infinity'::DOUBLE AND f < 'NaN'::DOUBLE AND y = 0) AS float_infinity;
+----
+float_nan	float_infinity
+t	t
+
+query
+SELECT
+ (SELECT count(*) FROM curve_strict_float_idx WHERE f > 'NaN'::DOUBLE AND f <= 'NaN'::DOUBLE AND y = 0) AS float_upper,
+ (SELECT count(*) FROM curve_strict_float_idx WHERE f >= '-Infinity'::DOUBLE AND f < '-Infinity'::DOUBLE AND y = 0) AS float_lower,
+ (SELECT count(*) FROM curve_strict_float_idx WHERE d > 'NaN'::DOUBLE AND d <= 'NaN'::DOUBLE AND y = 0) AS double_upper,
+ (SELECT count(*) FROM curve_strict_float_idx WHERE d >= '-Infinity'::DOUBLE AND d < '-Infinity'::DOUBLE AND y = 0) AS double_lower;
+----
+float_upper	float_lower	double_upper	double_lower
+0	0	0	0
+
+statement ok
+DROP TABLE curve_strict_float;
+
+statement ok
+CREATE TABLE curve_strict_metrics(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_metrics SELECT i, i % 4, i // 4 FROM range(16) t(i);
+
+statement ok
+CREATE INDEX curve_strict_metrics_idx ON curve_strict_metrics USING inverted(
+ id, (curve(ROW(x, y)))) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_metrics;
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_strict_plain.json';
+
+query
+SELECT sum(id) AS total FROM curve_strict_metrics_idx WHERE x > 0 AND x < 2 AND y > 0 AND y < 2;
+----
+total
+5
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_strict_box.json';
+
+query
+SELECT sum(id) AS total FROM curve_strict_metrics_idx
+ WHERE curve(ROW(x, y)) @@ ts_between(ROW(0,0), ROW(2,2), false, false);
+----
+total
+5
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_strict_closed.json';
+
+query
+SELECT sum(id) AS total FROM curve_strict_metrics_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0,0), ROW(2,2), true, true);
+----
+total
+45
+
+statement ok
+RESET enable_profiling;
+
+query
+WITH strict AS (
+ SELECT max(CAST(j.atom AS BIGINT)) AS candidates
+ FROM read_text('${__TEST_DIR__}/curve_strict_plain.json') f, json_tree(f.content) j WHERE j.key='rows_scanned'),
+explicit AS (
+ SELECT max(CAST(j.atom AS BIGINT)) AS candidates
+ FROM read_text('${__TEST_DIR__}/curve_strict_box.json') f, json_tree(f.content) j WHERE j.key='rows_scanned'),
+closed AS (
+ SELECT max(CAST(j.atom AS BIGINT)) AS candidates
+ FROM read_text('${__TEST_DIR__}/curve_strict_closed.json') f, json_tree(f.content) j WHERE j.key='rows_scanned')
+SELECT strict.candidates AS strict_candidates, strict.candidates = explicit.candidates AS explicit_equal,
+ strict.candidates < closed.candidates AS stricter FROM strict, explicit, closed;
+----
+strict_candidates	explicit_equal	stricter
+1	t	t
+
+statement ok
+DROP TABLE curve_strict_metrics;
+
+statement ok
+CREATE TABLE curve_strict_narrow(id INTEGER PRIMARY KEY, x INTEGER, y SMALLINT);
+
+statement ok
+INSERT INTO curve_strict_narrow SELECT i, i % 4, i // 4 FROM range(16) t(i);
+
+statement ok
+CREATE INDEX curve_strict_narrow_idx ON curve_strict_narrow USING inverted(
+ id, (curve(ROW(x, y)))) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_narrow;
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_strict_narrow.json';
+
+query
+SELECT sum(id) AS total FROM curve_strict_narrow_idx
+ WHERE curve(ROW(x, y)) @@ ts_between(ROW(0,0), ROW(2,2), false, false);
+----
+total
+5
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT max(CAST(j.atom AS BIGINT)) AS candidates
+FROM read_text('${__TEST_DIR__}/curve_strict_narrow.json') f, json_tree(f.content) j WHERE j.key='rows_scanned';
+----
+candidates
+1
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x > 2147483647::BIGINT AND y >= 0) AS above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x < 1 AND x > -5000000000::BIGINT AND y < 1) AS below,
+ (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x >= 3 AND x <= 3000000000::BIGINT AND y > 2 AND y < 70000) AS clamped;
+----
+above	below	clamped
+NULL	{0}	{15}
+
+statement ok
+DROP TABLE curve_strict_narrow;
+
+statement ok
+CREATE TABLE curve_strict_lossy(id INTEGER PRIMARY KEY, x BIGINT, d DOUBLE, ip INET, y BIGINT);
+
+statement ok
+INSERT INTO curve_strict_lossy VALUES
+ (1, -2, -0.5, '10.0.0.1/24', 0),
+ (2, -1, 0.0, '10.0.0.1/32', 0),
+ (3, 0, 0.5, '10.0.0.2', 0),
+ (4, 9, 1.0, '::1', 0),
+ (5, 10, 1.5, '::2', 0),
+ (6, 11, 2.0, '::3', 0),
+ (7, 12, 'NaN', '2001:db8::1', 0);
+
+statement ok
+CREATE INDEX curve_strict_lossy_idx ON curve_strict_lossy USING inverted(id,
+ (curve(ROW(x, y), lower := ROW(0, 0), upper := ROW(10, 1))),
+ (curve(ROW(d, y), lower := ROW(0, 0), upper := ROW(1, 1))),
+ (curve(ROW(ip, y)))) INCLUDE (x, d, ip, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_strict_lossy;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(x, y), lower := ROW(0, 0), upper := ROW(10, 1))
+   @@ ts_between(ROW(10, NULL), ROW(NULL, NULL), false, true)) AS above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(x, y), lower := ROW(0, 0), upper := ROW(10, 1))
+   @@ ts_between(ROW(NULL, NULL), ROW(0, NULL), true, false)) AS below,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(d, y), lower := ROW(0, 0), upper := ROW(1, 1))
+   @@ ts_between(ROW(1, NULL), ROW(NULL, NULL), false, true)) AS double_above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(d, y), lower := ROW(0, 0), upper := ROW(1, 1))
+   @@ ts_between(ROW(NULL, NULL), ROW(0, NULL), true, false)) AS double_below;
+----
+above	below	double_above	double_below
+{6,7}	{1,2}	{5,6,7}	{1}
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE x > 10) AS above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE x < 0) AS below,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE d > 1) AS double_above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE d < 0) AS double_below;
+----
+above	below	double_above	double_below
+{6,7}	{1,2}	{5,6,7}	{1}
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(ip, y))
+   @@ ts_between(ROW('10.0.0.1/24'::INET, NULL), ROW(NULL, NULL), false, true)) AS mask,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(ip, y))
+   @@ ts_between(ROW('::1'::INET, NULL), ROW(NULL, NULL), false, true)) AS ipv6_above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy_idx WHERE curve(ROW(ip, y))
+   @@ ts_between(ROW(NULL, NULL), ROW('::3'::INET, NULL), true, false)) AS ipv6_below;
+----
+mask	ipv6_above	ipv6_below
+{2,3,4,5,6,7}	{5,6,7}	{1,2,3,4,5}
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE ip > '10.0.0.1/24'::INET) AS mask,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE ip > '::1'::INET) AS ipv6_above,
+ (SELECT list(id ORDER BY id) FROM curve_strict_lossy WHERE ip < '::3'::INET) AS ipv6_below;
+----
+mask	ipv6_above	ipv6_below
+{2,3,4,5,6,7}	{5,6,7}	{1,2,3,4,5}
+
+statement ok
+DROP TABLE curve_strict_lossy;

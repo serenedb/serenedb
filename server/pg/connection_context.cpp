@@ -188,9 +188,6 @@ void ConnectionContext::ApplyRoleSettings() {
     for (const std::string_view entry : *config) {
       const std::pair<std::string_view, std::string_view> setting =
         absl::StrSplit(entry, absl::MaxSplits('=', 1));
-      if (setting.second.empty()) {
-        continue;
-      }
       try {
         SetSettingChecked(setting.first, std::string{setting.second});
       } catch (const std::exception& exception) {

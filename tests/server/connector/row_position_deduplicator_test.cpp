@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <latch>
 #include <random>
 #include <span>
 #include <thread>
@@ -137,6 +138,36 @@ TEST(RowPositionDeduplicatorTest, ThreadsKeepEachPositionOnce) {
   }
   absl::c_sort(merged);
   EXPECT_EQ(merged, Ints(all));
+}
+
+TEST(RowPositionDeduplicatorTest, ThreadsRaceToAllocateTheSamePages) {
+  constexpr uint32_t kPages = 512;
+  constexpr irs::doc_id_t kPageDocs = 1 << 16;
+  const irs::doc_id_t docs[] = {kPages * kPageDocs};
+  RowPositionDeduplicator seen{docs};
+  std::vector<uint64_t> positions;
+  for (uint32_t page = 0; page != kPages; ++page) {
+    positions.push_back(MakeRowPosition(0, page * kPageDocs + 1));
+  }
+  constexpr size_t kThreads = 16;
+  std::latch start{kThreads};
+  std::vector<std::vector<int64_t>> kept(kThreads);
+  std::vector<std::thread> threads;
+  for (size_t t = 0; t != kThreads; ++t) {
+    threads.emplace_back([&, t] {
+      start.arrive_and_wait();
+      kept[t] = Kept(seen, positions);
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  std::vector<int64_t> merged;
+  for (const auto& part : kept) {
+    merged.insert(merged.end(), part.begin(), part.end());
+  }
+  absl::c_sort(merged);
+  EXPECT_EQ(merged, Ints(positions));
 }
 
 }  // namespace

@@ -51,6 +51,12 @@ SELECT count(*) AS n FROM curve_forms_idx WHERE x >= 0 AND x <= NULL::INTEGER AN
 n
 0
 
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x BETWEEN 1 AND 1 AND y::DOUBLE >= 0.5 AND y BETWEEN 0 AND 1;
+----
+ids
+{1,16,31,46}
+
 statement ok
 RESET disabled_optimizers;
 
@@ -208,12 +214,6 @@ ids
 
 query
 SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::HUGEINT <= 5000000000000000000000 AND x BETWEEN 1 AND 1 AND y = 1;
-----
-ids
-{1,16,31,46}
-
-query
-SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::DOUBLE >= 0.5 AND x BETWEEN 1 AND 1 AND y = 1;
 ----
 ids
 {1,16,31,46}

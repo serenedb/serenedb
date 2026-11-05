@@ -337,10 +337,14 @@ bool IsComparisonExpr(const duckdb::Expression& expr) {
          GetComparisonOp(expr.GetExpressionType()) != ComparisonOp::None;
 }
 
+bool IsCurveField(const SearchColumnInfo& info) {
+  return info.tokenizer.analyzer &&
+         info.tokenizer.analyzer->type() == irs::Type<CurveTokenizer>::id();
+}
+
 absl::Status RequireKeywordAnalyzed(const SearchColumnInfo& info,
                                     std::string_view hint) {
-  if (info.tokenizer.analyzer &&
-      info.tokenizer.analyzer->type() == irs::Type<CurveTokenizer>::id()) {
+  if (IsCurveField(info)) {
     return absl::InvalidArgumentError(
       "Curve terms require an exact scalar recheck");
   }
@@ -2244,9 +2248,7 @@ void FromTSQueryMatch(BoolTarget filter, const FilterContext& ctx,
                "index relation (FROM <index_name>). CREATE INDEX ... USING "
                "inverted(<col>) if none exists."));
   }
-  if (column_info->tokenizer.analyzer &&
-      column_info->tokenizer.analyzer->type() ==
-        irs::Type<CurveTokenizer>::id()) {
+  if (IsCurveField(*column_info)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("curve() @@ is supported only as a top-level AND condition"),

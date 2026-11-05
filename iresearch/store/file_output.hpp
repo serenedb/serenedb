@@ -39,13 +39,19 @@ struct PendingUploads {
 
 PendingUploads CurrentUploads() noexcept;
 
-class FileOutput final : public IndexOutput {
+class FileOutput final : public DataOutput {
  public:
-  static ptr Open(duckdb::FileSystem& fs, std::string_view root,
-                  std::string_view name, const FileObservers& observers,
-                  duckdb::BlockCache* cache);
+  static std::unique_ptr<FileOutput> Open(duckdb::FileSystem& fs,
+                                          std::string_view root,
+                                          std::string_view name,
+                                          const FileObservers& observers,
+                                          duckdb::BlockCache* cache);
 
-  ~FileOutput() final;
+  ~FileOutput();
+
+  uint32_t Checksum();
+
+  void Close();
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
@@ -53,8 +59,6 @@ class FileOutput final : public IndexOutput {
              duckdb::BlockCache* cache);
 
   void Flush();
-  uint32_t Checksum() final;
-  void CloseImpl() final;
   void Release() noexcept;
   void Overflow(const byte_type* data, size_t size) final;
   void SetWindow(duckdb::FileWriteWindow window) noexcept;

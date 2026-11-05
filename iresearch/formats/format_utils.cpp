@@ -43,7 +43,7 @@ namespace {
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
-void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
+void WriteFooterImpl(FileOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   duckdb::MemoryStream footer;
   duckdb::BinarySerializer serializer{footer};
@@ -130,9 +130,9 @@ Footer ReadFooterImpl(const File& file, std::string_view name,
 
 }  // namespace
 
-void WriteFooter(IndexOutput& out) { WriteFooterImpl(out, nullptr); }
+void WriteFooter(FileOutput& out) { WriteFooterImpl(out, nullptr); }
 
-void WriteFooter(IndexOutput& out, FooterWriter write) {
+void WriteFooter(FileOutput& out, FooterWriter write) {
   WriteFooterImpl(out, &write);
 }
 
@@ -149,7 +149,7 @@ Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read) {
   return ReadFooterImpl(BytesFile{.bytes = file}, name, &read);
 }
 
-void PrepareOutput(std::string& str, IndexOutput::ptr& out,
+void PrepareOutput(std::string& str, std::unique_ptr<FileOutput>& out,
                    const FlushState& state, std::string_view ext) {
   SDB_ASSERT(!out);
 

@@ -21,7 +21,6 @@
 #include "index_dir.hpp"
 
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <iresearch/store/file_output.hpp>
 
 namespace tests {
 
@@ -44,7 +43,7 @@ IndexDir::IndexDir(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                                    irs::StorageKindOf(root),
                                    std::make_shared<irs::IndexFileRefs>())} {}
 
-irs::IndexOutput::ptr IndexDir::Create(std::string_view name) const {
+std::unique_ptr<irs::FileOutput> IndexDir::Create(std::string_view name) const {
   return irs::FileOutput::Open(Fs(), Root(), name, _observers,
                                &duckdb::BlockCache::Get(Db()));
 }

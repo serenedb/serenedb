@@ -162,7 +162,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripMultiColumnMultiRowGroup) {
 }
 
 // VARCHAR with a mix of inline-short, overflow-long, and NULL strings across
-// multiple row-groups: exercises the IndexOutput overflow writer + reader.
+// multiple row-groups: exercises the overflow string writer + reader.
 TEST_F(ColumnReaderTest, SegmentRoundTripVarcharOverflow) {
   constexpr uint64_t kRows = 6000;
   constexpr uint32_t kRgSize = 4096;

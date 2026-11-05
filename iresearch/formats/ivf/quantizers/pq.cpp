@@ -178,7 +178,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     };
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
     for (size_t i = 0; i < n; ++i) {
@@ -193,7 +193,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(DataOutput& out) final {
     if (_lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -241,7 +241,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _coded = _lane;
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(DataOutput& out, size_t count) {
     CodePending();
     faiss::pq4_pack_codes(_codes_tile.data(), count, _pq.M, kFastScanBbs,
                           kFastScanBbs, FastScanNsq(_pq.M), _packed.data(),
@@ -798,7 +798,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
             .record_size = static_cast<uint32_t>(_pq.code_size)};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(DataOutput& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_trained);
     _codes.resize(n * _pq.code_size);
     EncodeRows(vecs, n, _codes.data());
@@ -826,7 +826,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     return _pq.dsub == 1 ? 1U : static_cast<uint32_t>(kPq8Ksub);
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(DataOutput& /*out*/) final {}
 
   void Serialize(DataOutput& out) const final {
     if (!_trained) {

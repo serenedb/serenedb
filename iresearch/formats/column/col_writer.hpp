@@ -38,7 +38,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_output.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -91,7 +91,7 @@ class ColWriter final {
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
-  IndexOutput& Out() const noexcept { return *_out; }
+  DataOutput& Out() const noexcept { return *_out; }
 
  private:
   struct AnnEntry {
@@ -116,7 +116,7 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  IndexOutput::ptr _out;
+  std::unique_ptr<FileOutput> _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;

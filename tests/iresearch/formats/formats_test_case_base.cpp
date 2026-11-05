@@ -402,7 +402,7 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
 
     // add invalid files
     {
-      irs::IndexOutput::ptr tmp;
+      std::unique_ptr<irs::FileOutput> tmp;
       tmp = dir->Create("dummy.file.1");
       ASSERT_FALSE(!tmp);
       tmp->Close();

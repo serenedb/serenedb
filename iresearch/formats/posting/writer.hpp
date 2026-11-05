@@ -33,6 +33,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -124,7 +125,7 @@ class BlockGroup {
     _data.insert(_data.end(), bytes, bytes + size);
   }
 
-  void Close(IndexOutput& out) {
+  void Close(DataOutput& out) {
     SDB_ASSERT(_blocks < PosGroup::kBlocks);
     SDB_ASSERT(_data.size() <= std::numeric_limits<uint16_t>::max());
     _ends[_blocks] = static_cast<uint16_t>(_data.size());
@@ -133,7 +134,7 @@ class BlockGroup {
     }
   }
 
-  void Flush(IndexOutput& out) {
+  void Flush(DataOutput& out) {
     SDB_ASSERT(_blocks != 0);
     byte_type header[PosGroup::kHeaderBytes];
     for (uint32_t i = 0; i != PosGroup::kBlocks; ++i) {
@@ -284,14 +285,14 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   BytesOutput _tail;
-  PostingMeta _last_state;    // Last final term state
-  bitset _docs;               // Set of all processed documents
-  IndexOutput::ptr _doc_out;  // Postings (doc + freq)
-  IndexOutput::ptr _pos_out;  // Positions
-  IndexOutput::ptr _pay_out;  // Payload (pay + offs)
-  DocBuffer _doc;             // Document stream
-  PosBuffer _pos;             // Proximity stream
-  PayBuffer _pay;             // Payloads and offsets stream
+  PostingMeta _last_state;               // Last final term state
+  bitset _docs;                          // Set of all processed documents
+  std::unique_ptr<FileOutput> _doc_out;  // Postings (doc + freq)
+  std::unique_ptr<FileOutput> _pos_out;  // Positions
+  std::unique_ptr<FileOutput> _pay_out;  // Payload (pay + offs)
+  DocBuffer _doc;                        // Document stream
+  PosBuffer _pos;                        // Proximity stream
+  PayBuffer _pay;                        // Payloads and offsets stream
   BlockGroup _pos_group;
   BlockGroup _pay_group;
   const NormProvider* _norms{};
@@ -509,7 +510,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
   }
 
   if (_features.HasPosition() && pos_limits::kBlockSize < meta.freq) {
-    const auto extent = [](const IndexOutput& out, uint64_t start,
+    const auto extent = [](const DataOutput& out, uint64_t start,
                            const BlockGroup& group, bool partial,
                            uint32_t blocks) {
       const uint64_t bytes =

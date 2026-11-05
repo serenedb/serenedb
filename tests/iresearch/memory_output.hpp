@@ -23,12 +23,10 @@
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iterator>
 #include <memory>
-#include <utility>
 
 namespace irs {
 
@@ -50,9 +48,9 @@ class MemoryFile {
   bstring _bytes;
 };
 
-class MemoryIndexOutput final : public IndexOutput {
+class MemoryFileOutput final : public DataOutput {
  public:
-  explicit MemoryIndexOutput(MemoryFile& file) noexcept : _file{file} {
+  explicit MemoryFileOutput(MemoryFile& file) noexcept : _file{file} {
     _begin = _pos = _buf;
     _end = std::end(_buf);
     _offset = file.Length();
@@ -63,14 +61,7 @@ class MemoryIndexOutput final : public IndexOutput {
     _pos = _begin;
   }
 
-  uint32_t Checksum() final {
-    Flush();
-    return std::exchange(_crc, Crc32c{}).checksum();
-  }
-
  private:
-  void CloseImpl() final { Flush(); }
-
   void Overflow(const byte_type* data, size_t size) final {
     Flush();
     Append(data, size);
@@ -81,20 +72,11 @@ class MemoryIndexOutput final : public IndexOutput {
       return;
     }
     _file.Append(data, size);
-    _crc.process_bytes(data, size);
     _offset += size;
   }
 
   byte_type _buf[64];
   MemoryFile& _file;
-  Crc32c _crc;
-};
-
-struct MemoryOutput {
-  explicit MemoryOutput(IResourceManager& rm) noexcept : file{rm} {}
-
-  MemoryFile file;
-  MemoryIndexOutput stream{file};
 };
 
 }  // namespace irs

@@ -59,7 +59,7 @@ inline Records ReadRecords(irs::IndexInput& in) {
   return {std::move(data), end};
 }
 
-inline void WriteRecord(irs::PostingsWriter& writer, irs::IndexOutput& out,
+inline void WriteRecord(irs::PostingsWriter& writer, irs::DataOutput& out,
                         const irs::PostingMeta& meta) {
   writer.Encode(out, meta);
   if (meta.inline_size != 0) {

@@ -145,7 +145,7 @@ TEST_P(DirectoryTestCase, rename) {
 }
 
 TEST_P(DirectoryTestCase, create_many_files) {
-  std::vector<IndexOutput::ptr> opened_files;
+  std::vector<std::unique_ptr<FileOutput>> opened_files;
   std::vector<std::string> names;
   constexpr size_t kCount = 2048;
   names.reserve(kCount);
@@ -4603,7 +4603,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
 
   // add a dummy files
   {
-    irs::IndexOutput::ptr tmp;
+    std::unique_ptr<irs::FileOutput> tmp;
     tmp = dir.Create("dummy.file.1");
     ASSERT_FALSE(!tmp);
     tmp->Close();
@@ -4619,7 +4619,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
 
   // add a more dummy files
   {
-    irs::IndexOutput::ptr tmp;
+    std::unique_ptr<irs::FileOutput> tmp;
     tmp = dir.Create("dummy.file.3");
     ASSERT_FALSE(!tmp);
     tmp->Close();
@@ -4634,7 +4634,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
   auto ref1 = refs.add("tracked.file.1");
   auto ref2 = refs.add("tracked.file.2");
   {
-    irs::IndexOutput::ptr tmp;
+    std::unique_ptr<irs::FileOutput> tmp;
     tmp = dir.Create("tracked.file.1");
     ASSERT_FALSE(!tmp);
     tmp->Close();

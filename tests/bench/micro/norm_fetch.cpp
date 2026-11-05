@@ -260,8 +260,9 @@ struct PackedColumn {
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::MemoryIndexOutput out{file};
-    irs::NormColumnWriter writer{1, kRgRows, out};
+    irs::MemoryFileOutput out{file};
+    irs::NormColumnWriter writer{1, kRgRows,
+                                 [&]() -> irs::DataOutput& { return out; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }

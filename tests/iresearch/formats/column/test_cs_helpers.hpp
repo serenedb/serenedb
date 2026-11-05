@@ -109,7 +109,7 @@ void AppendNullBlob(ColumnWriter& cw, doc_id_t doc);
 
 // DataOutput that appends bytes to an `irs::bstring`. Used by tests to
 // capture a field's serialised STORE bytes for forwarding to a cs blob
-// column. Replaces the legacy IndexOutput-into-stored-column shape.
+// column.
 class BstringDataOutput final : public DataOutput {
  public:
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}

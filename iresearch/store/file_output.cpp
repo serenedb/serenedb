@@ -45,10 +45,11 @@ PendingUploads CurrentUploads() noexcept {
           .bytes = gUploadingBytes.load(std::memory_order_relaxed)};
 }
 
-IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs, std::string_view root,
-                                  std::string_view name,
-                                  const FileObservers& observers,
-                                  duckdb::BlockCache* cache) {
+std::unique_ptr<FileOutput> FileOutput::Open(duckdb::FileSystem& fs,
+                                             std::string_view root,
+                                             std::string_view name,
+                                             const FileObservers& observers,
+                                             duckdb::BlockCache* cache) {
   for (auto* observer : observers) {
     observer->Created(name);
   }
@@ -60,8 +61,9 @@ IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs, std::string_view root,
   auto handle = fs.OpenFile(PathOf(root, name),
                             duckdb::FileFlags::FILE_FLAGS_WRITE |
                               duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  ptr output{new FileOutput{std::move(handle), observers,
-                            StorageKindOf(root) == StorageKind::Remote, cache}};
+  std::unique_ptr<FileOutput> output{
+    new FileOutput{std::move(handle), observers,
+                   StorageKindOf(root) == StorageKind::Remote, cache}};
   std::move(abandon).Cancel();
   return output;
 }
@@ -171,7 +173,10 @@ void FileOutput::Release() noexcept {
   }
 }
 
-void FileOutput::CloseImpl() {
+void FileOutput::Close() {
+  if (!_handle) {
+    return;
+  }
   const auto size = Position();
   absl::Cleanup release = [&] noexcept { Release(); };
   Flush();

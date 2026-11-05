@@ -67,7 +67,7 @@ struct LayerLayout {
   static size_t BodyStart(uint64_t position) {
     return static_cast<size_t>(position + (-position & (alignof(float) - 1)));
   }
-  static void PadBody(IndexOutput& out) {
+  static void PadBody(DataOutput& out) {
     for (auto pad = BodyStart(out.Position()) - out.Position(); pad != 0;
          --pad) {
       out.WriteByte(0);
@@ -400,7 +400,7 @@ std::vector<CentroidsNodeView> CentroidsNode::ReadLayer(
   return nodes;
 }
 
-void CentroidsNode::Serialize(IndexOutput& out) const {
+void CentroidsNode::Serialize(DataOutput& out) const {
   out.WriteU64(size);
   LayerLayout::PadBody(out);
   if (size != 0) {
@@ -421,7 +421,7 @@ IVFHeader IVFHeader::Deserialize(IndexInput& in) {
   return head;
 }
 
-void IVFHeader::Serialize(IndexOutput& out) const {
+void IVFHeader::Serialize(DataOutput& out) const {
   out.WriteByte(static_cast<byte_type>(metric));
   out.WriteU32(d);
 }
@@ -557,7 +557,7 @@ CentroidsBuilder CentroidsBuilder::CreateFromSample(
                          params.max_fanout);
 }
 
-CentroidsSpan CentroidsBuilder::Serialize(IndexOutput& out) const {
+CentroidsSpan CentroidsBuilder::Serialize(DataOutput& out) const {
   const IVFHeader head{.metric = _metric, .d = _d};
   const size_t offset = static_cast<size_t>(out.Position());
   size_t root_end = 0;

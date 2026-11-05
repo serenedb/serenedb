@@ -30,12 +30,12 @@
 
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class IndexOutput;
 class ColumnReader;
 class ReadContext;
 
@@ -44,7 +44,7 @@ struct IVFHeader {
   uint32_t d;
 
   static IVFHeader Deserialize(IndexInput& in);
-  void Serialize(IndexOutput& out) const;
+  void Serialize(DataOutput& out) const;
 };
 
 struct CentroidsNodeView {
@@ -78,7 +78,7 @@ struct CentroidsNode {
                                                 size_t d,
                                                 std::span<const size_t> starts,
                                                 std::span<const size_t> sizes);
-  void Serialize(IndexOutput& out) const;
+  void Serialize(DataOutput& out) const;
 
   static std::vector<CentroidsNodeView> ReadLayer(
     IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
@@ -215,7 +215,7 @@ class CentroidsBuilder {
     std::vector<float> sample, uint32_t d, VectorMetric metric,
     const CentroidsBuildParams& params = {});
 
-  CentroidsSpan Serialize(IndexOutput& out) const;
+  CentroidsSpan Serialize(DataOutput& out) const;
 
   AssignedCentroids AssignCentroids(
     std::span<float> data, size_t d,

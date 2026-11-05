@@ -30,7 +30,7 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/data_input.hpp>
-#include <iresearch/store/data_output.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/string.hpp>
@@ -47,7 +47,7 @@ class IndexDir {
   IndexDir(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
            std::string_view root);
 
-  irs::IndexOutput::ptr Create(std::string_view name) const;
+  std::unique_ptr<irs::FileOutput> Create(std::string_view name) const;
   std::unique_ptr<irs::InputFile> Open(std::string_view name,
                                        duckdb::MappedFileAccess access) const;
   irs::bstring ReadWhole(std::string_view name) const;

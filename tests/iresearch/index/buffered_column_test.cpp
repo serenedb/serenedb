@@ -501,8 +501,9 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   irs::MemoryFile written{irs::IResourceManager::gNoop};
   irs::NormColumnMeta meta;
   {
-    irs::MemoryIndexOutput out{written};
-    irs::NormColumnWriter writer{1, kRows, out};
+    irs::MemoryFileOutput out{written};
+    irs::NormColumnWriter writer{1, kRows,
+                                 [&]() -> irs::DataOutput& { return out; }};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }
@@ -522,7 +523,7 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   }
   irs::MemoryFile corrupt{irs::IResourceManager::gNoop};
   {
-    irs::MemoryIndexOutput out{corrupt};
+    irs::MemoryFileOutput out{corrupt};
     out.WriteData(bytes.data(), bytes.size());
     out.Flush();
   }

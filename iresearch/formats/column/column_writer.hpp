@@ -128,7 +128,7 @@ class ColumnWriter final {
                   duckdb::CompressionType forced, ColumnMeta& meta);
 
   WriteContext& WriteCtx() const noexcept;
-  IndexOutput& Out() const noexcept;
+  DataOutput& Out() const noexcept;
 
   ColWriter* _owner;
   field_id _id;

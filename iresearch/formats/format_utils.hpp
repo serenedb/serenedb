@@ -28,7 +28,7 @@
 
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/data_output.hpp"
+#include "iresearch/store/file_output.hpp"
 
 namespace irs::format_utils {
 
@@ -43,9 +43,9 @@ using FooterWriter = absl::FunctionRef<void(duckdb::BinarySerializer&)>;
 using FooterReader =
   absl::FunctionRef<void(duckdb::BinaryDeserializer&, uint64_t)>;
 
-void WriteFooter(IndexOutput& out);
+void WriteFooter(FileOutput& out);
 
-void WriteFooter(IndexOutput& out, FooterWriter write);
+void WriteFooter(FileOutput& out, FooterWriter write);
 
 Footer ReadFooter(const InputFile& file, std::string_view name);
 
@@ -54,7 +54,7 @@ Footer ReadFooter(const InputFile& file, std::string_view name,
 
 Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read);
 
-void PrepareOutput(std::string& str, IndexOutput::ptr& out,
+void PrepareOutput(std::string& str, std::unique_ptr<FileOutput>& out,
                    const FlushState& state, std::string_view ext);
 
 }  // namespace irs::format_utils

@@ -26,11 +26,10 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class IndexOutput;
 
 inline constexpr uint32_t kNormCodes = 16;
 inline constexpr uint32_t kNormDirect = kNormCodes - 1;
@@ -103,9 +102,7 @@ inline uint64_t NormTableSize(const NormRegionMeta& region) noexcept {
 
 class NormColumnWriter final {
  public:
-  using Open = std::function<IndexOutput&()>;
-
-  NormColumnWriter(field_id id, uint32_t row_group_size, IndexOutput& out);
+  using Open = std::function<DataOutput&()>;
 
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
@@ -142,7 +139,7 @@ class NormColumnWriter final {
   void End();
 
   field_id _id;
-  IndexOutput* _out = nullptr;
+  DataOutput* _out = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;

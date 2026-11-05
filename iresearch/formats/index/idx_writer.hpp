@@ -47,7 +47,7 @@ class IdxWriter final {
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
 
-  IndexOutput& BlocksOut();
+  DataOutput& BlocksOut();
 
   void AddIvf(field_id id, IvfCentroidMeta meta);
 

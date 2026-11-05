@@ -53,7 +53,7 @@ namespace {
 // CentroidsBuilder::Serialize does: nodes coarsest-first, each layer's
 // centroids followed by its child_offsets (size+1, absolute) unless it is the
 // leaf layer.
-uint64_t WriteTree(IndexOutput& out, VectorMetric metric, uint32_t d,
+uint64_t WriteTree(DataOutput& out, VectorMetric metric, uint32_t d,
                    std::span<const CentroidsNode> nodes) {
   const uint64_t offset = out.Position();
   IVFHeader{.metric = metric, .d = d}.Serialize(out);
@@ -158,7 +158,7 @@ size_t BuiltRootSize(const CentroidsBuilder& builder) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -189,7 +189,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -272,7 +272,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -313,7 +313,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -362,7 +362,7 @@ TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     offset = WriteTree(out, VectorMetric::L2Sqr, d, nodes);
     byte_size = out.Position() - offset;
     out.Flush();
@@ -451,7 +451,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -544,7 +544,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -628,7 +628,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -663,7 +663,7 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
     MemoryFile file{memory};
     CentroidsSpan span;
     {
-      MemoryIndexOutput out{file};
+      MemoryFileOutput out{file};
       out.WriteU64(0);
       span = builder.Serialize(out);
       out.WriteU64(0);
@@ -707,7 +707,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -915,7 +915,7 @@ TEST(centroids_node_test, beam_escapes_greedy_trap) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     offset = WriteTree(out, VectorMetric::L2Sqr, d, nodes);
     byte_size = out.Position() - offset;
     out.Flush();
@@ -981,7 +981,7 @@ TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     offset = WriteTree(out, VectorMetric::L2Sqr, d, nodes);
     byte_size = out.Position() - offset;
     out.Flush();
@@ -1022,7 +1022,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -1249,7 +1249,7 @@ TEST(centroids_builder_test,
   uint64_t offset;
   uint64_t byte_size;
   {
-    MemoryIndexOutput out{file};
+    MemoryFileOutput out{file};
     const auto span = builder.Serialize(out);
     offset = span.offset;
     byte_size = span.root_byte_size;
@@ -1312,7 +1312,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
     uint64_t offset;
     uint64_t byte_size;
     {
-      MemoryIndexOutput out{file};
+      MemoryFileOutput out{file};
       const auto span = builder.Serialize(out);
       offset = span.offset;
       byte_size = span.root_byte_size;

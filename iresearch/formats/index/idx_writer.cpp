@@ -50,7 +50,7 @@ struct IdxWriter::Impl {
   std::string root;
   FileObservers observers;
   std::string filename;
-  IndexOutput::ptr out;
+  std::unique_ptr<FileOutput> out;
   std::vector<IvfCentroidEntry> ivf_entries;
   std::vector<HnswEntry> hnsw_entries;
   term_dict::TermsMeta terms;
@@ -77,7 +77,7 @@ void IdxWriter::EnsureOut() {
                      &duckdb::BlockCache::Get(_impl->db));
 }
 
-IndexOutput& IdxWriter::BlocksOut() {
+DataOutput& IdxWriter::BlocksOut() {
   EnsureOut();
   return *_impl->out;
 }

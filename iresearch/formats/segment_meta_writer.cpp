@@ -37,7 +37,7 @@
 namespace irs::segment_meta {
 namespace {
 
-void WriteDocumentMask(IndexOutput& out, const DocumentMask& mask,
+void WriteDocumentMask(DataOutput& out, const DocumentMask& mask,
                        uint64_t size) {
   if (auto* buf = out.Reserve(size); buf != nullptr) {
     mask.WriteFrozen(reinterpret_cast<char*>(buf));

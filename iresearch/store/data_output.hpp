@@ -25,8 +25,6 @@
 #include <absl/base/internal/endian.h>
 
 #include <cstring>
-#include <memory>
-#include <utility>
 
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -115,30 +113,6 @@ class DataOutput {
   }
 
   virtual void Overflow(const byte_type* data, size_t size) = 0;
-};
-
-class IndexOutput : public DataOutput {
- public:
-  using ptr = std::unique_ptr<IndexOutput>;
-
-  virtual ~IndexOutput() = default;
-
-  // Flush and compute checksum output
-  // TODO(mbkkt) maybe int64_t?
-  virtual uint32_t Checksum() = 0;
-
-  // Flush and close output
-  void Close() {
-    if (std::exchange(_closed, true)) {
-      return;
-    }
-    CloseImpl();
-  }
-
- private:
-  virtual void CloseImpl() = 0;
-
-  bool _closed = false;
 };
 
 }  // namespace irs

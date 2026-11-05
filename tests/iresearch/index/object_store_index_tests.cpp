@@ -643,7 +643,7 @@ const irs::bstring& Chunk() {
   return chunk;
 }
 
-void WriteValues(irs::IndexOutput& out, uint64_t from, uint64_t to) {
+void WriteValues(irs::DataOutput& out, uint64_t from, uint64_t to) {
   for (uint64_t i = from; i != to; ++i) {
     out.WriteV64(i * 2654435761);
     out.WriteU32(static_cast<uint32_t>(i));

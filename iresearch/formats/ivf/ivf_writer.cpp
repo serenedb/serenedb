@@ -320,7 +320,7 @@ TermOnlyIterator::ptr IvfTermReader::iterator() const {
   return memory::to_managed<TermOnlyIterator>(*_it);
 }
 
-void IvfTermReader::WriteTermPayload(IndexOutput& out,
+void IvfTermReader::WriteTermPayload(DataOutput& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
   const size_t cluster = _term_idx++;
@@ -353,7 +353,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   }
 }
 
-void IvfTermReader::Finish(IndexOutput& out) {
+void IvfTermReader::Finish(DataOutput& out) {
   SDB_ASSERT(_qw);
   _qw->Finish(out);
 }

@@ -493,7 +493,7 @@ class BlockIndexWriter {
 
   uint32_t* Root() noexcept { return _root; }
 
-  void Write(IndexOutput& out, BlockIndexShape shape) const {
+  void Write(DataOutput& out, BlockIndexShape shape) const {
     const auto n = Size();
     SDB_ASSERT(n != 0);
     const auto m = n - 1;

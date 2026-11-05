@@ -942,6 +942,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     std::vector<std::pair<int64_t, irs::doc_id_t>> heavy;
     std::vector<std::pair<int64_t, irs::doc_id_t>> mixed;
     std::vector<std::pair<int64_t, irs::doc_id_t>> multi;
+    std::vector<std::pair<int64_t, irs::doc_id_t>> medium;
     for (irs::doc_id_t doc = 1; doc <= 50000; ++doc) {
       sequential.emplace_back(int64_t{doc} * 3, doc);
       scattered.emplace_back(
@@ -959,6 +960,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       for (uint32_t n = 1 + rng() % 3; n != 0; --n) {
         multi.emplace_back(rng() % 3000, doc);
       }
+    }
+    for (irs::doc_id_t doc = 1; doc <= 80000; ++doc) {
+      medium.emplace_back(int64_t{doc % 20}, doc);
     }
     const Field fields[]{
       {.id = 1,
@@ -979,6 +983,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       {.id = 6,
        .entries = NumericEntries(multi),
        .dict = irs::NumericLayout::kNumbers},
+      {.id = 7,
+       .entries = NumericEntries(medium),
+       .dict = irs::NumericLayout::kNumbers},
     };
     Write(fields, compaction);
     for (const auto& field : fields) {
@@ -987,7 +994,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       ASSERT_NE(nullptr, reader);
       AssertField(*reader, field.entries);
       AssertLevels(*reader, field.entries);
-      AssertVisits(*reader, field.entries, field.id == 4 ? 100 : 10000);
+      AssertVisits(*reader, field.entries,
+                   field.id == 4 || field.id == 7 ? 100 : 10000);
     }
     const auto height = [&](irs::field_id id) {
       return Blocks(*Get(id, irs::NumericLayout::kNumbers))
@@ -995,7 +1003,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
         .size();
     };
     ASSERT_EQ(4, height(1));
-    ASSERT_EQ(1, height(4));
+    ASSERT_EQ(0, height(4));
+    ASSERT_LT(0, height(7));
   }
 
   void AssertOrdinal(std::span<const Field> fields, size_t ordinal,

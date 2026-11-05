@@ -88,8 +88,8 @@ constexpr Shape kShapes[]{
    }},
 };
 
-constexpr std::string_view kWideShapes[]{"dense", "random", "values10k",
-                                         "skewed", "random10k"};
+constexpr std::string_view kWideShapes[]{"dense",     "random", "values100",
+                                         "values10k", "skewed", "random10k"};
 
 const Shape& ShapeNamed(std::string_view name) {
   return *absl::c_find_if(
@@ -239,7 +239,8 @@ class TermsIterator : public irs::TermOnlyIterator {
 
 class TermsReader final : public irs::BasicTermReader {
  public:
-  TermsReader(const Terms& terms, Ladder ladder) noexcept : _terms{&terms} {
+  TermsReader(const Terms& terms, Ladder ladder, bool ranges) noexcept
+    : _terms{&terms}, _ranges{ranges} {
     key_width = ladder == Ladder::Adaptive
                   ? static_cast<uint32_t>(terms.keys.front().size())
                   : 0;
@@ -251,14 +252,16 @@ class TermsReader final : public irs::BasicTermReader {
   }
   irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final {
-    return {.index_features = irs::IndexFeatures::Ranges};
+    return {.index_features =
+              _ranges ? irs::IndexFeatures::Ranges : irs::IndexFeatures::None};
   }
 
  private:
   const Terms* _terms;
+  bool _ranges;
 };
 
-void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
+void Write(irs::Directory& dir, const Terms& terms, Ladder ladder, bool ranges,
            uint64_t rows) {
   const irs::FlushState state{
     .dir = &dir,
@@ -269,21 +272,35 @@ void Write(irs::Directory& dir, const Terms& terms, Ladder ladder,
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
-  writer.write(irs::NumericLayout::kNumbers, TermsReader{terms, ladder});
+  writer.write(irs::NumericLayout::kNumbers,
+               TermsReader{terms, ladder, ranges});
   writer.end();
   idx.Commit();
 }
 
-uint64_t DirectoryBytes(const irs::Directory& dir) {
-  uint64_t total = 0;
+struct Bytes {
+  uint64_t docs = 0;
+  uint64_t dict = 0;
+
+  uint64_t Total() const noexcept { return docs + dict; }
+};
+
+Bytes BytesOf(const irs::Directory& dir) {
+  Bytes bytes;
   dir.visit([&](std::string_view name) {
     uint64_t size = 0;
     if (dir.length(size, name)) {
-      total += size;
+      (name.ends_with(".doc") ? bytes.docs : bytes.dict) += size;
     }
     return true;
   });
-  return total;
+  return bytes;
+}
+
+void CountBytes(benchmark::State& state, const Bytes& bytes) {
+  state.counters["bytes"] = static_cast<double>(bytes.Total());
+  state.counters["doc_bytes"] = static_cast<double>(bytes.docs);
+  state.counters["dict_bytes"] = static_cast<double>(bytes.dict);
 }
 
 template<typename Visit>
@@ -475,7 +492,7 @@ void Prepare(Data& data, const Shape& shape,
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.dir = std::make_unique<irs::MMapDirectory>(path);
-  Write(*data.dir, data.terms, data.ladder, data.rows);
+  Write(*data.dir, data.terms, data.ladder, true, data.rows);
   static const irs::SegmentMeta kMeta{[] {
     irs::SegmentMeta meta;
     meta.name = "segment";
@@ -579,15 +596,20 @@ void Build(benchmark::State& state, const Shape& shape, Ladder ladder) {
   }
   for (auto _ : state) {
     irs::MemoryDirectory dir;
-    Write(dir, data.terms, ladder, data.rows);
+    Write(dir, data.terms, ladder, true, data.rows);
     benchmark::DoNotOptimize(dir);
   }
   irs::MemoryDirectory dir;
-  Write(dir, data.terms, ladder, data.rows);
+  Write(dir, data.terms, ladder, true, data.rows);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * data.rows));
   state.counters["terms"] = static_cast<double>(data.terms.keys.size());
   state.counters["postings"] = static_cast<double>(data.terms.docs.size());
-  state.counters["bytes"] = static_cast<double>(DirectoryBytes(dir));
+  const auto bytes = BytesOf(dir);
+  CountBytes(state, bytes);
+  irs::MemoryDirectory plain;
+  Write(plain, data.terms, ladder, false, data.rows);
+  state.counters["range_bytes"] = static_cast<double>(bytes.Total()) -
+                                  static_cast<double>(BytesOf(plain).Total());
   state.counters["levels"] = Levels(data);
   state.SetLabel(absl::StrJoin(data.shifts, ","));
 }
@@ -694,7 +716,7 @@ void Wide(benchmark::State& state, const Shape& shape, Ladder ladder,
     static_cast<double>(state.iterations()) * per_query,
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
   state.counters["levels"] = Levels(data);
-  state.counters["bytes"] = static_cast<double>(DirectoryBytes(*data.dir));
+  CountBytes(state, BytesOf(*data.dir));
   state.SetLabel(absl::StrJoin(data.shifts, ","));
 }
 

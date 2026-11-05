@@ -472,7 +472,7 @@ struct RowGroupCheck {
   const irs::ColumnReader* reader;
   const duckdb::ExpressionFilter* filter;
   duckdb::TableFilterState* state;
-  irs::BlockWindow window;
+  mutable irs::BlockWindow window;
 };
 
 void LiveRowGroups(const irs::ColReader& col_reader,
@@ -499,7 +499,7 @@ void LiveRowGroups(const irs::ColReader& col_reader,
   const auto live = [&](uint32_t rg) {
     const auto begin = uint64_t{rg} * rg_size;
     const auto end = std::min(rows, begin + rg_size);
-    return absl::c_none_of(checks, [&](RowGroupCheck& c) {
+    return absl::c_none_of(checks, [&](const RowGroupCheck& c) {
       return RowGroupDead(*c.reader, *c.filter, *c.state, c.window, begin, end);
     });
   };

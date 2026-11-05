@@ -32,7 +32,7 @@
 #include <limits>
 
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -154,7 +154,8 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
   SDB_ASSERT(!out);
 
   FileName(str, state.name, ext);
-  out = state.dir->Create(str);
+  out =
+    FileOutput::Open(*state.fs, state.root, str, *state.observers, state.cache);
 }
 
 }  // namespace irs::format_utils

@@ -58,7 +58,8 @@
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
@@ -79,13 +80,14 @@ const ProgressReportCallback kNoProgress =
     // intentionally do nothing
   };
 
-void CompactFiles(const Directory& dir, const SegmentMeta& meta) {
+void CompactFiles(duckdb::FileSystem& fs, std::string_view root,
+                  const SegmentMeta& meta) {
   for (const auto& file : meta.files) {
     try {
       SDB_IF_FAILURE("IndexWriter::CompactOutOfMemory") {
         throw duckdb::OutOfMemoryException("intentional debug error");
       }
-      dir.Compact(file);
+      fs.Compact(PathOf(root, file));
     } catch (const duckdb::OutOfMemoryException& e) {
       SDB_DEBUG(IRESEARCH, "Keeping '", file,
                 "' in blocks: ", duckdb::ErrorData{e}.RawMessage());
@@ -220,9 +222,9 @@ WriterRoots& GetWriterRoots() {
   return writers;
 }
 
-uint64_t MaxSegmentId(const Directory& dir) {
+uint64_t MaxSegmentId(duckdb::FileSystem& fs, std::string_view root) {
   uint64_t max_id = 0;
-  dir.Visit([&max_id](std::string_view name) {
+  ListIndexFiles(fs, root, [&max_id](std::string_view name) {
     if (uint64_t id = 0; ParseSegmentId(name, id)) {
       max_id = std::max(max_id, id);
     }
@@ -321,7 +323,9 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
                              const CompactingSegments& segment_mask,
                              uint64_t all_tick,
                              std::span<DocumentMaskBuilder> removed,
-                             const Directory& dir,
+                             duckdb::FileSystem& fs, std::string_view root,
+                             const FileObservers& observers,
+                             IndexFileRefs& refs,
                              const ProgressReportCallback& progress) {
   const auto& committed_meta = committed_reader.Meta();
   const size_t committed_reader_size = committed_reader.size();
@@ -363,8 +367,8 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
       std::make_shared<const DocumentMask>(std::move(docs_mask).Finish());
 
     // Write with new mask
-    index_utils::FlushIndexSegment(dir, segment, true);
-    auto reader = existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
+    index_utils::FlushIndexSegment(fs, root, observers, segment, true);
+    auto reader = existing_segment.GetImpl()->UpdateMeta(refs, segment.meta);
 
     result.segments.emplace_back(std::move(segment),
                                  SegmentReader{std::move(reader)}, Sync::Meta);
@@ -374,7 +378,8 @@ PublishResult UpdateExisting(const DirectoryReaderImpl& committed_reader,
 
 PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
                           std::span<DocumentMaskBuilder> removed,
-                          const Directory& dir,
+                          duckdb::FileSystem& fs, std::string_view root,
+                          const FileObservers& observers, IndexFileRefs& refs,
                           const ProgressReportCallback& progress) {
   size_t current_incoming_index = 0;
 
@@ -413,11 +418,12 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
 
     const bool unwritten = incoming.segment.filename.empty();
     if (docs_mask_modified || unwritten) {
-      index_utils::FlushIndexSegment(dir, incoming.segment, !unwritten);
+      index_utils::FlushIndexSegment(fs, root, observers, incoming.segment,
+                                     !unwritten);
     }
 
     if (docs_mask_modified) {
-      reader = reader->UpdateMeta(dir, meta);
+      reader = reader->UpdateMeta(refs, meta);
     }
 
     result.segments.emplace_back(
@@ -430,7 +436,8 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
 
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  const Directory& dir, const IndexReaderOptions& reader_options,
+  duckdb::FileSystem& fs, std::string_view root,
+  const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
   size_t total_flushed_segments = 0;
@@ -460,7 +467,8 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       SDB_ASSERT(flushed.meta.live_docs_count <= flushed.meta.docs_count);
       SDB_ASSERT(!flushed.meta.docs_mask);
 
-      auto reader = SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
+      auto reader =
+        SegmentReaderImpl::Open(fs, root, flushed.meta, reader_options);
       SDB_ASSERT(reader);
 
       segment_ctxs.emplace_back(std::move(reader), flushed);
@@ -628,7 +636,9 @@ uint64_t ResolveRemovals(
 }
 
 PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
-                             const Directory& dir,
+                             duckdb::FileSystem& fs, std::string_view root,
+                             const FileObservers& observers,
+                             IndexFileRefs& refs,
                              const ProgressReportCallback& progress) {
   PublishResult result;
   // write docs_mask if !empty(), if all docs are masked then remove segment
@@ -650,11 +660,11 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
         std::make_shared<const DocumentMask>(std::move(document_mask).Finish());
     }
     if (need_flush || !segment_ctx.flushed.meta_on_disk) {
-      index_utils::FlushIndexSegment(dir, new_segment, false);
+      index_utils::FlushIndexSegment(fs, root, observers, new_segment, false);
     }
     if (need_flush) {
       segment_ctx.reader =
-        segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
+        segment_ctx.reader->UpdateMeta(refs, new_segment.meta);
     }
     result.segments.emplace_back(
       std::move(new_segment), SegmentReader{std::move(segment_ctx.reader)},
@@ -756,12 +766,13 @@ IndexWriter::Transaction::FlushAndFsync() {
     SDB_ASSERT(!entry.meta_on_disk,
                "FlushAndFsync called twice on one transaction");
     SDB_ASSERT(!entry.meta.files.empty());
-    index_utils::FlushIndexSegment(segment->dir, entry, false);
+    index_utils::FlushIndexSegment(segment->fs, segment->root,
+                                   FileObservers{&segment->refs}, entry, false);
     files.insert(files.end(), entry.meta.files.begin(), entry.meta.files.end());
     files.emplace_back(entry.filename);
   }
-  segment->dir.Sync(files);
-  segment->dir.SyncDirectory();
+  SyncFiles(segment->fs, segment->root, files);
+  SyncDirectory(segment->fs, segment->root);
   for (auto& entry : flushed) {
     entry.meta_on_disk = true;
   }
@@ -775,20 +786,21 @@ void IndexWriter::Transaction::Remove(KeyRemoval removal) {
 }
 
 void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
-  auto& dir = _writer->_dir;
+  auto& fs = _writer->_fs;
+  const auto& root = _writer->_root;
   IndexSegment segment;
   segment.filename = meta_file;
-  segment_meta::Read(dir, segment.meta, meta_file);
+  segment_meta::Read(fs, root, segment.meta, meta_file);
   if (segment.meta.live_docs_count == 0) {
     return;
   }
-  auto meta_ref = Reference(dir, segment.filename);
+  auto meta_ref = Reference(fs, root, *_writer->_refs, segment.filename);
   if (!meta_ref) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                     ERR_MSG("cannot adopt segment meta '", segment.filename,
                             "': it does not exist"));
   }
-  auto reader = SegmentReaderImpl::Open(dir, segment.meta,
+  auto reader = SegmentReaderImpl::Open(fs, root, segment.meta,
                                         _writer->GetSnapshotImpl()->Options());
   [[maybe_unused]] uint64_t id = 0;
   SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
@@ -1037,13 +1049,16 @@ void IndexWriter::FlushContext::FlushPending() {
 }
 
 IndexWriter::SegmentContext::SegmentContext(
-  const Directory& dir, segment_meta_generator_t&& meta_generator,
+  duckdb::FileSystem& fs, std::string_view root, IndexFileRefs& file_refs,
+  segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
-  : dir{dir.Observed(refs)},
+  : refs{file_refs},
+    fs{fs},
+    root{root},
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
     meta_generator{std::move(meta_generator)},
-    writer{SegmentWriter::make(this->dir, options)} {
+    writer{SegmentWriter::make(fs, root, FileObservers{&refs}, options)} {
   SDB_ASSERT(this->meta_generator);
 }
 
@@ -1074,7 +1089,7 @@ void IndexWriter::SegmentContext::Flush() {
     return;
   }
   SDB_ASSERT(!writer_meta.meta.files.empty());
-  CompactFiles(dir, writer_meta.meta);
+  CompactFiles(fs, root, writer_meta.meta);
   auto& docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
@@ -1085,10 +1100,11 @@ void IndexWriter::SegmentContext::Flush() {
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
-  const Directory& dir, segment_meta_generator_t&& meta_generator,
+  duckdb::FileSystem& fs, std::string_view root, IndexFileRefs& file_refs,
+  segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& segment_writer_options) {
-  return std::make_unique<SegmentContext>(dir, std::move(meta_generator),
-                                          segment_writer_options);
+  return std::make_unique<SegmentContext>(
+    fs, root, file_refs, std::move(meta_generator), segment_writer_options);
 }
 
 void IndexWriter::SegmentContext::Prepare() {
@@ -1211,18 +1227,21 @@ void IndexWriter::RootRelease::operator()(
 }
 
 IndexWriter::IndexWriter(
-  ConstructToken, const Directory& dir, RootClaim root_claim,
-  size_t segment_pool_size, const SegmentOptions& segment_limits,
-  MetaPayloadWriter&& meta_payload_writer,
+  ConstructToken, duckdb::FileSystem& fs, std::string_view root,
+  RootClaim root_claim, size_t segment_pool_size,
+  const SegmentOptions& segment_limits, MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _dir{dir},
+  : _fs{fs},
+    _root{root},
+    _refs{committed_reader->Options().refs},
     _committed_reader{std::move(committed_reader)},
     _segment_limits{segment_limits},
     _segment_writer_pool{segment_pool_size},
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{std::move(meta_payload_writer)},
-    _root_claim{std::move(root_claim)} {
+    _root_claim{std::move(root_claim)},
+    _flush_contexts{{FlushContext{*_refs}, FlushContext{*_refs}}} {
   _topk_scorer = _committed_reader->Options().scorer;
   if (_topk_scorer) {
     _score_bound_features |= _topk_scorer->GetIndexFeatures();
@@ -1279,67 +1298,73 @@ void IndexWriter::Clear(const SourcePosition& position) {
   _compacting.segments.clear();
 }
 
-IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
+IndexWriter::ptr IndexWriter::Make(duckdb::FileSystem& fs,
+                                   std::string_view root, OpenMode mode,
                                    IndexWriterOptions options) {
   SDB_ENSURE(options.db != nullptr,
              "IndexWriterOptions::db must be set; iresearch indexes require a "
              "duckdb::DatabaseInstance");
+  if (!options.reader_options.db) {
+    options.reader_options.db = options.db;
+  }
+  if (!options.reader_options.refs) {
+    options.reader_options.refs = std::make_shared<IndexFileRefs>();
+  }
 
   RootClaim root_claim;
   if (options.lock_repository) {
-    auto root = std::make_unique<const std::string>(dir.Root());
+    auto claim = std::make_unique<const std::string>(PathOf(root, {}));
     auto& writers = GetWriterRoots();
     absl::MutexLock lock{&writers.mutex};
-    if (!writers.roots.emplace(*root).second) {
+    if (!writers.roots.emplace(*claim).second) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_LOCK_NOT_AVAILABLE),
-                      ERR_MSG("the index at '", dir.Root(),
+                      ERR_MSG("the index at '", *claim,
                               "' already has a writer in this process"));
     }
-    root_claim.reset(root.release());
+    root_claim.reset(claim.release());
   }
 
   // read from directory or create index metadata
   DirectoryMeta meta;
 
   {
-    auto last = index_meta::LastFile(dir);
+    auto last = index_meta::LastFile(fs, root);
     if (kOmCreate == mode || ((kOmCreate | kOmAppend) == mode && !last)) {
       if (last) {
         meta.index_meta.gen = index_meta::ParseGeneration(*last);
-        meta.index_meta.seg_counter = MaxSegmentId(dir);
+        meta.index_meta.seg_counter = MaxSegmentId(fs, root);
       }
     } else if (!last) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                       ERR_MSG("the directory holds no index to open"));
     } else {
       meta.filename = std::move(*last);
-      index_meta::Read(dir, meta.index_meta, meta.filename,
+      index_meta::Read(*options.db, fs, root, meta.index_meta, meta.filename,
                        std::move(options.meta_payload_reader));
     }
   }
 
   auto hnsw_bases = std::make_unique<HnswBases>();
   options.reader_options.hnsw_bases = hnsw_bases.get();
-  auto reader = [](const Directory& dir, DirectoryMeta&& meta,
-                   const IndexReaderOptions& opts) {
+  auto reader = [&](DirectoryMeta&& meta, const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
 
     std::vector<SegmentReader> readers(segments.size());
-    ForEach(dir, segments.size(), [&](size_t i) {
+    ForEach(*opts.db, root, segments.size(), [&](size_t i) {
       // Segment reader holds refs to all segment files
-      readers[i] =
-        SegmentReader{SegmentReaderImpl::Open(dir, segments[i].meta, opts)};
+      readers[i] = SegmentReader{
+        SegmentReaderImpl::Open(fs, root, segments[i].meta, opts)};
       SDB_ASSERT(readers[i]);
     });
 
     return std::make_shared<const DirectoryReaderImpl>(
-      dir, opts, std::move(meta), std::move(readers));
-  }(dir, std::move(meta), options.reader_options);
+      fs, root, opts, std::move(meta), std::move(readers));
+  }(std::move(meta), options.reader_options);
 
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, dir, std::move(root_claim), options.segment_pool_size,
-    SegmentOptions{options}, std::move(options.meta_payload_writer),
-    std::move(reader));
+    ConstructToken{}, fs, root, std::move(root_claim),
+    options.segment_pool_size, SegmentOptions{options},
+    std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
   writer->_key_column = options.key_column;
@@ -1352,15 +1377,15 @@ IndexWriter::ptr IndexWriter::Make(const Directory& dir, OpenMode mode,
   }
   if (options.cleanup_on_open) {
     try {
-      RemoveAllUnreferenced(dir);
+      RemoveAllUnreferenced(fs, root, *writer->_refs);
     } catch (const std::exception& e) {
-      SDB_WARN(IRESEARCH, "Failed to remove the unreferenced files of '",
-               dir.Root(), "': ", duckdb::ErrorData{e}.RawMessage());
+      SDB_WARN(IRESEARCH, "Failed to remove the unreferenced files of '", root,
+               "': ", duckdb::ErrorData{e}.RawMessage());
     }
   } else {
     // Unreferenced segments are kept for a host WAL to adopt, so their ids are
     // still live and the committed seg_counter sits below them.
-    const auto max_id = MaxSegmentId(dir);
+    const auto max_id = MaxSegmentId(fs, root);
     if (writer->_seg_counter.load(std::memory_order_relaxed) < max_id) {
       writer->_seg_counter.store(max_id, std::memory_order_relaxed);
     }
@@ -1515,10 +1540,11 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   // Increment active meta
   compaction_segment.meta.name = FileName(NextSegmentId());
 
-  RefTracker tracker;
-  const auto dir = _dir.Observed(tracker);
+  RefTracker tracker{*_refs};
+  const FileObservers observers{&tracker};
 
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  MergeWriter merger{_fs, _root, observers,
+                     GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
 
   // We do not persist segment meta since some removals may come later
@@ -1526,11 +1552,11 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // Nothing to compact or compaction failure
     co_return result;
   }
-  CompactFiles(_dir, compaction_segment.meta);
+  CompactFiles(_fs, _root, compaction_segment.meta);
 
   auto opts = committed_reader->Options();
   auto pending_reader =
-    SegmentReaderImpl::Open(_dir, compaction_segment.meta, opts);
+    SegmentReaderImpl::Open(_fs, _root, compaction_segment.meta, opts);
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1572,9 +1598,11 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
           std::make_shared<const DocumentMask>(std::move(carried).Finish());
       }
     }
-    index_utils::FlushIndexSegment(dir, compaction_segment, false);
+    index_utils::FlushIndexSegment(_fs, _root, observers, compaction_segment,
+                                   false);
     if (compaction_segment.meta.docs_mask) {
-      pending_reader = pending_reader->UpdateMeta(dir, compaction_segment.meta);
+      pending_reader =
+        pending_reader->UpdateMeta(*_refs, compaction_segment.meta);
     }
   }
   auto refs = tracker.GetRefs();
@@ -1646,21 +1674,22 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
   };
   const auto snapshot = GetSnapshotImpl();
   std::vector<Adopted> adopted(replacements.size());
-  ForEach(_dir, replacements.size(), [&](size_t i) {
+  ForEach(*_db, _root, replacements.size(), [&](size_t i) {
     auto& entry = adopted[i];
     entry.segment.filename = replacements[i].meta_file;
-    segment_meta::Read(_dir, entry.segment.meta, replacements[i].meta_file);
+    segment_meta::Read(_fs, _root, entry.segment.meta,
+                       replacements[i].meta_file);
     if (entry.segment.meta.live_docs_count == 0) {
       return;  // nothing to adopt; the sources are still replaced
     }
-    auto meta_ref = Reference(_dir, entry.segment.filename);
+    auto meta_ref = Reference(_fs, _root, *_refs, entry.segment.filename);
     if (!meta_ref) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                       ERR_MSG("cannot replace with segment meta '",
                               entry.segment.filename, "': it does not exist"));
     }
-    entry.reader =
-      SegmentReaderImpl::Open(_dir, entry.segment.meta, snapshot->Options());
+    entry.reader = SegmentReaderImpl::Open(_fs, _root, entry.segment.meta,
+                                           snapshot->Options());
     entry.refs.emplace_back(std::move(meta_ref));
   });
   std::vector<DocMap> maps;
@@ -1810,7 +1839,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
 
   // should allocate a new segment_context from the pool
   std::shared_ptr<SegmentContext> segment_ctx = _segment_writer_pool.emplace(
-    _dir,
+    _fs, _root, *_refs,
     [this] {
       SegmentMeta meta;
       meta.name = FileName(NextSegmentId());
@@ -1820,7 +1849,9 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
 
   // recreate writer if it reserved more memory than allowed by current limits
   if (_segment_limits.Memory() < segment_ctx->writer->memory_reserved()) {
-    segment_ctx->writer = SegmentWriter::make(segment_ctx->dir, options);
+    segment_ctx->writer =
+      SegmentWriter::make(segment_ctx->fs, segment_ctx->root,
+                          FileObservers{&segment_ctx->refs}, options);
   }
 
   return {segment_ctx, _segments_active};
@@ -1869,10 +1900,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto& progress =
     (info.progress != nullptr ? info.progress : kNoProgress);
 
-  const auto dir = _dir.Observed(ctx->refs);
+  const FileObservers observers{&ctx->refs};
   const auto& committed_reader = *_committed_reader;
-  auto segment_ctxs =
-    OpenFlushed(ctx->segments, dir, committed_reader.Options(), progress);
+  auto segment_ctxs = OpenFlushed(ctx->segments, _fs, _root,
+                                  committed_reader.Options(), progress);
   std::vector<DocumentMaskBuilder> removed(committed_reader.size() +
                                            ctx->incoming.size());
   const auto all_tick = ResolveRemovals(
@@ -1881,14 +1912,16 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
-  auto existing = UpdateExisting(committed_reader, ctx->segment_mask, all_tick,
-                                 removed, dir, progress);
+  auto existing =
+    UpdateExisting(committed_reader, ctx->segment_mask, all_tick, removed, _fs,
+                   _root, observers, *_refs, progress);
 
   // Stage 2
   // Add incoming segments registered by compaction, adoption or replacement
-  auto incoming = AddIncoming(
-    ctx->incoming, all_tick,
-    std::span{removed}.subspan(committed_reader.size()), dir, progress);
+  auto incoming =
+    AddIncoming(ctx->incoming, all_tick,
+                std::span{removed}.subspan(committed_reader.size()), _fs, _root,
+                observers, *_refs, progress);
 
   auto segments = std::move(existing.segments);
   segments.insert(segments.end(),
@@ -1898,7 +1931,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   if (info.reopen_reader) {
     for (auto& entry : segments) {
       entry.reader = SegmentReader{SegmentReaderImpl::Open(
-        dir, entry.segment.meta, committed_reader.Options())};
+        _fs, _root, entry.segment.meta, committed_reader.Options())};
     }
   }
 
@@ -1907,7 +1940,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   for (auto& segment_ctx : segment_ctxs) {
     segment_ctx.RemoveAll(all_tick);
   }
-  auto flushed = PublishFlushed(segment_ctxs, dir, progress);
+  auto flushed =
+    PublishFlushed(segment_ctxs, _fs, _root, observers, *_refs, progress);
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
@@ -1955,7 +1989,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     SDB_ASSERT(readers.size() == committed_reader.size());
     if (info.reopen_reader) {
       auto new_reader = std::make_shared<const DirectoryReaderImpl>(
-        committed_reader.Dir(), committed_reader.Options(),
+        _fs, _root, committed_reader.Options(),
         DirectoryMeta{committed_reader.Meta()}, std::move(readers));
       std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
                                  std::memory_order_release);
@@ -1979,14 +2013,14 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   SDB_ASSERT(!_pending_state.Valid());
   SDB_ASSERT(context.ctx);
 
-  const auto dir = _dir.Observed(context.ctx->refs);
+  const FileObservers observers{&context.ctx->refs};
 
   std::string index_meta_file;
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};
 
   // Execute 1st phase of index meta transaction
-  if (!_writer.prepare(dir, to_commit.index_meta, to_commit.filename,
-                       index_meta_file, context.position)) {
+  if (!_writer.prepare(_fs, _root, observers, to_commit.index_meta,
+                       to_commit.filename, index_meta_file, context.position)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("Failed to write index metadata for index: ", index_meta_file,
@@ -2007,13 +2041,13 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
 
   context.files_to_sync.emplace_back(to_commit.filename);
 
-  dir.Sync(context.files_to_sync);
+  SyncFiles(_fs, _root, context.files_to_sync);
 
   // Update file name so that directory reader holds a reference
   to_commit.filename = std::move(index_meta_file);
   // Assemble directory reader
   _pending_state.commit = std::make_shared<const DirectoryReaderImpl>(
-    dir, _committed_reader->Options(), std::move(to_commit),
+    _fs, _root, _committed_reader->Options(), std::move(to_commit),
     std::move(context.readers));
   SDB_ASSERT(context.ctx);
   static_cast<PendingBase&>(_pending_state) = std::move(context);

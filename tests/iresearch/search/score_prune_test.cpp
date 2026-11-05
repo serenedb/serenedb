@@ -279,10 +279,10 @@ void ScorePruneTestCase::AssertTermFilter(const irs::Scorer& scorer,
   irs::ByTerm filter;
   *filter.mutable_field_id() = kFieldId;
 
-  auto reader = irs::DirectoryReader{
+  auto reader = tests::OpenReader(
     dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()});
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
@@ -306,10 +306,10 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  auto reader = irs::DirectoryReader{
+  auto reader = tests::OpenReader(
     dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()});
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
@@ -340,10 +340,10 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  auto reader = irs::DirectoryReader{
+  auto reader = tests::OpenReader(
     dir(),
     irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
+                            .db = &::irs::DuckDBEngine::Instance().instance()});
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {

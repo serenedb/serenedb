@@ -50,6 +50,9 @@ class HookFileSystem : public duckdb::FileSystem {
     const duckdb::OpenFileInfo& path, duckdb::FileOpenFlags flags,
     const duckdb::MMapOptions& options,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;
+  duckdb::shared_ptr<duckdb::BlockCacheFile> OpenBlockFile(
+    const std::string& path) override;
+  void Compact(const std::string& path) override;
 
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) override;
@@ -67,6 +70,9 @@ class HookFileSystem : public duckdb::FileSystem {
   void FileSync(duckdb::FileHandle& handle) override;
   void HintWriteback(duckdb::FileHandle& handle, duckdb::idx_t location,
                      duckdb::idx_t nr_bytes) override;
+  duckdb::FileWriteWindow GetWriteWindow(duckdb::FileHandle& handle) override;
+  void CommitWriteWindow(duckdb::FileHandle& handle,
+                         duckdb::idx_t nr_bytes) override;
   void Seek(duckdb::FileHandle& handle, duckdb::idx_t location) override;
   duckdb::idx_t SeekPosition(duckdb::FileHandle& handle) override;
   bool CanSeek() override { return true; }

@@ -345,7 +345,7 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
 }
 
 inline void PostingsWriter::Prepare(const FlushState& state) {
-  SDB_ASSERT(state.dir);
+  SDB_ASSERT(state.fs);
   SDB_ASSERT(!IsNull(state.name));
 
   std::string name;

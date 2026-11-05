@@ -35,7 +35,6 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -123,10 +122,10 @@ irs::IndexWriterOptions MakeWriterOptions() {
 
 // Build the index from kCorpus, return the snapshot. Doc ids are assigned
 // in order, so doc_id N corresponds to kCorpus[N-min_doc_id].
-irs::DirectoryReader BuildIndex(const irs::Directory& dir,
+irs::DirectoryReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 std::vector<std::string>& names_out) {
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, MakeWriterOptions());
 
   TextField body;
 
@@ -221,8 +220,8 @@ int TextFiltersMain() {
   // down the duckdb::DuckDB they were dispatching through.
   {
     std::vector<std::string> names;
-    irs::Directory dir{Db(), "memory://text_filters"};
-    auto reader = BuildIndex(dir, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://text_filters", names);
     std::cout << "Indexed " << reader.docs_count() << " docs across "
               << reader.size() << " segment(s).\n\n";
 

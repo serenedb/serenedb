@@ -13,6 +13,7 @@ add_library(
     OBJECT
     formats/column/test_cs_helpers.cpp
     hook_file_system.cpp
+    index_dir.cpp
     search/filter_test_case_base.cpp
     tests_main.cpp
     tests_param.cpp

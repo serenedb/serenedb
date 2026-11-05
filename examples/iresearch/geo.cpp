@@ -32,7 +32,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/shape_container.hpp>
 #include <memory>
@@ -178,11 +177,11 @@ irs::IndexWriterOptions MakeWriterOptions() {
 }
 
 // Build a tiny index from the corpus above. Returns the writer's snapshot.
-irs::DirectoryReader BuildIndex(const irs::Directory& dir,
+irs::DirectoryReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, MakeWriterOptions());
 
   GeoField geo;
 
@@ -276,8 +275,8 @@ int GeoMain() {
     auto docs = ParseCorpus(kCorpus);
     std::vector<std::string> names;
 
-    irs::Directory dir{Db(), "memory://geo"};
-    auto reader = BuildIndex(dir, docs, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://geo", docs, names);
     std::cout << "Indexed " << reader.docs_count() << " points across "
               << reader.size() << " segment(s).\n\n";
 

@@ -38,7 +38,6 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/posting_heads.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
@@ -50,6 +49,7 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "store/simulated_object_store.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
@@ -71,11 +71,11 @@ std::string Root() {
                       count.fetch_add(1, std::memory_order_relaxed));
 }
 
-void WriteSegments(const irs::Directory& dir, size_t segments) {
+void WriteSegments(const tests::IndexDir& dir, size_t segments) {
   tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory};
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  auto writer =
+    tests::MakeWriter(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
   for (size_t i = 0; i != segments; ++i) {
     const auto* doc = gen.next();
     ASSERT_NE(nullptr, doc);
@@ -86,11 +86,11 @@ void WriteSegments(const irs::Directory& dir, size_t segments) {
 
 irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   auto& store = tests::ObjectStore();
-  const irs::Directory restarted{Db(), root};
+  const tests::IndexDir restarted{Db(), root};
   DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.ResetRequests();
-  const irs::DirectoryReader reader{restarted,
-                                    irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
   const auto requests = store.Requests();
   EXPECT_EQ(live_docs, reader.live_docs_count());
   return requests;
@@ -100,9 +100,9 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
   {
-    const irs::Directory dir{Db(), root};
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    const tests::IndexDir dir{Db(), root};
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     for (size_t segment = 0; segment != 3; ++segment) {
       tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory};
@@ -112,9 +112,9 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
       ASSERT_TRUE(writer->RefreshCommit());
     }
   }
-  const irs::Directory restarted{Db(), root};
-  const irs::DirectoryReader reader{restarted,
-                                    irs::tests::DefaultReaderOptions()};
+  const tests::IndexDir restarted{Db(), root};
+  const auto reader =
+    tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
   DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.ResetRequests();
 
@@ -145,7 +145,7 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
 TEST(ObjectStoreIndexTest, segments_open_in_parallel) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 4);
+  WriteSegments(tests::IndexDir{Db(), root}, 4);
   store.SetLatency(std::chrono::milliseconds{20});
   absl::Cleanup no_latency = [&] {
     store.SetLatency(std::chrono::microseconds{0});
@@ -159,8 +159,8 @@ TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
   constexpr std::chrono::milliseconds kLatency{50};
   auto& store = tests::ObjectStore();
   const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, kSegments);
-  const irs::Directory restarted{Db(), root};
+  WriteSegments(tests::IndexDir{Db(), root}, kSegments);
+  const tests::IndexDir restarted{Db(), root};
   DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.SetLatency(kLatency);
   absl::Cleanup no_latency = [&] {
@@ -169,8 +169,8 @@ TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
 
   store.ResetRequests();
   const auto began = std::chrono::steady_clock::now();
-  const auto writer = irs::IndexWriter::Make(
-    restarted, irs::kOmAppend, irs::tests::DefaultWriterOptions());
+  const auto writer = tests::MakeWriter(restarted, irs::kOmAppend,
+                                        irs::tests::DefaultWriterOptions());
   const auto elapsed = std::chrono::steady_clock::now() - began;
   ASSERT_NE(nullptr, writer);
   EXPECT_EQ(kSegments, writer->GetSnapshot().live_docs_count());
@@ -183,12 +183,12 @@ TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
 TEST(ObjectStoreIndexTest, cleanup_removes_files_in_one_request) {
   auto& store = tests::ObjectStore();
   const auto root = Root();
-  WriteSegments(irs::Directory{Db(), root}, 4);
-  const irs::Directory restarted{Db(), root};
+  WriteSegments(tests::IndexDir{Db(), root}, 4);
+  const tests::IndexDir restarted{Db(), root};
   store.ResetRequests();
 
-  const auto writer = irs::IndexWriter::Make(
-    restarted, irs::kOmAppend, irs::tests::DefaultWriterOptions());
+  const auto writer = tests::MakeWriter(restarted, irs::kOmAppend,
+                                        irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   EXPECT_EQ(1, store.Requests().remove);
   EXPECT_FALSE(restarted.Has("segments_1"));
@@ -196,11 +196,11 @@ TEST(ObjectStoreIndexTest, cleanup_removes_files_in_one_request) {
 
 TEST(ObjectStoreIndexTest, replace_adopts_segments) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory};
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  auto writer =
+    tests::MakeWriter(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
   for (size_t i = 0; i != 2; ++i) {
     ASSERT_TRUE(tests::Insert(*writer, *gen.next()));
     ASSERT_TRUE(writer->RefreshCommit());
@@ -238,7 +238,7 @@ TEST(ObjectStoreIndexTest, replace_adopts_segments) {
 constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
 constexpr uint64_t kBlocks = 16;
 
-std::unique_ptr<irs::InputFile> WriteUncached(const irs::Directory& dir) {
+std::unique_ptr<irs::InputFile> WriteUncached(const tests::IndexDir& dir) {
   const std::vector<irs::byte_type> block(kBlock, 0x5A);
   {
     auto out = dir.Create("blocks");
@@ -255,7 +255,7 @@ std::unique_ptr<irs::InputFile> WriteUncached(const irs::Directory& dir) {
 
 TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   const auto file = WriteUncached(dir);
   irs::IndexInput in{*file};
   while (in.Position() < in.Length()) {
@@ -266,7 +266,7 @@ TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
 
 TEST(ObjectStoreIndexTest, large_reads_fetch_their_range_at_once) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   const auto file = WriteUncached(dir);
   irs::IndexInput in{*file};
   irs::bstring buf(kBlocks * kBlock, 0);
@@ -300,9 +300,9 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
   const auto valid = [](uint64_t row) { return row % 7 != 0; };
 
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   {
-    irs::ColWriter writer{dir, "seg", Db()};
+    irs::ColWriter writer{Db(), dir.Fs(), dir.Root(), dir.Observers(), "seg"};
     auto& plain = writer.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
                                     /*skip_validity=*/false, kRgSize);
     auto& structs =
@@ -420,9 +420,9 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
   constexpr uint32_t kRgSize = 64 * 1024;
   constexpr irs::field_id kVariant = 4;
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   {
-    irs::ColWriter writer{dir, "seg", Db()};
+    irs::ColWriter writer{Db(), dir.Fs(), dir.Root(), dir.Observers(), "seg"};
     auto& variants = writer.OpenColumn(kVariant, duckdb::LogicalType::VARIANT(),
                                        /*skip_validity=*/false, kRgSize);
     duckdb::Connection con{Db()};
@@ -466,7 +466,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
 
 TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   {
     auto out = dir.Create("short");
     out->WriteU32(42);
@@ -484,9 +484,9 @@ TEST(ObjectStoreIndexTest, reads_past_the_end_are_refused) {
 TEST(ObjectStoreIndexTest, a_listing_skips_nested_objects) {
   tests::ObjectStore();
   const auto root = Root();
-  const irs::Directory dir{Db(), root};
+  const tests::IndexDir dir{Db(), root};
   dir.Create("top")->Close();
-  const irs::Directory nested{Db(), absl::StrCat(root, "/nested")};
+  const tests::IndexDir nested{Db(), absl::StrCat(root, "/nested")};
   nested.Create("inner")->Close();
 
   std::vector<std::string> names;
@@ -499,10 +499,10 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   constexpr irs::field_id kWords = 1;
   constexpr irs::field_id kText = 2;
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     tests::Document doc;
     auto words =
       std::make_shared<tests::StringField>("words", irs::IndexFeatures::Freq);
@@ -518,7 +518,8 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
     }
     ASSERT_TRUE(writer->RefreshCommit());
   }
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   const auto& segment = reader[0];
 
@@ -597,7 +598,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
 
 TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   const auto file = WriteUncached(dir);
   irs::IndexInput in{*file};
   for (uint64_t block = 0; block < kBlocks; block += 2) {
@@ -613,7 +614,7 @@ TEST(ObjectStoreIndexTest, random_reads_fetch_only_their_blocks) {
 
 TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   constexpr uint64_t kSize = uint64_t{200} << 20;
   const std::vector<irs::byte_type> block(kBlock, 0x5A);
   {
@@ -653,7 +654,7 @@ void WriteValues(irs::IndexOutput& out, uint64_t from, uint64_t to) {
   }
 }
 
-void ReadValues(const irs::Directory& dir, uint32_t checksum) {
+void ReadValues(const tests::IndexDir& dir, uint32_t checksum) {
   const auto file = dir.Open("values", duckdb::MappedFileAccess::NORMAL);
   irs::IndexInput in{*file};
   irs::bstring read(Chunk().size(), irs::byte_type{0});
@@ -679,7 +680,7 @@ void ReadValues(const irs::Directory& dir, uint32_t checksum) {
 
 TEST(ObjectStoreIndexTest, written_files_read_back_from_their_cache_blocks) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   uint32_t checksum = 0;
   {
     auto out = dir.Create("values");
@@ -700,7 +701,7 @@ TEST(ObjectStoreIndexTest, written_files_read_back_from_their_cache_blocks) {
 #ifdef SDB_FAULT_INJECTION
 TEST(ObjectStoreIndexTest, a_write_short_of_cache_blocks_uploads_every_byte) {
   tests::ObjectStore();
-  const irs::Directory dir{Db(), Root()};
+  const tests::IndexDir dir{Db(), Root()};
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   uint32_t checksum = 0;
   {

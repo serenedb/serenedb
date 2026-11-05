@@ -22,7 +22,9 @@
 
 #pragma once
 
-#include "iresearch/store/directory.hpp"
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
+#include <string_view>
 
 namespace irs {
 
@@ -30,7 +32,9 @@ class IdxReader;
 struct SegmentMeta;
 
 struct ReaderState {
-  const Directory* dir;
+  duckdb::FileSystem* fs;
+  std::string_view root;
+  duckdb::BlockCache* cache;
   const SegmentMeta* meta;
   IdxReader* idx = nullptr;
 };

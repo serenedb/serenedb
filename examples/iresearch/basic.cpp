@@ -40,7 +40,7 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -411,7 +411,8 @@ void RemoveDocuments(irs::IndexWriter& writer,
 
 // Compact segments after removal to reclaim space and merge segments.
 // Deleted documents are only physically removed during compaction.
-void CompactIndex(irs::IndexWriter& writer, const irs::Directory& dir) {
+void CompactIndex(irs::IndexWriter& writer, duckdb::FileSystem& fs,
+                  std::string_view root, irs::IndexFileRefs& refs) {
   std::cout << "=== Compact Index ===\n";
 
   auto before = writer.GetSnapshot();
@@ -427,7 +428,7 @@ void CompactIndex(irs::IndexWriter& writer, const irs::Directory& dir) {
   writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.
-  dir.RemoveAllUnreferenced();
+  irs::RemoveAllUnreferenced(fs, root, refs);
 
   auto after = writer.GetSnapshot();
   std::cout << "After compaction:  " << after.size() << " segment(s)\n";
@@ -448,17 +449,20 @@ int BasicMain() {
     auto tokenizer = irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{});
 
-    irs::Directory dir{Db(), "memory://basic"};
+    auto& fs = duckdb::FileSystem::GetFileSystem(Db());
+    constexpr std::string_view kRoot = "memory://basic";
+    auto refs = std::make_shared<irs::IndexFileRefs>();
     irs::IndexWriterOptions options;
     options.db = &Db();
     options.reader_options.db = &Db();
+    options.reader_options.refs = refs;
     options.norm_column_id =
       [next = std::make_shared<std::atomic<irs::field_id>>(0)](
         irs::field_id) -> irs::field_id {
       return next->fetch_add(1, std::memory_order_relaxed);
     };
     auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+      irs::IndexWriter::Make(fs, kRoot, irs::kOmCreate, std::move(options));
 
     BuildIndex(*writer);
 
@@ -474,7 +478,7 @@ int BasicMain() {
     QueryExclusion(reader, *tokenizer);
     ReadStoredFields(reader);
     RemoveDocuments(*writer, *tokenizer);
-    CompactIndex(*writer, dir);
+    CompactIndex(*writer, fs, kRoot, *refs);
   }
 
   engine.Shutdown();

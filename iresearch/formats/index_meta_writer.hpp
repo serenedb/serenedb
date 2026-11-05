@@ -27,13 +27,13 @@
 #include <compare>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
 
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -71,7 +71,8 @@ class IndexMetaWriter final {
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
-  bool prepare(const Directory& dir, IndexMeta& meta,
+  bool prepare(duckdb::FileSystem& fs, std::string_view root,
+               const FileObservers& observers, IndexMeta& meta,
                std::string& pending_filename, std::string& filename,
                const SourcePosition& position);
   bool commit();
@@ -79,7 +80,9 @@ class IndexMetaWriter final {
 
  private:
   MetaPayloadWriter _payload;
-  std::optional<Directory> _dir;
+  duckdb::FileSystem* _fs = nullptr;
+  std::string _root;
+  FileObservers _observers;
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit
 };
 

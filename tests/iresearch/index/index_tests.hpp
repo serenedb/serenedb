@@ -58,8 +58,7 @@ irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
 
 duckdb::FileSystem& DatabaseFileSystem();
 
-irs::Directory OverFileSystem(const irs::Directory& files,
-                              duckdb::FileSystem& fs);
+IndexDir OverFileSystem(const IndexDir& files, duckdb::FileSystem& fs);
 
 struct BlockingFileSystem : HookFileSystem {
   explicit BlockingFileSystem(const std::string& blocker)
@@ -123,31 +122,29 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     const testing::TestParamInfo<index_test_context>& info);
 
  protected:
-  std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
+  std::shared_ptr<IndexDir> get_directory(const TestBase& ctx) const;
 
-  irs::Directory& dir() const { return *_dir; }
+  IndexDir& dir() const { return *_dir; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
   irs::IndexWriter::ptr open_writer(
-    const irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
+    const IndexDir& dir, irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return MakeWriter(dir, mode, EnsureWriterDb(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return MakeWriter(*_dir, mode, EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, options};
+    return OpenReader(*_dir, options);
   }
 
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
@@ -202,7 +199,7 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
  private:
   index_t _index;
-  std::shared_ptr<irs::Directory> _dir;
+  std::shared_ptr<IndexDir> _dir;
 };
 
 }  // namespace tests

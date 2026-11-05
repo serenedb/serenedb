@@ -24,10 +24,10 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <memory>
 #include <optional>
-#include <string>
+#include <string_view>
 
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/crc.hpp"
 
 namespace irs {
@@ -41,17 +41,15 @@ PendingUploads CurrentUploads() noexcept;
 
 class FileOutput final : public IndexOutput {
  public:
-  static ptr Open(duckdb::FileSystem& fs, duckdb::MemoryFileSystem* memory,
-                  const std::string& path,
-                  const Directory::Observers& observers, bool remote,
+  static ptr Open(duckdb::FileSystem& fs, std::string_view root,
+                  std::string_view name, const FileObservers& observers,
                   duckdb::BlockCache* cache);
 
   ~FileOutput() final;
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-             duckdb::MemoryFileSystem* memory,
-             const Directory::Observers& observers, bool remote,
+             const FileObservers& observers, bool remote,
              duckdb::BlockCache* cache);
 
   void Flush();
@@ -71,11 +69,11 @@ class FileOutput final : public IndexOutput {
 
   std::unique_ptr<byte_type[]> _buf;
   std::unique_ptr<duckdb::FileHandle> _handle;
-  duckdb::MemoryFileSystem* _memory = nullptr;
   Crc32c _crc;
   uint64_t _unhinted = 0;
-  Directory::Observers _observers;
+  FileObservers _observers;
   bool _remote;
+  bool _in_place = false;
   std::optional<duckdb::BlockCacheAppender> _cached;
 };
 

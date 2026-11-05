@@ -36,9 +36,9 @@
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
-#include <iresearch/store/directory.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "memory_output.hpp"
 #include "tests_shared.hpp"
 
@@ -53,7 +53,7 @@ class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
 
 // Returns true iff `dir` contains a file named `segment_name + ".col"`.
 // Used to assert that Rollback() leaves the directory clean.
-bool HasCsFile(const irs::Directory& dir, std::string_view segment_name) {
+bool HasCsFile(const tests::IndexDir& dir, std::string_view segment_name) {
   std::string fn{segment_name};
   fn.append(".col");
   return dir.Has(fn);
@@ -137,9 +137,9 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
   // Mirrors the legacy `Empty()`/`Size()` checks on a default-constructed
   // BufferedColumn.
-  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "ctor_seg", Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "ctor_seg"};
     auto& nw = w.OpenNormColumn(/*id=*/1, /*row_group_size=*/128);
     EXPECT_EQ(nw.Id(), 1);
     EXPECT_EQ(nw.RowCount(), 0u);
@@ -165,9 +165,10 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
 
   // --- (1) Rollback path on a norm-only writer ----------------------------
   {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, "flush_empty_rb", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                       "flush_empty_rb"};
       auto& nw = w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       EXPECT_EQ(nw.RowCount(), 0u);
       w.Rollback();
@@ -181,9 +182,10 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
   // exists, the typed column has one row, the norm column has one
   // implicit zero-padded row (NonZeroCount == 0, Sum == 0).
   {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, "flush_empty_typed", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                       "flush_empty_typed"};
       w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
       auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
       duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
@@ -213,11 +215,11 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
 
   // (1) All zeros.
   {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     constexpr uint64_t kRowCount = 256;
     constexpr uint32_t kRowGroupSize = 64;  // 4 row groups
     {
-      irs::ColWriter w{dir, "dup_zero", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "dup_zero"};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, /*value=*/0);
@@ -240,12 +242,13 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
 
   // (2) All same non-zero value (matches the legacy test name's intent).
   {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     constexpr uint64_t kRowCount = 5000;
     constexpr uint32_t kRepeatedValue = 42;
     constexpr uint32_t kRowGroupSize = 1024;
     {
-      irs::ColWriter w{dir, "dup_value", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                       "dup_value"};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
@@ -274,12 +277,12 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
   }
 
   {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     constexpr uint64_t kRowCount = 300;
     constexpr uint32_t kRepeatedValue = 7;
     constexpr uint32_t kRowGroupSize = 100;
     {
-      irs::ColWriter w{dir, "dup_rg", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "dup_rg"};
       auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
@@ -315,9 +318,9 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   }
   expected[2058] = 255;
 
-  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "rare", Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "rare"};
     auto& nw = w.OpenNormColumn(9, kRowGroupSize);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -349,9 +352,9 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
   }
 
   for (const uint32_t row_group_size : {512u, 4096u}) {
-    irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, "rare_all", Db()};
+      irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "rare_all"};
       auto& nw = w.OpenNormColumn(9, row_group_size);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, expected[i]);
@@ -382,9 +385,9 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
   }
   expected[kRowCount - 1] = 1u << 31;
 
-  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "crowded", Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "crowded"};
     auto& nw = w.OpenNormColumn(9, kRowCount);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -416,9 +419,9 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
     expected[i] = static_cast<uint32_t>(i % 3 == 0 ? 100000 + i : i);
   }
 
-  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "wide", Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "wide"};
     auto& nw = w.OpenNormColumn(9, 2048);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
@@ -449,9 +452,9 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
   };
   constexpr uint64_t kRowCount = 7000;
   std::vector<uint32_t> expected;
-  irs::Directory dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "streamed", Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), "streamed"};
     auto& nw = w.StreamNormColumn(9);
     const auto write = [&](uint64_t from, uint64_t to, uint64_t skip) {
       irs::NormStats planned;

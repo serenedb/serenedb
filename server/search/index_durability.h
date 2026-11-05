@@ -27,13 +27,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -64,6 +65,7 @@ class IndexDurability {
   IndexDurability(duckdb::AttachedDatabase& database, std::string name,
                   const std::optional<catalog::StorageDirectory>& parent,
                   duckdb::idx_t oid, bool is_new);
+  ~IndexDurability();
 
   const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
     return _database;
@@ -130,7 +132,9 @@ class IndexDurability {
 
   duckdb::weak_ptr<duckdb::AttachedDatabase> _database;
   std::string _name;
-  irs::Directory _files;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<irs::IndexFileRefs> _refs;
   ManifestSource _manifest;
   std::shared_ptr<const FileManifest> _written_manifest;
   std::atomic<bool> _directory_dirty{true};

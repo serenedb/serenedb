@@ -28,7 +28,8 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/file_output.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -47,7 +48,8 @@ std::string index_meta::FileName(uint64_t gen) {
   return irs::FileName(kPrefix, gen);
 }
 
-bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
+bool IndexMetaWriter::prepare(duckdb::FileSystem& fs, std::string_view root,
+                              const FileObservers& observers, IndexMeta& meta,
                               std::string& pending_filename,
                               std::string& filename,
                               const SourcePosition& position) {
@@ -59,8 +61,11 @@ bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
   ++meta.gen;  // Increment generation before generating filename
   pending_filename = PendingFileName(meta.gen);
   filename = index_meta::FileName(meta.gen);
+  _fs = &fs;
+  _root = root;
+  _observers = observers;
 
-  auto out = dir.CreateWhole(pending_filename);
+  auto out = FileOutput::Open(fs, root, pending_filename, observers, nullptr);
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -87,8 +92,6 @@ bool IndexMetaWriter::prepare(const Directory& dir, IndexMeta& meta,
   });
   out->Close();
 
-  // Only noexcept operations below
-  _dir = dir;
   _pending_gen = meta.gen;
 
   return true;
@@ -102,12 +105,15 @@ bool IndexMetaWriter::commit() {
   const auto src = PendingFileName(_pending_gen);
   const auto dst = index_meta::FileName(_pending_gen);
 
-  _dir->Rename(src, dst);
+  _fs->MoveFile(PathOf(_root, src), PathOf(_root, dst));
+  for (auto* observer : _observers) {
+    observer->Renamed(src, dst);
+  }
 
   // only noexcept operations below
   // clear pending state
   _pending_gen = index_gen_limits::invalid();
-  _dir.reset();
+  _observers.clear();
 
   return true;
 }
@@ -134,7 +140,11 @@ void IndexMetaWriter::rollback() noexcept {
   }
 
   try {
-    if (!_dir->Remove(seg_file)) {
+    if (_fs->TryRemoveFile(PathOf(_root, seg_file))) {
+      for (auto* observer : _observers) {
+        observer->Removed(seg_file);
+      }
+    } else {
       SDB_ERROR(IRESEARCH, "Failed to remove file, path: ", seg_file);
     }
   } catch (const std::exception& e) {
@@ -145,7 +155,7 @@ void IndexMetaWriter::rollback() noexcept {
   }
 
   // clear pending state
-  _dir.reset();
+  _observers.clear();
   _pending_gen = index_gen_limits::invalid();
 }
 

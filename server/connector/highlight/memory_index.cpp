@@ -29,7 +29,7 @@ namespace sdb::connector::highlight {
 
 MemoryIndex::MemoryIndex()
   : _db{&irs::DuckDBEngine::Instance().instance()},
-    _dir{*_db, _fs,
-         absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "highlight")} {}
+    _root{absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "highlight")},
+    _refs{std::make_shared<irs::IndexFileRefs>()} {}
 
 }  // namespace sdb::connector::highlight

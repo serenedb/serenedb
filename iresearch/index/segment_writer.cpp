@@ -23,6 +23,7 @@
 
 #include "iresearch/index/segment_writer.hpp"
 
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "index_meta.hpp"
@@ -65,8 +66,10 @@ doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
 }
 
 std::unique_ptr<SegmentWriter> SegmentWriter::make(
-  const Directory& dir, const SegmentWriterOptions& options) {
-  return std::make_unique<SegmentWriter>(ConstructToken{}, dir, options);
+  duckdb::FileSystem& fs, std::string_view root, const FileObservers& observers,
+  const SegmentWriterOptions& options) {
+  return std::make_unique<SegmentWriter>(ConstructToken{}, fs, root, observers,
+                                         options);
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
@@ -89,9 +92,13 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
   return _docs_mask.Add(doc_id);
 }
 
-SegmentWriter::SegmentWriter(ConstructToken, const Directory& dir,
-                             const SegmentWriterOptions& options) noexcept
-  : _dir{dir.Observed(_tracker)},
+SegmentWriter::SegmentWriter(ConstructToken, duckdb::FileSystem& fs,
+                             std::string_view root,
+                             const FileObservers& observers,
+                             const SegmentWriterOptions& options)
+  : _fs{fs},
+    _root{root},
+    _observers{observers},
     _scorer{options.scorer},
     _docs_context{options.resource_manager},
     _fields{InverterMemory{
@@ -101,7 +108,9 @@ SegmentWriter::SegmentWriter(ConstructToken, const Directory& dir,
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _hnsw_bases{options.hnsw_bases} {}
+    _hnsw_bases{options.hnsw_bases} {
+  _observers.push_back(&_tracker);
+}
 
 void SegmentWriter::FlushFields(FlushState& state,
                                 std::span<const BasicTermReader* const> extra) {
@@ -120,14 +129,17 @@ void SegmentWriter::flush(IndexSegment& segment,
   auto& meta = segment.meta;
 
   FlushState state{
-    .dir = &_dir,
+    .fs = &_fs,
+    .root = _root,
+    .observers = &_observers,
+    .cache = &duckdb::BlockCache::Get(_db),
     .norms = this,
     .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
   };
 
-  IdxWriter idx{_dir, _seg_name};
+  IdxWriter idx{_db, _fs, _root, _observers, _seg_name};
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
@@ -145,7 +157,7 @@ void SegmentWriter::flush(IndexSegment& segment,
 
   if (state.doc_count != 0) {
     _col_reader = std::make_unique<ColReader>(
-      _dir, _seg_name, _tracker.Contains(FileName(_seg_name)),
+      _db, _fs, _root, _seg_name, _tracker.Contains(FileName(_seg_name)),
       duckdb::MappedFileAccess::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
@@ -226,7 +238,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   }
 
   const auto* active = ActiveFieldOptions();
-  _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _col_writer =
+    std::make_unique<ColWriter>(_db, _fs, _root, _observers, meta.name);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

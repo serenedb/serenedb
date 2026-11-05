@@ -38,14 +38,14 @@
 
 namespace bench {
 
-static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
-                                                 size_t segment_pool_size,
-                                                 size_t segment_mem_max,
-                                                 uint32_t row_group_size,
-                                                 uint32_t segment_docs_max) {
+static irs::IndexWriterOptions MakeWriterOptions(
+  irs::ScorerPtr scorer_ptr, std::shared_ptr<irs::IndexFileRefs> refs,
+  size_t segment_pool_size, size_t segment_mem_max, uint32_t row_group_size,
+  uint32_t segment_docs_max) {
   auto* db = &::irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
+  writer_opts.reader_options.refs = std::move(refs);
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
   writer_opts.segment_docs_max = segment_docs_max;
@@ -60,9 +60,9 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   return writer_opts;
 }
 
-static irs::Directory MakeDirectory(std::string_view path) {
+static std::string MakeDirectory(std::string_view path) {
   std::filesystem::create_directories(path);
-  return irs::Directory{::irs::DuckDBEngine::Instance().instance(), path};
+  return std::string{path};
 }
 
 IndexBuilder::IndexBuilder(std::string_view path,
@@ -70,10 +70,13 @@ IndexBuilder::IndexBuilder(std::string_view path,
                            const BenchConfig& config)
   : _opts{opts},
     _scorer{irs::BM25::Make(irs::BM25::Options{})},
-    _dir{MakeDirectory(path)},
+    _fs{duckdb::FileSystem::GetFileSystem(
+      ::irs::DuckDBEngine::Instance().instance())},
+    _root{MakeDirectory(path)},
+    _refs{std::make_shared<irs::IndexFileRefs>()},
     _writer{irs::IndexWriter::Make(
-      _dir, irs::kOmCreate,
-      MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
+      _fs, _root, irs::kOmCreate,
+      MakeWriterOptions(_scorer_ptr, _refs, opts.indexer_threads,
                         config.segment_mem_max, opts.row_group_size,
                         opts.segment_docs_max))} {}
 
@@ -221,7 +224,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
           _writer->Compact(policy);
         }
 
-        irs::RemoveAllUnreferenced(_dir);
+        irs::RemoveAllUnreferenced(_fs, _root, *_refs);
       }
     });
   }
@@ -258,7 +261,7 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     std::fflush(stdout);
     Settle();
   } else if (_opts.compaction_threads) {
-    irs::RemoveAllUnreferenced(_dir);
+    irs::RemoveAllUnreferenced(_fs, _root, *_refs);
   }
 }
 
@@ -266,7 +269,7 @@ void IndexBuilder::CompactAll() {
   _writer->Compact(
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
   _writer->RefreshCommit();
-  irs::RemoveAllUnreferenced(_dir);
+  irs::RemoveAllUnreferenced(_fs, _root, *_refs);
 }
 
 void IndexBuilder::Settle() {
@@ -281,7 +284,7 @@ void IndexBuilder::Settle() {
     }
     segments = left;
   }
-  irs::RemoveAllUnreferenced(_dir);
+  irs::RemoveAllUnreferenced(_fs, _root, *_refs);
 }
 
 bool TextField::Write(irs::DataOutput& out) const {

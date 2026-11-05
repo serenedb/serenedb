@@ -31,7 +31,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 #ifndef IRESEARCH_NO_VECTOR
@@ -49,14 +49,17 @@ struct IdxReader::Impl {
   term_dict::TermsMeta terms;
 };
 
-IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
+IdxReader::IdxReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, std::string_view segment_name,
                      bool present, HnswBases* hnsw_bases, bool keep_terms)
   : _impl{std::make_unique<Impl>()} {
   if (!present) {
     return;
   }
   const auto filename = FileName(segment_name, kIdxFormatExt);
-  _impl->file = dir.Open(filename, duckdb::MappedFileAccess::RANDOM);
+  _impl->file =
+    OpenInput(duckdb::BlockCache::Get(db), fs, PathOf(root, filename),
+              duckdb::MappedFileAccess::RANDOM);
 
   format_utils::ReadFooter(
     *_impl->file, filename,

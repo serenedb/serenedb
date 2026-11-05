@@ -137,7 +137,7 @@ void TfidfTestCase::TestQueryNorms() {
   auto scorer = irs::TFIDF{true};
   irs::ColumnArgsFetcher fetcher;
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -496,7 +496,7 @@ TEST_P(TfidfTestCase, test_query) {
 
   auto scorer = irs::TFIDF{false, true};
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -608,8 +608,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByTerm filter;
     *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
@@ -718,8 +717,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::BooleanFilter filter;
     // doc 0, 2, 5
     filter.Add(
@@ -843,8 +841,7 @@ TEST_P(TfidfTestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
     filter.SetScorer(&scorer);
@@ -1225,7 +1222,7 @@ TEST_P(TfidfTestCase, test_order) {
                 StoreSeq());
   }
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
 
   irs::ByTerm query;

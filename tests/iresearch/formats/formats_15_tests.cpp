@@ -20,6 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/posting/reader.hpp>
@@ -36,6 +37,7 @@
 #include <random>
 
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 #include "utils/write_helpers.hpp"
 
@@ -264,7 +266,7 @@ class Format15TestCase : public tests::FormatTestCase {
     tests::Records records;
   };
 
-  ReadMeta WriteReadMeta(const irs::Directory& dir, DocsView docs,
+  ReadMeta WriteReadMeta(const tests::IndexDir& dir, DocsView docs,
                          irs::ScorerPtr scorer, irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
@@ -335,7 +337,7 @@ class Format15TestCase : public tests::FormatTestCase {
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
-  const irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
+  const tests::IndexDir& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
   irs::PostingsWriter writer;
@@ -343,7 +345,10 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   {
     const irs::FlushState state{
-      .dir = &dir,
+      .fs = &dir.Fs(),
+      .root = dir.Root(),
+      .observers = &dir.Observers(),
+      .cache = &duckdb::BlockCache::Get(dir.Db()),
       .norms = &irs::SubReader::empty(),
       .name = "segment_name",
       .scorer = scorer,
@@ -373,7 +378,10 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.dir = &dir, .meta = &meta};
+  const irs::ReaderState state{.fs = &dir.Fs(),
+                               .root = dir.Root(),
+                               .cache = &duckdb::BlockCache::Get(dir.Db()),
+                               .meta = &meta};
 
   const auto in_file = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
   irs::IndexInput in{*in_file};

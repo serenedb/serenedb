@@ -33,7 +33,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <map>
@@ -44,6 +43,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index_dir.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -291,22 +291,23 @@ class StoreCollector final : public StoreSink {
 
 class IndexUnderTest {
  public:
-  Directory& dir() noexcept { return _dir; }
+  ::tests::IndexDir& dir() noexcept { return _dir; }
 
   std::shared_ptr<IndexWriter> Open() {
     auto options = irs::tests::DefaultWriterOptions();
     options.norm_column_id = [](field_id id) -> field_id {
       return static_cast<field_id>(id + 1000);
     };
-    return IndexWriter::Make(_dir, kOmCreate, std::move(options));
+    return ::tests::MakeWriter(_dir, kOmCreate, std::move(options));
   }
 
   DirectoryReader Read() {
-    return DirectoryReader(_dir, irs::tests::DefaultReaderOptions());
+    return ::tests::OpenReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
  private:
-  Directory _dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
+  ::tests::IndexDir _dir{DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
 };
 
 void WriteBlock(IndexWriter::Transaction& trx,

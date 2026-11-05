@@ -36,20 +36,24 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
 
-std::unique_ptr<InputFile> OpenColFile(const Directory& dir,
+std::unique_ptr<InputFile> OpenColFile(duckdb::DatabaseInstance& db,
+                                       duckdb::FileSystem& fs,
+                                       std::string_view root,
                                        std::string_view segment_name,
                                        bool present,
                                        duckdb::MappedFileAccess access) {
   if (!present) {
     return nullptr;
   }
-  return dir.Open(FileName(segment_name), access);
+  return OpenInput(duckdb::BlockCache::Get(db), fs,
+                   PathOf(root, FileName(segment_name)), access);
 }
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
@@ -147,10 +151,11 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 
 }  // namespace
 
-ColReader::ColReader(const Directory& dir, std::string_view segment_name,
+ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, std::string_view segment_name,
                      bool present, duckdb::MappedFileAccess access)
-  : ColReader{dir.Db(), segment_name,
-              OpenColFile(dir, segment_name, present, access)} {}
+  : ColReader{db, segment_name,
+              OpenColFile(db, fs, root, segment_name, present, access)} {}
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::string_view segment_name,

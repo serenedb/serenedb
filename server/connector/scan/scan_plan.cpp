@@ -43,6 +43,7 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -468,7 +469,8 @@ void UseSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
                     ? bind_data.relation.row_group_size
                     : DEFAULT_ROW_GROUP_SIZE;
   const auto& impl = state.snapshot->reader.GetImpl();
-  state.remote = impl && impl->Dir().Kind() == irs::StorageKind::Remote;
+  state.remote =
+    impl && irs::StorageKindOf(impl->Root()) == irs::StorageKind::Remote;
 }
 
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,

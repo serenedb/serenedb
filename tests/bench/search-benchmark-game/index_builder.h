@@ -21,9 +21,13 @@
 #pragma once
 
 #include <array>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <memory>
 #include <span>
+#include <string>
 
 #include "executor.h"
 #include "line_source.h"
@@ -92,7 +96,9 @@ class IndexBuilder {
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::Directory _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<irs::IndexFileRefs> _refs;
   irs::IndexWriter::ptr _writer;
 };
 

@@ -25,6 +25,8 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <utility>
 #include <vector>
 
@@ -71,11 +73,9 @@ class SegmentAllDocs : public lead::Node {
   doc_id_t _doc = doc_limits::invalid();
 };
 
-FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
+FileRefs GetRefs(IndexFileRefs& refs, const SegmentMeta& meta) {
   FileRefs file_refs;
   file_refs.reserve(meta.files.size());
-
-  auto& refs = dir.Refs();
   for (auto& file : meta.files) {
     file_refs.emplace_back(refs.add(file));
   }
@@ -85,19 +85,25 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 }  // namespace
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
-  const Directory& dir, const SegmentMeta& meta,
+  duckdb::FileSystem& fs, std::string_view root, const SegmentMeta& meta,
   const IndexReaderOptions& options) {
+  SDB_ENSURE(options.db != nullptr,
+             "IndexReaderOptions::db must be set; iresearch indexes require a "
+             "duckdb::DatabaseInstance");
+  SDB_ASSERT(options.refs);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
+  reader->_refs = GetRefs(*options.refs, meta);
   ParseSegmentId(meta.name, reader->_id);
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, options.index);
+  reader->_data->Open(fs, root, meta, options, options.index);
   reader->_field_reader =
     std::make_shared<term_dict::FieldReader>(IResourceManager::gNoop);
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
-      .dir = &dir,
+      .fs = &fs,
+      .root = root,
+      .cache = &duckdb::BlockCache::Get(*options.db),
       .meta = &meta,
       .idx = reader->_data->idx_reader.get(),
     });
@@ -106,7 +112,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
-  const Directory& dir, const SegmentMeta& meta,
+  duckdb::FileSystem& fs, std::string_view root, const SegmentMeta& meta,
   const IndexReaderOptions& options) const {
   SDB_ASSERT(meta == _info);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
@@ -115,14 +121,14 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenReader(
   reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
   reader->_data = std::make_shared<ColumnData>();
-  reader->_data->Open(dir, meta, options, false);
+  reader->_data->Open(fs, root, meta, options, false);
   return reader;
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
-  const Directory& dir, const SegmentMeta& meta) const {
+  IndexFileRefs& refs, const SegmentMeta& meta) const {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
+  reader->_refs = GetRefs(refs, meta);
   reader->_id = _id;
   reader->_doc_maps = _doc_maps;
   reader->_field_reader = _field_reader;
@@ -175,17 +181,21 @@ lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
     });
 }
 
-void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
+void SegmentReaderImpl::ColumnData::Open(duckdb::FileSystem& fs,
+                                         std::string_view root,
                                          const SegmentMeta& meta,
                                          const IndexReaderOptions& options,
                                          bool keep_terms) {
   const auto present = [&](std::string_view ext) {
     return absl::c_linear_search(meta.files, irs::FileName(meta.name, ext));
   };
-  col_reader = std::make_unique<ColReader>(dir, meta.name, present(kFormatExt),
-                                           duckdb::MappedFileAccess::RANDOM);
-  idx_reader = std::make_unique<IdxReader>(
-    dir, meta.name, present(kIdxFormatExt), options.hnsw_bases, keep_terms);
+  auto& db = *options.db;
+  col_reader =
+    std::make_unique<ColReader>(db, fs, root, meta.name, present(kFormatExt),
+                                duckdb::MappedFileAccess::RANDOM);
+  idx_reader =
+    std::make_unique<IdxReader>(db, fs, root, meta.name, present(kIdxFormatExt),
+                                options.hnsw_bases, keep_terms);
 }
 
 }  // namespace irs

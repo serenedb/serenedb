@@ -27,12 +27,12 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -65,25 +65,25 @@ auto StoreName() {
 }  // namespace
 
 TEST(directory_reader_test, open_empty_directory) {
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   // No index
-  ASSERT_SQL_ERROR((irs::DirectoryReader{dir}), ERRCODE_UNDEFINED_FILE);
+  ASSERT_SQL_ERROR((tests::OpenReader(dir)), ERRCODE_UNDEFINED_FILE);
 }
 
 TEST(directory_reader_test, open_empty_index) {
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   // Create empty index
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_TRUE(writer->RefreshCommit());
   }
 
-  auto rdr = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  auto rdr = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_FALSE(!rdr);
   ASSERT_EQ(0, rdr.docs_count());
   ASSERT_EQ(0, rdr.live_docs_count());
@@ -95,10 +95,10 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   constexpr irs::field_id kBoth = 7;
   constexpr irs::field_id kFirst = 8;
   constexpr irs::field_id kAbsent = 9;
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer =
+    tests::MakeWriter(dir, irs::kOmCreate, irs::tests::DefaultWriterOptions());
   const auto add = [&](std::string_view both, std::string_view first) {
     tests::Document doc;
     auto both_field = std::make_shared<tests::StringField>("both", both);
@@ -124,7 +124,8 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   add("c", "");
   ASSERT_TRUE(writer->RefreshCommit());
 
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(2, reader.size());
   const auto* both = reader.GetTermRange(kBoth, irs::StringLayout::kStrings);
   ASSERT_TRUE(both);
@@ -160,14 +161,14 @@ TEST(directory_reader_test, open) {
   const tests::Document* doc8 = gen.next();
   const tests::Document* doc9 = gen.next();
 
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   // create index
   {
     // open writer
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
 
     // add first segment
     {
@@ -203,7 +204,7 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     // add second segment
     {
@@ -249,7 +250,7 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     // add third segment
     {
@@ -275,11 +276,11 @@ TEST(directory_reader_test, open) {
     writer->RefreshCommit();
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
   // open reader
-  auto rdr = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  auto rdr = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_FALSE(!rdr);
   ASSERT_EQ(9, rdr.docs_count());
   ASSERT_EQ(9, rdr.live_docs_count());
@@ -361,16 +362,17 @@ TEST(segment_reader_test, segment_reader_has) {
 
   // has none (default)
   {
-    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       TestEnv::MemoryRoot()};
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir.Fs(), dir.Root(), dir.Observers(), filename,
+                             expected);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir.Fs(), dir.Root(), meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -378,16 +380,17 @@ TEST(segment_reader_test, segment_reader_has) {
 
   // has column store
   {
-    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       TestEnv::MemoryRoot()};
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir.Fs(), dir.Root(), dir.Observers(), filename,
+                             expected);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir.Fs(), dir.Root(), meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_FALSE(irs::HasRemovals(meta));
@@ -395,8 +398,8 @@ TEST(segment_reader_test, segment_reader_has) {
 
   // has document mask
   {
-    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       TestEnv::MemoryRoot()};
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -409,11 +412,12 @@ TEST(segment_reader_test, segment_reader_has) {
       return std::make_shared<const irs::DocumentMask>(
         std::move(docs_mask).Finish());
     }();
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir.Fs(), dir.Root(), dir.Observers(), filename,
+                             expected);
 
     irs::SegmentMeta meta;
 
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir.Fs(), dir.Root(), meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));
@@ -421,8 +425,8 @@ TEST(segment_reader_test, segment_reader_has) {
 
   // has all
   {
-    irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                       TestEnv::MemoryRoot()};
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     irs::SegmentMeta expected;
     expected.name = "_1";
 
@@ -435,10 +439,11 @@ TEST(segment_reader_test, segment_reader_has) {
       return std::make_shared<const irs::DocumentMask>(
         std::move(docs_mask).Finish());
     }();
-    irs::segment_meta::Write(dir, filename, expected);
+    irs::segment_meta::Write(dir.Fs(), dir.Root(), dir.Observers(), filename,
+                             expected);
 
     irs::SegmentMeta meta;
-    irs::segment_meta::Read(dir, meta, filename);
+    irs::segment_meta::Read(dir.Fs(), dir.Root(), meta, filename);
 
     ASSERT_EQ(expected, meta);
     ASSERT_TRUE(irs::HasRemovals(meta));
@@ -446,8 +451,8 @@ TEST(segment_reader_test, segment_reader_has) {
 }
 
 TEST(segment_reader_test, open_invalid_segment) {
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   /* open invalid segment */
   {
@@ -455,9 +460,9 @@ TEST(segment_reader_test, open_invalid_segment) {
     meta.name = "invalid_segment_name";
 
     auto rdr = irs::SegmentReaderImpl::Open(
-      dir, meta,
-      irs::IndexReaderOptions{.db =
-                                &::irs::DuckDBEngine::Instance().instance()});
+      dir.Fs(), dir.Root(), meta,
+      dir.ReaderOptions(irs::IndexReaderOptions{
+        .db = &::irs::DuckDBEngine::Instance().instance()}));
     ASSERT_NE(nullptr, rdr);
     ASSERT_EQ(0, rdr->docs_count());
   }
@@ -472,13 +477,13 @@ TEST(segment_reader_test, open) {
   const tests::Document* doc4 = gen.next();
   const tests::Document* doc5 = gen.next();
 
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader writer_snapshot;
   {
     // open writer
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
 
     // add first segment
     {
@@ -544,8 +549,9 @@ TEST(segment_reader_test, open) {
     meta.version = 42;
     meta.files = writer_snapshot.Meta().index_meta.segments.front().meta.files;
 
-    auto rdr = irs::SegmentReaderImpl::Open(dir, meta,
-                                            irs::tests::DefaultReaderOptions());
+    auto rdr = irs::SegmentReaderImpl::Open(
+      dir.Fs(), dir.Root(), meta,
+      dir.ReaderOptions(irs::tests::DefaultReaderOptions()));
     ASSERT_FALSE(!rdr);
     ASSERT_EQ(1, rdr->size());
     ASSERT_EQ(meta.docs_count, rdr->docs_count());

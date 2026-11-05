@@ -21,6 +21,8 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -29,14 +31,17 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
 class IdxWriter final {
  public:
-  IdxWriter(const Directory& dir, std::string_view segment_name);
+  IdxWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, const FileObservers& observers,
+            std::string_view segment_name);
   ~IdxWriter();
 
   IdxWriter(const IdxWriter&) = delete;

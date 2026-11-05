@@ -23,7 +23,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -37,15 +36,14 @@
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/store/index_files.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
-#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -55,6 +53,8 @@
 #include "hook_file_system.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
+#include "search/filter_test_case_base.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 #include "utils/write_helpers.hpp"
@@ -63,10 +63,10 @@ namespace {
 
 using namespace irs;
 
-size_t RemoveUnreferencedFiles(const Directory& dir) {
+size_t RemoveUnreferencedFiles(const ::tests::IndexDir& dir) {
   size_t before = 0;
   dir.Visit([&](std::string_view) { ++before; });
-  irs::RemoveUnreferenced(dir);
+  irs::RemoveUnreferenced(dir.Fs(), dir.Root(), dir.Refs());
   size_t after = 0;
   dir.Visit([&](std::string_view) { ++after; });
   return before - after;
@@ -4736,14 +4736,14 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
 
   // writer commit tracks files that are in active segments
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::MakeWriter(dir, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
 
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
     writer->RefreshCommit();
     ::tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     std::vector<std::string> files;
     auto list_files = [&files](std::string_view name) {
@@ -4759,9 +4759,9 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
     writer->RefreshCommit();
     ::tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
-      irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
+      ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
-    irs::RemoveUnreferenced(dir);
+    irs::RemoveUnreferenced(dir.Fs(), dir.Root(), dir.Refs());
     files.clear();
     dir.Visit(list_files);
     ASSERT_FALSE(files.empty());
@@ -4792,9 +4792,10 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
   // remember files used for first/single segment
   {
     irs::IndexMeta index_meta;
-    const auto segments_file = irs::index_meta::LastFile(dir);
+    const auto segments_file = irs::index_meta::LastFile(dir.Fs(), dir.Root());
     ASSERT_TRUE(segments_file);
-    irs::index_meta::Read(dir, index_meta, *segments_file);
+    irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), index_meta,
+                          *segments_file);
 
     file_set.insert(*segments_file);
 
@@ -4811,8 +4812,8 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
       files.emplace_back(std::move(name));
     };
     std::unordered_set<std::string> current_files(file_set);
-    auto reader = irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()};
-    irs::RemoveUnreferenced(dir);
+    auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+    irs::RemoveUnreferenced(dir.Fs(), dir.Root(), dir.Refs());
     dir.Visit(list_files);
     ASSERT_FALSE(files.empty());
 
@@ -4830,7 +4831,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced_current_segment) {
     auto list_files = [&files](std::string_view name) {
       files.emplace_back(std::move(name));
     };
-    irs::RemoveUnreferenced(dir);
+    irs::RemoveUnreferenced(dir.Fs(), dir.Root(), dir.Refs());
     dir.Visit(list_files);
     ASSERT_TRUE(files.empty());  // current segment should have been removed too
   }
@@ -4841,11 +4842,11 @@ TEST_P(DirectoryTestCase, reference) {
   auto out = dir.Create("abc");
   ASSERT_FALSE(!out);
   out->Close();
-  const auto ref = irs::Reference(dir, "abc");
+  const auto ref = irs::Reference(dir.Fs(), dir.Root(), dir.Refs(), "abc");
   ASSERT_NE(nullptr, ref);
   EXPECT_EQ("abc", *ref);
   EXPECT_EQ(ref, dir.Refs().add("abc"));
-  EXPECT_EQ(nullptr, irs::Reference(dir, "def"));
+  EXPECT_EQ(nullptr, irs::Reference(dir.Fs(), dir.Root(), dir.Refs(), "def"));
 }
 
 TEST_P(DirectoryTestCase, ref_tracker) {
@@ -4853,7 +4854,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
   // a tracking copy shares the refs
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Observed(tracker);
 
     ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
@@ -4861,7 +4862,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
   // test open
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Observed(tracker);
     const std::string_view file{"abc"};
     auto file1 = dir.Create(file);
@@ -4887,7 +4888,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
   // files created through the tracking copy are tracked
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Observed(tracker);
     auto file1 = track_dir.Create("abc");
     ASSERT_FALSE(!file1);
@@ -4899,7 +4900,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
 
   // opening a file does not track it
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Observed(tracker);
     auto file1 = dir.Create("abc");
     ASSERT_FALSE(!file1);
@@ -4911,7 +4912,7 @@ TEST_P(DirectoryTestCase, ref_tracker) {
   }
 
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{dir.Refs()};
     auto track_dir = dir.Observed(tracker);
     auto file1 = track_dir.Create("abc");
     ASSERT_FALSE(!file1);
@@ -4967,73 +4968,43 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(::testing::ValuesIn(::tests::kDirParams)),
   ::tests::DirectoryTestCaseBase::to_string);
 
-void WriteOneDocument(const irs::Directory& files) {
+TEST(DirectoryTest, memory_reader_reads_removed_files) {
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  const ::tests::IndexDir files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
   const ::tests::Document* doc = gen.next();
-  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
-  ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
-  writer->RefreshCommit();
-}
-
-TEST(DirectoryTest, memory_files_removed_with_last_copy) {
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  auto& memory = db.GetMemoryFileSystem();
-  auto files = std::make_optional<irs::Directory>(db, TestEnv::MemoryRoot());
-  ASSERT_EQ(irs::StorageKind::Memory, files->Kind());
   {
-    auto out = files->Create("file");
-    ASSERT_FALSE(!out);
-    out->WriteU32(42);
-    out->Close();
+    auto writer = ::tests::MakeWriter(files, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    writer->RefreshCommit();
   }
-  const auto path = absl::StrCat(files->Root(), "file");
-  ASSERT_TRUE(memory.FileExists(path));
+  const auto reader =
+    ::tests::OpenReader(files, irs::tests::DefaultReaderOptions());
 
-  std::optional<irs::Directory> copy{*files};
-  files.reset();
-  ASSERT_TRUE(memory.FileExists(path));
-  EXPECT_EQ(
-    42, irs::IndexInput{*copy->Open("file", duckdb::MappedFileAccess::NORMAL)}
-          .ReadI32());
+  files.Fs().RemoveDirectory(files.Root());
+  size_t listed = 0;
+  files.Visit([&](std::string_view) { ++listed; });
+  ASSERT_EQ(0, listed);
 
-  copy.reset();
-  EXPECT_FALSE(memory.FileExists(path));
-}
-
-TEST(DirectoryTest, memory_files_kept_by_reader) {
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  auto& memory = db.GetMemoryFileSystem();
-  irs::DirectoryReader reader;
-  std::vector<std::string> paths;
-  {
-    irs::Directory files{db, TestEnv::MemoryRoot()};
-    WriteOneDocument(files);
-    reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
-    files.Visit([&](std::string_view name) {
-      paths.emplace_back(absl::StrCat(files.Root(), name));
-    });
-  }
-  ASSERT_FALSE(paths.empty());
-  for (const auto& path : paths) {
-    EXPECT_TRUE(memory.FileExists(path)) << path;
-  }
-  ASSERT_EQ(1, reader.docs_count());
-  EXPECT_TRUE(reader == reader.Reopen());
-
-  reader = {};
-  for (const auto& path : paths) {
-    EXPECT_FALSE(memory.FileExists(path)) << path;
-  }
+  irs::ByTerm query;
+  *query.mutable_field_id() = ::tests::FieldIdFor("name");
+  query.mutable_options()->term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"A"});
+  const ::tests::PreparedFilter prepared{query, reader};
+  ASSERT_EQ(1, prepared.size());
+  auto docs = prepared.Execute(0);
+  ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
+  EXPECT_TRUE(irs::doc_limits::eof(docs->Next()));
 }
 
 TEST(DirectoryTest, compacted_memory_files_map_in_place) {
   constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& memory = db.GetMemoryFileSystem();
-  const irs::Directory files{db, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir files{db, TestEnv::MemoryRoot()};
   std::vector<irs::byte_type> data(2 * kBlock + 17);
   for (uint64_t i = 0; i != data.size(); ++i) {
     data[i] = static_cast<irs::byte_type>(i * 31 + i / 251);
@@ -5049,7 +5020,7 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
   irs::IndexInput blocks{*blocks_file};
 
   files.Compact("file");
-  EXPECT_FALSE(memory.GetBlockFile(absl::StrCat(files.Root(), "file")));
+  EXPECT_FALSE(memory.OpenBlockFile(irs::PathOf(files.Root(), "file")));
   const auto mapped_file = files.Open("file", duckdb::MappedFileAccess::NORMAL);
   ASSERT_TRUE(mapped_file->Contiguous());
   irs::IndexInput mapped{*mapped_file};
@@ -5066,13 +5037,13 @@ TEST(DirectoryTest, compacted_memory_files_map_in_place) {
     files.Open("file", duckdb::MappedFileAccess::NORMAL)->Contiguous());
 }
 
-size_t MemoryFilesInBlocks(const irs::Directory& files,
+size_t MemoryFilesInBlocks(const ::tests::IndexDir& files,
                            const irs::DirectoryReader& reader) {
   auto& memory = irs::DuckDBEngine::Instance().instance().GetMemoryFileSystem();
   size_t count = 0;
   for (const auto& segment : reader.Meta().index_meta.segments) {
     for (const auto& file : segment.meta.files) {
-      count += memory.GetBlockFile(absl::StrCat(files.Root(), file)) ? 1 : 0;
+      count += memory.OpenBlockFile(irs::PathOf(files.Root(), file)) ? 1 : 0;
     }
   }
   return count;
@@ -5080,11 +5051,11 @@ size_t MemoryFilesInBlocks(const irs::Directory& files,
 
 TEST(DirectoryTest, memory_segments_are_compacted_when_written) {
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const irs::Directory files{db, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
-  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::MakeWriter(files, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   for (size_t i = 0; i != 2; ++i) {
     const ::tests::Document* doc = gen.next();
@@ -5110,11 +5081,11 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
   }
   absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
   auto& db = irs::DuckDBEngine::Instance().instance();
-  const irs::Directory files{db, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir files{db, TestEnv::MemoryRoot()};
   ::tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                                 &::tests::GenericJsonFieldFactory);
-  auto writer = irs::IndexWriter::Make(files, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
+  auto writer = ::tests::MakeWriter(files, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
   const ::tests::Document* doc = gen.next();
   ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
@@ -5136,7 +5107,7 @@ TEST(DirectoryTest, memory_segments_without_memory_to_compact_stay_in_blocks) {
 TEST(DirectoryTest, private_memory) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::MemoryFileSystem fs;
-  const irs::Directory files{db, fs, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir files{db, fs, TestEnv::MemoryRoot()};
   ASSERT_EQ(irs::StorageKind::Memory, files.Kind());
 
   constexpr std::string_view kData = "private memory bytes";
@@ -5150,9 +5121,9 @@ TEST(DirectoryTest, private_memory) {
   }
   ASSERT_TRUE(files.Has("file"));
   EXPECT_FALSE(
-    db.GetMemoryFileSystem().FileExists(absl::StrCat(files.Root(), "file")));
+    db.GetMemoryFileSystem().FileExists(irs::PathOf(files.Root(), "file")));
   EXPECT_FALSE(duckdb::FileSystem::GetFileSystem(db).FileExists(
-    absl::StrCat(files.Root(), "file")));
+    irs::PathOf(files.Root(), "file")));
 
   std::vector<std::string> names;
   files.Visit([&](std::string_view name) { names.emplace_back(name); });
@@ -5186,8 +5157,8 @@ TEST(DirectoryTest, private_memory) {
 
 TEST(DirectoryTest, private_memory_open_missing_file) {
   duckdb::MemoryFileSystem fs;
-  const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
-                             TestEnv::MemoryRoot()};
+  const ::tests::IndexDir files{irs::DuckDBEngine::Instance().instance(), fs,
+                                TestEnv::MemoryRoot()};
   ASSERT_THROW(files.Open("missing", duckdb::MappedFileAccess::NORMAL),
                duckdb::IOException);
   ASSERT_THROW(files.ReadWhole("missing"), duckdb::IOException);
@@ -5197,9 +5168,9 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::MemoryFileSystem lhs_fs;
   duckdb::MemoryFileSystem rhs_fs;
-  const irs::Directory lhs{db, lhs_fs, TestEnv::MemoryRoot()};
-  const irs::Directory rhs{db, rhs_fs, TestEnv::MemoryRoot()};
-  const auto write = [](const irs::Directory& files, std::string_view name,
+  const ::tests::IndexDir lhs{db, lhs_fs, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir rhs{db, rhs_fs, TestEnv::MemoryRoot()};
+  const auto write = [](const ::tests::IndexDir& files, std::string_view name,
                         uint32_t value) {
     auto out = files.Create(name);
     ASSERT_FALSE(!out);
@@ -5211,7 +5182,7 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
   write(rhs, "file", 2);
   write(rhs, "rhs", 2);
 
-  const auto list = [](const irs::Directory& files) {
+  const auto list = [](const ::tests::IndexDir& files) {
     std::vector<std::string> names;
     files.Visit([&](std::string_view name) { names.emplace_back(name); });
     absl::c_sort(names);
@@ -5230,25 +5201,11 @@ TEST(DirectoryTest, private_memory_roots_are_separate) {
               .ReadI32());
 }
 
-TEST(DirectoryTest, private_memory_reader_outlives_files) {
-  duckdb::MemoryFileSystem fs;
-  irs::DirectoryReader reader;
-  {
-    const irs::Directory files{irs::DuckDBEngine::Instance().instance(), fs,
-                               TestEnv::MemoryRoot()};
-    WriteOneDocument(files);
-    reader = irs::DirectoryReader{files, irs::tests::DefaultReaderOptions()};
-  }
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(1, reader.docs_count());
-  EXPECT_TRUE(reader == reader.Reopen());
-}
-
 TEST(DirectoryTest, memory_files_written_through_windows_read_back) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::MemoryFileSystem heap;
-  const irs::Directory private_files{db, heap, TestEnv::MemoryRoot()};
-  const irs::Directory shared_files{db, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir private_files{db, heap, TestEnv::MemoryRoot()};
+  const ::tests::IndexDir shared_files{db, TestEnv::MemoryRoot()};
   constexpr uint64_t kValues = 100000;
   constexpr uint64_t kChunkEvery = 25000;
   const irs::bstring chunk(70000, irs::byte_type{0x5A});
@@ -5310,7 +5267,7 @@ TEST_F(DirectoryHookTest, ref_tracker_failures) {
 
   // test create failure
   {
-    irs::RefTracker tracker;
+    irs::RefTracker tracker{hooked.Refs()};
 
     ASSERT_THROW(hooked.Observed(tracker).Create("abc"), duckdb::IOException);
 
@@ -5342,7 +5299,9 @@ TEST_F(DirectoryHookTest, remove_failures) {
 
   hooked.Refs().add("abc");
   hooked.Refs().add("def");
-  ASSERT_THROW(irs::RemoveUnreferenced(hooked), duckdb::IOException);
+  ASSERT_THROW(
+    irs::RemoveUnreferenced(hooked.Fs(), hooked.Root(), hooked.Refs()),
+    duckdb::IOException);
   ASSERT_TRUE(local->Has("abc"));
   ASSERT_TRUE(local->Has("def"));
 
@@ -5378,7 +5337,9 @@ TEST_F(DirectoryHookTest, failed_object_removal_is_retried) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
-  EXPECT_THROW(irs::RemoveUnreferenced(*store), duckdb::IOException);
+  EXPECT_THROW(
+    irs::RemoveUnreferenced(store->Fs(), store->Root(), store->Refs()),
+    duckdb::IOException);
   TestEnv::ClearFaultPoints();
   ASSERT_TRUE(store->Has("abc"));
 

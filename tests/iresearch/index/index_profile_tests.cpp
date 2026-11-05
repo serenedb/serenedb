@@ -24,12 +24,12 @@
 #include <absl/synchronization/notification.h>
 
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 
@@ -345,8 +345,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     path = std::filesystem::absolute(path);
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     // not all commits might produce a new segment,
     ASSERT_LE(1, reader.size());
     // some might merge with concurrent commits
@@ -385,7 +384,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     std::jthread cleaner{[cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
-        irs::RemoveUnreferenced(*directory);
+        irs::RemoveUnreferenced(directory->Fs(), directory->Root(),
+                                directory->Refs());
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }
@@ -492,8 +492,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       ++docs_count;
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(docs_count, reader[0].docs_count());
   }

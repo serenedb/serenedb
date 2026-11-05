@@ -43,6 +43,7 @@
 #include <random>
 
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -375,12 +376,16 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     }
     _docs = docs;
     irs::FlushState state{
-      .dir = &dir(),
+      .fs = &dir().Fs(),
+      .root = dir().Root(),
+      .observers = &dir().Observers(),
+      .cache = &duckdb::BlockCache::Get(dir().Db()),
       .name = kSegment,
       .doc_count = docs,
       .index_features = irs::IndexFeatures::None,
     };
-    irs::IdxWriter idx{dir(), kSegment};
+    irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
+                       kSegment};
     irs::term_dict::FieldWriter writer{compaction};
     writer.SetIdxWriter(idx);
     const uint64_t keyed = absl::c_count_if(
@@ -412,14 +417,19 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     Open(dir());
   }
 
-  void Open(const irs::Directory& from) {
+  void Open(const tests::IndexDir& from) {
     _reader.reset();
     _meta.name = kSegment;
-    _idx = std::make_unique<irs::IdxReader>(from, kSegment, true, nullptr);
+    _idx = std::make_unique<irs::IdxReader>(from.Db(), from.Fs(), from.Root(),
+                                            kSegment, true, nullptr);
     _reader = std::make_unique<irs::term_dict::FieldReader>(
       irs::IResourceManager::gNoop);
     _reader->prepare(
-      irs::ReaderState{.dir = &from, .meta = &_meta, .idx = _idx.get()});
+      irs::ReaderState{.fs = &from.Fs(),
+                       .root = from.Root(),
+                       .cache = &duckdb::BlockCache::Get(from.Db()),
+                       .meta = &_meta,
+                       .idx = _idx.get()});
   }
 
   const irs::TermReader* Get(
@@ -441,7 +451,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
   }
 
   irs::term_dict::TermsMeta TakeTerms() {
-    return irs::IdxReader{dir(), kSegment, true, nullptr}.TakeTerms();
+    return irs::IdxReader{dir().Db(), dir().Fs(), dir().Root(),
+                          kSegment,   true,       nullptr}
+      .TakeTerms();
   }
 
   void RewriteTerms(const irs::term_dict::TermsMeta& terms) {
@@ -1891,12 +1903,16 @@ TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
   ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
             irs::term_dict::OrdinalBytes(kLimit));
   const irs::FlushState state{
-    .dir = &dir(),
+    .fs = &dir().Fs(),
+    .root = dir().Root(),
+    .observers = &dir().Observers(),
+    .cache = &duckdb::BlockCache::Get(dir().Db()),
     .name = kSegment,
     .doc_count = 10,
     .index_features = irs::IndexFeatures::None,
   };
-  irs::IdxWriter idx{dir(), kSegment};
+  irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
+                     kSegment};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   ASSERT_SQL_ERROR(writer.prepare(state, kLimit + 1),

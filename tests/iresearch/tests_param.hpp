@@ -24,13 +24,13 @@
 #pragma once
 
 #include <array>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
 
+#include "index_dir.hpp"
 #include "store/simulated_object_store.hpp"
 #include "tests_shared.hpp"
 
@@ -38,15 +38,15 @@ class TestBase;
 
 namespace tests {
 
-std::shared_ptr<irs::Directory> MemoryDirectory(const TestBase* test);
-std::shared_ptr<irs::Directory> LocalDirectory(const TestBase* test);
-std::shared_ptr<irs::Directory> ObjectStoreDirectory(const TestBase* test);
+std::shared_ptr<IndexDir> MemoryDirectory(const TestBase* test);
+std::shared_ptr<IndexDir> LocalDirectory(const TestBase* test);
+std::shared_ptr<IndexDir> ObjectStoreDirectory(const TestBase* test);
 
 irs::SimulatedObjectStore& ObjectStore();
 
 struct DirParam {
   std::string_view name;
-  std::shared_ptr<irs::Directory> (*factory)(const TestBase*);
+  std::shared_ptr<IndexDir> (*factory)(const TestBase*);
 };
 
 inline constexpr DirParam kMemoryDirParam{"memory", &MemoryDirectory};
@@ -78,10 +78,10 @@ class DirectoryTestCaseBase
     TestBase::TearDown();
   }
 
-  irs::Directory& dir() const noexcept { return *_dir; }
+  IndexDir& dir() const noexcept { return *_dir; }
 
  protected:
-  std::shared_ptr<irs::Directory> _dir;
+  std::shared_ptr<IndexDir> _dir;
 };
 
 }  // namespace tests

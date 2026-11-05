@@ -23,10 +23,11 @@
 #include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
+#include <string>
 
 namespace sdb::connector::highlight {
 
@@ -41,8 +42,9 @@ class MemoryIndex {
     opts.lock_repository = false;
     opts.db = _db;
     opts.reader_options.db = _db;
-    auto writer =
-      irs::IndexWriter::Make(_dir, irs::OpenMode::kOmCreate, std::move(opts));
+    opts.reader_options.refs = _refs;
+    auto writer = irs::IndexWriter::Make(_fs, _root, irs::OpenMode::kOmCreate,
+                                         std::move(opts));
     {
       irs::IndexWriter::Transaction trx{*writer};
       {
@@ -69,7 +71,8 @@ class MemoryIndex {
  private:
   duckdb::DatabaseInstance* _db;
   duckdb::MemoryFileSystem _fs;
-  irs::Directory _dir;
+  std::string _root;
+  std::shared_ptr<irs::IndexFileRefs> _refs;
 };
 
 }  // namespace sdb::connector::highlight

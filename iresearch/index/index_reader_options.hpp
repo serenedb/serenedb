@@ -22,8 +22,11 @@
 
 #pragma once
 
+#include <memory>
+
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/store/index_files.hpp"
 
 namespace duckdb {
 
@@ -39,6 +42,7 @@ struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
   duckdb::DatabaseInstance* db = nullptr;
   HnswBases* hnsw_bases = nullptr;
+  std::shared_ptr<IndexFileRefs> refs;
   bool index = true;  // Open inverted index
 };
 

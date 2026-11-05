@@ -22,11 +22,12 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <string>
 #include <string_view>
 
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 
 namespace irs {
 
@@ -42,7 +43,9 @@ inline constexpr duckdb::field_id_t kFieldByteSize = 3;
 
 std::string FileName(const SegmentMeta& meta);
 
-void Write(const Directory& dir, std::string& filename, SegmentMeta& meta);
+void Write(duckdb::FileSystem& fs, std::string_view root,
+           const FileObservers& observers, std::string& filename,
+           SegmentMeta& meta);
 
 }  // namespace segment_meta
 }  // namespace irs

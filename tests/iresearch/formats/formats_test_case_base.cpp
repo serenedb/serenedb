@@ -29,6 +29,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -47,7 +48,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
@@ -82,7 +83,7 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 namespace tests {
 
 void FormatTestCase::AssertNoDirectoryArtifacts(
-  const irs::Directory& dir,
+  const IndexDir& dir,
   const std::unordered_set<std::string>& expect_additional /* ={} */) {
   std::vector<std::string> dir_files;
   auto visitor = [&dir_files](std::string_view file) {
@@ -94,8 +95,10 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
 
   std::unordered_set<std::string> index_files(expect_additional.begin(),
                                               expect_additional.end());
-  if (const auto segment_file = irs::index_meta::LastFile(dir)) {
-    irs::index_meta::Read(dir, index_meta, *segment_file);
+  if (const auto segment_file =
+        irs::index_meta::LastFile(dir.Fs(), dir.Root())) {
+    irs::index_meta::Read(dir.Db(), dir.Fs(), dir.Root(), index_meta,
+                          *segment_file);
 
     VisitFiles(index_meta, [&index_files](const std::string& file) {
       index_files.emplace(file);
@@ -142,16 +145,17 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
   // cleanup on refcount decrement (old files not in use)
   {
     // create writer to directory
-    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(*dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
 
     // initialize directory
     {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -162,8 +166,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -173,8 +178,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -185,8 +191,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -197,8 +204,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -209,8 +217,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
@@ -230,16 +239,17 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
   // cleanup on refcount decrement (old files still in use)
   {
     // create writer to directory
-    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(*dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
 
     // initialize directory
     {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -251,8 +261,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
@@ -262,21 +273,23 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
 
     // create reader to directory
-    auto reader =
-      irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(*dir, irs::tests::DefaultReaderOptions());
     std::unordered_set<std::string> reader_files;
     {
       irs::IndexMeta index_meta;
-      const auto segments_file = irs::index_meta::LastFile(*dir);
+      const auto segments_file =
+        irs::index_meta::LastFile(dir->Fs(), dir->Root());
       ASSERT_TRUE(segments_file);
 
-      irs::index_meta::Read(*dir, index_meta, *segments_file);
+      irs::index_meta::Read(dir->Db(), dir->Fs(), dir->Root(), index_meta,
+                            *segments_file);
 
       VisitFiles(index_meta, [&reader_files](std::string_view file) {
         reader_files.emplace(file);
@@ -292,8 +305,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -304,8 +318,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -316,8 +331,9 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
@@ -328,15 +344,17 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // close reader (remove old meta + old doc_mask + first segment)
     {
       reader = {};
-      irs::RemoveUnreferenced(*dir);  // clean unused files
+      irs::RemoveUnreferenced(dir->Fs(), dir->Root(),
+                              dir->Refs());  // clean unused files
       AssertNoDirectoryArtifacts(*dir);
     }
   }
@@ -357,29 +375,29 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
   {
     // fill directory
     {
-      auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
+      auto writer = tests::MakeWriter(*dir, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
 
       writer->RefreshCommit();  // initialize directory
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
       ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
       writer->RefreshCommit();  // add first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
       ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
       writer->RefreshCommit();  // add second segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
       tests::Remove(*writer, query_doc1);
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
+        tests::OpenReader(*dir, irs::tests::DefaultReaderOptions()));
     }
 
     // add invalid files
@@ -397,8 +415,8 @@ TEST_P(FormatTestCase, unreferenced_files_removed) {
     ASSERT_TRUE(dir->Has("dummy.file.2"));
 
     // open writer
-    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(*dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
 
     // opening the writer removes files no index meta references
     ASSERT_FALSE(dir->Has("dummy.file.1"));
@@ -698,7 +716,10 @@ TEST_P(FormatTestCase, fields_read_write) {
   // write fields
   {
     irs::FlushState state{
-      .dir = &dir(),
+      .fs = &dir().Fs(),
+      .root = dir().Root(),
+      .observers = &dir().Observers(),
+      .cache = &duckdb::BlockCache::Get(dir().Db()),
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
@@ -710,7 +731,8 @@ TEST_P(FormatTestCase, fields_read_write) {
     tests::MockTermReader term_reader{
       terms, irs::FieldMeta{field.id, field.index_features}};
 
-    irs::IdxWriter idx{dir(), "segment_name"};
+    irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
+                       "segment_name"};
     irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
     writer.prepare(state, 1);
@@ -724,11 +746,16 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir(), "segment_name", true, nullptr};
+    irs::IdxReader idx{dir().Db(),     dir().Fs(), dir().Root(),
+                       "segment_name", true,       nullptr};
     irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
-      irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
+      irs::ReaderState{.fs = &dir().Fs(),
+                       .root = dir().Root(),
+                       .cache = &duckdb::BlockCache::Get(dir().Db()),
+                       .meta = &meta,
+                       .idx = &idx});
     ASSERT_EQ(1, reader->size());
 
     // check terms
@@ -916,7 +943,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     std::string filename;
 
     // write segment meta
-    irs::segment_meta::Write(dir(), filename, meta);
+    irs::segment_meta::Write(dir().Fs(), dir().Root(), dir().Observers(),
+                             filename, meta);
 
     // read segment meta
     {
@@ -924,7 +952,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       read_meta.name = meta.name;
       read_meta.version = 100;
 
-      irs::segment_meta::Read(dir(), read_meta,
+      irs::segment_meta::Read(dir().Fs(), dir().Root(), read_meta,
                               irs::segment_meta::FileName(read_meta));
       ASSERT_EQ(meta.name, read_meta.name);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
@@ -942,7 +970,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     {
       irs::SegmentMeta read_meta;
 
-      irs::segment_meta::Read(dir(), read_meta, filename);
+      irs::segment_meta::Read(dir().Fs(), dir().Root(), read_meta, filename);
       ASSERT_EQ(meta.name, read_meta.name);
       ASSERT_EQ(meta.version, read_meta.version);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
@@ -957,9 +985,9 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     {
       irs::SegmentMeta read_meta;
 
-      ASSERT_SQL_ERROR(
-        irs::segment_meta::Read(dir(), read_meta, "no_generation.sm"),
-        ERRCODE_INDEX_CORRUPTED);
+      ASSERT_SQL_ERROR(irs::segment_meta::Read(dir().Fs(), dir().Root(),
+                                               read_meta, "no_generation.sm"),
+                       ERRCODE_INDEX_CORRUPTED);
     }
   }
 }
@@ -1002,7 +1030,7 @@ TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
 
   std::string message;
   try {
-    sm::Read(dir(), read_meta, sm::FileName(read_meta));
+    sm::Read(dir().Fs(), dir().Root(), read_meta, sm::FileName(read_meta));
   } catch (const irs::SqlException& e) {
     EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
     message = e.what();
@@ -1027,7 +1055,8 @@ TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
     std::string message{"not rejected"};
     try {
       irs::SegmentMeta meta;
-      sm::Read(dir(), meta, irs::FileName(name, version, sm::kExt));
+      sm::Read(dir().Fs(), dir().Root(), meta,
+               irs::FileName(name, version, sm::kExt));
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << name;
       message = e.what();
@@ -1194,7 +1223,7 @@ TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
     }
     try {
       irs::IndexMeta meta;
-      im::Read(dir(), meta, name);
+      im::Read(dir().Db(), dir().Fs(), dir().Root(), meta, name);
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
       return e.what();
@@ -1228,9 +1257,9 @@ template<typename Populate, typename Verify>
 void RoundTrip(std::string_view segment_name, uint64_t row_count,
                Populate&& populate, Verify&& verify) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, segment_name, db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), segment_name};
     populate(w);
     w.Commit(row_count);
   }
@@ -1352,7 +1381,7 @@ TEST_P(FormatTestCase, columns_rw) {
   //  * "wrong column / wrong doc / can't find" lookups,
   //  * visit + partial-visit (early-stop) checks.
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
 
   // Build segment _1 -----------------------------------------------------
   // ids in this segment: 0,1,2 (empty),3,4,5; segment row count = 34.
@@ -1384,7 +1413,7 @@ TEST_P(FormatTestCase, columns_rw) {
   };
 
   {
-    irs::ColWriter w{dir, "_1", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), "_1"};
     auto& f0 = irs::tests::OpenBlobColumn(w, kF0);
     auto& f1 = irs::tests::OpenBlobColumn(w, kF1);
     irs::tests::OpenBlobColumn(w, kEmpty);  // empty column in the middle
@@ -1423,7 +1452,7 @@ TEST_P(FormatTestCase, columns_rw) {
   static constexpr irs::field_id kS2F1 = 1;
   static constexpr irs::field_id kS2F2 = 2;
   {
-    irs::ColWriter w{dir, "_2", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), "_2"};
     auto& f0 = irs::tests::OpenBlobColumn(w, kS2F0);
     irs::tests::OpenBlobColumn(w, kS2F1);  // pushed but never written
     auto& f2 = irs::tests::OpenBlobColumn(w, kS2F2);
@@ -1729,9 +1758,10 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kIntId = 2;
   constexpr irs::field_id kStrId = 3;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_typed", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "columns_rw_typed"};
 
     // Typed BIGINT column.
     auto& cw_int = w.OpenColumn(kIntId, duckdb::LogicalType::BIGINT);
@@ -1920,7 +1950,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kRgIntId = 100;
   constexpr irs::field_id kRgStrId = 101;
   {
-    irs::ColWriter w{dir, "columns_rw_typed_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "columns_rw_typed_rg"};
     auto& cw_int = w.OpenColumn(
       kRgIntId, duckdb::LogicalType::BIGINT,
       /*skip_validity=*/false,
@@ -2135,9 +2166,10 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 200;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_bit_mask_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "columns_rw_bit_mask_rg"};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
@@ -2306,9 +2338,10 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 300;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_dense_mask_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "columns_rw_dense_mask_rg"};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
@@ -2503,9 +2536,10 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   constexpr size_t kSmallPayloadSize = 1024;
   constexpr irs::field_id kBigId = 400;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_big_document_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "columns_rw_big_document_rg"};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
@@ -2561,12 +2595,13 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   //  * a fresh writer at the rolled-back name produces a clean file,
   //  * three independent segments with id+name BLOB columns round-trip.
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
 
   // Rollback path: the eagerly-created `.col` stays on disk as an orphan;
   // the directory cleaner sweeps it later.
   {
-    irs::ColWriter w{dir, "_rollback_seg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "_rollback_seg"};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
@@ -2582,7 +2617,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   static constexpr irs::field_id kIdCol = 7;
   static constexpr irs::field_id kNameCol = 8;
   auto write_seg = [&](const SegSpec& seg, uint64_t prefix) {
-    irs::ColWriter w{dir, seg.name, db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), seg.name};
     auto& id_w = irs::tests::OpenBlobColumn(w, kIdCol);
     auto& name_w = irs::tests::OpenBlobColumn(w, kNameCol);
     for (uint64_t i = 0; i < seg.row_count; ++i) {
@@ -2689,7 +2724,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   constexpr uint64_t kBigRows = 2048;
   constexpr std::string_view kBigSeg = "_big";
   {
-    irs::ColWriter w{dir, kBigSeg, db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), kBigSeg};
     auto& id_w = w.OpenColumn(
       kIdCol, duckdb::LogicalType::BLOB, /*skip_validity=*/false,
       /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO, false);
@@ -2881,9 +2916,10 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   constexpr irs::field_id kBigIdCol = 500;
   constexpr irs::field_id kBigNameCol = 501;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "same_col_empty_repeat_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "same_col_empty_repeat_rg"};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
                               /*skip_validity=*/false,
                               /*row_group_size=*/512,
@@ -3079,9 +3115,10 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   constexpr uint64_t kBigRows = 2049;
   constexpr irs::field_id kBigId = 600;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "sparse_dense_block_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "sparse_dense_block_rg"};
     auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,
@@ -3318,9 +3355,10 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   constexpr irs::field_id kBigDenseId = 700;
   constexpr irs::field_id kBigSparseId = 701;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "border_case_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
+                     "border_case_rg"};
     auto& dense = w.OpenColumn(
       kBigDenseId, duckdb::LogicalType::BLOB,
       /*skip_validity=*/false,
@@ -3520,9 +3558,9 @@ TEST_P(FormatTestCase, columns_issue700) {
   constexpr uint64_t kBigRows = STANDARD_VECTOR_SIZE * 2 + 1;  // 4097
   constexpr irs::field_id kBigColId = 800;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{db, TestEnv::MemoryRoot()};
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "issue700_rg", db};
+    irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), "issue700_rg"};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false,
                             /*row_group_size=*/512,

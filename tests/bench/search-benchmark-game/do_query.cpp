@@ -27,11 +27,18 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
+#include <iresearch/store/data_input.hpp>
+#include <iresearch/store/file_output.hpp>
+#include <iresearch/store/index_files.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/remap_executable.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "executor.h"
@@ -89,20 +96,23 @@ int64_t MedianRunNs(bench::Executor& executor, const bench::Command& cmd,
 
 // The index at `path`, or a copy of it in memory: in cache blocks, or with
 // every file compacted into one span.
-irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  irs::Directory local{db, path};
+std::string OpenIndex(std::string_view path, std::string_view memory) {
   if (memory.empty()) {
-    return local;
+    return std::string{path};
   }
-  irs::Directory copy{db, "memory://search-benchmark-game"};
+  constexpr std::string_view kCopy = "memory://search-benchmark-game";
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
   std::vector<std::string> names;
-  local.Visit([&](std::string_view name) { names.emplace_back(name); });
+  irs::ListIndexFiles(fs, path,
+                      [&](std::string_view name) { names.emplace_back(name); });
   std::vector<irs::byte_type> buffer(1 << 20);
   for (const auto& name : names) {
-    const auto file = local.Open(name, duckdb::MappedFileAccess::SEQUENTIAL);
+    const auto file =
+      irs::OpenInput(duckdb::BlockCache::Get(db), fs, irs::PathOf(path, name),
+                     duckdb::MappedFileAccess::SEQUENTIAL);
     irs::IndexInput in{*file};
-    auto out = copy.Create(name);
+    auto out = irs::FileOutput::Open(fs, kCopy, name, {}, nullptr);
     for (auto left = in.Length(); left != 0;) {
       const auto chunk = std::min<uint64_t>(left, buffer.size());
       in.ReadData(buffer.data(), chunk);
@@ -111,10 +121,10 @@ irs::Directory OpenIndex(std::string_view path, std::string_view memory) {
     }
     out->Close();
     if (memory == "compacted") {
-      copy.Compact(name);
+      fs.Compact(irs::PathOf(kCopy, name));
     }
   }
-  return copy;
+  return std::string{kCopy};
 }
 
 }  // namespace

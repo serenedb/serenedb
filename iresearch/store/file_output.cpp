@@ -28,6 +28,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <new>
 
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
 
@@ -44,36 +45,45 @@ PendingUploads CurrentUploads() noexcept {
           .bytes = gUploadingBytes.load(std::memory_order_relaxed)};
 }
 
-IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs,
-                                  duckdb::MemoryFileSystem* memory,
-                                  const std::string& path,
-                                  const Directory::Observers& observers,
-                                  bool remote, duckdb::BlockCache* cache) {
-  auto handle =
-    fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                        duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  return ptr{
-    new FileOutput{std::move(handle), memory, observers, remote, cache}};
+IndexOutput::ptr FileOutput::Open(duckdb::FileSystem& fs, std::string_view root,
+                                  std::string_view name,
+                                  const FileObservers& observers,
+                                  duckdb::BlockCache* cache) {
+  for (auto* observer : observers) {
+    observer->Created(name);
+  }
+  absl::Cleanup abandon = [&] {
+    for (auto* observer : observers) {
+      observer->Removed(name);
+    }
+  };
+  auto handle = fs.OpenFile(PathOf(root, name),
+                            duckdb::FileFlags::FILE_FLAGS_WRITE |
+                              duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+  ptr output{new FileOutput{std::move(handle), observers,
+                            StorageKindOf(root) == StorageKind::Remote, cache}};
+  std::move(abandon).Cancel();
+  return output;
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       duckdb::MemoryFileSystem* memory,
-                       const Directory::Observers& observers, bool remote,
+                       const FileObservers& observers, bool remote,
                        duckdb::BlockCache* cache)
   : _handle{std::move(handle)}, _observers{observers}, _remote{remote} {
   SDB_ASSERT(_handle);
-  if (memory && &_handle->file_system == memory) {
-    _memory = memory;
-  }
   if (_remote) {
     gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
     if (cache && cache->IsEnabled()) {
       _cached.emplace(*cache, cache->CreateWrittenFile(_handle->GetPath()));
     }
   }
-  if (_memory || _cached) {
+  if (_cached) {
     NextWindow();
-  } else {
+    return;
+  }
+  SetWindow(_handle->GetWriteWindow());
+  _in_place = _begin != nullptr;
+  if (!_in_place) {
     UseBuffer();
   }
 }
@@ -109,8 +119,8 @@ void FileOutput::SetWindow(duckdb::FileWriteWindow window) noexcept {
 }
 
 void FileOutput::NextWindow() {
-  if (_memory) {
-    SetWindow(_memory->GetWriteWindow(*_handle));
+  if (_in_place) {
+    SetWindow(_handle->GetWriteWindow());
     return;
   }
   try {
@@ -134,9 +144,9 @@ void FileOutput::CommitWindow() {
   if (size == 0) {
     return;
   }
-  if (_memory) {
+  if (_in_place) {
     _crc.process_bytes(_begin, size);
-    _memory->CommitWriteWindow(*_handle, size);
+    _handle->CommitWriteWindow(size);
     _offset += size;
   } else {
     WriteHandle(_begin, size);

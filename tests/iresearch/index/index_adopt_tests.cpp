@@ -38,7 +38,6 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -55,6 +54,7 @@
 #include "hook_file_system.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -129,10 +129,10 @@ class IndexAdoptTest : public TestBase {
     auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
-    _writer = irs::IndexWriter::Make(*_dir, mode, std::move(options));
+    _writer = tests::MakeWriter(*_dir, mode, std::move(options));
   }
 
-  // Drops the Directory too, so no in-memory IndexFileRefs survive.
+  // Drops the IndexDir too, so no in-memory IndexFileRefs survive.
   void Restart(bool cleanup_on_open, uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
@@ -205,7 +205,7 @@ class IndexAdoptTest : public TestBase {
 
   std::filesystem::path _path;
   std::unique_ptr<CountingFileSystem> _fs;
-  std::optional<irs::Directory> _dir;
+  std::optional<tests::IndexDir> _dir;
   irs::IndexWriter::ptr _writer;
 };
 
@@ -672,7 +672,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   trx.Adopt(adopt.front());
 
   // Before the commit that publishes it.
-  irs::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(_dir->Fs(), _dir->Root(), _dir->Refs());
   EXPECT_TRUE(Exists(adopt.front()))
     << adopt.front() << " (meta file) was reclaimed before publish";
   for (const auto& file : data_files) {
@@ -726,7 +726,7 @@ TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
   }
   ASSERT_FALSE(files.empty());
 
-  irs::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(_dir->Fs(), _dir->Root(), _dir->Refs());
   for (const auto& file : files) {
     EXPECT_FALSE(Exists(file)) << file << " is still pinned after Abort";
   }
@@ -2410,7 +2410,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   // The order the build uses: reference through adoption, then abort.
   Replace(*_writer, _writer->GetSnapshot(), sources, replacement);
   build.Abort();
-  irs::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(_dir->Fs(), _dir->Root(), _dir->Refs());
 
   for (const auto& file : files) {
     EXPECT_TRUE(Exists(file)) << file << " was reclaimed before the commit";
@@ -2438,7 +2438,7 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
   // The wrong order, kept as documentation of the hazard rather than as a
   // contract: after Abort nothing references the flushed files.
   build.Abort();
-  irs::RemoveAllUnreferenced(*_dir);
+  irs::RemoveAllUnreferenced(_dir->Fs(), _dir->Root(), _dir->Refs());
 
   bool any_gone = false;
   for (const auto& file : files) {

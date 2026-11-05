@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
@@ -38,7 +39,6 @@
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -212,14 +212,15 @@ Index BuildIndex(const std::vector<std::string>& docs,
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  const irs::Directory dir{*db, path.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = path.string();
   Index index{.strategy = &strategy, .tokenizer = MakeTokenizer(strategy)};
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
@@ -240,7 +241,7 @@ Index BuildIndex(const std::vector<std::string>& docs,
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  index.reader = irs::DirectoryReader{dir, reader_opts};
+  index.reader = irs::DirectoryReader{fs, root, reader_opts};
   return index;
 }
 

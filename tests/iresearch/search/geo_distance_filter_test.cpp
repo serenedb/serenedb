@@ -26,13 +26,13 @@
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
@@ -410,14 +410,14 @@ TEST(GeoDistanceFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::MakeWriter(dir, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -921,14 +921,14 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   irs::DirectoryReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::MakeWriter(dir, irs::kOmCreate,
+                                      irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";

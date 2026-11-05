@@ -22,20 +22,17 @@
 
 #include <duckdb/parallel/task_scheduler.hpp>
 
+#include "iresearch/store/storage.hpp"
+
 namespace irs {
 
-void FileTracker::Created(const Directory&, std::string_view name) {
-  _files.emplace(name);
-}
+void FileTracker::Created(std::string_view name) { _files.emplace(name); }
 
 void FileTracker::Written(uint64_t bytes) { _files_size += bytes; }
 
-void FileTracker::Removed(const Directory&, std::string_view name) {
-  _files.erase(name);
-}
+void FileTracker::Removed(std::string_view name) { _files.erase(name); }
 
-void FileTracker::Renamed(const Directory&, std::string_view src,
-                          std::string_view dst) {
+void FileTracker::Renamed(std::string_view src, std::string_view dst) {
   if (_files.erase(src) != 0) {
     _files.emplace(dst);
   }
@@ -56,29 +53,28 @@ void FileTracker::Clear() noexcept {
   _files.clear();
 }
 
-void RefTracker::Created(const Directory& dir, std::string_view name) {
-  auto ref = dir.Refs().add(name);
+void RefTracker::Created(std::string_view name) {
+  auto ref = _refs.add(name);
   absl::MutexLock lock{&_mutex};
   _tracked.insert(std::move(ref));
 }
 
 void RefTracker::Written(uint64_t) {}
 
-void RefTracker::Removed(const Directory& dir, std::string_view name) {
-  dir.Refs().remove(name);
+void RefTracker::Removed(std::string_view name) {
+  _refs.remove(name);
   absl::MutexLock lock{&_mutex};
   _tracked.erase(name);
 }
 
-void RefTracker::Renamed(const Directory& dir, std::string_view src,
-                         std::string_view dst) {
-  auto ref = dir.Refs().add(dst);
+void RefTracker::Renamed(std::string_view src, std::string_view dst) {
+  auto ref = _refs.add(dst);
   {
     absl::MutexLock lock{&_mutex};
     _tracked.erase(src);
     _tracked.emplace(std::move(ref));
   }
-  dir.Refs().remove(src);
+  _refs.remove(src);
 }
 
 std::vector<IndexFileRefs::ref_t> RefTracker::GetRefs() const {
@@ -91,28 +87,49 @@ void RefTracker::Clear() {
   _tracked.clear();
 }
 
-IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
-  if (!dir.Has(name)) {
+void ListIndexFiles(duckdb::FileSystem& fs, std::string_view root,
+                    absl::FunctionRef<void(std::string_view)> visitor) {
+  fs.ListFiles(std::string{root},
+               [&](const std::string& name, bool is_directory) {
+                 if (!is_directory && name.find('/') == std::string::npos) {
+                   visitor(name);
+                 }
+               });
+}
+
+IndexFileRefs::ref_t Reference(duckdb::FileSystem& fs, std::string_view root,
+                               IndexFileRefs& refs, std::string_view name) {
+  const auto path = PathOf(root, name);
+  if (!fs.FileExists(path)) {
     return nullptr;
   }
-  auto ref = dir.Refs().add(name);
-  if (!dir.Has(name)) {
+  auto ref = refs.add(name);
+  if (!fs.FileExists(path)) {
     return nullptr;
   }
   return ref;
 }
 
-void RemoveUnreferenced(const Directory& dir) {
-  const auto files = dir.Unobserved();
-  dir.Refs().RemoveUnused(
-    [&](std::vector<std::string>& names) { files.Remove(names); });
+void RemoveUnreferenced(duckdb::FileSystem& fs, std::string_view root,
+                        IndexFileRefs& refs) {
+  refs.RemoveUnused([&](std::vector<std::string>& names) {
+    if (names.empty()) {
+      return;
+    }
+    duckdb::vector<std::string> paths;
+    paths.reserve(names.size());
+    for (const auto& name : names) {
+      paths.push_back(PathOf(root, name));
+    }
+    fs.RemoveFiles(paths);
+  });
 }
 
-void RemoveAllUnreferenced(const Directory& dir) {
+void RemoveAllUnreferenced(duckdb::FileSystem& fs, std::string_view root,
+                           IndexFileRefs& refs) {
   duckdb::TaskScheduler::BlockingScope blocking;
-  auto& refs = dir.Refs();
-  dir.Visit([&](std::string_view name) { refs.add(name); });
-  RemoveUnreferenced(dir);
+  ListIndexFiles(fs, root, [&](std::string_view name) { refs.add(name); });
+  RemoveUnreferenced(fs, root, refs);
 }
 
 }  // namespace irs

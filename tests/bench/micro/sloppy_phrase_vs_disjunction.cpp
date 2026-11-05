@@ -47,6 +47,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/index/directory_reader.hpp>
@@ -60,7 +61,6 @@
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -388,14 +388,15 @@ Corpus BuildIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{*db, tmp_root.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -427,7 +428,7 @@ Corpus BuildIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{dir, reader_opts};
+  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -442,14 +443,15 @@ Corpus BuildSyntheticIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{*db, tmp_root.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -485,7 +487,7 @@ Corpus BuildSyntheticIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{dir, reader_opts};
+  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -500,14 +502,15 @@ Corpus BuildDense3Index() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{*db, tmp_root.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -539,7 +542,7 @@ Corpus BuildDense3Index() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{dir, reader_opts};
+  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -551,14 +554,15 @@ Corpus BuildAllSameIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{*db, tmp_root.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -590,7 +594,7 @@ Corpus BuildAllSameIndex() {
 
   irs::IndexReaderOptions reader_opts;
   reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{dir, reader_opts};
+  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -606,14 +610,15 @@ Corpus BuildFarApartIndex() {
   std::filesystem::create_directories(tmp_root);
 
   auto* db = &::irs::DuckDBEngine::Instance().instance();
-  irs::Directory dir{*db, tmp_root.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -651,7 +656,7 @@ Corpus BuildFarApartIndex() {
 
   irs::IndexReaderOptions reader_opts2;
   reader_opts2.db = db;
-  auto rdr2 = irs::DirectoryReader{dir, reader_opts2};
+  auto rdr2 = irs::DirectoryReader{fs, root, reader_opts2};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr2)};
 }
 

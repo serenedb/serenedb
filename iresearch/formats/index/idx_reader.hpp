@@ -21,7 +21,9 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/main/database.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -39,7 +41,6 @@
 
 namespace irs {
 
-class Directory;
 struct AnnIndex;
 
 struct IvfCentroidMeta {
@@ -74,7 +75,8 @@ inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name, bool present,
+  IdxReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, std::string_view segment_name, bool present,
             HnswBases* hnsw_bases, bool keep_terms = true);
   ~IdxReader();
 

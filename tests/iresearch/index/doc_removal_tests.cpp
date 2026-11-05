@@ -29,7 +29,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
@@ -44,6 +43,7 @@
 
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -51,12 +51,12 @@ namespace {
 constexpr uint32_t kSegments = 8;
 
 struct IndexOfSegments {
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   irs::DirectoryReader reader = [this] {
-    auto writer = irs::IndexWriter::Make(
-      dir, irs::kOmCreate,
-      tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+    auto writer =
+      tests::MakeWriter(dir, irs::kOmCreate,
+                        tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
     for (uint32_t segment = 0; segment != kSegments; ++segment) {
       tests::StringField field{"name", "doc"};
       field.id = tests::FieldIdFor("name");

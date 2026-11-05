@@ -33,7 +33,6 @@
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <numeric>
@@ -42,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+#include "index_dir.hpp"
 #include "memory_output.hpp"
 #include "tests_shared.hpp"
 
@@ -112,11 +112,12 @@ CentroidsBuildParams DeepParams() {
   };
 }
 
-void WriteVectorColumn(const Directory& dir, duckdb::DatabaseInstance& db,
-                       field_id id, uint32_t d, std::span<const float> data) {
+void WriteVectorColumn(const ::tests::IndexDir& dir,
+                       duckdb::DatabaseInstance& db, field_id id, uint32_t d,
+                       std::span<const float> data) {
   const uint64_t n = data.size() / d;
   const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
-  ColWriter w{dir, "seg", db};
+  ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), "seg"};
   auto& cw = w.OpenColumn(id, atype, /*skip_validity=*/false, /*rg_size=*/4096);
   uint64_t pos = 0;
   while (pos < n) {
@@ -474,10 +475,12 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  ColReader r{dir.Db(), dir.Fs(), dir.Root(),
+              "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 
@@ -496,10 +499,12 @@ TEST(centroids_builder_test,
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  Directory dir{DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
-  ColReader r{dir, "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  ColReader r{dir.Db(), dir.Fs(), dir.Root(),
+              "seg",    true,     duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = r.Column(kVec);
   ASSERT_NE(col, nullptr);
 

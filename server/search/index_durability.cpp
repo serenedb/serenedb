@@ -36,6 +36,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/index_files.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -112,8 +113,22 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
                                  duckdb::idx_t oid)
   : _database{database.shared_from_this()},
     _name{std::move(name)},
-    _files{irs::DuckDBEngine::Instance().instance(),
-           path ? *path : MemoryRoot(database, oid)} {}
+    _fs{duckdb::FileSystem::GetFileSystem(
+      irs::DuckDBEngine::Instance().instance())},
+    _root{path ? *path : MemoryRoot(database, oid)},
+    _refs{std::make_shared<irs::IndexFileRefs>()} {}
+
+IndexDurability::~IndexDurability() {
+  if (irs::StorageKindOf(_root) != irs::StorageKind::Memory) {
+    return;
+  }
+  try {
+    _fs.RemoveDirectory(_root);
+  } catch (const std::exception& e) {
+    SDB_ERROR(SEARCH, "Failed to remove the in-memory index '", _root,
+              "': ", duckdb::ErrorData{e}.RawMessage());
+  }
+}
 
 std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
 IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
@@ -128,15 +143,16 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
   options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
     stamp = IndexStamp::Read(in);
   };
-  if (is_new || _files.Kind() == irs::StorageKind::Memory) {
-    auto writer = irs::IndexWriter::Make(_files, irs::OpenMode::kOmCreate,
+  options.reader_options.refs = _refs;
+  if (is_new || irs::StorageKindOf(_root) == irs::StorageKind::Memory) {
+    auto writer = irs::IndexWriter::Make(_fs, _root, irs::OpenMode::kOmCreate,
                                          std::move(options));
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
   ResolvePendingSave();
   auto writer = irs::IndexWriter::Make(
-    _files, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
+    _fs, _root, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
   _written_manifest = stamp.manifest;
   _position = stamp.position;
@@ -150,8 +166,10 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
 std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
   const irs::IndexReaderOptions& options) const {
   IndexStamp stamp;
+  auto opts = options;
+  opts.refs = _refs;
   irs::DirectoryReader reader{
-    _files, options,
+    _fs, _root, opts,
     [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
   return {std::move(reader), std::move(stamp)};
 }
@@ -175,13 +193,13 @@ void IndexDurability::WritePayload(const irs::SourcePosition& position,
 }
 
 void IndexDurability::ResolvePendingSave() const {
-  const auto pending = irs::index_meta::LastPendingFile(_files);
+  const auto pending = irs::index_meta::LastPendingFile(_fs, _root);
   if (!pending) {
     return;
   }
   uint64_t checkpoint = 0;
   try {
-    irs::index_meta::ReadPayload(_files, *pending,
+    irs::index_meta::ReadPayload(_fs, _root, *pending,
                                  [&](duckdb::BinaryDeserializer& in) {
                                    checkpoint = IndexStamp::Read(in).checkpoint;
                                  });
@@ -199,11 +217,11 @@ void IndexDurability::ResolvePendingSave() const {
         store->GetStorageManager().GetBlockManager().GetCheckpointIteration()) {
       const auto committed = irs::index_meta::FileName(
         irs::index_meta::ParsePendingGeneration(*pending));
-      _files.Rename(*pending, committed);
+      _fs.MoveFile(irs::PathOf(_root, *pending), irs::PathOf(_root, committed));
       return;
     }
   }
-  std::ignore = _files.Remove(*pending);
+  std::ignore = _fs.TryRemoveFile(irs::PathOf(_root, *pending));
 }
 
 void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
@@ -445,7 +463,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    _files.SyncDirectory();
+    irs::SyncDirectory(_fs, _root);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
@@ -458,9 +476,9 @@ absl::Status IndexDurability::Cleanup() {
   try {
     SyncDirectory();
     if (_swept.load(std::memory_order_relaxed)) {
-      irs::RemoveUnreferenced(_files);
+      irs::RemoveUnreferenced(_fs, _root, *_refs);
     } else {
-      irs::RemoveAllUnreferenced(_files);
+      irs::RemoveAllUnreferenced(_fs, _root, *_refs);
       _swept.store(true, std::memory_order_relaxed);
     }
   } catch (const std::exception& e) {
@@ -479,7 +497,7 @@ absl::Status IndexDurability::CompactFiles(irs::IndexWriter& writer) {
     const auto reader = writer.GetSnapshot();
     for (const auto& segment : reader.Meta().index_meta.segments) {
       for (const auto& file : segment.meta.files) {
-        _files.Compact(file);
+        _fs.Compact(irs::PathOf(_root, file));
       }
     }
   } catch (const std::exception& e) {

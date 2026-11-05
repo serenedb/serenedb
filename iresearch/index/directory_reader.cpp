@@ -33,11 +33,11 @@
 
 namespace irs {
 
-DirectoryReader::DirectoryReader(
-  const Directory& dir,
-  const IndexReaderOptions& opts /*= directory_reader_options()*/,
-  MetaPayloadReader payload)
-  : _impl{DirectoryReaderImpl::Open(dir, opts, nullptr, std::move(payload))} {}
+DirectoryReader::DirectoryReader(duckdb::FileSystem& fs, std::string_view root,
+                                 const IndexReaderOptions& opts,
+                                 MetaPayloadReader payload)
+  : _impl{
+      DirectoryReaderImpl::Open(fs, root, opts, nullptr, std::move(payload))} {}
 
 DirectoryReader::DirectoryReader(
   std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept
@@ -88,7 +88,7 @@ DirectoryReader DirectoryReader::Reopen(MetaPayloadReader payload) const {
   auto impl = std::atomic_load_explicit(&_impl, std::memory_order_acquire);
 
   return DirectoryReader{DirectoryReaderImpl::Open(
-    impl->Dir(), impl->Options(), std::move(impl), std::move(payload))};
+    impl->Fs(), impl->Root(), impl->Options(), impl, std::move(payload))};
 }
 
 }  // namespace irs

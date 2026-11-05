@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <memory>
 #include <span>
@@ -33,7 +34,6 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -53,7 +53,8 @@ inline std::string FileName(std::string_view segment_name) {
 
 class ColReader final {
  public:
-  ColReader(const Directory& dir, std::string_view segment_name, bool present,
+  ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, std::string_view segment_name, bool present,
             duckdb::MappedFileAccess access);
   ~ColReader();
 

@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -29,7 +30,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
@@ -98,13 +98,15 @@ const Index& IndexOf() {
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  const irs::Directory dir{*db, index.path.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = index.path.string();
 
   irs::IndexWriterOptions opts;
   opts.db = db;
   opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer =
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(opts));
   {
     auto trx = writer->GetBatch();
     BodyField field;
@@ -123,7 +125,8 @@ const Index& IndexOf() {
     trx.Commit();
   }
   writer->RefreshCommit();
-  index.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
+  index.reader =
+    irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
   SDB_ASSERT(index.reader.size() == 1);
   return index;
 }

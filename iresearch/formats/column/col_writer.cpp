@@ -33,6 +33,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -81,9 +82,12 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
-  : _dir{dir},
+ColWriter::ColWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, const FileObservers& observers,
+                     std::string_view segment_name)
+  : _fs{fs},
+    _root{root},
+    _observers{observers},
     _segment_name{segment_name},
     _filename{FileName(segment_name)},
     _db{&db} {}
@@ -98,7 +102,8 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir.Create(_filename);
+  _out = FileOutput::Open(_fs, _root, _filename, _observers,
+                          &duckdb::BlockCache::Get(*_db));
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -312,8 +317,8 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{_dir, _segment_name, true,
-                   duckdb::MappedFileAccess::SEQUENTIAL};
+  ColReader reader{*_db,          _fs,  _root,
+                   _segment_name, true, duckdb::MappedFileAccess::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;

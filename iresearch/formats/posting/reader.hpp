@@ -30,7 +30,7 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/store/store_utils.hpp"
 
 namespace irs {
@@ -39,7 +39,8 @@ inline std::unique_ptr<InputFile> PrepareInput(std::string& str,
                                                const ReaderState& state,
                                                std::string_view ext) {
   irs::FileName(str, state.meta->name, ext);
-  auto file = state.dir->Open(str, duckdb::MappedFileAccess::RANDOM);
+  auto file = OpenInput(*state.cache, *state.fs, PathOf(state.root, str),
+                        duckdb::MappedFileAccess::RANDOM);
   format_utils::ReadFooter(*file, str);
   return file;
 }

@@ -45,7 +45,6 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -55,6 +54,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -169,9 +169,9 @@ bool DocInRanges(const RangeType (&ranges)[N], irs::doc_id_t doc) {
 // per doc inside `ranges` (payload = `PayloadFor(doc)`) and a null row
 // for every doc in between. The column ends one row past the max range.
 template<size_t N>
-void WriteRanges(duckdb::DatabaseInstance& db, const irs::Directory& dir,
+void WriteRanges(duckdb::DatabaseInstance& db, const tests::IndexDir& dir,
                  std::string_view name, const RangeType (&ranges)[N]) {
-  irs::ColWriter w{dir, name, db};
+  irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(), name};
   // Use the override that lets us pick the row-group size. We pass
   // skip_validity=false (we *want* the validity bits) and
   // COMPRESSION_AUTO so the codec picks an appropriate validity
@@ -217,8 +217,8 @@ void ExpectPayloadEq(irs::bytes_view payload, irs::doc_id_t doc) {
 // that `HasValidity()` is true.
 template<size_t N>
 void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_next";
   WriteRanges(db, dir, kName, ranges);
 
@@ -322,8 +322,8 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 // confirms `IsNullDoc(RowCount)` (past-end) returns true.
 template<size_t N>
 void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek";
   WriteRanges(db, dir, kName, ranges);
 
@@ -386,8 +386,8 @@ void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 template<size_t N>
 void TestRwSeekNext(duckdb::DatabaseInstance& db,
                     const RangeType (&ranges)[N]) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_next";
   WriteRanges(db, dir, kName, ranges);
 
@@ -534,8 +534,8 @@ template<size_t N, size_t K>
 void TestRwSeekRandom(duckdb::DatabaseInstance& db,
                       const RangeType (&ranges)[N],
                       const SeekType (&seeks)[K]) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_rand";
   WriteRanges(db, dir, kName, ranges);
 
@@ -643,13 +643,13 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
 // We test both. Past-end IsNullDoc on the empty column also returns
 // true, mirroring "next() past eof".
 TEST_P(SparseBitmapTestCase, read_write_empty) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   // Shape (a): segment with no columns at all.
   constexpr std::string_view kName = "empty_seg";
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), kName};
     // No OpenColumn -> footer has zero column entries; the segment
     // still commits with a valid .col file.
     w.Commit(/*target_row=*/0);
@@ -667,7 +667,7 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
   // Shape (b): segment with a column that has zero rows.
   constexpr std::string_view kName2 = "empty_col";
   {
-    irs::ColWriter w{dir, kName2, Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), kName2};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Commit(/*target_row=*/0);
   }
@@ -798,11 +798,11 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   ASSERT_EQ(valid_docs.back(),
             irs::doc_limits::min() + (kStepCount - 1) * kStep);
 
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "sparse_blocks";
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), kName};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
                             duckdb::CompressionType::COMPRESSION_AUTO, false);
@@ -1073,8 +1073,8 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
 // regressions where a flushed row group is mis-reported (e.g. doc 42
 // is itself a row in row-group 0, doc 50 is the second).
 TEST_P(SparseBitmapTestCase, insert_erase) {
-  irs::Directory dir{::irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{::irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "insert_erase";
   constexpr irs::doc_id_t kErasedDoc = 42;
   constexpr irs::doc_id_t kSurvivorEarlyA = 50;    // valid, same RG as 42
@@ -1082,7 +1082,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
   constexpr irs::doc_id_t kSurvivingDoc = 70000;   // valid, later RG
 
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Fs(), dir.Root(), dir.Observers(), kName};
     auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                             /*skip_validity=*/false, kRowGroupSize,
                             duckdb::CompressionType::COMPRESSION_AUTO, false);

@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -42,7 +43,6 @@
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -189,7 +189,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   std::filesystem::remove_all(_dir_path);
   std::filesystem::create_directories(_dir_path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  const irs::Directory dir{*db, _dir_path.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = _dir_path.string();
 
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
@@ -203,7 +204,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -225,7 +226,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
+  _reader = irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {

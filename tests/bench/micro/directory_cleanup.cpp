@@ -27,7 +27,7 @@
 #include <chrono>
 #include <duckdb/common/local_file_system.hpp>
 #include <filesystem>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <thread>
@@ -52,28 +52,30 @@ void BmCreateWhileCleaning(benchmark::State& state) {
     std::filesystem::temp_directory_path() / "sdb_bench_directory_cleanup";
   std::filesystem::remove_all(root);
   std::filesystem::create_directories(root);
-  const irs::Directory dir{irs::DuckDBEngine::Instance().instance(), fs,
-                           root.string()};
-  irs::RefTracker tracker;
-  const auto tracked = dir.Observed(tracker);
+  const auto path = root.string();
+  irs::IndexFileRefs refs;
+  irs::RefTracker tracker{refs};
+  const irs::FileObservers tracked{&tracker};
   uint64_t round = 0;
   for (auto _ : state) {
     for (int i = 0; i != kUnused; ++i) {
       const auto name = absl::StrCat("unused_", round, "_", i);
-      dir.Create(name)->Close();
-      dir.Refs().add(name);
+      irs::FileOutput::Open(fs, path, name, {}, nullptr)->Close();
+      refs.add(name);
     }
     absl::Notification started;
     absl::Notification cleaned;
     const std::jthread cleaner{[&] {
       started.Notify();
-      irs::RemoveUnreferenced(dir);
+      irs::RemoveUnreferenced(fs, path, refs);
       cleaned.Notify();
     }};
     started.WaitForNotification();
     absl::SleepFor(absl::FromChrono(kRemoveLatency / 3));
     const auto began = std::chrono::steady_clock::now();
-    tracked.Create(absl::StrCat("new_", round))->Close();
+    irs::FileOutput::Open(fs, path, absl::StrCat("new_", round), tracked,
+                          nullptr)
+      ->Close();
     state.SetIterationTime(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
         .count());

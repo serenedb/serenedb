@@ -28,6 +28,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/wal_type.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <future>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -38,7 +39,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iterator>
@@ -156,10 +157,13 @@ class SearchRowRemovalTest : public ::testing::Test {
  protected:
   void SetUp() override { Open(irs::kOmCreate); }
 
-  void TearDown() override { _writer.reset(); }
+  void TearDown() override {
+    _writer.reset();
+    _fs.RemoveDirectory(_root);
+  }
 
   void Open(irs::OpenMode mode) {
-    _writer = irs::IndexWriter::Make(_dir, mode, WriterOptions());
+    _writer = irs::IndexWriter::Make(_fs, _root, mode, WriterOptions());
   }
 
   void Reopen() {
@@ -344,8 +348,8 @@ class SearchRowRemovalTest : public ::testing::Test {
     EXPECT_TRUE(std::ranges::equal(_model, live));
   }
 
-  irs::Directory _dir{EngineDb(),
-                      absl::StrCat("memory://search_row_removal/", NextRoot())};
+  duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(EngineDb());
+  std::string _root = absl::StrCat("memory://search_row_removal/", NextRoot());
   irs::IndexWriter::ptr _writer;
   std::set<int64_t> _model;
 };
@@ -746,13 +750,14 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
 TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   _writer.reset();
   {
-    auto out = _dir.Create("_4294967294");
+    auto out = irs::FileOutput::Open(_fs, _root, "_4294967294", {}, nullptr);
     ASSERT_TRUE(out);
     out->Close();
   }
   auto options = WriterOptions();
   options.cleanup_on_open = false;
-  _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+  _writer =
+    irs::IndexWriter::Make(_fs, _root, irs::kOmCreate, std::move(options));
   InsertRange(0, 100);
   InsertRange(100, 100);
   const auto snapshot = _writer->GetSnapshot();

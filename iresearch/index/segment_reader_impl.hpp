@@ -24,14 +24,15 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/hash_utils.hpp"
@@ -56,14 +57,14 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
-    const Directory& dir, const SegmentMeta& meta,
+    duckdb::FileSystem& fs, std::string_view root, const SegmentMeta& meta,
     const IndexReaderOptions& options);
 
   std::shared_ptr<const SegmentReaderImpl> ReopenReader(
-    const Directory& dir, const SegmentMeta& meta,
+    duckdb::FileSystem& fs, std::string_view root, const SegmentMeta& meta,
     const IndexReaderOptions& options) const;
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
-    const Directory& dir, const SegmentMeta& meta) const;
+    IndexFileRefs& refs, const SegmentMeta& meta) const;
 
   const SegmentInfo& Meta() const final { return _info; }
 
@@ -103,8 +104,9 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
 
-    void Open(const Directory& dir, const SegmentMeta& meta,
-              const IndexReaderOptions& options, bool keep_terms);
+    void Open(duckdb::FileSystem& fs, std::string_view root,
+              const SegmentMeta& meta, const IndexReaderOptions& options,
+              bool keep_terms);
   };
 
   FileRefs _refs;

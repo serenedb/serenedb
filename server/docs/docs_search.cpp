@@ -52,7 +52,7 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/file_output.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -197,38 +197,32 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-irs::Directory LoadIndex(duckdb::DatabaseInstance& db,
-                         duckdb::MemoryFileSystem& fs,
-                         std::span<const IndexFile> files) {
-  irs::Directory dir{db, fs,
-                     absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs")};
+irs::DirectoryReader LoadIndex(duckdb::DatabaseInstance& db,
+                               duckdb::MemoryFileSystem& fs,
+                               std::span<const IndexFile> files) {
+  const auto root = absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs");
   for (const auto& file : files) {
-    auto out = dir.Create(file.name);
+    auto out = irs::FileOutput::Open(fs, root, file.name, {}, nullptr);
     out->WriteData(file.bytes.data(), file.bytes.size());
     out->Close();
   }
-  return dir;
+  irs::IndexReaderOptions options;
+  options.db = &db;
+  return irs::DirectoryReader{fs, root, options,
+                              [](duckdb::BinaryDeserializer& payload) {
+                                search::IndexStamp::Read(payload);
+                              }};
 }
 
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{LoadIndex(db, _fs, files)},
-      _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::IndexStamp::Read(payload);
-              }} {}
+    : _reader{LoadIndex(db, _fs, files)} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }
 
  private:
-  static irs::IndexReaderOptions Options(duckdb::DatabaseInstance& db) {
-    irs::IndexReaderOptions options;
-    options.db = &db;
-    return options;
-  }
-
   duckdb::MemoryFileSystem _fs;
-  irs::Directory _dir;
   irs::DirectoryReader _reader;
 };
 

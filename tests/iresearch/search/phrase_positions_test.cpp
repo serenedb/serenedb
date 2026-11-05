@@ -32,7 +32,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
@@ -42,6 +41,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "phrase_slop_run.hpp"
 #include "tests_shared.hpp"
@@ -257,11 +257,11 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   WhitespaceTokenizer whitespace;
   ExplicitTokenizer explicit_positions;
   const auto value = dense ? doc.Text() : doc.Explicit();
-  irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                     TestEnv::MemoryRoot()};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     EXPECT_NE(nullptr, writer);
     Field field{.value = value};
     field.tokenizer = &explicit_positions;
@@ -276,7 +276,8 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
     ctx.Commit();
     writer->RefreshCommit();
   }
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
 
   irs::ByPhrase filter;
   *filter.mutable_field_id() = kField;
@@ -583,11 +584,11 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
     }
   }
   WhitespaceTokenizer whitespace;
-  const irs::Directory dir{irs::DuckDBEngine::Instance().instance(),
-                           TestEnv::MemoryRoot()};
+  const tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                            TestEnv::MemoryRoot()};
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = tests::MakeWriter(dir, irs::kOmCreate,
+                                    irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     Field field{.tokenizer = &whitespace, .value = text};
     auto ctx = writer->GetBatch();
@@ -600,7 +601,8 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
   }
   TestEnv::ClearFaultPoints();
   {
-    const irs::DirectoryReader flushed{dir, irs::tests::DefaultReaderOptions()};
+    const auto flushed =
+      tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
     for (const auto& segment : flushed.Meta().index_meta.segments) {
       for (const auto& file : segment.meta.files) {
         if (!file.ends_with(".pos")) {
@@ -609,7 +611,8 @@ TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
       }
     }
   }
-  const irs::DirectoryReader reader{dir, irs::tests::DefaultReaderOptions()};
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, reader.size());
   const auto handles = reader[0].field(kField)->Handles();
   ASSERT_TRUE(handles.doc->Contiguous());

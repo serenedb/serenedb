@@ -41,6 +41,7 @@
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 
 namespace tests {
 
@@ -513,7 +514,7 @@ class FormatTestCase : public IndexTestBase {
   }
 
   void AssertNoDirectoryArtifacts(
-    const irs::Directory& dir,
+    const IndexDir& dir,
     const std::unordered_set<std::string>& expect_additional = {});
 };
 

@@ -32,12 +32,13 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::segment_meta {
 
-void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
+void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
+          std::string_view filename) {
   SDB_ASSERT(!IsNull(filename));
 
   std::string_view segment_name;
@@ -51,7 +52,7 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
 
   std::string name{segment_name};
 
-  const auto bytes = dir.ReadWhole(filename);
+  const auto bytes = ReadWhole(fs, PathOf(root, filename));
 
   std::vector<std::string> files;
   bool has_files = false;

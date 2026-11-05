@@ -51,7 +51,6 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <string>
@@ -78,6 +77,7 @@ uint64_t Rows() {
 
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
+constexpr std::string_view kRoot = "memory://bench";
 
 duckdb::LogicalType TypeOf(Shape s) {
   return s == Shape::Bigint ? duckdb::LogicalType::BIGINT
@@ -97,7 +97,6 @@ duckdb::DatabaseInstance& CsDb() {
 struct Seg {
   std::unique_ptr<duckdb::MemoryFileSystem> fs =
     std::make_unique<duckdb::MemoryFileSystem>();
-  irs::Directory dir{CsDb(), *fs, "memory://bench"};
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -137,7 +136,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   seg->rows = Rows();
   const auto type = TypeOf(shape);
   {
-    irs::ColWriter w{seg->dir, kSeg, CsDb()};
+    irs::ColWriter w{CsDb(), *seg->fs, kRoot, irs::FileObservers{}, kSeg};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
     while (pos < seg->rows) {
@@ -152,7 +151,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
     w.Commit(seg->rows);
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    seg->dir, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
+    CsDb(), *seg->fs, kRoot, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");
@@ -266,8 +265,7 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
   const uint64_t n = Rows();
   for (auto _ : state) {
     duckdb::MemoryFileSystem fs;
-    irs::Directory dir{CsDb(), fs, "memory://bench"};
-    irs::ColWriter w{dir, kSeg, CsDb()};
+    irs::ColWriter w{CsDb(), fs, kRoot, irs::FileObservers{}, kSeg};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
     while (pos < n) {
@@ -279,7 +277,7 @@ void IrsWriteSeal(benchmark::State& state, Shape shape, bool nullable) {
       pos += take;
     }
     w.Commit(n);
-    benchmark::DoNotOptimize(&dir);
+    benchmark::DoNotOptimize(&fs);
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
                           static_cast<int64_t>(n));

@@ -20,31 +20,47 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/ref_counter.hpp"
 
 namespace irs {
 
+using IndexFileRefs = RefCounter<std::string>;
 using FileRefs = std::vector<IndexFileRefs::ref_t>;
+
+class FileObserver {
+ public:
+  virtual void Created(std::string_view name) = 0;
+  virtual void Written(uint64_t bytes) = 0;
+  virtual void Removed(std::string_view name) = 0;
+  virtual void Renamed(std::string_view src, std::string_view dst) = 0;
+
+ protected:
+  ~FileObserver() = default;
+};
+
+using FileObservers = absl::InlinedVector<FileObserver*, 2>;
 
 struct TrackedFiles {
   std::vector<std::string> files;
   uint64_t bytes = 0;
 };
 
-class FileTracker final : public Directory::Observer {
+class FileTracker final : public FileObserver {
  public:
-  void Created(const Directory& dir, std::string_view name) final;
+  void Created(std::string_view name) final;
   void Written(uint64_t bytes) final;
-  void Removed(const Directory& dir, std::string_view name) final;
-  void Renamed(const Directory& dir, std::string_view src,
-               std::string_view dst) final;
+  void Removed(std::string_view name) final;
+  void Renamed(std::string_view src, std::string_view dst) final;
 
   bool Contains(std::string_view name) const { return _files.contains(name); }
   TrackedFiles Flush();
@@ -55,13 +71,14 @@ class FileTracker final : public Directory::Observer {
   uint64_t _files_size = 0;
 };
 
-class RefTracker final : public Directory::Observer {
+class RefTracker final : public FileObserver {
  public:
-  void Created(const Directory& dir, std::string_view name) final;
+  explicit RefTracker(IndexFileRefs& refs) noexcept : _refs{refs} {}
+
+  void Created(std::string_view name) final;
   void Written(uint64_t bytes) final;
-  void Removed(const Directory& dir, std::string_view name) final;
-  void Renamed(const Directory& dir, std::string_view src,
-               std::string_view dst) final;
+  void Removed(std::string_view name) final;
+  void Renamed(std::string_view src, std::string_view dst) final;
 
   std::vector<IndexFileRefs::ref_t> GetRefs() const;
   void Clear();
@@ -71,14 +88,21 @@ class RefTracker final : public Directory::Observer {
     containers::FlatHashSet<IndexFileRefs::ref_t, IndexFileRefs::Hash,
                             IndexFileRefs::EqualTo>;
 
+  IndexFileRefs& _refs;
   mutable absl::Mutex _mutex;
   Refs _tracked ABSL_GUARDED_BY(_mutex);
 };
 
-IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
+void ListIndexFiles(duckdb::FileSystem& fs, std::string_view root,
+                    absl::FunctionRef<void(std::string_view)> visitor);
 
-void RemoveUnreferenced(const Directory& dir);
+IndexFileRefs::ref_t Reference(duckdb::FileSystem& fs, std::string_view root,
+                               IndexFileRefs& refs, std::string_view name);
 
-void RemoveAllUnreferenced(const Directory& dir);
+void RemoveUnreferenced(duckdb::FileSystem& fs, std::string_view root,
+                        IndexFileRefs& refs);
+
+void RemoveAllUnreferenced(duckdb::FileSystem& fs, std::string_view root,
+                           IndexFileRefs& refs);
 
 }  // namespace irs

@@ -23,7 +23,9 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
+#include <string_view>
 
 #include "index_reader.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
@@ -48,9 +50,9 @@ class DirectoryReader final : public IndexReader {
   DirectoryReader& operator=(DirectoryReader&&) noexcept = default;
 
   // Create an index reader over the specified directory
-  explicit DirectoryReader(
-    const Directory& dir, const IndexReaderOptions& opts = IndexReaderOptions{},
-    MetaPayloadReader payload = {});
+  DirectoryReader(duckdb::FileSystem& fs, std::string_view root,
+                  const IndexReaderOptions& opts,
+                  MetaPayloadReader payload = {});
   explicit DirectoryReader(
     std::shared_ptr<const DirectoryReaderImpl>&& impl) noexcept;
   DirectoryReader(const DirectoryReader& other) noexcept;

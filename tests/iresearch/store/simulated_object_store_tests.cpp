@@ -31,12 +31,13 @@
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <functional>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "index_dir.hpp"
 #include "store/simulated_object_store.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
@@ -200,7 +201,7 @@ TEST(SimulatedObjectStoreTest, prefixes_list_move_and_remove) {
 
 TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
   auto& store = tests::ObjectStore();
-  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
+  tests::IndexDir files{irs::DuckDBEngine::Instance().instance(), Root()};
   ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
   {
     auto out = files.Create("segment");
@@ -237,7 +238,7 @@ TEST(SimulatedObjectStoreTest, index_files_on_the_store) {
 
 TEST(SimulatedObjectStoreTest, files_this_process_wrote_open_without_requests) {
   auto& store = tests::ObjectStore();
-  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
+  tests::IndexDir files{irs::DuckDBEngine::Instance().instance(), Root()};
   {
     auto out = files.Create("written");
     for (uint32_t i = 0; i != 100000; ++i) {
@@ -260,7 +261,7 @@ TEST(SimulatedObjectStoreTest,
      files_opened_without_requests_refuse_an_object_replaced_since) {
   auto& store = tests::ObjectStore();
   auto& db = irs::DuckDBEngine::Instance().instance();
-  irs::Directory files{db, Root()};
+  tests::IndexDir files{db, Root()};
   {
     auto out = files.Create("written");
     for (uint32_t i = 0; i != 100000; ++i) {
@@ -272,7 +273,7 @@ TEST(SimulatedObjectStoreTest,
   store.ResetRequests();
   const auto in_file = files.Open("written", duckdb::MappedFileAccess::NORMAL);
   EXPECT_EQ(0, store.Requests().head);
-  store.Publish(absl::StrCat(files.Root(), "written"),
+  store.Publish(irs::PathOf(files.Root(), "written"),
                 std::string(400000, '\0'));
   duckdb::BlockCache::Get(db).SetEnabled(false);
   duckdb::BlockCache::Get(db).SetEnabled(true);
@@ -286,9 +287,9 @@ TEST(SimulatedObjectStoreTest,
 
 TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
   tests::ObjectStore();
-  irs::Directory files{irs::DuckDBEngine::Instance().instance(), Root()};
+  tests::IndexDir files{irs::DuckDBEngine::Instance().instance(), Root()};
   ASSERT_EQ(irs::StorageKind::Remote, files.Kind());
-  ASSERT_SQL_ERROR(irs::ForEach(files, 4,
+  ASSERT_SQL_ERROR(irs::ForEach(files.Db(), files.Root(), 4,
                                 [](size_t i) {
                                   if (i == 2) {
                                     THROW_SQL_ERROR(

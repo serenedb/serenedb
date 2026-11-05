@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
 #include <string>
@@ -38,7 +39,7 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/store/index_files.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -50,8 +51,9 @@ struct AnnBuildEnv;
 
 class ColWriter final {
  public:
-  ColWriter(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+  ColWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, const FileObservers& observers,
+            std::string_view segment_name);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -106,7 +108,9 @@ class ColWriter final {
                                    duckdb::CompressionType forced,
                                    bool hyperloglog);
 
-  Directory _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  FileObservers _observers;
   std::string _segment_name;
   std::string _filename;
   duckdb::DatabaseInstance* _db;

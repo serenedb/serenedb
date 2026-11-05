@@ -38,12 +38,12 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"
@@ -114,9 +114,9 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
 irs::DirectoryReader BuildIndex(
-  const irs::Directory& dir, irs::doc_id_t n,
+  const ::tests::IndexDir& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer = ::tests::MakeWriter(dir, irs::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {
@@ -199,8 +199,8 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   }
 
   irs::doc_id_t _docs = 0;
-  irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
-                      TestEnv::MemoryRoot()};
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
@@ -478,8 +478,8 @@ class RerankExactDistancesTest
     }
   }
 
-  irs::Directory _dir{irs::DuckDBEngine::Instance().instance(),
-                      TestEnv::MemoryRoot()};
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
   irs::DirectoryReader _reader;
 };
 

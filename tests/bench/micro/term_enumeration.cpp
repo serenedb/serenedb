@@ -20,6 +20,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/term_reader.hpp>
@@ -33,7 +34,6 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -98,7 +98,8 @@ const CachedIndex& IndexOf(size_t num_terms) {
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
-  const irs::Directory dir{*db, cached.path.string()};
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = cached.path.string();
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {
@@ -112,7 +113,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
     return {};
   };
   auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(writer_opts));
+    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -126,7 +127,8 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
   writer->RefreshCommit();
 
-  cached.reader = irs::DirectoryReader{dir, irs::IndexReaderOptions{.db = db}};
+  cached.reader =
+    irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
   return cached;
 }
 

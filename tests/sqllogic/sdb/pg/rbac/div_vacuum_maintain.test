@@ -135,8 +135,8 @@ VACUUM (recompute_stats_schema) vac_no_schema;
 db error: ERROR: schema "vac_no_schema" does not exist<slt:ignore>
 
 
-# An unrecognized pragma option is rejected at parse time (PG: "unrecognized
-# VACUUM option ..."), rather than silently lowering to a standard no-op VACUUM.
+# An unrecognized option is rejected (PG: "unrecognized VACUUM option ..."),
+# rather than silently lowering to a standard no-op VACUUM.
 connection default
 statement error
 VACUUM (refresh_bogus) vac_mop;

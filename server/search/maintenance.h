@@ -25,6 +25,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <iresearch/index/index_writer.hpp>
+#include <string>
 
 // Background-maintenance vocabulary shared by Store and the loops in
 // search/task.h that drive it.
@@ -47,13 +49,18 @@ enum class RefreshResult {
   Done,
 };
 
-// Outcome of a best-effort background tick (refresh / compaction /
-// cleanup): the *Impl worker throws, the *Unsafe wrapper converts it to a
-// Status and the caller logs + counts it. A failure is never propagated
-// past the caller.
+// Outcome of a best-effort background tick (refresh / cleanup): the *Unsafe op
+// returns a failure as a Status and the caller logs + counts it. A failure is
+// never propagated past the caller.
 struct ResultWithTime {
   absl::Status res;
   uint64_t time_ms;
+};
+
+struct MergeResult {
+  irs::CompactionResult outcome;
+  std::string error;
+  bool backup = false;
 };
 
 }  // namespace sdb::search

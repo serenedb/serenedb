@@ -382,3 +382,55 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
     ASSERT_FALSE(track_dir.remove("def"));
   }
 }
+
+TEST_F(DirectoryUtilsTests, test_tracking_dir_failures) {
+  struct FailingDirectory final : public irs::Directory {
+    using Directory::Directory;
+
+    irs::DirectoryAttributes attrs{};
+    irs::DirectoryAttributes& attributes() noexcept final { return attrs; }
+    irs::IndexOutput::ptr create(std::string_view name) final {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("cannot create ", name));
+    }
+    bool exists(bool&, std::string_view) const noexcept final { return false; }
+    bool length(uint64_t&, std::string_view) const noexcept final {
+      return false;
+    }
+    bool visit(const visitor_f&) const final { return false; }
+    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
+      return nullptr;
+    }
+    bool mtime(std::time_t&, std::string_view) const noexcept final {
+      return false;
+    }
+    irs::IndexInput::ptr open(std::string_view,
+                              irs::IOAdvice) const noexcept final {
+      return nullptr;
+    }
+    bool remove(std::string_view) noexcept final { return false; }
+    bool rename(std::string_view, std::string_view) noexcept final {
+      return false;
+    }
+    bool sync(std::span<const std::string_view>) noexcept final {
+      return false;
+    }
+  } failing{irs::ResourceManagementOptions::gDefault};
+
+  {
+    irs::TrackingDirectory track_dir{failing};
+    ASSERT_SQL_ERROR(track_dir.create("abc"), ERRCODE_IO_ERROR);
+    EXPECT_FALSE(track_dir.rename("abc", "def"));
+    uint64_t byte_size{1};
+    EXPECT_TRUE(track_dir.FlushTracked(byte_size).empty());
+    EXPECT_EQ(0, byte_size);
+  }
+
+  irs::MemoryDirectory dir;
+  irs::TrackingDirectory track_dir{dir};
+  track_dir.create("g").reset();
+  track_dir.ClearTracked();
+  uint64_t byte_size{1};
+  EXPECT_TRUE(track_dir.FlushTracked(byte_size).empty());
+  EXPECT_EQ(0, byte_size);
+}

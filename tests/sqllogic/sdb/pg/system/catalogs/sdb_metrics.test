@@ -52,7 +52,9 @@ catalog_wal_size_on_disk	current catalog wal file size in bytes
 cleanup_active	Search cleanup tasks currently running
 cleanup_pending	Search cleanup tasks waiting to run
 compaction_active	Search compaction tasks currently running
-compaction_pending	Search compaction tasks waiting to run
+compaction_pending	Search tables and indexes whose compaction waits for a free merge slot
+compaction_threads	Merge slots that search compaction holds
+compaction_written_bytes	Bytes written by search compaction tasks since start
 http_connections	Open HTTP client connections
 pg_connections	Open pg-wire client connections
 refresh_active	Search refresh tasks currently running

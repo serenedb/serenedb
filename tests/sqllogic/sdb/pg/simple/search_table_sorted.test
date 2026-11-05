@@ -1,0 +1,356 @@
+statement ok
+CREATE TABLE srt_small (a INTEGER, b VARCHAR)
+  SORTED BY (a NULLS FIRST, b DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE table_name = 'srt_small';
+----
+definition
+CREATE TABLE public.srt_small(a INTEGER, b VARCHAR) SORTED BY (a ASC NULLS FIRST, b DESC NULLS FIRST)
+
+statement ok
+INSERT INTO srt_small VALUES (2, 'x'), (NULL, 'y'), (1, 'b'), (2, NULL), (1, 'c'), (NULL, NULL), (2, 'y');
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_small;
+
+query
+SELECT a, b FROM srt_small ORDER BY rowid;
+----
+a	b
+NULL	NULL
+NULL	y
+1	c
+1	b
+2	NULL
+2	y
+2	x
+
+statement ok
+ALTER TABLE srt_small RENAME COLUMN a TO a2;
+
+query
+SELECT split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE table_name = 'srt_small';
+----
+definition
+CREATE TABLE public.srt_small(a2 INTEGER, b VARCHAR) SORTED BY (a2 ASC NULLS FIRST, b DESC NULLS FIRST)
+
+statement ok
+INSERT INTO srt_small VALUES (0, 'z'), (NULL, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_small;
+
+query
+SELECT a2, b FROM srt_small WHERE rowid >> 32 = (SELECT max(rowid >> 32) FROM srt_small) ORDER BY rowid;
+----
+a2	b
+NULL	a
+0	z
+
+statement ok
+DROP TABLE srt_small;
+
+statement ok
+CREATE TABLE srt (k INTEGER, ts TIMESTAMP, body VARCHAR, n INTEGER)
+  SORTED BY (k DESC, ts)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE table_name = 'srt';
+----
+definition
+CREATE TABLE public.srt(k INTEGER, ts TIMESTAMP, body VARCHAR, n INTEGER) SORTED BY (k DESC NULLS FIRST, ts ASC NULLS LAST)
+
+statement ok
+INSERT INTO srt SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 7919) % 101 END, TIMESTAMP '2026-01-01' + to_seconds(i), 'row ' || i, i FROM range(5000) t(i);
+
+statement ok
+INSERT INTO srt SELECT (i * 31) % 57, TIMESTAMP '2026-02-01' + to_seconds(i), 'more ' || i, 5000 + i FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt;
+
+query
+SELECT count(*) AS n, count(DISTINCT n) AS distinct_n, count(*) FILTER (WHERE k IS NULL) AS null_keys FROM srt;
+----
+n	distinct_n	null_keys
+8000	8000	500
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  FROM srt) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+INSERT INTO srt VALUES (1, TIMESTAMP '2026-03-01', 'moved', 9000), (100, TIMESTAMP '2026-03-01 00:00:01', 'kept', 9001);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt;
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE srt SET k = 200 WHERE n = 9000;
+
+statement ok
+DELETE FROM srt WHERE n % 100 = 7;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) srt;
+
+query
+SELECT k, body FROM srt WHERE n >= 9000 ORDER BY n;
+----
+k	body
+200	moved
+100	kept
+
+query
+SELECT count(*) AS n FROM srt;
+----
+n
+7922
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  FROM srt) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) srt;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt;
+----
+segments	n
+1	7922
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  FROM srt) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+INSERT INTO srt SELECT (i * 13) % 211, TIMESTAMP '2026-04-01' + to_seconds(i), 'late ' || i, 10000 + i FROM range(700) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt;
+
+query
+SELECT outcome FROM sdb_compact('srt', mode := 'compact');
+----
+outcome
+merged
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt;
+----
+segments	n
+1	8622
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS logical
+  FROM srt) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE srt;
+
+statement ok
+CREATE TABLE srt_ctas SORTED BY (v DESC) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+  AS SELECT i AS id, (i * 37) % 23 AS v FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_ctas;
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY v DESC, rowid) AS logical
+  FROM srt_ctas) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE srt_ctas;
+
+statement ok
+CREATE TABLE srt_rep (k INTEGER, n INTEGER)
+  SORTED BY (k, k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT split_part(sql, ' WITH', 1) AS definition FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'srt_rep';
+----
+definition
+CREATE TABLE public.srt_rep(k INTEGER, n INTEGER) SORTED BY (k ASC NULLS LAST, k DESC NULLS FIRST)
+
+statement ok
+INSERT INTO srt_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 7919) % 101 END, i FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_rep;
+
+statement ok
+INSERT INTO srt_rep SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE (i * 31) % 57 END, 3000 + i FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srt_rep;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt_rep;
+----
+segments	n
+2	5000
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (PARTITION BY rowid >> 32 ORDER BY rowid) AS physical,
+         row_number() OVER (PARTITION BY rowid >> 32 ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST, rowid) AS logical
+  FROM srt_rep) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) srt_rep;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srt_rep;
+----
+segments	n
+1	5000
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST, k DESC NULLS FIRST, rowid) AS logical
+  FROM srt_rep) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE srt_rep;
+
+statement error
+CREATE TABLE srt_bad (a INTEGER) SORTED BY (b) WITH (storage = 'search');
+----
+db error: ERROR: column "b" does not exist
+
+
+statement error
+CREATE TABLE srt_bad (a INTEGER) SORTED BY (a + 1) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY takes column names, not "(a + 1)"
+
+
+statement error
+CREATE TABLE srt_bad (a VARCHAR) SORTED BY (a COLLATE nocase) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY takes column names, not "a COLLATE nocase"
+
+
+statement error
+CREATE TABLE srt_bad (a VARCHAR COLLATE nocase) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" with collation "nocase"
+
+
+statement error
+CREATE TABLE srt_bad (a INTERVAL) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type INTERVAL
+
+
+statement error
+CREATE TABLE srt_bad (a TIMETZ) SORTED BY (a DESC) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type TIME WITH TIME ZONE
+
+
+statement error
+CREATE TABLE srt_bad (a BIT) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type BIT
+
+
+statement error
+CREATE TABLE srt_bad (a STRUCT(n INTEGER, span INTERVAL)) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type STRUCT(n INTEGER, span INTERVAL)
+
+
+statement error
+CREATE TABLE srt_bad (a TIMETZ[2]) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type TIME WITH TIME ZONE[2]
+
+
+statement error
+CREATE TABLE srt_bad (a INTEGER) SORTED BY (srt_bad.a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY takes column names, not "srt_bad.a"
+
+
+statement error
+CREATE TABLE srt_bad (a INTEGER, b AS (a * 2)) SORTED BY (b) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use generated column "b"
+
+
+statement error
+CREATE TABLE srt_bad (a INTEGER) SORTED BY (a);
+----
+db error: ERROR: SORTED BY is supported only for search tables
+
+
+statement error
+CREATE TABLE srt_bad (a INTEGER) SORTED BY (a) PARTITIONED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+statement ok
+CREATE TABLE srt_alter (a INTEGER) SORTED BY (a) WITH (storage = 'search');
+
+statement error
+ALTER TABLE srt_alter SET SORTED BY (a DESC);
+----
+db error: ERROR: SET SORTED BY on a search-backed table is not yet supported
+
+
+statement error SORTED BY on a search-backed table is not yet supported
+ALTER TABLE srt_alter RESET SORTED BY;
+
+statement ok
+DROP TABLE srt_alter;
+
+query
+SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = current_database() AND table_name LIKE 'srt%';
+----
+tables
+0

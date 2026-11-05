@@ -1,8 +1,8 @@
 control substitution on
 
 # A delta masks a changed file by re-paying its whole dead-row set, seeking each
-# dead row's primary-key term in turn. Compaction physically drops the terms of
-# rows masked earlier, so those seeks miss -- and a seek that does not land on
+# dead row's primary-key term in turn. OPTIMIZE_INDEX rewrites the segment and
+# drops the terms of rows masked earlier, so those seeks miss -- and a seek that does not land on
 # its term advances the iterator internally. Reusing it for the remaining dead
 # rows of the file then skips one, and the row stays in the index for good.
 #
@@ -108,7 +108,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2667, 198, 297);
@@ -117,7 +117,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (3364, 2195, 386);
@@ -126,7 +126,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1498, 2388, 238);
@@ -135,7 +135,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2079, 880, 154);
@@ -144,7 +144,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (353, 1777, 1713);
@@ -153,7 +153,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (287, 986, 372);
@@ -162,7 +162,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2258, 1739, 243);
@@ -171,7 +171,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (3387, 2317, 508);
@@ -180,7 +180,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (915, 2584, 2570);
@@ -189,7 +189,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (254, 2364, 2399);
@@ -198,7 +198,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1625, 204, 906);
@@ -207,7 +207,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (191, 2281, 546);
@@ -216,7 +216,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1187, 1717, 591);
@@ -225,7 +225,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2215, 483, 2339);
@@ -234,7 +234,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1264, 2295, 3343);
@@ -243,7 +243,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2794, 741, 423);
@@ -252,7 +252,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2383, 2340, 2617);
@@ -261,7 +261,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (770, 1526, 400);
@@ -270,7 +270,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2244, 2917, 258);
@@ -279,7 +279,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2312, 245, 2536);
@@ -288,7 +288,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (844, 2034, 2787);
@@ -297,7 +297,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (2178, 1752, 3184);
@@ -306,7 +306,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 statement count 3
 DELETE FROM cmd.${__DATABASE__}.t WHERE id IN (1287, 1908, 1857);
@@ -315,7 +315,7 @@ statement ok
 CALL serenedb_reindex('cmd_idx');
 
 statement ok
-VACUUM (COMPACT_INDEX) cmd_idx;
+VACUUM (OPTIMIZE_INDEX) cmd_idx;
 
 query
 SELECT count(*) FROM (SELECT id FROM cmd_idx EXCEPT SELECT id FROM cmd.${__DATABASE__}.t);

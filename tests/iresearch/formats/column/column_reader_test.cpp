@@ -18,16 +18,20 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -39,22 +43,33 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
+#include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/trained_dictionary.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <latch>
 #include <numeric>
 #include <random>
 #include <span>
 #include <string_view>
+#include <thread>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
+#include "index/index_tests.hpp"
+
+#ifdef SERENEDB_HAVE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#endif
 
 namespace {
 
@@ -277,7 +292,7 @@ TEST_F(ColumnReaderTest, DictFsstValidityAbsorbed) {
   ASSERT_NE(cs, nullptr);
   // dict_fsst self-carries nulls -> validity absorbed to EMPTY; NullsInData()
   // reports it so readers scan the data (not the empty validity) for nullness.
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
 
   auto state = cs->InitScan(r.Ctx());
   uint64_t pos = 0;
@@ -377,7 +392,7 @@ TEST_F(ColumnReaderTest, DictFsstReusedBatchAcrossChunks) {
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
   auto state = cs->InitScan(r.Ctx());
   duckdb::Vector batch{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
   batch.BufferMutable().GetValidityMask().Initialize(STANDARD_VECTOR_SIZE);
@@ -662,9 +677,12 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
       if (codec != "auto") {
-        const auto forced =
-          duckdb::EnumUtil::FromString<duckdb::CompressionType>(
-            duckdb::StringUtil::Upper(codec));
+        auto forced = duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+          duckdb::StringUtil::Upper(codec));
+        if (const auto choice = irs::codecs::ChoiceOf(forced);
+            choice && c.type.id() == duckdb::LogicalTypeId::VARCHAR) {
+          forced = irs::codecs::TypeOf(*choice);
+        }
         EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
           return b.codec->type == forced;
         }));
@@ -1129,16 +1147,16 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
        return Value::DOUBLE(static_cast<double>((g / 50) % 7) + 0.5);
      }},
     {"varchar dictionary", LogicalType::VARCHAR,
-     CompressionType::COMPRESSION_DICT_FSST, periodic,
+     CompressionType::COMPRESSION_COL_DICT_FSST, periodic,
      [](uint64_t g) { return Value{"category_" + std::to_string(g % 50)}; }},
     {"varchar fsst", LogicalType::VARCHAR,
-     CompressionType::COMPRESSION_DICT_FSST, sparse,
+     CompressionType::COMPRESSION_COL_FSST, sparse,
      [](uint64_t g) {
        return Value{"https://example.org/items/" + std::to_string(g * 7919) +
                     "/detail"};
      }},
-    {"varchar zstd", LogicalType::VARCHAR, CompressionType::COMPRESSION_ZSTD,
-     dense,
+    {"varchar zstd", LogicalType::VARCHAR,
+     CompressionType::COMPRESSION_COL_ZSTD, dense,
      [](uint64_t g) {
        return Value{std::string(200, static_cast<char>('a' + g % 26)) +
                     std::to_string(g)};
@@ -1160,6 +1178,362 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
   };
   for (const auto& c : cases) {
     CheckPointFetch(Db(), c);
+  }
+}
+
+TEST_F(ColumnReaderTest, BlobPointReaderHoldsOnlyTheLastValue) {
+#ifndef SERENEDB_HAVE_JEMALLOC
+  GTEST_SKIP() << "needs jemalloc's per-thread counters";
+#else
+  constexpr uint64_t kRows = 20000;
+  constexpr irs::field_id kS = 1;
+  const auto value = [](uint64_t g) {
+    return absl::StrCat("value-", g, "-", std::string(300, 'x'));
+  };
+  const auto live_bytes = [] {
+    uint64_t epoch = 1;
+    size_t epoch_size = sizeof(epoch);
+    mallctl("epoch", &epoch, &epoch_size, &epoch, sizeof(epoch));
+    uint64_t allocated = 0;
+    uint64_t deallocated = 0;
+    size_t size = sizeof(uint64_t);
+    mallctl("thread.allocated", &allocated, &size, nullptr, 0);
+    mallctl("thread.deallocated", &deallocated, &size, nullptr, 0);
+    return static_cast<int64_t>(allocated - deallocated);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR, false, 4096);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ds[k] = duckdb::StringVector::AddString(vs, value(pos + k));
+      }
+      duckdb::FlatVector::SetSize(vs, take);
+      cw.Append(vs, take);
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColumnReader::BlobPointReader reader{r, *r.Column(kS)};
+  const auto walk = [&] {
+    for (uint64_t g = 0; g != kRows; ++g) {
+      const auto got = reader.FetchRow(g);
+      ASSERT_EQ(value(g),
+                std::string_view(reinterpret_cast<const char*>(got.data()),
+                                 got.size()));
+    }
+  };
+  ASSERT_NO_FATAL_FAILURE(walk());
+  const auto before = live_bytes();
+  ASSERT_NO_FATAL_FAILURE(walk());
+  EXPECT_LT(live_bytes() - before, static_cast<int64_t>(kRows * 30));
+#endif
+}
+
+struct PrefetchRange {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
+class PrefetchRecordingInput final : public irs::IndexInput {
+ public:
+  PrefetchRecordingInput(irs::IndexInput::ptr impl,
+                         std::vector<PrefetchRange>& prefetched) noexcept
+    : _impl{std::move(impl)}, _prefetched{&prefetched} {}
+
+  const irs::byte_type* ReadStable(uint64_t count) final {
+    return _impl->ReadStable(count);
+  }
+  const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
+    return _impl->ReadStable(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
+    return _impl->ReadVolatile(offset, count);
+  }
+  const irs::byte_type* ReadVolatile(uint64_t count) final {
+    return _impl->ReadVolatile(count);
+  }
+  irs::byte_type ReadByte() final { return _impl->ReadByte(); }
+  using DataInput::ReadData;
+  void ReadData(irs::byte_type* b, uint64_t count) final {
+    _impl->ReadData(b, count);
+  }
+  void ReadData(duckdb::QueryContext, irs::byte_type* b, uint64_t count) final {
+    _impl->ReadData(b, count);
+  }
+  void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
+    _impl->ReadData(offset, b, count);
+  }
+  int16_t ReadI16() final { return _impl->ReadI16(); }
+  int32_t ReadI32() final { return _impl->ReadI32(); }
+  int64_t ReadI64() final { return _impl->ReadI64(); }
+  uint32_t ReadV32() final { return _impl->ReadV32(); }
+  uint64_t ReadV64() final { return _impl->ReadV64(); }
+  void SkipV32() final { _impl->SkipV32(); }
+  void SkipV64() final { _impl->SkipV64(); }
+  uint64_t Position() const noexcept final { return _impl->Position(); }
+  uint64_t Length() const noexcept final { return _impl->Length(); }
+  bool IsEOF() const noexcept final { return _impl->IsEOF(); }
+  ptr Dup() const final {
+    return std::make_unique<PrefetchRecordingInput>(_impl->Dup(), *_prefetched);
+  }
+  ptr Reopen() const final {
+    return std::make_unique<PrefetchRecordingInput>(_impl->Reopen(),
+                                                    *_prefetched);
+  }
+  void Skip(uint64_t count) final { _impl->Skip(count); }
+  void Seek(uint64_t pos) final { _impl->Seek(pos); }
+  uint32_t Checksum(uint64_t offset) const final {
+    return _impl->Checksum(offset);
+  }
+  void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
+    _prefetched->emplace_back(offset, size);
+  }
+
+ private:
+  irs::IndexInput::ptr _impl;
+  std::vector<PrefetchRange>* _prefetched;
+};
+
+class PrefetchRecordingDirectory final : public tests::DirectoryMock {
+ public:
+  PrefetchRecordingDirectory(irs::Directory& impl,
+                             std::vector<PrefetchRange>& prefetched)
+    : DirectoryMock{impl}, _prefetched{&prefetched} {}
+
+  irs::IndexInput::ptr open(std::string_view name,
+                            irs::IOAdvice advice) const final {
+    return std::make_unique<PrefetchRecordingInput>(
+      DirectoryMock::open(name, advice), *_prefetched);
+  }
+
+ private:
+  std::vector<PrefetchRange>* _prefetched;
+};
+
+TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
+  constexpr uint64_t kRows = 20000;
+  constexpr irs::field_id kS = 1;
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR, false, 4096);
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ds[k] = duckdb::StringVector::AddString(
+          vs, absl::StrCat("value-", pos + k, "-", std::string(300, 'x')));
+      }
+      duckdb::FlatVector::SetSize(vs, take);
+      cw.Append(vs, take);
+    }
+    w.Commit(0);
+  }
+
+  std::vector<PrefetchRange> prefetched;
+  PrefetchRecordingDirectory dir{mem, prefetched};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& col = *r.Column(kS);
+  const auto& block = col.DataBlocks().back();
+  const auto covers_block = [&](const PrefetchRange& p) {
+    return p.offset <= block.file_offset &&
+           block.file_offset + block.byte_size <= p.offset + p.size;
+  };
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+
+  prefetched.clear();
+  {
+    irs::ColumnReader::PointReader reader{r, col, true};
+    ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
+  }
+  EXPECT_TRUE(absl::c_none_of(prefetched, covers_block));
+
+  prefetched.clear();
+  irs::ColumnReader::PointReader reader{r, col};
+  ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
+  EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
+}
+
+TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
+  constexpr uint64_t kRows = 120000;
+  constexpr irs::field_id kS = 1;
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db()};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR, false, 16384,
+                            duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+                            false, {.compression_level = 3});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        ds[k] = duckdb::StringVector::AddString(
+          vs,
+          absl::StrCat("https://shop", g % 997, ".example.org/catalog/",
+                       (g * 7919) % 100003, "/item?id=", g, "&ref=", g % 13));
+      }
+      duckdb::FlatVector::SetSize(vs, take);
+      cw.Append(vs, take);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  std::vector<PrefetchRange> prefetched;
+  PrefetchRecordingDirectory dir{mem, prefetched};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& col = *r.Column(kS);
+  ASSERT_FALSE(col.DictionaryMetas().empty());
+  irs::ReadContext ctx{r, true};
+  prefetched.clear();
+  ASSERT_TRUE(col.Dictionaries(ctx));
+  const auto prefetched_whole = [&](const irs::ColumnDictionaryMeta& d) {
+    return absl::c_any_of(prefetched, [&](const PrefetchRange& p) {
+      return p.offset <= d.file_offset &&
+             d.file_offset + d.byte_size <= p.offset + p.size;
+    });
+  };
+  EXPECT_TRUE(absl::c_all_of(col.DictionaryMetas(), prefetched_whole));
+}
+
+TEST_F(ColumnReaderTest, SameColumnsGiveTheSameFileSize) {
+  constexpr irs::field_id kS = 1;
+  constexpr uint64_t kRows = 1000;
+  irs::MemoryDirectory mem;
+  std::vector<uint64_t> lengths;
+  for (int file = 0; file != 16; ++file) {
+    const auto name = absl::StrCat("seg", file);
+    {
+      irs::ColWriter w{mem, name, Db()};
+      auto& cw = w.OpenColumn(kS, duckdb::LogicalType::BIGINT, false, 2048,
+                              duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                              false, {});
+      duckdb::Vector values{duckdb::LogicalType::BIGINT, kRows};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+      for (uint64_t row = 0; row != kRows; ++row) {
+        data[row] = static_cast<int64_t>(row * 7);
+      }
+      duckdb::FlatVector::SetSize(values, kRows);
+      cw.Append(values, kRows);
+      ASSERT_TRUE(w.Commit(0));
+    }
+    uint64_t length = 0;
+    ASSERT_TRUE(mem.length(length, irs::FileName(name)));
+    lengths.push_back(length);
+  }
+  EXPECT_EQ(lengths.size(), absl::c_count(lengths, lengths.front()));
+}
+
+TEST_F(ColumnReaderTest, ConcurrentPartsClaimEachDictionarySlotOnce) {
+  constexpr irs::field_id kS = 1;
+  constexpr uint32_t kOwners = 4;
+  constexpr uint32_t kCopiers = 8;
+  constexpr uint32_t kParts = kOwners + kCopiers;
+  constexpr uint64_t kPartRows = 100;
+  constexpr size_t kClaimedCopiers = 3;
+  using Dictionary = std::shared_ptr<const irs::codecs::TrainedDictionary>;
+  const auto dictionary = [](std::string_view name) {
+    return std::make_shared<const irs::codecs::TrainedDictionary>(
+      absl::StrCat(name, std::string(64, '.')));
+  };
+  const auto own = dictionary("own");
+  std::array<std::array<Dictionary, 2>, kParts> copies;
+  for (uint32_t part = kOwners; part != kParts; ++part) {
+    copies[part] = {dictionary(absl::StrCat("copy-", part, "-a")),
+                    dictionary(absl::StrCat("copy-", part, "-b"))};
+  }
+  for (size_t round = 0; round != 8; ++round) {
+    SCOPED_TRACE(round);
+    std::array<uint16_t, kParts> owned{};
+    std::array<bool, kParts> claimed{};
+    std::array<std::vector<uint16_t>, kParts> copied;
+    irs::MemoryDirectory dir;
+    {
+      irs::ColWriter w{dir, "seg", Db(), irs::WriteTier::Merge};
+      w.PlanParts(kS, kParts);
+      std::latch start{kParts};
+      std::vector<std::thread> threads;
+      for (uint32_t part = 0; part != kParts; ++part) {
+        threads.emplace_back([&, part] {
+          start.arrive_and_wait();
+          if (part < kOwners) {
+            owned[part] = w.AddColumnDictionary(kS, own->Bytes());
+          } else {
+            claimed[part] =
+              w.AddCopiedDictionaries(kS, copies[part], copied[part]);
+          }
+          auto& cw = w.OpenColumnPart(
+            kS, part, duckdb::LogicalType::VARCHAR, false, 4096,
+            duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+            irs::ColCodecParams{.tier = irs::WriteTier::Merge});
+          duckdb::Vector values{duckdb::LogicalType::VARCHAR, kPartRows};
+          for (uint64_t row = 0; row != kPartRows; ++row) {
+            values.SetValue(
+              row, duckdb::Value{absl::StrCat("part-", part, "-", row)});
+          }
+          duckdb::FlatVector::SetSize(values, kPartRows);
+          cw.Append(values, kPartRows);
+          w.CloseColumnPart(kS, part);
+        });
+      }
+      for (auto& thread : threads) {
+        thread.join();
+      }
+      ASSERT_TRUE(w.Commit(kParts * kPartRows));
+    }
+
+    std::vector<uint16_t> slots{owned[0]};
+    size_t claimers = 0;
+    for (uint32_t part = 1; part != kOwners; ++part) {
+      EXPECT_EQ(owned[0], owned[part]);
+    }
+    for (uint32_t part = kOwners; part != kParts; ++part) {
+      claimers += claimed[part];
+      EXPECT_EQ(claimed[part] ? 2 : 0, copied[part].size());
+      slots.insert(slots.end(), copied[part].begin(), copied[part].end());
+    }
+    EXPECT_EQ(kClaimedCopiers, claimers);
+    std::vector<uint16_t> expected(1 + 2 * kClaimedCopiers);
+    std::iota(expected.begin(), expected.end(), 1);
+    absl::c_sort(slots);
+    EXPECT_EQ(expected, slots);
+
+    irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kS);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(kParts * kPartRows, col->RowCount());
+    irs::ReadContext ctx{r};
+    const auto* dictionaries = col->Dictionaries(ctx);
+    ASSERT_NE(dictionaries, nullptr);
+    ASSERT_EQ(expected.size(), dictionaries->size());
+    EXPECT_EQ(own->Bytes(), (*dictionaries)[owned[0] - 1]->Bytes());
+    for (uint32_t part = kOwners; part != kParts; ++part) {
+      for (size_t i = 0; i != copied[part].size(); ++i) {
+        EXPECT_EQ(copies[part][i]->Bytes(),
+                  (*dictionaries)[copied[part][i] - 1]->Bytes());
+      }
+    }
+    auto state = col->InitScan(ctx);
+    for (uint32_t part = 0; part != kParts; ++part) {
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, kPartRows);
+      for (uint64_t row = 0; row != kPartRows; ++row) {
+        EXPECT_EQ(absl::StrCat("part-", part, "-", row),
+                  out.GetValue(row).ToString());
+      }
+    }
   }
 }
 
@@ -2138,6 +2512,84 @@ TEST_F(ColumnReaderTest, ListGatherSparse) {
   }
 }
 
+TEST_F(ColumnReaderTest, PointReadsAfterASpreadVectorReturnTheirOwnLists) {
+  constexpr irs::field_id kL = 16;
+  constexpr uint64_t kLists = 4200;
+  constexpr uint64_t kListLen = 128;
+  constexpr uint64_t kAlternating = 2 * kLists;
+  constexpr uint64_t kFirstRepeat = 600;
+  constexpr uint64_t kRepeats = 4;
+  constexpr uint64_t kRows = kAlternating + kRepeats;
+  constexpr uint64_t kSpreadFirst = 6200;
+  const auto ltype = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  auto list_of = [](uint64_t row) -> uint64_t {
+    if (row >= kAlternating) {
+      return kFirstRepeat + (row - kAlternating);
+    }
+    return row % 2 == 0 ? 0 : (row + 1) / 2;
+  };
+  auto elem_val = [](uint64_t list, uint64_t j) {
+    return static_cast<int64_t>(list * 1000 + j);
+  };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "pseg", Db()};
+    auto& cw = w.OpenColumn(kL, ltype, /*skip_validity=*/false,
+                            static_cast<uint32_t>(kRows));
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{ltype, STANDARD_VECTOR_SIZE};
+      duckdb::ListVector::Reserve(v, take * kListLen);
+      auto* le = duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(v);
+      auto* cd = duckdb::FlatVector::GetDataMutable<int64_t>(
+        duckdb::ListVector::GetChildMutable(v));
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        le[k] = duckdb::list_entry_t{k * kListLen, kListLen};
+        for (uint64_t j = 0; j < kListLen; ++j) {
+          cd[k * kListLen + j] = elem_val(list_of(pos + k), j);
+        }
+      }
+      duckdb::ListVector::SetListSize(v, take * kListLen);
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "pseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kL);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  ASSERT_EQ(col->Child()->RowCount(), (kLists + 1) * kListLen);
+
+  auto state = col->InitScan(r.Ctx());
+  uint64_t at = 0;
+  auto read = [&](uint64_t first, duckdb::idx_t count) {
+    col->Skip(state, first - at);
+    duckdb::Vector result{ltype, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(col->Scan(state, result, count), count);
+    at = first + count;
+    result.Flatten(count);
+    const auto* le = duckdb::FlatVector::GetData<duckdb::list_entry_t>(result);
+    const auto* cd = duckdb::FlatVector::GetData<int64_t>(
+      duckdb::ListVector::GetChild(result));
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = first + i;
+      ASSERT_EQ(le[i].length, kListLen) << "row " << row;
+      for (uint64_t j = 0; j < kListLen; ++j) {
+        ASSERT_EQ(cd[le[i].offset + j], elem_val(list_of(row), j))
+          << "row " << row << " element " << j;
+      }
+    }
+  };
+  read(1, 2);
+  read(kSpreadFirst, STANDARD_VECTOR_SIZE);
+  read(kAlternating, kRepeats);
+}
+
 // Build a VARIANT column from a SQL query (each chunk Append-ed), collecting
 // the per-row expected Values. Mirrors variant_shredding_test.cpp's
 // construction but drives the new ColWriter.
@@ -2203,6 +2655,986 @@ std::vector<duckdb::Value> ScanVariantAll(const irs::ColumnReader& col,
   return out;
 }
 
+void WriteViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
+                 std::string_view segment, irs::field_id id,
+                 const duckdb::LogicalType& type, const std::string& sql,
+                 uint32_t rg_size, std::vector<duckdb::Value>& expected,
+                 bool hyperloglog = false) {
+  irs::ColWriter w{dir, segment, db};
+  auto& cw =
+    w.OpenColumn(id, type, /*skip_validity=*/false, rg_size,
+                 duckdb::CompressionType::COMPRESSION_AUTO, hyperloglog);
+  duckdb::Connection con{db};
+  auto result = con.Query(sql);
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  while (auto chunk = result->Fetch()) {
+    if (chunk->size() == 0) {
+      continue;
+    }
+    ASSERT_EQ(chunk->data[0].GetType(), type);
+    cw.Append(chunk->data[0], chunk->size());
+    for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
+      expected.emplace_back(chunk->GetValue(0, k));
+    }
+  }
+  w.Commit(0);
+}
+
+void WriteSparseViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
+                       std::string_view segment, irs::field_id id,
+                       const duckdb::LogicalType& type, const std::string& sql,
+                       uint32_t rg_size, uint64_t gap,
+                       std::vector<duckdb::Value>& expected) {
+  irs::ColWriter w{dir, segment, db};
+  auto& cw = w.OpenColumn(id, type, /*skip_validity=*/false, rg_size);
+  duckdb::Connection con{db};
+  auto result = con.Query(sql);
+  ASSERT_FALSE(result->HasError()) << result->GetError();
+  uint64_t chunks = 0;
+  while (auto chunk = result->Fetch()) {
+    if (chunk->size() == 0) {
+      continue;
+    }
+    ASSERT_EQ(chunk->data[0].GetType(), type);
+    if (chunks++ % 3 == 0) {
+      expected.resize(expected.size() + gap, duckdb::Value{type});
+    }
+    cw.Append(expected.size(), chunk->data[0], chunk->size());
+    for (duckdb::idx_t k = 0; k < chunk->size(); ++k) {
+      expected.emplace_back(chunk->GetValue(0, k));
+    }
+  }
+  w.Commit(0);
+}
+
+std::vector<duckdb::Value> ScanValues(const irs::ColumnReader& col,
+                                      irs::ReadContext& ctx) {
+  auto state = col.InitScan(ctx);
+  std::vector<duckdb::Value> out;
+  const auto total = col.RowCount();
+  out.reserve(total);
+  uint64_t pos = 0;
+  while (pos < total) {
+    const auto take =
+      std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{col.Type(), STANDARD_VECTOR_SIZE};
+    col.Scan(state, result, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      out.emplace_back(result.GetValue(k));
+    }
+    pos += take;
+  }
+  return out;
+}
+
+void ExpectGathered(const irs::ColumnReader& col, irs::ReadContext& ctx,
+                    const std::vector<duckdb::Value>& expected,
+                    const Rows& rows, bool whole_output) {
+  auto state = col.InitScan(ctx);
+  duckdb::Vector result{col.Type(), STANDARD_VECTOR_SIZE};
+  irs::column_internal::GatherRows(col, state, rows, result, 0, whole_output);
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& want = expected[rows[i]];
+    const auto got = result.GetValue(i);
+    EXPECT_EQ(want.IsNull(), got.IsNull()) << "row " << rows[i];
+    if (!want.IsNull()) {
+      EXPECT_EQ(want.ToString(), got.ToString()) << "row " << rows[i];
+    }
+  }
+}
+
+uint64_t ElementCount(const std::vector<duckdb::Value>& values) {
+  uint64_t n = 0;
+  for (const auto& v : values) {
+    if (!v.IsNull()) {
+      n += duckdb::ListValue::GetChildren(v).size();
+    }
+  }
+  return n;
+}
+
+TEST_F(ColumnReaderTest, RepeatedMapsAreStoredOnce) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "mseg", 40, type,
+              "SELECT CASE WHEN i % 11 = 0 THEN NULL WHEN i % 17 = 0 THEN "
+              "map([], [])::MAP(VARCHAR, VARCHAR) ELSE MAP {'service': 'svc-' "
+              "|| (i // 997 % 7), 'host': 'h-' || (i % 13), 'env': 'prod'} END "
+              "FROM range(20000) t(i)",
+              4096, expected);
+  ASSERT_EQ(expected.size(), 20000u);
+
+  irs::ColReader r{dir, "mseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(40);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 20000u);
+  ASSERT_NE(col->Child(), nullptr);
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 2, 11, 17, 4095, 4096, 4097, 9000, 13000, 19999}},
+                 false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{8200, 8201, 8205, 8250, 8300, 9000, 10000}}, true);
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{8200, 8201, 8206, 8210, 8230}},
+                 true);
+}
+
+TEST_F(ColumnReaderTest, RepeatedListsGatherAndSkip) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 41, type,
+              "SELECT CASE WHEN i % 9 = 0 THEN NULL ELSE ['a' || (i % 5), 'b' "
+              "|| (i % 3), repeat('x', (i % 4) * 20)] END FROM range(12000) "
+              "t(i)",
+              1024, expected);
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(41);
+  ASSERT_NE(col, nullptr);
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  Rows sparse;
+  for (uint64_t g = 3; g < 12000; g += 97) {
+    sparse.v.push_back(g);
+  }
+  ExpectGathered(*col, r.Ctx(), expected, sparse, false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{5000, 5001, 5002, 5003, 5100, 6000, 7000}}, true);
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{5000, 5001, 5004, 5010, 5020}},
+                 true);
+}
+
+TEST_F(ColumnReaderTest, OneRepeatedListAmongUniqueListsScans) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 41, type,
+              "SELECT CASE WHEN i % 2 = 0 THEN [] ELSE ['value-' || i, 'tail-' "
+              "|| (i * 7)] END FROM range(40000) t(i)",
+              40000, expected);
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(41);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  Rows sparse;
+  for (uint64_t g = 1; g < 40000; g += 61) {
+    sparse.v.push_back(g);
+  }
+  ExpectGathered(*col, r.Ctx(), expected, sparse, false);
+}
+
+TEST_F(ColumnReaderTest, RepeatedNestedLists) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "nseg", 42, type,
+              "SELECT CASE WHEN i % 13 = 0 THEN NULL ELSE [[i % 3, i % 2], "
+              "[i % 4], []] END FROM range(9000) t(i)",
+              2048, expected);
+  irs::ColReader r{dir, "nseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(42);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{1, 2, 13, 2047, 2048, 2049, 4500, 8999}}, false);
+}
+
+TEST_F(ColumnReaderTest, UniqueNestedListsKeepEveryRow) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "unseg", 47, type,
+              "SELECT CASE WHEN i % 11 = 0 THEN NULL ELSE [[i, i * 7], [], "
+              "[i % 5]] END FROM range(12000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "unseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(47);
+  ASSERT_NE(col, nullptr);
+  EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 11, 4095, 4096, 8191, 11999}}, false);
+}
+
+void CollectDoubleBits(const duckdb::Value& v, std::vector<uint64_t>& out) {
+  if (v.IsNull()) {
+    out.emplace_back(0x5a5a5a5a5a5a5a5aULL);
+    return;
+  }
+  const auto id = v.type().id();
+  if (id == duckdb::LogicalTypeId::DOUBLE) {
+    out.emplace_back(std::bit_cast<uint64_t>(v.GetValue<double>()));
+    return;
+  }
+  if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::MAP) {
+    for (const auto& c : duckdb::ListValue::GetChildren(v)) {
+      CollectDoubleBits(c, out);
+    }
+    return;
+  }
+  if (id == duckdb::LogicalTypeId::STRUCT) {
+    for (const auto& c : duckdb::StructValue::GetChildren(v)) {
+      CollectDoubleBits(c, out);
+    }
+  }
+}
+
+void ExpectDoubleBitsRoundTrip(duckdb::DatabaseInstance& db,
+                               const duckdb::LogicalType& type,
+                               const std::vector<duckdb::Value>& rows) {
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "zseg", db};
+    auto& cw = w.OpenColumn(60, type, /*skip_validity=*/false, 4096);
+    duckdb::Vector vec{type, rows.size()};
+    for (size_t i = 0; i < rows.size(); ++i) {
+      vec.SetValue(i, rows[i]);
+    }
+    cw.Append(vec, rows.size());
+    w.Commit(0);
+  }
+  irs::ColReader r{dir, "zseg", db, irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(60);
+  ASSERT_NE(col, nullptr);
+  const auto got = ScanValues(*col, r.Ctx());
+  ASSERT_EQ(got.size(), rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    std::vector<uint64_t> want_bits;
+    std::vector<uint64_t> got_bits;
+    CollectDoubleBits(rows[i], want_bits);
+    CollectDoubleBits(got[i], got_bits);
+    EXPECT_EQ(want_bits, got_bits) << "row " << i;
+  }
+}
+
+std::vector<double> SignedZerosAndNaNs() {
+  return {0.0, -0.0, std::bit_cast<double>(0x7ff8000000000000ULL),
+          std::bit_cast<double>(0x7ff8000000000001ULL),
+          std::bit_cast<double>(0xfff8000000000000ULL)};
+}
+
+TEST_F(ColumnReaderTest, NestedListsKeepSignedZerosAndNaNPayloads) {
+  const auto inner = duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
+  const auto type = duckdb::LogicalType::LIST(inner);
+  std::vector<duckdb::Value> rows;
+  for (const auto d : SignedZerosAndNaNs()) {
+    rows.emplace_back(duckdb::Value::LIST(
+      inner, {duckdb::Value::LIST(duckdb::LogicalType::DOUBLE,
+                                  {duckdb::Value::DOUBLE(d)})}));
+  }
+  ExpectDoubleBitsRoundTrip(Db(), type, rows);
+}
+
+TEST_F(ColumnReaderTest, MapsWithListValuesKeepSignedZerosAndNaNPayloads) {
+  const auto value_type =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
+  const auto type =
+    duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR, value_type);
+  std::vector<duckdb::Value> rows;
+  for (const auto d : SignedZerosAndNaNs()) {
+    rows.emplace_back(duckdb::Value::MAP(
+      duckdb::LogicalType::VARCHAR, value_type, {duckdb::Value{"k"}},
+      {duckdb::Value::LIST(duckdb::LogicalType::DOUBLE,
+                           {duckdb::Value::DOUBLE(d)})}));
+  }
+  ExpectDoubleBitsRoundTrip(Db(), type, rows);
+}
+
+TEST_F(ColumnReaderTest, NestedListsKeepEqualComparingIntervalsApart) {
+  const auto type = duckdb::LogicalType::LIST(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::INTERVAL));
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "iseg", 61, type,
+              "SELECT CASE i % 3 WHEN 0 THEN [[INTERVAL '1 month']] WHEN 1 "
+              "THEN [[INTERVAL '30 days']] ELSE [[INTERVAL '720 hours']] END "
+              "FROM range(300) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "iseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(61);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+}
+
+TEST_F(ColumnReaderTest, ListsInsideStructs) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
+     {"attrs", duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                        duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "sseg", 48, type,
+              "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE {'tags': CASE WHEN "
+              "i % 9 = 0 THEN NULL WHEN i < 10000 THEN ['t' || (i % 5), 'x'] "
+              "ELSE ['u' || i] END, 'attrs': map_from_entries(list_transform("
+              "range(3), lambda k: {'key': 'a' || k, 'value': CASE WHEN i < "
+              "10000 THEN 'v' || ((i // 50) % 7) ELSE 'w' || i || k END}))} "
+              "END FROM range(20000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "sseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(48);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 20000u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 9, 17, 4095, 4096, 9999, 10000, 19999}}, false);
+}
+
+TEST_F(ColumnReaderTest, RepeatedMapsWithHyperLogLog) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::INTEGER);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "hseg", 49, type,
+              "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE map_from_entries("
+              "list_transform(range(4), lambda k: {'key': 'k' || k, 'value': "
+              "((i // 25) % 40)::INTEGER})) END FROM range(20000) t(i)",
+              4096, expected, /*hyperloglog=*/true);
+  irs::ColReader r{dir, "hseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(49);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 20000u);
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 24, 25, 4095, 4096, 12287, 12288, 19999}}, false);
+  const auto* hll = col->HyperLogLog();
+  ASSERT_NE(hll, nullptr);
+  EXPECT_GE(hll->Count(), 20u);
+  EXPECT_LE(hll->Count(), 80u);
+}
+
+TEST_F(ColumnReaderTest, SparseRepeatedMapsPadNulls) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteSparseViaSql(Db(), dir, "pseg", 50, type,
+                    "SELECT CASE WHEN i % 29 = 0 THEN NULL ELSE "
+                    "map_from_entries(list_transform(range(3), lambda k: "
+                    "{'key': 'a' || k, 'value': 'v' || ((i // 40) % 6) || k}))"
+                    " END FROM range(12000) t(i)",
+                    4096, 1500, expected);
+  ASSERT_GT(expected.size(), 12000u);
+  irs::ColReader r{dir, "pseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(50);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), expected.size());
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1499, 1500, 4095, 4096, 7643, 7644, 8191, 8192, 9143,
+                       9144, 12287, 12288, expected.size() - 1}},
+                 false);
+}
+
+TEST_F(ColumnReaderTest, RewrittenRepeatedListsKeepTheirValues) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> source;
+  WriteViaSql(Db(), dir, "rsrc", 51, type,
+              "SELECT CASE WHEN i % 23 = 0 THEN NULL WHEN i % 31 = 0 THEN "
+              "map([], [])::MAP(VARCHAR, VARCHAR) ELSE map_from_entries("
+              "list_transform(range(3), lambda k: {'key': 'attr.' || k, "
+              "'value': 'v' || ((i // 7) % 50) || '-' || k})) END "
+              "FROM range(30000) t(i)",
+              8192, source);
+  irs::ColReader src{dir, "rsrc", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = src.Column(51);
+  ASSERT_NE(col, nullptr);
+  for (const bool sliced : {false, true}) {
+    SCOPED_TRACE(sliced ? "every other row" : "every row");
+    const std::string segment = sliced ? "rdst_sliced" : "rdst";
+    std::vector<duckdb::Value> expected;
+    {
+      irs::ColWriter w{dir, segment, Db()};
+      auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
+      auto state = col->InitScan(src.Ctx());
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      uint64_t pos = 0;
+      while (pos < col->RowCount()) {
+        const auto take =
+          std::min<uint64_t>(col->RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, batch, take);
+        if (!sliced) {
+          cw.Append(batch, take);
+          expected.insert(expected.end(), source.begin() + pos,
+                          source.begin() + pos + take);
+        } else {
+          duckdb::idx_t kept = 0;
+          for (duckdb::idx_t k = 0; k < take; k += 2) {
+            sel.set_index(kept++, k);
+            expected.emplace_back(source[pos + k]);
+          }
+          const duckdb::Vector selected{batch, sel, kept};
+          cw.Append(selected, kept);
+        }
+        pos += take;
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* out = r.Column(52);
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(out->RowCount(), expected.size());
+    EXPECT_LT(out->Child()->RowCount() * 10, ElementCount(expected));
+    ExpectVariantValuesEqual(expected, ScanValues(*out, r.Ctx()));
+    ExpectGathered(*out, r.Ctx(), expected,
+                   Rows{{0, 1, 22, 23, 8191, 8192, expected.size() - 1}},
+                   false);
+  }
+}
+
+TEST_F(ColumnReaderTest, RewrittenStructsKeepTheirListFieldsDeduplicated) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"id", duckdb::LogicalType::BIGINT},
+     {"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
+     {"attrs", duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                        duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> source;
+  WriteViaSql(Db(), dir, "ssrc", 51, type,
+              "SELECT CASE WHEN i % 23 = 0 THEN NULL ELSE {'id': i, 'tags': "
+              "CASE WHEN i % 29 = 0 THEN NULL WHEN i % 31 = 0 THEN "
+              "[]::VARCHAR[] ELSE ['tag.' || (i % 40), 'env.' || (i % 3)] "
+              "END, 'attrs': map_from_entries(list_transform(range(3), lambda "
+              "k: {'key': 'attr.' || k, 'value': 'v' || ((i // 7) % 50) || "
+              "'-' || k}))} END FROM range(30000) t(i)",
+              8192, source);
+  const auto tag_count = [](const std::vector<duckdb::Value>& values) {
+    std::vector<duckdb::Value> tags;
+    for (const auto& v : values) {
+      if (!v.IsNull()) {
+        tags.emplace_back(duckdb::StructValue::GetChildren(v)[1]);
+      }
+    }
+    return ElementCount(tags);
+  };
+  irs::ColReader src{dir, "ssrc", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = src.Column(51);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->StructFieldCount(), 3u);
+  EXPECT_LT(col->StructField(1).Child()->RowCount() * 10, tag_count(source));
+  for (const bool sliced : {false, true}) {
+    SCOPED_TRACE(sliced ? "every other row" : "every row");
+    const std::string segment = sliced ? "sdst_sliced" : "sdst";
+    std::vector<duckdb::Value> expected;
+    {
+      irs::ColWriter w{dir, segment, Db()};
+      auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
+      auto state = col->InitScan(src.Ctx());
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      uint64_t pos = 0;
+      while (pos < col->RowCount()) {
+        const auto take =
+          std::min<uint64_t>(col->RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, batch, take);
+        if (!sliced) {
+          cw.Append(batch, take);
+          expected.insert(expected.end(), source.begin() + pos,
+                          source.begin() + pos + take);
+        } else {
+          duckdb::idx_t kept = 0;
+          for (duckdb::idx_t k = 0; k < take; k += 2) {
+            sel.set_index(kept++, k);
+            expected.emplace_back(source[pos + k]);
+          }
+          const duckdb::Vector selected{batch, sel, kept};
+          cw.Append(selected, kept);
+        }
+        pos += take;
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* out = r.Column(52);
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(out->RowCount(), expected.size());
+    ASSERT_EQ(out->StructFieldCount(), 3u);
+    EXPECT_LT(out->StructField(1).Child()->RowCount() * 10,
+              tag_count(expected));
+    ExpectVariantValuesEqual(expected, ScanValues(*out, r.Ctx()));
+    ExpectGathered(*out, r.Ctx(), expected,
+                   Rows{{0, 1, 22, 23, 8191, 8192, expected.size() - 1}},
+                   false);
+  }
+}
+
+TEST_F(ColumnReaderTest, RepeatedListsStayDeduplicatedAcrossSplitAppends) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteSparseViaSql(Db(), dir, "split", 51, type,
+                    "SELECT CASE WHEN i % 17 = 0 THEN NULL ELSE ['tag.' || (i "
+                    "% 3), 'env'] END FROM range(40000) t(i)",
+                    8192, 1, expected);
+  irs::ColReader r{dir, "split", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(51);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), expected.size());
+  EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+}
+
+TEST_F(ColumnReaderTest, ListDictionariesKeepTheirValuesAcrossAppends) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  constexpr duckdb::idx_t kLists = 64;
+  constexpr duckdb::idx_t kRows = 1500;
+  const auto list_of = [](uint64_t generation, duckdb::idx_t i) {
+    return duckdb::Value::LIST(duckdb::LogicalType::VARCHAR,
+                               {duckdb::Value{"g" + std::to_string(generation) +
+                                              "-" + std::to_string(i % 8)},
+                                duckdb::Value{"x"}});
+  };
+  irs::MemoryDirectory dir{};
+  for (const bool reusable : {false, true}) {
+    SCOPED_TRACE(reusable ? "reusable dictionaries" : "refilled vector");
+    const std::string segment = reusable ? "reused" : "refilled";
+    std::vector<duckdb::Value> expected;
+    {
+      irs::ColWriter w{dir, segment, Db()};
+      auto& cw = w.OpenColumn(51, type, /*skip_validity=*/false, 8192);
+      const duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                                      type};
+      duckdb::Vector lists{cache};
+      duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
+      duckdb::SelectionVector sel{kRows};
+      for (uint64_t round = 0; round != 6; ++round) {
+        const uint64_t generation = reusable ? round / 2 : round;
+        if (!reusable) {
+          lists.ResetFromCache(cache);
+          for (duckdb::idx_t i = 0; i != kLists; ++i) {
+            lists.SetValue(i, list_of(generation, i));
+          }
+          duckdb::FlatVector::SetSize(lists, kLists);
+        } else if (round % 2 == 0) {
+          dictionary =
+            duckdb::DictionaryVector::CreateReusableDictionary(type, kLists);
+          for (duckdb::idx_t i = 0; i != kLists; ++i) {
+            dictionary->data.SetValue(i, list_of(generation, i));
+          }
+        }
+        for (duckdb::idx_t k = 0; k != kRows; ++k) {
+          const auto i = (k * 7 + round) % kLists;
+          sel.set_index(k, i);
+          expected.emplace_back(list_of(generation, i));
+        }
+        duckdb::Vector selected{type};
+        if (reusable) {
+          selected.Dictionary(dictionary, sel, kRows);
+        } else {
+          selected.Slice(lists, sel, kRows);
+        }
+        cw.Append(selected, kRows);
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, segment, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(51);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->RowCount(), expected.size());
+    EXPECT_LT(col->Child()->RowCount() * 10, ElementCount(expected));
+    ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  }
+}
+
+TEST_F(ColumnReaderTest,
+       RewrittenListsKeepTheirValuesAcrossReaderDictionaries) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> source;
+  WriteViaSql(Db(), dir, "lsrc", 51, type,
+              "SELECT CASE WHEN i % 29 = 0 THEN NULL ELSE ['loc' || (i // 4), "
+              "'z'] END FROM range(40000) t(i)",
+              8192, source);
+  irs::ColReader src{dir, "lsrc", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = src.Column(51);
+  ASSERT_NE(col, nullptr);
+  struct Arm {
+    bool reusable;
+    bool read_ahead;
+    std::string segment;
+  };
+  for (const auto& arm :
+       {Arm{false, true, "plain"}, Arm{true, true, "reusable"},
+        Arm{true, false, "reusable_exact"}}) {
+    SCOPED_TRACE(arm.segment);
+    {
+      irs::ColWriter w{dir, arm.segment, Db()};
+      auto& cw = w.OpenColumn(52, type, /*skip_validity=*/false, 8192);
+      auto ctx = std::make_shared<irs::ReadContext>(src);
+      ctx->SetMergeRead(arm.reusable);
+      ctx->SetReadAhead(arm.read_ahead);
+      auto state = col->InitScan(std::move(ctx));
+      uint64_t pos = 0;
+      while (pos < col->RowCount()) {
+        const auto take =
+          std::min<uint64_t>(col->RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+        col->Scan(state, batch, take);
+        cw.Append(batch, take);
+        pos += take;
+      }
+      w.Commit(0);
+    }
+    irs::ColReader r{dir, arm.segment, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* out = r.Column(52);
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(out->RowCount(), source.size());
+    ExpectVariantValuesEqual(source, ScanValues(*out, r.Ctx()));
+  }
+}
+
+TEST_F(ColumnReaderTest, SparseListsInsideStructsPadNulls) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteSparseViaSql(
+    Db(), dir, "sps", 51, type,
+    "SELECT CASE WHEN i % 31 = 0 THEN NULL ELSE {'tags': CASE "
+    "WHEN i % 11 = 0 THEN NULL WHEN i < 6000 THEN ['t' || (i "
+    "% 4), 'x'] ELSE ['u' || i] END} END FROM range(12000) t(i)",
+    4096, 1500, expected);
+  ASSERT_GT(expected.size(), 12000u);
+  irs::ColReader r{dir, "sps", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(51);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), expected.size());
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1499, 1500, 4095, 4096, 7643, 7644, 8191, 8192, 9143,
+                       9144, 12287, 12288, expected.size() - 1}},
+                 false);
+}
+
+TEST_F(ColumnReaderTest, LongListsInsideStructs) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lls", 52, type,
+              "SELECT {'tags': CASE WHEN i < 4096 THEN CASE WHEN i % 50 = 0 "
+              "THEN list_transform(range(2500), lambda k: 'e' || k) ELSE ['r' "
+              "|| (i % 3)] END WHEN i % 7 = 0 THEN list_transform(range(2100 + "
+              "i % 5), lambda k: 'u' || i || '-' || k) ELSE ['s' || i] END} "
+              "FROM range(8192) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "lls", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(52);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 8192u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(
+    *col, r.Ctx(), expected,
+    Rows{{0, 1, 50, 51, 2050, 4095, 4096, 4102, 4103, 6146, 8189, 8191}},
+    false);
+}
+
+TEST_F(ColumnReaderTest, UniqueListsKeepEveryRow) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "useg", 43, type,
+              "SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE ['u' || i, 'v' || (i "
+              "* 31)] END FROM range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "useg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(43);
+  ASSERT_NE(col, nullptr);
+  EXPECT_EQ(col->Child()->RowCount(), ElementCount(expected));
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{1, 7, 8, 4096, 9999}}, false);
+}
+
+TEST_F(ColumnReaderTest, UniqueListRowGroupsBitpackTheirCodes) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "sseg", 62, type,
+              "SELECT CASE WHEN i % 7 = 0 THEN NULL WHEN i = 11 THEN "
+              "[]::VARCHAR[] ELSE ['u' || i, 'v' || (i * 31)] END FROM "
+              "range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "sseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(62);
+  ASSERT_NE(col, nullptr);
+  ASSERT_FALSE(col->DataBlocks().empty());
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type,
+              duckdb::CompressionType::COMPRESSION_BITPACKING);
+  }
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 7, 11, 12, 4095, 4096, 4097, 8191, 9999}}, false);
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{3000, 3001, 3002, 3010, 5000, 5001}}, true);
+}
+
+TEST_F(ColumnReaderTest, RepeatedListRowGroupsKeepTheirCodes) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "kseg", 63, type,
+              "SELECT CASE WHEN i < 4096 THEN ['u' || i] ELSE ['r' || (i % 5)] "
+              "END FROM range(8192) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "kseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(63);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), 2u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 4095, 4096, 4097, 8191}},
+                 false);
+}
+
+void ScanCorruptedLists(duckdb::DatabaseInstance& db, std::string_view segment,
+                        std::span<const uint64_t> stored, size_t word,
+                        uint64_t value, const char* error) {
+  constexpr irs::field_id kId = 71;
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  {
+    duckdb::Connection con{db};
+    ASSERT_FALSE(
+      con.Query("SET force_compression = 'uncompressed'")->HasError());
+    WriteViaSql(db, dir, segment, kId, type,
+                "SELECT ['r' || (i % 5), 'x'] FROM range(4096) t(i)", 4096,
+                expected);
+    con.Query("SET force_compression = 'auto'");
+  }
+  const auto file = irs::FileName(segment);
+  std::string bytes;
+  {
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    bytes.resize(in->Length());
+    in->ReadData(reinterpret_cast<irs::byte_type*>(bytes.data()), bytes.size());
+  }
+  std::string needle(stored.size() * sizeof(uint64_t), '\0');
+  std::memcpy(needle.data(), stored.data(), needle.size());
+  const auto at = bytes.find(needle);
+  ASSERT_NE(at, std::string::npos);
+  std::memcpy(bytes.data() + at + word * sizeof(uint64_t), &value,
+              sizeof(value));
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+  }
+  irs::ColReader r{dir, segment, db, irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(ScanValues(*col, r.Ctx()), error);
+#else
+  EXPECT_ANY_THROW(ScanValues(*col, r.Ctx()));
+#endif
+}
+
+TEST_F(ColumnReaderTest, CorruptedListCodesAreRejected) {
+  constexpr uint64_t kCodes[] = {0, 1, 2, 3, 4, 0, 1, 2, 3, 4};
+  ScanCorruptedLists(Db(), "cseg", kCodes, 7, 1000, "corrupted list codes");
+}
+
+TEST_F(ColumnReaderTest, CorruptedListEndsAreRejected) {
+  constexpr uint64_t kEnds[] = {2, 4, 6, 8, 10};
+  ScanCorruptedLists(Db(), "eseg", kEnds, 2, 1, "corrupted list ends");
+}
+
+TEST_F(ColumnReaderTest, ListEndsPastTheElementsAreRejected) {
+  constexpr uint64_t kEnds[] = {2, 4, 6, 8, 10};
+  ScanCorruptedLists(Db(), "pseg", kEnds, 4, 1000, "corrupted list ends");
+}
+
+void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
+                             auto corrupt) {
+  constexpr irs::field_id kId = 1;
+  constexpr duckdb::idx_t kRows = 100;
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "fseg", db};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT);
+    duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+    for (duckdb::idx_t i = 0; i < kRows; ++i) {
+      data[i] = static_cast<int64_t>(i);
+    }
+    duckdb::FlatVector::SetSize(v, kRows);
+    cw.Append(v, kRows);
+    w.Commit(kRows);
+  }
+  const auto file = irs::FileName("fseg");
+  std::string bytes;
+  std::vector<irs::ColumnMeta> metas;
+  {
+    auto in = dir.open(file, irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    const auto stored = irs::format_utils::ReadFooter(
+      *in, file, [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+        footer.Set<duckdb::DatabaseInstance&>(db);
+        footer.ReadOptionalList(
+          irs::kColFieldColumns, "columns",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+              metas.emplace_back(irs::DeserializeColumnMeta(obj));
+            });
+          });
+        footer.Unset<duckdb::DatabaseInstance>();
+      });
+    bytes.resize(stored.data_len);
+    in->ReadData(0, reinterpret_cast<irs::byte_type*>(bytes.data()),
+                 bytes.size());
+  }
+  ASSERT_EQ(metas.size(), 1);
+  corrupt(metas.front());
+  {
+    auto out = dir.create(file);
+    ASSERT_NE(out, nullptr);
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(bytes.data()),
+                   bytes.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
+      footer.WriteList(
+        irs::kColFieldColumns, "columns", metas.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            irs::SerializeColumnMeta(obj, metas[i]);
+          });
+        });
+    });
+  }
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH((irs::ColReader{dir, "fseg", db, irs::IOAdvice::SEQUENTIAL}),
+               error);
+#else
+  EXPECT_ANY_THROW(
+    (irs::ColReader{dir, "fseg", db, irs::IOAdvice::SEQUENTIAL}));
+#endif
+}
+
+TEST_F(ColumnReaderTest, FooterBlockRangesThatWrapAreRejected) {
+  OpenWithCorruptedFooter(
+    Db(), "column data on column id 1 out of range", [](irs::ColumnMeta& meta) {
+      auto& block = meta.data.front();
+      block.file_offset =
+        std::numeric_limits<uint64_t>::max() - block.byte_size + 1;
+    });
+}
+
+TEST_F(ColumnReaderTest, FooterDictionaryRangesThatWrapAreRejected) {
+  OpenWithCorruptedFooter(
+    Db(), "dictionary on column id 1 out of range", [](irs::ColumnMeta& meta) {
+      meta.dictionaries.emplace_back(std::numeric_limits<uint64_t>::max(), 2);
+    });
+}
+
+TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(
+    Db(), dir, "aseg", 64, type,
+    "SELECT CASE WHEN i % 17 = 0 THEN NULL WHEN i < 4096 THEN ['u' || "
+    "i] ELSE ['r' || (i % 5), 'x'] END FROM range(65536) t(i)",
+    32768, expected);
+  irs::ColReader r{dir, "aseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(64);
+  ASSERT_NE(col, nullptr);
+  EXPECT_LT(col->Child()->RowCount(), 40000u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 4095, 4096, 4097, 9000, 40000, 65535}}, false);
+}
+
+TEST_F(ColumnReaderTest, StructListsTurningRepetitiveAreDeduplicatedAgain) {
+  const auto type = duckdb::LogicalType::STRUCT(
+    {{"tags", duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)}});
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "bseg", 65, type,
+              "SELECT {'tags': CASE WHEN i % 17 = 0 THEN NULL WHEN i < 4096 "
+              "THEN ['u' || i] ELSE ['r' || (i % 5), 'x'] END} FROM "
+              "range(32768) t(i)",
+              32768, expected);
+  irs::ColReader r{dir, "bseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(65);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 4095, 4096, 4097, 9000, 20000, 32767}}, false);
+}
+
+TEST_F(ColumnReaderTest, RepeatedWideMapsAcrossRowGroups) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "wseg", 44, type,
+              "SELECT CASE WHEN i % 101 = 0 THEN NULL WHEN i % 13 = 0 THEN "
+              "map([], [])::MAP(VARCHAR, VARCHAR) ELSE map_from_entries("
+              "list_transform(range(8), lambda k: {'key': 'attribute.' || k, "
+              "'value': 'v' || ((i // 37) % 300) || '-' || k})) END "
+              "FROM range(30000) t(i)",
+              12288, expected);
+  irs::ColReader r{dir, "wseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(44);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 30000u);
+  EXPECT_LT(col->Child()->RowCount(), ElementCount(expected) / 10);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 36, 37, 12287, 12288, 29999}}, false);
+}
+
+TEST_F(ColumnReaderTest, ListsLongerThanAVector) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(
+    Db(), dir, "lseg", 45, type,
+    "SELECT CASE WHEN i % 9 = 0 THEN list_transform(range(3000 + i "
+    "% 5), lambda k: 'e' || k) WHEN i % 9 = 1 THEN NULL ELSE ['a' || (i "
+    "% 4), 'b'] END FROM range(20000) t(i)",
+    8192, expected);
+  irs::ColReader r{dir, "lseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(45);
+  ASSERT_NE(col, nullptr);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 1, 2, 9, 8191, 19998}},
+                 false);
+}
+
+TEST_F(ColumnReaderTest, EmptyMapsOnly) {
+  const auto type = duckdb::LogicalType::MAP(duckdb::LogicalType::VARCHAR,
+                                             duckdb::LogicalType::VARCHAR);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "eseg", 46, type,
+              "SELECT CASE WHEN i % 5 = 0 THEN NULL ELSE map([], "
+              "[])::MAP(VARCHAR, VARCHAR) END FROM range(10000) t(i)",
+              4096, expected);
+  irs::ColReader r{dir, "eseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(46);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), 10000u);
+  EXPECT_EQ(col->Child()->RowCount(), 0u);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected, Rows{{0, 1, 4095, 4096, 9999}},
+                 false);
+}
+
 // VARIANT, shredding disabled: many unshredded row groups round-trip.
 TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   SetShreddingSize(Db(), -1);
@@ -2237,6 +3669,34 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RowCount(), 500u);
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
+}
+
+TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
+  constexpr irs::field_id kId = 34;
+  constexpr uint32_t kRowGroup = 256;
+  constexpr uint64_t kRows = 600;
+  constexpr uint64_t kMd5Bytes = 16;
+  SetShreddingSize(Db(), kRowGroup);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteVariantViaSql(Db(), dir, "vseg", kId,
+                     absl::StrCat("SELECT md5(i::VARCHAR)::VARIANT FROM range(",
+                                  kRows, ") t(i)"),
+                     kRowGroup, expected);
+  ASSERT_EQ(expected.size(), kRows);
+
+  irs::ColReader r{dir, "vseg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->Validity(), nullptr);
+  ASSERT_TRUE(col->DataBlocks().empty());
+  std::vector<std::string> sub_columns;
+  col->VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    sub_columns.emplace_back(absl::StrCat(sub.index, "@", sub.first_row));
+  });
+  EXPECT_EQ((std::vector<std::string>{"1@0", "2@0", "1@256", "2@256", "1@512"}),
+            sub_columns);
+  EXPECT_GE(irs::StoredBytes(*col), kRows * kMd5Bytes);
 }
 
 // VARIANT with NULL rows + leftover (mixed types) under shredding: exercises
@@ -3130,7 +4590,7 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
       cwA.Append(r.start, v, r.count);
     }
     // Typed columns don't auto-pad at Commit (matches the old engine: only norm
-    // columns do); the caller pads the tail, exactly like MergeInto.
+    // columns do); the caller pads the tail.
     cwA.PadNullsTo(kTotal);
     w.Commit(kTotal);
   }
@@ -3140,6 +4600,78 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
   ASSERT_NE(ca, nullptr);
   ASSERT_EQ(ca->RowCount(), kTotal);
   VerifyBigint(*ca, r.Ctx(), kTotal, is_valid, val);
+}
+
+TEST_F(ColumnReaderTest, SortedFlushReorderKeepsStagedStringBytes) {
+  constexpr uint64_t kRows = 3000;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kInOrder = 1;
+  constexpr irs::field_id kReversed = 2;
+  auto text = [](uint64_t row) {
+    return absl::StrCat("staged string longer than inlined ", row);
+  };
+  auto staged_strings = [](const irs::ColumnWriter& cw) {
+    std::vector<duckdb::string_t> strings;
+    for (const auto& chunk : cw.Staged()) {
+      const auto* d = duckdb::FlatVector::GetData<duckdb::string_t>(chunk.data);
+      strings.insert(strings.end(), d, d + chunk.count);
+    }
+    return strings;
+  };
+
+  irs::MemoryDirectory dir;
+  irs::ColWriter w{dir, "seg", Db(), irs::WriteTier::Flush,
+                   /*stage_all=*/true};
+  auto& in_order = w.OpenColumn(kInOrder, duckdb::LogicalType::VARCHAR,
+                                /*skip_validity=*/false, kRgSize);
+  auto& reversed = w.OpenColumn(kReversed, duckdb::LogicalType::VARCHAR,
+                                /*skip_validity=*/false, kRgSize);
+  for (uint64_t pos = 0; pos < kRows;) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector v{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      d[k] = duckdb::StringVector::AddString(v, text(pos + k));
+    }
+    duckdb::FlatVector::SetSize(v, take);
+    in_order.Append(v, take);
+    reversed.Append(v, take);
+    pos += take;
+  }
+  const auto in_order_before = staged_strings(in_order);
+  const auto reversed_before = staged_strings(reversed);
+  ASSERT_EQ(kRows, in_order_before.size());
+  ASSERT_EQ(kRows, reversed_before.size());
+  std::vector<uint32_t> new2old(kRows);
+  for (uint32_t row = 0; row != kRows; ++row) {
+    new2old[row] = static_cast<uint32_t>(kRows - 1 - row);
+  }
+
+  in_order.PadNullsTo(kRows);
+  in_order.Reorder({});
+  reversed.PadNullsTo(kRows);
+  reversed.Reorder(new2old);
+
+  const auto in_order_after = staged_strings(in_order);
+  const auto reversed_after = staged_strings(reversed);
+  ASSERT_EQ(kRows, in_order_after.size());
+  ASSERT_EQ(kRows, reversed_after.size());
+  uint64_t in_order_copies = 0;
+  uint64_t reversed_copies = 0;
+  for (uint32_t row = 0; row != kRows; ++row) {
+    const auto old = new2old[row];
+    in_order_copies +=
+      in_order_after[row].GetData() != in_order_before[row].GetData();
+    reversed_copies +=
+      reversed_after[row].GetData() != reversed_before[old].GetData();
+    EXPECT_EQ(text(row), in_order_after[row].GetString()) << row;
+    EXPECT_EQ(text(old), reversed_after[row].GetString()) << row;
+  }
+  EXPECT_EQ(0u, in_order_copies);
+  EXPECT_EQ(0u, reversed_copies);
+  in_order.Finish();
+  reversed.Finish();
 }
 
 // DENSE VARCHAR with FEW distinct short repeated values -> forces the dict_fsst
@@ -3266,7 +4798,8 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
   {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cwS = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
-                             /*skip_validity=*/false, 1024);
+                             /*skip_validity=*/false, 1024,
+                             duckdb::CompressionType::COMPRESSION_DICT_FSST);
     auto put = [&](uint64_t row, const std::string& s) {
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
@@ -3284,7 +4817,7 @@ TEST_F(ColumnReaderTest, ScanCountDictFsstNulls) {
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto* cs = r.Column(kS);
   ASSERT_NE(cs, nullptr);
-  ASSERT_TRUE(cs->NullsInData());
+  ASSERT_TRUE(irs::tests::NullsInData(*cs));
   auto state = cs->InitScan(r.Ctx());
   duckdb::Vector result{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
   cs->ScanCount(state, result, 4, /*result_offset=*/0);
@@ -3504,7 +5037,8 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
     const auto codec = blocks[rg].codec->type;
     EXPECT_TRUE(codec == duckdb::CompressionType::COMPRESSION_ALP ||
-                codec == duckdb::CompressionType::COMPRESSION_ALPRD)
+                codec == duckdb::CompressionType::COMPRESSION_ALPRD ||
+                codec == duckdb::CompressionType::COMPRESSION_COL_NUMERIC)
       << "row-group " << rg
       << " codec=" << duckdb::CompressionTypeToString(codec);
   }

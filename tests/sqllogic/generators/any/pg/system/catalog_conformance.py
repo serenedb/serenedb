@@ -197,7 +197,7 @@ t.statement("GRANT SELECT ON customers TO conf_reader")
 t.statement("GRANT SELECT, INSERT ON orders TO conf_reader")
 t.statement("GRANT SELECT ON app.order_totals TO conf_reader")
 
-UNMATCHED = "('sdb_progress', 'sdb_metrics', 'sdb_settings', 'pg_stat_progress_create_table_as')"
+UNMATCHED = "('sdb_progress', 'sdb_metrics', 'sdb_settings', 'sdb_merges', 'sdb_compact_history', 'pg_stat_progress_create_table_as')"
 
 
 def shape(namespace, differing=""):

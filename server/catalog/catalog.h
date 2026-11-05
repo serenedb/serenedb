@@ -70,11 +70,14 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+    : duckdb::DuckCatalog{db, true},
+      _directory{std::move(directory)},
+      _attachment{_directory->Attach()} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
   }
+  uint64_t Attachment() const noexcept { return _attachment; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
   std::string GetCatalogType() final;
@@ -84,9 +87,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   bool UsesCatalogLog() const final { return true; }
-  bool IsDropped() const final {
-    return _detached.load(std::memory_order_acquire);
-  }
+  bool IsDropped() const final { return _directory->Detached(_attachment); }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
   void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
   bool AppendLocalIndexes(
@@ -94,6 +95,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::RowGroupCollection& source,
     const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
     duckdb::row_t row_start, duckdb::ErrorData& error) final;
+  bool VerifyColumnCompression(
+    duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::StorageManager> storage_manager,
+    const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
+    const duckdb::LogicalType& type) const final;
 
   void Initialize(bool load_builtin) final;
   duckdb::idx_t DefaultSchemaOid() const final;
@@ -202,9 +208,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
+  uint64_t _attachment;
   CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
-  std::atomic_bool _detached{false};
 };
 
 duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(

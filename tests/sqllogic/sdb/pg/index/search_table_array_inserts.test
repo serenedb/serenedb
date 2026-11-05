@@ -1,0 +1,44 @@
+statement ok
+CREATE TABLE sai (id BIGINT, pair INTEGER[2], tags VARCHAR[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sai
+  SELECT i, [i, i + 1]::INTEGER[2], ['a' || i, 'b' || i]::VARCHAR[2]
+  FROM range(3000) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO sai
+  SELECT i, [i, i + 1]::INTEGER[2], ['a' || i, 'b' || i]::VARCHAR[2]
+  FROM range(3000, 6000) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sai;
+
+
+query
+SELECT count(*) AS n, sum(pair[1]) AS s1, sum(pair[2]) AS s2, count(DISTINCT tags[2]) AS t FROM sai;
+----
+n	s1	s2	t
+6000	17997000	18003000	6000
+
+
+query
+SELECT pair, tags FROM sai WHERE id IN (0, 2047, 2048, 5999) ORDER BY id;
+----
+pair	tags
+{0,1}	{a0,b0}
+{2047,2048}	{a2047,b2047}
+{2048,2049}	{a2048,b2048}
+{5999,6000}	{a5999,b5999}

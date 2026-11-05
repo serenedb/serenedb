@@ -1,0 +1,54 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <span>
+
+#include "iresearch/formats/column/merge.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/types.hpp"
+
+namespace irs {
+
+const TermReader* MemberTerms(const SubReader& reader, field_id id,
+                              DictMember member);
+
+const NormColumnReader* SourceNormColumn(const MergeSource& source,
+                                         field_id id);
+
+struct LiveNormStats {
+  bool present = false;
+  uint64_t sum = 0;
+  uint64_t non_zero = 0;
+};
+
+LiveNormStats ComputeLiveNormStats(field_id id,
+                                   std::span<const MergeSource> sources);
+
+void MergeNormColumn(NormColumnWriter& writer, field_id id,
+                     std::span<const MergeSource> sources,
+                     const MergeOrder* order);
+
+}  // namespace irs

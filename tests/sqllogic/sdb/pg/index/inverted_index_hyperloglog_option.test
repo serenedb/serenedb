@@ -174,3 +174,64 @@ DROP INDEX dc_t_idx
 
 statement ok
 DROP TABLE dc_t
+
+statement ok
+CREATE TABLE dc_s (pk INTEGER PRIMARY KEY, v BIGINT, s VARCHAR, plain BIGINT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0)
+
+statement ok
+CREATE INDEX dc_s_idx ON dc_s USING inverted(pk)
+  INCLUDE (v included (hyperloglog = true),
+           s included (hyperloglog = true),
+           plain)
+
+statement ok
+INSERT INTO dc_s
+SELECT i, i % 100, 'tag-' || (i % 7)::VARCHAR, i FROM range(10000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_s
+
+query
+SELECT (stats(v)).approx_unique::BIGINT BETWEEN 80 AND 120 AS v_ok,
+       (stats(s)).approx_unique::BIGINT BETWEEN 5 AND 9 AS s_ok,
+       stats(plain)::VARCHAR NOT LIKE '%approx_unique%' AS plain_ok
+FROM dc_s LIMIT 1;
+----
+v_ok	s_ok	plain_ok
+t	t	t
+
+query
+SELECT (stats(v)).approx_unique::BIGINT BETWEEN 80 AND 120 AS v_ok,
+       (stats(s)).approx_unique::BIGINT BETWEEN 5 AND 9 AS s_ok
+FROM dc_s_idx LIMIT 1;
+----
+v_ok	s_ok
+t	t
+
+statement ok
+INSERT INTO dc_s
+SELECT i, i % 1000, 'tag-' || (i % 50)::VARCHAR, i FROM range(10000, 30000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) dc_s
+
+statement ok
+VACUUM (COMPACT_TABLE) dc_s
+
+query
+SELECT (stats(v)).approx_unique::BIGINT BETWEEN 700 AND 1300 AS v_ok,
+       (stats(s)).approx_unique::BIGINT BETWEEN 40 AND 62 AS s_ok
+FROM dc_s LIMIT 1;
+----
+v_ok	s_ok
+t	t
+
+query
+SELECT COUNT(*), COUNT(DISTINCT v) FROM dc_s;
+----
+count	count
+30000	1000
+
+statement ok
+DROP TABLE dc_s

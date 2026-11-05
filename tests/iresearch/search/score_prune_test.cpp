@@ -33,10 +33,10 @@
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/index_tests.hpp"
 #include "search/filter_test_case_base.hpp"
 
@@ -206,10 +206,10 @@ void ScorePruneTestCase::AssertResults(const irs::DirectoryReader& index,
 }
 
 void ScorePruneTestCase::CompactAll(irs::ScorerPtr scorer, bool write_norms) {
-  const irs::index_utils::CompactionCount compact_all;
+  const tests::CompactionCount compact_all;
   auto writer =
     open_writer(irs::kOmAppend, GetWriterOptions(scorer, write_norms));
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
   ASSERT_TRUE(writer->RefreshCommit());
   ASSERT_EQ(1, writer->GetSnapshot().size());
 }

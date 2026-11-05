@@ -1,0 +1,61 @@
+statement ok
+CREATE TABLE iisn (id INTEGER, k STRUCT(tag VARCHAR, n INTEGER), l INTEGER[], body VARCHAR);
+
+
+statement ok
+CREATE INDEX iisn_idx ON iisn USING inverted (body) INCLUDE (id) SORTED BY (k DESC, l)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO iisn SELECT i, CASE WHEN i = 1234 THEN NULL ELSE {'tag': 'a_long_tag_value_' || (i % 13), 'n': i % 50} END, [i % 7, i], 'row ' || i FROM range(5000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iisn;
+
+
+statement ok
+INSERT INTO iisn SELECT i, {'tag': 'a_long_tag_value_' || (i % 13), 'n': i % 50}, [i % 7, i], 'row ' || i FROM range(5000, 7000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iisn;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iisn_idx');
+----
+segments	docs
+2	7000
+
+
+statement ok
+VACUUM (COMPACT_INDEX) iisn_idx;
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('iisn_idx');
+----
+segments	docs
+1	7000
+
+
+statement ok
+SET threads = 1;
+
+
+query
+SELECT count(*) AS wrong FROM iisn_idx
+WHERE l IS DISTINCT FROM [id % 7, id]
+   OR k IS DISTINCT FROM CASE WHEN id = 1234 THEN NULL ELSE {'tag': 'a_long_tag_value_' || (id % 13), 'n': id % 50} END;
+----
+wrong
+0
+
+
+query
+SELECT count(*) AS n, list({'k': k, 'l': l}) = list({'k': k, 'l': l} ORDER BY k DESC NULLS FIRST, l ASC NULLS LAST) AS sorted FROM iisn_idx;
+----
+n	sorted
+7000	t

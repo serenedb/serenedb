@@ -184,13 +184,10 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
+    _total_term_freq{head.text.total_freq},
     _has_score_bounds{head.text.has_score_bounds} {
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
-  SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
-             "term dictionary: total frequency ", head.text.total_freq,
-             " exceeds uint32_t::max");
-  _freq.value = static_cast<uint32_t>(head.text.total_freq);
 
   const auto corrupted = [&] { Corrupted("record", head.id); };
   SDB_ASSERT(head.term_count > 1);
@@ -505,13 +502,6 @@ std::unique_ptr<IndexInput> TermReaderImpl::ReopenPayload() const {
 
 PostingsHandles TermReaderImpl::Handles() const noexcept {
   return _owner->Postings().Handles();
-}
-
-Attribute* TermReaderImpl::GetMutable(TypeInfo::type_id type) noexcept {
-  return type == irs::Type<FreqAttr>::id() &&
-             _meta.dict.member == DictMember::Strings
-           ? &_freq
-           : nullptr;
 }
 
 }  // namespace irs::term_dict

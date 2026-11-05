@@ -109,6 +109,37 @@ IRS_FORCE_INLINE inline void PatchNormSlots(const NormRegion& region,
   }
 }
 
+IRS_FORCE_INLINE inline void ReadNorms(const NormRegion& region,
+                                       const doc_id_t* docs, uint32_t* values,
+                                       size_t n) {
+  ReadNormSlots(region, docs, values, n);
+  if (region.exceptions) {
+    PatchNormSlots(region, docs, values, n);
+  }
+}
+
+IRS_FORCE_INLINE inline uint32_t ReadNorm(const NormRegion& region,
+                                          doc_id_t doc) {
+  const auto value = region.Slot(doc);
+  return region.exceptions && value >= region.first_code
+           ? region.Exception(doc, value)
+           : value;
+}
+
+inline constexpr uint64_t kNormAheadBytes = 16 * 1024;
+
+IRS_FORCE_INLINE inline void PrefetchNorms(const byte_type* first,
+                                           const byte_type* last) noexcept {
+  const auto span = static_cast<uint64_t>(last - first);
+  if (span > kNormAheadBytes) {
+    return;
+  }
+  for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
+       offset += ABSL_CACHELINE_SIZE) {
+    __builtin_prefetch(last + offset);
+  }
+}
+
 class NormReaderBase : public NormReader {
  public:
   score_t GetAvg() const noexcept final { return _avg; }
@@ -128,7 +159,6 @@ class NormReaderBase : public NormReader {
     ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) / file_utils::kPage +
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
-  static constexpr uint64_t kAheadBytes = 16 * 1024;
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
@@ -404,34 +434,6 @@ class NormReaderBase : public NormReader {
     return count;
   }
 
-  IRS_FORCE_INLINE void Read(const doc_id_t* docs, uint32_t* values,
-                             size_t n) const {
-    ReadNormSlots(*_region, docs, values, n);
-    if (_region->exceptions) {
-      PatchNormSlots(*_region, docs, values, n);
-    }
-  }
-
-  IRS_FORCE_INLINE void PrefetchNext(const doc_id_t* docs,
-                                     size_t n) const noexcept {
-    const auto* const last = At(docs[n - 1]);
-    const auto span = static_cast<uint64_t>(last - At(docs[0]));
-    if (span > kAheadBytes) {
-      return;
-    }
-    for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
-         offset += ABSL_CACHELINE_SIZE) {
-      __builtin_prefetch(last + offset);
-    }
-  }
-
-  IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const {
-    const auto value = _region->Slot(doc);
-    return _region->exceptions && value >= _region->first_code
-             ? _region->Exception(doc, value)
-             : value;
-  }
-
   void Position(const NormRegion& region) noexcept {
     _region = &region;
     _bytes = region.bits / 8;
@@ -484,7 +486,7 @@ class PersistedNormReader : public NormReaderBase {
       }
     }
     Touched(&doc, 1);
-    return ReadOne(doc);
+    return ReadNorm(*_region, doc);
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
@@ -495,7 +497,7 @@ class PersistedNormReader : public NormReaderBase {
   void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
                        std::span<uint32_t, kPostingBlock> values) final {
     Fetch(docs.data(), values.data(), docs.size());
-    PrefetchNext(docs.data(), docs.size());
+    PrefetchNorms(At(docs.front()), At(docs.back()));
   }
 
  private:
@@ -510,7 +512,7 @@ class PersistedNormReader : public NormReaderBase {
       }
     }
     Touched(docs, n);
-    Read(docs, values, n);
+    ReadNorms(*_region, docs, values, n);
   }
 
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
@@ -524,7 +526,7 @@ class PersistedNormReader : public NormReaderBase {
         ++j;
       }
       Touched(docs + i, j - i);
-      Read(docs + i, values + i, j - i);
+      ReadNorms(*_region, docs + i, values + i, j - i);
       i = j;
     }
   }

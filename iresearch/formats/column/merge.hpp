@@ -20,28 +20,142 @@
 
 #pragma once
 
-#include <cstdint>
-#include <functional>
-#include <span>
+#include <absl/base/call_once.h>
 
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <vector>
+
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/column_writer.hpp"
+#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
-
-struct SubReader;
-
-class ColReader;
-class ColWriter;
 
 struct MergeSource {
   const SubReader* reader;
   const ColReader* col_reader;
   uint64_t alive_count;
+  const DocRemap* remap = nullptr;
 };
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress = {});
+class ColumnMerger {
+ public:
+  ColumnMerger(std::span<const MergeSource> sources,
+               const IndexFieldOptions* field_options, const MergeOrder* order,
+               duckdb::ObjectCache& cache);
+
+  ColumnMerger(const ColumnMerger&) = delete;
+  ColumnMerger& operator=(const ColumnMerger&) = delete;
+
+  std::span<const field_id> Columns() const noexcept { return _ids; }
+
+  uint64_t StoredBytes(field_id column) const;
+
+  uint64_t StoredBytes(field_id column, size_t input) const;
+
+  uint32_t RowGroupSize() const noexcept { return _row_group_size; }
+
+  bool Splittable(field_id column) const;
+
+  bool HoldsText(field_id column) const;
+
+  bool Copyable(field_id column, size_t input) const;
+
+  void Open(field_id column, ColWriter& output) const;
+
+  bool Merge(field_id column, ColWriter& output, const MergeProgress& progress);
+
+  bool Train(field_id column, ColWriter& output, const MergeProgress& progress);
+
+  bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
+                  ColWriter& output, const MergeProgress& progress);
+
+  bool CopyRange(field_id column, uint32_t part, size_t input, uint64_t begin,
+                 uint64_t end, ColWriter& output,
+                 const MergeProgress& progress);
+
+ private:
+  struct KeptRows {
+    absl::once_flag once;
+    std::vector<std::vector<duckdb::sel_t>> windows;
+  };
+
+  struct LeafDictionary {
+    std::vector<uint32_t> path;
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+  };
+
+  struct ColumnSlot {
+    const ColumnReader* first = nullptr;
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+    std::vector<LeafDictionary> leaves;
+    bool trained = false;
+  };
+
+  struct LeafSample;
+  struct OrderedInput;
+
+  static bool AllReady(std::span<const LeafSample> leaves);
+
+  std::vector<duckdb::sel_t>& KeptFor(size_t si, uint64_t pos);
+
+  auto& Slot(this auto& self, field_id column);
+
+  const ColumnReader& First(field_id column) const;
+
+  ColumnOptions Options(field_id column) const;
+
+  ColCodecParams CodecParams(const ColumnOptions& opts) const;
+
+  std::span<const field_id> AnnFields(field_id column) const noexcept;
+
+  ColumnWriter& OpenPart(field_id column, uint32_t part,
+                         ColWriter& output) const;
+
+  template<typename Visit>
+  bool VisitRows(field_id column, uint64_t begin, uint64_t end,
+                 std::span<const std::shared_ptr<ReadContext>> ctxs,
+                 const MergeProgress& progress, Visit&& visit);
+
+  uint64_t Rows(field_id column) const;
+
+  bool TrainLeaves(field_id column, ColWriter& output,
+                   const MergeProgress& progress);
+
+  bool SampleRowGroups(field_id column,
+                       std::span<const std::shared_ptr<ReadContext>> ctxs,
+                       std::span<LeafSample> leaves, bool exact,
+                       const MergeProgress& progress);
+
+  void OpenOrdered(OrderedInput& in, size_t si, field_id column, uint64_t live);
+
+  void LoadOrdered(OrderedInput& in, size_t si);
+
+  template<typename Visit>
+  bool VisitOrdered(field_id column, uint64_t begin, uint64_t end,
+                    const MergeProgress& progress, Visit&& visit);
+
+  std::span<const MergeSource> _sources;
+  const IndexFieldOptions* _field_options;
+  const MergeOrder* _order;
+  duckdb::ObjectCache* _cache;
+  duckdb::DatabaseInstance* _db = nullptr;
+  uint32_t _row_group_size;
+  std::vector<field_id> _ids;
+  containers::FlatHashMap<field_id, ColumnSlot> _slots;
+  std::unique_ptr<KeptRows[]> _kept_rows;
+};
 
 }  // namespace irs

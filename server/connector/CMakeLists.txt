@@ -63,6 +63,7 @@ target_sources(
         reindex_removes.cpp
         file_manifest.cpp
         duckdb_vacuum_function.cpp
+        merge_target.cpp
         duckdb_physical_search_truncate.cpp
         highlight/highlight_options.cpp
         highlight/memory_index.cpp

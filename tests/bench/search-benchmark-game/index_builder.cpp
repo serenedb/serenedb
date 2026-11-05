@@ -29,11 +29,12 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <memory>
 #include <optional>
 #include <thread>
 #include <vector>
+
+#include "index/compaction/policy_compaction.hpp"
 
 namespace bench {
 
@@ -167,55 +168,18 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     batch_provider.Close();
   });
 
-  absl::Mutex compaction_mutex;
-  absl::CondVar compaction_cv;
-
   // commiter thread
   if (_opts.refresh_interval_ms) {
-    threads.emplace_back(
-      [&compaction_cv, &compaction_mutex, &batch_provider, this] {
-        while (!batch_provider.done.load()) {
-          {
-            absl::PrintF("[COMMIT]\n");
-            std::fflush(stdout);
-            _writer->RefreshCommit();
-          }
-
-          // notify compaction threads
-          if (_opts.compaction_threads) {
-            absl::MutexLock lock{&compaction_mutex};
-            compaction_cv.notify_all();
-          }
-
-          std::this_thread::sleep_for(
-            std::chrono::milliseconds(_opts.refresh_interval_ms));
-        }
-      });
-  }
-
-  // compaction threads
-  const irs::index_utils::CompactionTier compaction_options;
-  auto policy = irs::index_utils::MakePolicy(compaction_options);
-
-  for (size_t i = _opts.compaction_threads; i; --i) {
-    threads.emplace_back([&] {
+    threads.emplace_back([&batch_provider, this] {
       while (!batch_provider.done.load()) {
         {
-          absl::MutexLock lock{&compaction_mutex};
-          if (compaction_cv.WaitWithTimeout(
-                &compaction_mutex,
-                absl::Milliseconds(_opts.compaction_interval_ms))) {
-            continue;
-          }
-        }
-
-        {
-          absl::PrintF("[COMPACT]");
+          absl::PrintF("[COMMIT]\n");
           std::fflush(stdout);
-          _writer->Compact(policy);
+          _writer->RefreshCommit();
         }
 
-        irs::directory_utils::RemoveAllUnreferenced(_dir);
+        std::this_thread::sleep_for(
+          std::chrono::milliseconds(_opts.refresh_interval_ms));
       }
     });
   }
@@ -247,14 +211,11 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
     absl::PrintF("Compacting all segments:\n");
     std::fflush(stdout);
     CompactAll();
-  } else if (_opts.compaction_threads) {
-    irs::directory_utils::RemoveAllUnreferenced(_dir);
   }
 }
 
 void IndexBuilder::CompactAll() {
-  _writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
+  tests::Compact(*_writer, tests::MakePolicy(tests::CompactionCount()));
   _writer->RefreshCommit();
   irs::directory_utils::RemoveAllUnreferenced(_dir);
 }

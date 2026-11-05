@@ -20,17 +20,27 @@
 
 #include "iresearch/formats/column/col_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstring>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <duckdb/function/compression_function.hpp>
 #include <duckdb/main/database.hpp>
+#include <iterator>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -43,6 +53,72 @@
 
 namespace irs {
 namespace {
+
+constexpr uint64_t kOwnShift = 32;
+
+constexpr uint64_t SlotsOf(uint64_t claims) noexcept {
+  return claims & ((uint64_t{1} << kOwnShift) - 1);
+}
+
+constexpr uint64_t OwnOf(uint64_t claims) noexcept {
+  return claims >> kOwnShift;
+}
+
+uint64_t BlockRows(const std::vector<ColumnBlockMeta>& blocks) {
+  uint64_t rows = 0;
+  for (const auto& block : blocks) {
+    rows += block.tuple_count;
+  }
+  return rows;
+}
+
+uint64_t MetaRows(const ColumnMeta& meta) {
+  return BlockRows(meta.data.empty() ? meta.validity : meta.data);
+}
+
+void DropTuning(ColumnMeta& meta) {
+  meta.write_string_tuning.reset();
+  meta.write_numeric_tuning.reset();
+  for (auto& child : meta.children) {
+    DropTuning(child);
+  }
+  for (auto& layout : meta.variant_rgs) {
+    if (layout.unshredded) {
+      DropTuning(*layout.unshredded);
+    }
+    if (layout.shredded) {
+      DropTuning(*layout.shredded);
+    }
+  }
+}
+
+void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
+  SDB_ASSERT(part.list_parts.empty() && part.variant_rgs.empty() &&
+             !part.hyperloglog);
+  SDB_ENSURE(part.dictionaries.empty(), "column ", part.id,
+             ": a merged part trained its own dictionary");
+  if (meta.type.id() == duckdb::LogicalTypeId::INVALID) {
+    meta.id = part.id;
+    meta.type = std::move(part.type);
+  }
+  if (meta.children.empty()) {
+    meta.children.resize(part.children.size());
+  }
+  SDB_ASSERT(meta.children.size() == part.children.size());
+  if (meta.type.InternalType() == duckdb::PhysicalType::LIST &&
+      !meta.data.empty()) {
+    meta.list_parts.push_back(ListPart{
+      .row = BlockRows(meta.data),
+      .code = MetaRows(meta.children[1]),
+      .elem = MetaRows(meta.children[0]),
+    });
+  }
+  absl::c_move(part.data, std::back_inserter(meta.data));
+  absl::c_move(part.validity, std::back_inserter(meta.validity));
+  for (size_t i = 0; i != part.children.size(); ++i) {
+    AppendPart(meta.children[i], part.children[i]);
+  }
+}
 
 void SerializeNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
   s.WriteProperty(0, "rows", r.stats.rows);
@@ -79,31 +155,88 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
               });
 }
 
+bool PatchDictionary(std::string_view block,
+                     std::span<const uint16_t> dictionaries,
+                     std::array<char, sizeof(codecs::Header)>& head) {
+  const auto header = codecs::Header::Parse(
+    reinterpret_cast<duckdb::const_data_ptr_t>(block.data()), block.size());
+  if (header.flags != codecs::FrameDictionary::Trained) {
+    return false;
+  }
+  SDB_ENSURE(header.dictionary <= dictionaries.size(),
+             "col codec: missing trained dictionary ", header.dictionary);
+  const uint16_t dictionary = dictionaries[header.dictionary - 1];
+  std::memcpy(head.data(), block.data(), head.size());
+  std::memcpy(head.data() + offsetof(codecs::Header, dictionary), &dictionary,
+              sizeof(dictionary));
+  return true;
+}
+
+bool CopyBlocks(ReadContext& ctx, std::span<const ColumnBlockMeta> blocks,
+                std::span<const uint16_t> dictionaries, ColFileWriter& sink,
+                std::vector<ColumnBlockMeta>& out,
+                absl::FunctionRef<bool()> progress) {
+  std::string bytes;
+  for (const auto& block : blocks) {
+    if (!progress()) {
+      return false;
+    }
+    auto& copy = out.emplace_back(block.statistics.Copy(), block.tuple_count,
+                                  uint64_t{0}, block.byte_size, block.codec);
+    if (block.byte_size == 0) {
+      continue;
+    }
+    std::string_view view;
+    if (const auto* stable =
+          ctx.TryReadStable(block.file_offset, block.byte_size)) {
+      view = {reinterpret_cast<const char*>(stable), block.byte_size};
+    } else {
+      bytes.resize(block.byte_size);
+      ctx.Read(block.file_offset,
+               reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
+               block.byte_size);
+      view = bytes;
+    }
+    std::array<char, sizeof(codecs::Header)> head{};
+    if (!dictionaries.empty() &&
+        duckdb::IsSereneDBCompressionType(block.codec->type) &&
+        PatchDictionary(view, dictionaries, head)) {
+      const std::array<std::string_view, 2> parts{
+        std::string_view{head.data(), head.size()},
+        view.substr(head.size()),
+      };
+      copy.file_offset = sink.AppendAligned(parts);
+    } else {
+      copy.file_offset = sink.AppendAligned({&view, 1});
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db)
+                     duckdb::DatabaseInstance& db, WriteTier tier,
+                     bool stage_all)
   : _dir{&dir},
     _segment_name{segment_name},
-    _filename{FileName(segment_name)},
-    _db{&db} {}
+    _db{&db},
+    _tier{tier},
+    _stage_all{stage_all} {}
 
 ColWriter::~ColWriter() {
-  if (_out && !_committed) {
+  if (_file && !_committed) {
     Rollback();
   }
 }
 
 void ColWriter::EnsureOut() {
-  if (_out) {
+  if (_file) {
     return;
   }
-  _out = _dir->create(_filename);
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
-}
-
-bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _ann_writers.empty();
+  _file =
+    std::make_unique<ColFileWriter>(_dir->create(FileName(_segment_name)));
+  _write_ctx = std::make_unique<WriteContext>(*_db, *_file);
 }
 
 void ColWriter::SetFieldOptions(
@@ -114,40 +247,65 @@ void ColWriter::SetFieldOptions(
   _field_options = field_options;
 }
 
-ColumnWriter& ColWriter::OpenColumnInternal(
-  field_id id, duckdb::LogicalType type, bool skip_validity,
-  uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog) {
+ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
+  SDB_ASSERT(_stage_all);
+  const auto it = _by_id.find(id);
+  return it == _by_id.end() ? nullptr : _columns[it->second].writer.get();
+}
+
+uint64_t ColWriter::StagedBytes() const noexcept {
+  if (!_stage_all) {
+    return 0;
+  }
+  uint64_t bytes = 0;
+  for (const auto& column : _columns) {
+    bytes += column.writer->StagedBytes();
+  }
+  for (const auto& norm : _norms) {
+    bytes += norm->StagedBytes();
+  }
+  return bytes;
+}
+
+ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
+                                    bool skip_validity, uint32_t row_group_size,
+                                    duckdb::CompressionType forced,
+                                    bool hyperloglog,
+                                    ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
+  SDB_ASSERT(!_parts.contains(id));
   if (auto it = _by_id.find(id); it != _by_id.end()) {
-    auto& existing = *it->second;
+    SDB_ASSERT(_columns[it->second].writer);
+    auto& existing = *_columns[it->second].writer;
     SDB_ASSERT(
       existing._type == type && existing._row_group_size == row_group_size &&
         existing._skip_validity == skip_validity &&
-        existing._forced == forced &&
+        existing._forced == forced && existing._codec_params == codec_params &&
         (existing._meta.hyperloglog != nullptr) == hyperloglog,
       "ColWriter::OpenColumn: re-opened id ", id, " with mismatched settings");
     return existing;
   }
   EnsureOut();
-  auto col =
-    std::make_unique<ColumnWriter>(*this, id, std::move(type), skip_validity,
-                                   row_group_size, forced, hyperloglog);
-  auto* ptr = col.get();
-  _by_id.emplace(id, ptr);
-  _columns.push_back(std::move(col));
-  return *ptr;
+  _by_id.emplace(id, _columns.size());
+  auto& entry = _columns.emplace_back();
+  entry.writer = std::make_unique<ColumnWriter>(
+    *_write_ctx, id, std::move(type), skip_validity, row_group_size, forced,
+    hyperloglog, codec_params, _stage_all);
+  return *entry.writer;
 }
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   ColumnOptions opts{};
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  ColCodecParams codec_params;
   if (_field_options) {
     opts = _field_options->GetColumnOptions(id);
     row_group_size = _field_options->row_group_size;
+    codec_params = _field_options->CodecParams(opts);
+    codec_params.tier = _tier;
   }
-  auto& cw =
-    OpenColumnInternal(id, std::move(type), opts.skip_validity, row_group_size,
-                       opts.compression, opts.hyperloglog);
+  auto& cw = OpenColumn(id, std::move(type), opts.skip_validity, row_group_size,
+                        opts.compression, opts.hyperloglog, codec_params);
   if (_field_options) {
     for (const auto ann : _field_options->AnnFields(id)) {
       AttachAnn(id, *_field_options->GetColumnOptions(ann).ann_info);
@@ -156,20 +314,172 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
   return cw;
 }
 
-ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
-                                    bool skip_validity, uint32_t row_group_size,
-                                    duckdb::CompressionType compression,
-                                    bool hyperloglog) {
-  return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
-                            compression, hyperloglog);
+ColumnWriter& ColWriter::OpenedColumn(field_id id) noexcept {
+  const auto it = _by_id.find(id);
+  SDB_ASSERT(it != _by_id.end() && _columns[it->second].writer);
+  return *_columns[it->second].writer;
+}
+
+void ColWriter::CloseColumn(field_id id) {
+  const auto it = _by_id.find(id);
+  SDB_ASSERT(it != _by_id.end());
+  Close(_columns[it->second]);
+}
+
+void ColWriter::PlanParts(field_id id, uint32_t parts) {
+  SDB_ASSERT(!_by_id.contains(id));
+  EnsureOut();
+  const bool planned =
+    _parts.try_emplace(id, std::make_unique<ColumnParts>(parts)).second;
+  SDB_ASSERT(planned);
+}
+
+ColWriter::ColumnParts& ColWriter::PartsOf(field_id id) {
+  const auto it = _parts.find(id);
+  SDB_ASSERT(it != _parts.end());
+  return *it->second;
+}
+
+ColWriter::ColumnEntry& ColWriter::PartOf(field_id id, uint32_t part) {
+  auto& parts = PartsOf(id).parts;
+  SDB_ASSERT(part < parts.size());
+  return parts[part];
+}
+
+void ColWriter::Close(ColumnEntry& entry) {
+  SDB_ASSERT(entry.writer);
+  entry.writer->Finish();
+  entry.meta = std::move(entry.writer->_meta);
+  entry.writer.reset();
+  DropTuning(entry.meta);
+}
+
+ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
+                                        duckdb::LogicalType type,
+                                        bool skip_validity,
+                                        uint32_t row_group_size,
+                                        duckdb::CompressionType compression,
+                                        ColCodecParams codec_params) {
+  SDB_ASSERT(row_group_size != 0);
+  auto& writer = PartOf(id, part).writer;
+  SDB_ASSERT(!writer);
+  writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
+                                          skip_validity, row_group_size,
+                                          compression, false, codec_params);
+  return *writer;
+}
+
+void ColWriter::CloseColumnPart(field_id id, uint32_t part) {
+  Close(PartOf(id, part));
+}
+
+bool ColWriter::CopyColumnPart(field_id id, uint32_t part, ReadContext& ctx,
+                               const ColumnReader& column, bool validity,
+                               std::span<const uint16_t> dictionaries,
+                               absl::FunctionRef<bool()> progress) {
+  auto& slot = PartOf(id, part);
+  SDB_ASSERT(!slot.writer);
+  auto& meta = slot.meta;
+  meta.id = column.Id();
+  meta.type = column.Type();
+  if (!CopyBlocks(ctx, column.DataBlocks(), dictionaries, *_file, meta.data,
+                  progress)) {
+    return false;
+  }
+  if (!validity) {
+    return true;
+  }
+  if (const auto* stored = column.Validity()) {
+    return CopyBlocks(ctx, stored->DataBlocks(), {}, *_file, meta.validity,
+                      progress);
+  }
+  for (const auto& block : meta.data) {
+    EmitEmptyValidity(*_db, block.tuple_count, meta.validity);
+  }
+  return true;
+}
+
+uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
+  auto& parts = PartsOf(id);
+  auto claims = parts.claims.load(std::memory_order_relaxed);
+  uint64_t own = 0;
+  do {
+    if (OwnOf(claims) != 0) {
+      return static_cast<uint16_t>(OwnOf(claims));
+    }
+    own = SlotsOf(claims) + 1;
+  } while (!parts.claims.compare_exchange_weak(claims, (own << kOwnShift) | own,
+                                               std::memory_order_relaxed));
+  SDB_ASSERT(own <= kMaxColumnDictionaries);
+  parts.dictionaries[own - 1] = {.file_offset = _file->Append(bytes),
+                                 .byte_size = bytes.size()};
+  return static_cast<uint16_t>(own);
+}
+
+void ColWriter::AddLeafDictionary(field_id id, std::span<const uint32_t> path,
+                                  std::string_view bytes) {
+  const bool added =
+    PartsOf(id)
+      .leaf_dictionaries
+      .try_emplace(std::vector<uint32_t>{path.begin(), path.end()},
+                   ColumnDictionaryMeta{.file_offset = _file->Append(bytes),
+                                        .byte_size = bytes.size()})
+      .second;
+  SDB_ASSERT(added);
+}
+
+bool ColWriter::AddCopiedDictionaries(
+  field_id id,
+  std::span<const std::shared_ptr<const codecs::TrainedDictionary>>
+    dictionaries,
+  std::vector<uint16_t>& indexes) {
+  auto& parts = PartsOf(id);
+  auto claims = parts.claims.load(std::memory_order_relaxed);
+  do {
+    const uint64_t reserved = OwnOf(claims) == 0 ? 1 : 0;
+    if (SlotsOf(claims) + reserved + dictionaries.size() >
+        kMaxColumnDictionaries) {
+      return false;
+    }
+  } while (!parts.claims.compare_exchange_weak(
+    claims, claims + dictionaries.size(), std::memory_order_relaxed));
+  for (auto slot = SlotsOf(claims); const auto& dictionary : dictionaries) {
+    const auto bytes = dictionary->Bytes();
+    parts.dictionaries[slot] = {.file_offset = _file->Append(bytes),
+                                .byte_size = bytes.size()};
+    indexes.emplace_back(static_cast<uint16_t>(++slot));
+  }
+  return true;
+}
+
+ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
+  ColumnMeta meta;
+  for (auto& part : parts.parts) {
+    SDB_ASSERT(!part.writer);
+    SDB_ASSERT(part.meta.type.id() != duckdb::LogicalTypeId::INVALID,
+               "ColWriter::Commit: column ", id, " misses a part");
+    AppendPart(meta, part.meta);
+  }
+  const auto slots = SlotsOf(parts.claims.load(std::memory_order_relaxed));
+  meta.dictionaries.assign(parts.dictionaries.begin(),
+                           parts.dictionaries.begin() + slots);
+  for (auto& [path, dictionary] : parts.leaf_dictionaries) {
+    auto* leaf = &meta;
+    for (const auto child : path) {
+      SDB_ASSERT(child < leaf->children.size());
+      leaf = &leaf->children[child];
+    }
+    leaf->dictionaries = {dictionary};
+  }
+  return meta;
 }
 
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> IndexOutput& {
+    id, _stage_all ? 0 : row_group_size, [this]() -> ColFileWriter& {
       EnsureOut();
-      return *_out;
+      return *_file;
     }));
   _norm_by_id.emplace(id, &writer);
   return writer;
@@ -192,7 +502,7 @@ NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   if (auto it = _ann_by_id.find(info.index_id); it != _ann_by_id.end()) {
-    auto& existing = *it->second;
+    auto& existing = _ann_writers[it->second];
     SDB_ASSERT(existing.info == info && existing.column_id == column_id,
                "ColWriter::AttachAnn: re-attach with mismatched AnnInfo on "
                "column ",
@@ -201,30 +511,29 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   }
   SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachAnn: column ",
              column_id, " must be opened first");
-  auto entry = std::make_unique<AnnEntry>();
-  entry->column_id = column_id;
+  std::unique_ptr<AnnWriter> writer;
   switch (info.kind) {
 #ifndef IRESEARCH_NO_VECTOR
     case AnnKind::Ivf:
-      entry->writer = std::make_unique<IvfWriter>(info);
+      writer = std::make_unique<IvfWriter>(info);
       break;
     case AnnKind::Hnsw:
-      entry->writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
+      writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
       break;
 #endif
     default:
       SDB_UNREACHABLE();
   }
-  entry->info = std::move(info);
-  auto& back = *_ann_writers.emplace_back(std::move(entry));
-  _ann_by_id.emplace(back.info.index_id, &back);
-  return *back.writer;
+  auto& entry =
+    _ann_writers.emplace_back(column_id, std::move(info), std::move(writer));
+  _ann_by_id.emplace(entry.info.index_id, _ann_writers.size() - 1);
+  return *entry.writer;
 }
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
-    if (entry->writer) {
-      entry->writer->SetIdxWriter(idx);
+    if (entry.writer) {
+      entry.writer->SetIdxWriter(idx);
     }
   }
 }
@@ -233,34 +542,36 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
-    if (entry->writer) {
-      out.push_back(std::move(entry->writer));
+    if (entry.writer) {
+      out.push_back(std::move(entry.writer));
     }
   }
   return out;
 }
 
-void ColWriter::Rollback() noexcept { _out.reset(); }
+void ColWriter::Rollback() noexcept {
+  _write_ctx.reset();
+  _file.reset();
+}
 
 constexpr auto kNoCancel = [] { return true; };
 
-bool ColWriter::Commit(uint64_t target_row) {
-  return Commit(target_row, kNoCancel);
+bool ColWriter::Commit(uint64_t target_row, std::span<const uint32_t> new2old) {
+  return Commit(target_row, kNoCancel, new2old);
 }
 
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
-  return ComputeAnn(env, kNoCancel);
-}
-
-bool ColWriter::Commit(uint64_t target_row,
-                       absl::FunctionRef<bool()> progress) {
+bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
+                       std::span<const uint32_t> new2old) {
   if (_committed) {
     return true;
   }
+  SDB_ASSERT(new2old.empty() || (_stage_all && new2old.size() == target_row));
   std::vector<const NormColumnWriter*> norms;
   for (auto& writer : _norms) {
-    if (writer->RowCount() < target_row) {
-      writer->PadTo(target_row);
+    writer->PadTo(target_row);
+    if (_stage_all) {
+      SDB_ASSERT(_field_options);
+      writer->Reorder(new2old, _field_options->row_group_size);
     }
     writer->Finalize();
     SDB_ASSERT(writer->Meta().row_count == target_row,
@@ -270,24 +581,44 @@ bool ColWriter::Commit(uint64_t target_row,
       norms.push_back(writer.get());
     }
   }
-  if (Empty() && !_out && norms.empty()) {
+  if (!_file && norms.empty()) {
     _committed = true;
     return true;
   }
   EnsureOut();
-  for (auto& cw : _columns) {
+  for (auto& column : _columns) {
+    if (!column.writer) {
+      continue;
+    }
     if (!progress()) {
       return false;
     }
-    cw->SealRowGroup();
+    if (_stage_all) {
+      column.writer->PadNullsTo(target_row);
+      column.writer->Reorder(new2old);
+    }
+    column.writer->Finish();
   }
-  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    if (!_columns.empty()) {
+  std::vector<ColumnMeta> assembled;
+  assembled.reserve(_parts.size());
+  for (auto& [id, parts] : _parts) {
+    assembled.emplace_back(AssembleParts(id, *parts));
+  }
+  std::vector<const ColumnMeta*> metas;
+  metas.reserve(_columns.size() + assembled.size());
+  for (const auto& column : _columns) {
+    metas.emplace_back(column.writer ? &column.writer->Meta() : &column.meta);
+  }
+  for (const auto& meta : assembled) {
+    metas.emplace_back(&meta);
+  }
+  _file->Finish([&](duckdb::BinarySerializer& footer) {
+    if (!metas.empty()) {
       footer.WriteList(
-        kColFieldColumns, "columns", _columns.size(),
+        kColFieldColumns, "columns", metas.size(),
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeColumnMeta(obj, _columns[i]->Meta());
+            SerializeColumnMeta(obj, *metas[i]);
           });
         });
     }
@@ -301,28 +632,38 @@ bool ColWriter::Commit(uint64_t target_row,
         });
     }
   });
-  _out.reset();
   _committed = true;
   return true;
 }
 
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
-                                         absl::FunctionRef<bool()> progress) {
+yaclib::Task<> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   if (!_committed || _ann_writers.empty()) {
-    co_return true;
+    co_return {};
   }
   ColReader reader{*_dir, _segment_name, *_db, IOAdvice::SEQUENTIAL};
   for (auto& entry : _ann_writers) {
-    if (!progress()) {
-      co_return false;
-    }
-    const auto* col = reader.Column(entry->column_id);
+    const auto* col = reader.Column(entry.column_id);
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    co_await entry.writer->Compute(*col, reader.Ctx(), env);
   }
-  co_return true;
+  co_return {};
+}
+
+yaclib::Task<> ColWriter::ComputeAnn(field_id column, ColReader& reader,
+                                     const AnnBuildEnv* env) {
+  SDB_ASSERT(_committed);
+  const auto* col = reader.Column(column);
+  if (!col) {
+    co_return {};
+  }
+  for (auto& entry : _ann_writers) {
+    if (entry.column_id == column) {
+      co_await entry.writer->Compute(*col, reader.Ctx(), env);
+    }
+  }
+  co_return {};
 }
 
 }  // namespace irs

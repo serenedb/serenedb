@@ -24,12 +24,17 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <duckdb/common/bswap.hpp>
 #include <functional>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
+#include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 namespace {
@@ -41,17 +46,6 @@ constexpr uint32_t kRekeyMaxSkip = 64;
 uint64_t PrefixKey(const duckdb::string_t& term) noexcept {
   uint64_t key;
   std::memcpy(&key, term.GetData(), sizeof key);
-  return duckdb::BSwapIfLE(key);
-}
-
-uint64_t PrefixKeyAt(const duckdb::string_t& term, uint32_t skip) noexcept {
-  const uint32_t size = term.GetSize();
-  if (size <= skip) {
-    return 0;
-  }
-  uint64_t key = 0;
-  std::memcpy(&key, term.GetData() + skip,
-              std::min<uint32_t>(sizeof key, size - skip));
   return duckdb::BSwapIfLE(key);
 }
 
@@ -88,15 +82,116 @@ class LogColumnReader {
   field_id _field;
 };
 
-IRS_FORCE_INLINE void Put(uint32_t** blocks, uint64_t i,
+IRS_FORCE_INLINE void Put(uint32_t* const* blocks, uint64_t i,
                           uint32_t value) noexcept {
   blocks[i >> ScatterScratch::kBlockShift][i & ScatterScratch::kBlockMask] =
     value;
 }
 
+IRS_FORCE_INLINE uint32_t Get(uint32_t* const* blocks, uint64_t i) noexcept {
+  return blocks[i >> ScatterScratch::kBlockShift]
+               [i & ScatterScratch::kBlockMask];
+}
+
+template<typename T, typename DocOf>
+void SortByDoc(ManagedVector<T>& items, ManagedVector<T>& spare,
+               doc_id_t max_doc, DocOf doc_of) {
+  constexpr uint32_t kRadixBits = 11;
+  constexpr uint32_t kRadixMask = (uint32_t{1} << kRadixBits) - 1;
+  constexpr size_t kComparisonSortMax = 256;
+  if (items.size() <= kComparisonSortMax) {
+    absl::c_sort(items);
+    return;
+  }
+  spare.resize(items.size());
+  std::array<uint32_t, kRadixMask + 1> counts;
+  const auto bits = static_cast<uint32_t>(std::bit_width(max_doc));
+  for (uint32_t shift = 0; shift < bits; shift += kRadixBits) {
+    counts.fill(0);
+    for (const auto& item : items) {
+      ++counts[(doc_of(item) >> shift) & kRadixMask];
+    }
+    uint32_t sum = 0;
+    for (auto& count : counts) {
+      sum += std::exchange(count, sum);
+    }
+    for (const auto& item : items) {
+      spare[counts[(doc_of(item) >> shift) & kRadixMask]++] = item;
+    }
+    items.swap(spare);
+  }
+}
+
 }  // namespace
 
-void ScatteredField::Reset(const FieldInverter& field) {
+template<TokenLayout kLayout>
+void ScatteredField::RemapLogDocs(const DocOrder& order) {
+  auto* const* docs = _s->docs.data();
+  auto* const* positions = _s->pos.data();
+  for (size_t t = 0, n = TermCount(); t != n; ++t) {
+    const auto begin = TermBegin(t);
+    const auto end = TermEnd(t);
+    bool sorted = true;
+    doc_id_t prev = 0;
+    doc_id_t max_doc = 0;
+    for (auto i = begin; i != end; ++i) {
+      const auto doc = order.NewDoc(Get(docs, i) - doc_limits::min());
+      Put(docs, i, doc);
+      sorted = sorted && prev <= doc;
+      prev = doc;
+      max_doc = std::max(max_doc, doc);
+    }
+    if (sorted) {
+      continue;
+    }
+    if constexpr (kLayout == TokenLayout::Terms) {
+      auto& keys = _s->doc_keys;
+      keys.clear();
+      for (auto i = begin; i != end; ++i) {
+        keys.emplace_back(Get(docs, i));
+      }
+      SortByDoc(keys, _s->doc_keys_alt, max_doc,
+                [](uint32_t doc) noexcept { return doc; });
+      for (auto i = begin; const auto doc : keys) {
+        Put(docs, i++, doc);
+      }
+    } else if constexpr (kLayout == TokenLayout::TermsPos) {
+      auto& pairs = _s->doc_pos;
+      pairs.clear();
+      for (auto i = begin; i != end; ++i) {
+        pairs.emplace_back(uint64_t{Get(docs, i)} << 32 | Get(positions, i));
+      }
+      SortByDoc(pairs, _s->doc_pos_alt, max_doc, [](uint64_t pair) noexcept {
+        return static_cast<uint32_t>(pair >> 32);
+      });
+      for (auto i = begin; const auto pair : pairs) {
+        Put(docs, i, static_cast<uint32_t>(pair >> 32));
+        Put(positions, i++, static_cast<uint32_t>(pair));
+      }
+    } else {
+      auto* const* offs_start = _s->offs_start.data();
+      auto* const* offs_end = _s->offs_end.data();
+      auto& occurrences = _s->occurrences;
+      occurrences.clear();
+      for (auto i = begin; i != end; ++i) {
+        occurrences.emplace_back(Get(docs, i), Get(positions, i),
+                                 Get(offs_start, i), Get(offs_end, i));
+      }
+      SortByDoc(occurrences, _s->occurrences_alt, max_doc,
+                [](const ScatterScratch::Occurrence& occurrence) noexcept {
+                  return occurrence.doc;
+                });
+      for (auto i = begin; const auto& occurrence : occurrences) {
+        Put(docs, i, occurrence.doc);
+        Put(positions, i, occurrence.pos);
+        Put(offs_start, i, occurrence.offs_start);
+        Put(offs_end, i++, occurrence.offs_end);
+      }
+    }
+  }
+}
+
+void ScatteredField::Reset(const FieldInverter& field, const DocOrder& order) {
   _field = &field;
   if (field.Log().Size() > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
     ThrowDesyncedLog(field.Meta().id, "occurrence count overflows u32");
@@ -118,6 +213,9 @@ void ScatteredField::Reset(const FieldInverter& field) {
       Scatter<true>(log, nocc);
     } else {
       Scatter<false>(log, nocc);
+    }
+    if (!order.Empty()) {
+      RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(order);
     }
   });
 }
@@ -248,7 +346,7 @@ void ScatteredField::RekeyPastSharedPrefix(
     min_key = std::numeric_limits<uint64_t>::max();
     max_key = 0;
     for (auto& term : ranked) {
-      const auto key = PrefixKeyAt(entries[term.id], skip);
+      const auto key = HeadAt(AsBytesView(entries[term.id]), skip);
       term.key = key;
       min_key = std::min(min_key, key);
       max_key = std::max(max_key, key);

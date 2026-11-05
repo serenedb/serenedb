@@ -23,10 +23,10 @@
 
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
@@ -899,15 +899,15 @@ TEST(index_death_test_formats_15,
       FailingDirectory::Failure::SYNC,
       "_4.0.sm");  // fail at segment meta synchronization on compaction
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
     // segment meta creation failure
-    ASSERT_SQL_ERROR(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+    ASSERT_SQL_ERROR(tests::Compact(*writer, tests::MakePolicy(compact_all)),
                      ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // segment meta synchronization failure
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
@@ -1017,14 +1017,14 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       FailingDirectory::Failure::SYNC,
       "_6.0.sm");  // fail at segment meta synchronization on compaction
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
     // segment meta creation failure
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
     ASSERT_TRUE(writer->RefreshBegin());  // start transaction
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      compact_all)));                       // register pending compaction
-    ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(compact_all)));  // register pending compaction
+    ASSERT_FALSE(writer->RefreshCommit());        // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
@@ -1035,9 +1035,9 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     // segment meta synchronization failure
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
     ASSERT_TRUE(writer->RefreshBegin());  // start transaction
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(
-      compact_all)));                       // register pending compaction
-    ASSERT_FALSE(writer->RefreshCommit());  // commit started transaction
+    ASSERT_TRUE(tests::Compact(
+      *writer, tests::MakePolicy(compact_all)));  // register pending compaction
+    ASSERT_FALSE(writer->RefreshCommit());        // commit started transaction
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
@@ -1798,10 +1798,9 @@ TEST(index_death_test_formats_15,
     dir.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer] {
-      const irs::index_utils::CompactionCount compact_all;
-      ASSERT_SQL_ERROR(
-        writer->Compact(irs::index_utils::MakePolicy(compact_all)),
-        ERRCODE_IO_ERROR);
+      const tests::CompactionCount compact_all;
+      ASSERT_SQL_ERROR(tests::Compact(*writer, tests::MakePolicy(compact_all)),
+                       ERRCODE_IO_ERROR);
     });
 
     dir.wait_for_blocker();
@@ -1863,8 +1862,8 @@ TEST(index_death_test_formats_15,
     dir.intermediate_commits_lock.lock();
 
     std::thread compaction_thread([&writer] {
-      const irs::index_utils::CompactionCount compact_all;
-      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+      const tests::CompactionCount compact_all;
+      ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     });
 
     dir.wait_for_blocker();
@@ -1936,7 +1935,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     // components. Each compaction attempt allocates a fresh
     // segment id (NextSegmentId()), so after `_3.col` fails the next
     // attempt's segment is `_4`, the one after is `_5`, etc. Order
-    // matches the order files are created during MergeWriter::Flush:
+    // matches the order files are created during MergeSegments:
     // cs writer is opened first (in OpenColumnstoreContexts), then
     // postings, then term index/data, etc.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
@@ -1950,12 +1949,11 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "_7.pay");  // postings list (offset + payload)
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
     while (!dir.NoFailures()) {
-      ASSERT_SQL_ERROR(
-        writer->Compact(irs::index_utils::MakePolicy(compact_all)),
-        ERRCODE_IO_ERROR);
+      ASSERT_SQL_ERROR(tests::Compact(*writer, tests::MakePolicy(compact_all)),
+                       ERRCODE_IO_ERROR);
       ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
     }
 
@@ -2047,10 +2045,10 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_7.pos");
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_8.pay");
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
     while (!dir.NoFailures()) {
-      ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+      ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
       ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
       ASSERT_FALSE(writer->RefreshBegin());
     }
@@ -2385,9 +2383,9 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -2487,9 +2485,9 @@ TEST(index_death_test_formats_15, fails_in_exists) {
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     ASSERT_TRUE(writer->RefreshCommit());
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -2635,10 +2633,10 @@ TEST(index_death_test_formats_15, fails_in_length) {
                           std::string{seg} + ".col");
     }
 
-    const irs::index_utils::CompactionCount compact_all;
+    const tests::CompactionCount compact_all;
 
     const auto num_failures_before = dir.NumFailures();
-    ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
+    ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(compact_all)));
     // Same number of failures: the compaction code path doesn't
     // probe exists on the input segment `.col` files.
     ASSERT_EQ(num_failures_before, dir.NumFailures());

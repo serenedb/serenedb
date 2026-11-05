@@ -632,10 +632,6 @@ struct EmptyTermReader : irs::Singleton<EmptyTermReader>, irs::TermReader {
     return gEmpty;
   }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
-    return nullptr;
-  }
-
   // total number of terms
   size_t size() const final { return 0; }
 

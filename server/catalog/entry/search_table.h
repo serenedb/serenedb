@@ -27,10 +27,16 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/table_column.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/column_definition.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
@@ -39,11 +45,11 @@
 #include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "catalog/sort_keys.h"
 #include "query/config_variable_names.h"
 
 namespace duckdb {
 
-class ClientContext;
 struct CreateInfo;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;
@@ -105,6 +111,12 @@ TableEngine ReadStorageEngine(
     duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
 
 void RequireSearchTableIndexOption(std::string_view name);
+void CheckColumnCodec(duckdb::ClientContext& context,
+                      duckdb::optional_ptr<duckdb::StorageManager> storage,
+                      std::string_view column_name,
+                      duckdb::CompressionType type, uint32_t level,
+                      const duckdb::LogicalType& column_type,
+                      TableEngine engine);
 
 using persistence::SearchTableOptions;
 
@@ -155,6 +167,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
 
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
+  void OnAlter(const duckdb::AlterInfo& info) final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
@@ -186,10 +199,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     duckdb::unique_ptr<duckdb::CreateInfo> create) const;
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterOptions(
     duckdb::ClientContext& context, duckdb::AlterTableInfo& alter);
+  duckdb::unique_ptr<duckdb::CatalogEntry> SetColumnCompression(
+    duckdb::ClientContext& context, duckdb::SetColumnCompressionInfo& info);
 
   duckdb::ColumnList _columns;
   std::shared_ptr<search::Store> _storage;
   SearchTableOptions _options;
+  std::vector<SortKey> _sort_keys;
 };
 
 }  // namespace sdb::catalog

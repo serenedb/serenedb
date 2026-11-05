@@ -1956,7 +1956,7 @@ TEST_P(TermDictTest, json_layout_holds_six_dictionaries) {
     ASSERT_NE(nullptr, reader);
     ASSERT_EQ(field.id, reader->meta().id);
     ASSERT_EQ(field.dict.member == irs::DictMember::Strings,
-              irs::get<irs::FreqAttr>(*reader) != nullptr);
+              reader->total_term_freq() != 0);
     if (field.entries.size() > 1) {
       const auto& impl = Blocks(*reader);
       ASSERT_EQ(irs::bytes_view(&ordinal, 1), impl.KeyPrefix());

@@ -1,0 +1,121 @@
+statement ok
+CREATE TABLE opt_null_head (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+CREATE TABLE opt_const_head (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO opt_null_head
+SELECT i,
+       CASE WHEN i > 2048 THEN
+         'GET /api/v1/customers/' || (k % 997) || '/orders/' || (k * 7 % 10007) || '?page=' || (k % 13)
+         || '&sort=created_at HTTP/1.1 agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/'
+         || (100 + k % 30) || '.0.0.0 Safari/537.36" ref="https://shop.example.com/catalog/'
+         || md5((k % 251)::TEXT) || '"'
+       END
+FROM (SELECT i, i // 4 AS k FROM generate_series(1, 32768) s(i))
+
+
+statement ok
+INSERT INTO opt_const_head
+SELECT i,
+       CASE WHEN i > 2048 THEN
+         'GET /api/v1/customers/' || (k % 997) || '/orders/' || (k * 7 % 10007) || '?page=' || (k % 13)
+         || '&sort=created_at HTTP/1.1 agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/'
+         || (100 + k % 30) || '.0.0.0 Safari/537.36" ref="https://shop.example.com/catalog/'
+         || md5((k % 251)::TEXT) || '"'
+       ELSE 'n/a'
+       END
+FROM (SELECT i, i // 4 AS k FROM generate_series(1, 32768) s(i))
+
+
+statement ok
+RESET threads
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_null_head
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_const_head
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('opt_null_head')
+----
+segments	docs
+1	32768
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('opt_const_head')
+----
+segments	docs
+1	32768
+
+
+statement ok
+SELECT * FROM sdb_compact('opt_null_head', mode := 'optimize')
+
+
+statement ok
+SELECT * FROM sdb_compact('opt_const_head', mode := 'optimize')
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('opt_null_head', mode := 'optimize')
+----
+merge	outcome	input_docs	output_docs
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('opt_const_head', mode := 'optimize')
+----
+merge	outcome	input_docs	output_docs
+
+
+query
+SELECT "column", rows, verdict
+FROM sdb_segments('opt_null_head', columns := true)
+ORDER BY "column"
+----
+column	rows	verdict
+body	32768	copy
+id	32768	copy
+
+
+query
+SELECT "column", rows, verdict
+FROM sdb_segments('opt_const_head', columns := true)
+ORDER BY "column"
+----
+column	rows	verdict
+body	32768	copy
+id	32768	copy
+
+
+query
+SELECT count(*) AS n, count(body) AS bodies, count(DISTINCT body) AS distinct_bodies
+FROM opt_null_head
+----
+n	bodies	distinct_bodies
+32768	30720	7681
+
+
+query
+SELECT count(*) AS n, count(body) AS bodies, count(DISTINCT body) AS distinct_bodies
+FROM opt_const_head
+----
+n	bodies	distinct_bodies
+32768	32768	7682

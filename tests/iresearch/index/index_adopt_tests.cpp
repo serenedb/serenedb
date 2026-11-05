@@ -40,7 +40,6 @@
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <map>
 #include <memory>
@@ -49,6 +48,7 @@
 #include <thread>
 #include <vector>
 
+#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -397,9 +397,9 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
 
   Restart(false);
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
   {
     auto trx = _writer->GetBatch();
     trx.Adopt(adopt.front());
@@ -860,9 +860,9 @@ std::shared_ptr<const irs::DocRemoval> FirstDocsEverywhere(
   return removal;
 }
 
-const irs::CompactionPolicy& FullMerge() {
-  static const auto kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+const tests::CompactionPolicy& FullMerge() {
+  static const auto kPolicy = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
   return kPolicy;
 }
 
@@ -1006,9 +1006,9 @@ TEST_F(IndexAdoptTest, DocRemovalOnAPendingCompactionIsRemapped) {
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(2, sources.size());
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
 
   auto del = _writer->GetBatch();
   del.Remove(Positions(_writer->GetSnapshot(),
@@ -1035,9 +1035,9 @@ TEST_F(IndexAdoptTest, DocRemovalInFlightDuringACompactionIsRemapped) {
   auto del = _writer->GetBatch();
   del.Remove(Positions(_writer->GetSnapshot(),
                        {{sources.front(), {2}}, {sources.back(), {1}}}));
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
   ASSERT_TRUE(del.Commit());
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -1060,7 +1060,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfAMergedAwaySegmentIsRemapped) {
   }
   const auto sources = CommittedNames(*_writer);
   const auto snapshot = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer);
   ASSERT_EQ(1, merged.size());
@@ -1086,7 +1086,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
   const auto sources = CommittedNames(*_writer);
   ASSERT_EQ(2, sources.size());
   const auto snapshot = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto first_merged = CommittedNames(*_writer);
   ASSERT_EQ(1, first_merged.size());
@@ -1099,7 +1099,7 @@ TEST_F(IndexAdoptTest, DocRemovalIsRemappedThroughTwoMerges) {
   const auto between = _writer->GetSnapshot();
   const auto second_sources = CommittedNames(*_writer);
   ASSERT_EQ(2, second_sources.size());
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer);
   ASSERT_EQ(1, merged.size());
@@ -1143,7 +1143,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
     ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -1151,7 +1151,7 @@ TEST_F(IndexAdoptTest, DocRemovalOfADocDeletedBeforeTwoMergesChangesNothing) {
     ASSERT_TRUE(trx.Commit());
     ASSERT_TRUE(_writer->RefreshCommit());
   }
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   ASSERT_EQ(1, CommittedNames(*_writer).size());
   ASSERT_EQ(4, _writer->GetSnapshot().live_docs_count());
@@ -1172,7 +1172,7 @@ TEST_F(IndexAdoptTest, DocMapsLastAsLongAsASnapshotOfTheirSource) {
   }
   const auto sources = CommittedNames(*_writer);
   auto old = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
   ASSERT_EQ(2, MappedInto(DocMapsOf(*_writer, old, sources), merged));
@@ -1213,7 +1213,7 @@ TEST_F(IndexAdoptTest, CompactionDuringABegunCommitFindsNoRemovals) {
   commit("b");
   const auto sources = CommittedNames(*_writer);
   const auto before = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
   ASSERT_EQ(2, MappedInto(DocMapsOf(*_writer, before, sources), merged));
@@ -1223,7 +1223,7 @@ TEST_F(IndexAdoptTest, CompactionDuringABegunCommitFindsNoRemovals) {
   ASSERT_TRUE(InsertDoc(pending, "d"));
   ASSERT_TRUE(pending.Commit());
   ASSERT_TRUE(_writer->RefreshBegin());
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   _writer->RefreshCommit();
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -1247,7 +1247,7 @@ TEST_F(IndexAdoptTest,
   commit("b");
   const auto sources = CommittedNames(*_writer);
   const auto before = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   commit("c");
 
@@ -1255,7 +1255,7 @@ TEST_F(IndexAdoptTest,
   ASSERT_TRUE(InsertDoc(pending, "d"));
   ASSERT_TRUE(pending.Commit());
   ASSERT_TRUE(_writer->RefreshBegin());
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   auto stale = _writer->GetBatch();
   stale.Remove(Positions(before, {{sources.front(), {1}}}));
   ASSERT_TRUE(stale.Commit());
@@ -1283,7 +1283,7 @@ TEST_F(IndexAdoptTest, DocMapsLastWhileARemovalNamesTheirSource) {
   auto removal = Positions(_writer->GetSnapshot(), {{sources.back(), {1}}});
   const std::weak_ptr<const irs::DocMapsSlot> maps =
     removal->groups.front().maps;
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto commit = [&](std::string_view value) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -1323,7 +1323,7 @@ TEST_F(IndexAdoptTest, AnAbortedCommitDropsTheDocMapsOfItsMerge) {
   }
   const auto sources = CommittedNames(*_writer);
   const auto snapshot = _writer->GetSnapshot();
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   EXPECT_TRUE(DocMapsOf(*_writer, snapshot, sources).empty())
     << "a merge of the open flush commits with every record that names it";
   ASSERT_TRUE(_writer->RefreshBegin());
@@ -1333,7 +1333,7 @@ TEST_F(IndexAdoptTest, AnAbortedCommitDropsTheDocMapsOfItsMerge) {
   EXPECT_TRUE(DocMapsOf(*_writer, snapshot, sources).empty());
   EXPECT_EQ(sources, CommittedNames(*_writer));
 
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer);
   ASSERT_EQ(1, merged.size());
@@ -1407,9 +1407,9 @@ TEST_F(IndexAdoptTest, DocRemovalRemapSkipsMergedAwayAndOutOfRangeDocs) {
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
 
   auto del = _writer->GetBatch();
   del.Remove(Positions(_writer->GetSnapshot(),
@@ -1835,7 +1835,7 @@ TEST_F(IndexAdoptTest, AReaderReopenedWithoutChangesKeepsTheDocMaps) {
   auto reopened = _writer->GetSnapshot();
   ASSERT_NE(before.GetImpl(), reopened.GetImpl());
   before = {};
-  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(tests::Compact(*_writer, FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
   const auto commit = [&](std::string_view value) {
@@ -2040,9 +2040,9 @@ TEST_F(IndexAdoptTest, MergingStaleSegmentsProducesAFreshId) {
     ASSERT_LE(SegmentIdOf(segment.Meta().name), boundary);
   }
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   auto reader = _writer->GetSnapshot();
@@ -2079,9 +2079,9 @@ TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
   }
   ASSERT_EQ(4, _writer->GetSnapshot().size());
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // The fresh pair merged; the stale pair is untouched. This is the point of a
@@ -2102,7 +2102,7 @@ TEST_F(IndexAdoptTest, CompactionFloorProtectsStaleAndFreesFresh) {
 
   // Released, the stale pair becomes eligible again.
   guard = {};
-  ASSERT_TRUE(_writer->Compact(kFullMerge));
+  ASSERT_TRUE(tests::Compact(*_writer, kFullMerge));
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().size());
   EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
@@ -2114,7 +2114,7 @@ namespace {
 // scan every segment, skip the ones it is told are unavailable, stop when its
 // budget is full. The budget is what makes this different from the full merge
 // above -- a policy that takes everything cannot starve.
-irs::CompactionPolicy BudgetedPolicy(size_t budget) {
+tests::CompactionPolicy BudgetedPolicy(size_t budget) {
   return [budget](irs::Compaction& candidates, const irs::IndexReader& reader,
                   const irs::CompactingSegments& unavailable) {
     for (const auto& segment : reader) {
@@ -2166,7 +2166,7 @@ TEST_F(IndexAdoptTest, ABudgetedPolicySpendsItsBudgetAboveTheFloor) {
     ASSERT_LE(SegmentIdOf(snapshot[1].Meta().name), floor);
   }
 
-  ASSERT_TRUE(_writer->Compact(BudgetedPolicy(2)));
+  ASSERT_TRUE(tests::Compact(*_writer, BudgetedPolicy(2)));
   // Starvation shows up here first: with the protected segments merely vetoed
   // after selection there are no candidates left, so the compaction queues
   // nothing and there is nothing to publish.
@@ -2211,7 +2211,7 @@ TEST_F(IndexAdoptTest,
   }
   ASSERT_TRUE(_writer->RefreshBegin());
   ASSERT_EQ(irs::CompactionError::Pending,
-            _writer->Compact(BudgetedPolicy(2)).error);
+            tests::Compact(*_writer, BudgetedPolicy(2)).error);
   _writer->RefreshCommit();
 
   {
@@ -2265,13 +2265,12 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
   }
   ASSERT_EQ(2, _writer->GetSnapshot().size());
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
 
-  bool removed = false;
-  const irs::MergeWriter::FlushProgress progress = [&] {
-    if (!removed) {
-      removed = true;
+  std::atomic_bool removed{false};
+  const irs::MergeProgress progress = [&] {
+    if (!removed.exchange(true)) {
       auto del = _writer->GetBatch();
       del.Remove(ByNames(evens));
       EXPECT_TRUE(del.Commit());
@@ -2280,7 +2279,7 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
     return true;
   };
   ASSERT_EQ(irs::CompactionError::Ok,
-            _writer->Compact(kFullMerge, nullptr, progress).error);
+            tests::Compact(*_writer, kFullMerge, nullptr, progress).error);
   ASSERT_TRUE(removed) << "the progress callback never ran";
 
   {
@@ -2324,28 +2323,29 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
     ASSERT_TRUE(_writer->RefreshCommit());
   }
 
-  static const auto kFullMerge = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
+  static const auto kFullMerge = tests::MakePolicy(
+    tests::CompactionCount{std::numeric_limits<size_t>::max()});
 
   // Arm from inside the merge's progress callback. By then the candidates are
   // registered and the output id has been minted, which is the state that must
   // refuse: a floor set now would sit below that output while the segments it
   // consumed sit below it too, so their contents would hide behind an id that
   // says "written later".
-  bool attempted = false;
-  bool held = true;
-  const irs::MergeWriter::FlushProgress progress = [&] {
-    if (!attempted) {
-      attempted = true;
+  std::atomic_bool attempted{false};
+  std::atomic_bool held{true};
+  const irs::MergeProgress progress = [&] {
+    if (!attempted.exchange(true)) {
       held = _writer->ArmCompactionFloor().Held();
     }
     return true;
   };
-  ASSERT_TRUE(_writer->Compact(kFullMerge, nullptr, progress));
+  EXPECT_EQ(irs::CompactionError::Cancelled,
+            tests::Compact(*_writer, kFullMerge, nullptr, progress).error);
   ASSERT_TRUE(attempted) << "the progress callback never ran";
   EXPECT_FALSE(held) << "armed a floor while a merge was in flight";
 
-  ASSERT_TRUE(_writer->RefreshCommit());
+  EXPECT_FALSE(_writer->RefreshCommit());
+  EXPECT_EQ(2, _writer->GetSnapshot().size());
 
   // Idle again, it arms -- so the refusal above was the in-flight merge.
   auto guard = _writer->ArmCompactionFloor();

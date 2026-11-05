@@ -24,7 +24,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/detail/wildcard_ngram_slots.hpp"
+#include "iresearch/search/detail/verified_slots.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/fill/walk.hpp"
@@ -64,7 +64,8 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
 
   const auto recipe = query.MakeRecipe();
   const auto make = [&]<typename Approx>(auto&&... args) -> Result {
-    return f.template operator()<WildcardNGramSlots<Approx>>(
+    using Slots = VerifiedSlots<Approx, WildcardNGramQuery::Recipe, !kProbed>;
+    return f.template operator()<Slots>(
       std::piecewise_construct,
       std::forward_as_tuple(std::forward<decltype(args)>(args)...), recipe);
   };

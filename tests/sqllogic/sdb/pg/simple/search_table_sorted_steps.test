@@ -1,0 +1,172 @@
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE sts_compact (k INTEGER, n INTEGER) SORTED BY (k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1);
+
+statement ok
+INSERT INTO sts_compact SELECT (i * 7919) % 1009, i FROM range(2400000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sts_compact;
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, min(docs) AS smallest FROM sdb_segments('sts_compact');
+----
+segments	docs	smallest
+1172	2400000	1792
+
+query
+EXPLAIN CALL sdb_compact('sts_compact', mode := 'compact');
+----
+QUERY PLAN
+╭─ SDB_COMPACT ─────────────────────────────────────────────────────╮
+│ Table: public.sts_compact                                         │
+│ Mode: compact                                                     │
+│ Segments: 1172                                                    │
+│ Merges: 1                                                         │
+│ Merge 1:                                                          │
+│ 149 segments -> 1, compact to 1 segment, first step               │
+│ Merge 1 Inputs:                                                   │
+│ _1024, _1025, _1026, _1027, _1028, _1029, _1030, _1031, +141 more │
+│ Merge 1 Docs: 304896 (304896 live)                                │
+│ Merge 1 Bytes:                                                    │
+│ <slt:ignore>│
+│ ~1 row                                                            │
+╰───────────────────────────────────────────────────────────────────╯
+
+statement ok
+VACUUM (COMPACT_TABLE) sts_compact;
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sts_compact');
+----
+segments	docs
+1	2400000
+
+query
+SELECT outcome, cardinality(inputs) AS inputs, input_docs, output_docs FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_compact')
+ORDER BY id;
+----
+outcome	inputs	input_docs	output_docs
+merged	149	304896	304896
+merged	1024	2400000	2400000
+
+query
+SELECT count(*) AS out_of_order FROM (
+  SELECT k, lag(k) OVER (ORDER BY rowid) AS previous FROM sts_compact)
+WHERE previous < k;
+----
+out_of_order
+0
+
+query
+SELECT count(*) AS n, count(DISTINCT n) AS distinct_n, sum(n) AS total FROM sts_compact;
+----
+n	distinct_n	total
+2400000	2400000	2879998800000
+
+statement ok
+DROP TABLE sts_compact;
+
+statement ok
+CREATE TABLE sts_listed (k INTEGER, n INTEGER) SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1);
+
+statement ok
+INSERT INTO sts_listed SELECT i % 7, i FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sts_listed;
+
+statement ok
+INSERT INTO sts_listed SELECT (i * 7919) % 1009, 100 + i FROM range(2400000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sts_listed;
+
+statement ok
+SET VARIABLE sts_listed_segments = (SELECT list(segment) FROM sdb_segments('sts_listed'));
+
+query
+SELECT cardinality(getvariable('sts_listed_segments')) AS listed;
+----
+listed
+1173
+
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs, input_docs
+FROM sdb_compact('sts_listed', mode := 'segments', segments := getvariable('sts_listed_segments'));
+----
+merge	outcome	inputs	input_docs
+1	merged	150	305252
+2	merged	1024	2400100
+
+query
+SELECT count(*) AS segments, max(docs) AS largest FROM sdb_segments('sts_listed');
+----
+segments	largest
+1	2400100
+
+query
+SELECT merge, outcome, cardinality(inputs) AS inputs FROM sdb_compact('sts_listed', mode := 'compact');
+----
+merge	outcome	inputs
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sts_listed');
+----
+segments	docs
+1	2400100
+
+query
+SELECT count(*) AS out_of_order FROM (
+  SELECT k, lag(k) OVER (ORDER BY rowid) AS previous FROM sts_listed)
+WHERE previous > k;
+----
+out_of_order
+0
+
+statement ok
+DROP TABLE sts_listed;
+
+statement ok
+CREATE TABLE sts_background (k INTEGER, n INTEGER) SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 1,
+        compaction_max_segments = 2000);
+
+statement ok
+INSERT INTO sts_background SELECT (i * 7919) % 1009, i FROM range(2400000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sts_background;
+
+query
+SELECT outcome, cardinality(inputs) AS inputs FROM sdb_compact('sts_background') WHERE merge = 1;
+----
+outcome	inputs
+merged	1024
+
+query
+SELECT bool_and(outcome = 'merged') AS merged, max(cardinality(inputs)) AS widest FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sts_background');
+----
+merged	widest
+t	1024
+
+statement ok
+VACUUM (COMPACT_TABLE) sts_background;
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sts_background');
+----
+segments	docs
+1	2400000
+
+statement ok
+DROP TABLE sts_background;
+
+statement ok
+RESET threads;

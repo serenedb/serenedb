@@ -36,7 +36,8 @@ namespace irs {
 
 VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
                                          std::unique_ptr<ColumnReader> validity,
-                                         std::vector<VariantRgMeta>&& rgs)
+                                         std::vector<VariantRgMeta>&& rgs,
+                                         uint64_t file_id)
   : ColumnReader{id, std::move(type), {}, std::move(validity), {}} {
   _variant_rgs.reserve(rgs.size());
   _variant_offsets.reserve(rgs.size() + 1);
@@ -44,21 +45,21 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   auto stats = duckdb::VariantStats::CreateEmpty(_type);
   for (auto& rg : rgs) {
     VariantRg vrg;
-    vrg.unshredded = Make(std::move(*rg.unshredded));
+    vrg.unshredded = Make(std::move(*rg.unshredded), file_id);
+    auto rg_s = duckdb::VariantStats::CreateEmpty(_type);
+    duckdb::VariantStats::SetUnshreddedStats(
+      rg_s, vrg.unshredded->MergedStatistics());
+    _row_group_columns.emplace_back(*vrg.unshredded, 1, _row_count);
     if (rg.shredded) {
-      vrg.shredded = Make(std::move(*rg.shredded));
+      vrg.shredded = Make(std::move(*rg.shredded), file_id);
       duckdb::child_list_t<duckdb::LogicalType> intermediate_children;
       intermediate_children.emplace_back("unshredded", vrg.unshredded->Type());
       intermediate_children.emplace_back("shredded", vrg.shredded->Type());
       vrg.intermediate_type =
         duckdb::LogicalType::STRUCT(std::move(intermediate_children));
-    }
-    auto rg_s = duckdb::VariantStats::CreateEmpty(_type);
-    duckdb::VariantStats::SetUnshreddedStats(
-      rg_s, vrg.unshredded->MergedStatistics());
-    if (vrg.shredded) {
       duckdb::VariantStats::SetShreddedStats(rg_s,
                                              vrg.shredded->MergedStatistics());
+      _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
     }
     // Like duckdb's checkpoint stats, an unshredded row group stays
     // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
@@ -98,10 +99,10 @@ void VariantColumnReader::SeekVariantRg(ScanState& s, size_t rg,
   auto& vstate = VariantState(s).rgs[rg];
   if (!vstate.unshredded) {
     vstate.unshredded =
-      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(*s.ctx));
+      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(s.ctx));
     if (rg_meta.shredded) {
       vstate.shredded =
-        std::make_unique<ScanState>(rg_meta.shredded->InitScan(*s.ctx));
+        std::make_unique<ScanState>(rg_meta.shredded->InitScan(s.ctx));
     }
     vstate.local_pos = 0;
   }
@@ -159,7 +160,7 @@ bool VariantColumnReader::ResolveUniformShreddedLeaf(
     const auto& rg = _variant_rgs[i];
     const ColumnReader* leaf =
       rg.shredded ? FindShreddedLeaf(*rg.shredded, path) : nullptr;
-    if (!leaf || leaf->Type().IsNested()) {
+    if (!leaf) {
       continue;
     }
     if (!have) {
@@ -181,7 +182,7 @@ VariantColumnReader::ShreddedLeafScan(
     vstate.leaf_reader = FindShreddedLeaf(*_variant_rgs[rg].shredded, path);
     SDB_ASSERT(vstate.leaf_reader);
     vstate.leaf =
-      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(*s.ctx));
+      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(s.ctx));
   }
   return {vstate.leaf_reader, vstate.leaf.get()};
 }
@@ -197,19 +198,9 @@ void VariantColumnReader::ReleaseLeavesBefore(ScanState& s,
   }
 }
 
-duckdb::Vector& VariantColumnReader::ScratchVector(
-  VariantScanState& vs, const duckdb::LogicalType& type) {
-  if (!vs.scratch) {
-    vs.scratch = std::make_unique<VectorScratch>(type);
-  }
-  return vs.scratch->Reset();
-}
-
-void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
-                                                duckdb::idx_t local_start,
-                                                duckdb::idx_t run,
-                                                duckdb::Vector& result,
-                                                duckdb::idx_t out_off) const {
+void VariantColumnReader::ReconstructVariantRun(
+  ScanState& s, size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
+  duckdb::Vector& result, duckdb::idx_t out_off, bool in_place) const {
   const auto& rg_meta = _variant_rgs[rg];
   SeekVariantRg(s, rg, local_start);
   auto& vs = *s.variant;
@@ -218,18 +209,19 @@ void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
   if (!rg_meta.shredded) {
     rg_meta.unshredded->ScanCount(*vstate.unshredded, result, run, out_off);
   } else {
-    if (!vstate.intermediate) {
-      vstate.intermediate =
-        std::make_unique<VectorScratch>(rg_meta.intermediate_type);
-    }
-    auto& intermediate = vstate.intermediate->Reset();
+    auto& intermediate =
+      ResetScratch(vstate.intermediate, rg_meta.intermediate_type);
     auto& entries = duckdb::StructVector::GetEntries(intermediate);
     rg_meta.unshredded->ScanCount(*vstate.unshredded, entries[0], run, 0);
     rg_meta.shredded->ScanCount(*vstate.shredded, entries[1], run, 0);
     duckdb::FlatVector::SetSize(intermediate, run);
-    auto& scratch = ScratchVector(vs, result.GetType());
-    duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
-    duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
+    if (in_place) {
+      duckdb::VariantUtils::UnshredVariantData(intermediate, result, run);
+    } else {
+      auto& scratch = ResetScratch(vs.scratch, result.GetType());
+      duckdb::VariantUtils::UnshredVariantData(intermediate, scratch, run);
+      duckdb::VectorOperations::Copy(scratch, result, run, 0, out_off);
+    }
   }
   vstate.local_pos += run;
 }
@@ -237,12 +229,20 @@ void VariantColumnReader::ReconstructVariantRun(ScanState& s, size_t rg,
 duckdb::idx_t VariantColumnReader::Scan(ScanState& s, duckdb::Vector& result,
                                         duckdb::idx_t count) const {
   NewOutputVector(s);
-  return ScanCount(s, result, count, /*result_offset=*/0);
+  return ScanRuns(s, result, count, /*result_offset=*/0, /*fresh=*/true);
 }
 
 duckdb::idx_t VariantColumnReader::ScanCount(
   ScanState& s, duckdb::Vector& result, duckdb::idx_t count,
   duckdb::idx_t result_offset) const {
+  return ScanRuns(s, result, count, result_offset, /*fresh=*/false);
+}
+
+duckdb::idx_t VariantColumnReader::ScanRuns(ScanState& s,
+                                            duckdb::Vector& result,
+                                            duckdb::idx_t count,
+                                            duckdb::idx_t result_offset,
+                                            bool fresh) const {
   if (count == 0) {
     return 0;
   }
@@ -251,7 +251,8 @@ duckdb::idx_t VariantColumnReader::ScanCount(
                     [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
                         duckdb::idx_t done) {
                       ReconstructVariantRun(s, rg, local_start, run, result,
-                                            result_offset + done);
+                                            result_offset + done,
+                                            fresh && run == count);
                     });
   if (_validity) {
     _validity->ColumnReader::ScanCount(s.child_states[0], result, count,

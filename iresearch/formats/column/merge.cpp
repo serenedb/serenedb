@@ -78,19 +78,17 @@ constexpr uint64_t kSampleWindowsReach =
 constexpr uint64_t kRowGroupFallbackBytes =
   uint64_t{kSampleWindows} * codecs::kSamplePieceBytes;
 
-void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t count,
+void AppendDistinct(const duckdb::Vector& values, duckdb::idx_t begin,
+                    duckdb::idx_t end,
                     irs::containers::FlatHashSet<uint64_t>& seen,
                     std::string& window, size_t cap = kSampleWindowBytes) {
-  duckdb::UnifiedVectorFormat format;
-  values.ToUnifiedFormat(format);
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
-  for (duckdb::idx_t i = 0; i < count && window.size() < cap; ++i) {
-    const auto idx = format.sel->get_index(i);
-    if (!format.validity.RowIsValid(idx)) {
+  const auto strings = values.Values<duckdb::string_t>();
+  for (auto i = begin; i < end && window.size() < cap; ++i) {
+    const auto entry = strings[i];
+    if (!entry.IsValid()) {
       continue;
     }
-    const auto& s = data[idx];
+    const auto& s = entry.GetValue();
     if (seen.insert(duckdb::Hash(s)).second) {
       window.append(s.GetData(), s.GetSize());
     }
@@ -156,7 +154,7 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
   ScanSampleWindows(
     sources, id, ctxs,
     [&](const duckdb::Vector& batch, duckdb::idx_t take) {
-      AppendDistinct(batch, take, seen, window);
+      AppendDistinct(batch, 0, take, seen, window);
       return window.size() < kSampleWindowBytes;
     },
     [&] {
@@ -295,16 +293,23 @@ uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept, uint64_t take) {
 struct ColumnMerger::LeafSample {
   explicit LeafSample(std::vector<uint32_t> path) : path{std::move(path)} {}
 
-  void Add(const duckdb::Vector& values, duckdb::idx_t count, size_t cap) {
-    VisitLeaf(values, count, path,
+  void Add(const duckdb::Vector& values, duckdb::idx_t begin, duckdb::idx_t end,
+           size_t cap) {
+    if (path.empty()) {
+      AppendDistinct(values, begin, end, seen, window, cap);
+      return;
+    }
+    SDB_ASSERT(begin == 0);
+    VisitLeaf(values, end, path,
               [&](const duckdb::Vector& strings, duckdb::idx_t n) {
-                AppendDistinct(strings, n, seen, window, cap);
+                AppendDistinct(strings, 0, n, seen, window, cap);
               });
   }
 
   void Close() {
     const std::string_view view{window};
     sampler.Add({&view, 1});
+    found += window.size();
     seen.clear();
     window.clear();
     ++closed;
@@ -319,6 +324,7 @@ struct ColumnMerger::LeafSample {
   irs::containers::FlatHashSet<uint64_t> seen;
   std::string window;
   codecs::DictionarySampler sampler;
+  uint64_t found = 0;
   size_t closed = 0;
 };
 
@@ -486,7 +492,7 @@ bool ColumnMerger::TrainLeaves(field_id column, ColWriter& output,
         for (auto& leaf : leaves) {
           if (leaf.window.size() < kSampleWindowBytes &&
               (fallback || leaf.CanFill())) {
-            leaf.Add(batch, take, kSampleWindowBytes);
+            leaf.Add(batch, 0, take, kSampleWindowBytes);
             open |= leaf.window.size() < kSampleWindowBytes;
           }
         }
@@ -498,7 +504,7 @@ bool ColumnMerger::TrainLeaves(field_id column, ColWriter& output,
         }
       });
     if (!AllReady(leaves) && fallback &&
-        !SampleLeafRowGroups(column, ctxs, leaves, progress)) {
+        !SampleRowGroups(column, ctxs, leaves, false, progress)) {
       return false;
     }
     if (!progress()) {
@@ -516,9 +522,9 @@ bool ColumnMerger::TrainLeaves(field_id column, ColWriter& output,
   return true;
 }
 
-bool ColumnMerger::SampleLeafRowGroups(
+bool ColumnMerger::SampleRowGroups(
   field_id column, std::span<const std::shared_ptr<ReadContext>> ctxs,
-  std::span<LeafSample> leaves, const MergeProgress& progress) {
+  std::span<LeafSample> leaves, bool exact, const MergeProgress& progress) {
   uint64_t group = 0;
   const auto close = [&] {
     for (auto& leaf : leaves) {
@@ -531,67 +537,30 @@ bool ColumnMerger::SampleLeafRowGroups(
         column, 0, std::numeric_limits<uint64_t>::max(), ctxs, progress,
         [&](size_t, uint64_t at, const duckdb::Vector& values,
             duckdb::idx_t count) {
-          if (at / _row_group_size != group) {
-            close();
-            if (AllReady(leaves)) {
-              return false;
+          for (duckdb::idx_t i = 0; i < count;) {
+            if ((at + i) / _row_group_size != group) {
+              close();
+              if (AllReady(leaves)) {
+                return false;
+              }
+              group = (at + i) / _row_group_size;
             }
-            group = at / _row_group_size;
-          }
-          for (auto& leaf : leaves) {
-            if (!leaf.sampler.Ready()) {
-              leaf.Add(values, count, std::numeric_limits<size_t>::max());
+            const auto end =
+              exact
+                ? std::min<uint64_t>(count, (group + 1) * _row_group_size - at)
+                : count;
+            for (auto& leaf : leaves) {
+              if (!leaf.sampler.Ready()) {
+                leaf.Add(values, i, end, std::numeric_limits<size_t>::max());
+              }
             }
+            i = end;
           }
           return true;
         })) {
     return false;
   }
   close();
-  return true;
-}
-
-bool ColumnMerger::SampleRowGroups(
-  field_id column, std::span<const std::shared_ptr<ReadContext>> ctxs,
-  codecs::DictionarySampler& sampler, const MergeProgress& progress) {
-  uint64_t group = 0;
-  std::string entries;
-  irs::containers::FlatHashSet<uint64_t> seen;
-  const auto flush = [&] {
-    const std::string_view view{entries};
-    sampler.Add({&view, 1});
-    entries.clear();
-    seen.clear();
-  };
-  if (!VisitRows(
-        column, 0, std::numeric_limits<uint64_t>::max(), ctxs, progress,
-        [&](size_t, uint64_t at, const duckdb::Vector& values,
-            duckdb::idx_t count) {
-          duckdb::UnifiedVectorFormat format;
-          values.ToUnifiedFormat(format);
-          const auto* data =
-            duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
-          for (duckdb::idx_t i = 0; i < count; ++i) {
-            if ((at + i) / _row_group_size != group) {
-              flush();
-              if (sampler.Ready()) {
-                return false;
-              }
-              group = (at + i) / _row_group_size;
-            }
-            const auto idx = format.sel->get_index(i);
-            if (format.validity.RowIsValid(idx) &&
-                seen.insert(duckdb::Hash(data[idx])).second) {
-              entries.append(data[idx].GetData(), data[idx].GetSize());
-            }
-          }
-          return true;
-        })) {
-    return false;
-  }
-  if (!sampler.Ready()) {
-    flush();
-  }
   return true;
 }
 
@@ -889,9 +858,7 @@ bool ColumnMerger::Splittable(field_id column) const {
 }
 
 bool ColumnMerger::HoldsText(field_id column) const {
-  const auto& type = First(column).Type();
-  return type.InternalType() == duckdb::PhysicalType::VARCHAR ||
-         !TextLeavesOf(type).empty();
+  return !TextLeavesOf(First(column).Type()).empty();
 }
 
 bool ColumnMerger::Copyable(field_id column, size_t input) const {
@@ -921,20 +888,22 @@ bool ColumnMerger::Train(field_id column, ColWriter& output,
   if (TrainsColumnDictionary(*_db, slot.first->Type(), opts.compression,
                              CodecParams(opts))) {
     const auto ctxs = SampleContexts(_sources, column, *_cache);
-    codecs::DictionarySampler sampler;
-    uint64_t sampled = 0;
-    SampleDictionary(_sources, column, ctxs, [&](std::string_view window) {
-      sampled += window.size();
-      sampler.Add({&window, 1});
-    });
-    if (!sampler.Ready() && sampled >= kRowGroupFallbackBytes &&
-        !SampleRowGroups(column, ctxs, sampler, progress)) {
+    LeafSample text{{}};
+    ScanSampleWindows(
+      _sources, column, ctxs,
+      [&](const duckdb::Vector& batch, duckdb::idx_t take) {
+        text.Add(batch, 0, take, kSampleWindowBytes);
+        return text.window.size() < kSampleWindowBytes;
+      },
+      [&] { text.Close(); });
+    if (!text.sampler.Ready() && text.found >= kRowGroupFallbackBytes &&
+        !SampleRowGroups(column, ctxs, {&text, 1}, true, progress)) {
       return false;
     }
     if (!progress()) {
       return false;
     }
-    slot.dictionary = sampler.Train();
+    slot.dictionary = text.sampler.Train();
   }
   slot.trained = true;
   return true;

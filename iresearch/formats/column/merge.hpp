@@ -136,14 +136,9 @@ class ColumnMerger {
   bool TrainLeaves(field_id column, ColWriter& output,
                    const MergeProgress& progress);
 
-  bool SampleLeafRowGroups(field_id column,
-                           std::span<const std::shared_ptr<ReadContext>> ctxs,
-                           std::span<LeafSample> leaves,
-                           const MergeProgress& progress);
-
   bool SampleRowGroups(field_id column,
                        std::span<const std::shared_ptr<ReadContext>> ctxs,
-                       codecs::DictionarySampler& sampler,
+                       std::span<LeafSample> leaves, bool exact,
                        const MergeProgress& progress);
 
   void OpenOrdered(OrderedInput& in, size_t si, field_id column, uint64_t live);

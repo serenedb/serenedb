@@ -57,9 +57,31 @@ constexpr bool IsNumeric(duckdb::LogicalTypeId id) noexcept {
     case TIMESTAMP_TZ_NS:
     case FLOAT:
     case DOUBLE:
+    case UBIGINT:
+    case HUGEINT:
+    case UHUGEINT:
+    case UUID:
+    case DECIMAL:
       return true;
     default:
       return false;
+  }
+}
+
+inline duckdb::LogicalTypeId IndexedKind(const duckdb::LogicalType& type) {
+  using enum duckdb::LogicalTypeId;
+  if (type.id() != DECIMAL) {
+    return type.id();
+  }
+  switch (type.InternalType()) {
+    case duckdb::PhysicalType::INT16:
+      return SMALLINT;
+    case duckdb::PhysicalType::INT32:
+      return INTEGER;
+    case duckdb::PhysicalType::INT64:
+      return BIGINT;
+    default:
+      return HUGEINT;
   }
 }
 

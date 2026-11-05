@@ -61,6 +61,20 @@ struct encode_traits<double_t> : encode_traits<uint64_t> {
   static constexpr byte_type TYPE_MAGIC = 0xA0;
 };
 
+struct UnsignedEncodeTraits : encode_traits<uint64_t> {
+  static constexpr byte_type TYPE_MAGIC = 0x40;
+};
+
+template<>
+struct encode_traits<unsigned __int128> {
+  using type = unsigned __int128;
+  static constexpr byte_type TYPE_MAGIC = 0xE0;
+};
+
+struct Unsigned128EncodeTraits : encode_traits<unsigned __int128> {
+  static constexpr byte_type TYPE_MAGIC = 0xF0;
+};
+
 // returns number of bytes required to store
 // value of type T with the specified offset
 template<typename T>
@@ -76,12 +90,31 @@ size_t Encode(typename EncodeTraits::type value, byte_type* out, size_t shift) {
   SDB_ASSERT(shift < BitsRequired<Type>());
   value ^= Type(1) << (BitsRequired<Type>() - 1);
   value &= std::numeric_limits<Type>::max() ^ ((Type(1) << shift) - 1);
-  value = absl::big_endian::FromHost(value);
 
   const size_t size = EncodedSize<Type>(shift);
   *out = static_cast<byte_type>(shift) + EncodeTraits::TYPE_MAGIC;
-  std::memcpy(out + 1, reinterpret_cast<const void*>(&value), size);
+  if constexpr (sizeof(Type) == sizeof(unsigned __int128)) {
+    const uint64_t halves[] = {
+      absl::big_endian::FromHost(static_cast<uint64_t>(value >> 64)),
+      absl::big_endian::FromHost(static_cast<uint64_t>(value)),
+    };
+    std::memcpy(out + 1, halves, size);
+  } else {
+    value = absl::big_endian::FromHost(value);
+    std::memcpy(out + 1, reinterpret_cast<const void*>(&value), size);
+  }
   return size + 1;
+}
+
+template<typename EncodeTraits>
+typename EncodeTraits::type DecodeTerm(const byte_type* in) {
+  using Type = typename EncodeTraits::type;
+  SDB_ASSERT(*in == EncodeTraits::TYPE_MAGIC);
+  Type value = 0;
+  for (size_t i = 1; i <= sizeof(Type); ++i) {
+    value = (value << 8) | in[i];
+  }
+  return value ^ (Type(1) << (BitsRequired<Type>() - 1));
 }
 
 bytes_view Mini64();
@@ -246,6 +279,41 @@ struct NumericEncodeOf<int64_t> {
   }
 };
 
+template<>
+struct NumericEncodeOf<uint64_t> {
+  using Traits = UnsignedEncodeTraits;
+  static constexpr uint64_t Integral(uint64_t value) noexcept {
+    return value ^ (uint64_t{1} << 63);
+  }
+  static constexpr uint64_t Value(uint64_t integral) noexcept {
+    return Integral(integral);
+  }
+};
+
+template<>
+struct NumericEncodeOf<__int128> {
+  using Traits = encode_traits<unsigned __int128>;
+  static constexpr unsigned __int128 Integral(__int128 value) noexcept {
+    return static_cast<unsigned __int128>(value);
+  }
+  static constexpr __int128 Value(unsigned __int128 integral) noexcept {
+    return static_cast<__int128>(integral);
+  }
+};
+
+template<>
+struct NumericEncodeOf<unsigned __int128> {
+  using Traits = Unsigned128EncodeTraits;
+  static constexpr unsigned __int128 Integral(
+    unsigned __int128 value) noexcept {
+    return value ^ (static_cast<unsigned __int128>(1) << 127);
+  }
+  static constexpr unsigned __int128 Value(
+    unsigned __int128 integral) noexcept {
+    return Integral(integral);
+  }
+};
+
 #ifndef FLOAT_T_IS_DOUBLE_T
 template<>
 struct NumericEncodeOf<float_t> {
@@ -266,13 +334,24 @@ struct NumericEncodeOf<double_t> {
   }
 };
 
-inline constexpr size_t kNumericTermMaxSize = 1 + sizeof(uint64_t);
+inline constexpr size_t kNumericTermMaxSize = 1 + sizeof(unsigned __int128);
+
+template<typename T>
+inline constexpr size_t kNumericTermSize =
+  1 + sizeof(typename NumericEncodeOf<T>::Traits::type);
 
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type* buf, T value) {
   using Enc = typename NumericEncodeOf<T>::Traits;
   using U = typename Enc::type;
   return {buf, Encode<U, Enc>(NumericEncodeOf<T>::Integral(value), buf, 0)};
+}
+
+template<typename T>
+T DecodeNumericTerm(bytes_view term) {
+  using Enc = typename NumericEncodeOf<T>::Traits;
+  SDB_ASSERT(term.size() == kNumericTermSize<T>);
+  return NumericEncodeOf<T>::Value(DecodeTerm<Enc>(term.data()));
 }
 
 }  // namespace irs::numeric_utils

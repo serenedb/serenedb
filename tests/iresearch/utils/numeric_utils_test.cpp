@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
+#include <limits>
+#include <span>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -39,7 +41,46 @@ irs::bstring Encode(T value, size_t offset = 0) {
   return data;
 }
 
+template<typename T>
+void AssertTermsSortLikeValues(std::span<const T> values) {
+  namespace nu = irs::numeric_utils;
+  std::vector<irs::bstring> terms;
+  for (const auto value : values) {
+    irs::byte_type buf[nu::kNumericTermMaxSize];
+    const auto term = nu::EncodeNumericTerm(buf, value);
+    ASSERT_EQ(nu::kNumericTermSize<T>, term.size());
+    ASSERT_EQ(nu::NumericEncodeOf<T>::Traits::TYPE_MAGIC, term[0]);
+    ASSERT_TRUE(value == nu::DecodeNumericTerm<T>(term));
+    terms.emplace_back(term);
+  }
+  for (size_t i = 1; i < values.size(); ++i) {
+    ASSERT_TRUE(values[i - 1] < values[i]);
+    ASSERT_LT(terms[i - 1], terms[i]);
+  }
+}
+
 }  // namespace
+
+TEST(numeric_utils_test, wide_terms_sort_like_their_values) {
+  constexpr uint64_t kU64Max = std::numeric_limits<uint64_t>::max();
+  constexpr uint64_t kU64Half = uint64_t{1} << 63;
+  const uint64_t u64[]{0, 1, kU64Half - 1, kU64Half, kU64Max - 1, kU64Max};
+  AssertTermsSortLikeValues<uint64_t>(u64);
+
+  constexpr auto kI128Min = std::numeric_limits<__int128>::min();
+  constexpr auto kI128Max = std::numeric_limits<__int128>::max();
+  const __int128 i128[]{
+    kI128Min, kI128Min + 1,      -(__int128{1} << 64), -1,      0,
+    1,        __int128{1} << 64, kI128Max - 1,         kI128Max};
+  AssertTermsSortLikeValues<__int128>(i128);
+
+  using U128 = unsigned __int128;
+  constexpr auto kU128Max = std::numeric_limits<U128>::max();
+  constexpr U128 kU128Half = U128{1} << 127;
+  const U128 u128[]{
+    0, 1, U128{1} << 64, kU128Half - 1, kU128Half, kU128Max - 1, kU128Max};
+  AssertTermsSortLikeValues<U128>(u128);
+}
 
 TEST(numeric_utils_test, encode32) {
   const irs::byte_type type_magic = 0;

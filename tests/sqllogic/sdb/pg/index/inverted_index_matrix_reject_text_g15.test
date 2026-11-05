@@ -25,8 +25,8 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
 #   (1) term_dict::Validate (line 399) -- rejects types that Classify (in
 #       server/catalog/inverted_index.h:64) maps to Kind::Unsupported.
 #       Wording: "has unsupported type X and can not be indexed".
-#       For this block: UBIGINT, HUGEINT, UHUGEINT, DECIMAL(10,2), INTERVAL,
-#       UUID, STRUCT(a INTEGER), MAP(VARCHAR, INTEGER), VARIANT.
+#       For this block: INTERVAL, STRUCT(a INTEGER), MAP(VARCHAR, INTEGER),
+#       VARIANT.
 #
 #   (2) ValidateTokenizerVsColumn (line 704) -- rejects types that are
 #       Supported by term_dict but are not VARCHAR / BLOB / LIST / ARRAY of
@@ -36,8 +36,8 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
 #        VARCHAR/BLOB (got X)".
 #       For this block: TIME, TIME_NS, TIME WITH TIME ZONE,
 #       TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP WITH TIME ZONE,
-#       TINYINT, SMALLINT, UTINYINT, USMALLINT, UINTEGER, FLOAT,
-#       GEOMETRY('OGC:CRS84').
+#       TINYINT, SMALLINT, UTINYINT, USMALLINT, UINTEGER, UBIGINT, HUGEINT,
+#       UHUGEINT, DECIMAL(10,2), UUID, FLOAT, GEOMETRY('OGC:CRS84').
 #
 # kw_dict / ng_dict / any_text_dict are already declared at the top of this
 # file (lines 28, 31-32, 1583) -- not redeclared.
@@ -77,29 +77,30 @@ CREATE TABLE g15_t(pk    INTEGER PRIMARY KEY,
 # kw_dict (keyword tokenizer)
 # ----------------------------------------------------------------------------
 
-# Unsupported-set rejections: term_dict::Validate fails first.
+# Numbers fail the tokenizer check; INTERVAL, STRUCT, MAP and VARIANT fail
+# term_dict::Validate first.
 statement error
 CREATE INDEX g15_kw_u64 ON g15_t USING inverted(pk, u64 kw_dict);
 ----
-db error: ERROR: Column 'u64' has unsupported type UBIGINT and can not be indexed
+db error: ERROR: Column 'u64' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UBIGINT)
 
 
 statement error
 CREATE INDEX g15_kw_h ON g15_t USING inverted(pk, h kw_dict);
 ----
-db error: ERROR: Column 'h' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'h' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got HUGEINT)
 
 
 statement error
 CREATE INDEX g15_kw_uh ON g15_t USING inverted(pk, uh kw_dict);
 ----
-db error: ERROR: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+db error: ERROR: Column 'uh' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UHUGEINT)
 
 
 statement error
 CREATE INDEX g15_kw_d ON g15_t USING inverted(pk, d kw_dict);
 ----
-db error: ERROR: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'd' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DECIMAL(10,2))
 
 
 statement error
@@ -111,7 +112,7 @@ db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexe
 statement error
 CREATE INDEX g15_kw_uu ON g15_t USING inverted(pk, uu kw_dict);
 ----
-db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'uu' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID)
 
 
 statement error
@@ -219,25 +220,25 @@ db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/A
 statement error
 CREATE INDEX g15_ng_u64 ON g15_t USING inverted(pk, u64 ng_dict);
 ----
-db error: ERROR: Column 'u64' has unsupported type UBIGINT and can not be indexed
+db error: ERROR: Column 'u64' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UBIGINT)
 
 
 statement error
 CREATE INDEX g15_ng_h ON g15_t USING inverted(pk, h ng_dict);
 ----
-db error: ERROR: Column 'h' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'h' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got HUGEINT)
 
 
 statement error
 CREATE INDEX g15_ng_uh ON g15_t USING inverted(pk, uh ng_dict);
 ----
-db error: ERROR: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+db error: ERROR: Column 'uh' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UHUGEINT)
 
 
 statement error
 CREATE INDEX g15_ng_d ON g15_t USING inverted(pk, d ng_dict);
 ----
-db error: ERROR: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'd' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DECIMAL(10,2))
 
 
 statement error
@@ -249,7 +250,7 @@ db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexe
 statement error
 CREATE INDEX g15_ng_uu ON g15_t USING inverted(pk, uu ng_dict);
 ----
-db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'uu' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID)
 
 
 statement error
@@ -355,25 +356,25 @@ db error: ERROR: Column 'g' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/A
 statement error
 CREATE INDEX g15_at_u64 ON g15_t USING inverted(pk, u64 any_text_dict);
 ----
-db error: ERROR: Column 'u64' has unsupported type UBIGINT and can not be indexed
+db error: ERROR: Column 'u64' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UBIGINT)
 
 
 statement error
 CREATE INDEX g15_at_h ON g15_t USING inverted(pk, h any_text_dict);
 ----
-db error: ERROR: Column 'h' has unsupported type HUGEINT and can not be indexed
+db error: ERROR: Column 'h' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got HUGEINT)
 
 
 statement error
 CREATE INDEX g15_at_uh ON g15_t USING inverted(pk, uh any_text_dict);
 ----
-db error: ERROR: Column 'uh' has unsupported type UHUGEINT and can not be indexed
+db error: ERROR: Column 'uh' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UHUGEINT)
 
 
 statement error
 CREATE INDEX g15_at_d ON g15_t USING inverted(pk, d any_text_dict);
 ----
-db error: ERROR: Column 'd' has unsupported type DECIMAL(10,2) and can not be indexed
+db error: ERROR: Column 'd' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DECIMAL(10,2))
 
 
 statement error
@@ -385,7 +386,7 @@ db error: ERROR: Column 'iv' has unsupported type INTERVAL and can not be indexe
 statement error
 CREATE INDEX g15_at_uu ON g15_t USING inverted(pk, uu any_text_dict);
 ----
-db error: ERROR: Column 'uu' has unsupported type UUID and can not be indexed
+db error: ERROR: Column 'uu' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID)
 
 
 statement error

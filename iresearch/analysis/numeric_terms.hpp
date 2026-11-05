@@ -27,17 +27,26 @@
 
 namespace irs {
 
+template<typename T>
+inline constexpr bool kInlineNumericTerm =
+  numeric_utils::kNumericTermSize<T> <= duckdb::string_t::INLINE_LENGTH;
+
 template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
-                             ValueAt&& value_at) {
-  using U = typename numeric_utils::NumericEncodeOf<T>::Traits::type;
+                             ValueAt&& value_at, byte_type* wide = nullptr) {
   constexpr auto kSize =
-    static_cast<uint32_t>(numeric_utils::EncodedSize<U>(0) + 1);
-  static_assert(kSize <= duckdb::string_t::INLINE_LENGTH);
+    static_cast<uint32_t>(numeric_utils::kNumericTermSize<T>);
   for (size_t i = 0; i < count; ++i) {
-    out[i] = duckdb::string_t{kSize};
-    numeric_utils::EncodeNumericTerm<T>(
-      reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
+    if constexpr (kInlineNumericTerm<T>) {
+      out[i] = duckdb::string_t{kSize};
+      numeric_utils::EncodeNumericTerm<T>(
+        reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
+    } else {
+      SDB_ASSERT(wide);
+      auto* bytes = wide + i * kSize;
+      numeric_utils::EncodeNumericTerm<T>(bytes, value_at(i));
+      out[i] = duckdb::string_t{reinterpret_cast<const char*>(bytes), kSize};
+    }
   }
 }
 
@@ -49,6 +58,7 @@ void AppendNumericTermsBlock(duckdb::string_t* out, std::span<const T> values) {
 
 template<typename T>
 void AppendNumericTermsBlock(TokenBatch& batch, std::span<const T> values) {
+  static_assert(kInlineNumericTerm<T>);
   SDB_ASSERT(batch.count + values.size() <= TokenBatch::kCapacity);
   AppendNumericTermsBlock<T>(batch.terms + batch.count, values);
   batch.count += static_cast<uint32_t>(values.size());

@@ -207,21 +207,17 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     return;
   }
 
+  auto bound = ResolveNumericBound(column_info.logical_type, *bound_val,
+                                   !is_lower, !inclusive);
+  if (bound.kind == NumericBound::Kind::Empty) {
+    AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
+    return;
+  }
   auto& range = AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
   SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
   range.SetBoost(ctx.boost);
   SetLeafScorer(range, column_info);
-  auto* options = range.mutable_options();
-  auto& rng = options->range;
-  WithNumericValue(col_type, *bound_val, [&](auto v) {
-    if (is_lower) {
-      irs::SetGranularNumericTerm(rng.min, v);
-      rng.min_type = bound_type;
-    } else {
-      irs::SetGranularNumericTerm(rng.max, v);
-      rng.max_type = bound_type;
-    }
-  });
+  SetNumericBound(range.mutable_options()->range, !is_lower, std::move(bound));
 }
 
 void FromBetween(BoolTarget parent, const FilterContext& ctx,
@@ -319,26 +315,29 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     AddBools(MaybeNegated(parent, ctx, column_info), column_info,
              accepts(false), accepts(true), ctx.boost);
   } else {
+    NumericBound min;
+    NumericBound max;
+    if (args.min) {
+      min = ResolveNumericBound(column_info.logical_type, *args.min, false,
+                                !args.min_incl);
+    }
+    if (args.max) {
+      max = ResolveNumericBound(column_info.logical_type, *args.max, true,
+                                !args.max_incl);
+    }
+    if (min.kind == NumericBound::Kind::Empty ||
+        max.kind == NumericBound::Kind::Empty) {
+      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
+      return;
+    }
     auto& range =
       AddMaybeNegated<irs::ByGranularRange>(parent, ctx, column_info);
     SetField(range, column_info, RefOf(column_info, irs::DictMember::Numbers));
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
-    auto* range_opts = range.mutable_options();
-    auto& rng = range_opts->range;
-    auto emit_bound = [&](const duckdb::Value& v, irs::bstring& boundary,
-                          irs::BoundType& bt, bool incl) {
-      WithNumericValue(col_type, v, [&](auto val) {
-        irs::SetGranularNumericTerm(boundary, val);
-      });
-      bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
-    };
-    if (args.min) {
-      emit_bound(*args.min, rng.min, rng.min_type, args.min_incl);
-    }
-    if (args.max) {
-      emit_bound(*args.max, rng.max, rng.max_type, args.max_incl);
-    }
+    auto& rng = range.mutable_options()->range;
+    SetNumericBound(rng, false, std::move(min));
+    SetNumericBound(rng, true, std::move(max));
   }
 }
 

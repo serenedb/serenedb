@@ -213,17 +213,17 @@ statement ok
 DROP INDEX index_ts;
 
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(d);
-----
-db error: ERROR: Column 'd' has unsupported type HUGEINT and can not be indexed
 
+statement ok
+DROP INDEX index_ts;
 
-statement error
+statement ok
 CREATE INDEX index_ts on tstest USING inverted(e);
-----
-db error: ERROR: Column 'e' has unsupported type DECIMAL(10,2) and can not be indexed
 
+statement ok
+DROP INDEX index_ts;
 
 statement ok
 CREATE INDEX index_ts on tstest USING inverted(c);

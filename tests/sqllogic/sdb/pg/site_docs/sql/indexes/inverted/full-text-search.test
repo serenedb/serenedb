@@ -547,3 +547,34 @@ QUERY PLAN
 │ Projections: id                                          │
 │ ~1 row                                                   │
 ╰──────────────────────────────────────────────────────────╯
+
+# DOCS_TEST: range_bounds_by_column_type
+
+statement ok
+CREATE TABLE prices (id INTEGER PRIMARY KEY, amount DECIMAL(9,2), stock INTEGER, sku UUID);
+
+statement ok
+CREATE INDEX prices_idx ON prices USING inverted (id, amount, stock, sku);
+
+statement ok
+INSERT INTO prices VALUES
+    (1, 4.99, 5, '00000000-0000-0000-0000-000000000001'),
+    (2, 5.12, 6, '7fffffff-ffff-ffff-ffff-ffffffffffff'),
+    (3, 5.13, 7, '80000000-0000-0000-0000-000000000000');
+
+statement ok
+VACUUM (REFRESH_TABLE) prices;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id
+FROM prices_idx
+WHERE amount @@ ts_lt(5.125)
+  AND stock @@ ts_le(6.5)
+  AND sku @@ ts_lt('80000000-0000-0000-0000-000000000000'::UUID)
+ORDER BY id;
+----
+id
+1
+2

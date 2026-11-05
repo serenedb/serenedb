@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/common/types/decimal.hpp>
+#include <duckdb/common/types/uuid.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -112,7 +114,58 @@ std::string DecodeNumericTerm(bytes_view term) {
   if (marker >= 0xA0 && marker < 0xE0) {
     return absl::StrCat(nu::numeric_traits<double>::decode(term.data()));
   }
+  if (marker == nu::UnsignedEncodeTraits::TYPE_MAGIC &&
+      term.size() == nu::kNumericTermSize<uint64_t>) {
+    return absl::StrCat(nu::DecodeNumericTerm<uint64_t>(term));
+  }
+  if (marker == nu::encode_traits<unsigned __int128>::TYPE_MAGIC &&
+      term.size() == nu::kNumericTermSize<__int128>) {
+    return duckdb::hugeint_t::FromInt128(
+             absl::int128{nu::DecodeNumericTerm<__int128>(term)})
+      .ToString();
+  }
+  if (marker == nu::Unsigned128EncodeTraits::TYPE_MAGIC &&
+      term.size() == nu::kNumericTermSize<unsigned __int128>) {
+    return duckdb::uhugeint_t::FromUint128(
+             absl::uint128{nu::DecodeNumericTerm<unsigned __int128>(term)})
+      .ToString();
+  }
   return TermToString(term);
+}
+
+std::string DecodeTypedNumericTerm(bytes_view term, const LogicalType& type) {
+  namespace nu = irs::numeric_utils;
+  const auto as = [&]<typename T>() -> std::optional<T> {
+    if (term.size() != nu::kNumericTermSize<T> ||
+        term[0] != nu::NumericEncodeOf<T>::Traits::TYPE_MAGIC) {
+      return std::nullopt;
+    }
+    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t>) {
+      return nu::numeric_traits<T>::decode(term.data());
+    } else {
+      return nu::DecodeNumericTerm<T>(term);
+    }
+  };
+  if (type.id() == LogicalTypeId::UUID) {
+    if (const auto v = as.template operator()<__int128>()) {
+      return duckdb::UUID::ToString(
+        duckdb::hugeint_t::FromInt128(absl::int128{*v}));
+    }
+  } else if (type.id() == LogicalTypeId::DECIMAL) {
+    const auto width = duckdb::DecimalType::GetWidth(type);
+    const auto scale = duckdb::DecimalType::GetScale(type);
+    if (const auto v = as.template operator()<int32_t>()) {
+      return duckdb::Decimal::ToString(*v, width, scale);
+    }
+    if (const auto v = as.template operator()<int64_t>()) {
+      return duckdb::Decimal::ToString(*v, width, scale);
+    }
+    if (const auto v = as.template operator()<__int128>()) {
+      return duckdb::Decimal::ToString(
+        duckdb::hugeint_t::FromInt128(absl::int128{*v}), width, scale);
+    }
+  }
+  return DecodeNumericTerm(term);
 }
 
 bool IsString(const LogicalType& type) {
@@ -131,7 +184,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
     return !term.empty() && term[0] ? "true" : "false";
   }
   if (sdb::connector::term_dict::IsNumeric(type.id())) {
-    return DecodeNumericTerm(term);
+    return DecodeTypedNumericTerm(term, type);
   }
   if (sdb::pg::IsInetOrCidr(type)) {
     return sdb::connector::inet_terms::Describe(term);

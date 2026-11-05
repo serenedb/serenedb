@@ -21,12 +21,13 @@ CREATE TEXT SEARCH DICTIONARY any_text_dict AS
 #
 # Closes the remaining gaps in text-tokenizer rejection:
 #
-#   (1) LIST<UUID>, LIST<GEOMETRY('OGC:CRS84')>, ARRAY<GEOMETRY('OGC:CRS84'),3>:
+#   (1) LIST<GEOMETRY('OGC:CRS84')>, ARRAY<GEOMETRY('OGC:CRS84'),3>:
 #       the element type cannot be indexed at all.
 #       Wording: "has unsupported type X and can not be indexed".
 #
-#   (2) LIST<INTEGER>, LIST<BIGINT>, LIST<DOUBLE>, ARRAY<INTEGER,3>: the
-#       elements can be indexed, but a tokenizer needs text. Wording: "uses a
+#   (2) LIST<INTEGER>, LIST<BIGINT>, LIST<DOUBLE>, LIST<UUID>,
+#       ARRAY<INTEGER,3>: the elements can be indexed as numbers, but a
+#       tokenizer needs text. Wording: "uses a
 #       tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB
 #       (got X)".
 #
@@ -98,11 +99,11 @@ CREATE INDEX g20_kw_ld ON g20_t USING inverted(pk, list_d kw_dict);
 db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got DOUBLE[])
 
 
-# (d) kw_dict on LIST<UUID>: UUID elements cannot be indexed.
+# (d) kw_dict on LIST<UUID>: UUID elements are numbers, not text.
 statement error
 CREATE INDEX g20_kw_lu ON g20_t USING inverted(pk, list_u kw_dict);
 ----
-db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID[])
 
 
 # (e) kw_dict on LIST<GEOMETRY('OGC:CRS84')>: explicit child-GEOMETRY guard
@@ -194,7 +195,7 @@ db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a L
 statement error
 CREATE INDEX g20_ng_lu ON g20_t USING inverted(pk, list_u ng_dict);
 ----
-db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID[])
 
 
 # (e) ng_dict on LIST<GEOMETRY('OGC:CRS84')>: not previously covered for
@@ -281,7 +282,7 @@ db error: ERROR: Column 'list_d' uses a tokenizer; must be VARCHAR, BLOB, or a L
 statement error
 CREATE INDEX g20_at_lu ON g20_t USING inverted(pk, list_u any_text_dict);
 ----
-db error: ERROR: Column 'list_u' has unsupported type UUID[] and can not be indexed
+db error: ERROR: Column 'list_u' uses a tokenizer; must be VARCHAR, BLOB, or a LIST/ARRAY of VARCHAR/BLOB (got UUID[])
 
 
 # (e) any_text_dict on LIST<GEOMETRY('OGC:CRS84')>.

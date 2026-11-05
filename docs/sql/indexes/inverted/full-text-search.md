@@ -156,13 +156,17 @@ When the alternatives are a list, [`ts_any`](../../functions/search/full-text.md
 
 ## Range queries {#range-queries}
 
-Numeric, temporal, boolean, text and `BLOB` columns support range matching. On a text column each bound is analyzed with the column's dictionary and must give one token, so `keyword`, `normalize_tokens` and `collate_tokens` dictionaries work, and so does a tokenizing one for single-token bounds. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
+Numeric, `UUID`, temporal, boolean, text and `BLOB` columns support range matching. On a text column each bound is analyzed with the column's dictionary and must give one token, so `keyword`, `normalize_tokens` and `collate_tokens` dictionaries work, and so does a tokenizing one for single-token bounds. [`ts_between`](../../functions/search/full-text.md#ts_between) takes lower and upper bounds (either may be `NULL` for unbounded) and inclusivity flags; [`ts_lt`](../../functions/search/full-text.md#ts_lt), `ts_le`, `ts_gt` and `ts_ge` are single-bound shortcuts:
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_014" />
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_015" />
 
-On a numeric or temporal column other than an array, `count(*)` of a range, of an `IN` list, or of either `OR`ed with `IS NULL` is answered from the index's statistics without reading the matching rows, except in segments with deleted rows. A range that admits most of a column's values costs about as much as the values it leaves out.
+A bound on a numeric column, `DECIMAL`, `UBIGINT`, `HUGEINT` and `UHUGEINT` included, may be of any numeric type and selects the rows the same comparison selects on the table: a bound the column can't hold exactly, such as `5.125` on a `DECIMAL(9,2)` column or `6.5` on an `INTEGER` column, keeps the values on its side, and an equality with such a value matches no row. A bound outside the column type's range keeps every value or none. A `UUID` column takes `UUID` bounds and orders its values like their text:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/range_bounds_by_column_type" />
+
+On a numeric, `UUID` or temporal column other than an array, `count(*)` of a range, of an `IN` list, or of either `OR`ed with `IS NULL` is answered from the index's statistics without reading the matching rows, except in segments with deleted rows. A range that admits most of a column's values costs about as much as the values it leaves out.
 
 See the [Range Queries](../../../cookbook/search/range-queries.md) recipe for lexicographic ordering details.
 

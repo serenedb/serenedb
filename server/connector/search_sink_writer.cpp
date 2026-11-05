@@ -76,6 +76,17 @@ auto ExtractNumericValue(const duckdb::UnifiedVectorFormat& fmt,
       duckdb::UnifiedVectorFormat::GetData<uint16_t>(fmt)[idx]);
   } else if constexpr (Kind == duckdb::LogicalTypeId::UINTEGER) {
     return duckdb::UnifiedVectorFormat::GetData<uint32_t>(fmt)[idx];
+  } else if constexpr (Kind == duckdb::LogicalTypeId::UBIGINT) {
+    return duckdb::UnifiedVectorFormat::GetData<uint64_t>(fmt)[idx];
+  } else if constexpr (Kind == duckdb::LogicalTypeId::HUGEINT ||
+                       Kind == duckdb::LogicalTypeId::UUID) {
+    return static_cast<__int128>(
+      duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(fmt)[idx]
+        .ToInt128());
+  } else if constexpr (Kind == duckdb::LogicalTypeId::UHUGEINT) {
+    return static_cast<unsigned __int128>(
+      duckdb::UnifiedVectorFormat::GetData<duckdb::uhugeint_t>(fmt)[idx]
+        .ToUint128());
   } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
     return duckdb::UnifiedVectorFormat::GetData<float>(fmt)[idx];
   } else {
@@ -113,10 +124,10 @@ template<duckdb::LogicalTypeId... Extra, typename F>
 bool DispatchNumericKind(duckdb::LogicalTypeId kind, F&& f) {
   using enum duckdb::LogicalTypeId;
   return DispatchKind<Extra..., TINYINT, SMALLINT, INTEGER, BIGINT, UTINYINT,
-                      USMALLINT, UINTEGER, FLOAT, DOUBLE, DATE, TIME, TIME_TZ,
-                      TIME_NS, TIMESTAMP, TIMESTAMP_TZ, TIMESTAMP_SEC,
-                      TIMESTAMP_MS, TIMESTAMP_NS, TIMESTAMP_TZ_NS>(
-    kind, std::forward<F>(f));
+                      USMALLINT, UINTEGER, UBIGINT, HUGEINT, UHUGEINT, UUID,
+                      FLOAT, DOUBLE, DATE, TIME, TIME_TZ, TIME_NS, TIMESTAMP,
+                      TIMESTAMP_TZ, TIMESTAMP_SEC, TIMESTAMP_MS, TIMESTAMP_NS,
+                      TIMESTAMP_TZ_NS>(kind, std::forward<F>(f));
 }
 
 // The kinds every indexable list/array child shares.
@@ -889,10 +900,10 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
   }
 
   if (is_list_or_array) {
-    const auto child_kind = (kind == duckdb::LogicalTypeId::LIST
+    const auto child_kind =
+      term_dict::IndexedKind(kind == duckdb::LogicalTypeId::LIST
                                ? duckdb::ListType::GetChildType(type)
-                               : duckdb::ArrayType::GetChildType(type))
-                              .id();
+                               : duckdb::ArrayType::GetChildType(type));
     const duckdb::idx_t array_size =
       (kind == duckdb::LogicalTypeId::ARRAY ? duckdb::ArrayType::GetSize(type)
                                             : 0);
@@ -960,8 +971,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       }
       _field.PrepareForNumericValue(irs::NumericLayout::kNumbers);
       append_stored();
-      [[maybe_unused]] const bool matched =
-        DispatchNumericKind(kind, [&]<duckdb::LogicalTypeId K>() {
+      [[maybe_unused]] const bool matched = DispatchNumericKind(
+        term_dict::IndexedKind(type), [&]<duckdb::LogicalTypeId K>() {
           WriteNumericColumn<K>(_field, count);
         });
       SDB_ASSERT(matched);

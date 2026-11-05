@@ -1,0 +1,44 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+SET enable_external_access = false;
+
+
+statement ok
+CREATE TEMPORARY TABLE temp_docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement count 2
+INSERT INTO temp_docs VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+CREATE INDEX temp_idx ON temp_docs USING inverted(body en);
+
+
+statement count 1
+INSERT INTO temp_docs VALUES (3, 'pudge hooks the courier');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) temp_docs;
+
+
+statement ok
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) temp_docs;
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+DROP TABLE temp_docs;

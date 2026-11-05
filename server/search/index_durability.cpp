@@ -70,6 +70,14 @@ std::string MemoryRoot(const duckdb::AttachedDatabase& database,
   return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, database.oid, "/", oid);
 }
 
+duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& engine,
+                                 const std::optional<std::string>& path) {
+  if (path) {
+    return duckdb::FileSystem::GetFileSystem(engine);
+  }
+  return engine.GetMemoryFileSystem();
+}
+
 std::optional<std::string> StoragePath(
   duckdb::AttachedDatabase& database,
   const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
@@ -113,8 +121,7 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
                                  duckdb::idx_t oid)
   : _database{database.shared_from_this()},
     _name{std::move(name)},
-    _fs{duckdb::FileSystem::GetFileSystem(
-      irs::DuckDBEngine::Instance().instance())},
+    _fs{FileSystemOf(irs::DuckDBEngine::Instance().instance(), path)},
     _root{path ? *path : MemoryRoot(database, oid)},
     _refs{std::make_shared<irs::IndexFileRefs>()} {}
 

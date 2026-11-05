@@ -282,8 +282,9 @@ void SereneDBClientState::TransactionDurable(duckdb::AttachedDatabase& db,
   _connection_ctx->PublishSearch(db.oid);
 }
 
-void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
-                                                 duckdb::ClientContext&) {
+void SereneDBClientState::TransactionPreWalWrite(
+  duckdb::AttachedDatabase& db, duckdb::ClientContext&,
+  duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>>) {
   _connection_ctx->RefreshCreatedIndexes(db.oid);
 }
 

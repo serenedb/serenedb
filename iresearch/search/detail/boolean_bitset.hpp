@@ -33,6 +33,8 @@
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
+#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
@@ -174,6 +176,37 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
 }
 
 template<typename Result>
+Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
+                          TableFilter* table) {
+  SDB_ASSERT(!groups.must_not.empty() || !groups.must_not_filters.empty());
+  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
+  const auto* const doc = SegmentDoc(segment);
+  if (doc == nullptr) {
+    return {};
+  }
+  const ExcludeCosts<PostingClause> exclusion{
+    groups.must_not, groups.must_not_filters, docs_count, docs_count,
+    docs_count,      ExcludeUse::PerDoc};
+  if (!TakeFold(exclusion.Windowed(true) == ExcludeForm::Bitset,
+                groups.must_not.size(), *doc, docs_count)) {
+    return {};
+  }
+  BitsetBuckets buckets;
+  buckets.fills.emplace_back(fill::MakeAllDocs(segment));
+  const auto split = SplitMask(groups.must_not_filters);
+  ExcludeFills fills;
+  CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
+                        buckets, fills);
+  if (split.masked) {
+    buckets.masked = &segment;
+  }
+  if (!PlanExcludeFills(fills, buckets)) {
+    return {};
+  }
+  return MakeBitsetNode<Result>(std::move(buckets), *doc, docs_count, table);
+}
+
+template<typename Result>
 Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
                          TableFilter* table, doc_id_t span) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -181,6 +214,9 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     return {};
   }
   if (groups.must.empty() && groups.must_filters.empty()) {
+    if (groups.should.empty() && groups.should_filters.empty()) {
+      return MakeNegationBitset<Result>(groups, segment, table);
+    }
     if (groups.should.empty() || !groups.must_not.empty() ||
         !groups.must_not_filters.empty() ||
         (!groups.should_filters.empty() && groups.should_fills == nullptr)) {

@@ -139,6 +139,30 @@ std::vector<Query> Queries() {
     filter->Add(Clause(kRare, "y"), irs::Occur::MustNot);
     queries.push_back({"block_and_third_not_rare", std::move(filter)});
   }
+  const auto buckets = [] {
+    auto any = std::make_unique<irs::BooleanFilter>();
+    for (int b = 0; b != 300; ++b) {
+      any->Add(Clause(kBucket, std::to_string(b)), irs::Occur::Should);
+    }
+    any->SetMinShouldMatch(1);
+    return any;
+  };
+  {
+    auto filter = std::make_unique<irs::BooleanFilter>();
+    filter->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    filter->Add(buckets(), irs::Occur::MustNot);
+    queries.push_back({"not_buckets", std::move(filter)});
+  }
+  {
+    auto both = std::make_unique<irs::BooleanFilter>();
+    both->Add(Clause(kThird, "y"), irs::Occur::Must);
+    both->Add(Clause(kHalf, "y"), irs::Occur::Must);
+    auto filter = std::make_unique<irs::BooleanFilter>();
+    filter->Add(std::make_unique<irs::All>(), irs::Occur::Must);
+    filter->Add(buckets(), irs::Occur::MustNot);
+    filter->Add(std::move(both), irs::Occur::MustNot);
+    queries.push_back({"not_buckets_not_third_and_half", std::move(filter)});
+  }
   return queries;
 }
 

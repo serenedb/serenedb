@@ -132,7 +132,7 @@ class PrunedReqOpt : public Root {
         if (const auto required = threshold - optional_max; required > 0) {
           len = irs::detail::FilterScores(docs, scores, len, required);
         }
-        len = _optional.AddOptional(docs, scores, len, threshold);
+        len = _optional.AddOptional(docs, scores, len, threshold, _hits);
         if (len != 0) {
           _admit.AddDocs(collector, docs, len, scores);
         }
@@ -142,6 +142,7 @@ class PrunedReqOpt : public Root {
   Lead _lead;
   Optional _optional;
   ScoreBatch _batch;
+  LeafHits _hits;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

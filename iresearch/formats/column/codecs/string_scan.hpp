@@ -128,9 +128,26 @@ struct EntryAt {
 uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
                       std::span<const EntryAt> order);
 
+class AuxiliaryLink {
+ public:
+  bool Holds(
+    const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& set) const noexcept {
+    return set && set.get() == _set && !_weak.expired();
+  }
+
+  void Set(const duckdb::buffer_ptr<duckdb::AuxiliaryDataSet>& set) {
+    _weak = set;
+    _set = set.get();
+  }
+
+ private:
+  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> _weak;
+  const duckdb::AuxiliaryDataSet* _set = nullptr;
+};
+
 struct HeapReference {
-  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> source;
-  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> target;
+  AuxiliaryLink target;
+  const duckdb::AuxiliaryDataSet* source = nullptr;
 };
 
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
@@ -157,7 +174,7 @@ struct FrameReference final : duckdb::AuxiliaryDataHolder {
 };
 
 struct FrameLink {
-  duckdb::weak_ptr<duckdb::AuxiliaryDataSet> target;
+  AuxiliaryLink target;
   const FrameBytes* frame = nullptr;
 };
 

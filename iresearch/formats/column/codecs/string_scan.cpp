@@ -136,28 +136,26 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result) {
   const auto& heap = source.GetBufferRef()->GetAuxiliaryData();
-  const auto& target = result.GetBufferRef()->GetAuxiliaryData();
-  if (target && target.get() == reference.target.lock().get() &&
-      heap.get() == reference.source.lock().get()) {
+  if (heap.get() == reference.source &&
+      reference.target.Holds(result.GetBufferRef()->GetAuxiliaryData())) {
     return;
   }
   duckdb::StringVector::AddAuxiliaryData(
     result, duckdb::ImmutableStrings::Reference(heap));
-  reference.target = result.GetBufferRef()->GetAuxiliaryData();
-  reference.source = heap;
+  reference.target.Set(result.GetBufferRef()->GetAuxiliaryData());
+  reference.source = heap.get();
 }
 
 void ReferenceFrame(FrameLink& link,
                     const duckdb::shared_ptr<const FrameBytes>& frame,
                     duckdb::Vector& result) {
-  const auto& target = result.GetBufferRef()->GetAuxiliaryData();
-  if (target && frame.get() == link.frame &&
-      target.get() == link.target.lock().get()) {
+  if (frame.get() == link.frame &&
+      link.target.Holds(result.GetBufferRef()->GetAuxiliaryData())) {
     return;
   }
   duckdb::StringVector::AddAuxiliaryData(
     result, duckdb::make_uniq<FrameReference>(frame));
-  link.target = result.GetBufferRef()->GetAuxiliaryData();
+  link.target.Set(result.GetBufferRef()->GetAuxiliaryData());
   link.frame = frame.get();
 }
 

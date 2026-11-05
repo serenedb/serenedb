@@ -822,9 +822,10 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   }
   bstring buf;
   if (type == Type<ByWildcard>::id()) {
+    const auto& options = irs::utils::downCast<ByWildcard>(child).options();
     return ExecuteWildcard(
-      buf, irs::utils::downCast<ByWildcard>(child).options().term,
-      part(Kind::Term), part(Kind::Prefix), part(Kind::Wildcard));
+      buf, options.term, part(Kind::Term), part(Kind::Prefix),
+      part(options.bytes ? Kind::WildcardBytes : Kind::Wildcard));
   }
   if (type == Type<AutomatonFilter>::id()) {
     const auto& options =
@@ -836,6 +837,12 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
         return part(Kind::PosixEre)(options.pattern);
       case PatternKind::Wildcard:
         return part(Kind::Wildcard)(options.pattern);
+      case PatternKind::RegexpPerlBytes:
+        return part(Kind::PerlBytes)(options.pattern);
+      case PatternKind::RegexpPosixEreBytes:
+        return part(Kind::PosixEreBytes)(options.pattern);
+      case PatternKind::WildcardBytes:
+        return part(Kind::WildcardBytes)(options.pattern);
       case PatternKind::Union:
         key += options.pattern;
         return true;
@@ -846,9 +853,11 @@ bool OrAcceptorFusionRule::AppendParts(bstring& key, const Filter& child) {
   }
   SDB_ASSERT(type == Type<ByRegexp>::id());
   const auto& options = irs::utils::downCast<ByRegexp>(child).options();
-  return ExecuteRegexp(
-    buf, options.pattern, part(Kind::Term), part(Kind::Prefix),
-    part(options.syntax == RegexpSyntax::Perl ? Kind::Perl : Kind::PosixEre));
+  const auto kind = options.syntax == RegexpSyntax::Perl
+                      ? (options.bytes ? Kind::PerlBytes : Kind::Perl)
+                      : (options.bytes ? Kind::PosixEreBytes : Kind::PosixEre);
+  return ExecuteRegexp(buf, options.pattern, part(Kind::Term),
+                       part(Kind::Prefix), part(kind));
 }
 
 bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,

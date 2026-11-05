@@ -2930,15 +2930,15 @@ query
 SELECT id, round(BM25(twice_both.tableoid)::numeric, 4) AS s FROM twice_both WHERE lower(body) @@ 'fox' ORDER BY id;
 ----
 id	s
-1	0.203
-3	0.203
+1	0.2032
+3	0.2032
 
 query
 SELECT id, round(BM25(twice_once.tableoid)::numeric, 4) AS s FROM twice_once WHERE lower(body) @@ 'fox' ORDER BY id;
 ----
 id	s
-1	0.203
-3	0.203
+1	0.2032
+3	0.2032
 
 statement ok
 CREATE TABLE twice_spelled (id INTEGER PRIMARY KEY, body TEXT);

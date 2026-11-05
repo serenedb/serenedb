@@ -60,6 +60,13 @@ ALTER TABLE sc_ren RENAME COLUMN a TO a2;
 statement ok
 ALTER TABLE sc_ren RENAME TO sc_ren2;
 
+statement ok
+CREATE SCHEMA sc_ren_target;
+
+# ddl_alter: SET SCHEMA
+statement ok
+ALTER TABLE sc_ren2 SET SCHEMA sc_ren_target;
+
 # --- ALTER TABLE columns and constraints ---
 
 statement ok

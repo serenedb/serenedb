@@ -626,7 +626,7 @@
   text: true
   binary: true
   array: false
-  samples: ["{}", "{42,0}", "{NULL,42}", null]
+  samples: ["{}", "{42,0}", "{NULL,42}", "{18446744073709551615}", null]
   skip:
     python_asyncpg: ["extended-text", "extended-binary"]
 
@@ -2021,7 +2021,7 @@
   text: true
   binary: true
   array: false
-  samples: ["42", "0", null]
+  samples: ["42", "0", "18446744073709551615", null]
   skip:
     python_asyncpg: ["extended-text", "extended-binary"]
 

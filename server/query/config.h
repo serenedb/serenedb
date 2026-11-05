@@ -81,13 +81,13 @@ bool IsUnchangeableSetting(std::string_view name);
 
 bool IsNonTransactionalSetting(std::string_view name);
 
-void RequireSuperuserToSet(duckdb::ClientContext& ctx, std::string_view name,
-                           bool global);
+void RequireSuperuserToSetGlobal(duckdb::ClientContext& ctx,
+                                 std::string_view name);
 
 class Config {
  public:
-  // Per-key tracking for a currently-open transaction. Populated only when
-  // `setting_change_handler` sees a real change inside an explicit txn;
+  // Per-key tracking for a currently-open transaction. Populated when
+  // `setting_change_handler` sees a SET or RESET inside an explicit txn;
   // cleared on COMMIT / ROLLBACK.
   struct TxnVariable {
     // Value to restore on ROLLBACK. Captured on the first tracked event
@@ -133,12 +133,7 @@ class Config {
 
   // Record a SET / SET LOCAL event inside an explicit txn.
   //   old_value -- value currently in effect (pre-event snapshot).
-  //   new_value -- pointer to the about-to-be value for SET; nullptr for
-  //                RESET. Used only to skip initial insertion when a SET
-  //                wouldn't actually change the value; for already-tracked
-  //                keys, scope bookkeeping still runs regardless.
-  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value,
-             const duckdb::Value* new_value);
+  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
 
   void SetSetting(std::string_view key, std::string value, bool) {
     SetInternal(key, std::move(value));

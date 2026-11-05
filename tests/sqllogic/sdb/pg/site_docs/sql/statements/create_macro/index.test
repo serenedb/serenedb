@@ -294,11 +294,6 @@ x
 
 # DOCS_TEST: example_031
 
-# Reduce the expression-depth limit so the recursive expansion fails fast instead
-# of expanding to the default 1000 (which takes seconds).
-statement ok
-SET max_expression_depth TO 50;
-
 # DOCS_TEST_BODY
 
 statement ok
@@ -315,13 +310,10 @@ CREATE OR REPLACE FUNCTION fibo(n) AS (
 query error
 SELECT fibo(3);
 ----
-db error: ERROR: Max expression depth limit of 50 exceeded. Use "SET max_expression_depth TO x" to increase the maximum expression depth.
+db error: ERROR: stack depth limit exceeded
 
 
 # DOCS_TEST: example_032
-
-statement ok
-RESET max_expression_depth;
 
 # DOCS_TEST_BODY
 
@@ -583,3 +575,23 @@ SELECT visit(name)
 FROM (VALUES ('bob'), ('eve')) v(name);
 ----
 db error: ERROR: A function whose body modifies data cannot be called for each row of a query
+
+
+# DOCS_TEST: example_048
+
+statement ok
+CREATE SCHEMA archive;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION times_two(a int) RETURNS int LANGUAGE sql AS 'SELECT a * 2';
+
+statement ok
+ALTER FUNCTION times_two SET SCHEMA archive;
+
+query
+SELECT archive.times_two(21) AS n;
+----
+n
+42

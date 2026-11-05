@@ -461,19 +461,19 @@ VACUUM (REFRESH_TABLE) slot_json;
 
 
 query
-SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::int = 42) ORDER BY id;
+SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42) ORDER BY id;
 ----
 id
 4
 
 query
-SELECT id FROM slot_json WHERE NOT ((content->'val')::int = 42) ORDER BY id;
+SELECT id FROM slot_json WHERE NOT ((content->'val')::double = 42) ORDER BY id;
 ----
 id
 4
 
 query
-EXPLAIN SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::int = 42);
+EXPLAIN SELECT id FROM slot_json_idx WHERE NOT ((content->'val')::double = 42);
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -492,21 +492,21 @@ QUERY PLAN
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 query
-SELECT id FROM slot_json_idx WHERE (content->'val')::int IS NULL ORDER BY id;
+SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL ORDER BY id;
 ----
 id
 2
 3
 
 query
-SELECT id FROM slot_json WHERE (content->'val')::int IS NULL ORDER BY id;
+SELECT id FROM slot_json WHERE (content->'val')::double IS NULL ORDER BY id;
 ----
 id
 2
 3
 
 query
-EXPLAIN SELECT id FROM slot_json_idx WHERE (content->'val')::int IS NULL;
+EXPLAIN SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NULL;
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
@@ -524,14 +524,14 @@ QUERY PLAN
 ╰───────────────────────────────────────────────────────────────────────────────────╯
 
 query
-SELECT id FROM slot_json_idx WHERE (content->'val')::int IS NOT NULL ORDER BY id;
+SELECT id FROM slot_json_idx WHERE (content->'val')::double IS NOT NULL ORDER BY id;
 ----
 id
 1
 4
 
 query
-SELECT id FROM slot_json WHERE (content->'val')::int IS NOT NULL ORDER BY id;
+SELECT id FROM slot_json WHERE (content->'val')::double IS NOT NULL ORDER BY id;
 ----
 id
 1

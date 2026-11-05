@@ -35,22 +35,22 @@ SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
 FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
 id	score
-1	0.078
-2	0.078
-5	0.078
-7	0.099
-8	0.078
+1	0.0777
+2	0.0777
+5	0.0777
+7	0.0988
+8	0.0777
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
 FROM pwp_pos_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
 id	score
-1	0.078
-2	0.078
-5	0.078
-7	0.099
-8	0.078
+1	0.0777
+2	0.0777
+5	0.0777
+7	0.0988
+8	0.0777
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown')
@@ -255,8 +255,8 @@ WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
 ORDER BY id
 ----
 id	score
-1	1.335
-5	1.335
+1	1.3347
+5	1.3347
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
@@ -265,8 +265,8 @@ WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
 ORDER BY id
 ----
 id	score
-1	1.335
-5	1.335
+1	1.3347
+5	1.3347
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx
@@ -310,8 +310,8 @@ WHERE (body @@ ts_phrase('quick brown'))::score(NULL) AND body @@ 'fox'
 ORDER BY id
 ----
 id	score
-1	0.335
-5	0.335
+1	0.3347
+5	0.3347
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
@@ -320,8 +320,8 @@ WHERE (body @@ ts_phrase('quick brown'))::score(NULL) AND body @@ 'fox'
 ORDER BY id
 ----
 id	score
-1	0.335
-5	0.335
+1	0.3347
+5	0.3347
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx
@@ -444,7 +444,7 @@ WHERE (body @@ ts_phrase('quick brown quick'))::score('constant(1)')
 ORDER BY id
 ----
 id	score
-7	1.049
+7	1.0494
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
@@ -454,7 +454,7 @@ WHERE (body @@ ts_phrase('quick brown quick'))::score('constant(1)')
 ORDER BY id
 ----
 id	score
-7	1.049
+7	1.0494
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx
@@ -522,50 +522,50 @@ SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
 FROM pwp_text_idx WHERE body @@ ts_phrase('quick', [0, 2], 'brown') ORDER BY id
 ----
 id	score
-1	0.078
-2	0.078
-4	0.078
-5	0.093
-6	0.078
-7	0.104
-8	0.102
+1	0.0777
+2	0.0777
+4	0.0777
+5	0.0925
+6	0.0777
+7	0.1045
+8	0.1023
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
 FROM pwp_pos_idx WHERE body @@ ts_phrase('quick', [0, 2], 'brown') ORDER BY id
 ----
 id	score
-1	0.078
-2	0.078
-4	0.078
-5	0.093
-6	0.078
-7	0.104
-8	0.102
+1	0.0777
+2	0.0777
+4	0.0777
+5	0.0925
+6	0.0777
+7	0.1045
+8	0.1023
 
 query
 SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
 FROM pwp_text_idx WHERE body @@ ts_phrase('brown quick', slop := 2) ORDER BY id
 ----
 id	score
-1	0.047
-2	0.047
-3	0.059
-5	0.047
-7	0.095
-8	0.047
+1	0.0474
+2	0.0474
+3	0.0588
+5	0.0474
+7	0.0951
+8	0.0474
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
 FROM pwp_pos_idx WHERE body @@ ts_phrase('brown quick', slop := 2) ORDER BY id
 ----
 id	score
-1	0.047
-2	0.047
-3	0.059
-5	0.047
-7	0.095
-8	0.047
+1	0.0474
+2	0.0474
+3	0.0588
+5	0.0474
+7	0.0951
+8	0.0474
 
 query
 SELECT id FROM pwp_text_idx WHERE body @@ to_tsquery('"quick fo*"~2') ORDER BY id
@@ -586,24 +586,24 @@ SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
 FROM pwp_text_idx WHERE body @@ to_tsquery('"br* quick"~2') ORDER BY id
 ----
 id	score
-1	0.047
-2	0.047
-3	0.059
-5	0.047
-7	0.095
-8	0.047
+1	0.0474
+2	0.0474
+3	0.0588
+5	0.0474
+7	0.0951
+8	0.0474
 
 query
 SELECT id, round(BM25(pwp_pos_idx.tableoid)::numeric, 4) AS score
 FROM pwp_pos_idx WHERE body @@ to_tsquery('"br* quick"~2') ORDER BY id
 ----
 id	score
-1	0.047
-2	0.047
-3	0.059
-5	0.047
-7	0.095
-8	0.047
+1	0.0474
+2	0.0474
+3	0.0588
+5	0.0474
+7	0.0951
+8	0.0474
 
 query
 EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ to_tsquery('"quick fo*"~2')
@@ -962,16 +962,16 @@ SELECT id, round(BM25(pwp_expr_lower.tableoid)::numeric, 4) AS score
 FROM pwp_expr_lower WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
 ----
 id	score
-1	0.665
-5	0.665
+1	0.6647
+5	0.6647
 
 query
 SELECT id, round(BM25(pwp_expr_lower_pos.tableoid)::numeric, 4) AS score
 FROM pwp_expr_lower_pos WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
 ----
 id	score
-1	0.665
-5	0.665
+1	0.6647
+5	0.6647
 
 query
 SELECT id FROM pwp_expr_concat WHERE lower(title || ' ' || body) @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1327,9 +1327,9 @@ SELECT id, round(BM25(pwp_cars_idx.tableoid)::numeric, 4) AS score
 FROM pwp_cars_idx WHERE body @@ ts_phrase('red car') ORDER BY id
 ----
 id	score
-1	0.296
-3	0.296
-4	0.348
+1	0.2959
+3	0.2959
+4	0.3477
 
 query
 SELECT id FROM pwp_cars_idx WHERE body @@ to_tsquery('"red aut*"~2') ORDER BY id
@@ -1385,8 +1385,8 @@ SELECT id, round(BM25(pwp_shingled_idx.tableoid)::numeric, 4) AS score
 FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
 ----
 id	score
-1	0.480
-6	0.564
+1	0.4801
+6	0.5638
 
 query
 EXPLAIN SELECT id FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox')

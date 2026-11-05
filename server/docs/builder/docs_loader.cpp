@@ -51,6 +51,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
@@ -386,7 +387,7 @@ std::string DescribeLayout(const catalog::SearchTableEntry& table) {
   const auto config = table.Storage()->Config();
   std::string layout;
   for (const auto& column : table.GetColumns().Logical()) {
-    const auto id = static_cast<irs::field_id>(column.Logical().index);
+    const auto id = connector::TableColumnId(column);
     absl::StrAppend(&layout, column.Name().GetIdentifierName(), " ", id);
     if (const auto* entry = config ? config->FindColumnInfo(id) : nullptr;
         entry && entry->IsTermDict()) {

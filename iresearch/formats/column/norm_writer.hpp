@@ -106,8 +106,7 @@ class NormColumnWriter final {
  public:
   using Open = std::function<ColFileWriter&()>;
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, Open open,
-                   bool stage_all);
+  NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
   NormColumnWriter(const NormColumnWriter&) = delete;
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
@@ -116,7 +115,7 @@ class NormColumnWriter final {
 
   void PadTo(uint64_t target);
 
-  void Reorder(std::span<const uint32_t> new2old);
+  void Reorder(std::span<const uint32_t> new2old, uint32_t row_group_size);
 
   uint64_t StagedBytes() const noexcept {
     return _values.size() * sizeof(uint32_t);
@@ -153,7 +152,6 @@ class NormColumnWriter final {
   ColFileWriter* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
-  uint32_t _staged_row_group_size = 0;
   NormColumnMeta _meta;
   std::vector<uint32_t> _values;
   NormRegionMeta _region;

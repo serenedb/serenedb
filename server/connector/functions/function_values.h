@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -40,17 +38,6 @@ inline std::string ReadRelation(const duckdb::TableFunctionBindInput& input,
                     ERR_MSG(function, " requires a relation name"));
   }
   return input.inputs[0].GetValue<std::string>();
-}
-
-inline const duckdb::Value& NamedParameter(
-  const duckdb::TableFunctionBindInput& input, std::string_view name) {
-  const auto entry = input.named_parameters.find(duckdb::Identifier{name});
-  SDB_ASSERT(entry != input.named_parameters.end());
-  return entry->second;
-}
-
-inline duckdb::Value Bigint(uint64_t value) {
-  return duckdb::Value::BIGINT(static_cast<int64_t>(value));
 }
 
 inline duckdb::Value NullIfEmpty(std::string_view value) {

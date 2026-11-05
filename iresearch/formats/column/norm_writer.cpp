@@ -97,14 +97,8 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
 }
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   Open open, bool stage_all)
-  : _id{id},
-    _open{std::move(open)},
-    _row_group_size{stage_all ? std::numeric_limits<uint32_t>::max()
-                              : row_group_size},
-    _staged_row_group_size{stage_all ? row_group_size : 0} {
-  SDB_ASSERT(!stage_all || row_group_size != 0);
-}
+                                   Open open)
+  : _id{id}, _open{std::move(open)}, _row_group_size{row_group_size} {}
 
 void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
   SDB_ASSERT(target_row >= RowCount(),
@@ -119,10 +113,12 @@ void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
 
 void NormColumnWriter::PadTo(uint64_t target) {
   while (RowCount() < target) {
-    SDB_ENSURE(_row_group_size != 0, "NormColumnWriter: streamed column ", _id,
-               " holds ", RowCount(), " rows, cannot pad to ", target);
-    const auto chunk =
-      std::min<uint64_t>(target - RowCount(), _row_group_size - _values.size());
+    SDB_ENSURE(_row_group_size != 0 || _meta.row_count == 0,
+               "NormColumnWriter: streamed column ", _id, " holds ", RowCount(),
+               " rows, cannot pad to ", target);
+    const auto room = _row_group_size == 0 ? target - RowCount()
+                                           : _row_group_size - _values.size();
+    const auto chunk = std::min<uint64_t>(target - RowCount(), room);
     _values.insert(_values.end(), chunk, 0);
     if (_values.size() == _row_group_size) {
       FlushRowGroup();
@@ -130,11 +126,12 @@ void NormColumnWriter::PadTo(uint64_t target) {
   }
 }
 
-void NormColumnWriter::Reorder(std::span<const uint32_t> new2old) {
-  SDB_ASSERT(_staged_row_group_size != 0);
+void NormColumnWriter::Reorder(std::span<const uint32_t> new2old,
+                               uint32_t row_group_size) {
+  SDB_ASSERT(_row_group_size == 0 && row_group_size != 0);
   SDB_ASSERT(_meta.row_count == 0);
   SDB_ASSERT(new2old.empty() || _values.size() == new2old.size());
-  _row_group_size = std::exchange(_staged_row_group_size, 0);
+  _row_group_size = row_group_size;
   if (new2old.empty()) {
     const std::span<const uint32_t> staged = _values;
     const auto sealed = staged.size() - staged.size() % _row_group_size;

@@ -29,6 +29,7 @@
 #include <array>
 #include <cstdint>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
@@ -107,7 +108,7 @@ MergeTarget ResolveWritable(duckdb::ClientContext& context,
 std::vector<std::string> ReadSegments(
   const duckdb::TableFunctionBindInput& input) {
   std::vector<std::string> segments;
-  const auto& list = NamedParameter(input, "segments");
+  const auto& list = input.named_parameters.at(duckdb::Identifier{"segments"});
   if (list.IsNull()) {
     return segments;
   }
@@ -120,7 +121,7 @@ std::vector<std::string> ReadSegments(
 }
 
 search::MergeMode ReadMode(const duckdb::TableFunctionBindInput& input) {
-  const auto& value = NamedParameter(input, "mode");
+  const auto& value = input.named_parameters.at(duckdb::Identifier{"mode"});
   if (value.IsNull()) {
     return search::MergeMode::Background;
   }
@@ -139,7 +140,8 @@ search::MergeMode ReadMode(const duckdb::TableFunctionBindInput& input) {
 }
 
 uint32_t ReadTargetSegments(const duckdb::TableFunctionBindInput& input) {
-  const auto& target = NamedParameter(input, "target_segments");
+  const auto& target =
+    input.named_parameters.at(duckdb::Identifier{"target_segments"});
   if (target.IsNull()) {
     return 0;
   }
@@ -235,15 +237,15 @@ void AppendRow(duckdb::DataChunk& chunk, size_t number,
   auto append = [&](duckdb::Value value) {
     chunk.data[column++].Append(std::move(value));
   };
-  append(Bigint(number));
+  append(duckdb::Value::BIGINT(number));
   append(duckdb::Value{irs::SnakeCaseName(search::OutcomeOf(merge.outcome))});
   append(duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(inputs)));
-  append(Bigint(stats.input_docs));
-  append(Bigint(stats.input_live_docs));
-  append(Bigint(stats.input_bytes));
+  append(duckdb::Value::BIGINT(stats.input_docs));
+  append(duckdb::Value::BIGINT(stats.input_live_docs));
+  append(duckdb::Value::BIGINT(stats.input_bytes));
   append(NullIfEmpty(stats.output));
-  append(Bigint(stats.output_docs));
-  append(Bigint(stats.output_bytes));
+  append(duckdb::Value::BIGINT(stats.output_docs));
+  append(duckdb::Value::BIGINT(stats.output_bytes));
   append(duckdb::Value::DOUBLE(Millis(stats.profile.TotalNanos())));
   for (const auto step : magic_enum::enum_values<irs::MergeStep>()) {
     append(duckdb::Value::DOUBLE(Millis(stats.profile.Nanos(step))));

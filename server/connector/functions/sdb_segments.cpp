@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -37,7 +38,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -83,7 +83,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SegmentsBind(
   auto data = duckdb::make_uniq<SegmentsBindData>();
   data->relation = ReadRelation(input, "sdb_segments");
   MergeTarget::Resolve(context, data->relation);
-  const auto& columns = NamedParameter(input, "columns");
+  const auto& columns =
+    input.named_parameters.at(duckdb::Identifier{"columns"});
   data->columns = !columns.IsNull() && columns.GetValue<bool>();
   const auto add = [&](std::string_view name, duckdb::LogicalType type) {
     names.emplace_back(name);
@@ -126,13 +127,9 @@ void LoadColumns(duckdb::ClientContext& context, const MergeTarget& target,
   for (const auto& segment : snapshot) {
     segments.emplace_back(&segment);
   }
-  auto checks =
+  const auto checks =
     search::CheckColumns(duckdb::TaskScheduler::GetScheduler(context),
                          target.FieldOptions(), segments);
-  absl::c_sort(checks, [](const auto& lhs, const auto& rhs) {
-    return std::tie(lhs.segment, lhs.column) <
-           std::tie(rhs.segment, rhs.column);
-  });
   for (const auto& check : checks) {
     const auto* segment = segments[check.segment];
     const auto* column = segment->GetColReader()->Column(check.column);
@@ -160,11 +157,11 @@ void EmitColumns(SegmentsState& state, duckdb::DataChunk& output) {
     output.data[0].Append(duckdb::Value{row.segment});
     output.data[1].Append(duckdb::Value{row.column});
     output.data[2].Append(duckdb::Value{row.type});
-    output.data[3].Append(Bigint(row.rows));
-    output.data[4].Append(Bigint(row.bytes));
+    output.data[3].Append(duckdb::Value::BIGINT(row.rows));
+    output.data[4].Append(duckdb::Value::BIGINT(row.bytes));
     output.data[5].Append(NullIfEmpty(row.codecs));
     if (row.reencoded_bytes) {
-      output.data[6].Append(Bigint(*row.reencoded_bytes));
+      output.data[6].Append(duckdb::Value::BIGINT(*row.reencoded_bytes));
       output.data[7].Append(duckdb::Value{row.reencode ? "re-encode" : "copy"});
     } else {
       output.data[6].Append(duckdb::Value{duckdb::LogicalType::BIGINT});
@@ -179,10 +176,10 @@ void EmitSegments(SegmentsState& state, duckdb::DataChunk& output) {
   for (; state.offset < end; ++state.offset) {
     const auto& row = state.rows[state.offset];
     output.data[0].Append(duckdb::Value{row.name});
-    output.data[1].Append(Bigint(row.docs));
-    output.data[2].Append(Bigint(row.live_docs));
-    output.data[3].Append(Bigint(row.docs - row.live_docs));
-    output.data[4].Append(Bigint(row.bytes));
+    output.data[1].Append(duckdb::Value::BIGINT(row.docs));
+    output.data[2].Append(duckdb::Value::BIGINT(row.live_docs));
+    output.data[3].Append(duckdb::Value::BIGINT(row.docs - row.live_docs));
+    output.data[4].Append(duckdb::Value::BIGINT(row.bytes));
   }
 }
 

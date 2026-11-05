@@ -576,7 +576,7 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _detached.load(std::memory_order_acquire)) {
+  if (GetAttached().IsReadOnly() || _directory->Detached()) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -654,7 +654,6 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  _detached.store(true, std::memory_order_release);
   _directory->MarkDetached();
   if (GetAttached().IsReadOnly()) {
     duckdb::DuckCatalog::OnDetach(context);

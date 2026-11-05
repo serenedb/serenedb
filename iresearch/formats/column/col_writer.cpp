@@ -477,12 +477,10 @@ ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size,
-    [this]() -> ColFileWriter& {
+    id, _stage_all ? 0 : row_group_size, [this]() -> ColFileWriter& {
       EnsureOut();
       return *_file;
-    },
-    _stage_all));
+    }));
   _norm_by_id.emplace(id, &writer);
   return writer;
 }
@@ -572,7 +570,8 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
   for (auto& writer : _norms) {
     writer->PadTo(target_row);
     if (_stage_all) {
-      writer->Reorder(new2old);
+      SDB_ASSERT(_field_options);
+      writer->Reorder(new2old, _field_options->row_group_size);
     }
     writer->Finalize();
     SDB_ASSERT(writer->Meta().row_count == target_row,

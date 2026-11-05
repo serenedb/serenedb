@@ -84,9 +84,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   bool UsesCatalogLog() const final { return true; }
-  bool IsDropped() const final {
-    return _detached.load(std::memory_order_acquire);
-  }
+  bool IsDropped() const final { return _directory->Detached(); }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
   void FinalizeLoad(duckdb::optional_ptr<duckdb::ClientContext> context) final;
   bool AppendLocalIndexes(
@@ -209,7 +207,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};
   duckdb::unique_ptr<duckdb::FileHandle> _catalog_log_lock;
-  std::atomic_bool _detached{false};
 };
 
 duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(

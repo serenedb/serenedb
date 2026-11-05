@@ -2567,6 +2567,9 @@ int CompareDecimalText(std::string_view lhs, std::string_view rhs) {
 
 ColumnCast CastToColumn(const duckdb::Value& value,
                         const duckdb::LogicalType& type) {
+  if (value.type() == type) {
+    return {.value = value};
+  }
   std::string error;
   if (auto cast = value.DefaultTryCastAs(type, &error)) {
     return {.value = std::move(*cast)};
@@ -2586,7 +2589,8 @@ ColumnCast CastToColumn(const duckdb::Value& value,
 }
 
 int CastOrder(const duckdb::Value& cast, const duckdb::Value& value) {
-  if (IsTextConstant(value)) {
+  if (IsTextConstant(value) ||
+      (IntegerKindOf(cast.type().id()) && IntegerKindOf(value.type().id()))) {
     return 0;
   }
   if (IsExactNumber(cast.type()) && IsExactNumber(value.type())) {

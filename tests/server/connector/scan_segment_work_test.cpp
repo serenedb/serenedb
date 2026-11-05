@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <roaring/roaring.hh>
 #include <vector>
 
 #include "connector/scan/scan_state.h"
@@ -31,12 +32,12 @@ namespace {
 void CheckLive(uint32_t rg_count, const std::vector<uint32_t>& live) {
   SegmentWork work;
   work.rg_count = rg_count;
-  std::vector<uint64_t> bits((rg_count + 63) / 64);
+  roaring::Roaring set;
   for (const auto rg : live) {
-    bits[rg / 64] |= uint64_t{1} << (rg % 64);
+    set.add(rg);
   }
-  work.SetLive(std::move(bits));
-  EXPECT_EQ(work.AllLive(), live.size() == rg_count);
+  work.SetLive(std::move(set));
+  EXPECT_EQ(work.all_live, live.size() == rg_count);
   EXPECT_EQ(work.LiveCount(), live.size());
   for (uint32_t rg = 0; rg <= rg_count; ++rg) {
     const auto before = std::count_if(live.begin(), live.end(),
@@ -56,21 +57,29 @@ TEST(ScanSegmentWork, AllLiveKeepsNothing) {
   CheckLive(130, live);
   SegmentWork work;
   work.rg_count = 130;
-  work.SetLive(std::vector<uint64_t>{~uint64_t{0}, ~uint64_t{0}, 0b11});
-  EXPECT_TRUE(work.live_bits.empty());
-  EXPECT_TRUE(work.live_rank.empty());
+  roaring::Roaring set;
+  set.addRange(0, 130);
+  work.SetLive(std::move(set));
+  EXPECT_TRUE(work.all_live);
+  EXPECT_TRUE(work.live.isEmpty());
 }
 
 TEST(ScanSegmentWork, NoneLive) { CheckLive(130, {}); }
 
-TEST(ScanSegmentWork, SparseAcrossWords) {
+TEST(ScanSegmentWork, Sparse) {
   CheckLive(150, {0, 1, 63, 64, 100, 127, 128, 149});
 }
 
-TEST(ScanSegmentWork, LastWordFull) { CheckLive(128, {5, 70, 127}); }
+TEST(ScanSegmentWork, LongRun) {
+  std::vector<uint32_t> live;
+  for (uint32_t rg = 50; rg < 250; ++rg) {
+    live.push_back(rg);
+  }
+  CheckLive(300, live);
+}
 
-TEST(ScanSegmentWork, EmptyWordsBetweenLiveOnes) {
-  CheckLive(300, {3, 250, 299});
+TEST(ScanSegmentWork, AcrossContainers) {
+  CheckLive(70000, {5, 65535, 65536, 69999});
 }
 
 }  // namespace

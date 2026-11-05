@@ -36,6 +36,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
+#include <roaring/roaring.hh>
 #include <span>
 #include <vector>
 
@@ -305,7 +306,7 @@ void TakeUnit(ScanGlobalState& g, ScanLocalState& l, ScanUnit unit) {
 
 uint32_t ClaimEnd(const ScanGlobalState& g, const SegmentWork& work,
                   uint32_t begin) {
-  if (work.AllLive()) {
+  if (work.all_live) {
     return begin + std::max<uint32_t>(1, (work.rg_count - begin) / g.workers);
   }
   const auto first = work.LiveBefore(begin);
@@ -448,6 +449,8 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   }
 }
 
+constexpr uint32_t kLiveSamples = 16;
+
 void LiveRowGroups(const irs::ColReader& col_reader,
                    std::span<const irs::ColFilterSpec> specs,
                    duckdb::ClientContext& context,
@@ -489,16 +492,30 @@ void LiveRowGroups(const irs::ColReader& col_reader,
   if (zonemaps.empty()) {
     return;
   }
-  std::vector<uint64_t> bits((work.rg_count + 63) / 64);
-  for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
+  const auto live = [&](uint32_t rg) {
     const auto begin = uint64_t{rg} * rg_size;
     const auto end = std::min(rows, begin + rg_size);
-    if (absl::c_none_of(
-          zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
-      bits[rg / 64] |= uint64_t{1} << (rg % 64);
+    return absl::c_none_of(
+      zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); });
+  };
+  const auto samples = std::min(kLiveSamples, work.rg_count);
+  bool pruned = false;
+  for (uint32_t i = 0; i != samples && !pruned; ++i) {
+    pruned = !live(static_cast<uint32_t>((uint64_t{2} * i + 1) * work.rg_count /
+                                         (uint64_t{2} * samples)));
+  }
+  if (!pruned) {
+    return;
+  }
+  roaring::Roaring set;
+  for (uint32_t rg = 0; rg != work.rg_count; ++rg) {
+    if (live(rg)) {
+      set.add(rg);
     }
   }
-  work.SetLive(std::move(bits));
+  set.runOptimize();
+  set.shrinkToFit();
+  work.SetLive(std::move(set));
 }
 
 }  // namespace

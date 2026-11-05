@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <array>
@@ -451,18 +452,36 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
 
 constexpr uint32_t kLiveSamples = 16;
 
+bool RowGroupDead(const irs::ColumnReader& reader,
+                  const duckdb::ExpressionFilter& filter,
+                  duckdb::TableFilterState& state, irs::BlockWindow& window,
+                  uint64_t begin, uint64_t end) {
+  if (end > reader.RowCount()) {
+    return false;
+  }
+  for (auto row = begin; row < end; row = window.end) {
+    window = reader.Locate(row, window);
+    if (!irs::ZoneDead(filter.CheckStatistics(
+          reader.RowGroupStatistics(window.block), state))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct RowGroupCheck {
+  const irs::ColumnReader* reader;
+  const duckdb::ExpressionFilter* filter;
+  duckdb::TableFilterState* state;
+  irs::BlockWindow window;
+};
+
 void LiveRowGroups(const irs::ColReader& col_reader,
                    std::span<const irs::ColFilterSpec> specs,
                    duckdb::ClientContext& context,
                    irs::ColFilterStateCache& states, uint64_t rows,
                    uint64_t rg_size, SegmentWork& work) {
-  struct Zonemap {
-    const irs::ColumnReader* reader = nullptr;
-    const duckdb::ExpressionFilter* expr = nullptr;
-    duckdb::TableFilterState* state = nullptr;
-    mutable irs::BlockWindow window;
-  };
-  std::vector<Zonemap> zonemaps;
+  absl::InlinedVector<RowGroupCheck, 4> checks;
   for (const auto& spec : specs) {
     if (spec.is_score || spec.row_gather) {
       continue;
@@ -472,31 +491,18 @@ void LiveRowGroups(const irs::ColReader& col_reader,
     if (!reader || reader->Type().IsNested()) {
       continue;
     }
-    zonemaps.emplace_back(reader,
-                          &spec.filter->Cast<duckdb::ExpressionFilter>(),
-                          &states.State(context, *spec.filter));
+    checks.emplace_back(reader, &spec.filter->Cast<duckdb::ExpressionFilter>(),
+                        &states.State(context, *spec.filter));
   }
-  const auto dead = [](const Zonemap& z, uint64_t begin, uint64_t end) {
-    if (end > z.reader->RowCount()) {
-      return false;
-    }
-    for (auto row = begin; row < end; row = z.window.end) {
-      z.window = z.reader->Locate(row, z.window);
-      if (!irs::ZoneDead(z.expr->CheckStatistics(
-            z.reader->RowGroupStatistics(z.window.block), *z.state))) {
-        return false;
-      }
-    }
-    return true;
-  };
-  if (zonemaps.empty()) {
+  if (checks.empty()) {
     return;
   }
   const auto live = [&](uint32_t rg) {
     const auto begin = uint64_t{rg} * rg_size;
     const auto end = std::min(rows, begin + rg_size);
-    return absl::c_none_of(
-      zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); });
+    return absl::c_none_of(checks, [&](RowGroupCheck& c) {
+      return RowGroupDead(*c.reader, *c.filter, *c.state, c.window, begin, end);
+    });
   };
   const auto samples = std::min(kLiveSamples, work.rg_count);
   bool pruned = false;

@@ -1,0 +1,132 @@
+statement ok
+DROP DATABASE IF EXISTS cdo_db;
+
+
+statement ok
+DROP DATABASE IF EXISTS cdo_db_with;
+
+
+statement ok
+DROP DATABASE IF EXISTS cdo_db_member;
+
+
+statement ok
+DROP ROLE IF EXISTS cdo_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS cdo_bob;
+
+
+statement ok
+DROP ROLE IF EXISTS cdo_carol;
+
+
+statement ok
+CREATE ROLE cdo_alice;
+
+
+statement ok
+CREATE ROLE cdo_bob LOGIN CREATEDB PASSWORD 'cdo_pw';
+
+
+statement ok
+CREATE ROLE cdo_carol LOGIN PASSWORD 'cdo_pw';
+
+
+statement ok
+CREATE DATABASE cdo_db OWNER cdo_alice;
+
+
+statement ok
+CREATE DATABASE cdo_db_with WITH OWNER = cdo_alice;
+
+
+query
+SELECT d.datname, r.rolname
+FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+WHERE d.datname IN ('cdo_db', 'cdo_db_with')
+ORDER BY d.datname;
+----
+datname	rolname
+cdo_db	cdo_alice
+cdo_db_with	cdo_alice
+
+
+statement error
+CREATE DATABASE cdo_db_missing OWNER cdo_nobody;
+----
+db error: ERROR: role "cdo_nobody" does not exist
+
+
+connection c_bob user=cdo_bob password=cdo_pw
+statement error
+CREATE DATABASE cdo_db_member OWNER cdo_alice;
+----
+db error: ERROR: must be able to SET ROLE "cdo_alice"
+
+
+connection c_carol user=cdo_carol password=cdo_pw
+statement error
+CREATE DATABASE cdo_db_member OWNER cdo_alice;
+----
+db error: ERROR: permission denied to create database
+
+
+statement ok
+GRANT cdo_alice TO cdo_bob;
+
+
+connection c_bob user=cdo_bob password=cdo_pw
+statement ok
+CREATE DATABASE cdo_db_member OWNER cdo_alice;
+
+
+query
+SELECT r.rolname
+FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+WHERE d.datname = 'cdo_db_member';
+----
+rolname
+cdo_alice
+
+
+statement ok
+DROP DATABASE cdo_db_member;
+
+
+statement ok
+DROP DATABASE cdo_db_with;
+
+
+onlyif postgres
+statement error
+DROP ROLE cdo_alice;
+----
+db error: ERROR: role "cdo_alice" cannot be dropped because some objects depend on it
+DETAIL: owner of database cdo_db
+
+
+skipif postgres
+statement error
+DROP ROLE cdo_alice;
+----
+db error: ERROR: Cannot drop entry "cdo_alice" because there are entries that depend on it.
+database "cdo_db" depends on role "cdo_alice".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP DATABASE cdo_db;
+
+
+statement ok
+DROP ROLE cdo_carol;
+
+
+statement ok
+DROP ROLE cdo_bob;
+
+
+statement ok
+DROP ROLE cdo_alice;

@@ -21,6 +21,11 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -30,7 +35,10 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
@@ -43,24 +51,72 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
+#include <span>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
+#include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
+#include "pg/progress_registry.h"
 #include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
 
-constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
+
+struct PredefinedRole {
+  duckdb::idx_t oid;
+  std::string_view name;
+  RoleOption options;
+  std::span<const duckdb::idx_t> member_of;
+};
+
+#include "pg/catalog/generated/predefined_roles.gen.inc"
+
+void RequireDatabaseUnused(duckdb::ClientContext& context,
+                           duckdb::AttachedDatabase& database) {
+  if (duckdb::DatabaseManager::GetDefaultDatabase(context) ==
+      database.GetName()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("cannot drop the currently open database"));
+  }
+  auto& catalog = database.GetCatalog().Cast<duckdb::DuckCatalog>();
+  size_t subscriptions = 0;
+  catalog.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+    .Scan([&](duckdb::CatalogEntry&) { ++subscriptions; });
+  if (subscriptions != 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+              "\" is being used by logical replication subscription"),
+      ERR_DETAIL(subscriptions == 1 ? std::string{"There is 1 subscription."}
+                                    : absl::StrCat("There are ", subscriptions,
+                                                   " subscriptions.")));
+  }
+  const auto* connection = connector::GetSereneDBContextPtr(context);
+  const auto others = pg::ProgressRegistry::Instance().OtherSessions(
+    static_cast<int64_t>(database.oid),
+    connection ? connection->GetBackendPid() : 0, absl::Seconds(5));
+  if (others == 0) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_OBJECT_IN_USE),
+    ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+            "\" is being accessed by other users"),
+    ERR_DETAIL(others == 1 ? std::string{"There is 1 other session using "
+                                         "the database."}
+                           : absl::StrCat("There are ", others,
+                                          " other sessions using the "
+                                          "database.")));
+}
 
 }  // namespace
 
@@ -95,7 +151,7 @@ void ClusterCatalog::OpenCatalogLog(
   _compactable = compactable;
   _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
                     std::memory_order_relaxed);
-  auth::PublishRoles(*this);
+  PublishSecurity();
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -112,7 +168,7 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
-void ClusterCatalog::EndCatalogLogCommit() { auth::PublishRoles(*this); }
+void ClusterCatalog::EndCatalogLogCommit() { PublishSecurity(); }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
   if (!_compactable) {
@@ -268,6 +324,21 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
     }
     CreateRole(transaction, info);
   }
+  for (const auto& predefined : kPredefinedRoles) {
+    const duckdb::Identifier name{predefined.name};
+    if (GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+          .GetEntry(transaction, name)) {
+      continue;
+    }
+    duckdb::CreateRoleInfo info;
+    info.SetName(name);
+    info.oid = predefined.oid;
+    info.options = predefined.options;
+    for (const auto role : predefined.member_of) {
+      info.member_of.push_back({.role = role, .grantor = pg::kRootUser});
+    }
+    CreateRole(transaction, info);
+  }
   const duckdb::Identifier postgres{irs::StaticStrings::kDefaultDatabase};
   if (!GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
          .GetEntry(transaction, postgres)) {
@@ -281,28 +352,28 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
 
 duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
   duckdb::CreateRoleInfo& info) {
-  RequireUnreservedRoleName(info.GetQualifiedName().Name());
-  if (!info.password.empty()) {
-    info.password = StoredPassword(info.password);
+  if (!IsPredefinedRole(info.oid)) {
+    RequireUnreservedRoleName(info.GetQualifiedName().Name());
   }
   return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
-}
-
-bool ClusterCatalog::IsPinnedEntry(const duckdb::CatalogEntry& entry) const {
-  return entry.type == duckdb::CatalogType::ROLE_ENTRY &&
-         entry.oid == pg::kRootUser;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   DeclareModified(transaction, *this);
+  auto& context = transaction.GetContext();
+  if (!info.password.empty()) {
+    info.password = StoredPassword(
+      context, info.GetQualifiedName().Name().GetIdentifierName(),
+      info.password);
+  }
   auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
   const auto grant = [&](const duckdb::Identifier& member,
                          const duckdb::Identifier& granted, bool admin) {
     duckdb::AlterRoleInfo alter{member};
     alter.grant_role = granted.GetIdentifierName();
     alter.admin_option = admin;
-    Alter(transaction, alter);
+    ApplyAlter(transaction, alter);
   };
   for (const auto& name : info.in_roles) {
     grant(role->name, name, false);
@@ -313,17 +384,37 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   for (const auto& name : info.admin_members) {
     grant(name, role->name, true);
   }
-  auto& context = transaction.GetContext();
   if (const auto creator = GrantorOfMembership(context);
       creator != pg::kRootUser) {
     duckdb::AlterRoleInfo alter{
-      duckdb::Identifier{auth::RolesOf(&context)->NameOf(creator)}};
+      duckdb::Identifier{RolesOf(&context)->NameOf(creator)}};
     alter.grant_role = role->name.GetIdentifierName();
     alter.grantor_id = pg::kRootUser;
     alter.admin_option = true;
     alter.inherit_option = false;
     alter.set_option = false;
-    Alter(transaction, alter);
+    ApplyAlter(transaction, alter);
+    duckdb::Value self_grant;
+    context.TryGetCurrentSetting(duckdb::Identifier{"createrole_self_grant"},
+                                 self_grant);
+    bool inherit = false;
+    bool set = false;
+    for (const auto option : absl::StrSplit(
+           self_grant.IsNull() ? std::string{} : self_grant.ToString(), ',',
+           absl::SkipWhitespace())) {
+      const auto keyword = absl::StripAsciiWhitespace(option);
+      inherit |= absl::EqualsIgnoreCase(keyword, "inherit");
+      set |= absl::EqualsIgnoreCase(keyword, "set");
+    }
+    if (inherit || set) {
+      duckdb::AlterRoleInfo own{alter.GetQualifiedName().Name()};
+      own.grant_role = alter.grant_role;
+      own.grantor_id = creator;
+      own.admin_option = false;
+      own.inherit_option = inherit;
+      own.set_option = set;
+      ApplyAlter(transaction, own);
+    }
   }
   return role;
 }
@@ -333,8 +424,13 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-  if (auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name())) {
-    auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
+  auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
+  std::vector<duckdb::idx_t> dropped;
+  const auto check = [&](const duckdb::DropInfo& target) {
+    auto role = roles.GetEntry(transaction, target.GetQualifiedName().Name());
+    if (!role) {
+      return;
+    }
     if (session && (role->oid == session->GetRoleId() ||
                     role->oid == session->GetSessionRoleId() ||
                     role->oid == session->GetLoginRoleId())) {
@@ -347,31 +443,197 @@ void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
         ERR_MSG("cannot drop role \"", role->name.GetIdentifierName(),
                 "\" because it is required by the database system"));
     }
-    std::vector<duckdb::Identifier> members;
-    roles.Scan(transaction, [&](duckdb::CatalogEntry& other) {
-      if (absl::c_any_of(other.Cast<RoleCatalogEntry>().MemberOf(),
-                         [&](const duckdb::Membership& membership) {
-                           return membership.role == role->oid;
-                         })) {
-        members.emplace_back(other.name);
+    if (!absl::c_linear_search(dropped, role->oid)) {
+      dropped.push_back(role->oid);
+    }
+  };
+  check(info);
+  for (const auto& target : info.additional_drops) {
+    check(*target);
+  }
+  struct Membership {
+    duckdb::Identifier member;
+    duckdb::idx_t role;
+  };
+  std::vector<Membership> memberships;
+  roles.Scan(transaction, [&](duckdb::CatalogEntry& other) {
+    const bool listed = absl::c_linear_search(dropped, other.oid);
+    std::vector<duckdb::idx_t> granted;
+    for (const auto& membership : other.Cast<RoleCatalogEntry>().MemberOf()) {
+      if ((listed || absl::c_linear_search(dropped, membership.role)) &&
+          !absl::c_linear_search(granted, membership.role)) {
+        granted.push_back(membership.role);
+        memberships.push_back({other.name, membership.role});
+      }
+    }
+  });
+  for (const auto& membership : memberships) {
+    duckdb::AlterRoleInfo alter{membership.member};
+    alter.grant_role_id = membership.role;
+    alter.revoke = true;
+    ApplyAlter(transaction, alter);
+  }
+  struct Settings {
+    duckdb::Identifier database;
+    duckdb::idx_t role;
+  };
+  std::vector<Settings> settings;
+  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& database) {
+      for (const auto role : dropped) {
+        if (database.Cast<DatabaseCatalogEntry>().SettingsOf(role)) {
+          settings.push_back({database.name, role});
+        }
       }
     });
-    for (const auto& member : members) {
-      duckdb::AlterRoleInfo alter{member};
-      alter.grant_role_id = role->oid;
-      alter.revoke = true;
-      Alter(transaction, alter);
-    }
+  for (const auto& setting : settings) {
+    duckdb::AlterDatabaseSettingsInfo alter{setting.database};
+    alter.role_id = setting.role;
+    alter.reset_all_config = true;
+    ApplyAlter(transaction, alter);
   }
   duckdb::DuckCatalog::DropRole(transaction, info);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_DATABASE_SETTINGS) {
+    auto& alter = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
+    if (transaction.HasContext()) {
+      duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
+                                             alter.set_config);
+    }
+    ApplyAlter(transaction, info);
+    return;
+  }
+  if (info.type != duckdb::AlterType::ALTER_ROLE) {
+    ApplyAlter(transaction, info);
+    return;
+  }
+  auto& alter = info.Cast<duckdb::AlterRoleInfo>();
+  if (transaction.HasContext()) {
+    duckdb::Settings::ResolveCurrentValues(transaction.GetContext(),
+                                           alter.set_config);
+  }
+  if (alter.revoke && !alter.grant_role.empty() &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+    RevokeMembership(transaction, alter);
+    return;
+  }
+  if (!HasOption(alter.set_options | alter.clear_options,
+                 RoleOption::Superuser) ||
+      !transaction.HasContext() ||
+      info.bind_mode != duckdb::AlterBindMode::BIND_ON_ALTER) {
+    ApplyAlter(transaction, info);
+    return;
+  }
+  auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
+  const auto& name = info.GetQualifiedName().Name();
+  const auto previous = roles.GetEntry(transaction, name);
+  const bool was_superuser =
+    previous && previous->Cast<RoleCatalogEntry>().IsSuperuser();
+  ApplyAlter(transaction, info);
+  const auto& role =
+    roles.GetEntry(transaction, name)->Cast<RoleCatalogEntry>();
+  if (role.IsSuperuser() != was_superuser) {
+    FollowOwnerStatus(transaction.GetContext(), role.oid, role.IsSuperuser());
+  }
+}
+
+void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
+                                      duckdb::AlterRoleInfo& alter) {
+  auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
+  const auto granted =
+    roles.GetEntry(transaction, duckdb::Identifier{alter.grant_role});
+  const auto member =
+    roles.GetEntry(transaction, alter.GetQualifiedName().Name());
+  if (!granted || !member || !alter.grantor_id ||
+      (alter.option_only && alter.admin_option != 0)) {
+    ApplyAlter(transaction, alter);
+    return;
+  }
+  struct Grant {
+    duckdb::Identifier member;
+    duckdb::idx_t member_oid;
+    duckdb::idx_t grantor;
+    bool admin;
+  };
+  enum class Plan : uint8_t {
+    Keep,
+    RevokeAdmin,
+    Revoke,
+  };
+  std::vector<Grant> grants;
+  roles.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+    for (const auto& edge : entry.Cast<RoleCatalogEntry>().MemberOf()) {
+      if (edge.role == granted->oid) {
+        grants.push_back(
+          {entry.name, entry.oid, edge.grantor, edge.admin_option});
+      }
+    }
+  });
+  const auto target = absl::c_find_if(grants, [&](const Grant& grant) {
+    return grant.member_oid == member->oid && grant.grantor == alter.grantor_id;
+  });
+  if (target == grants.end()) {
+    ApplyAlter(transaction, alter);
+    return;
+  }
+  std::vector<Plan> plans(grants.size(), Plan::Keep);
+  const auto plan = [&](this const auto& self, size_t index,
+                        bool admin_only) -> void {
+    if (plans[index] == Plan::Revoke ||
+        (plans[index] == Plan::RevokeAdmin && admin_only)) {
+      return;
+    }
+    if (!grants[index].admin) {
+      if (!admin_only) {
+        plans[index] = Plan::Revoke;
+      }
+      return;
+    }
+    plans[index] = admin_only ? Plan::RevokeAdmin : Plan::Revoke;
+    const auto holder = grants[index].member_oid;
+    for (size_t i = 0; i < grants.size(); ++i) {
+      if (grants[i].member_oid == holder && grants[i].admin &&
+          plans[i] == Plan::Keep) {
+        return;
+      }
+    }
+    for (size_t i = 0; i < grants.size(); ++i) {
+      if (grants[i].grantor != holder || plans[i] == Plan::Revoke) {
+        continue;
+      }
+      if (!alter.cascade) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+                        ERR_MSG("dependent privileges exist"),
+                        ERR_HINT("Use CASCADE to revoke them too."));
+      }
+      self(i, false);
+    }
+  };
+  const size_t revoked = target - grants.begin();
+  plan(revoked, alter.option_only);
+  ApplyAlter(transaction, alter);
+  for (size_t i = 0; i < grants.size(); ++i) {
+    if (i == revoked || plans[i] != Plan::Revoke) {
+      continue;
+    }
+    duckdb::AlterRoleInfo cascaded{grants[i].member};
+    cascaded.grant_role_id = granted->oid;
+    cascaded.grantor_id = grants[i].grantor;
+    cascaded.revoke = true;
+    ApplyAlter(transaction, cascaded);
+  }
+}
+
+void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
+                                duckdb::AlterInfo& info) {
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();
-  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
+  if (!GetCatalogSet(type).AlterEntry(transaction, name, info) &&
+      info.if_not_found == duckdb::OnEntryNotFound::THROW_EXCEPTION) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
@@ -390,6 +652,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
 
 void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   duckdb::DropInfo& info) {
+  auto& context = transaction.GetContext();
+  if (const auto* connection = connector::GetSereneDBContextPtr(context)) {
+    connection->PreventInTransactionBlock("DROP DATABASE");
+  }
+  if (auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
+        info.GetQualifiedName().Name());
+      database && database->GetCatalog().GetCatalogType() ==
+                    SereneDBCatalog::kStorageType) {
+    RequireDatabaseUnused(context, *database);
+  }
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropDatabase(transaction, info);
@@ -414,6 +686,20 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
 
 ClusterCatalog& ClusterOf() {
   return ClusterOf(irs::DuckDBEngine::Instance().instance());
+}
+
+duckdb::shared_ptr<const duckdb::SecuritySnapshot> RolesOf(
+  duckdb::ClientContext* context) {
+  if (context && context->security) {
+    return context->security;
+  }
+  auto& cluster = context ? ClusterOf(*context->db) : ClusterOf();
+  auto& db = cluster.GetDatabase();
+  if (auto roles = db.GetSecurity()) {
+    return roles;
+  }
+  cluster.PublishSecurity();
+  return db.GetSecurity();
 }
 
 }  // namespace sdb::catalog

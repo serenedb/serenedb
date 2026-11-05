@@ -1,0 +1,67 @@
+control substitution on
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+
+statement ok
+CREATE SERVER efbi_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+
+statement ok
+CREATE SCHEMA efbi_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE efbi_${__DATABASE__}.${__DATABASE__}.efbi_t (id INTEGER, body TEXT);
+
+
+statement count 2
+INSERT INTO efbi_${__DATABASE__}.${__DATABASE__}.efbi_t VALUES (1, 'pudge'), (2, 'anchin');
+
+
+statement ok
+DROP ROLE IF EXISTS efbi_vedernikoff;
+
+
+statement ok
+CREATE ROLE efbi_vedernikoff LOGIN PASSWORD 'efbi_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER efbi_${__DATABASE__} TO efbi_vedernikoff;
+
+
+connection c_ved user=efbi_vedernikoff password=efbi_pw
+query
+SELECT id, body FROM efbi_${__DATABASE__}.${__DATABASE__}.efbi_t ORDER BY id;
+----
+id	body
+1	pudge
+2	anchin
+
+
+connection c_ved user=efbi_vedernikoff password=efbi_pw
+statement error
+CREATE TABLE efbi_${__DATABASE__}.${__DATABASE__}.efbi_elsewhere (id INTEGER);
+----
+db error: ERROR: permission denied for schema <slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON FOREIGN SERVER efbi_${__DATABASE__} FROM efbi_vedernikoff;
+
+
+connection c_ved user=efbi_vedernikoff password=efbi_pw
+statement error
+SELECT id, body FROM efbi_${__DATABASE__}.${__DATABASE__}.efbi_t ORDER BY id;
+----
+db error: ERROR: permission denied for foreign server efbi_<slt:ignore>
+
+
+statement ok
+DROP SERVER efbi_${__DATABASE__};
+
+
+statement ok
+DROP ROLE efbi_vedernikoff;

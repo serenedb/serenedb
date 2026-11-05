@@ -1,0 +1,70 @@
+control substitution on
+
+statement ok
+CREATE ROLE esa_vedernikoff_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE esa_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY esa_english AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE INDEX esa_idx ON esa_docs USING inverted(id, body esa_english);
+
+
+statement ok
+INSERT INTO esa_docs VALUES (1, 'quick fox'), (2, 'lazy dog');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) esa_docs;
+
+
+statement ok
+GRANT SELECT ON esa_docs TO esa_vedernikoff_${__DATABASE__};
+
+
+statement ok
+SET ROLE esa_vedernikoff_${__DATABASE__};
+
+
+query
+SELECT id FROM esa_idx WHERE (body @@ to_tsquery('quick'))::score('constant(5)') ORDER BY id;
+----
+id
+1
+
+
+statement error
+SELECT id FROM esa_idx WHERE (body @@ to_tsquery('quick'))::score('constant(length(json_serialize_plan(''SELECT 1'')))') ORDER BY id;
+----
+db error: ERROR: permission denied for function json_serialize_plan
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id FROM esa_idx WHERE (body @@ to_tsquery('quick'))::score('constant(length(json_serialize_plan(''SELECT 1'')))') ORDER BY id;
+----
+id
+1
+
+
+statement ok
+DROP TABLE esa_docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY esa_english;
+
+
+statement ok
+DROP ROLE esa_vedernikoff_${__DATABASE__};

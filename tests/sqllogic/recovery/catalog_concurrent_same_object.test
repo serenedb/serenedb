@@ -92,7 +92,7 @@ SELECT pg_get_userbyid(relowner) AS owner,
 FROM pg_class WHERE relname = 'ccso_t'
 ----
 owner	acl
-ccso_owner	ccso_grantee=r/ccso_owner
+ccso_owner	ccso_owner=arwdDxtm/ccso_owner|ccso_grantee=r/ccso_owner
 
 
 # ----------------------------------------------------------------------
@@ -329,7 +329,7 @@ SELECT pg_get_userbyid(relowner) AS owner,
 FROM pg_class WHERE relname = 'ccso_t'
 ----
 owner	acl
-ccso_owner	ccso_grantee=r/ccso_owner
+ccso_owner	ccso_owner=arwdDxtm/ccso_owner|ccso_grantee=r/ccso_owner
 
 
 connection after_crash

@@ -193,12 +193,18 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   void DropForeignServer(duckdb::CatalogTransaction transaction,
                          duckdb::DropInfo& info) final;
 
+  bool SupportsSubscriptions() const final { return true; }
+
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSubscriptionInfo& info);
+    duckdb::CreateSubscriptionInfo& info) final;
 
   void DropSubscription(duckdb::CatalogTransaction transaction,
-                        duckdb::DropInfo& info);
+                        duckdb::DropInfo& info) final;
+
+ private:
+  void AlterSubscription(duckdb::CatalogTransaction transaction,
+                         duckdb::AlterInfo& info);
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;

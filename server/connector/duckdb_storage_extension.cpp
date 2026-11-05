@@ -91,6 +91,23 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  std::string owner;
+  if (const auto option = options.options.find("owner");
+      option != options.options.end()) {
+    owner = option->second.ToString();
+    options.options.erase(option);
+  }
+  duckdb::CreateDatabaseInfo database;
+  if (const auto option = options.options.find("connection_limit");
+      option != options.options.end()) {
+    database.connection_limit = option->second.GetValue<int32_t>();
+    options.options.erase(option);
+  }
+  if (const auto option = options.options.find("allow_connections");
+      option != options.options.end()) {
+    database.allow_connections = option->second.GetValue<bool>();
+    options.options.erase(option);
+  }
   if (options.recovery_mode != duckdb::RecoveryMode::DEFAULT) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -118,7 +135,6 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
                  .GetEntry(transaction, info.name);
   if (!entry) {
-    duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
     for (const auto* key : {"block_size", "row_group_size"}) {
       if (auto option = options.options.find(key);
@@ -129,6 +145,20 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     auto* connection = GetSereneDBContextPtr(context);
     database.permissions.owner =
       connection ? connection->GetRoleId() : pg::kRootUser;
+    if (!owner.empty()) {
+      const auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+                          .GetEntry(transaction, duckdb::Identifier{owner});
+      if (!role) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("role \"", owner, "\" does not exist"));
+      }
+      if (!context.CurrentRole().CanSet(role->oid)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be able to SET ROLE \"",
+                                role->name.GetIdentifierName(), "\""));
+      }
+      database.permissions.owner = role->oid;
+    }
     entry = cluster.CreateDatabase(transaction, database);
     SDB_IF_FAILURE("unable_to_create") {
       THROW_SQL_ERROR(ERR_MSG("internal error"));
@@ -272,6 +302,7 @@ void RegisterSereneDBStorage(
   extension->attach = AttachSereneDB;
   extension->create_transaction_manager = CreateTransactionManager;
   extension->storage_info = std::move(layout);
+  extension->creates_database = true;
   duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
 }
 
@@ -283,6 +314,22 @@ void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
       .get_sql_value_function = &pg::SystemUserValueFunction,
     });
   optimizer::RegisterIResearchPlanOptimizer(db);
+}
+
+void RequireDatabaseNotBeingCreated(duckdb::ClientContext& context,
+                                    const duckdb::Identifier& name) {
+  auto database = duckdb::DatabaseManager::Get(context).GetDatabase(name);
+  if (!database || database->GetCatalog().GetCatalogType() !=
+                     catalog::SereneDBCatalog::kStorageType) {
+    return;
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  if (!cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+         .GetEntry(cluster.GetCatalogTransaction(context), name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                    ERR_MSG("database \"", name.GetIdentifierName(),
+                            "\" is being created by another transaction"));
+  }
 }
 
 }  // namespace sdb::connector

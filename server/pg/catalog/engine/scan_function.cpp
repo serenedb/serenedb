@@ -34,7 +34,6 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/system_table.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/engine/registry.h"
@@ -48,6 +47,20 @@ struct SystemFunctionInfo final : duckdb::TableFunctionInfo {
   explicit SystemFunctionInfo(const SystemTable& table) : table{table} {}
 
   const SystemTable& table;
+};
+
+class SystemTableVersion final : public duckdb::PlanDataVersion {
+ public:
+  explicit SystemTableVersion(duckdb::Identifier database)
+    : _database{std::move(database)} {}
+
+  bool IsCurrent(duckdb::ClientContext& context) const final {
+    return _database.GetIdentifierName().empty() ||
+           duckdb::DatabaseManager::GetDefaultDatabase(context) == _database;
+  }
+
+ private:
+  duckdb::Identifier _database;
 };
 
 duckdb::BindInfo SystemTableGetBindInfo(
@@ -189,27 +202,27 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   duckdb::vector<duckdb::LogicalType>& types,
   duckdb::vector<duckdb::Identifier>& names) {
   const auto& table = input.info->Cast<SystemFunctionInfo>().table;
-  if (table.SuperuserOnly()) {
-    if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->is_superuser) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("permission denied for function ", table.Sql().name));
-    }
-  }
   for (const auto& column : table.Columns().Logical()) {
     types.emplace_back(column.Type());
     names.emplace_back(column.Name());
   }
-  return duckdb::make_uniq<SystemTableBindData>(
-    table,
+  auto& catalog =
     duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-      .Cast<duckdb::DuckCatalog>(),
-    nullptr);
+      .Cast<duckdb::DuckCatalog>();
+  if (input.binder) {
+    input.binder->GetStatementProperties().RegisterDBRead(catalog, context);
+  }
+  return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr);
 }
 
 }  // namespace
+
+duckdb::shared_ptr<duckdb::PlanDataVersion>
+SystemTableBindData::GetPlanDataVersion() const {
+  return duckdb::make_shared_ptr<SystemTableVersion>(
+    entry ? duckdb::Identifier{} : catalog.GetName());
+}
 
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
@@ -228,6 +241,9 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
     function.bind = SystemFunctionBind;
     function.function_info =
       duckdb::make_shared_ptr<SystemFunctionInfo>(*table);
+    if (table->SuperuserOnly()) {
+      function.required_capability = duckdb::RoleCapability::Superuser;
+    }
     duckdb::CreateTableFunctionInfo info{std::move(function)};
     info.SetSchema(duckdb::Identifier{table->Sql().schema});
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;

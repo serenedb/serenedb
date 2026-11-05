@@ -18,21 +18,49 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <span>
+
+#include "catalog/entry/database.h"
+#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
-#include "pg/catalog/utils/acl.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr auto kWrapper = Shape<kPgForeignDataWrapperSql, const SystemObject>(
-  Col<"oid">(&SystemObject::oid), Col<"fdwname">(&SystemObject::name),
-  Col<"fdwowner">([](const auto&) { return kRootUser; }),
-  Col<"fdwacl">(
-    [](const auto&) -> const auto& { return kForeignDataWrapperAcl; }));
+struct Wrapper {
+  const SystemObject& object;
+  std::span<const duckdb::AclItem> acl;
+};
+
+class PgForeignDataWrapper final
+  : public SystemTableScan<kPgForeignDataWrapperSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = std::size(kForeignDataWrappers);
+
+  static constexpr std::tuple kSources{CatalogSetSource{
+    SystemCatalog::Cluster, duckdb::CatalogType::DATABASE_ENTRY, {}}};
+
+  static constexpr auto kWrapper = Shape<kSql, const Wrapper>(
+    Col<"oid">([](const auto& row) { return row.object.oid; }),
+    Col<"fdwname">([](const auto& row) { return row.object.name; }),
+    Col<"fdwowner">([](const auto&) { return kRootUser; }),
+    Col<"fdwacl">([](const auto& row) { return row.acl; }));
+
+  void Row(const catalog::DatabaseCatalogEntry& database) {
+    if (database.oid != Database().GetAttached().oid) {
+      return;
+    }
+    for (const auto& wrapper : kForeignDataWrappers) {
+      Emit<kWrapper>(
+        {wrapper, database.permissions.ForeignDataWrapperAcl(wrapper.oid)});
+    }
+  }
+};
 
 }  // namespace
 
-SystemTable gPgForeignDataWrapper =
-  SystemTableOf<StaticTable<kWrapper, kForeignDataWrappers>>();
+SystemTable gPgForeignDataWrapper = SystemTableOf<PgForeignDataWrapper>();
 
 }  // namespace sdb::pg

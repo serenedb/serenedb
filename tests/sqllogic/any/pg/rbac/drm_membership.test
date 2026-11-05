@@ -8,13 +8,6 @@
 # the pg_auth_members rows that reference the dropped role disappear. So these
 # DROP ROLE statements SUCCEED.
 #
-# (PG does refuse DROP ROLE when the role is the GRANTOR of a membership still
-# held by a live role -- DETAIL "privileges for membership of role X in role Y".
-# Reproducing that requires CREATE ROLE ... WITH ADMIN <role> and
-# REVOKE ... GRANTED BY, neither of which serenedb parses (syntax error), and
-# SET ROLE is not enforced, so a non-bootstrap grantor cannot be established.
-# That edge is therefore out of scope here -- see the report.)
-#
 # The one membership operation PG (and serenedb) reject is creating a cycle:
 # GRANT a TO b then GRANT b TO a -> ERROR 0LP01.
 #

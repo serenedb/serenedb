@@ -218,7 +218,7 @@ macro_not_hijacked
 t
 
 statement ok
-DROP MACRO TABLE duckdb_profiling_settings
+DROP MACRO TABLE public.duckdb_profiling_settings
 
 
 # Named parameters ride along with the copied function set. include_hidden is

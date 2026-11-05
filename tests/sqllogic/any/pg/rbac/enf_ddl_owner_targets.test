@@ -1,0 +1,205 @@
+statement ok
+DROP SCHEMA IF EXISTS edo_s CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS edo_theirs CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS edo_theirs_log;
+
+
+statement ok
+DROP TABLE IF EXISTS edo_mine CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS edo_mine_log;
+
+
+statement ok
+DROP FUNCTION IF EXISTS edo_tf();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION IF EXISTS edo_note();
+
+
+statement ok
+DROP ROLE IF EXISTS edo_vedernikoff;
+
+
+statement ok
+CREATE ROLE edo_vedernikoff LOGIN PASSWORD 'edo_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO edo_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA edo_s;
+
+
+statement ok
+GRANT CREATE ON SCHEMA edo_s TO edo_vedernikoff;
+
+
+statement ok
+CREATE TABLE edo_theirs (a integer);
+
+
+statement ok
+CREATE TABLE edo_theirs_log (a integer);
+
+
+statement ok
+CREATE INDEX edo_theirs_idx ON edo_theirs (a);
+
+
+statement ok
+CREATE FUNCTION edo_tf() RETURNS TABLE (a integer) LANGUAGE sql AS 'SELECT 1';
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION edo_note() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END';
+
+
+onlyif postgres
+statement ok
+CREATE TRIGGER edo_theirs_trg AFTER INSERT ON edo_theirs REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION edo_note();
+
+
+skipif postgres
+statement ok
+CREATE TRIGGER edo_theirs_trg AFTER INSERT ON edo_theirs REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO edo_theirs_log SELECT a FROM new_rows;
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+CREATE TABLE edo_mine (a integer);
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+CREATE TABLE edo_mine_log (a integer);
+
+
+onlyif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+CREATE TRIGGER edo_mine_trg AFTER INSERT ON edo_mine REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION edo_note();
+
+
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+CREATE TRIGGER edo_mine_trg AFTER INSERT ON edo_mine REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO edo_mine_log SELECT a FROM new_rows;
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+DROP TRIGGER edo_mine_trg ON edo_mine;
+
+
+onlyif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP TRIGGER edo_theirs_trg ON edo_theirs;
+----
+db error: ERROR: must be owner of relation edo_theirs
+
+
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP TRIGGER edo_theirs_trg ON edo_theirs;
+----
+db error: ERROR: must be owner of table edo_theirs
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP INDEX edo_theirs_idx;
+----
+db error: ERROR: must be owner of index edo_theirs_idx
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+CREATE INDEX edo_more_idx ON edo_theirs (a);
+----
+db error: ERROR: must be owner of table edo_theirs
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+COMMENT ON TABLE edo_theirs IS 'mine now';
+----
+db error: ERROR: must be owner of table edo_theirs
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+ALTER FUNCTION public.edo_tf RENAME TO edo_tf_mine;
+----
+db error: ERROR: must be owner of function edo_tf
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement ok
+CREATE TABLE edo_s.edo_inner (a integer);
+
+
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP TABLE edo_s.edo_inner;
+----
+db error: ERROR: permission denied for schema edo_s
+
+
+query
+SELECT count(*) AS triggers FROM pg_trigger WHERE tgname IN ('edo_theirs_trg', 'edo_mine_trg');
+----
+triggers
+1
+
+
+statement ok
+DROP TABLE edo_mine;
+
+
+statement ok
+DROP TABLE edo_mine_log;
+
+
+statement ok
+DROP TABLE edo_theirs;
+
+
+statement ok
+DROP TABLE edo_theirs_log;
+
+
+statement ok
+DROP FUNCTION edo_tf();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION edo_note();
+
+
+statement ok
+DROP SCHEMA edo_s CASCADE;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM edo_vedernikoff;
+
+
+statement ok
+DROP ROLE edo_vedernikoff;

@@ -32,7 +32,7 @@ Note the last lines: unlike PostgreSQL's packaged default, password authenticati
 
 ## Passwords
 
-Passwords are stored as SCRAM-SHA-256 verifiers, never in cleartext. Set one at creation or rotate it later:
+Passwords are stored as SCRAM-SHA-256 verifiers, or as MD5 hashes when `password_encryption` is `md5`, never in cleartext. `ENCRYPTED PASSWORD` means the same as `PASSWORD`, and `UNENCRYPTED PASSWORD` is refused. A password given already hashed, such as the one psql's `\password` command sends, is stored as it is. An empty password, or the hash of one, clears the password instead, with the notice `empty string is not a valid password, clearing password`. Renaming a role clears an MD5 password, because the hash includes the role name: the role needs a new password to log in. Set one at creation or rotate it later:
 
 <SqlLogicTest id="security/client_authentication/example_001" />
 

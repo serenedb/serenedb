@@ -73,7 +73,6 @@
 #include <variant>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/role.h"
@@ -942,8 +941,9 @@ class SystemScan {
 
   template<duckdb::PhysicalType E, bool Nullable, typename R>
   void PutList(const SystemVector& target, R& items) {
-    if constexpr (Nullable && std::is_same_v<std::ranges::range_value_t<R>,
-                                             duckdb::AclItem>) {
+    constexpr bool kAcl =
+      std::is_same_v<std::ranges::range_value_t<R>, duckdb::AclItem>;
+    if constexpr (Nullable && kAcl) {
       if (std::ranges::empty(items)) {
         target.validity->SetInvalid(_row);
         return;
@@ -951,18 +951,23 @@ class SystemScan {
     }
     auto& vector = *target.vector;
     const auto offset = duckdb::ListVector::GetListSize(vector);
-    const auto length = static_cast<duckdb::idx_t>(std::ranges::size(items));
-    duckdb::ListVector::Reserve(vector, offset + length);
+    duckdb::ListVector::Reserve(
+      vector, offset + static_cast<duckdb::idx_t>(std::ranges::size(items)));
     auto& child = duckdb::ListVector::GetChildMutable(vector);
     const SystemVector elements{&child,
                                 duckdb::FlatVector::GetDataMutable(child),
                                 &duckdb::FlatVector::ValidityMutable(child)};
     auto row = offset;
     for (const auto& item : items) {
+      if constexpr (kAcl) {
+        if (item.GrantsNothing()) {
+          continue;
+        }
+      }
       Put<E>(elements, row++, item);
     }
-    Cells<duckdb::list_entry_t>(target)[_row] = {offset, length};
-    duckdb::ListVector::SetListSize(vector, offset + length);
+    Cells<duckdb::list_entry_t>(target)[_row] = {offset, row - offset};
+    duckdb::ListVector::SetListSize(vector, row);
   }
 
   template<const SystemSql& Sql, uint32_t C>
@@ -1009,7 +1014,7 @@ class SystemScan {
   duckdb::DuckCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
-  std::shared_ptr<const auth::RoleGraph> _roles;
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
   std::vector<SystemConstant> _constants;
@@ -1112,6 +1117,9 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
     case duckdb::CatalogType::COORDINATE_SYSTEM_ENTRY:
     case duckdb::CatalogType::JOB_ENTRY:
     case duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY:
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+    case duckdb::CatalogType::PARAMETER_ENTRY:
+    case duckdb::CatalogType::LANGUAGE_ENTRY:
     case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
     case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
     case duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY:

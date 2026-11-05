@@ -1,0 +1,139 @@
+control substitution on
+
+
+statement ok
+CREATE MACRO dropl_m1(x) AS x + 1;
+
+
+statement ok
+CREATE MACRO dropl_m2(x) AS dropl_m1(x) * 2;
+
+
+statement ok
+DROP MACRO dropl_m1, dropl_m2;
+
+
+statement ok
+CREATE MACRO dropl_m1(x) AS x + 1;
+
+
+statement ok
+CREATE MACRO dropl_m2(x) AS dropl_m1(x) * 2;
+
+
+statement ok
+DROP MACRO dropl_m2, dropl_m1;
+
+
+statement ok
+CREATE MACRO dropl_tm1() AS TABLE SELECT 1 AS x;
+
+
+statement ok
+CREATE MACRO dropl_tm2() AS TABLE SELECT 2 AS x;
+
+
+statement ok
+DROP MACRO TABLE dropl_tm1, dropl_tm2;
+
+
+statement ok
+CREATE MACRO dropl_tm3() AS TABLE SELECT 3 AS x;
+
+
+statement ok
+CREATE MACRO dropl_sm(x) AS x;
+
+
+statement ok
+DROP MACRO dropl_tm3, dropl_sm;
+
+
+query
+SELECT count(*) AS n FROM duckdb_functions() WHERE function_name LIKE 'dropl\_%' ESCAPE '\';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE dropl_log (x INT);
+
+
+statement ok
+CREATE JOB dropl_j1 AFTER 1 HOUR AS INSERT INTO dropl_log VALUES (1);
+
+
+statement ok
+CREATE JOB dropl_j2 AFTER 1 HOUR AS INSERT INTO dropl_log VALUES (2);
+
+
+statement error
+DROP JOB dropl_j1, dropl_j_missing;
+----
+db error: ERROR: Job with name dropl_j_missing does not exist!
+Did you mean "dropl_j1"?
+
+
+statement ok
+DROP JOB dropl_j1, dropl_j2;
+
+
+statement ok
+DROP JOB IF EXISTS dropl_j1, dropl_j2;
+
+
+statement ok
+DROP TABLE dropl_log;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dropl_d1 AS split_text(case := 'lower');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dropl_d2 AS split_text(case := 'upper');
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY dropl_d1, dropl_d2;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS dropl_d1, dropl_d2;
+
+
+statement ok
+CREATE SERVER dropl_srv1_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:');
+
+
+statement ok
+CREATE SERVER dropl_srv2_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:');
+
+
+statement error
+DROP SERVER dropl_srv1_${__DATABASE__}, dropl_srv_missing_${__DATABASE__};
+----
+db error: ERROR: Foreign Server with name dropl_srv_missing_<slt:ignore> does not exist!
+
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname IN ('dropl_srv1_${__DATABASE__}', 'dropl_srv2_${__DATABASE__}');
+----
+n
+2
+
+
+statement ok
+DROP SERVER dropl_srv1_${__DATABASE__}, dropl_srv2_${__DATABASE__};
+
+
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname IN ('dropl_srv1_${__DATABASE__}', 'dropl_srv2_${__DATABASE__}');
+----
+n
+0
+
+
+statement ok
+DROP SERVER IF EXISTS dropl_srv1_${__DATABASE__}, dropl_srv2_${__DATABASE__};

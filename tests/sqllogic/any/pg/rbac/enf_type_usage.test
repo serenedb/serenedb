@@ -60,12 +60,22 @@ statement ok
 REVOKE USAGE ON TYPE enf_tu_mop_money FROM PUBLIC;
 
 
-# The oracle now reads f for the unprivileged role.
+# The oracle now reads f for the unprivileged role, for the array type too.
 query
-SELECT has_type_privilege('enf_tu_vedernikoff','enf_tu_mop_money','USAGE') AS can_use;
+SELECT has_type_privilege('enf_tu_vedernikoff','enf_tu_mop_money','USAGE') AS can_use,
+       has_type_privilege('enf_tu_vedernikoff','enf_tu_mop_money[]','USAGE') AS can_use_array;
 ----
-can_use
-f
+can_use	can_use_array
+f	f
+
+
+# A table's row type keeps the default: every role may use it.
+query
+SELECT has_type_privilege('enf_tu_vedernikoff','enf_tu_t1','USAGE') AS row_type,
+       has_type_privilege('enf_tu_vedernikoff','enf_tu_t1[]','USAGE') AS row_array;
+----
+row_type	row_array
+t	t
 
 
 # A non-owner CREATE TABLE with a column of the type is now denied.
@@ -74,6 +84,76 @@ statement error
 CREATE TABLE enf_tu_t2 (m enf_tu_mop_money);
 ----
 db error: ERROR: permission denied for type enf_tu_mop_money<slt:ignore>
+
+
+# Every other declared type is checked too: arrays of it, columns of views and
+# CREATE TABLE AS, attributes of composite types, added or retyped columns, and
+# function parameters and results. Casts in queries and bodies are not.
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE TABLE enf_tu_t2 (m enf_tu_mop_money[]);
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE VIEW enf_tu_v AS SELECT m FROM enf_tu_t1;
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE TABLE enf_tu_t2 AS SELECT m FROM enf_tu_t1;
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE TYPE enf_tu_wrap AS (m enf_tu_mop_money);
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+ALTER TABLE enf_tu_t1 ADD COLUMN m2 enf_tu_mop_money;
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE FUNCTION enf_tu_f(m enf_tu_mop_money) RETURNS int LANGUAGE sql AS 'SELECT 1';
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement error
+CREATE FUNCTION enf_tu_f() RETURNS SETOF enf_tu_mop_money LANGUAGE sql AS 'SELECT m FROM enf_tu_t1';
+----
+db error: ERROR: permission denied for type enf_tu_mop_money
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement ok
+CREATE FUNCTION enf_tu_f() RETURNS text LANGUAGE sql AS 'SELECT (m).ccy FROM enf_tu_t1';
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+query
+SELECT count(m) AS n FROM enf_tu_t1;
+----
+n
+0
+
+
+connection c_tu2 user=enf_tu_vedernikoff password=enf_tu_vedernikoff_pw
+statement ok
+DROP FUNCTION enf_tu_f();
 
 
 # Built-in (pg_catalog) types never require USAGE: primitive columns still work.

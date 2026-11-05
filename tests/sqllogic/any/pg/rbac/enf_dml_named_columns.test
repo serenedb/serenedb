@@ -1,0 +1,133 @@
+statement ok
+DROP TABLE IF EXISTS ednc_ledger;
+
+
+statement ok
+DROP TABLE IF EXISTS ednc_notes;
+
+
+statement ok
+DROP TABLE IF EXISTS ednc_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS ednc_vedernikoff;
+
+
+statement ok
+CREATE ROLE ednc_vedernikoff;
+
+
+statement ok
+CREATE TABLE ednc_ledger (id integer PRIMARY KEY, amount integer, fee integer, CHECK (amount + fee < 100));
+
+
+statement ok
+CREATE TABLE ednc_notes (body text, tag text);
+
+
+statement ok
+CREATE TABLE ednc_vault (secret integer);
+
+
+statement ok
+INSERT INTO ednc_ledger VALUES (1, 1, 1);
+
+
+statement ok
+GRANT UPDATE (id, amount), SELECT (amount) ON ednc_ledger TO ednc_vedernikoff;
+
+
+statement ok
+GRANT INSERT (tag) ON ednc_notes TO ednc_vedernikoff;
+
+
+statement ok
+SET ROLE ednc_vedernikoff;
+
+
+statement ok
+UPDATE ednc_ledger SET amount = 2;
+
+
+query
+UPDATE ednc_ledger SET amount = 3 RETURNING amount;
+----
+amount
+3
+
+
+statement ok
+UPDATE ednc_ledger SET id = 5;
+
+
+statement error
+UPDATE ednc_ledger SET fee = 4;
+----
+db error: ERROR: permission denied for table ednc_ledger
+
+
+statement error
+UPDATE ednc_ledger SET amount = 4 RETURNING fee;
+----
+db error: ERROR: permission denied for table ednc_ledger
+
+
+statement ok
+INSERT INTO ednc_notes DEFAULT VALUES;
+
+
+statement ok
+INSERT INTO ednc_notes (tag) VALUES ('mop');
+
+
+statement error
+INSERT INTO ednc_notes (body) VALUES ('mop');
+----
+db error: ERROR: permission denied for table ednc_notes
+
+
+statement error
+INSERT INTO ednc_vault SELECT amount FROM ednc_notes, ednc_ledger;
+----
+db error: ERROR: permission denied for table ednc_vault
+
+
+statement error
+UPDATE ednc_vault SET secret = (SELECT count(*) FROM ednc_notes);
+----
+db error: ERROR: permission denied for table ednc_vault
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, amount, fee FROM ednc_ledger;
+----
+id	amount	fee
+5	3	1
+
+
+query
+SELECT count(*) AS n, count(tag) AS tagged FROM ednc_notes;
+----
+n	tagged
+2	1
+
+
+statement ok
+DROP TABLE ednc_ledger;
+
+
+statement ok
+DROP TABLE ednc_notes;
+
+
+statement ok
+DROP TABLE ednc_vault;
+
+
+statement ok
+DROP ROLE ednc_vedernikoff;

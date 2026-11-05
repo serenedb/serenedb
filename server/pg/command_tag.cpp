@@ -28,6 +28,7 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -111,6 +112,14 @@ std::string_view DiscardTag(duckdb::DiscardTarget target) {
   return "DISCARD";
 }
 
+std::string_view AlterRoutineTag(bool include_functions,
+                                 bool include_procedures) {
+  if (!include_procedures) {
+    return "ALTER FUNCTION";
+  }
+  return include_functions ? "ALTER ROUTINE" : "ALTER PROCEDURE";
+}
+
 std::string_view AlterTag(const duckdb::AlterInfo& info) {
   using enum duckdb::AlterType;
   switch (info.type) {
@@ -121,7 +130,11 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
     case ALTER_SEQUENCE:
     case CHANGE_OWNERSHIP:
       return "ALTER SEQUENCE";
-    case ALTER_SCALAR_FUNCTION:
+    case ALTER_SCALAR_FUNCTION: {
+      const auto& function = info.Cast<duckdb::AlterScalarFunctionInfo>();
+      return AlterRoutineTag(function.include_functions,
+                             function.include_procedures);
+    }
     case ALTER_TABLE_FUNCTION:
       return "ALTER FUNCTION";
     case SET_COMMENT:
@@ -129,6 +142,11 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "COMMENT";
     case ALTER_DATABASE:
       return "ALTER DATABASE";
+    case ALTER_DATABASE_SETTINGS: {
+      const auto& settings = info.Cast<duckdb::AlterDatabaseSettingsInfo>();
+      return settings.role.empty() && !settings.all_roles ? "ALTER DATABASE"
+                                                          : "ALTER ROLE";
+    }
     case ALTER_SCHEMA:
       return "ALTER SCHEMA";
     case ALTER_INDEX:
@@ -137,9 +155,15 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "ALTER JOB";
     case SET_SCHEMA:
       return TagsOf(info.GetCatalogType(), false).alter;
+    case ALTER_SUBSCRIPTION:
+      return "ALTER SUBSCRIPTION";
+    case REASSIGN_OWNED:
+      return "REASSIGN OWNED";
+    case DROP_OWNED:
+      return "DROP OWNED";
     case ALTER_ROLE: {
       const auto& role = info.Cast<duckdb::AlterRoleInfo>();
-      if (role.grant_role.empty()) {
+      if (role.grant_role.empty() || role.alter_group) {
         return "ALTER ROLE";
       }
       return role.revoke ? "REVOKE ROLE" : "GRANT ROLE";
@@ -150,6 +174,13 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
         return "ALTER DEFAULT PRIVILEGES";
       }
       if (!permissions.new_owner.empty()) {
+        if (permissions.entry_catalog_type ==
+              duckdb::CatalogType::MACRO_ENTRY ||
+            permissions.entry_catalog_type ==
+              duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+          return AlterRoutineTag(permissions.include_functions,
+                                 permissions.include_procedures);
+        }
         return TagsOf(permissions.entry_catalog_type, false).alter;
       }
       return permissions.revoke ? "REVOKE" : "GRANT";

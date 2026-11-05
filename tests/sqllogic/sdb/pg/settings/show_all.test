@@ -76,6 +76,7 @@ compaction_interval	1000	Background compaction interval (ms) for newly created i
 compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
+createrole_self_grant	(empty)	Sets whether a CREATEROLE user automatically grants the role to themselves, and with which options.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
@@ -207,6 +208,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -427,6 +429,7 @@ compaction_interval	1000	Background compaction interval (ms) for newly created i
 compaction_max_segments	10	Maximum segments of an inverted index or search table merged by one background compaction. WITH (compaction_max_segments = ...) overrides it per index or table. Default 10.
 compaction_max_segments_bytes	5368709120	Byte budget of one background compaction of an inverted index or search table (the tier target size). WITH (compaction_max_segments_bytes = ...) overrides it per index or table. Default 5368709120 (5GB).
 copy_csv_header_default	off	Whether COPY ... TO a CSV file writes a header line when HEADER is not specified
+createrole_self_grant	(empty)	Sets whether a CREATEROLE user automatically grants the role to themselves, and with which options.
 current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction.
 custom_extension_repository	(empty)	Overrides the custom endpoint for extension installation.
 custom_user_agent	(empty)	HTTP request metadata that can be set by callers/wrappers to tag their own traffic when DuckDB makes a request.
@@ -558,6 +561,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.

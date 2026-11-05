@@ -1,0 +1,208 @@
+statement ok
+DROP FUNCTION IF EXISTS lgp_f();
+
+
+statement ok
+DROP ROLE IF EXISTS lgp_user;
+
+
+statement ok
+CREATE ROLE lgp_user LOGIN PASSWORD 'lgp_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO lgp_user;
+
+
+query
+SELECT has_language_privilege('lgp_user', 'sql', 'USAGE') AS sql_usage,
+       has_language_privilege('lgp_user', 'internal', 'USAGE') AS internal_usage;
+----
+sql_usage	internal_usage
+t	t
+
+
+statement error
+GRANT USAGE ON LANGUAGE internal TO lgp_user;
+----
+db error: ERROR: language "internal" is not trusted
+DETAIL: GRANT and REVOKE are not allowed on untrusted languages, because only superusers can use untrusted languages.
+
+
+statement error
+GRANT USAGE ON LANGUAGE lgp_missing TO lgp_user;
+----
+db error: ERROR: language "lgp_missing" does not exist
+
+
+statement error
+GRANT SELECT ON LANGUAGE sql TO lgp_user;
+----
+db error: ERROR: invalid privilege type SELECT for language
+
+
+statement ok
+REVOKE USAGE ON LANGUAGE sql FROM PUBLIC;
+
+
+query
+SELECT array_to_string(lanacl, ',') AS lanacl FROM pg_language WHERE lanname = 'sql';
+----
+lanacl
+postgres=U/postgres
+
+
+query
+SELECT has_language_privilege('lgp_user', 'sql', 'USAGE') AS sql_usage;
+----
+sql_usage
+f
+
+
+connection c_user user=lgp_user password=lgp_pw
+statement error
+CREATE FUNCTION lgp_f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
+----
+db error: ERROR: permission denied for language sql
+
+
+connection c_user user=lgp_user password=lgp_pw
+statement error
+CREATE PROCEDURE lgp_p() LANGUAGE sql AS $$ SELECT 1 $$;
+----
+db error: ERROR: permission denied for language sql
+
+
+onlyif serenedb
+connection c_user user=lgp_user password=lgp_pw
+statement error
+CREATE MACRO lgp_m(x) AS x + 1;
+----
+db error: ERROR: permission denied for language sql
+
+
+connection c_user user=lgp_user password=lgp_pw
+statement error
+GRANT USAGE ON LANGUAGE sql TO lgp_user;
+----
+db error: ERROR: permission denied for language sql
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO lgp_user WITH GRANT OPTION;
+
+
+query
+SELECT array_to_string(lanacl, ',') AS lanacl FROM pg_language WHERE lanname = 'sql';
+----
+lanacl
+postgres=U/postgres,lgp_user=U*/postgres
+
+
+connection c_user user=lgp_user password=lgp_pw
+statement ok
+CREATE FUNCTION lgp_f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;
+
+
+connection c_user user=lgp_user password=lgp_pw
+query
+SELECT lgp_f() AS f;
+----
+f
+1
+
+
+skipif serenedb
+statement error
+DROP ROLE lgp_user;
+----
+db error: ERROR: role "lgp_user" cannot be dropped because some objects depend on it
+DETAIL: privileges for language sql
+privileges for schema public
+owner of function lgp_f()
+
+
+onlyif serenedb
+statement error
+DROP ROLE lgp_user;
+----
+db error: ERROR: Cannot drop entry "lgp_user" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP OWNED BY lgp_user;
+
+
+query
+SELECT array_to_string(lanacl, ',') AS lanacl FROM pg_language WHERE lanname = 'sql';
+----
+lanacl
+postgres=U/postgres
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO PUBLIC;
+
+
+query
+SELECT has_language_privilege('lgp_user', 'sql', 'USAGE') AS sql_usage;
+----
+sql_usage
+t
+
+
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE CASE WHEN usename = 'lgp_user' THEN pg_terminate_backend(pid) ELSE false END;
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP ROLE lgp_user;
+
+
+statement ok
+DROP ROLE IF EXISTS lgp_lang;
+
+
+statement ok
+CREATE ROLE lgp_lang;
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO lgp_lang;
+
+
+query
+SELECT objid = (SELECT oid FROM pg_language WHERE lanname = 'sql') AS sql, objsubid, deptype
+FROM pg_shdepend
+WHERE refobjid = 'lgp_lang'::regrole AND classid = 'pg_language'::regclass
+  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+sql	objsubid	deptype
+t	0	a
+
+
+skipif serenedb
+statement error
+DROP ROLE lgp_lang;
+----
+db error: ERROR: role "lgp_lang" cannot be dropped because some objects depend on it
+DETAIL: privileges for language sql
+
+
+onlyif serenedb
+statement error
+DROP ROLE lgp_lang;
+----
+db error: ERROR: Cannot drop entry "lgp_lang" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON LANGUAGE sql FROM lgp_lang;
+
+
+statement ok
+DROP ROLE lgp_lang;

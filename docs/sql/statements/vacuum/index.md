@@ -33,6 +33,8 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_005" />
 
+`VACUUM` and `ANALYZE` of a table need the `MAINTAIN` privilege on it or ownership of it. For a table the role may not maintain, they emit the warning `permission denied to vacuum "<table>", skipping it` (or `analyze`) and change nothing.
+
 ## Inverted Index Maintenance
 
 SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.

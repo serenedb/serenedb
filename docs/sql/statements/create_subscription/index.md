@@ -63,7 +63,7 @@ The publisher may require `trust`, `password`, `md5` or `scram-sha-256` authenti
 | `synchronous_commit` | `off` | Stored for compatibility; every applied transaction is durable before its position is reported to the publisher. |
 | `two_phase` | `false` | Only `false` is accepted. |
 
-Creating a subscription requires `CREATE` on the current database. A non-superuser must put a password in `CONNECTION` unless `password_required` is `false`. When `create_slot` is `true`, `CREATE SUBSCRIPTION` cannot run inside a transaction block, because a replication slot on the publisher cannot be rolled back.
+Creating a subscription requires the privileges of the [`pg_create_subscription`](../../../security/privileges.md#predefined-roles) role and `CREATE` on the current database. A non-superuser must put a password in `CONNECTION` unless `password_required` is `false`. When `create_slot` is `true`, `CREATE SUBSCRIPTION` cannot run inside a transaction block, because a replication slot on the publisher cannot be rolled back.
 
 ## `ALTER SUBSCRIPTION`
 

@@ -1,0 +1,245 @@
+statement ok
+DROP ROLE IF EXISTS btg_user, btg_other;
+
+
+statement ok
+CREATE ROLE btg_user;
+
+
+statement ok
+CREATE ROLE btg_other;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO btg_user, btg_other;
+
+
+statement ok
+REVOKE USAGE ON TYPE pg_catalog.int4 FROM PUBLIC;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO btg_user;
+
+
+query
+SELECT array_to_string(typacl, ',') AS acl FROM pg_type WHERE oid = 'integer'::regtype;
+----
+acl
+postgres=U/postgres,btg_user=U/postgres
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_type'::regclass, 'integer'::regtype, 0), ',') AS acl;
+----
+acl
+postgres=U/postgres,btg_user=U/postgres
+
+
+query
+SELECT has_type_privilege('btg_user', 'integer', 'USAGE') AS user_usage,
+       has_type_privilege('btg_other', 'integer', 'USAGE') AS other_usage,
+       has_type_privilege('btg_other', 'integer[]', 'USAGE') AS other_array,
+       has_type_privilege('btg_other', 'bigint', 'USAGE') AS other_bigint;
+----
+user_usage	other_usage	other_array	other_bigint
+t	f	f	t
+
+
+query
+SELECT refobjid::regrole::text AS role, deptype
+FROM pg_shdepend
+WHERE classid = 'pg_type'::regclass AND objid = 'integer'::regtype
+  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+role	deptype
+btg_user	a
+
+
+statement ok
+SET ROLE btg_other;
+
+
+statement error
+CREATE TABLE btg_t (a integer);
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE TEMP TABLE btg_t (a integer[]);
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE TABLE btg_t AS SELECT 1::integer AS a;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE VIEW btg_v AS SELECT 1::integer AS a;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE TYPE btg_c AS (a integer);
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE FUNCTION btg_f(a integer) RETURNS bigint LANGUAGE sql AS 'SELECT 1::bigint';
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE FUNCTION btg_f() RETURNS integer LANGUAGE sql AS 'SELECT 1';
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE FUNCTION btg_f() RETURNS TABLE (a integer) LANGUAGE sql AS 'SELECT 1';
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+CREATE PROCEDURE btg_p(a integer[]) LANGUAGE sql AS 'SELECT 1';
+----
+db error: ERROR: permission denied for type integer
+
+
+statement ok
+CREATE FUNCTION btg_f() RETURNS bigint LANGUAGE sql AS 'SELECT 1::integer::bigint';
+
+
+query
+SELECT btg_f() AS f, 2::integer AS cast;
+----
+f	cast
+1	2
+
+
+statement ok
+DROP FUNCTION btg_f();
+
+
+statement ok
+CREATE TABLE btg_t (a bigint);
+
+
+statement error
+ALTER TABLE btg_t ADD COLUMN b integer;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement error
+ALTER TABLE btg_t ALTER COLUMN a TYPE integer;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement ok
+DROP TABLE btg_t;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE btg_user;
+
+
+statement ok
+CREATE TABLE btg_t (a integer);
+
+
+statement ok
+DROP TABLE btg_t;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP OWNED BY btg_user;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO PUBLIC;
+
+
+query
+SELECT array_to_string(typacl, ',') AS acl FROM pg_type WHERE oid = 'integer'::regtype;
+----
+acl
+postgres=U/postgres,=U/postgres
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+statement ok
+SET ROLE btg_other;
+
+
+onlyif postgres
+statement error
+GRANT USAGE ON TYPE int4 TO btg_user;
+----
+db error: ERROR: permission denied for type int4
+
+
+skipif postgres
+statement error
+GRANT USAGE ON TYPE int4 TO btg_user;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO PUBLIC;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM btg_other;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO btg_other;
+
+
+skipif serenedb
+statement error
+DROP ROLE btg_other;
+----
+db error: ERROR: role "btg_other" cannot be dropped because some objects depend on it
+DETAIL: privileges for type integer
+
+
+onlyif serenedb
+statement error
+DROP ROLE btg_other;
+----
+db error: ERROR: Cannot drop entry "btg_other" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM btg_other;
+
+
+statement ok
+DROP ROLE btg_user, btg_other;

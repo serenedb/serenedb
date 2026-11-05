@@ -46,7 +46,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_enum                     | 🟢            | Contains information about enum types. |
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
-| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
+| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `duckdb_fdw`, `iceberg_fdw`, `postgres_fdw` and `serenedb_fdw`. `fdwacl` holds the `GRANT USAGE ON FOREIGN DATA WRAPPER` grants made in the current database, and is NULL for a wrapper that has none. |
 | pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** -- its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
@@ -59,7 +59,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_opclass                  | 🟢            | Contains information about operator classes. |
 | pg_operator                 | 🟡            | Stores information about operators. |
 | pg_opfamily                 | 🟡            | Contains information about operator families. |
-| pg_parameter_acl            | 🟡            | Stores access privileges for server parameters. |
+| pg_parameter_acl            | 🟢            | Lists the parameters that have `GRANT SET` or `GRANT ALTER SYSTEM ON PARAMETER` grants, with their access privileges. |
 | pg_partitioned_table        | 🟡            | Contains information about partitioned tables. |
 | pg_policy                   | 🟡            | Stores information about row-level security policies. |
 | pg_proc                     | 🟢            | Contains information about functions and procedures. |
@@ -72,7 +72,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
 | pg_sequence                 | 🟢            | Contains information about sequences. |
 | pg_shdepend                 | 🟢            | Records dependencies between database objects and shared objects. |
-| pg_shdescription            | 🟡            | Stores optional descriptions for shared database objects. |
+| pg_shdescription            | 🟢            | Stores optional descriptions (comments) for databases and roles. |
 | pg_shseclabel               | 🟡            | Stores security labels for shared database objects. |
 | pg_statistic                | 🟡            | Stores planner statistics. |
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |
@@ -108,7 +108,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
 | pg_policies | 🟡 | Displays information about policies. |
-| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol; `generic_plans` and `custom_plans` are always NULL. |
+| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol. `generic_plans` counts the executions that ran a plan made without their parameter values, and `custom_plans` the executions planned for their own values. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
 | pg_replication_origin_status | 🟢 | Shows each replication origin, of a subscription or made with `pg_replication_origin_create`, with the remote position it has durably applied; `local_lsn` is always `0/0`. |
@@ -175,7 +175,7 @@ name:
 | enabled_roles | 🟢 |  |
 | foreign_data_wrapper_options | 🟡 |  |
 | foreign_data_wrappers | 🟡 |  |
-| foreign_server_options | 🟡 |  |
+| foreign_server_options | 🟡 | `option_value` is shown only to superusers, since server options carry credentials. |
 | foreign_servers | 🟡 |  |
 | foreign_table_options | 🟡 |  |
 | foreign_tables | 🟡 |  |

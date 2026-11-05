@@ -1,11 +1,6 @@
 # serenedb-only (needs concurrent non-superuser password sessions): a schema
 # privilege changed in one transaction is not in force for another session
-# until it commits, whichever way the enforcer reaches the schema. By name is
-# the CatalogSet's own snapshot walk. Through a table (OWNER TO checks the new
-# owner's CREATE on the table's schema) it used to read whatever version was
-# newest, committed or not, so a pending GRANT was already honoured and a
-# pending REVOKE already enforced. Now the table resolves its schema with the
-# reader's transaction, like any other catalog lookup.
+# until it commits.
 #
 # Lore: vedernikoff owns the ledger and its schema; bob is the intern who is
 # handed the ledger once, and only once the grant is real.
@@ -110,10 +105,6 @@ statement ok
 ALTER TABLE xsai_s.t OWNER TO xsai_owner;
 
 
-# ---- (2) A pending REVOKE on the schema and an OWNER TO on a table in it are
-# two writers of the same dependency edge (table -> schema), so the second is
-# refused as a write-write conflict and nothing of it lands; the ROLLBACK of the
-# first leaves the committed grant in place.
 connection default
 statement ok
 BEGIN;
@@ -125,10 +116,8 @@ REVOKE CREATE ON SCHEMA xsai_s FROM xsai_bob;
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw
-statement error
+statement ok
 ALTER TABLE xsai_s.t OWNER TO xsai_bob;
-----
-db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
 
 
 connection default
@@ -144,7 +133,7 @@ FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'xsai_s' AND c.relname = 't';
 ----
 owner	bob_create
-xsai_owner	t
+xsai_bob	t
 
 
 connection c_owner user=xsai_owner password=xsai_owner_pw

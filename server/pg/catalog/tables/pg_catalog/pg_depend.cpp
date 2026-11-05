@@ -213,10 +213,19 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   }
 
   void Row(duckdb::MacroCatalogEntry& macro) {
-    Namespace(macro);
-    if (Allows<"deptype">('n')) {
-      References(kPgProcTable, macro);
+    for (const auto& overload : macro.macros) {
+      Depend(kPgProcTable, macro.OverloadOid(*overload), 0, kPgNamespaceTable,
+             macro.ParentSchemaOid(), 0, 'n');
     }
+    if (!Allows<"deptype">('n')) {
+      return;
+    }
+    ScanSubjects(macro, [&](duckdb::CatalogEntry& object,
+                            const duckdb::DependencyDependentFlags&) {
+      for (const auto& overload : macro.macros) {
+        Reference(kPgProcTable, macro.OverloadOid(*overload), object, 'n');
+      }
+    });
   }
 
   void Row(duckdb::IndexCatalogEntry& index) {
@@ -281,19 +290,19 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void Reference(duckdb::idx_t classid, duckdb::idx_t objid,
                  const duckdb::CatalogEntry& object, char deptype) {
     using enum duckdb::CatalogType;
-    if (object.type == SCHEMA_ENTRY || object.type == ROLE_ENTRY ||
-        object.type == DATABASE_ENTRY) {
+    if (object.type == SCHEMA_ENTRY || object.type == DATABASE_ENTRY) {
+      return;
+    }
+    if (object.type == MACRO_ENTRY || object.type == TABLE_MACRO_ENTRY) {
+      const auto& macro = object.Cast<duckdb::MacroCatalogEntry>();
+      for (const auto& overload : macro.macros) {
+        Depend(classid, objid, 0, kPgProcTable, macro.OverloadOid(*overload), 0,
+               deptype);
+      }
       return;
     }
     Depend(classid, objid, 0, CatalogClassOid(object.type), object.oid, 0,
            deptype);
-  }
-
-  void References(duckdb::idx_t classid, duckdb::CatalogEntry& dependent) {
-    ScanSubjects(dependent, [&](duckdb::CatalogEntry& object,
-                                const duckdb::DependencyDependentFlags&) {
-      Reference(classid, dependent.oid, object, 'n');
-    });
   }
 
   void Trigger(const duckdb::TableCatalogEntry& table,

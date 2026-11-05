@@ -20,12 +20,19 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <ranges>
+#include <span>
+#include <vector>
 
 #include "catalog/cluster.h"
+#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/acl.h"
@@ -74,34 +81,132 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
     if (role.oid == kRootUser) {
       return;
     }
-    auto& cluster = catalog::ClusterOf(Context());
-    cluster.GetDependencyManager()->ScanDependentEntries(
-      cluster.GetCatalogTransaction(Context()), role,
-      [&](duckdb::CatalogEntry& entry) {
-        if (entry.type != duckdb::CatalogType::DATABASE_ENTRY) {
-          Entry(entry.ParentCatalog().GetAttached().oid, role.oid, entry);
-          return;
+    for (auto* entry : Referencing(role.oid)) {
+      if (entry->type == duckdb::CatalogType::ROLE_ENTRY) {
+        duckdb::idx_t oid = 0;
+        for (const auto& row : entry->permissions.parameters) {
+          ++oid;
+          if (Names(row.acl, role.oid)) {
+            Depend(kInvalidOid, kPgParameterAclTable, oid, 0, role.oid, 'a');
+          }
         }
-        Entry(kInvalidOid, role.oid, entry);
-        VisitDefaultAcls(
-          Context(), entry,
-          [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
-            if (row.role == role.oid) {
-              Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'o');
-            } else if (Names(row.acl, role.oid)) {
-              Depend(entry.oid, kPgDefaultAclTable, oid, 0, role.oid, 'a');
-            }
-          });
-      });
+        continue;
+      }
+      if (entry->type != duckdb::CatalogType::DATABASE_ENTRY) {
+        Entry(entry->ParentCatalog().GetAttached().oid, role.oid, *entry);
+        continue;
+      }
+      Entry(kInvalidOid, role.oid, *entry);
+      VisitDefaultAcls(
+        Context(), *entry,
+        [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
+          if (row.role == role.oid) {
+            Depend(entry->oid, kPgDefaultAclTable, oid, 0, role.oid, 'o');
+          } else if (Names(row.acl, role.oid)) {
+            Depend(entry->oid, kPgDefaultAclTable, oid, 0, role.oid, 'a');
+          }
+        });
+      for (const auto& wrapper : entry->permissions.foreign_data_wrappers) {
+        if (Names(wrapper.acl, role.oid)) {
+          Depend(entry->oid, kPgForeignDataWrapperTable, wrapper.oid, 0,
+                 role.oid, 'a');
+        }
+      }
+      for (const auto& language : entry->permissions.languages) {
+        if (Names(language.acl, role.oid)) {
+          Depend(entry->oid, kPgLanguageTable, language.oid, 0, role.oid, 'a');
+        }
+      }
+      for (const auto& schema : entry->permissions.schemas) {
+        if (Names(schema.acl, role.oid)) {
+          Depend(entry->oid, kPgNamespaceTable, schema.oid, 0, role.oid, 'a');
+        }
+      }
+      for (const auto& function : entry->permissions.functions) {
+        if (Names(function.acl, role.oid)) {
+          Depend(entry->oid, kPgProcTable, BuiltinOid(function.name), 0,
+                 role.oid, 'a');
+        }
+      }
+      for (const auto& type : entry->permissions.types) {
+        if (Names(type.acl, role.oid)) {
+          Depend(entry->oid, kPgTypeTable, type.oid, 0, role.oid, 'a');
+        }
+      }
+      for (const auto& relation : entry->permissions.relations) {
+        if (Names(relation.acl, role.oid)) {
+          Depend(entry->oid, kPgClassTable, relation.oid, 0, role.oid, 'a');
+        }
+        const auto* system = FindSystemTable(relation.oid);
+        for (const auto& column : relation.columns) {
+          if (system && Names(column.acl, role.oid) &&
+              system->Columns().ColumnExists(column.column)) {
+            Depend(entry->oid, kPgClassTable, relation.oid,
+                   Attnum(system->Columns().GetColumn(column.column)), role.oid,
+                   'a');
+          }
+        }
+      }
+    }
   }
 
  private:
+  duckdb::idx_t BuiltinOid(std::string_view key) {
+    if (!_builtins) {
+      _builtins = GetBuiltinFunctions(Context());
+      for (const auto& function : _builtins->All()) {
+        _builtin_oids.try_emplace(BuiltinFunctionKey(function), function.oid);
+      }
+    }
+    const auto it = _builtin_oids.find(key);
+    return it == _builtin_oids.end() ? kInvalidOid : it->second;
+  }
+
+  std::span<duckdb::CatalogEntry* const> Referencing(duckdb::idx_t role) {
+    if (!_scanned) {
+      _scanned = true;
+      auto& cluster = catalog::ClusterOf(Context());
+      cluster.GetDependencyManager()->ScanAllEntries(
+        cluster.GetCatalogTransaction(Context()),
+        [&](duckdb::CatalogEntry& entry) {
+          duckdb::ForEachRoleReference(entry, [&](duckdb::idx_t role) {
+            auto& entries = _referencing[role];
+            if (entries.empty() || entries.back() != &entry) {
+              entries.push_back(&entry);
+            }
+          });
+        });
+      for (auto& [_, entries] : _referencing) {
+        absl::c_sort(entries, [](const auto* lhs, const auto* rhs) {
+          return lhs->oid < rhs->oid;
+        });
+      }
+    }
+    const auto it = _referencing.find(role);
+    if (it == _referencing.end()) {
+      return {};
+    }
+    return it->second;
+  }
+
   void Entry(duckdb::idx_t database, duckdb::idx_t role,
-             const duckdb::CatalogEntry& entry) {
+             duckdb::CatalogEntry& entry) {
     const auto classid = CatalogClassOid(entry.type);
     if (classid == kInvalidOid ||
         entry.type == duckdb::CatalogType::INDEX_ENTRY ||
         entry.type == duckdb::CatalogType::ROLE_ENTRY) {
+      return;
+    }
+    if (classid == kPgProcTable) {
+      const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+      for (const auto& overload : macro.macros) {
+        const auto& permissions = macro.OverloadPermissions(*overload);
+        if (permissions.owner == role) {
+          Depend(database, classid, macro.OverloadOid(*overload), 0, role, 'o');
+        } else if (Names(permissions.acl, role)) {
+          Depend(database, classid, macro.OverloadOid(*overload), 0, role, 'a');
+        }
+      }
       return;
     }
     if (entry.permissions.owner == role) {
@@ -110,6 +215,18 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
     }
     if (Names(entry.permissions.acl, role)) {
       Depend(database, classid, entry.oid, 0, role, 'a');
+    }
+    if (entry.type == duckdb::CatalogType::VIEW_ENTRY) {
+      auto& view = entry.Cast<duckdb::ViewCatalogEntry>();
+      for (const auto& column : view.column_acls) {
+        if (!Names(column.acl, role)) {
+          continue;
+        }
+        if (const auto attnum = ViewAttnum(Context(), view, column.column)) {
+          Depend(database, classid, entry.oid, attnum, role, 'a');
+        }
+      }
+      return;
     }
     if (entry.type != duckdb::CatalogType::TABLE_ENTRY) {
       return;
@@ -127,6 +244,13 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
               char deptype) {
     Emit<kDependency>({database, classid, objid, objsubid, role, deptype});
   }
+
+  bool _scanned = false;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::vector<duckdb::CatalogEntry*>>
+    _referencing;
+  std::shared_ptr<const BuiltinFunctions> _builtins;
+  irs::containers::FlatHashMap<std::string, duckdb::idx_t> _builtin_oids;
 };
 
 }  // namespace

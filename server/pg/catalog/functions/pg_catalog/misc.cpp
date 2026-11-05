@@ -55,6 +55,7 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -69,8 +70,8 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "connector/duckdb_client_state.h"
@@ -88,6 +89,7 @@
 #include "pg/types/logical.h"
 #include "pg/types/mapping.h"
 #include "pg/version.h"
+#include "query/config.h"
 #include "search/store.h"
 #include "server/utils/build.h"
 
@@ -118,7 +120,7 @@ void IsVisibleFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void PgGetUserByIdFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(), [&](int64_t oid) {
       const auto name = roles->NameOf(static_cast<duckdb::idx_t>(oid));
@@ -142,6 +144,24 @@ duckdb::optional<duckdb::string_t> Comment(duckdb::Vector& result,
   return duckdb::StringVector::AddString(result, text);
 }
 
+struct DescribedObject {
+  duckdb::idx_t classoid;
+  const duckdb::Value& comment;
+};
+
+std::optional<DescribedObject> Described(const Session& session, uint64_t oid) {
+  if (auto entry = EntryByOid(session, oid);
+      entry && CatalogClassOid(entry->type) != kPgProcTable) {
+    return DescribedObject{CatalogClassOid(entry->type), entry->comment};
+  }
+  const auto found = FindMacro(session, oid);
+  if (!found.macro) {
+    return std::nullopt;
+  }
+  return DescribedObject{kPgProcTable,
+                         found.entry->OverloadComment(*found.macro)};
+}
+
 void ObjDescription2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
@@ -153,9 +173,33 @@ void ObjDescription2Function(duckdb::DataChunk& args,
         duckdb::string_t catalog) -> duckdb::optional<duckdb::string_t> {
       const auto* table =
         GetSystemTable(irs::StaticStrings::kPgCatalogSchema, AsView(catalog));
-      auto entry = EntryByOid(session, oid);
-      if (!table || !entry ||
-          CatalogClassOid(entry->type) != table->Sql().oid) {
+      const auto described = Described(session, oid);
+      if (!table || !described || described->classoid != table->Sql().oid) {
+        return duckdb::nullopt;
+      }
+      return Comment(result, described->comment);
+    });
+}
+
+void ShobjDescriptionFunction(duckdb::DataChunk& args,
+                              duckdb::ExpressionState& state,
+                              duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t,
+                                    duckdb::string_t>(
+    args, result,
+    [&](int64_t oid,
+        duckdb::string_t catalog) -> duckdb::optional<duckdb::string_t> {
+      const auto* table =
+        GetSystemTable(irs::StaticStrings::kPgCatalogSchema, AsView(catalog));
+      if (!table || oid <= 0) {
+        return duckdb::nullopt;
+      }
+      auto entry = cluster.GetOidIndex().GetVisible(static_cast<uint64_t>(oid),
+                                                    transaction.view);
+      if (!entry || CatalogClassOid(entry->type) != table->Sql().oid) {
         return duckdb::nullopt;
       }
       return Comment(result, entry->comment);
@@ -169,11 +213,11 @@ void ObjDescription1Function(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
-      auto entry = EntryByOid(session, oid);
-      if (!entry || CatalogClassOid(entry->type) == kInvalidOid) {
+      const auto described = Described(session, oid);
+      if (!described || described->classoid == kInvalidOid) {
         return duckdb::nullopt;
       }
-      return Comment(result, entry->comment);
+      return Comment(result, described->comment);
     });
 }
 
@@ -435,6 +479,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     const auto key = AsView(name.GetValue());
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
+      duckdb::Settings::CheckRead(context, duckdb::Identifier{key});
       value = duckdb::Settings::FormatDisplayValue(context, value);
       last_found = row;
       last_value = value.IsNull()
@@ -457,6 +502,14 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
 void CurrentUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
+  if (const auto& bind_info =
+        state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo()) {
+    result.Reference(duckdb::Value{std::string{
+                       catalog::RolesOf(&state.GetContext())
+                         ->NameOf(bind_info->Cast<CallerRole>().role)}},
+                     duckdb::count_t(args.size()));
+    return;
+  }
   auto& context = state.GetContext();
   const auto& conn_ctx = GetSereneDBContext(context);
   auto value = duckdb::Value(conn_ctx.EffectiveUserName());
@@ -504,8 +557,8 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
   auto* registry = conn_ctx.GetCancelRegistry();
-  const auto roles = auth::RolesOf(&context);
-  const auto caller = auth::ClosureFor(&context, conn_ctx.GetRoleId());
+  const auto roles = catalog::RolesOf(&context);
+  const auto& caller = context.CurrentRole();
   const auto pids = args.data[0].Values<int32_t>();
   auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -528,16 +581,17 @@ void SignalBackendFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto role = match.token->role.load(std::memory_order_relaxed);
-    const auto* node = roles->Find(role);
-    if (role == kInvalidOid || (node && node->is_superuser)) {
-      if (!caller->is_superuser) {
+    const auto access = roles->Access(role);
+    if (role == kInvalidOid || (access && access->is_superuser)) {
+      if (!caller.is_superuser) {
         ThrowSignalDenied<kTerminate>(
           kTerminate ? "Only roles with the SUPERUSER attribute may terminate "
                        "processes of roles with the SUPERUSER attribute."
                      : "Only roles with the SUPERUSER attribute may cancel "
                        "queries of roles with the SUPERUSER attribute.");
       }
-    } else if (!caller->MemberOf(role)) {
+    } else if (!caller.MemberOf(role) &&
+               !caller.Has(duckdb::RoleCapability::SignalBackend)) {
       ThrowSignalDenied<kTerminate>(
         kTerminate
           ? "Only roles with privileges of the role whose process is being "
@@ -556,6 +610,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   }
 }
 
+template<bool kSecurityDefinerBody>
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
@@ -564,6 +619,16 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
+      if constexpr (kSecurityDefinerBody) {
+        for (const std::string_view guarded :
+             {"role", "session_authorization"}) {
+          if (absl::EqualsIgnoreCase(AsView(name), guarded)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                            ERR_MSG("cannot set parameter \"", guarded,
+                                    "\" within security-definer function"));
+          }
+        }
+      }
       const duckdb::Identifier setting{AsView(name)};
       duckdb::PhysicalSet::SetVariable(
         context, setting,
@@ -576,6 +641,14 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
         result,
         duckdb::Settings::FormatDisplayValue(context, current).ToString());
     });
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindSetConfig(
+  duckdb::BindScalarFunctionInput& input) {
+  if (input.HasBinder() && input.GetBinder().security_definer_body) {
+    input.GetBoundFunction().SetFunctionCallback(SetConfigFunction<true>);
+  }
+  return nullptr;
 }
 
 void VersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -1426,6 +1499,9 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "col_description", CONSISTENT_WITHIN_QUERY, InitSession,
     {duckdb::ScalarFunction{{oid, int4}, text, ColDescriptionFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "shobj_description", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{oid, text}, text, ShobjDescriptionFunction}});
   {
     duckdb::ScalarFunction function{
       {text, text}, text, PgGetSerialSequenceFunction};
@@ -1501,7 +1577,8 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunction function{
-      {text, text, boolean}, text, SetConfigFunction};
+      {text, text, boolean}, text, SetConfigFunction<false>};
+    function.SetBindCallback(BindSetConfig);
     function.SetFallible();
     function.SetRequiresOrderedExecution(true);
     RegisterScalar(loader, main, "set_config", VOLATILE, nullptr, {function});
@@ -1560,10 +1637,12 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     loader, main, "pg_xact_status", VOLATILE, nullptr,
     {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
 
-  RegisterScalar(loader, main, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, main, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  RegisterScalar(
+    loader, main, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCallerRole}});
+  RegisterScalar(
+    loader, main, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCallerRole}});
   RegisterScalar(loader, main, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
                  {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 

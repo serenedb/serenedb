@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -41,7 +42,6 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
@@ -223,6 +223,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
+  context.CheckDatabaseReference(context.CurrentRole(), *found);
   return *found;
 }
 
@@ -294,7 +295,8 @@ CollectMaintainTargets(duckdb::ClientContext& context,
       [&](duckdb::CatalogEntry& entry) {
         // Tables and views share one set, so the scan hands
         // back both.
-        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal) {
+        if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
+            !context.CanSee(entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
@@ -333,9 +335,8 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 
 bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
                  std::string_view name, std::string_view verb) {
-  if (auth::ClosureFor(&conn_ctx.GetClientContext(), conn_ctx.GetRoleId())
-        ->Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-              duckdb::AclMode::Maintain)) {
+  if (conn_ctx.GetClientContext().CurrentRole().Can(
+        duckdb::CatalogType::TABLE_ENTRY, perm, duckdb::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -368,8 +369,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       // No refresh/compact at column granularity.
       break;
     case Scope::Index: {
-      auto entry = duckdb::Catalog::GetEntry(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::INDEX_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -397,15 +397,14 @@ void DispatchInverted(duckdb::ClientContext& context,
       auto relation =
         index->GetRelation(index->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
-                                   relation->name.GetIdentifierName(), verb)) {
+                                   index->name.GetIdentifierName(), verb)) {
         return;
       }
       steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
                          index->name.GetIdentifierName());
     } break;
     case Scope::Table: {
-      auto entry = duckdb::Catalog::GetEntry(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -534,8 +533,7 @@ void DispatchRecomputeStats(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Table:
     case Scope::Column: {
-      auto entry = duckdb::Catalog::GetEntry(
-        context,
+      auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},
@@ -645,8 +643,7 @@ void VacuumExecute(duckdb::ClientContext& context,
         kSereneDBClientStateKey)) {
     duckdb::idx_t relid = pg::kInvalidOid;
     if (verb->scope == Scope::Table || verb->scope == Scope::Column) {
-      auto table = duckdb::Catalog::GetEntry(
-        context,
+      auto table = duckdb::CatalogEntryRetriever{context}.GetEntry(
         duckdb::EntryLookupInfo{
           duckdb::CatalogType::TABLE_ENTRY,
           duckdb::QualifiedName{duckdb::Identifier{target.database},

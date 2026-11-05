@@ -49,7 +49,6 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
@@ -285,24 +284,6 @@ void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
     duckdb::Value::BIGINT(0));
 }
 
-// PG's rule for a GUC whose effect reaches past the session that set it is
-// PGC_SUSET: still readable by everyone, settable only by a superuser, 42501
-// otherwise. Every developer knob that can damage or kill the backend is in
-// that class -- zero_damaged_pages, ignore_checksum_failure,
-// allow_system_table_mods, debug_discard_caches, wal_consistency_checking.
-void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
-                      std::string_view detail) {
-  // No connection context means an internal connection (boot, background
-  // work): the server acting on its own behalf, with no role to check.
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (!conn || auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
-    return;
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied to set parameter \"", name, "\""),
-                  ERR_DETAIL(detail));
-}
-
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
 void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
                        duckdb::Value& value) {
@@ -311,34 +292,43 @@ void SetServerDuration(duckdb::ClientContext&, duckdb::SetScope,
     kName, value.ToString(), static_cast<double>(UnitlessMs)))};
 }
 
-void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
-                        duckdb::Value& value) {
-  auto* conn = connector::GetSereneDBContextPtr(ctx);
-  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG(
-        "permission denied to set parameter \"session_replication_role\""));
+template<irs::utils::detail::FixedString Name,
+         irs::utils::detail::FixedString... Values>
+void OneOf(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+  auto chosen = absl::AsciiStrToLower(value.ToString());
+  if (((chosen == std::string_view{Values}) || ...)) {
+    value = duckdb::Value{std::move(chosen)};
+    return;
   }
-  const auto role = absl::AsciiStrToLower(value.ToString());
-  if (role != "origin" && role != "replica" && role != "local") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value for parameter "
-                            "\"session_replication_role\": \"",
-                            value.ToString(), "\""),
-                    ERR_HINT("Available values: origin, replica, local."));
-  }
-  value = duckdb::Value{role};
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("invalid value for parameter \"", std::string_view{Name}, "\": \"",
+            value.ToString(), "\""),
+    ERR_HINT("Available values: ",
+             absl::StrJoin({std::string_view{Values}...}, ", "), "."));
 }
 
-#ifdef SDB_FAULT_INJECTION
-void RequireFaultSuperuser(duckdb::ClientContext& ctx) {
-  RequireSuperuser(ctx, "sdb_faults",
-                   "Only roles with the SUPERUSER attribute may arm failure "
-                   "points: the registry is process-global, so a fault armed "
-                   "by one session fires in all of them.");
+void SetCreateroleSelfGrant(duckdb::ClientContext&, duckdb::SetScope,
+                            duckdb::Value& value) {
+  const auto text = value.ToString();
+  if (text.empty()) {
+    return;
+  }
+  for (const auto option : absl::StrSplit(text, ',')) {
+    const auto keyword =
+      absl::AsciiStrToLower(absl::StripAsciiWhitespace(option));
+    if (keyword == "set" || keyword == "inherit") {
+      continue;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"createrole_self_grant\": \"", text,
+              "\""),
+      ERR_DETAIL(keyword.empty() ? std::string{"List syntax is invalid."}
+                                 : absl::StrCat("Unrecognized key word: \"",
+                                                keyword, "\".")));
+  }
 }
-#endif
 
 const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
                                            std::string_view name) {
@@ -354,9 +344,9 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
 }
 
 void RefreshSuperuser(ConnectionContext& conn) {
-  const bool superuser =
-    auth::ClosureFor(&conn.GetClientContext(), conn.GetRoleId())->is_superuser;
-  conn.SetSetting("is_superuser", superuser ? "on" : "off", false);
+  conn.SetSetting(
+    "is_superuser",
+    conn.GetClientContext().CurrentRole().is_superuser ? "on" : "off", false);
 }
 
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
@@ -375,11 +365,7 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
   }
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
-  const auto session_role = conn.GetSessionRoleId();
-  const auto session =
-    auth::ComputeRoleClosure(*auth::RolesOf(&ctx), session_role);
-  if (role.oid != session_role && !session.is_superuser &&
-      !session.CanSet(role.oid)) {
+  if (!ctx.AccessOf(conn.GetSessionRoleId()).CanSet(role.oid)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
@@ -393,7 +379,7 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
   auto& conn = connector::GetSereneDBContext(ctx);
   const auto& role = RoleNamed(ctx, name);
   const auto login = conn.GetLoginRoleId();
-  if (role.oid != login && !auth::ClosureFor(&ctx, login)->is_superuser) {
+  if (role.oid != login && !ctx.AccessOf(login).is_superuser) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
@@ -495,1094 +481,1191 @@ void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-constexpr std::pair<std::string_view, VariableDescription>
-  kEngineVariableDescription[] = {
-    {
-      "sdb_ai_text_default_secret",
-      {
-        LogicalTypeId::VARCHAR,
-        "Name of the openai secret used by ai_generate, ai_classify, "
-        "ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, "
-        "ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does "
-        "not pass secret_name. Default: '' (no default).",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_embedding_default_secret",
-      {
-        LogicalTypeId::VARCHAR,
-        "Name of the openai secret used by ai_embed and ai_similarity when "
-        "the call does not pass secret_name. Default: '' (no default).",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_system_one_default_secret",
-      {
-        LogicalTypeId::VARCHAR,
-        "Name of the typesafe secret used by ai_system_one when the call does "
-        "not pass secret_name. Default: '' (no default).",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_throw_on_error",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When true, a row whose AI function request fails fails the query; "
-        "when false, that row returns NULL. Authentication, not-found, "
-        "validation (422) and exhausted-quota (429 insufficient_quota) errors "
-        "always fail the query. Default: true.",
-        [] { return duckdb::Value::BOOLEAN(true); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_throw_on_quota_exceeded",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When true, exceeding sdb_ai_max_api_calls_per_query or "
-        "sdb_ai_max_output_tokens_per_query fails the query; when false, the "
-        "remaining rows return NULL. Default: true.",
-        [] { return duckdb::Value::BOOLEAN(true); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_max_api_calls_per_query",
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum number of AI provider requests a single query may send. "
-        "0 = unlimited. Default: 0.",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_max_output_tokens_per_query",
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum number of output tokens, as reported by the provider, a "
-        "single query may consume; checked before each request, so requests "
-        "already in flight may exceed it. 0 = unlimited. Default: 0.",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_max_retries",
-      {
-        LogicalTypeId::UINTEGER,
-        "How many times an AI provider request is retried after a connection "
-        "error or HTTP 408, 429, 5xx or 529. Default: 3.",
-        [] { return duckdb::Value::UINTEGER(3); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_retry_initial_delay_ms",
-      {
-        LogicalTypeId::UINTEGER,
-        "Delay before the first AI provider retry, in milliseconds; each "
-        "further retry doubles it, up to 60 seconds. A Retry-After response "
-        "header overrides it, up to 60 "
-        "seconds. Default: 500.",
-        [] { return duckdb::Value::UINTEGER(500); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "sdb_ai_request_timeout",
-      {
-        LogicalTypeId::UINTEGER,
-        "Timeout of a single AI provider request, in seconds. Default: 120.",
-        [] { return duckdb::Value::UINTEGER(120); },
-        RejectZero<"sdb_ai_request_timeout">,
-      },
-    },
-    {
-      "sdb_ai_max_concurrent_requests",
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum number of AI provider requests a query has in flight, across "
-        "all of its AI calls and threads. Requests are sent by async tasks "
-        "(async_threads) and by the threads that evaluate the calls. "
-        "Default: 16.",
-        [] { return duckdb::Value::UINTEGER(16); },
-        RejectZero<"sdb_ai_max_concurrent_requests">,
-      },
-    },
-    {
-      "sdb_ai_embedding_max_batch_size",
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum number of texts ai_embed and ai_similarity send in one "
-        "embeddings request. Default: 100.",
-        [] { return duckdb::Value::UINTEGER(100); },
-        RejectZero<"sdb_ai_embedding_max_batch_size">,
-      },
-    },
-    {
-      "sdb_ai_allow_insecure_endpoint",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When false, AI functions refuse a secret whose base_url sends "
-        "requests over plain http:// to a host other than localhost, "
-        "127.0.0.0/8 or ::1, because the prompts and the API key would "
-        "travel unencrypted. Default: false.",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
-    },
-    {
-      "extra_float_digits",
-      {
-        LogicalTypeId::INTEGER,
-        "Sets the number of digits displayed for floating-point values.",
-        [] { return duckdb::Value{"1"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (!(-15 <= n && n <= 3)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"extra_float_digits\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      "bytea_output",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the output format for bytea.",
-        [] { return duckdb::Value{"hex"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
-                                                  magic_enum::case_insensitive)
-                 .has_value()) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"bytea_output\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
-    },
-    {
-      "xmloption",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets whether XML data in implicit parsing and serialization "
-        "operations is to be considered as documents or content fragments.",
-        [] { return duckdb::Value{"content"}; },
-        OneOfEnum<pg::XmlOption, "xmloption">,
-      },
-    },
+struct VariableEntry {
+  std::string_view name;
+  VariableDescription description;
+  duckdb::SettingAccess access;
 };
 
-constexpr std::pair<std::string_view, VariableDescription>
-  kVariableDescription[] = {
-    // serenedb specific variables
+constexpr duckdb::SettingAccess kUserSetting{duckdb::SettingContext::USER};
+constexpr duckdb::SettingAccess kHiddenUserSetting{duckdb::SettingContext::USER,
+                                                   false, true};
+constexpr duckdb::SettingAccess kInternalSetting{
+  duckdb::SettingContext::INTERNAL};
+constexpr duckdb::SettingAccess kHiddenInternalSetting{
+  duckdb::SettingContext::INTERNAL, false, true};
+constexpr duckdb::SettingAccess kSuperuserReadSetting{
+  duckdb::SettingContext::SUPERUSER, true};
+[[maybe_unused]] constexpr duckdb::SettingAccess kHiddenSetting{
+  duckdb::SettingContext::SUPERUSER, false, true};
+
+constexpr VariableEntry kEngineVariableDescription[] = {
+  {
+    "sdb_ai_text_default_secret",
     {
-      "hba",
-      {
-        LogicalTypeId::VARCHAR,
-        "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
-        "string: one rule per line, first match wins, applied to connections "
-        "opened after the SET. An un-removable local + loopback trust rule is "
-        "force-prepended so a bad ruleset cannot lock you out; an empty value "
-        "restores the default (SCRAM for every role). Server-global.",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (auto err =
-                network::pg::hba::SetHbaFromTextString(value.ToString())) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid hba ruleset: ", *err));
-          }
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          // RESET => default
-          if (auto err = network::pg::hba::SetHbaFromTextString("")) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
-          }
-        },
-        duckdb::SetScope::GLOBAL,
+      LogicalTypeId::VARCHAR,
+      "Name of the openai secret used by ai_generate, ai_classify, "
+      "ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, "
+      "ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does "
+      "not pass secret_name. Default: '' (no default).",
+      [] { return duckdb::Value{""}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+  },
+  {
+    "sdb_ai_embedding_default_secret",
+    {
+      LogicalTypeId::VARCHAR,
+      "Name of the openai secret used by ai_embed and ai_similarity when "
+      "the call does not pass secret_name. Default: '' (no default).",
+      [] { return duckdb::Value{""}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+  },
+  {
+    "sdb_ai_system_one_default_secret",
+    {
+      LogicalTypeId::VARCHAR,
+      "Name of the typesafe secret used by ai_system_one when the call does "
+      "not pass secret_name. Default: '' (no default).",
+      [] { return duckdb::Value{""}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+  },
+  {
+    "sdb_ai_throw_on_error",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When true, a row whose AI function request fails fails the query; "
+      "when false, that row returns NULL. Authentication, not-found, "
+      "validation (422) and exhausted-quota (429 insufficient_quota) errors "
+      "always fail the query. Default: true.",
+      [] { return duckdb::Value::BOOLEAN(true); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_throw_on_quota_exceeded",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When true, exceeding sdb_ai_max_api_calls_per_query or "
+      "sdb_ai_max_output_tokens_per_query fails the query; when false, the "
+      "remaining rows return NULL. Default: true.",
+      [] { return duckdb::Value::BOOLEAN(true); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_max_api_calls_per_query",
+    {
+      LogicalTypeId::UINTEGER,
+      "Maximum number of AI provider requests a single query may send. "
+      "0 = unlimited. Default: 0.",
+      [] { return duckdb::Value::UINTEGER(0); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_max_output_tokens_per_query",
+    {
+      LogicalTypeId::UINTEGER,
+      "Maximum number of output tokens, as reported by the provider, a "
+      "single query may consume; checked before each request, so requests "
+      "already in flight may exceed it. 0 = unlimited. Default: 0.",
+      [] { return duckdb::Value::UINTEGER(0); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_max_retries",
+    {
+      LogicalTypeId::UINTEGER,
+      "How many times an AI provider request is retried after a connection "
+      "error or HTTP 408, 429, 5xx or 529. Default: 3.",
+      [] { return duckdb::Value::UINTEGER(3); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_retry_initial_delay_ms",
+    {
+      LogicalTypeId::UINTEGER,
+      "Delay before the first AI provider retry, in milliseconds; each "
+      "further retry doubles it, up to 60 seconds. A Retry-After response "
+      "header overrides it, up to 60 "
+      "seconds. Default: 500.",
+      [] { return duckdb::Value::UINTEGER(500); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_request_timeout",
+    {
+      LogicalTypeId::UINTEGER,
+      "Timeout of a single AI provider request, in seconds. Default: 120.",
+      [] { return duckdb::Value::UINTEGER(120); },
+      RejectZero<"sdb_ai_request_timeout">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_max_concurrent_requests",
+    {
+      LogicalTypeId::UINTEGER,
+      "Maximum number of AI provider requests a query has in flight, across "
+      "all of its AI calls and threads. Requests are sent by async tasks "
+      "(async_threads) and by the threads that evaluate the calls. "
+      "Default: 16.",
+      [] { return duckdb::Value::UINTEGER(16); },
+      RejectZero<"sdb_ai_max_concurrent_requests">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_embedding_max_batch_size",
+    {
+      LogicalTypeId::UINTEGER,
+      "Maximum number of texts ai_embed and ai_similarity send in one "
+      "embeddings request. Default: 100.",
+      [] { return duckdb::Value::UINTEGER(100); },
+      RejectZero<"sdb_ai_embedding_max_batch_size">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ai_allow_insecure_endpoint",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When false, AI functions refuse a secret whose base_url sends "
+      "requests over plain http:// to a host other than localhost, "
+      "127.0.0.0/8 or ::1, because the prompts and the API key would "
+      "travel unencrypted. Default: false.",
+      [] { return duckdb::Value::BOOLEAN(false); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+  },
+  {
+    "extra_float_digits",
+    {
+      LogicalTypeId::INTEGER,
+      "Sets the number of digits displayed for floating-point values.",
+      [] { return duckdb::Value{"1"}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto n = value.GetValue<int32_t>();
+        if (!(-15 <= n && n <= 3)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"extra_float_digits\": \"",
+                                  value.ToString(), "\""));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "bytea_output",
+    {
+      LogicalTypeId::VARCHAR,
+      "Sets the output format for bytea.",
+      [] { return duckdb::Value{"hex"}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
+                                                magic_enum::case_insensitive)
+               .has_value()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"bytea_output\": \"",
+                                  value.ToString(), "\""));
+        }
+      },
+    },
+    kUserSetting,
+  },
+  {
+    "xmloption",
+    {
+      LogicalTypeId::VARCHAR,
+      "Sets whether XML data in implicit parsing and serialization "
+      "operations is to be considered as documents or content fragments.",
+      [] { return duckdb::Value{"content"}; },
+      OneOfEnum<pg::XmlOption, "xmloption">,
+    },
+    kUserSetting,
+  },
+};
+
+constexpr VariableEntry kVariableDescription[] = {
+  // serenedb specific variables
+  {
+    "hba",
+    {
+      LogicalTypeId::VARCHAR,
+      "Host-based authentication ruleset (pg_hba.conf syntax) as a single "
+      "string: one rule per line, first match wins, applied to connections "
+      "opened after the SET. An un-removable local + loopback trust rule is "
+      "force-prepended so a bad ruleset cannot lock you out; an empty value "
+      "restores the default (SCRAM for every role). Server-global.",
+      [] { return duckdb::Value{""}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        if (auto err =
+              network::pg::hba::SetHbaFromTextString(value.ToString())) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid hba ruleset: ", *err));
+        }
+      },
+      [](duckdb::ClientContext&, duckdb::SetScope) {
+        // RESET => default
+        if (auto err = network::pg::hba::SetHbaFromTextString("")) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR), ERR_MSG(*err));
+        }
+      },
+      duckdb::SetScope::GLOBAL,
+    },
+    kSuperuserReadSetting,
+  },
 #ifdef SDB_FAULT_INJECTION
+  {
+    "sdb_faults",
     {
-      "sdb_faults",
-      {
-        LogicalTypeId::VARCHAR,
-        "Fault injection control. SET sdb_faults = 'name' to add a failure "
-        "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
-        "clear all and release parked threads. Superuser only: the "
-        "failure-point registry is "
-        "process-global, so an armed point fires for every session.",
-        [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, duckdb::Value& value) {
-          RequireFaultSuperuser(ctx);
-          auto s = value.ToString();
-          if (s.starts_with('-')) {
-            if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
-              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                              ERR_MSG("failure point '", s, "' not set"));
-            }
-          } else {
-            if (!duckdb::FaultPoints::Arm(s)) {
-              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                              ERR_MSG("failure point '", s, "' already set"));
-            }
-            SDB_WARN(GENERAL, "activating intentional failure point '", s,
-                     "'. the server will misbehave!");
+      LogicalTypeId::VARCHAR,
+      "Fault injection control. SET sdb_faults = 'name' to add a failure "
+      "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
+      "clear all and release parked threads. Superuser only: the "
+      "failure-point registry is "
+      "process-global, so an armed point fires for every session.",
+      [] { return duckdb::Value{""}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto s = value.ToString();
+        if (s.starts_with('-')) {
+          if (!duckdb::FaultPoints::Disarm(std::string_view{s}.substr(1))) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("failure point '", s, "' not set"));
           }
-          auto points = duckdb::FaultPoints::List();
-          value = duckdb::Value(absl::StrJoin(points, ","));
-        },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope) {
-          RequireFaultSuperuser(ctx);
-          duckdb::FaultPoints::Clear();
-        },
-        // SESSION scope, though the registry behind it is process-global: it
-        // is the only scope that works. GLOBAL is refused inside a
-        // transaction, and every crash-recovery test arms its fault inside an
-        // uncommitted txn; LOCAL would promise a rollback the registry cannot
-        // give. PG's PGC_SUSET developer knobs are declared the same way --
-        // session-scoped and superuser-gated -- and the gate is what makes the
-        // mismatch safe: only a superuser can reach the global registry.
-        duckdb::SetScope::SESSION,
+        } else {
+          if (!duckdb::FaultPoints::Arm(s)) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("failure point '", s, "' already set"));
+          }
+          SDB_WARN(GENERAL, "activating intentional failure point '", s,
+                   "'. the server will misbehave!");
+        }
+        auto points = duckdb::FaultPoints::List();
+        value = duckdb::Value(absl::StrJoin(points, ","));
       },
+      [](duckdb::ClientContext&, duckdb::SetScope) {
+        duckdb::FaultPoints::Clear();
+      },
+      // SESSION scope, though the registry behind it is process-global: it
+      // is the only scope that works. GLOBAL is refused inside a
+      // transaction, and every crash-recovery test arms its fault inside an
+      // uncommitted txn; LOCAL would promise a rollback the registry cannot
+      // give. PG's PGC_SUSET developer knobs are declared the same way --
+      // session-scoped and superuser-gated -- and the gate is what makes the
+      // mismatch safe: only a superuser can reach the global registry.
+      duckdb::SetScope::SESSION,
     },
+    kHiddenSetting,
+  },
 #endif
 #ifdef D_ASSERT_IS_ENABLED
+  {
+    "debug_verification",
     {
-      "debug_verification",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
-        "false to disable verification projections in EXPLAIN and speed "
-        "up tests in debug builds. Default: false.",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          duckdb::g_debug_verify_enabled.store(value.GetValue<bool>(),
-                                               std::memory_order_relaxed);
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          duckdb::g_debug_verify_enabled.store(false,
-                                               std::memory_order_relaxed);
-        },
-        duckdb::SetScope::GLOBAL,
+      LogicalTypeId::BOOLEAN,
+      "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+      "false to disable verification projections in EXPLAIN and speed "
+      "up tests in debug builds. Default: false.",
+      [] { return duckdb::Value::BOOLEAN(false); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        duckdb::g_debug_verify_enabled.store(value.GetValue<bool>(),
+                                             std::memory_order_relaxed);
       },
+      [](duckdb::ClientContext&, duckdb::SetScope) {
+        duckdb::g_debug_verify_enabled.store(false, std::memory_order_relaxed);
+      },
+      duckdb::SetScope::GLOBAL,
     },
+    kHiddenSetting,
+  },
 #endif
-    // Logging knobs (level, type filters, storage, on/off) live in duckdb's
-    // built-in settings: logging_level / enable_logging / enabled_log_types
-    // / disabled_log_types / logging_storage / logging_mode. The previous
-    // sdb_log_level extension option was dropped in favour of those.
+  // Logging knobs (level, type filters, storage, on/off) live in duckdb's
+  // built-in settings: logging_level / enable_logging / enabled_log_types
+  // / disabled_log_types / logging_storage / logging_mode. The previous
+  // sdb_log_level extension option was dropped in favour of those.
+  {
+    "sdb_ivf_search_nprobe",
     {
-      "sdb_ivf_search_nprobe",
-      {
-        LogicalTypeId::INTEGER,
-        "Number of IVF cluster lists each segment scans per vector-similarity "
-        "query. Higher values improve recall at the cost of latency. A value "
-        "is used as written. -1 (the default) lets the engine choose per "
-        "segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is "
-        "the segment's rows over the index's posting size, which keeps recall "
-        "near 0.95 at any LIMIT and segment size.",
-        [] { return duckdb::Value::INTEGER(-1); },
-        PositiveOrMinusOne<"sdb_ivf_search_nprobe">,
+      LogicalTypeId::INTEGER,
+      "Number of IVF cluster lists each segment scans per vector-similarity "
+      "query. Higher values improve recall at the cost of latency. A value "
+      "is used as written. -1 (the default) lets the engine choose per "
+      "segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is "
+      "the segment's rows over the index's posting size, which keeps recall "
+      "near 0.95 at any LIMIT and segment size.",
+      [] { return duckdb::Value::INTEGER(-1); },
+      PositiveOrMinusOne<"sdb_ivf_search_nprobe">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ivf_max_search_fanout",
+    {
+      LogicalTypeId::INTEGER,
+      "Upper bound on the beam of the descent through a multi-level IVF "
+      "centroid tree, where each level keeps the beam\'s worth of its "
+      "nearest centroids and scores only their children. The beam follows "
+      "sdb_ivf_search_nprobe as the query resolves it; a narrower one "
+      "scores fewer centroids at some recall cost. Applied after "
+      "sdb_ivf_min_search_fanout. -1 (the default) leaves the beam "
+      "unbounded.",
+      [] { return duckdb::Value::INTEGER(-1); },
+      PositiveOrMinusOne<"sdb_ivf_max_search_fanout">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ivf_min_search_fanout",
+    {
+      LogicalTypeId::INTEGER,
+      "Lower bound on the beam of the descent through a multi-level IVF "
+      "centroid tree, where each level keeps the beam\'s worth of its "
+      "nearest centroids and scores only their children. The beam follows "
+      "sdb_ivf_search_nprobe as the query resolves it; a wider one reaches "
+      "clusters a narrow descent misses, and one as wide as the segment\'s "
+      "list count makes the descent exact. -1 (the default) leaves the "
+      "beam unbounded.",
+      [] { return duckdb::Value::INTEGER(-1); },
+      PositiveOrMinusOne<"sdb_ivf_min_search_fanout">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_hnsw_ef_search",
+    {
+      LogicalTypeId::INTEGER,
+      "Search-time beam width (ef) of each segment's HNSW search. Higher "
+      "values improve recall at the cost of latency. A value is used as "
+      "written, floored only at what a segment must return for the query's "
+      "LIMIT. -1 (the default) lets the engine choose: the index's "
+      "ef_construction or the LIMIT, whichever is larger, so an untuned "
+      "query keeps its recall at any LIMIT. With a quantized index every "
+      "hit of the beam is rescored exactly.",
+      [] { return duckdb::Value::INTEGER(-1); },
+      PositiveOrMinusOne<"sdb_hnsw_ef_search">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_hnsw_filter_mode",
+    {
+      LogicalTypeId::VARCHAR,
+      "How an HNSW vector index answers a query with a WHERE: 'auto' picks "
+      "by the predicate's estimated selectivity, and walks as 'twohop' "
+      "where a vector's code is long enough that crossing a rejected row "
+      "costs less than scoring it; 'scan' scores every row "
+      "the predicate admits; 'walk' walks the graph scoring every "
+      "neighbour and passing through rejected rows; 'prune' walks scoring "
+      "and expanding admitted rows only; 'twohop' walks expanding a "
+      "rejected row's neighbours in its place; 'bridge' walks scoring every "
+      "neighbour but expanding a rejected row into admitted ones only. "
+      "Default 'auto'.",
+      [] { return duckdb::Value{"auto"}; },
+      OneOfEnum<irs::HnswFilterMode, "sdb_hnsw_filter_mode">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_hnsw_column_filter",
+    {
+      LogicalTypeId::VARCHAR,
+      "How an HNSW graph walk answers a predicate the columnstore can "
+      "evaluate: 'fold' evaluates one only the columnstore answers over the "
+      "whole segment before the walk, and takes one the index answers from "
+      "the index; 'read' reads the columns of each row the walk reaches, "
+      "including for predicates the index answers; 'auto' reads while the "
+      "walk is expected to reach few enough rows for that to cost less than "
+      "the fold, or than the index where the index answers the predicate, "
+      "weighing what one read costs in the columns' encodings. Default "
+      "'auto'.",
+      [] { return duckdb::Value{"auto"}; },
+      OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ann_force_exact",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When true, a vector search (ORDER BY <distance> LIMIT k, or a "
+      "distance "
+      "range) returns the exact answer instead of walking the ANN index, "
+      "split across the "
+      "scan's workers. Every row with a vector is considered; where an hnsw "
+      "index stores 8-bit codes, a row's stored vector is read only if its "
+      "code leaves it a chance at the top k. Default false, which leaves the "
+      "choice to the engine.",
+      [] { return duckdb::Value::BOOLEAN(false); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_ivf_sample_factor",
+    {
+      LogicalTypeId::DOUBLE,
+      "Fraction of rows used to train the IVF centroid tree "
+      "(sample_size = sample_factor * N), captured into the index config at "
+      "CREATE INDEX. Any value in (0, 1]. Default 0.2.",
+      [] { return duckdb::Value::DOUBLE(0.2); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto f = value.GetValue<double>();
+        if (f <= 0.0 || f > 1.0) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"sdb_ivf_sample_factor\": \"",
+                                  value.ToString(), "\""));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_ivf_posting_size",
     {
-      "sdb_ivf_max_search_fanout",
-      {
-        LogicalTypeId::INTEGER,
-        "Upper bound on the beam of the descent through a multi-level IVF "
-        "centroid tree, where each level keeps the beam\'s worth of its "
-        "nearest centroids and scores only their children. The beam follows "
-        "sdb_ivf_search_nprobe as the query resolves it; a narrower one "
-        "scores fewer centroids at some recall cost. Applied after "
-        "sdb_ivf_min_search_fanout. -1 (the default) leaves the beam "
-        "unbounded.",
-        [] { return duckdb::Value::INTEGER(-1); },
-        PositiveOrMinusOne<"sdb_ivf_max_search_fanout">,
+      LogicalTypeId::INTEGER,
+      "Target IVF posting-list size (leaf cap t), captured into the index "
+      "config at CREATE INDEX. Smaller values force deeper multi-level "
+      "centroid trees (useful for testing). Default 1024.",
+      [] { return duckdb::Value::INTEGER(1024); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto n = value.GetValue<int32_t>();
+        if (n < 1) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"sdb_ivf_posting_size\": \"",
+                                  value.ToString(), "\""));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_ann_rescore_width",
     {
-      "sdb_ivf_min_search_fanout",
-      {
-        LogicalTypeId::INTEGER,
-        "Lower bound on the beam of the descent through a multi-level IVF "
-        "centroid tree, where each level keeps the beam\'s worth of its "
-        "nearest centroids and scores only their children. The beam follows "
-        "sdb_ivf_search_nprobe as the query resolves it; a wider one reaches "
-        "clusters a narrow descent misses, and one as wide as the segment\'s "
-        "list count makes the descent exact. -1 (the default) leaves the "
-        "beam unbounded.",
-        [] { return duckdb::Value::INTEGER(-1); },
-        PositiveOrMinusOne<"sdb_ivf_min_search_fanout">,
+      LogicalTypeId::DOUBLE,
+      "Rescore width z for a quantized vector-similarity query, HNSW and "
+      "IVF alike: the search runs on quantized codes, and a candidate from "
+      "any segment is read back at full precision while its code score plus "
+      "z times the code's estimated error could still beat the k-th best "
+      "full-precision score found so far, so a segment holding many of the "
+      "nearest neighbours gets more of them rescored and a segment holding "
+      "none gets none. A larger z rescores more and misses fewer: a "
+      "neighbour sitting exactly at the k-th score is missed with the "
+      "probability that a normal error exceeds z standard deviations. 0 "
+      "disables the rescore: the query answers from the codes, which is "
+      "faster and caps recall at whatever the codes can tell apart. -1 (the "
+      "default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit "
+      "rabitq, 4 for usq8, 5 for sq4, 6 for usq4, 7 for osq at 4 or more "
+      "bits, and 0 for fp16 and bf16, which answer from their codes; pq uses "
+      "2 on an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or "
+      "2 bits 3 and 2. "
+      "Unquantized (quant = \'none\') indexes are never rescored.",
+      [] { return duckdb::Value::DOUBLE(-1); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto n = value.GetValue<double>();
+        if (!std::isfinite(n) || (n < 0.0 && n != -1.0)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"sdb_ann_rescore_width\": \"",
+                                  value.ToString(), "\""));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_levenshtein_max_terms",
     {
-      "sdb_hnsw_ef_search",
-      {
-        LogicalTypeId::INTEGER,
-        "Search-time beam width (ef) of each segment's HNSW search. Higher "
-        "values improve recall at the cost of latency. A value is used as "
-        "written, floored only at what a segment must return for the query's "
-        "LIMIT. -1 (the default) lets the engine choose: the index's "
-        "ef_construction or the LIMIT, whichever is larger, so an untuned "
-        "query keeps its recall at any LIMIT. With a quantized index every "
-        "hit of the beam is rescored exactly.",
-        [] { return duckdb::Value::INTEGER(-1); },
-        PositiveOrMinusOne<"sdb_hnsw_ef_search">,
+      LogicalTypeId::INTEGER,
+      "The maximum number of dictionary terms a fuzzy predicate "
+      "(`ts_levenshtein`) expands to per index segment. Terms closest to the "
+      "query survive; the rest neither match nor contribute to scoring. "
+      "Higher values improve recall on wide expansions at the cost of "
+      "per-query work. 0 removes the cap, so every term within the edit "
+      "distance matches. Default 50.",
+      [] { return duckdb::Value::INTEGER(50); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        auto n = value.GetValue<int32_t>();
+        if (n < 0) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"sdb_levenshtein_max_terms\": \"",
+                                  value.ToString(), "\""));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_pattern_cache_size",
     {
-      "sdb_hnsw_filter_mode",
-      {
-        LogicalTypeId::VARCHAR,
-        "How an HNSW vector index answers a query with a WHERE: 'auto' picks "
-        "by the predicate's estimated selectivity, and walks as 'twohop' "
-        "where a vector's code is long enough that crossing a rejected row "
-        "costs less than scoring it; 'scan' scores every row "
-        "the predicate admits; 'walk' walks the graph scoring every "
-        "neighbour and passing through rejected rows; 'prune' walks scoring "
-        "and expanding admitted rows only; 'twohop' walks expanding a "
-        "rejected row's neighbours in its place; 'bridge' walks scoring every "
-        "neighbour but expanding a rejected row into admitted ones only. "
-        "Default 'auto'.",
-        [] { return duckdb::Value{"auto"}; },
-        OneOfEnum<irs::HnswFilterMode, "sdb_hnsw_filter_mode">,
+      LogicalTypeId::UBIGINT,
+      "Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and "
+      "fused alternations over an inverted index) kept across queries, so "
+      "a pattern is compiled once per server rather than once per query. "
+      "The least recently used patterns are dropped first; a pattern in use "
+      "by a running query stays alive until it finishes. 0, the default, "
+      "keeps nothing: each query compiles its own patterns. Server-global.",
+      [] {
+        return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
+      },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        irs::PatternCache::Instance().SetCapacity(value.GetValue<uint64_t>());
+      },
+      [](duckdb::ClientContext&, duckdb::SetScope) {
+        irs::PatternCache::Instance().SetCapacity(
+          irs::PatternCache::kDefaultCapacity);
+      },
+      duckdb::SetScope::GLOBAL,
+    },
+  },
+  {
+    "sdb_job_history_size",
+    {
+      LogicalTypeId::UBIGINT,
+      "Number of recent job runs, across all jobs, that sdb_job_runs() "
+      "returns; the oldest run is dropped first. 0 keeps none. Default "
+      "1024. Server-global.",
+      [] { return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize); },
+      nullptr,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
+    },
+  },
+  {
+    "sdb_job_max_depth",
+    {
+      LogicalTypeId::UINTEGER,
+      "Maximum number of job runs in one chain of EXECUTE JOB calls, where "
+      "a job's body executes another job; a run that would go deeper fails. "
+      "Default 16. Server-global.",
+      [] { return duckdb::Value::UINTEGER(16); },
+      nullptr,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
+    },
+  },
+  {
+    "sdb_disable_top_k_optimization",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
+      "LIMIT k` into the inverted-index scan, so block-max score pruning "
+      "never engages. Default: false (optimization on).",
+      [] { return duckdb::Value::BOOLEAN(false); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_lookup_join_source_hop",
+    {
+      LogicalTypeId::BOOLEAN,
+      "When true, a LOOKUP_JOIN over an inverted index that returns only "
+      "source columns reads the row keys from the index in one LOOKUP_JOIN "
+      "and the source columns in a second one. Default: false.",
+      [] { return duckdb::Value::BOOLEAN(false); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    "sdb_scan_split",
+    {
+      LogicalTypeId::VARCHAR,
+      "How an inverted-index scan shares a segment between workers: 'tail' "
+      "gives each worker its own segment and lets an idle worker join the "
+      "segment with the most row groups left only once no segment is "
+      "unclaimed; 'always' puts every worker on the same segment until it "
+      "is claimed; 'never' scans each segment whole on one worker; 'auto' "
+      "(default) is 'always' under an ORDER BY scan order and 'tail' "
+      "otherwise.",
+      [] { return duckdb::Value{"auto"}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        const auto mode = value.ToString();
+        if (!absl::EqualsIgnoreCase(mode, "auto") &&
+            !absl::EqualsIgnoreCase(mode, "tail") &&
+            !absl::EqualsIgnoreCase(mode, "always") &&
+            !absl::EqualsIgnoreCase(mode, "never")) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("invalid value for parameter \"sdb_scan_split\": \"", mode,
+                    "\" (auto, tail, always or never)"));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_scan_order",
     {
-      "sdb_hnsw_column_filter",
-      {
-        LogicalTypeId::VARCHAR,
-        "How an HNSW graph walk answers a predicate the columnstore can "
-        "evaluate: 'fold' evaluates one only the columnstore answers over the "
-        "whole segment before the walk, and takes one the index answers from "
-        "the index; 'read' reads the columns of each row the walk reaches, "
-        "including for predicates the index answers; 'auto' reads while the "
-        "walk is expected to reach few enough rows for that to cost less than "
-        "the fold, or than the index where the index answers the predicate, "
-        "weighing what one read costs in the columns' encodings. Default "
-        "'auto'.",
-        [] { return duckdb::Value{"auto"}; },
-        OneOfEnum<irs::HnswColumnFilter, "sdb_hnsw_column_filter">,
+      LogicalTypeId::VARCHAR,
+      "The order an inverted-index scan claims its segments in: "
+      "'smallest_first' and 'largest_first' order them by live document "
+      "count; 'order' is best-first by the ORDER BY column's row-group "
+      "statistics when the query has a scan order (and 'largest_first' "
+      "otherwise); 'auto' (default) is 'order' under a scan order and "
+      "'largest_first' otherwise.",
+      [] { return duckdb::Value{"auto"}; },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        const auto mode = value.ToString();
+        if (!absl::EqualsIgnoreCase(mode, "auto") &&
+            !absl::EqualsIgnoreCase(mode, "smallest_first") &&
+            !absl::EqualsIgnoreCase(mode, "largest_first") &&
+            !absl::EqualsIgnoreCase(mode, "order")) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("invalid value for parameter \"sdb_scan_order\": \"", mode,
+                    "\" (auto, smallest_first, largest_first or order)"));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_scan_no_split_row_groups",
     {
-      "sdb_ann_force_exact",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When true, a vector search (ORDER BY <distance> LIMIT k, or a "
-        "distance "
-        "range) returns the exact answer instead of walking the ANN index, "
-        "split across the "
-        "scan's workers. Every row with a vector is considered; where an hnsw "
-        "index stores 8-bit codes, a row's stored vector is read only if its "
-        "code leaves it a chance at the top k. Default false, which leaves the "
-        "choice to the engine.",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      LogicalTypeId::INTEGER,
+      "A segment with at most this many row groups is always one unit of "
+      "an inverted-index scan and is never split across workers. "
+      "Default 1.",
+      [] { return duckdb::Value::INTEGER(1); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        if (value.GetValue<int32_t>() < 1) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("sdb_scan_no_split_row_groups must be at least 1"));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    "sdb_compact_target_segments",
     {
-      "sdb_ivf_sample_factor",
-      {
-        LogicalTypeId::DOUBLE,
-        "Fraction of rows used to train the IVF centroid tree "
-        "(sample_size = sample_factor * N), captured into the index config at "
-        "CREATE INDEX. Any value in (0, 1]. Default 0.2.",
-        [] { return duckdb::Value::DOUBLE(0.2); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto f = value.GetValue<double>();
-          if (f <= 0.0 || f > 1.0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_sample_factor\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+      LogicalTypeId::UINTEGER,
+      "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
+      "1 (default) merges every segment into one; a larger N splits the "
+      "segments into N disjoint groups, merges each group into one segment "
+      "and stops there, so no single merge holds the whole table. A table "
+      "with N segments or fewer is left as it is. Default 1.",
+      [] { return duckdb::Value::UINTEGER(1); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+    },
+    kUserSetting,
+  },
+  {
+    kRowGroupSizeSetting,
+    {
+      LogicalTypeId::UINTEGER,
+      "Default columnstore row-group size for newly created inverted "
+      "indexes. Per-index WITH (row_group_size = ...) overrides it. Reads "
+      "from existing indexes are unaffected. Default: 122'880.",
+      [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+        const auto n = value.GetValue<uint32_t>();
+        if (n == 0 || n % STANDARD_VECTOR_SIZE != 0) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("invalid value for parameter "
+                                  "\"row_group_size\": \"",
+                                  value.ToString(),
+                                  "\" (must be a positive multiple of the "
+                                  "vector size ",
+                                  STANDARD_VECTOR_SIZE, ")"));
+        }
       },
     },
+    kUserSetting,
+  },
+  {
+    kRefreshIntervalSetting,
     {
-      "sdb_ivf_posting_size",
-      {
-        LogicalTypeId::INTEGER,
-        "Target IVF posting-list size (leaf cap t), captured into the index "
-        "config at CREATE INDEX. Smaller values force deeper multi-level "
-        "centroid trees (useful for testing). Default 1024.",
-        [] { return duckdb::Value::INTEGER(1024); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 1) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ivf_posting_size\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
+      LogicalTypeId::UINTEGER,
+      "Background refresh interval (ms) for newly created inverted indexes "
+      "and search tables. WITH (refresh_interval = ...) overrides it per "
+      "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
+      "0 disables the refresh task. Default: 1000.",
+      [] { return duckdb::Value::UINTEGER(1000); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kReindexIntervalSetting,
     {
-      "sdb_ann_rescore_width",
-      {
-        LogicalTypeId::DOUBLE,
-        "Rescore width z for a quantized vector-similarity query, HNSW and "
-        "IVF alike: the search runs on quantized codes, and a candidate from "
-        "any segment is read back at full precision while its code score plus "
-        "z times the code's estimated error could still beat the k-th best "
-        "full-precision score found so far, so a segment holding many of the "
-        "nearest neighbours gets more of them rescored and a segment holding "
-        "none gets none. A larger z rescores more and misses fewer: a "
-        "neighbour sitting exactly at the k-th score is missed with the "
-        "probability that a normal error exceeds z standard deviations. 0 "
-        "disables the rescore: the query answers from the codes, which is "
-        "faster and caps recall at whatever the codes can tell apart. -1 (the "
-        "default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit "
-        "rabitq, 4 for usq8, 5 for sq4, 6 for usq4, 7 for osq at 4 or more "
-        "bits, and 0 for fp16 and bf16, which answer from their codes; pq uses "
-        "2 on an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or "
-        "2 bits 3 and 2. "
-        "Unquantized (quant = \'none\') indexes are never rescored.",
-        [] { return duckdb::Value::DOUBLE(-1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<double>();
-          if (!std::isfinite(n) || (n < 0.0 && n != -1.0)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_ann_rescore_width\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
+      LogicalTypeId::UINTEGER,
+      "Periodic reindex interval (ms) for newly created VIEW-backed "
+      "inverted indexes: a non-zero value creates a job named after the "
+      "index that runs the ordinary REINDEX road (up_to_date / delta / "
+      "rebuild) as the index owner, AFTER the interval. Per-index "
+      "WITH (reindex_interval = ...) overrides; ALTER INDEX SET "
+      "retunes, creates or drops the job. 0 disables it. Hint-less iceberg "
+      "sources refresh from the background only when the GLOBAL "
+      "unsafe_enable_version_guessing is set. Default: 0.",
+      [] { return duckdb::Value::UINTEGER(0); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kCompactionIntervalSetting,
     {
-      "sdb_levenshtein_max_terms",
-      {
-        LogicalTypeId::INTEGER,
-        "The maximum number of dictionary terms a fuzzy predicate "
-        "(`ts_levenshtein`) expands to per index segment. Terms closest to the "
-        "query survive; the rest neither match nor contribute to scoring. "
-        "Higher values improve recall on wide expansions at the cost of "
-        "per-query work. 0 removes the cap, so every term within the edit "
-        "distance matches. Default 50.",
-        [] { return duckdb::Value::INTEGER(50); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (n < 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"sdb_levenshtein_max_terms\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
-      },
+      LogicalTypeId::UINTEGER,
+      "Background compaction interval (ms) for newly created inverted "
+      "indexes and search tables. WITH (compaction_interval = ...) "
+      "overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET "
+      "changes it later. 0 disables background compaction; VACUUM "
+      "(COMPACT_*) still merges on demand. Default: 1000.",
+      [] { return duckdb::Value::UINTEGER(1000); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kCleanupIntervalStepSetting,
     {
-      "sdb_pattern_cache_size",
-      {
-        LogicalTypeId::UBIGINT,
-        "Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and "
-        "fused alternations over an inverted index) kept across queries, so "
-        "a pattern is compiled once per server rather than once per query. "
-        "The least recently used patterns are dropped first; a pattern in use "
-        "by a running query stays alive until it finishes. 0, the default, "
-        "keeps nothing: each query compiles its own patterns. Server-global.",
-        [] {
-          return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          irs::PatternCache::Instance().SetCapacity(value.GetValue<uint64_t>());
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          irs::PatternCache::Instance().SetCapacity(
-            irs::PatternCache::kDefaultCapacity);
-        },
-        duckdb::SetScope::GLOBAL,
-      },
+      LogicalTypeId::UINTEGER,
+      "Number of automatic refreshes between background unreferenced-file "
+      "cleanup passes for newly created inverted indexes and search tables. "
+      "WITH (cleanup_interval_step = ...) overrides it per index or table. "
+      "0 disables the periodic passes: cleanup then follows only background "
+      "compaction and, on a search table, VACUUM. Default: 1.",
+      [] { return duckdb::Value::UINTEGER(1); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kSearchBackfillGroupBytesSetting,
     {
-      "sdb_job_history_size",
-      {
-        LogicalTypeId::UBIGINT,
-        "Number of recent job runs, across all jobs, that sdb_job_runs() "
-        "returns; the oldest run is dropped first. 0 keeps none. Default "
-        "1024. Server-global.",
-        [] {
-          return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize);
-        },
-        nullptr,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
-      },
+      LogicalTypeId::UBIGINT,
+      "Bytes of existing segments a search-table CREATE INDEX rewrites "
+      "before swapping them in and moving on. Bounds the build's peak disk "
+      "(~2x one group) and the length of each publish; a value above the "
+      "table's size means a single swap. 0 = no limit (one swap for the "
+      "whole table). Default 1073741824 (1GB).",
+      [] { return duckdb::Value::UBIGINT(uint64_t{1} << 30); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kSegmentMemoryMaxSetting,
     {
-      "sdb_job_max_depth",
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum number of job runs in one chain of EXECUTE JOB calls, where "
-        "a job's body executes another job; a run that would go deeper fails. "
-        "Default 16. Server-global.",
-        [] { return duckdb::Value::UINTEGER(16); },
-        nullptr,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
+      LogicalTypeId::UBIGINT,
+      "In-memory bytes an inverted-index or search-table segment writer "
+      "fills before rolling over to a new on-disk segment (also the CREATE "
+      "INDEX backfill commit cadence). Per-object WITH (segment_memory_max "
+      "= ...) overrides. A serial write to a search table also buffers up "
+      "to checkpoint_threshold of rows. Default 268435456 (256MB).",
+      [] {
+        return duckdb::Value::UBIGINT(
+          catalog::InvertedIndexSettings{}.segment_memory_max);
       },
+      RejectZero<"segment_memory_max">,
     },
+    kUserSetting,
+  },
+  {
+    kSegmentDocsMaxSetting,
     {
-      "sdb_disable_top_k_optimization",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC "
-        "LIMIT k` into the inverted-index scan, so block-max score pruning "
-        "never engages. Default: false (optimization on).",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::UINTEGER,
+      "Document count at which an inverted-index segment writer rolls over "
+      "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
+      "overrides. 0 = unlimited (memory limit governs).",
+      [] { return duckdb::Value::UINTEGER(0); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+    kUserSetting,
+  },
+  {
+    kRecoveryReplayDepthSetting,
     {
-      "sdb_lookup_join_source_hop",
-      {
-        LogicalTypeId::BOOLEAN,
-        "When true, a LOOKUP_JOIN over an inverted index that returns only "
-        "source columns reads the row keys from the index in one LOOKUP_JOIN "
-        "and the source columns in a second one. Default: false.",
-        [] { return duckdb::Value::BOOLEAN(false); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::UINTEGER,
+      "Maximum WAL chunks in flight per inverted index during recovery "
+      "replay (the prefetch window; bounds replay memory). 0 = auto "
+      "(4 x cpu threads).",
+      [] { return duckdb::Value::UINTEGER(0); },
+      [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
     },
+  },
+  {
+    kCompactionMaxSegmentsSetting,
     {
-      "sdb_scan_split",
-      {
-        LogicalTypeId::VARCHAR,
-        "How an inverted-index scan shares a segment between workers: 'tail' "
-        "gives each worker its own segment and lets an idle worker join the "
-        "segment with the most row groups left only once no segment is "
-        "unclaimed; 'always' puts every worker on the same segment until it "
-        "is claimed; 'never' scans each segment whole on one worker; 'auto' "
-        "(default) is 'always' under an ORDER BY scan order and 'tail' "
-        "otherwise.",
-        [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "tail") &&
-              !absl::EqualsIgnoreCase(mode, "always") &&
-              !absl::EqualsIgnoreCase(mode, "never")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_scan_split\": \"",
-                      mode, "\" (auto, tail, always or never)"));
-          }
-        },
+      LogicalTypeId::UINTEGER,
+      "Maximum segments of an inverted index or search table merged by one "
+      "background compaction. WITH (compaction_max_segments = ...) "
+      "overrides it per index or table. Default 10.",
+      [] {
+        return duckdb::Value::UINTEGER(
+          catalog::InvertedIndexSettings{}.compaction_max_segments);
       },
+      RejectZero<"compaction_max_segments">,
     },
+    kUserSetting,
+  },
+  {
+    kCompactionMaxSegmentsBytesSetting,
     {
-      "sdb_scan_order",
-      {
-        LogicalTypeId::VARCHAR,
-        "The order an inverted-index scan claims its segments in: "
-        "'smallest_first' and 'largest_first' order them by live document "
-        "count; 'order' is best-first by the ORDER BY column's row-group "
-        "statistics when the query has a scan order (and 'largest_first' "
-        "otherwise); 'auto' (default) is 'order' under a scan order and "
-        "'largest_first' otherwise.",
-        [] { return duckdb::Value{"auto"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto mode = value.ToString();
-          if (!absl::EqualsIgnoreCase(mode, "auto") &&
-              !absl::EqualsIgnoreCase(mode, "smallest_first") &&
-              !absl::EqualsIgnoreCase(mode, "largest_first") &&
-              !absl::EqualsIgnoreCase(mode, "order")) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"sdb_scan_order\": \"",
-                      mode,
-                      "\" (auto, smallest_first, largest_first or order)"));
-          }
-        },
+      LogicalTypeId::UBIGINT,
+      "Byte budget of one background compaction of an inverted index or "
+      "search table (the tier target size). WITH "
+      "(compaction_max_segments_bytes = ...) overrides it per index or "
+      "table. Default 5368709120 (5GB).",
+      [] {
+        return duckdb::Value::UBIGINT(
+          catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
       },
+      RejectZero<"compaction_max_segments_bytes">,
     },
+    kUserSetting,
+  },
+  {
+    kCompactionFloorSegmentBytesSetting,
     {
-      "sdb_scan_no_split_row_groups",
-      {
-        LogicalTypeId::INTEGER,
-        "A segment with at most this many row groups is always one unit of "
-        "an inverted-index scan and is never split across workers. "
-        "Default 1.",
-        [] { return duckdb::Value::INTEGER(1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (value.GetValue<int32_t>() < 1) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("sdb_scan_no_split_row_groups must be at least 1"));
-          }
-        },
+      LogicalTypeId::UBIGINT,
+      "Segments of an inverted index or search table below this size count "
+      "as equal-sized for compaction candidate selection. WITH "
+      "(compaction_floor_segment_bytes = ...) overrides it per index or "
+      "table. Default 2097152 (2MB).",
+      [] {
+        return duckdb::Value::UBIGINT(
+          catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
       },
+      RejectZero<"compaction_floor_segment_bytes">,
     },
+    kUserSetting,
+  },
+  {
+    "client_encoding",
     {
-      "sdb_compact_target_segments",
-      {
-        LogicalTypeId::UINTEGER,
-        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
-        "1 (default) merges every segment into one; a larger N splits the "
-        "segments into N disjoint groups, merges each group into one segment "
-        "and stops there, so no single merge holds the whole table. A table "
-        "with N segments or fewer is left as it is. Default 1.",
-        [] { return duckdb::Value::UINTEGER(1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the client's character set encoding.",
+      [] { return duckdb::Value{"UTF8"}; },
+      NoOverwriteClientEncoding,
     },
+    kUserSetting,
+  },
+  {
+    "application_name",
     {
-      kRowGroupSizeSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Default columnstore row-group size for newly created inverted "
-        "indexes. Per-index WITH (row_group_size = ...) overrides it. Reads "
-        "from existing indexes are unaffected. Default: 122'880.",
-        [] { return duckdb::Value::UINTEGER(DEFAULT_ROW_GROUP_SIZE); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          const auto n = value.GetValue<uint32_t>();
-          if (n == 0 || n % STANDARD_VECTOR_SIZE != 0) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"row_group_size\": \"",
-                                    value.ToString(),
-                                    "\" (must be a positive multiple of the "
-                                    "vector size ",
-                                    STANDARD_VECTOR_SIZE, ")"));
-          }
-        },
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the application name to be reported in statistics and logs.",
+      [] { return duckdb::Value{""}; },
+      CheckApplicationName,
     },
+    kUserSetting,
+  },
+  {
+    "in_hot_standby",
     {
-      kRefreshIntervalSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Background refresh interval (ms) for newly created inverted indexes "
-        "and search tables. WITH (refresh_interval = ...) overrides it per "
-        "index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. "
-        "0 disables the refresh task. Default: 1000.",
-        [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::BOOLEAN,
+      "Shows whether hot standby is currently active.",
+      [] { return duckdb::Value{false}; },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "integer_datetimes",
     {
-      kReindexIntervalSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Periodic reindex interval (ms) for newly created VIEW-backed "
-        "inverted indexes: a non-zero value creates a job named after the "
-        "index that runs the ordinary REINDEX road (up_to_date / delta / "
-        "rebuild) as the index owner, AFTER the interval. Per-index "
-        "WITH (reindex_interval = ...) overrides; ALTER INDEX SET "
-        "retunes, creates or drops the job. 0 disables it. Hint-less iceberg "
-        "sources refresh from the background only when the GLOBAL "
-        "unsafe_enable_version_guessing is set. Default: 0.",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::BOOLEAN,
+      "Shows whether datetimes are integer based.",
+      [] { return duckdb::Value{true}; },
+      NoOverwrite<"integer_datetimes">,
     },
+    kUserSetting,
+  },
+  {
+    "createrole_self_grant",
     {
-      kCompactionIntervalSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Background compaction interval (ms) for newly created inverted "
-        "indexes and search tables. WITH (compaction_interval = ...) "
-        "overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET "
-        "changes it later. 0 disables background compaction; VACUUM "
-        "(COMPACT_*) still merges on demand. Default: 1000.",
-        [] { return duckdb::Value::UINTEGER(1000); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets whether a CREATEROLE user automatically grants the role to "
+      "themselves, and with which options.",
+      [] { return duckdb::Value{""}; },
+      SetCreateroleSelfGrant,
     },
+    kUserSetting,
+  },
+  {
+    "password_encryption",
     {
-      kCleanupIntervalStepSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Number of automatic refreshes between background unreferenced-file "
-        "cleanup passes for newly created inverted indexes and search tables. "
-        "WITH (cleanup_interval_step = ...) overrides it per index or table. "
-        "0 disables the periodic passes: cleanup then follows only background "
-        "compaction and, on a search table, VACUUM. Default: 1.",
-        [] { return duckdb::Value::UINTEGER(1); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::VARCHAR,
+      "Chooses the algorithm for encrypting passwords.",
+      [] { return duckdb::Value{"scram-sha-256"}; },
+      OneOf<"password_encryption", "md5", "scram-sha-256">,
     },
+    kUserSetting,
+  },
+  {
+    "scram_iterations",
     {
-      kSearchBackfillGroupBytesSetting,
-      {
-        LogicalTypeId::UBIGINT,
-        "Bytes of existing segments a search-table CREATE INDEX rewrites "
-        "before swapping them in and moving on. Bounds the build's peak disk "
-        "(~2x one group) and the length of each publish; a value above the "
-        "table's size means a single swap. 0 = no limit (one swap for the "
-        "whole table). Default 1073741824 (1GB).",
-        [] { return duckdb::Value::UBIGINT(uint64_t{1} << 30); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::INTEGER,
+      "Sets the iteration count for SCRAM secret generation.",
+      [] { return duckdb::Value{"4096"}; },
+      NoOverwrite<"scram_iterations">,
     },
+    kUserSetting,
+  },
+  {
+    "server_encoding",
     {
-      kSegmentMemoryMaxSetting,
-      {
-        LogicalTypeId::UBIGINT,
-        "In-memory bytes an inverted-index or search-table segment writer "
-        "fills before rolling over to a new on-disk segment (also the CREATE "
-        "INDEX backfill commit cadence). Per-object WITH (segment_memory_max "
-        "= ...) overrides. A serial write to a search table also buffers up "
-        "to checkpoint_threshold of rows. Default 268435456 (256MB).",
-        [] {
-          return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexSettings{}.segment_memory_max);
-        },
-        RejectZero<"segment_memory_max">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Shows the server (database) character set encoding.",
+      [] { return duckdb::Value{"UTF8"}; },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "server_version",
     {
-      kSegmentDocsMaxSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Document count at which an inverted-index segment writer rolls over "
-        "to a new on-disk segment. Per-index WITH (segment_docs_max = ...) "
-        "overrides. 0 = unlimited (memory limit governs).",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::VARCHAR,
+      "Shows the server version.",
+      [] { return duckdb::Value{pg::kPgServerVersion}; },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "server_version_num",
     {
-      kRecoveryReplayDepthSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum WAL chunks in flight per inverted index during recovery "
-        "replay (the prefetch window; bounds replay memory). 0 = auto "
-        "(4 x cpu threads).",
-        [] { return duckdb::Value::UINTEGER(0); },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
-      },
+      LogicalTypeId::INTEGER,
+      "Shows the server version as an integer.",
+      [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "archive_mode",
     {
-      kCompactionMaxSegmentsSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "Maximum segments of an inverted index or search table merged by one "
-        "background compaction. WITH (compaction_max_segments = ...) "
-        "overrides it per index or table. Default 10.",
-        [] {
-          return duckdb::Value::UINTEGER(
-            catalog::InvertedIndexSettings{}.compaction_max_segments);
-        },
-        RejectZero<"compaction_max_segments">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Not used. Added for PostgreSQL compatibility only.",
+      [] { return duckdb::Value{"off"}; },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "archive_command",
     {
-      kCompactionMaxSegmentsBytesSetting,
-      {
-        LogicalTypeId::UBIGINT,
-        "Byte budget of one background compaction of an inverted index or "
-        "search table (the tier target size). WITH "
-        "(compaction_max_segments_bytes = ...) overrides it per index or "
-        "table. Default 5368709120 (5GB).",
-        [] {
-          return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
-        },
-        RejectZero<"compaction_max_segments_bytes">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Not used. Added for PostgreSQL compatibility only.",
+      [] { return duckdb::Value{""}; },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "checkpoint_timeout",
     {
-      kCompactionFloorSegmentBytesSetting,
-      {
-        LogicalTypeId::UBIGINT,
-        "Segments of an inverted index or search table below this size count "
-        "as equal-sized for compaction candidate selection. WITH "
-        "(compaction_floor_segment_bytes = ...) overrides it per index or "
-        "table. Default 2097152 (2MB).",
-        [] {
-          return duckdb::Value::UBIGINT(
-            catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
-        },
-        RejectZero<"compaction_floor_segment_bytes">,
-      },
+      LogicalTypeId::INTEGER,
+      "Not used. Added for PostgreSQL compatibility only.",
+      [] { return duckdb::Value::INTEGER(300); },
+      nullptr,
     },
+    kInternalSetting,
+  },
+  {
+    "max_parallel_workers_per_gather",
     {
-      "client_encoding",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the client's character set encoding.",
-        [] { return duckdb::Value{"UTF8"}; },
-        NoOverwriteClientEncoding,
-      },
+      LogicalTypeId::INTEGER,
+      "Not used. Added for PostgreSQL compatibility only.",
+      [] { return duckdb::Value::INTEGER(2); },
     },
+    kUserSetting,
+  },
+  {
+    "standard_conforming_strings",
     {
-      "application_name",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the application name to be reported in statistics and logs.",
-        [] { return duckdb::Value{""}; },
-        CheckApplicationName,
-      },
+      LogicalTypeId::BOOLEAN,
+      "Causes '...' strings to treat backslashes literally.",
+      [] { return duckdb::Value{true}; },
+      NoOverwrite<"standard_conforming_strings">,
     },
+    kUserSetting,
+  },
+  {
+    "client_min_messages",
     {
-      "in_hot_standby",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Shows whether hot standby is currently active.",
-        [] { return duckdb::Value{false}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the message levels that are sent to the client.",
+      [] { return duckdb::Value{"notice"}; },
+      NoOverwrite<"client_min_messages">,
     },
+    kUserSetting,
+  },
+  {
+    "statement_timeout",
     {
-      "integer_datetimes",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Shows whether datetimes are integer based.",
-        [] { return duckdb::Value{true}; },
-        NoOverwrite<"integer_datetimes">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Aborts any statement that takes more than the specified amount of "
+      "time (milliseconds without a unit). 0 disables the timeout.",
+      [] { return duckdb::Value{"0"}; },
+      SetStatementTimeout,
+      ResetStatementTimeout,
     },
+    kUserSetting,
+  },
+  {
+    kWalReceiverTimeoutSetting,
     {
-      "scram_iterations",
-      {
-        LogicalTypeId::INTEGER,
-        "Sets the iteration count for SCRAM secret generation.",
-        [] { return duckdb::Value{"4096"}; },
-        NoOverwrite<"scram_iterations">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Terminates a logical replication worker whose publisher sent "
+      "nothing for this long (milliseconds without a unit); 0 disables the "
+      "timeout. Server-wide, superuser only.",
+      [] { return duckdb::Value{"1min"}; },
+      SetServerDuration<"wal_receiver_timeout", 1>,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
     },
+  },
+  {
+    kWalReceiverStatusIntervalSetting,
     {
-      "server_encoding",
-      {
-        LogicalTypeId::VARCHAR,
-        "Shows the server (database) character set encoding.",
-        [] { return duckdb::Value{"UTF8"}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "How often a logical replication worker reports its position to the "
+      "publisher (seconds without a unit); 0 disables the periodic "
+      "reports. Server-wide, superuser only.",
+      [] { return duckdb::Value{"10s"}; },
+      SetServerDuration<"wal_receiver_status_interval", 1000>,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
     },
+  },
+  {
+    kWalRetrieveRetryIntervalSetting,
     {
-      "server_version",
-      {
-        LogicalTypeId::VARCHAR,
-        "Shows the server version.",
-        [] { return duckdb::Value{pg::kPgServerVersion}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "How long a failed logical replication worker waits before it "
+      "reconnects (milliseconds without a unit). Server-wide, superuser "
+      "only.",
+      [] { return duckdb::Value{"5s"}; },
+      SetServerDuration<"wal_retrieve_retry_interval", 1>,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
     },
+  },
+  {
+    kMaxSyncWorkersPerSubscriptionSetting,
     {
-      "server_version_num",
-      {
-        LogicalTypeId::INTEGER,
-        "Shows the server version as an integer.",
-        [] { return duckdb::Value::INTEGER(pg::kPgServerVersionNum); },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::UINTEGER,
+      "How many tables one subscription copies at the same time during "
+      "its initial synchronization. Server-wide, superuser only.",
+      [] { return duckdb::Value::UINTEGER(2); },
+      nullptr,
+      nullptr,
+      duckdb::SetScope::GLOBAL,
     },
+  },
+  {
+    "session_replication_role",
     {
-      "archive_mode",
-      {
-        LogicalTypeId::VARCHAR,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value{"off"}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the session's behavior for triggers and rewrite rules.",
+      [] { return duckdb::Value{"origin"}; },
+      OneOf<"session_replication_role", "origin", "replica", "local">,
     },
+  },
+  {
+    "session_authorization",
     {
-      "archive_command",
-      {
-        LogicalTypeId::VARCHAR,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value{""}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the current session's user name.",
+      [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
+      SetSessionAuthCallback,
+      ResetSessionAuthCallback,
     },
+    kHiddenUserSetting,
+  },
+  {
+    "role",
     {
-      "checkpoint_timeout",
-      {
-        LogicalTypeId::INTEGER,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value::INTEGER(300); },
-        nullptr,  // refused via kUnchangeableSettings
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the current role.",
+      [] { return duckdb::Value{"none"}; },
+      SetRoleCallback,
+      ResetRoleCallback,
     },
+    kHiddenUserSetting,
+  },
+  {
+    "is_superuser",
     {
-      "max_parallel_workers_per_gather",
-      {
-        LogicalTypeId::INTEGER,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value::INTEGER(2); },
-      },
+      LogicalTypeId::BOOLEAN,
+      "Shows whether the current session's user is a superuser.",
+      [] { return duckdb::Value{true}; },
+      nullptr,
     },
+    kHiddenInternalSetting,
+  },
+  {
+    "DateStyle",
     {
-      "standard_conforming_strings",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Causes '...' strings to treat backslashes literally.",
-        [] { return duckdb::Value{true}; },
-        NoOverwrite<"standard_conforming_strings">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the display format for date and time values.",
+      [] { return duckdb::Value{"ISO, MDY"}; },
+      CheckDateStyle,
     },
+    kUserSetting,
+  },
+  {
+    "IntervalStyle",
     {
-      "client_min_messages",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the message levels that are sent to the client.",
-        [] { return duckdb::Value{"notice"}; },
-        NoOverwrite<"client_min_messages">,
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the display format for interval values.",
+      [] { return duckdb::Value{"postgres"}; },
+      CheckIntervalStyle,
     },
+    kUserSetting,
+  },
+  {
+    "TimeZone",
     {
-      "statement_timeout",
-      {
-        LogicalTypeId::VARCHAR,
-        "Aborts any statement that takes more than the specified amount of "
-        "time (milliseconds without a unit). 0 disables the timeout.",
-        [] { return duckdb::Value{"0"}; },
-        SetStatementTimeout,
-        ResetStatementTimeout,
-      },
+      LogicalTypeId::VARCHAR,
+      "Sets the time zone for displaying and interpreting time stamps.",
+      [] { return duckdb::Value{"Etc/UTC"}; },
     },
+    kUserSetting,
+  },
+  {
+    "max_identifier_length",
     {
-      kWalReceiverTimeoutSetting,
-      {
-        LogicalTypeId::VARCHAR,
-        "Terminates a logical replication worker whose publisher sent "
-        "nothing for this long (milliseconds without a unit); 0 disables the "
-        "timeout. Server-wide, superuser only.",
-        [] { return duckdb::Value{"1min"}; },
-        SetServerDuration<"wal_receiver_timeout", 1>,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
-      },
+      LogicalTypeId::INTEGER,
+      "Shows the maximum identifier length. SereneDB keeps longer "
+      "identifiers in full.",
+      [] { return duckdb::Value::INTEGER(63); },
     },
+    kInternalSetting,
+  },
+  {
+    "max_index_keys",
     {
-      kWalReceiverStatusIntervalSetting,
-      {
-        LogicalTypeId::VARCHAR,
-        "How often a logical replication worker reports its position to the "
-        "publisher (seconds without a unit); 0 disables the periodic "
-        "reports. Server-wide, superuser only.",
-        [] { return duckdb::Value{"10s"}; },
-        SetServerDuration<"wal_receiver_status_interval", 1000>,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
-      },
+      LogicalTypeId::INTEGER,
+      "Shows the maximum number of index keys. Clients read it as the bound "
+      "of index and constraint key arrays, such as pg_index.indkey and "
+      "pg_constraint.conkey.",
+      [] { return duckdb::Value::INTEGER(32); },
     },
-    {
-      kWalRetrieveRetryIntervalSetting,
-      {
-        LogicalTypeId::VARCHAR,
-        "How long a failed logical replication worker waits before it "
-        "reconnects (milliseconds without a unit). Server-wide, superuser "
-        "only.",
-        [] { return duckdb::Value{"5s"}; },
-        SetServerDuration<"wal_retrieve_retry_interval", 1>,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
-      },
-    },
-    {
-      kMaxSyncWorkersPerSubscriptionSetting,
-      {
-        LogicalTypeId::UINTEGER,
-        "How many tables one subscription copies at the same time during "
-        "its initial synchronization. Server-wide, superuser only.",
-        [] { return duckdb::Value::UINTEGER(2); },
-        nullptr,
-        nullptr,
-        duckdb::SetScope::GLOBAL,
-      },
-    },
-    {
-      "session_replication_role",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the session's behavior for triggers and rewrite rules.",
-        [] { return duckdb::Value{"origin"}; },
-        SetReplicationRole,
-      },
-    },
-    {
-      "session_authorization",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the current session's user name.",
-        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
-        SetSessionAuthCallback,
-        ResetSessionAuthCallback,
-      },
-    },
-    {
-      "role",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the current role.",
-        [] { return duckdb::Value{"none"}; },
-        SetRoleCallback,
-        ResetRoleCallback,
-      },
-    },
-    {
-      "is_superuser",
-      {
-        LogicalTypeId::BOOLEAN,
-        "Shows whether the current session's user is a superuser.",
-        [] { return duckdb::Value{true}; },
-        nullptr,  // refused via kUnchangeableSettings
-      },
-    },
-    {
-      "DateStyle",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the display format for date and time values.",
-        [] { return duckdb::Value{"ISO, MDY"}; },
-        CheckDateStyle,
-      },
-    },
-    {
-      "IntervalStyle",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the display format for interval values.",
-        [] { return duckdb::Value{"postgres"}; },
-        CheckIntervalStyle,
-      },
-    },
-    {
-      "TimeZone",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the time zone for displaying and interpreting time stamps.",
-        [] { return duckdb::Value{"Etc/UTC"}; },
-      },
-    },
-    {
-      "max_identifier_length",
-      {
-        LogicalTypeId::INTEGER,
-        "Shows the maximum identifier length. SereneDB keeps longer "
-        "identifiers in full.",
-        [] { return duckdb::Value::INTEGER(63); },
-      },
-    },
-    {
-      "max_index_keys",
-      {
-        LogicalTypeId::INTEGER,
-        "Shows the maximum number of index keys. Clients read it as the bound "
-        "of index and constraint key arrays, such as pg_index.indkey and "
-        "pg_constraint.conkey.",
-        [] { return duckdb::Value::INTEGER(32); },
-      },
-    },
+    kInternalSetting,
+  },
 };
 
 const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
@@ -1590,13 +1673,17 @@ const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
   m.reserve(std::size(kEngineVariableDescription) +
             std::size(kVariableDescription));
   for (const auto& entry : kEngineVariableDescription) {
-    m.emplace(entry.first);
+    m.emplace(entry.name);
   }
   for (const auto& entry : kVariableDescription) {
-    m.emplace(entry.first);
+    m.emplace(entry.name);
   }
   return m;
 }();
+
+const duckdb::case_insensitive_set_view_t kNonTransactionalSettings = {
+  "sdb_faults",
+};
 
 }  // namespace
 
@@ -1608,76 +1695,41 @@ std::string_view GetOriginalName(std::string_view name) {
   return *it;
 }
 
-// Settings a client may never change, refused for the lifetime of the process
-// by the setting_change_handler.
-const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
-  // Describes how this process is wired rather than a preference, and is pinned
-  // at startup in
-  // ConfigureServerDBConfig.
-  "external_threads",
-  // Read-only in PostgreSQL, where reporting the value is the whole point of
-  // the GUC.
-  "archive_command",
-  "archive_mode",
-  "checkpoint_timeout",
-  "data_directory",
-  "in_hot_standby",
-  "is_superuser",
-  "max_identifier_length",
-  "max_index_keys",
-  "server_encoding",
-  "server_version",
-  "server_version_num",
-};
-
-bool IsUnchangeableSetting(std::string_view name) {
-  return kUnchangeableSettings.contains(name);
-}
-
-const duckdb::case_insensitive_set_view_t kNonTransactionalSettings = {
-  "sdb_faults",
-};
-
 bool IsNonTransactionalSetting(std::string_view name) {
   return kNonTransactionalSettings.contains(name);
 }
 
-void RequireSuperuserToSetGlobal(duckdb::ClientContext& ctx,
-                                 std::string_view name) {
-  RequireSuperuser(ctx, name,
-                   "Only roles with the SUPERUSER attribute may change the "
-                   "server-wide value of a parameter.");
-}
-
 namespace {
 
-void TryRegister(duckdb::DBConfig& config, std::string_view name,
-                 const VariableDescription& desc) {
+void TryRegister(duckdb::DBConfig& config, const VariableEntry& entry) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  const duckdb::Identifier setting{name};
+  const duckdb::Identifier setting{entry.name};
   if (config.TryGetSettingIndex(setting, option).IsValid()) {
     return;  // already registered or built-in
   }
+  const auto& desc = entry.description;
   config.AddExtensionOption(
     setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
     desc.set_callback, desc.reset_callback, desc.scope,
-    IsUnchangeableSetting(name));
+    entry.access.context == duckdb::SettingContext::INTERNAL ||
+      entry.name == "role" || entry.name == "session_authorization",
+    entry.access);
 }
 
 }  // namespace
 namespace connector {
 
 void RegisterEngineConfigVariables(duckdb::DBConfig& config) {
-  for (const auto& [name, desc] : kEngineVariableDescription) {
-    TryRegister(config, name, desc);
+  for (const auto& entry : kEngineVariableDescription) {
+    TryRegister(config, entry);
   }
 }
 
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   RegisterEngineConfigVariables(config);
-  for (const auto& [name, desc] : kVariableDescription) {
-    TryRegister(config, name, desc);
+  for (const auto& entry : kVariableDescription) {
+    TryRegister(config, entry);
   }
 }
 

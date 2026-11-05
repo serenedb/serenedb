@@ -1,0 +1,109 @@
+control substitution on
+
+statement ok
+CREATE ROLE fwg_alice LOGIN PASSWORD 'fwg_pw';
+
+
+statement ok
+CREATE ROLE fwg_bob LOGIN PASSWORD 'fwg_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO fwg_alice WITH GRANT OPTION;
+
+
+connection c_alice user=fwg_alice password=fwg_pw
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO fwg_bob;
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO fwg_bob;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_wal_replay
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT fdwname, fdwacl FROM pg_foreign_data_wrapper WHERE fdwacl IS NOT NULL ORDER BY fdwname;
+----
+fdwname	fdwacl
+clickhouse_fdw	{postgres=U/postgres,fwg_bob=U/postgres}
+postgres_fdw	{postgres=U/postgres,fwg_alice=U*/postgres,fwg_bob=U/fwg_alice}
+
+
+connection after_wal_replay
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_wal_replay
+statement ok
+CREATE ROLE fwg_trigger;
+
+
+connection after_wal_replay
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_wal_replay
+statement error connection closed
+SELECT 1;
+
+
+connection after_compaction
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT fdwname, fdwacl FROM pg_foreign_data_wrapper WHERE fdwacl IS NOT NULL ORDER BY fdwname;
+----
+fdwname	fdwacl
+clickhouse_fdw	{postgres=U/postgres,fwg_bob=U/postgres}
+postgres_fdw	{postgres=U/postgres,fwg_alice=U*/postgres,fwg_bob=U/fwg_alice}
+
+
+connection after_compaction
+query
+SELECT has_foreign_data_wrapper_privilege('fwg_bob', 'clickhouse_fdw', 'USAGE') AS ch,
+       has_foreign_data_wrapper_privilege('fwg_bob', 'postgres_fdw', 'USAGE') AS pg,
+       has_foreign_data_wrapper_privilege('fwg_bob', 'iceberg_fdw', 'USAGE') AS ice;
+----
+ch	pg	ice
+t	t	f
+
+
+connection after_compaction
+statement error
+DROP ROLE fwg_bob;
+----
+db error: ERROR: Cannot drop entry "fwg_bob" because there are entries that depend on it.<slt:ignore>
+
+
+connection after_compaction
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM fwg_alice CASCADE;
+
+
+connection after_compaction
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw FROM fwg_bob;
+
+
+connection after_compaction
+statement ok
+DROP ROLE fwg_bob;
+
+
+connection after_compaction
+statement ok
+DROP ROLE fwg_alice;
+
+
+connection after_compaction
+statement ok
+DROP ROLE fwg_trigger;

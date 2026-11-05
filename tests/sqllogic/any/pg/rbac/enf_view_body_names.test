@@ -1,0 +1,217 @@
+statement ok
+DROP VIEW IF EXISTS public.evbn_clickclack;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_mop;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_lower;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_quas_first;
+
+
+statement ok
+DROP VIEW IF EXISTS public.evbn_ved_first;
+
+
+statement ok
+DROP SCHEMA IF EXISTS evbn_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS evbn_ved CASCADE;
+
+
+statement ok
+CREATE SCHEMA evbn_quas;
+
+
+statement ok
+CREATE SCHEMA evbn_ved;
+
+
+statement ok
+CREATE TABLE evbn_quas.evbn_iceberg (a int);
+
+
+statement ok
+INSERT INTO evbn_quas.evbn_iceberg VALUES (1);
+
+
+statement ok
+CREATE TABLE evbn_ved.evbn_iceberg (a int);
+
+
+statement ok
+INSERT INTO evbn_ved.evbn_iceberg VALUES (2);
+
+
+statement ok
+CREATE FUNCTION evbn_quas.evbn_tag(x int) RETURNS int LANGUAGE sql AS 'SELECT x + 10';
+
+
+statement ok
+CREATE FUNCTION evbn_ved.evbn_tag(x int) RETURNS int LANGUAGE sql AS 'SELECT x + 20';
+
+
+statement ok
+CREATE FUNCTION evbn_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''shadowed''';
+
+
+statement ok
+CREATE FUNCTION evbn_quas.lower(x text, y text) RETURNS text LANGUAGE sql AS 'SELECT x || y';
+
+
+statement ok
+SET search_path = evbn_quas, public;
+
+
+statement ok
+CREATE VIEW public.evbn_clickclack AS SELECT evbn_tag(a) AS tagged FROM evbn_iceberg;
+
+
+statement ok
+CREATE VIEW public.evbn_mop AS SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
+
+
+statement ok
+CREATE VIEW public.evbn_lower AS SELECT lower('A') AS one, lower('A', 'B') AS two;
+
+
+statement ok
+CREATE VIEW public.evbn_quas_first AS SELECT (SELECT a FROM evbn_ved.evbn_iceberg) AS qualified, (SELECT a FROM evbn_iceberg) AS unqualified;
+
+
+statement ok
+SET search_path = evbn_ved, public;
+
+
+statement ok
+CREATE VIEW public.evbn_ved_first AS SELECT (SELECT a FROM evbn_quas.evbn_iceberg) AS qualified, (SELECT a FROM evbn_iceberg) AS unqualified;
+
+
+query
+SELECT tagged FROM public.evbn_clickclack;
+----
+tagged
+11
+
+
+query
+SELECT one, two FROM public.evbn_lower;
+----
+one	two
+a	AB
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_quas_first;
+----
+qualified	unqualified
+2	1
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_ved_first;
+----
+qualified	unqualified
+1	2
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT one, two FROM public.evbn_lower;
+----
+one	two
+a	AB
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_quas_first;
+----
+qualified	unqualified
+2	1
+
+
+query
+SELECT qualified, unqualified FROM public.evbn_ved_first;
+----
+qualified	unqualified
+1	2
+
+
+statement ok
+SET search_path = evbn_ved, public;
+
+
+statement ok
+CREATE TEMP TABLE evbn_iceberg (a int);
+
+
+statement ok
+INSERT INTO evbn_iceberg VALUES (3);
+
+
+statement ok
+CREATE TEMP TABLE pg_roles (rolname text);
+
+
+query
+SELECT tagged FROM public.evbn_clickclack;
+----
+tagged
+11
+
+
+query
+SELECT from_catalog FROM public.evbn_mop;
+----
+from_catalog
+t
+
+
+statement ok
+DROP TABLE evbn_iceberg;
+
+
+statement ok
+DROP TABLE pg_roles;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP VIEW public.evbn_clickclack;
+
+
+statement ok
+DROP VIEW public.evbn_mop;
+
+
+statement ok
+DROP VIEW public.evbn_lower;
+
+
+statement ok
+DROP VIEW public.evbn_quas_first;
+
+
+statement ok
+DROP VIEW public.evbn_ved_first;
+
+
+statement ok
+DROP SCHEMA evbn_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA evbn_ved CASCADE;

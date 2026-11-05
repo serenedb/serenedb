@@ -1,0 +1,198 @@
+statement ok
+DROP ROLE IF EXISTS gsp_user;
+
+
+statement ok
+DROP ROLE IF EXISTS gsp_group;
+
+
+statement ok
+CREATE ROLE gsp_user LOGIN PASSWORD 'gsp_pw';
+
+
+statement ok
+CREATE ROLE gsp_group;
+
+
+statement ok
+GRANT gsp_group TO gsp_user;
+
+
+skipif postgres
+connection c_user user=gsp_user password=gsp_pw
+statement error
+SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+onlyif postgres
+connection c_user user=gsp_user password=gsp_pw
+statement error
+SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+statement ok
+GRANT SET ON PARAMETER session_replication_role TO gsp_group;
+
+
+query
+SELECT has_parameter_privilege('gsp_user', 'session_replication_role', 'SET') AS can_set,
+       has_parameter_privilege('gsp_user', 'session_replication_role', 'ALTER SYSTEM') AS can_alter;
+----
+can_set	can_alter
+t	f
+
+
+query
+SELECT parname, array_to_string(paracl, ',') AS acl FROM pg_parameter_acl WHERE parname = 'session_replication_role';
+----
+parname	acl
+session_replication_role	postgres=sA/postgres,gsp_group=s/postgres
+
+
+query
+SELECT count(*) AS deps
+FROM pg_shdepend
+WHERE classid = 'pg_parameter_acl'::regclass
+  AND refobjid = 'gsp_group'::regrole
+  AND deptype = 'a';
+----
+deps
+1
+
+
+skipif serenedb
+statement error
+DROP ROLE gsp_group;
+----
+db error: ERROR: role "gsp_group" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE gsp_group;
+----
+db error: ERROR: Cannot drop entry "gsp_group" because there are entries that depend on it.<slt:ignore>
+
+
+connection c_user user=gsp_user password=gsp_pw
+statement ok
+SET session_replication_role = replica;
+
+
+connection c_user user=gsp_user password=gsp_pw
+query
+SHOW session_replication_role;
+----
+session_replication_role
+replica
+
+
+connection c_user user=gsp_user password=gsp_pw
+statement ok
+RESET session_replication_role;
+
+
+statement ok
+GRANT ALTER SYSTEM ON PARAMETER session_replication_role TO gsp_user;
+
+
+query
+SELECT array_to_string(paracl, ',') AS acl FROM pg_parameter_acl WHERE parname = 'session_replication_role';
+----
+acl
+postgres=sA/postgres,gsp_group=s/postgres,gsp_user=A/postgres
+
+
+statement ok
+REVOKE SET ON PARAMETER session_replication_role FROM gsp_group;
+
+
+statement ok
+REVOKE ALTER SYSTEM ON PARAMETER session_replication_role FROM gsp_user;
+
+
+skipif postgres
+connection c_user user=gsp_user password=gsp_pw
+statement error
+SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+onlyif postgres
+connection c_user user=gsp_user password=gsp_pw
+statement error
+SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+query
+SELECT has_parameter_privilege('gsp_user', 'session_replication_role', 'SET') AS can_set;
+----
+can_set
+f
+
+
+statement error
+GRANT SET ON PARAMETER gsp_no_such_parameter TO gsp_user;
+----
+db error: ERROR: unrecognized configuration parameter "gsp_no_such_parameter"
+
+
+query
+SELECT count(*) AS grants FROM pg_parameter_acl WHERE parname = 'session_replication_role';
+----
+grants
+0
+
+
+statement ok
+GRANT SET, ALTER SYSTEM ON PARAMETER session_replication_role TO gsp_user;
+
+
+statement ok
+DROP OWNED BY gsp_user;
+
+
+query
+SELECT has_parameter_privilege('gsp_user', 'session_replication_role', 'SET') AS can_set,
+       has_parameter_privilege('gsp_user', 'session_replication_role', 'ALTER SYSTEM') AS can_alter;
+----
+can_set	can_alter
+f	f
+
+
+query
+SELECT count(*) AS grants FROM pg_parameter_acl WHERE parname = 'session_replication_role';
+----
+grants
+0
+
+
+statement ok
+SET ROLE gsp_user;
+
+
+statement error
+GRANT SET ON PARAMETER session_replication_role TO gsp_group;
+----
+db error: ERROR: permission denied for parameter session_replication_role
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP ROLE gsp_user;
+
+
+statement ok
+DROP ROLE gsp_group;

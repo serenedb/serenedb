@@ -1,0 +1,98 @@
+control substitution on
+
+
+statement ok
+CREATE ROLE aras_plain LOGIN PASSWORD 'aras_pw';
+
+
+statement ok
+CREATE ROLE aras_own LOGIN PASSWORD 'aras_pw';
+
+
+statement ok
+ALTER ROLE ALL SET aras.scope = 'global';
+
+
+statement ok
+ALTER ROLE aras_own SET aras.scope = 'role';
+
+
+query
+SELECT setdatabase, setrole, setconfig FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = 0;
+----
+setdatabase	setrole	setconfig
+0	0	{aras.scope=global}
+
+
+connection c_plain user=aras_plain password=aras_pw
+query
+SELECT current_setting('aras.scope') AS scope;
+----
+scope
+global
+
+
+connection c_own user=aras_own password=aras_pw
+query
+SELECT current_setting('aras.scope') AS scope;
+----
+scope
+role
+
+
+connection c_plain user=aras_plain password=aras_pw
+statement error
+ALTER ROLE ALL SET aras.other = 'x';
+----
+db error: ERROR: permission denied to alter setting
+DETAIL: Only roles with the SUPERUSER attribute may alter settings globally.
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT setdatabase, setrole, setconfig FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = 0;
+----
+setdatabase	setrole	setconfig
+0	0	{aras.scope=global}
+
+
+connection plain_after_restart user=aras_plain password=aras_pw
+query
+SELECT current_setting('aras.scope') AS scope;
+----
+scope
+global
+
+
+connection after_restart
+statement ok
+ALTER ROLE ALL RESET aras.scope;
+
+
+connection after_restart
+query
+SELECT count(*) AS settings FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = 0;
+----
+settings
+0
+
+
+connection plain_reset user=aras_plain password=aras_pw
+query
+SELECT current_setting('aras.scope', true) IS NULL AS unset;
+----
+unset
+t

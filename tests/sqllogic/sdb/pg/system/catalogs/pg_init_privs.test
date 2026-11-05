@@ -41,7 +41,7 @@ ORDER BY 1;
 ----
 schema	privtype	initprivs
 pg_catalog	i	{postgres=UC/postgres,=U/postgres}
-public	i	{postgres=UC/postgres,=U/postgres}
+public	i	{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}
 
 
 query
@@ -92,7 +92,7 @@ query
 SELECT initprivs FROM pg_init_privs WHERE objoid = 'public'::regnamespace;
 ----
 initprivs
-{postgres=UC/postgres,=U/postgres}
+{pg_database_owner=UC/pg_database_owner,=U/pg_database_owner}
 
 
 statement ok

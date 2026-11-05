@@ -1,0 +1,140 @@
+statement ok
+DROP SCHEMA IF EXISTS ebr_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS ebr_ved CASCADE;
+
+
+statement ok
+CREATE SCHEMA ebr_quas;
+
+
+statement ok
+CREATE SCHEMA ebr_ved;
+
+
+statement ok
+CREATE FUNCTION ebr_quas.ebr_tag(x int) RETURNS int LANGUAGE sql AS 'SELECT x + 10';
+
+
+statement ok
+CREATE FUNCTION ebr_ved.ebr_tag(x int, y int) RETURNS int LANGUAGE sql AS 'SELECT x + y + 20';
+
+
+statement ok
+CREATE FUNCTION ebr_quas.lower(x text) RETURNS text LANGUAGE sql AS 'SELECT ''shadowed''';
+
+
+statement ok
+CREATE FUNCTION ebr_quas.lower(x text, y text) RETURNS text LANGUAGE sql AS 'SELECT x || y';
+
+
+statement ok
+CREATE TABLE ebr_quas.pg_roles (rolname text);
+
+
+statement ok
+CREATE TABLE ebr_quas.duckdb_tables (ebr_marker int);
+
+
+statement ok
+INSERT INTO ebr_quas.duckdb_tables VALUES (42);
+
+
+statement ok
+SET search_path = ebr_quas, public;
+
+
+query
+SELECT current_schemas(true) AS schemas;
+----
+schemas
+{pg_catalog,ebr_quas,public}
+
+
+query
+SELECT lower('ABC') AS result;
+----
+result
+abc
+
+
+query
+SELECT ebr_quas.lower('ABC') AS result;
+----
+result
+shadowed
+
+
+query
+SELECT lower('A', 'B') AS result;
+----
+result
+AB
+
+
+statement ok
+SET search_path = ebr_quas, ebr_ved, public;
+
+
+query
+SELECT ebr_tag(1) AS one, ebr_tag(1, 2) AS two;
+----
+one	two
+11	23
+
+
+statement ok
+SET search_path = ebr_quas, public;
+
+
+query
+SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
+----
+from_catalog
+t
+
+
+query
+SELECT ebr_marker FROM duckdb_tables;
+----
+ebr_marker
+42
+
+
+statement ok
+SET search_path = ebr_quas, pg_catalog, public;
+
+
+query
+SELECT current_schemas(true) AS schemas;
+----
+schemas
+{ebr_quas,pg_catalog,public}
+
+
+query
+SELECT lower('ABC') AS result;
+----
+result
+shadowed
+
+
+query
+SELECT count(*) > 0 AS from_catalog FROM pg_roles WHERE rolname = current_user;
+----
+from_catalog
+f
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA ebr_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA ebr_ved CASCADE;

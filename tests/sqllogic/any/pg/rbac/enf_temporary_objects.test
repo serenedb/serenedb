@@ -1,0 +1,62 @@
+statement ok
+DROP ROLE IF EXISTS eto_vedernikoff;
+
+
+statement ok
+CREATE ROLE eto_vedernikoff LOGIN PASSWORD 'eto_pw';
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+CREATE TEMP TABLE eto_scratch (a integer);
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+INSERT INTO eto_scratch VALUES (1), (2);
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+CREATE TEMP VIEW eto_view AS SELECT a FROM eto_scratch;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+query
+SELECT a FROM eto_view ORDER BY a;
+----
+a
+1
+2
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+CREATE TEMP SEQUENCE eto_counter;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+query
+SELECT nextval('eto_counter') AS n;
+----
+n
+1
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+DROP VIEW eto_view;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+DROP TABLE eto_scratch;
+
+
+connection c_eto user=eto_vedernikoff password=eto_pw
+statement ok
+DROP SEQUENCE eto_counter;
+
+
+statement ok
+DROP ROLE eto_vedernikoff;

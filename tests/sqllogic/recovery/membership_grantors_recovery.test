@@ -1,0 +1,123 @@
+control substitution on
+
+statement ok
+CREATE ROLE mgr_r;
+
+
+statement ok
+CREATE ROLE mgr_m;
+
+
+statement ok
+CREATE ROLE mgr_x;
+
+
+statement ok
+CREATE ROLE mgr_a1 CREATEROLE;
+
+
+statement ok
+CREATE ROLE mgr_a2 CREATEROLE;
+
+
+statement ok
+GRANT mgr_r TO mgr_a1 WITH ADMIN OPTION;
+
+
+statement ok
+GRANT mgr_r TO mgr_a2 WITH ADMIN OPTION;
+
+
+statement ok
+SET ROLE mgr_a1;
+
+
+statement ok
+GRANT mgr_r TO mgr_m;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE mgr_a2;
+
+
+statement ok
+GRANT mgr_r TO mgr_m;
+
+
+statement ok
+GRANT mgr_r TO mgr_x;
+
+
+statement ok
+SET createrole_self_grant = 'set';
+
+
+statement ok
+CREATE ROLE mgr_made;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE ADMIN OPTION FOR mgr_r FROM mgr_a2 CASCADE;
+
+
+query
+SELECT r.rolname AS role, m.rolname AS member, g.rolname AS grantor, a.admin_option, a.inherit_option, a.set_option
+FROM pg_auth_members a
+JOIN pg_roles r ON r.oid = a.roleid
+JOIN pg_roles m ON m.oid = a.member
+JOIN pg_roles g ON g.oid = a.grantor
+WHERE r.rolname LIKE 'mgr%'
+ORDER BY role, member, grantor;
+----
+role	member	grantor	admin_option	inherit_option	set_option
+mgr_made	mgr_a2	mgr_a2	f	f	t
+mgr_made	mgr_a2	postgres	t	f	f
+mgr_r	mgr_a1	postgres	t	t	t
+mgr_r	mgr_a2	postgres	f	t	t
+mgr_r	mgr_m	mgr_a1	f	t	t
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT r.rolname AS role, m.rolname AS member, g.rolname AS grantor, a.admin_option, a.inherit_option, a.set_option
+FROM pg_auth_members a
+JOIN pg_roles r ON r.oid = a.roleid
+JOIN pg_roles m ON m.oid = a.member
+JOIN pg_roles g ON g.oid = a.grantor
+WHERE r.rolname LIKE 'mgr%'
+ORDER BY role, member, grantor;
+----
+role	member	grantor	admin_option	inherit_option	set_option
+mgr_made	mgr_a2	mgr_a2	f	f	t
+mgr_made	mgr_a2	postgres	t	f	f
+mgr_r	mgr_a1	postgres	t	t	t
+mgr_r	mgr_a2	postgres	f	t	t
+mgr_r	mgr_m	mgr_a1	f	t	t
+
+
+connection after_crash
+statement error
+DROP ROLE mgr_a1;
+----
+db error: ERROR: Cannot drop entry "mgr_a1" because there are entries that depend on it.<slt:ignore>

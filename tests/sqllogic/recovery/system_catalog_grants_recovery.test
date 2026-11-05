@@ -1,0 +1,130 @@
+control substitution on
+
+statement ok
+CREATE ROLE scgr_monitor;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_authid TO scgr_monitor;
+
+
+statement ok
+REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC;
+
+
+statement ok
+GRANT SELECT (relname, relkind) ON pg_catalog.pg_class TO scgr_monitor;
+
+
+statement ok
+GRANT USAGE ON SCHEMA information_schema TO scgr_monitor;
+
+
+statement ok
+REVOKE USAGE ON SCHEMA information_schema FROM PUBLIC;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO scgr_monitor;
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO scgr_monitor;
+
+
+query
+SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relkind', 'SELECT') AS relkind;
+----
+authid	class	relkind
+t	f	t
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT has_table_privilege('scgr_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scgr_monitor', 'pg_catalog.pg_class', 'SELECT') AS class,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relkind', 'SELECT') AS relkind,
+       has_column_privilege('scgr_monitor', 'pg_catalog.pg_class', 'relacl', 'SELECT') AS relacl;
+----
+authid	class	relkind	relacl
+t	f	t	f
+
+
+connection after_crash
+query
+SELECT attname, array_to_string(attacl, ',') AS acl
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_class'::regclass AND cardinality(attacl) > 0
+ORDER BY attnum;
+----
+attname	acl
+relname	scgr_monitor=r/postgres
+relkind	scgr_monitor=r/postgres
+
+
+connection after_crash
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE relname IN ('pg_authid', 'pg_class') ORDER BY relname;
+----
+acl
+postgres=arwdDxtm/postgres,scgr_monitor=r/postgres
+postgres=arwdDxtm/postgres
+
+
+connection after_crash
+query
+SELECT array_to_string(nspacl, ',') AS acl,
+       has_schema_privilege('scgr_monitor', 'information_schema', 'USAGE') AS monitor,
+       has_schema_privilege('pg_database_owner', 'information_schema', 'USAGE') AS other
+FROM pg_namespace
+WHERE nspname = 'information_schema';
+----
+acl	monitor	other
+postgres=UC/postgres,scgr_monitor=U/postgres	t	f
+
+
+connection after_crash
+query
+SELECT array_to_string(proacl, ',') AS acl,
+       has_function_privilege('scgr_monitor', 'lower(text)', 'EXECUTE') AS monitor,
+       has_function_privilege('pg_database_owner', 'lower(text)', 'EXECUTE') AS other
+FROM pg_proc
+WHERE oid = 'lower(text)'::regprocedure;
+----
+acl	monitor	other
+postgres=X/postgres,scgr_monitor=X/postgres	t	f
+
+
+connection after_crash
+query
+SELECT array_to_string(typacl, ',') AS acl,
+       has_type_privilege('scgr_monitor', 'integer', 'USAGE') AS monitor,
+       has_type_privilege('pg_database_owner', 'integer[]', 'USAGE') AS other
+FROM pg_type
+WHERE oid = 'integer'::regtype;
+----
+acl	monitor	other
+postgres=U/postgres,scgr_monitor=U/postgres	t	f

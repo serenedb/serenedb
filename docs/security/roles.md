@@ -42,9 +42,9 @@ Attributes control a role's server-level abilities. They are set at creation or 
 | `CREATEDB` / `NOCREATEDB` | May the role create databases? |
 | `CREATEROLE` / `NOCREATEROLE` | May the role create, alter and drop other roles? It cannot hand out attributes it does not hold itself. |
 | `INHERIT` / `NOINHERIT` | Does the role automatically use privileges of roles it is a member of? Default `INHERIT`. |
-| `PASSWORD '...'` | Stores a SCRAM-SHA-256 verifier for password authentication. `PASSWORD NULL` clears it. |
+| `PASSWORD '...'` | Stores the password for password authentication, hashed as [`password_encryption`](client_authentication.md#passwords) says. `PASSWORD NULL` clears it. |
 | `VALID UNTIL '<timestamp>'` | The password stops working after this time — enforced at login. |
-| `CONNECTION LIMIT <n>` | Accepted and stored for PostgreSQL compatibility; not currently enforced. |
+| `CONNECTION LIMIT <n>` | How many sessions the role may have open at once, over the PostgreSQL protocol and the HTTP APIs together; `-1` (the default) means no limit. A login beyond it fails with `too many connections for role`. Superusers are not limited. |
 
 A role that grants management powers with `CREATEROLE` gets them, but bounded like PostgreSQL: a `CREATEROLE` role cannot hand out an attribute it does not itself hold (so it cannot create a `SUPERUSER`), and it can only alter or drop roles it administers — i.e. roles it created, on which it automatically receives `ADMIN OPTION`:
 
@@ -74,11 +74,14 @@ A role cannot be dropped while it still owns objects, or while a grant on them n
 
 <SqlLogicTest id="security/roles/example_007" />
 
-<DocCallout type="attention">
+Default privileges that name the role block the drop too. Two statements clear everything that holds a role back, in the database the session is connected to:
 
-Default privileges that name the role block the drop too. `DROP OWNED BY` and `REASSIGN OWNED BY` are not supported, so transfer ownership with `ALTER ... OWNER TO` and remove the grants with [`REVOKE`](../sql/statements/revoke/index.md), object by object.
+- `REASSIGN OWNED BY role [, ...] TO new_role` makes `new_role` the owner of every object the roles own in the current database, and of every database and subscription they own. Grants they hold and their default privileges stay.
+- `DROP OWNED BY role [, ...] [CASCADE | RESTRICT]` drops every object the roles own in the current database and revokes their privileges there and on databases, together with the grants they passed on, their default privileges and their foreign-data wrapper grants. Privileges are revoked as a `REVOKE` run by the current role would: a role dropping its own objects keeps the grants others made to it, and a superuser removes those the owners made. Databases and subscriptions they own are kept. Without `CASCADE`, it fails when objects of other roles depend on the objects it would drop.
 
-</DocCallout>
+Both need the privileges of every role they name, and `REASSIGN OWNED` also those of the new owner. Neither accepts the `postgres` role. Run them in each database where the role owns objects or holds privileges, then drop it:
+
+<SqlLogicTest id="security/roles/example_010" />
 
 ## See also
 

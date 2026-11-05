@@ -2386,17 +2386,12 @@ a84d63e33388b4cb
 	oid	spcname	spcowner	spcacl	spcoptions
 	1663	pg_default	postgres	NULL	NULL
 	1664	pg_global	postgres	NULL	NULL
-2c9abf308761b3ea
+ac6a4fed7ec93982
 	oid	nspname	nspowner	nspacl
 	app	app	postgres	conf_reader=U/postgres,postgres=UC/postgres
 	information_schema	information_schema	postgres	=U/postgres,postgres=UC/postgres
 	pg_catalog	pg_catalog	postgres	=U/postgres,postgres=UC/postgres
-f18163174e8d0217
-	oid	nspname	nspowner	nspacl
 	public	public	pg_database_owner	=U/pg_database_owner,pg_database_owner=UC/pg_database_owner
-7ab7f08f2977e1c6
-	oid	nspname	nspowner	nspacl
-	public	public	postgres	=U/postgres,postgres=UC/postgres
 d89036df01be5d74
 	oid	relname	relnamespace	reltype	reloftype	relowner	relam	reltablespace	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relacl	reloptions	relpartbound
 	active_customers	active_customers	public	active_customers	-	postgres	0	0	f	f	p	v	3	0	t	f	f	f	f	t	n	f	0	NULL	NULL	NULL
@@ -3576,17 +3571,12 @@ f73eeea331a7ddd5
 	tstzrange	timestamp with time zone	tstzmultirange	0	3127	-	tstzrange_subdiff
 77c733bdc7f348a7
 	inhrelid	inhparent	inhseqno	inhdetachpending
-2aaaac3abbe05d22
+ff6a36be767cc7cb
 	catalog_name	schema_name	schema_owner	default_character_set_catalog	default_character_set_schema	default_character_set_name	sql_path
 	db	app	postgres	NULL	NULL	NULL	NULL
 	db	information_schema	postgres	NULL	NULL	NULL	NULL
 	db	pg_catalog	postgres	NULL	NULL	NULL	NULL
-aee8450f182fc382
-	catalog_name	schema_name	schema_owner	default_character_set_catalog	default_character_set_schema	default_character_set_name	sql_path
 	db	public	pg_database_owner	NULL	NULL	NULL	NULL
-09db06e4eac329d6
-	catalog_name	schema_name	schema_owner	default_character_set_catalog	default_character_set_schema	default_character_set_name	sql_path
-	db	public	postgres	NULL	NULL	NULL	NULL
 7ec9d99c78350399
 	table_catalog	table_schema	table_name	table_type	self_referencing_column_name	reference_generation	user_defined_type_catalog	user_defined_type_schema	user_defined_type_name	is_insertable_into	is_typed	commit_action
 	db	app	all_types	BASE TABLE	NULL	NULL	NULL	NULL	NULL	YES	NO	NULL
@@ -4622,17 +4612,12 @@ ac41ea5997a348ad
 	orders_amount_check	NULL	NULL	NULL	((amount >= 0))
 	orders_customer_id_fkey	NULL	NULL	NULL	NULL
 	orders_status_check	NULL	NULL	NULL	((status IN ('new', 'paid', 'shipped')))
-14d08975156d7e50
+9aa2e05d135a0f8a
 	oid	oid	nspname	nspowner	nspacl	description
 	app	app	app	postgres	conf_reader=U/postgres,postgres=UC/postgres	NULL
 	information_schema	information_schema	information_schema	postgres	=U/postgres,postgres=UC/postgres	NULL
 	pg_catalog	pg_catalog	pg_catalog	postgres	=U/postgres,postgres=UC/postgres	NULL
-4e595e4e55785cea
-	oid	oid	nspname	nspowner	nspacl	description
 	public	public	public	pg_database_owner	=U/pg_database_owner,pg_database_owner=UC/pg_database_owner	NULL
-5ae7968cd3457993
-	oid	oid	nspname	nspowner	nspacl	description
-	public	public	public	postgres	=U/postgres,postgres=UC/postgres	NULL
 d7f5745573ceb9fa
 	oid	oid	relname	relnamespace	reltype	reloftype	relowner	relam	reltablespace	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relacl	reloptions	relpartbound	description	partition_expr	partition_key
 	app.all_types	app.all_types	all_types	app	app.all_types	0	postgres	2	0	t	f	p	r	22	0	f	f	f	f	f	t	d	f	0	NULL	NULL	f	NULL	NULL	NULL
@@ -6360,15 +6345,10 @@ b5557b68dbb58603
 	public	orders_amount_desc_idx	index	postgres	orders
 	public	orders_customer_idx	index	postgres	orders
 	public	orders_pkey	index	postgres	orders
-11263cf943cda203
+235aca057642f316
 	Name	Owner
 	app	postgres
-9a590c294a59375a
-	Name	Owner
 	public	pg_database_owner
-be7a3d68766b0c92
-	Name	Owner
-	public	postgres
 49b8b0fb0ff7e10c
 	Schema	Name	Type	Access privileges	Column privileges	Policies
 	public	active_customers	view	NULL	(empty)	(empty)

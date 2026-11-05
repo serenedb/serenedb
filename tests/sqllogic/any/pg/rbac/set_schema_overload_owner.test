@@ -1,0 +1,125 @@
+statement ok
+DROP SCHEMA IF EXISTS ssoo_src CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS ssoo_dst CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ssoo_alice, ssoo_bob;
+
+
+statement ok
+CREATE ROLE ssoo_alice;
+
+
+statement ok
+CREATE ROLE ssoo_bob;
+
+
+statement ok
+CREATE SCHEMA ssoo_src;
+
+
+statement ok
+CREATE SCHEMA ssoo_dst;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA ssoo_src TO ssoo_alice, ssoo_bob;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA ssoo_dst TO ssoo_alice, ssoo_bob;
+
+
+statement ok
+SET ROLE ssoo_alice;
+
+
+statement ok
+CREATE FUNCTION ssoo_src.f(x int) RETURNS int LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE ssoo_bob;
+
+
+statement ok
+CREATE FUNCTION ssoo_src.f(x text) RETURNS text LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET search_path = ssoo_src;
+
+
+statement ok
+SET ROLE ssoo_alice;
+
+
+statement error
+ALTER FUNCTION f SET SCHEMA ssoo_dst;
+----
+db error: ERROR: function name "f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+ALTER FUNCTION f SET SCHEMA ssoo_dst;
+----
+db error: ERROR: function name "f" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+query
+SELECT p.proname, n.nspname, r.rolname
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_roles r ON r.oid = p.proowner
+WHERE p.proname = 'f' AND n.nspname IN ('ssoo_src', 'ssoo_dst')
+ORDER BY r.rolname;
+----
+proname	nspname	rolname
+f	ssoo_src	ssoo_alice
+f	ssoo_src	ssoo_bob
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP FUNCTION ssoo_src.f(int);
+
+
+statement ok
+DROP FUNCTION ssoo_src.f(text);
+
+
+statement ok
+DROP SCHEMA ssoo_src;
+
+
+statement ok
+DROP SCHEMA ssoo_dst;
+
+
+statement ok
+DROP ROLE ssoo_alice;
+
+
+statement ok
+DROP ROLE ssoo_bob;

@@ -30,8 +30,8 @@
 #include "catalog/catalog.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
-#include "pg/commands/create_subscription.h"
 #include "pg/types/logical.h"
+#include "pg/types/pg_lsn.h"
 #include "replication/subscription_engine.h"
 
 namespace sdb::pg {
@@ -293,12 +293,13 @@ void RegisterSubscriptionFunctions(duckdb::ExtensionLoader& loader) {
   stats.in_out_function =
     RowsInOut<std::optional<SubscriptionStats>, &LoadStats, &WriteStats>;
   RegisterTable(loader, pg_catalog, std::move(stats));
-  RegisterTable(loader, pg_catalog,
-                duckdb::TableFunction{"pg_show_replication_origin_status",
+  duckdb::TableFunction origin_status{"pg_show_replication_origin_status",
                                       {},
                                       OriginStatusScan,
                                       OriginStatusBind,
-                                      OriginStatusInit});
+                                      OriginStatusInit};
+  origin_status.required_capability = duckdb::RoleCapability::Superuser;
+  RegisterTable(loader, pg_catalog, std::move(origin_status));
 }
 
 }  // namespace sdb::pg

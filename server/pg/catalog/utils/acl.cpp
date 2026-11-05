@@ -36,8 +36,6 @@
 #include <ranges>
 #include <tuple>
 
-#include "auth/role_closure.h"
-
 namespace sdb::pg {
 namespace {
 
@@ -86,10 +84,10 @@ irs::pg::SqlErrorData AclSyntaxError(std::string message,
 }
 
 std::optional<duckdb::idx_t> AclRole(
-  const auth::RoleGraph& roles, std::string_view name, bool oids,
+  const duckdb::SecuritySnapshot& roles, std::string_view name, bool oids,
   std::optional<irs::pg::SqlErrorData>& error) {
-  if (const auto* role = roles.FindByName(name)) {
-    return role->first;
+  if (const auto role = roles.FindByName(name); role.IsValid()) {
+    return role.GetIndex();
   }
   if (duckdb::idx_t oid = 0; oids && absl::SimpleAtoi(name, &oid)) {
     return oid;
@@ -110,7 +108,7 @@ void PutId(std::string& out, std::string_view name) {
 }
 
 void PutRole(std::string& out, duckdb::idx_t role,
-             const auth::RoleGraph& roles) {
+             const duckdb::SecuritySnapshot& roles) {
   if (const auto name = roles.NameOf(role); !name.empty()) {
     PutId(out, name);
     return;
@@ -121,7 +119,7 @@ void PutRole(std::string& out, duckdb::idx_t role,
 }  // namespace
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
-               const auth::RoleGraph& roles) {
+               const duckdb::SecuritySnapshot& roles) {
   if (item.grantee != kPublicGrantee) {
     PutRole(out, item.grantee, roles);
   }
@@ -138,10 +136,9 @@ void AppendAcl(std::string& out, const duckdb::AclItem& item,
   PutRole(out, item.grantor, roles);
 }
 
-std::optional<irs::pg::SqlErrorData> ParseAcl(std::string_view text,
-                                              const auth::RoleGraph& roles,
-                                              bool oids,
-                                              duckdb::AclItem& item) {
+std::optional<irs::pg::SqlErrorData> ParseAcl(
+  std::string_view text, const duckdb::SecuritySnapshot& roles, bool oids,
+  duckdb::AclItem& item) {
   auto grantee = ReadAclName(text);
   if (!text.starts_with('=')) {
     if (grantee != "group" && grantee != "user") {

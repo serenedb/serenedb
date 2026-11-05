@@ -308,13 +308,14 @@ bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
-  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(name),
+  auto dict = duckdb::CatalogEntryRetriever{context}.GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                            duckdb::QualifiedName::Parse(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};
   }
-  return dict->Acquire(context);
+  return dict->Cast<catalog::TokenizerCatalogEntry>().Acquire(context);
 }
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(

@@ -1,0 +1,381 @@
+statement ok
+DROP SCHEMA IF EXISTS rdo_s CASCADE;
+
+
+statement ok
+DROP VIEW IF EXISTS rdo_carol_v;
+
+
+statement ok
+DROP VIEW IF EXISTS rdo_v;
+
+
+statement ok
+DROP TABLE IF EXISTS rdo_serial;
+
+
+statement ok
+DROP TABLE IF EXISTS rdo_t;
+
+
+statement ok
+DROP FUNCTION IF EXISTS rdo_f();
+
+
+statement ok
+DROP SEQUENCE IF EXISTS rdo_seq;
+
+
+statement ok
+DROP DATABASE IF EXISTS rdo_db;
+
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS rdo_sub;
+
+
+statement ok
+DROP ROLE IF EXISTS rdo_alice, rdo_bob, rdo_carol;
+
+
+statement ok
+CREATE ROLE rdo_alice LOGIN PASSWORD 'rdo_pw';
+
+
+statement ok
+CREATE ROLE rdo_bob LOGIN PASSWORD 'rdo_pw';
+
+
+statement ok
+CREATE ROLE rdo_carol LOGIN PASSWORD 'rdo_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rdo_alice, rdo_carol;
+
+
+statement ok
+CREATE SCHEMA rdo_s AUTHORIZATION rdo_alice;
+
+
+statement ok
+CREATE DATABASE rdo_db;
+
+
+statement ok
+ALTER DATABASE rdo_db OWNER TO rdo_alice;
+
+
+statement ok
+GRANT CREATE ON DATABASE rdo_db TO rdo_carol;
+
+
+statement ok
+CREATE SUBSCRIPTION rdo_sub CONNECTION 'host=127.0.0.1 port=1 dbname=rdo' PUBLICATION rdo_pub WITH (connect = false, slot_name = NONE);
+
+
+statement ok
+ALTER SUBSCRIPTION rdo_sub OWNER TO rdo_alice;
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE TABLE rdo_t (a int);
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE INDEX rdo_t_a ON rdo_t (a);
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE TABLE rdo_serial (id serial);
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE VIEW rdo_v AS SELECT a FROM rdo_t;
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE FUNCTION rdo_f() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE SEQUENCE rdo_seq;
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+CREATE TABLE rdo_s.t2 (b int);
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement ok
+GRANT SELECT ON rdo_t TO rdo_carol;
+
+
+connection c_bob user=rdo_bob password=rdo_pw
+statement error
+REASSIGN OWNED BY rdo_alice TO rdo_bob;
+----
+db error: ERROR: permission denied to reassign objects
+DETAIL: Only roles with privileges of role "rdo_alice" may reassign objects owned by it.
+
+
+connection c_alice user=rdo_alice password=rdo_pw
+statement error
+REASSIGN OWNED BY rdo_alice TO rdo_bob;
+----
+db error: ERROR: permission denied to reassign objects
+DETAIL: Only roles with privileges of role "rdo_bob" may reassign objects to it.
+
+
+statement error
+REASSIGN OWNED BY rdo_nosuch TO rdo_bob;
+----
+db error: ERROR: role "rdo_nosuch" does not exist
+
+
+statement error
+REASSIGN OWNED BY postgres TO rdo_bob;
+----
+db error: ERROR: cannot reassign ownership of objects owned by role postgres because they are required by the database system
+
+
+statement error
+DROP OWNED BY postgres;
+----
+db error: ERROR: cannot drop objects owned by role postgres because they are required by the database system
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+REASSIGN OWNED BY rdo_alice TO rdo_bob;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT relowner::regrole::text AS owner FROM pg_class WHERE relname = 'rdo_t';
+----
+owner
+rdo_alice
+
+
+statement ok
+REASSIGN OWNED BY rdo_alice TO rdo_bob;
+
+
+query
+SELECT c.relname::text AS relname, c.relowner::regrole::text AS owner
+FROM pg_class c
+WHERE c.relname IN ('rdo_t', 'rdo_t_a', 'rdo_v', 'rdo_seq', 'rdo_serial', 'rdo_serial_id_seq')
+   OR (c.relname = 't2' AND c.relnamespace = 'rdo_s'::regnamespace)
+ORDER BY 1;
+----
+relname	owner
+rdo_seq	rdo_bob
+rdo_serial	rdo_bob
+rdo_serial_id_seq	rdo_bob
+rdo_t	rdo_bob
+rdo_t_a	rdo_bob
+rdo_v	rdo_bob
+t2	rdo_bob
+
+
+query
+SELECT (SELECT proowner::regrole::text FROM pg_proc WHERE proname = 'rdo_f') AS func,
+       (SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = 'rdo_s') AS nsp,
+       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db,
+       (SELECT subowner::regrole::text FROM pg_subscription WHERE subname = 'rdo_sub') AS sub;
+----
+func	nsp	db	sub
+rdo_bob	rdo_bob	rdo_bob	rdo_bob
+
+
+query
+SELECT has_table_privilege('rdo_carol', 'rdo_t', 'SELECT') AS carol;
+----
+carol
+t
+
+
+statement error
+DROP ROLE rdo_alice;
+----
+db error: ERROR: <slt:ignore>
+
+
+statement ok
+DROP OWNED BY rdo_alice;
+
+
+statement ok
+DROP ROLE rdo_alice;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rdo_bob GRANT SELECT ON TABLES TO rdo_carol;
+
+
+connection c_carol user=rdo_carol password=rdo_pw
+statement error
+DROP OWNED BY rdo_bob;
+----
+db error: ERROR: permission denied to drop objects
+DETAIL: Only roles with privileges of role "rdo_bob" may drop objects owned by it.
+
+
+connection c_carol user=rdo_carol password=rdo_pw
+statement ok
+DROP OWNED BY rdo_carol;
+
+
+query
+SELECT has_table_privilege('rdo_carol', 'rdo_t', 'SELECT') AS carol,
+       has_schema_privilege('rdo_carol', 'public', 'CREATE') AS public_create,
+       has_database_privilege('rdo_carol', 'rdo_db', 'CREATE') AS db_create,
+       (SELECT count(*) FROM pg_default_acl WHERE defaclrole = 'rdo_bob'::regrole) AS defaults;
+----
+carol	public_create	db_create	defaults
+t	t	t	0
+
+
+statement ok
+DROP OWNED BY rdo_carol;
+
+
+query
+SELECT has_table_privilege('rdo_carol', 'rdo_t', 'SELECT') AS carol,
+       has_schema_privilege('rdo_carol', 'public', 'CREATE') AS public_create,
+       has_database_privilege('rdo_carol', 'rdo_db', 'CREATE') AS db_create;
+----
+carol	public_create	db_create
+f	f	f
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rdo_carol;
+
+
+statement ok
+GRANT SELECT ON rdo_t TO rdo_carol;
+
+
+connection c_carol user=rdo_carol password=rdo_pw
+statement ok
+CREATE VIEW rdo_carol_v AS SELECT a FROM rdo_t;
+
+
+onlyif postgres
+statement error
+DROP OWNED BY rdo_bob;
+----
+db error: ERROR: cannot drop desired object(s) because other objects depend on them
+DETAIL: view rdo_carol_v depends on table rdo_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
+
+
+skipif postgres
+statement error
+DROP OWNED BY rdo_bob;
+----
+db error: ERROR: Cannot drop entry "rdo_t" because there are entries that depend on it.
+view "rdo_carol_v" depends on table "rdo_t".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('rdo_t', 'rdo_v', 'rdo_carol_v');
+----
+n
+3
+
+
+statement ok
+DROP OWNED BY rdo_bob CASCADE;
+
+
+query
+SELECT (SELECT count(*) FROM pg_class WHERE relname IN ('rdo_t', 'rdo_t_a', 'rdo_v', 'rdo_seq', 'rdo_serial', 'rdo_serial_id_seq', 'rdo_carol_v')) AS relations,
+       (SELECT count(*) FROM pg_proc WHERE proname = 'rdo_f') AS functions,
+       (SELECT count(*) FROM pg_namespace WHERE nspname = 'rdo_s') AS schemas,
+       (SELECT datdba::regrole::text FROM pg_database WHERE datname = 'rdo_db') AS db,
+       (SELECT subowner::regrole::text FROM pg_subscription WHERE subname = 'rdo_sub') AS sub;
+----
+relations	functions	schemas	db	sub
+0	0	0	rdo_bob	rdo_bob
+
+
+statement ok
+DROP SUBSCRIPTION rdo_sub;
+
+
+statement ok
+DROP DATABASE rdo_db;
+
+
+statement ok
+DROP OWNED BY rdo_carol;
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO rdo_bob;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_class TO rdo_bob;
+
+
+statement ok
+GRANT CREATE ON SCHEMA information_schema TO rdo_bob;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION upper(text) TO rdo_bob;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO rdo_bob;
+
+
+statement ok
+DROP OWNED BY rdo_carol;
+
+
+query
+SELECT position('rdo_bob=U/postgres' IN (SELECT array_to_string(lanacl, ',') FROM pg_language WHERE lanname = 'sql')) > 0 AS language,
+       position('rdo_bob=r/postgres' IN array_to_string(relacl, ',')) > 0 AS relation,
+       has_schema_privilege('rdo_bob', 'information_schema', 'CREATE') AS schema,
+       position('rdo_bob=X/postgres' IN (SELECT array_to_string(proacl, ',') FROM pg_proc WHERE oid = 'upper(text)'::regprocedure)) > 0 AS function,
+       position('rdo_bob=U/postgres' IN (SELECT array_to_string(typacl, ',') FROM pg_type WHERE oid = 'integer'::regtype)) > 0 AS type
+FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+language	relation	schema	function	type
+t	t	t	t	t
+
+
+statement ok
+DROP OWNED BY rdo_bob;
+
+
+query
+SELECT position('rdo_bob' IN array_to_string(relacl, ',')) > 0 AS relation,
+       has_schema_privilege('rdo_bob', 'information_schema', 'CREATE') AS schema
+FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+relation	schema
+f	f
+
+
+statement ok
+DROP ROLE rdo_bob, rdo_carol;

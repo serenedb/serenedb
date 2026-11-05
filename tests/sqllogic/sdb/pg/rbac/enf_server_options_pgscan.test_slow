@@ -1,0 +1,88 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS eso_${__DATABASE__};
+
+
+statement ok
+DROP ROLE IF EXISTS eso_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS eso_babsky;
+
+
+statement ok
+CREATE ROLE eso_vedernikoff;
+
+
+statement ok
+CREATE ROLE eso_babsky;
+
+
+statement ok
+CREATE SERVER eso_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}', password 'eso_not_a_secret');
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER eso_${__DATABASE__} TO eso_vedernikoff;
+
+
+query
+SELECT option_name, option_value
+FROM information_schema.foreign_server_options
+WHERE foreign_server_name = 'eso_${__DATABASE__}' AND option_name IN ('database', 'password')
+ORDER BY option_name;
+----
+option_name	option_value
+database	postgres
+password	eso_not_a_secret
+
+
+statement ok
+SET ROLE eso_vedernikoff;
+
+
+query
+SELECT option_name, option_value
+FROM information_schema.foreign_server_options
+WHERE foreign_server_name = 'eso_${__DATABASE__}' AND option_name IN ('database', 'password')
+ORDER BY option_name;
+----
+option_name	option_value
+database	NULL
+password	NULL
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE eso_babsky;
+
+
+query
+SELECT count(*) AS n
+FROM information_schema.foreign_server_options
+WHERE foreign_server_name = 'eso_${__DATABASE__}';
+----
+n
+0
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP SERVER eso_${__DATABASE__};
+
+
+statement ok
+DROP ROLE eso_vedernikoff;
+
+
+statement ok
+DROP ROLE eso_babsky;

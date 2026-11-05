@@ -208,6 +208,38 @@ search_path
 "$user", public
 
 
+statement ok
+CREATE TEMP TABLE discard_fk1 (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TEMP TABLE discard_fk2 (pid INT REFERENCES discard_fk1 (id), id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TEMP TABLE discard_fk3 (pid INT REFERENCES discard_fk2 (id), id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TEMP TABLE discard_fk4 (pid INT REFERENCES discard_fk3 (id));
+
+
+statement ok
+DISCARD TEMP;
+
+
+statement ok
+CREATE TEMP TABLE discard_fk1 (id INT);
+
+
+statement ok
+CREATE TEMP TABLE discard_fk4 (id INT);
+
+
+statement ok
+DISCARD TEMP;
+
+
 statement error
 DISCARD WHATEVER;
 ----

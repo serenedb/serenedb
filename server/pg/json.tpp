@@ -144,15 +144,17 @@ class JsonParser {
 inline simdjson::simdjson_result<simdjson::ondemand::value>
 JsonParser::GetByIndex(simdjson::ondemand::array arr, int64_t relative_index) {
   size_t size, index;
-  auto ec = arr.count_elements().get(size);
-  SDB_ASSERT(ec == simdjson::SUCCESS);
+  if (auto ec = arr.count_elements().get(size); ec != simdjson::SUCCESS) {
+    return simdjson::simdjson_result<simdjson::ondemand::value>(ec);
+  }
 
   if (relative_index < 0) {
-    if (static_cast<size_t>(-relative_index) > size) {
+    const auto back = 0 - static_cast<uint64_t>(relative_index);
+    if (back > size) {
       return simdjson::simdjson_result<simdjson::ondemand::value>(
         simdjson::OUT_OF_BOUNDS);
     }
-    index = size + relative_index;
+    index = size - back;
   } else {
     index = static_cast<size_t>(relative_index);
   }

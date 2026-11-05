@@ -1,0 +1,141 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS for_srv;
+
+
+statement ok
+DROP ROLE IF EXISTS for_alice;
+
+
+statement ok
+CREATE ROLE for_alice LOGIN PASSWORD 'for_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO for_alice;
+
+
+connection c_alice user=for_alice password=for_pw
+statement ok
+CREATE SERVER for_srv FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (host '${CHHOST}', port '${CHPORT}', database 'chtest', user 'scanner', password 'pass word');
+
+
+statement ok
+SET VARIABLE for_attached = (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'for_srv');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SERVER for_srv OWNER TO postgres;
+
+
+query
+SELECT database_oid <> getvariable('for_attached') AS reattached FROM duckdb_databases() WHERE database_name = 'for_srv';
+----
+reattached
+t
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT d.database_oid = getvariable('for_attached') AS restored, s.srvowner::regrole::text AS owner
+FROM duckdb_databases() d JOIN pg_foreign_server s ON s.srvname = d.database_name
+WHERE d.database_name = 'for_srv';
+----
+restored	owner
+t	for_alice
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER for_srv TO postgres;
+
+
+query
+SELECT database_oid = getvariable('for_attached') AS kept FROM duckdb_databases() WHERE database_name = 'for_srv';
+----
+kept
+t
+
+
+statement ok
+REASSIGN OWNED BY for_alice TO postgres;
+
+
+query
+SELECT database_oid <> getvariable('for_attached') AS reattached FROM duckdb_databases() WHERE database_name = 'for_srv';
+----
+reattached
+t
+
+
+query
+SELECT count(*) AS n FROM for_srv.chtest.vedernikoff;
+----
+n
+6
+
+
+statement ok
+ALTER SERVER for_srv OWNER TO for_alice;
+
+
+statement ok
+SET VARIABLE for_attached = (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'for_srv');
+
+
+statement ok
+ALTER ROLE for_alice SUPERUSER;
+
+
+query
+SELECT database_oid <> getvariable('for_attached') AS reattached FROM duckdb_databases() WHERE database_name = 'for_srv';
+----
+reattached
+t
+
+
+statement ok
+SET VARIABLE for_attached = (SELECT database_oid FROM duckdb_databases() WHERE database_name = 'for_srv');
+
+
+statement ok
+ALTER ROLE for_alice NOSUPERUSER;
+
+
+query
+SELECT database_oid <> getvariable('for_attached') AS reattached FROM duckdb_databases() WHERE database_name = 'for_srv';
+----
+reattached
+t
+
+
+connection c_alice user=for_alice password=for_pw
+query
+SELECT count(*) AS n FROM for_srv.chtest.vedernikoff;
+----
+n
+6
+
+
+statement ok
+RESET VARIABLE for_attached;
+
+
+statement ok
+DROP SERVER for_srv;
+
+
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw FROM for_alice;
+
+
+statement ok
+DROP ROLE for_alice;

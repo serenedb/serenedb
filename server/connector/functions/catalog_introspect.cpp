@@ -41,7 +41,6 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
@@ -52,16 +51,6 @@
 
 namespace sdb::connector {
 namespace {
-
-// The dump spans every database and includes definitions a role could never
-// SELECT (role rows carry password verifiers), so it is superuser-only.
-void RequireSuperuser(duckdb::ClientContext& context, std::string_view what) {
-  auto& conn = GetSereneDBContext(context);
-  if (!auth::ClosureFor(&context, conn.GetRoleId())->is_superuser) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("must be superuser to use ", what));
-  }
-}
 
 // The output vectors are freshly initialized flat vectors, so write them
 // directly instead of building a duckdb::Value per cell.
@@ -97,7 +86,6 @@ duckdb::unique_ptr<duckdb::FunctionData> CatalogSetsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  RequireSuperuser(context, "sdb_catalog_sets()");
   names.emplace_back("schema_name");
   return_types.emplace_back(duckdb::LogicalType::VARCHAR);
   names.emplace_back("entry_type");
@@ -226,7 +214,6 @@ duckdb::unique_ptr<duckdb::FunctionData> DeferredCatalogBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  RequireSuperuser(context, "sdb_deferred_catalog()");
   names.emplace_back("catalog_version");
   return_types.emplace_back(duckdb::LogicalType::UBIGINT);
   return duckdb::make_uniq<duckdb::TableFunctionData>();
@@ -259,16 +246,20 @@ void DeferredCatalogExecute(duckdb::ClientContext& context,
 
 void RegisterCatalogIntrospectFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
-  loader.RegisterFunction(duckdb::TableFunction{"sdb_deferred_catalog",
-                                                {},
-                                                DeferredCatalogExecute,
-                                                DeferredCatalogBind,
-                                                OneRowState::Init});
-  loader.RegisterFunction(duckdb::TableFunction{"sdb_catalog_sets",
-                                                {},
-                                                CatalogSetsExecute,
-                                                CatalogSetsBind,
-                                                CatalogSetsState::Init});
+  duckdb::TableFunction deferred{"sdb_deferred_catalog",
+                                 {},
+                                 DeferredCatalogExecute,
+                                 DeferredCatalogBind,
+                                 OneRowState::Init};
+  deferred.required_capability = duckdb::RoleCapability::Superuser;
+  loader.RegisterFunction(deferred);
+  duckdb::TableFunction catalog_sets{"sdb_catalog_sets",
+                                     {},
+                                     CatalogSetsExecute,
+                                     CatalogSetsBind,
+                                     CatalogSetsState::Init};
+  catalog_sets.required_capability = duckdb::RoleCapability::Superuser;
+  loader.RegisterFunction(catalog_sets);
 }
 
 }  // namespace sdb::connector

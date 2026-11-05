@@ -1,0 +1,152 @@
+statement ok
+DROP TABLE IF EXISTS dak_table;
+
+
+statement ok
+DROP ROLE IF EXISTS dak_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS dak_writer;
+
+
+statement ok
+DROP ROLE IF EXISTS dak_owner;
+
+
+statement ok
+CREATE ROLE dak_reader;
+
+
+statement ok
+CREATE ROLE dak_writer;
+
+
+statement ok
+CREATE ROLE dak_owner;
+
+
+statement ok
+CREATE TABLE dak_table (a integer);
+
+
+statement ok
+GRANT SELECT ON dak_table TO dak_reader;
+
+
+statement ok
+ALTER TABLE dak_table ADD COLUMN b integer;
+
+
+statement ok
+COMMENT ON TABLE dak_table IS 'kept';
+
+
+skipif serenedb
+statement error
+DROP ROLE dak_reader;
+----
+db error: ERROR: role "dak_reader" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dak_reader;
+----
+db error: ERROR: Cannot drop entry "dak_reader" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+GRANT INSERT ON dak_table TO dak_reader;
+
+
+statement ok
+GRANT UPDATE ON dak_table TO dak_writer;
+
+
+skipif serenedb
+statement error
+DROP ROLE dak_writer;
+----
+db error: ERROR: role "dak_writer" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dak_writer;
+----
+db error: ERROR: Cannot drop entry "dak_writer" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE SELECT ON dak_table FROM dak_reader;
+
+
+skipif serenedb
+statement error
+DROP ROLE dak_reader;
+----
+db error: ERROR: role "dak_reader" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dak_reader;
+----
+db error: ERROR: Cannot drop entry "dak_reader" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE INSERT ON dak_table FROM dak_reader;
+
+
+statement ok
+DROP ROLE dak_reader;
+
+
+statement ok
+ALTER TABLE dak_table OWNER TO dak_owner;
+
+
+skipif serenedb
+statement error
+DROP ROLE dak_owner;
+----
+db error: ERROR: role "dak_owner" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dak_owner;
+----
+db error: ERROR: Cannot drop entry "dak_owner" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+ALTER TABLE dak_table RENAME TO dak_renamed;
+
+
+skipif serenedb
+statement error
+DROP ROLE dak_writer;
+----
+db error: ERROR: role "dak_writer" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dak_writer;
+----
+db error: ERROR: Cannot drop entry "dak_writer" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP TABLE dak_renamed;
+
+
+statement ok
+DROP ROLE dak_writer;
+
+
+statement ok
+DROP ROLE dak_owner;

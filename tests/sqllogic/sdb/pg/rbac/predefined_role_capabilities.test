@@ -1,0 +1,74 @@
+statement ok
+DROP ROLE IF EXISTS prc_monitor;
+
+
+statement ok
+DROP ROLE IF EXISTS prc_settings;
+
+
+statement ok
+CREATE ROLE prc_monitor LOGIN PASSWORD 'prc_pw';
+
+
+statement ok
+CREATE ROLE prc_settings LOGIN PASSWORD 'prc_pw';
+
+
+connection c_settings user=prc_settings password=prc_pw
+statement error
+SELECT current_setting('temp_directory');
+----
+db error: ERROR: permission denied to examine "temp_directory"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_monitor user=prc_monitor password=prc_pw
+query
+SELECT bool_and(query = '<insufficient privilege>') AS hidden
+FROM sdb_progress
+WHERE usename <> current_user;
+----
+hidden
+t
+
+
+statement ok
+GRANT pg_read_all_settings TO prc_settings;
+
+
+connection c_settings user=prc_settings password=prc_pw
+query
+SELECT current_setting('temp_directory') IS NOT NULL AS readable;
+----
+readable
+t
+
+
+statement ok
+GRANT pg_monitor TO prc_monitor;
+
+
+connection c_monitor user=prc_monitor password=prc_pw
+query
+SELECT current_setting('temp_directory') IS NOT NULL AS readable;
+----
+readable
+t
+
+
+connection c_monitor user=prc_monitor password=prc_pw
+query
+SELECT count(*) > 0 AS sees_others, bool_and(query <> '<insufficient privilege>') AS shown
+FROM sdb_progress
+WHERE usename <> current_user;
+----
+sees_others	shown
+t	t
+
+
+statement ok
+DROP ROLE prc_monitor;
+
+
+statement ok
+DROP ROLE prc_settings;

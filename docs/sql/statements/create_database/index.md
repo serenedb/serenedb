@@ -20,6 +20,8 @@ Use `IF NOT EXISTS` so the statement succeeds even when the database already exi
 
 <SqlLogicTest id="sql/statements/create_database/index/example_002" />
 
+The role that creates a database owns it. `OWNER role`, also written `WITH OWNER = role`, makes another role the owner; the creating role must be able to `SET ROLE` to it, and otherwise the statement fails with `must be able to SET ROLE "role"`. Creating a database requires a superuser or a role with the `CREATEDB` attribute.
+
 Once created, you can connect to it like any other database — for example with `psql`:
 
 ```sh
@@ -44,6 +46,19 @@ As an alternative to reconnecting, switch to the new database within the current
 The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
 
 A database created inside a transaction is visible to other sessions only once that transaction commits. Until then, creating a database of the same name from another session fails.
+
+## Connection limits
+
+Two options control who may connect to a database. `CREATE DATABASE` takes them in any order with `OWNER`, and `ALTER DATABASE name [WITH] option ...` changes them later; only the owner of the database, a member of the owning role or a superuser may run it:
+
+<SqlLogicTest id="sql/statements/create_database/index/example_007" />
+
+| Option                         | Description                                                                                                                       | Default |
+|--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|---------|
+| `CONNECTION LIMIT [=] n`       | How many sessions may be connected to the database at once, over the PostgreSQL protocol and the HTTP APIs together; `-1` means no limit. | `-1`    |
+| `ALLOW_CONNECTIONS [=] TRUE \| FALSE` | Whether the database accepts new connections at all.                                                                       | `TRUE`  |
+
+A login beyond the limit fails with `too many connections for database "name"`. Superusers are not held to the limit, though their sessions count towards it. A login to a database that does not allow connections fails with `database "name" is not currently accepting connections`, for superusers too. Sessions already connected stay connected when either option changes. A session cannot disallow connections to the database it is connected to: that fails with `cannot disallow connections for current database`. Giving an option twice in one statement fails with `conflicting or redundant options`, and a limit below `-1` with `invalid connection limit`. `pg_database` shows the options as `datconnlimit` and `datallowconn`.
 
 ## Dropping a database
 

@@ -1,0 +1,108 @@
+statement ok
+DROP TABLE IF EXISTS ecir_t;
+
+
+statement ok
+DROP TABLE IF EXISTS ecir_other;
+
+
+statement ok
+DROP ROLE IF EXISTS ecir_reader;
+
+
+statement ok
+CREATE ROLE ecir_reader LOGIN PASSWORD 'ecir_pw';
+
+
+statement ok
+CREATE TABLE ecir_t (a integer, secret text);
+
+
+statement ok
+CREATE TABLE ecir_other (x integer);
+
+
+statement ok
+INSERT INTO ecir_t VALUES (1, 'alpha'), (2, 'beta');
+
+
+statement ok
+INSERT INTO ecir_other VALUES (1);
+
+
+statement ok
+GRANT SELECT (a) ON ecir_t TO ecir_reader;
+
+
+statement ok
+GRANT SELECT ON ecir_other TO ecir_reader;
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+query
+SELECT a FROM ecir_t ORDER BY a;
+----
+a
+1
+2
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT a FROM ecir_t ORDER BY secret;
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT count(*) FROM ecir_t GROUP BY secret;
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT x FROM ecir_other WHERE EXISTS (SELECT 1 FROM ecir_t WHERE ecir_t.secret = 'alpha');
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT a FROM ecir_t AS t WHERE EXISTS (SELECT 1 FROM ecir_other WHERE t.secret = 'alpha');
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT a FROM ecir_t AS t, LATERAL (SELECT t.secret AS s) AS l;
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT t FROM ecir_t AS t;
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+connection c_ecir user=ecir_reader password=ecir_pw
+statement error
+SELECT a FROM ecir_t WHERE (SELECT max(length(secret)) FROM ecir_t) > 0;
+----
+db error: ERROR: permission denied for table ecir_t
+
+
+statement ok
+DROP TABLE ecir_t;
+
+
+statement ok
+DROP TABLE ecir_other;
+
+
+statement ok
+DROP ROLE ecir_reader;

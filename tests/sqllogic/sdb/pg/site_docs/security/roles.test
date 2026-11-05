@@ -153,6 +153,56 @@ DROP ROLE doc_sec_viewer;
 statement ok
 DROP TABLE doc_sec_log;
 
+# DOCS_TEST: example_010
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE ROLE doc_sec_leaver;
+
+statement ok
+CREATE ROLE doc_sec_heir;
+
+statement ok
+CREATE TABLE doc_sec_orders (id int);
+
+statement ok
+ALTER TABLE doc_sec_orders OWNER TO doc_sec_leaver;
+
+statement ok
+CREATE TABLE doc_sec_events (id int);
+
+statement ok
+GRANT SELECT ON doc_sec_events TO doc_sec_leaver;
+
+statement ok
+REASSIGN OWNED BY doc_sec_leaver TO doc_sec_heir;
+
+statement ok
+DROP OWNED BY doc_sec_leaver;
+
+statement ok
+DROP ROLE doc_sec_leaver;
+
+query
+SELECT tablename, tableowner
+FROM pg_tables
+WHERE tablename LIKE 'doc_sec_%'
+ORDER BY tablename;
+----
+tablename	tableowner
+doc_sec_events	postgres
+doc_sec_orders	doc_sec_heir
+
+statement ok
+DROP TABLE doc_sec_orders;
+
+statement ok
+DROP TABLE doc_sec_events;
+
+statement ok
+DROP ROLE doc_sec_heir;
+
 # DOCS_TEST: example_007
 
 # DOCS_TEST_BODY

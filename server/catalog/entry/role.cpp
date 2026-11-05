@@ -24,19 +24,59 @@
 
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string_view>
 #include <utility>
 
-#include "auth/role_closure.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
+#include "query/config.h"
 
 namespace sdb::catalog {
+namespace {
+
+duckdb::RoleCapability PredefinedCapability(duckdb::idx_t oid) {
+  switch (oid) {
+    case pg::kPgReadAllSettingsRole:
+      return duckdb::RoleCapability::ReadAllSettings;
+    case pg::kPgReadAllStatsRole:
+      return duckdb::RoleCapability::ReadAllStats;
+    case pg::kPgSignalBackendRole:
+      return duckdb::RoleCapability::SignalBackend;
+    case pg::kPgCheckpointRole:
+      return duckdb::RoleCapability::Checkpoint;
+    case pg::kPgReadServerFilesRole:
+      return duckdb::RoleCapability::ReadServerFiles;
+    case pg::kPgWriteServerFilesRole:
+      return duckdb::RoleCapability::WriteServerFiles;
+    case pg::kPgReadAllDataRole:
+      return duckdb::RoleCapability::ReadAllData;
+    case pg::kPgWriteAllDataRole:
+      return duckdb::RoleCapability::WriteAllData;
+    case pg::kPgCreateSubscriptionRole:
+      return duckdb::RoleCapability::CreateSubscription;
+    case pg::kPgMaintainRole:
+      return duckdb::RoleCapability::Maintain;
+    default:
+      return duckdb::RoleCapability::None;
+  }
+}
+
+bool HashesEmptyPassword(std::string_view role, std::string_view password) {
+  if (network::IsMd5Verifier(password)) {
+    return network::VerifyCleartextAgainstMd5(password, role, "");
+  }
+  const auto verifier = network::ParseScramVerifier(password);
+  return verifier && network::VerifyCleartextAgainstScram(*verifier, "");
+}
+
+}  // namespace
 
 void RequireUnreservedRoleName(const duckdb::Identifier& name) {
   const auto& text = name.GetIdentifierName();
@@ -52,9 +92,21 @@ void RequireUnreservedRoleName(const duckdb::Identifier& name) {
   }
 }
 
-std::string StoredPassword(std::string_view password) {
+std::string StoredPassword(duckdb::ClientContext& context,
+                           std::string_view role, std::string_view password) {
+  if (auto* session = connector::GetSereneDBContextPtr(context);
+      session && (password.empty() || HashesEmptyPassword(role, password))) {
+    session->AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+      ERR_MSG("empty string is not a valid password, clearing password")));
+    return {};
+  }
   if (network::IsScramVerifier(password) || network::IsMd5Verifier(password)) {
     return std::string{password};
+  }
+  constexpr std::string_view kMethods[] = {"scram-sha-256", "md5"};
+  if (GetEnumSetting(context, "password_encryption", kMethods) == 1) {
+    return network::BuildMd5Verifier(role, password);
   }
   auto verifier = network::BuildScramVerifierString(password);
   if (!verifier) {
@@ -66,8 +118,7 @@ std::string StoredPassword(std::string_view password) {
 
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
   auto* session = connector::GetSereneDBContextPtr(context);
-  if (!session ||
-      auth::ClosureFor(&context, session->GetRoleId())->is_superuser) {
+  if (!session || context.CurrentRole().is_superuser) {
     return pg::kRootUser;
   }
   return session->GetRoleId();
@@ -75,14 +126,18 @@ duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
 
 RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
                                    duckdb::CreateRoleInfo& info)
-  : duckdb::InCatalogEntry{duckdb::CatalogType::ROLE_ENTRY, catalog,
-                           info.GetQualifiedName().Name(), info.oid},
-    _options{info.options},
+  : duckdb::RoleEntry{catalog,
+                      info.GetQualifiedName().Name(),
+                      info.oid,
+                      info.options,
+                      info.member_of,
+                      PredefinedCapability(info.oid),
+                      IsPredefinedRole(info.oid)},
     _conn_limit{info.conn_limit},
     _valid_until{info.valid_until},
     _password{info.password},
-    _member_of{info.member_of},
-    _config{info.config} {
+    _config{info.config},
+    _all_roles_config{info.all_roles_config} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
@@ -91,12 +146,13 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
 duckdb::unique_ptr<duckdb::CreateInfo> RoleCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateRoleInfo>();
   info->SetName(name);
-  info->options = _options;
+  info->options = Options();
   info->conn_limit = _conn_limit;
   info->valid_until = _valid_until;
   info->password = _password;
-  info->member_of = _member_of;
+  info->member_of = MemberOf();
   info->config = _config;
+  info->all_roles_config = _all_roles_config;
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
@@ -109,13 +165,30 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::Copy(
     catalog, info->Cast<duckdb::CreateRoleInfo>());
 }
 
-namespace {
-
-std::string_view ConfigKey(std::string_view entry) {
-  return entry.substr(0, entry.find('='));
+void ApplyConfigChange(duckdb::vector<std::string>& config,
+                       std::span<const std::string> set_config,
+                       std::span<const std::string> reset_config,
+                       bool reset_all_config) {
+  if (reset_all_config) {
+    config.clear();
+  }
+  for (const auto& key : reset_config) {
+    std::erase_if(config, [&](std::string_view entry) {
+      return duckdb::Settings::ConfigKey(entry) == key;
+    });
+  }
+  for (const auto& entry : set_config) {
+    const auto key = duckdb::Settings::ConfigKey(entry);
+    auto it = absl::c_find_if(config, [&](std::string_view e) {
+      return duckdb::Settings::ConfigKey(e) == key;
+    });
+    if (it == config.end()) {
+      config.emplace_back(entry);
+    } else {
+      *it = entry;
+    }
+  }
 }
-
-}  // namespace
 
 duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
@@ -138,9 +211,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
                 "\" because it is required by the database system"));
     }
   }
-  if (alter.set_password) {
+  if (alter.set_password && !alter.null_password) {
     alter.password =
-      alter.null_password ? std::string{} : StoredPassword(alter.password);
+      StoredPassword(context, name.GetIdentifierName(), alter.password);
+    alter.null_password = alter.password.empty();
   }
   if (!alter.grant_role.empty() && alter.grant_role_id == 0) {
     const duckdb::Identifier granted{alter.grant_role};
@@ -154,8 +228,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     }
     if (!alter.revoke &&
         (oid == target->oid ||
-         auth::ComputeRoleClosure(*auth::RolesOf(&context), target->oid)
-           .IsMember(oid))) {
+         RolesOf(&context)->MembershipsOf(target->oid).IsMember(oid))) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_GRANT_OPERATION),
         ERR_MSG("role \"", target->name.GetIdentifierName(),
@@ -164,6 +237,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     alter.grant_role_id = target->oid;
     if (!alter.grantor_id) {
       alter.grantor_id = GrantorOfMembership(context);
+      if (alter.grantor_id != pg::kRootUser) {
+        if (const auto admin =
+              RolesOf(&context)->BestAdmin(alter.grantor_id, target->oid);
+            admin.IsValid()) {
+          alter.grantor_id = admin.GetIndex();
+        }
+      }
     }
   }
   auto copy = GetInfo();
@@ -180,45 +260,56 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   }
   if (!alter.new_name.empty()) {
     next.SetName(alter.new_name);
-  }
-  if (alter.reset_all_config) {
-    next.config.clear();
-  }
-  for (const auto& key : alter.reset_config) {
-    std::erase_if(next.config, [&](std::string_view entry) {
-      return ConfigKey(entry) == key;
-    });
-  }
-  for (const auto& entry : alter.set_config) {
-    const auto key = ConfigKey(entry);
-    auto it = absl::c_find_if(
-      next.config, [&](std::string_view e) { return ConfigKey(e) == key; });
-    if (it == next.config.end()) {
-      next.config.emplace_back(entry);
-    } else {
-      *it = entry;
+    if (network::IsMd5Verifier(next.password)) {
+      next.password.clear();
+      if (auto* session = connector::GetSereneDBContextPtr(context)) {
+        session->AddNotice(SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+          ERR_MSG("MD5 password cleared because of role rename")));
+      }
     }
   }
+  ApplyConfigChange(alter.all_roles ? next.all_roles_config : next.config,
+                    alter.set_config, alter.reset_config,
+                    alter.reset_all_config);
   if (alter.grant_role_id != 0) {
-    auto it =
-      absl::c_find_if(next.member_of, [&](const duckdb::Membership& member) {
-        return member.role == alter.grant_role_id;
-      });
-    if (alter.revoke && !alter.option_only) {
-      if (it != next.member_of.end()) {
-        next.member_of.erase(it);
+    const auto granted = [&](const duckdb::Membership& edge) {
+      return edge.role == alter.grant_role_id &&
+             (!alter.grantor_id || edge.grantor == alter.grantor_id);
+    };
+    const auto notify = [&](int errcode, std::string_view message) {
+      auto* session = connector::GetSereneDBContextPtr(context);
+      if (!session) {
+        return;
       }
-    } else if (!alter.revoke || it != next.member_of.end()) {
-      auto edge =
-        it != next.member_of.end()
-          ? *it
-          : duckdb::Membership{
-              .role = alter.grant_role_id,
-              .grantor = alter.grantor_id,
-              .admin_option = false,
-              .inherit_option = HasOption(next.options, RoleOption::Inherit),
-              .set_option = true,
-            };
+      const auto roles = RolesOf(&context);
+      session->AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(errcode),
+        ERR_MSG("role \"", name.GetIdentifierName(), "\" ", message,
+                " membership in role \"", roles->NameOf(alter.grant_role_id),
+                "\" by role \"", roles->NameOf(alter.grantor_id), "\"")));
+    };
+    auto it = absl::c_find_if(next.member_of, granted);
+    if (alter.revoke && !alter.grantor_id) {
+      std::erase_if(next.member_of, granted);
+    } else if (it == next.member_of.end()) {
+      if (alter.revoke) {
+        notify(ERRCODE_WARNING, "has not been granted");
+      } else {
+        next.member_of.push_back(duckdb::Membership{
+          .role = alter.grant_role_id,
+          .grantor = alter.grantor_id,
+          .admin_option = alter.admin_option == 1,
+          .inherit_option = alter.inherit_option == -1
+                              ? HasOption(next.options, RoleOption::Inherit)
+                              : alter.inherit_option == 1,
+          .set_option = alter.set_option != 0,
+        });
+      }
+    } else if (alter.revoke && !alter.option_only) {
+      next.member_of.erase(it);
+    } else {
+      auto edge = *it;
       if (alter.admin_option != -1) {
         edge.admin_option = alter.admin_option == 1;
       }
@@ -228,11 +319,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
       if (alter.set_option != -1) {
         edge.set_option = alter.set_option == 1;
       }
-      if (it == next.member_of.end()) {
-        next.member_of.emplace_back(edge);
-      } else {
-        *it = edge;
+      if (!alter.revoke && edge == *it) {
+        notify(ERRCODE_SUCCESSFUL_COMPLETION, "has already been granted");
       }
+      *it = edge;
     }
   }
   return duckdb::make_uniq<RoleCatalogEntry>(catalog, next);

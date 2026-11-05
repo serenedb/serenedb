@@ -82,7 +82,6 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
@@ -182,8 +181,7 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   }
   target.database_id = database->GetOid();
   target.schema_path = std::move(schema_path);
-  auto index_entry = duckdb::Catalog::GetEntry(
-    context,
+  auto index_entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::INDEX_ENTRY,
                             QualifiedIn(target, duckdb::Identifier{name})},
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -206,9 +204,8 @@ ReindexTarget ResolveTarget(duckdb::ClientContext& context,
   auto& view = relation->Cast<duckdb::ViewCatalogEntry>();
   // PG semantics: REINDEX needs MAINTAIN (same as VACUUM). Enforced here --
   // the passes run on internal connections and reach no other gate.
-  if (!auth::ClosureFor(&context, conn_ctx.GetRoleId())
-         ->Can(duckdb::CatalogType::TABLE_ENTRY, view.permissions,
-               duckdb::AclMode::Maintain)) {
+  if (!context.CurrentRole().Can(duckdb::CatalogType::TABLE_ENTRY,
+                                 view.permissions, duckdb::AclMode::Maintain)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for index \"", name, "\""));
   }

@@ -21,7 +21,7 @@
 #include <memory>
 #include <string_view>
 
-#include "auth/role_closure.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/progress_registry.h"
@@ -134,9 +134,9 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (_closure && !_closure->is_superuser) {
-      const auto* role = _roles->FindByName(s.user);
-      if (!role || !_closure->MemberOf(role->first)) {
+    if (!_role.Has(duckdb::RoleCapability::ReadAllStats)) {
+      const auto role = _roles->FindByName(s.user);
+      if (!role.IsValid() || !_role.MemberOf(role.GetIndex())) {
         Emit<kHidden>(s);
         return;
       }
@@ -152,10 +152,11 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   }
 
  private:
-  std::shared_ptr<const auth::RoleClosure> _closure =
-    auth::SessionClosure(Context());
-  std::shared_ptr<const auth::RoleGraph> _roles =
-    _closure && !_closure->is_superuser ? auth::RolesOf(&Context()) : nullptr;
+  const duckdb::RoleAccess& _role = Context().CurrentRole();
+  duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles =
+    !_role.Has(duckdb::RoleCapability::ReadAllStats)
+      ? catalog::RolesOf(&Context())
+      : duckdb::shared_ptr<const duckdb::SecuritySnapshot>{};
 };
 
 }  // namespace

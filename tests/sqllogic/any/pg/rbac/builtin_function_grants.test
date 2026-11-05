@@ -1,0 +1,240 @@
+statement ok
+DROP ROLE IF EXISTS bfg_user, bfg_other;
+
+
+statement ok
+CREATE ROLE bfg_user;
+
+
+statement ok
+CREATE ROLE bfg_other;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION pg_catalog.lower(text) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO bfg_user;
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE oid = 'lower(text)'::regprocedure;
+----
+acl
+postgres=X/postgres,bfg_user=X/postgres
+
+
+query
+SELECT has_function_privilege('bfg_user', 'lower(text)', 'EXECUTE') AS user_exec,
+       has_function_privilege('bfg_other', 'lower(text)', 'EXECUTE') AS other_exec,
+       has_function_privilege('bfg_other', 'upper(text)', 'EXECUTE') AS other_upper;
+----
+user_exec	other_exec	other_upper
+t	f	t
+
+
+query
+SELECT refobjid::regrole::text AS role, deptype
+FROM pg_shdepend
+WHERE classid = 'pg_proc'::regclass AND objid = 'lower(text)'::regprocedure
+  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+role	deptype
+bfg_user	a
+
+
+statement ok
+SET ROLE bfg_other;
+
+
+statement error
+SELECT lower('A');
+----
+db error: ERROR: permission denied for function lower
+
+
+query
+SELECT upper('a') AS v;
+----
+v
+A
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE bfg_user;
+
+
+query
+SELECT lower('A') AS v;
+----
+v
+a
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP OWNED BY bfg_user;
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE oid = 'lower(text)'::regprocedure;
+----
+acl
+postgres=X/postgres
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_proc'::regclass, 'lower(text)'::regprocedure, 0), ',') AS acl;
+----
+acl
+postgres=X/postgres
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO PUBLIC;
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE oid = 'lower(text)'::regprocedure;
+----
+acl
+postgres=X/postgres,=X/postgres
+
+
+statement ok
+SET ROLE bfg_other;
+
+
+query
+SELECT lower('A') AS v;
+----
+v
+a
+
+
+statement ok
+RESET ROLE;
+
+
+onlyif postgres
+statement error
+GRANT EXECUTE ON FUNCTION lower(integer) TO bfg_user;
+----
+db error: ERROR: function lower(integer) does not exist
+
+
+skipif postgres
+statement error
+GRANT EXECUTE ON FUNCTION lower(integer) TO bfg_user;
+----
+db error: ERROR: function lower(INTEGER) does not exist
+
+
+statement error
+GRANT EXECUTE ON FUNCTION abs TO bfg_user;
+----
+db error: ERROR: function name "abs" is not unique
+HINT: Specify the argument list to select the function unambiguously.
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION pg_backend_pid TO bfg_user;
+
+
+query
+SELECT has_function_privilege('bfg_user', 'pg_backend_pid()', 'EXECUTE WITH GRANT OPTION') AS user_option,
+       position('bfg_user=X/postgres' IN array_to_string(proacl, ',')) > 0 AS granted
+FROM pg_proc WHERE oid = 'pg_backend_pid()'::regprocedure;
+----
+user_option	granted
+f	t
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION pg_backend_pid FROM bfg_user;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM PUBLIC;
+
+
+statement ok
+SET ROLE bfg_user;
+
+
+statement error
+GRANT EXECUTE ON FUNCTION lower(text) TO bfg_other;
+----
+db error: ERROR: permission denied for function lower
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION upper(text) TO bfg_other;
+
+
+skipif serenedb
+statement error
+DROP ROLE bfg_other;
+----
+db error: ERROR: role "bfg_other" cannot be dropped because some objects depend on it
+DETAIL: privileges for function upper(text)
+
+
+onlyif serenedb
+statement error
+DROP ROLE bfg_other;
+----
+db error: ERROR: Cannot drop entry "bfg_other" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION upper(text) FROM bfg_other;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION abs(integer) FROM PUBLIC;
+
+
+statement ok
+SET ROLE bfg_other;
+
+
+statement error
+SELECT abs(-1);
+----
+db error: ERROR: permission denied for function abs
+
+
+query
+SELECT abs(-1.5) AS v;
+----
+v
+1.5
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION abs(integer) TO PUBLIC;
+
+
+statement ok
+DROP ROLE bfg_user, bfg_other;

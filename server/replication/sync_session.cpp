@@ -36,20 +36,19 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/pg/wire_frames.h"
-#include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
+#include "pg/types/pg_lsn.h"
 #include "replication/repl_source.h"
 
 namespace sdb::replication {
@@ -222,15 +221,11 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
 }
 
 bool SyncSession::SetupApplyConnection() {
-  if (_target.database_oid == 0) {
+  if (_target.database_oid == 0 || _target.owner_name.empty()) {
     return false;
   }
-  const std::string_view user =
-    _target.owner_name.empty()
-      ? std::string_view{irs::StaticStrings::kDefaultUser}
-      : std::string_view{_target.owner_name};
-  const duckdb::idx_t role =
-    _target.owner_name.empty() ? pg::kRootUser : _target.owner_id;
+  const std::string_view user{_target.owner_name};
+  const duckdb::idx_t role = _target.owner_id;
   _database =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
       .GetDatabase(duckdb::Identifier{_target.database_name});
@@ -412,9 +407,8 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
   if (!_target.run_as_owner && table_owner != role &&
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
-    const auto closure = auth::ClosureFor(&context, role);
-    if (!closure->is_superuser && !closure->CanSet(table_owner)) {
-      const auto roles = auth::RolesOf(&context);
+    if (!context.AccessOf(role).CanSet(table_owner)) {
+      const auto roles = catalog::RolesOf(&context);
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
         ERR_MSG("role \"", roles->NameOf(role), "\" cannot SET ROLE to \"",

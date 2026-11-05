@@ -27,12 +27,14 @@ constexpr SystemTable* kSystemTables[] = {
   &gPgLanguage,
   &gPgNamespace,
   &gPgOpclass,
+  &gPgParameterAcl,
   &gPgProc,
   &gPgRange,
   &gPgReplicationOrigin,
   &gPgRewrite,
   &gPgSequence,
   &gPgShdepend,
+  &gPgShdescription,
   &gPgSubscription,
   &gPgSubscriptionRel,
   &gPgTablespace,
@@ -49,6 +51,7 @@ constexpr SystemTable* kSystemTableFunctions[] = {
   &gPgShowAllSettings,
 };
 const SystemViewSql kSystemViewSql[] = {
+  {"information_schema", "foreign_server_options", kInfoForeignServerOptions},
   {"information_schema", "triggers", kInfoTriggers},
   {"pg_catalog", "pg_stat_progress_basebackup", kPgStatProgressBasebackup},
   {"pg_catalog", "pg_stat_progress_create_index", kPgStatProgressCreateIndex},

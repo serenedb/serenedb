@@ -1,9 +1,7 @@
 # GRANT ON SCHEMA and ALTER DEFAULT PRIVILEGES each populate their per-object
 # ACL catalog column (pg_namespace.nspacl, pg_default_acl.defaclacl) exactly
 # like PostgreSQL (verified on PG18). ACL arrays are asserted per-element
-# (LIKE / unnest) so the assertions are portable across engines. SereneDB
-# diverges from PG on GRANT ... ON TYPE <built-in>: PG mutates pg_type.typacl,
-# SereneDB refuses (built-in type privileges are not changeable).
+# (LIKE / unnest) so the assertions are portable across engines.
 #
 # ALTER DEFAULT PRIVILEGES without FOR ROLE writes the *current* role's
 # pg_default_acl row, which on this shared server is `postgres` -- one row for
@@ -81,12 +79,19 @@ ord	e
 2	catacl_vedernikoff=r/catacl_lawyer
 
 
-# GRANT USAGE ON a built-in TYPE: PG mutates pg_type.typacl, SereneDB refuses.
-onlyif serenedb
-statement error
+statement ok
 GRANT USAGE ON TYPE int4 TO catacl_vedernikoff;
+
+
+query
+SELECT array_to_string(typacl, ',') AS acl FROM pg_type WHERE oid = 'int4'::regtype;
 ----
-db error: ERROR: Cannot alter entry "int4" because it is an internal system entry
+acl
+=U/postgres,postgres=U/postgres,catacl_vedernikoff=U/postgres
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM catacl_vedernikoff;
 
 
 # Cleanup: the revoke empties the pg_default_acl row and takes it away with it,

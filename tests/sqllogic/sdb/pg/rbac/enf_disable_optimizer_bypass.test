@@ -50,8 +50,11 @@ db error: ERROR: permission denied for table edo_mop_vault<slt:ignore>
 # ... and neither via SET debug_disable_optimizer (the session-scoped knob the
 # optimizer also honors; `disable_optimizer` itself is pragma-only in serened).
 connection c_ved3 user=edo_vedernikoff password=ved_pw
-statement ok
+statement error
 SET debug_disable_optimizer = true;
+----
+db error: ERROR: permission denied to set parameter "debug_disable_optimizer"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
 connection c_ved3 user=edo_vedernikoff password=ved_pw

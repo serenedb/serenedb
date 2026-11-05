@@ -1,0 +1,393 @@
+query
+SELECT current_setting('cst.never', true) IS NULL AS unset;
+----
+unset
+t
+
+
+statement error
+SELECT current_setting('cst.never');
+----
+db error: ERROR: unrecognized configuration parameter "cst.never"
+
+
+statement error
+SHOW cst.never;
+----
+db error: ERROR: unrecognized configuration parameter "cst.never"
+
+
+query
+SELECT set_config('cst.claims', '{"sub": "42"}', false) AS value;
+----
+value
+{"sub": "42"}
+
+
+query
+SHOW cst.claims;
+----
+cst.claims
+{"sub": "42"}
+
+
+query
+SELECT current_setting('cst.claims')::json->>'sub' AS sub;
+----
+sub
+42
+
+
+statement ok
+SET cst.app = 42;
+
+
+query
+SELECT current_setting('cst.app') AS value, pg_typeof(current_setting('cst.app')) AS type;
+----
+value	type
+42	text
+
+
+statement ok
+SET cst.app TO 'two words';
+
+
+query
+SHOW cst.app;
+----
+cst.app
+two words
+
+
+statement error
+SET cst.app = 1, 2;
+----
+db error: ERROR: SET cst.app takes only one argument
+
+
+statement ok
+SET "CST.Mixed" = 'm';
+
+
+query
+SELECT current_setting('cst.mixed') AS value;
+----
+value
+m
+
+
+statement ok
+SET cst.deep.name = 'three parts';
+
+
+query
+SHOW cst.deep.name;
+----
+cst.deep.name
+three parts
+
+
+statement error
+SELECT set_config('cst..empty', 'x', false);
+----
+db error: ERROR: invalid configuration parameter name "cst..empty"
+DETAIL: Custom parameter names must be two or more simple identifiers separated by dots.
+
+
+statement error
+SELECT set_config('cst.1digit', 'x', false);
+----
+db error: ERROR: invalid configuration parameter name "cst.1digit"
+DETAIL: Custom parameter names must be two or more simple identifiers separated by dots.
+
+
+onlyif postgres
+statement error
+SELECT set_config('nodot_setting_cst', 'x', false);
+----
+db error: ERROR: unrecognized configuration parameter "nodot_setting_cst"
+
+
+skipif postgres
+statement error
+SELECT set_config('nodot_setting_cst', 'x', false);
+----
+db error: ERROR: unrecognized configuration parameter "nodot_setting_cst"
+
+Did you mean: <slt:ignore>
+
+
+statement ok
+RESET cst.app;
+
+
+query
+SELECT current_setting('cst.app') = '' AS empty;
+----
+empty
+t
+
+
+statement ok
+SET cst.app = 'again';
+
+
+statement ok
+SET cst.app TO DEFAULT;
+
+
+query
+SELECT current_setting('cst.app') = '' AS empty;
+----
+empty
+t
+
+
+statement ok
+RESET cst.reset_first;
+
+
+query
+SELECT current_setting('cst.reset_first', true) = '' AS empty;
+----
+empty
+t
+
+
+statement ok
+BEGIN;
+
+
+query
+SELECT set_config('cst.request', 'in transaction', true) AS value;
+----
+value
+in transaction
+
+
+query
+SELECT current_setting('cst.request') AS value;
+----
+value
+in transaction
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT current_setting('cst.request', true) = '' AS empty;
+----
+empty
+t
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET cst.rolled = 'r1';
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT current_setting('cst.rolled', true) = '' AS empty;
+----
+empty
+t
+
+
+statement ok
+SET cst.kept = 'before';
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL cst.kept = 'inside';
+
+
+query
+SHOW cst.kept;
+----
+cst.kept
+inside
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW cst.kept;
+----
+cst.kept
+before
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET cst.kept = 'committed';
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW cst.kept;
+----
+cst.kept
+committed
+
+
+query
+SELECT count(*) AS listed FROM pg_settings WHERE name LIKE 'cst.%';
+----
+listed
+0
+
+
+statement ok
+DROP ROLE IF EXISTS cst_role;
+
+
+statement ok
+CREATE ROLE cst_role LOGIN PASSWORD 'cst_pw';
+
+
+statement ok
+ALTER ROLE cst_role SET cst.role_setting = 'from role';
+
+
+query
+SELECT s.setconfig
+FROM pg_db_role_setting s
+JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'cst_role';
+----
+setconfig
+{"cst.role_setting=from role"}
+
+
+connection c_role user=cst_role password=cst_pw
+query
+SHOW cst.role_setting;
+----
+cst.role_setting
+from role
+
+
+connection c_role user=cst_role password=cst_pw
+query
+SELECT set_config('cst.user_set', 'by a plain role', false) AS value;
+----
+value
+by a plain role
+
+
+onlyif postgres
+connection c_role user=cst_role password=cst_pw
+statement error
+ALTER ROLE cst_role SET cst.self = 'x';
+----
+db error: ERROR: permission denied to set parameter "cst.self"
+
+
+skipif postgres
+connection c_role user=cst_role password=cst_pw
+statement error
+ALTER ROLE cst_role SET cst.self = 'x';
+----
+db error: ERROR: permission denied to set parameter "cst.self"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+statement ok
+GRANT SET ON PARAMETER cst.granted TO cst_role;
+
+
+connection c_role user=cst_role password=cst_pw
+statement ok
+ALTER ROLE cst_role SET cst.granted = 'g';
+
+
+statement error
+ALTER ROLE cst_role SET "cst..bad" = 'x';
+----
+db error: ERROR: invalid configuration parameter name "cst..bad"
+DETAIL: Custom parameter names must be two or more simple identifiers separated by dots.
+
+
+query
+SELECT s.setconfig
+FROM pg_db_role_setting s
+JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'cst_role';
+----
+setconfig
+{"cst.role_setting=from role",cst.granted=g}
+
+
+statement ok
+REVOKE SET ON PARAMETER cst.granted FROM cst_role;
+
+
+statement ok
+ALTER ROLE cst_role RESET cst.granted;
+
+
+connection c_role user=cst_role password=cst_pw
+query
+SELECT current_setting('cst.claims', true) IS NULL AS other_session;
+----
+other_session
+t
+
+
+statement ok
+ALTER ROLE cst_role RESET cst.role_setting;
+
+
+query
+SELECT count(*) AS settings
+FROM pg_db_role_setting s
+JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'cst_role';
+----
+settings
+0
+
+
+statement ok
+DISCARD ALL;
+
+
+query
+SELECT current_setting('cst.claims') = '' AS reset_by_discard;
+----
+reset_by_discard
+t
+
+
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE CASE WHEN usename = 'cst_role' THEN pg_terminate_backend(pid) ELSE false END;
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP ROLE cst_role;

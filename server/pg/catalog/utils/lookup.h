@@ -85,6 +85,9 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
+void EntriesByOid(
+  const Session& session, std::span<const duckdb::idx_t> oids,
+  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries);
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
@@ -149,6 +152,9 @@ inline bool IsTemporary(const Relation& relation) {
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry);
 std::optional<Relation> RowTypeOwner(const Session& session, uint64_t oid);
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation);
@@ -156,12 +162,19 @@ const duckdb::ColumnList* TableColumns(const Relation& relation);
 
 struct RelationAccess : Relation {
   const duckdb::Permissions* permissions;
+  const duckdb::vector<duckdb::ColumnAcl>* column_acls = nullptr;
 };
 
+std::span<const duckdb::AclItem> ColumnAclOf(
+  const RelationAccess& relation, const duckdb::ColumnDefinition& column);
+
 const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry);
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& entry);
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid);
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry);
 
 }  // namespace sdb::pg

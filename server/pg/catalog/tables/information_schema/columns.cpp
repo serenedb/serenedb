@@ -24,10 +24,10 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <ranges>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
@@ -259,9 +259,14 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
+    const auto column_acls =
+      visible ? nullptr : duckdb::EffectiveColumnAcls(Context(), table);
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!visible && (_closure->HeldModes(column.Acl()) &
-                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+      const auto acl = column_acls
+                         ? duckdb::FindColumnAcl(*column_acls, column.Name())
+                         : std::span<const duckdb::AclItem>{column.Acl()};
+      if (!visible && (_role.HeldModes(acl) & kAnyColumnPrivilege) ==
+                        duckdb::AclMode::NoRights) {
         continue;
       }
       Emit<kTableColumn>(
@@ -281,7 +286,9 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
-    if (!Visible(view)) {
+    const bool visible = Visible(view);
+    const auto column_acls = duckdb::EffectiveColumnAcls(Context(), view);
+    if (!visible && view.column_acls.empty() && !column_acls) {
       return;
     }
     const auto columns = ViewColumns(Context(), view);
@@ -290,6 +297,11 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
+      if (!visible &&
+          (_role.HeldModes(duckdb::ColumnAclAt(view, column_acls, i)) &
+           kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+        continue;
+      }
       Emit<kViewColumn>({.scan = *this,
                          .database = _database,
                          .arrays = _arrays,
@@ -303,16 +315,15 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
  private:
   bool Visible(const duckdb::CatalogEntry& relation) const {
-    const auto& permissions = PrivilegePermissions(relation);
-    return !_closure || permissions.owner == kInvalidOid ||
-           _closure->CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
-                            kAnyColumnPrivilege);
+    const auto& permissions = PrivilegePermissions(Context(), relation);
+    return permissions.owner == kInvalidOid ||
+           _role.CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
+                        kAnyColumnPrivilege);
   }
 
   std::string_view _database = Database().GetName().GetIdentifierName();
   ArrayTypeNames _arrays{*this};
-  std::shared_ptr<const auth::RoleClosure> _closure =
-    auth::SessionClosure(Context());
+  const duckdb::RoleAccess& _role = Context().CurrentRole();
 };
 
 }  // namespace

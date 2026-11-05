@@ -34,6 +34,8 @@
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -46,8 +48,8 @@
 #include <utility>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "connector/common.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
@@ -94,7 +96,7 @@ std::nullopt_t Miss(irs::pg::SqlErrorData* soft_error,
   return std::nullopt;
 }
 
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
   const Session& session, std::string_view name) {
   if (!session.database) {
     return nullptr;
@@ -108,6 +110,16 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
   return session.database->GetSchema(*session.transaction,
                                      duckdb::Identifier{name},
                                      duckdb::OnEntryNotFound::RETURN_NULL);
+}
+
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
+  const Session& session, std::string_view name) {
+  auto schema = LookupSchema(session, name);
+  if (schema && !duckdb::CanUseNamedSchema(
+                  *session.context, session.context->CurrentRole(), *schema)) {
+    duckdb::ThrowPermissionDenied(*schema);
+  }
+  return schema;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
@@ -133,7 +145,7 @@ std::optional<uint64_t> SchemaOid(const Session& session,
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     return system->oid;
   }
-  if (auto entry = FindSchema(session, schema)) {
+  if (auto entry = LookupSchema(session, schema)) {
     return entry->oid;
   }
   return Miss(soft_error, SQL_ERROR_DATA(
@@ -216,13 +228,22 @@ uint64_t ResolveRelation(const Session& session,
   return kInvalidOid;
 }
 
-const duckdb::MacroCatalogEntry* FindMacro(const Session& session,
-                                           uint64_t oid) {
-  const auto entry = EntryByOid(session, oid);
-  if (!entry || CatalogClassOid(entry->type) != kPgProcTable) {
-    return nullptr;
+MacroOverload FindMacro(const Session& session, uint64_t oid) {
+  if (!session.database || oid == kInvalidOid) {
+    return {};
   }
-  return &entry->Cast<duckdb::MacroCatalogEntry>();
+  const auto entry = session.database->GetOidIndex().GetVisibleOwner(
+    oid, session.transaction->view);
+  if (!entry || entry->internal ||
+      CatalogClassOid(entry->type) != kPgProcTable) {
+    return {};
+  }
+  const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
+  const auto overload = macro.FindOverload(oid);
+  if (!overload) {
+    return {};
+  }
+  return {.entry = &macro, .macro = overload.get()};
 }
 
 namespace {
@@ -983,8 +1004,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
                                    duckdb::Identifier{(*names)[1]},
                                    duckdb::Identifier{(*names)[2]}};
   for (const auto type : kRelationSets) {
-    if (auto entry = duckdb::Catalog::GetEntry(
-          *session.context, duckdb::EntryLookupInfo{type, name},
+    if (auto entry = duckdb::CatalogEntryRetriever{*session.context}.GetEntry(
+          duckdb::EntryLookupInfo{type, name},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
       return entry;
     }
@@ -1203,9 +1224,9 @@ void CollectProcs(const Session& session, const BuiltinFunctions& builtins,
   for (const auto type : {duckdb::CatalogType::MACRO_ENTRY,
                           duckdb::CatalogType::TABLE_MACRO_ENTRY}) {
     if (auto entry = FindInSchema(session, schema, type, name)) {
-      for (const auto& macro :
-           entry->Cast<duckdb::MacroCatalogEntry>().macros) {
-        add(entry->oid, entry->ParentSchemaOid(),
+      const auto& macro_entry = entry->Cast<duckdb::MacroCatalogEntry>();
+      for (const auto& macro : macro_entry.macros) {
+        add(macro_entry.OverloadOid(*macro), entry->ParentSchemaOid(),
             ProcArgs{.macro = MacroArgs(*macro)});
       }
     }
@@ -1247,15 +1268,15 @@ std::optional<ProcInfo> FindProc(const Session& session,
     }
     return std::nullopt;
   }
-  const auto* macro = FindMacro(session, oid);
-  if (!macro) {
+  const auto found = FindMacro(session, oid);
+  if (!found.entry) {
     return std::nullopt;
   }
-  const auto object = NameOf(*session.transaction, *macro);
-  return ProcInfo{.nsp = macro->ParentSchemaOid(),
+  const auto object = NameOf(*session.transaction, *found.entry);
+  return ProcInfo{.nsp = found.entry->ParentSchemaOid(),
                   .schema = object.schema,
                   .name = object.name,
-                  .args = {.macro = MacroArgs(*macro->macros.front())}};
+                  .args = {.macro = MacroArgs(*found.macro)}};
 }
 
 bool ProcVisible(const Session& session, const BuiltinFunctions& builtins,
@@ -1565,9 +1586,9 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
   if (!name) {
     return std::nullopt;
   }
-  const auto graph = auth::RolesOf(session.context);
-  if (const auto* role = graph->FindByName(*name)) {
-    return role->first;
+  const auto graph = catalog::RolesOf(session.context);
+  if (const auto role = graph->FindByName(*name); role.IsValid()) {
+    return role.GetIndex();
   }
   return Miss(soft_error,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1576,7 +1597,7 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
 
 std::string RoleOut(const Session& session, uint64_t oid) {
   if (session.context) {
-    const auto graph = auth::RolesOf(session.context);
+    const auto graph = catalog::RolesOf(session.context);
     if (const auto name = graph->NameOf(oid); !name.empty()) {
       return QuoteIdentifier(name);
     }

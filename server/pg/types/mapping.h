@@ -103,6 +103,8 @@ PgTypeInfo CatalogLogical2Pg(const duckdb::LogicalType& type,
                              bool in_array = false);
 uint32_t Type2Oid(const duckdb::LogicalType& type);
 uint32_t CatalogTypeOid(const duckdb::LogicalType& type);
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type,
+                             std::string& name);
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context);
 
 struct PgTypeMapping {

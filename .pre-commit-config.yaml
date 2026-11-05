@@ -116,6 +116,12 @@ repos:
         entry: python3 scripts/check_fault_points.py
         pass_filenames: false
         always_run: true
+      - id: check-catalog-lookups
+        name: Check names are resolved through a privilege-checked retriever
+        language: python
+        entry: python3 scripts/check_catalog_lookups.py
+        pass_filenames: false
+        always_run: true
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python

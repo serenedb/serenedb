@@ -1,0 +1,36 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS ecac_vedernikoff;
+
+
+statement ok
+CREATE ROLE ecac_vedernikoff LOGIN PASSWORD 'ecac_pw';
+
+
+connection c_ecac user=ecac_vedernikoff password=ecac_pw
+query
+SELECT 1 AS one;
+----
+one
+1
+
+
+statement ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM PUBLIC;
+
+
+connection c_ecac user=ecac_vedernikoff password=ecac_pw
+query
+SELECT 2 AS two;
+----
+two
+2
+
+
+statement ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO PUBLIC;
+
+
+statement ok
+DROP ROLE ecac_vedernikoff;

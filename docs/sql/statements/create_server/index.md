@@ -97,7 +97,7 @@ This makes a successful `CREATE SERVER` a positive statement about reachability,
 
 <DocCallout type="attention">
 
-There is no `CREATE OR REPLACE SERVER` and no `ALTER SERVER`. To change a server's options, `DROP SERVER` and create it again.
+There is no `CREATE OR REPLACE SERVER`, and `ALTER SERVER` only changes the owner. To change a server's options, `DROP SERVER` and create it again.
 
 </DocCallout>
 
@@ -243,11 +243,11 @@ WHERE s.srvname = 'analytics';
 
 <DocCallout type="attention">
 
-**`pg_foreign_server` is superuser-only.** Because server `OPTIONS` carry credentials, and option values are shown **verbatim with no redaction**, the whole catalog is restricted rather than filtered — a non-superuser reading it gets `permission denied for table pg_foreign_server`. This mirrors PostgreSQL's treatment of `pg_user_mapping`, not its world-readable `pg_foreign_server`.
+**`pg_foreign_server` is superuser-only.** Because server `OPTIONS` carry credentials, and option values are shown **verbatim with no redaction**, the whole catalog is restricted rather than filtered — a non-superuser reading it gets `permission denied for table pg_foreign_server`. This mirrors PostgreSQL's treatment of `pg_user_mapping`, not its world-readable `pg_foreign_server`. For the same reason, `information_schema.foreign_server_options` lists a server's options to the roles that own it or hold `USAGE` on it, but shows `option_value` only to superusers.
 
 </DocCallout>
 
-`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. Every role may use the wrappers: each grants `USAGE` to `PUBLIC`, and `CREATE SERVER` needs the `CREATE` privilege on the database instead. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
+`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. The wrappers grant `USAGE` to no role, so only superusers create servers. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
 
 ## Privileges
 
@@ -255,16 +255,14 @@ A foreign server is owned by the role that created it and carries a single privi
 
 | Action | Requirement |
 |---|---|
-| `CREATE SERVER` | `CREATE` on the current **database** |
+| `CREATE SERVER` | `USAGE` on the foreign-data wrapper in the current database, which only superusers hold until one grants it; a server owned by a role without `SUPERUSER` also follows the [rules below](#servers-owned-by-roles-without-superuser) |
+| `ALTER SERVER ... OWNER TO` | Ownership of the server, the right to `SET ROLE` to the new owner, and `USAGE` on the server's foreign-data wrapper for the new owner; superusers need none of these. A new owner without `SUPERUSER` makes the server follow the [rules below](#servers-owned-by-roles-without-superuser) |
 | `DROP SERVER` | Ownership of the server, or superuser |
 | Querying through the server | `USAGE` on the server (owner and superusers exempt) |
+| `iceberg_snapshots`, `iceberg_metadata`, `iceberg_column_stats`, `iceberg_partition_stats`, `iceberg_table_properties`, `iceberg_schema_properties`, `iceberg_scan_plan` and `iceberg_view_metadata` on the server's tables, views and schemas | `USAGE` on the server |
+| `set_iceberg_table_properties`, `remove_iceberg_table_properties`, `iceberg_rollback_to_snapshot`, `iceberg_rewrite_data_files`, `set_iceberg_schema_properties` and `remove_iceberg_schema_properties` | Superuser: they change the table or schema as `ALTER` does, which needs its owner, and the server's tables and schemas have none |
+| `iceberg_load_table_response` | Superuser: it returns the storage credentials the catalog hands out |
 | `GRANT` / `REVOKE USAGE` | Ownership, `WITH GRANT OPTION`, or superuser |
-
-Because servers are database children, the create gate is a **database** grant — granting `CREATE` on a schema does not allow it:
-
-```sql
-GRANT CREATE ON DATABASE shop TO analyst;
-```
 
 `USAGE` is checked at query time, so granting and revoking it takes effect on the next statement:
 
@@ -274,6 +272,32 @@ REVOKE USAGE ON FOREIGN SERVER analytics FROM analyst;
 ```
 
 Without it, a query through the server fails with `permission denied for foreign server analytics`. `USAGE` is the only privilege the object accepts — `GRANT SELECT ON FOREIGN SERVER …` is rejected as an invalid privilege type.
+
+A superuser lets another role create servers by granting `USAGE` on a wrapper; the grant holds in the database where it is made, and `pg_foreign_data_wrapper.fdwacl` shows it. The role owns the servers it creates, and revoking the grant stops new servers without touching existing ones:
+
+```sql
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO etl;
+REVOKE USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw FROM etl;
+```
+
+Without the grant, `CREATE SERVER` fails with `permission denied for foreign-data wrapper clickhouse_fdw`. A role holding a wrapper grant can create servers that connect to any host its options name, so grant it only to roles trusted with that.
+
+### Servers owned by roles without `SUPERUSER`
+
+A server whose owner is not a superuser connects only with what its own options give:
+
+- Its wrapper is `postgres_fdw` or `clickhouse_fdw`. A `duckdb_fdw` or `serenedb_fdw` server opens files on the server and an `iceberg_fdw` server reads with the server's storage credentials, so only a superuser owns one.
+- Its options set a `password`; without one the statement fails with `password is required`. A `postgres_fdw` server also requires the remote to authenticate with that password (password, MD5 or SCRAM authentication), so a remote that lets the connection in without asking for it refuses the connection.
+- Its options are only connection settings: `host`, `hostname`, `port`, `database`, `dbname`, `user`, `username` and `password`; for `clickhouse_fdw` also `passwd`, `db`, `secure`, `ssl` and `compression`; for `postgres_fdw` also `hostaddr`, `connect_timeout`, `client_encoding`, `options`, `application_name`, the `keepalives` settings, `tcp_user_timeout`, `sslmode`, `sslnegotiation`, `sslcompression`, `sslsni`, the protocol version bounds, `target_session_attrs`, `load_balance_hosts`, `channel_binding`, `schema`, `isolation_level` and `use_text_protocol`. Any other option, such as `secret` or one naming a file on the server, fails with `permission denied to use option`.
+- No [secret](../../../configuration/secrets_manager.md), the unnamed default ones included, fills in its options.
+
+These rules are checked when the server is created, when `ALTER SERVER ... OWNER TO` or `REASSIGN OWNED` hands it to such a role, when its owner loses `SUPERUSER`, and each time SereneDB starts. When the owner of a server changes between a superuser and another role, or the owner gains or loses `SUPERUSER`, the statement reconnects the server under the rules for its new owner and fails if the server cannot connect under them; rolling the transaction back restores the previous connection.
+
+`ALTER SERVER ... OWNER TO` hands a server to another role:
+
+```sql
+ALTER SERVER analytics OWNER TO etl;
+```
 
 <DocCallout type="tip">
 
@@ -285,7 +309,7 @@ The `USAGE` check is enforced wherever the server is referenced, including from 
 
 - **No `USER MAPPING`.** Credentials live in the server's `OPTIONS` and one shared connection serves every authorized role, the way a ClickHouse connection is normally shared. `CREATE USER MAPPING` and `DROP USER MAPPING` are syntax errors; per-role remote identities are not available.
 - **No `CREATE FOREIGN TABLE`.** Remote tables are reached through the server's catalog (`server.schema.table`), discovered live, rather than declared one by one.
-- **No `ALTER SERVER`, no `CREATE OR REPLACE SERVER`.** Drop and recreate to change options.
+- **`ALTER SERVER` supports only `OWNER TO`, and there is no `CREATE OR REPLACE SERVER`.** Drop and recreate to change options.
 - **No `CREATE FOREIGN DATA WRAPPER`.** The wrappers are built in.
 - **`pg_foreign_server` is superuser-only**, and its option values are unredacted (see above).
 - **`CREATE SERVER` connects eagerly**, so it fails on an unreachable remote instead of deferring the error to first use.

@@ -39,7 +39,6 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <vector>
 
-#include "auth/enforce.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
@@ -91,6 +90,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
     return nullptr;
   }
   return entry;
+}
+
+void EntriesByOid(
+  const Session& session, std::span<const duckdb::idx_t> oids,
+  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries) {
+  if (!session.database) {
+    absl::c_fill(entries, nullptr);
+    return;
+  }
+  session.database->GetOidIndex().GetVisible(oids, session.transaction->view,
+                                             entries);
+  for (auto& entry : entries) {
+    if (entry && entry->internal) {
+      entry = nullptr;
+    }
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -164,7 +179,13 @@ std::vector<duckdb::reference<duckdb::CatalogEntry>> Databases(
 }
 
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
-  if (const auto entry = EntryByOid(session, oid)) {
+  return FindRelation(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<Relation> FindRelation(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  if (entry) {
     if (CatalogClassOid(entry->type) != kPgClassTable &&
         (entry->type != duckdb::CatalogType::TYPE_ENTRY ||
          !duckdb::StructType::IsStruct(
@@ -235,13 +256,32 @@ const duckdb::ColumnList* TableColumns(const Relation& relation) {
 
 std::optional<RelationAccess> RelationByOid(const Session& session,
                                             uint64_t oid) {
-  auto relation = FindRelation(session, oid);
+  return RelationByOid(session, oid, EntryByOid(session, oid));
+}
+
+std::optional<RelationAccess> RelationByOid(
+  const Session& session, uint64_t oid,
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
+  auto relation = FindRelation(session, oid, entry);
   if (!relation) {
     return std::nullopt;
   }
   if (relation->system) {
-    return RelationAccess{
-      {*relation}, &SystemPermissions(relation->system->SuperuserOnly())};
+    const auto* permissions =
+      &SystemPermissions(relation->system->SuperuserOnly());
+    const duckdb::vector<duckdb::ColumnAcl>* column_acls = nullptr;
+    if (session.context && session.context->security && session.database) {
+      const auto& security = session.context->security;
+      const auto& database = session.database->GetName().GetIdentifierName();
+      if (const auto overridden =
+            security->RelationPermissions(database, oid)) {
+        permissions = overridden.get();
+      }
+      if (const auto columns = security->RelationColumns(database, oid)) {
+        column_acls = columns.get();
+      }
+    }
+    return RelationAccess{{*relation}, permissions, column_acls};
   }
   if (relation->view) {
     auto schema =
@@ -259,7 +299,10 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
+    return RelationAccess{
+      {*relation},
+      &PrivilegePermissions(*session.context, *entry),
+      duckdb::EffectiveColumnAcls(*session.context, *entry).get()};
   }
   if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
     const auto table_oid =
@@ -268,15 +311,28 @@ std::optional<RelationAccess> RelationByOid(const Session& session,
                          ? TemporaryEntryByOid(session, table_oid)
                          : EntryByOid(session, table_oid);
     return RelationAccess{
-      {*relation}, &PrivilegePermissions(owner ? *owner : *relation->entry)};
+      {*relation},
+      &PrivilegePermissions(*session.context,
+                            owner ? *owner : *relation->entry)};
   }
-  return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
+  return RelationAccess{
+    {*relation}, &PrivilegePermissions(*session.context, *relation->entry)};
+}
+
+std::span<const duckdb::AclItem> ColumnAclOf(
+  const RelationAccess& relation, const duckdb::ColumnDefinition& column) {
+  if (relation.column_acls) {
+    return duckdb::FindColumnAcl(*relation.column_acls, column.Name());
+  }
+  return column.Acl();
 }
 
 const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry) {
+  duckdb::ClientContext& context, const duckdb::CatalogEntry& entry) {
   static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
-  return auth::Unowned(entry) ? kUnowned : entry.permissions;
+  return duckdb::IsUnowned(entry)
+           ? kUnowned
+           : duckdb::EffectivePermissions(context, entry);
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,

@@ -55,7 +55,7 @@ db error: ERROR: must be owner of table rio_t
 statement error
 CREATE OR REPLACE INDEX rio_i ON rio_u (y);
 ----
-db error: ERROR: must be owner of table rio_t
+db error: ERROR: must be owner of index rio_i
 
 
 statement ok

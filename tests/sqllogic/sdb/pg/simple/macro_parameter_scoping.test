@@ -148,6 +148,17 @@ db error: ERROR: Referenced table "other" not found!<slt:ignore>
 
 
 statement ok
+CREATE MACRO mps_defaulted(a, b := current_date) AS (SELECT a);
+
+
+query
+SELECT mps_defaulted(1) AS value;
+----
+value
+1
+
+
+statement ok
 CREATE MACRO mps_twice(x) AS x + x;
 
 

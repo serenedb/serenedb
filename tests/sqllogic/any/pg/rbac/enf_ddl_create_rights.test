@@ -1,0 +1,99 @@
+control substitution on
+
+statement ok
+DROP SCHEMA IF EXISTS ecr_s CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS ecr_own CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ecr_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS ecr_team;
+
+
+statement ok
+CREATE ROLE ecr_team;
+
+
+statement ok
+CREATE ROLE ecr_vedernikoff LOGIN PASSWORD 'ecr_pw';
+
+
+statement ok
+GRANT ecr_team TO ecr_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA ecr_s;
+
+
+statement ok
+GRANT CREATE, USAGE ON SCHEMA ecr_s TO ecr_vedernikoff;
+
+
+connection c_ecr user=ecr_vedernikoff password=ecr_pw
+statement ok
+CREATE TABLE ecr_s.ecr_t (a integer);
+
+
+statement ok
+REVOKE CREATE ON SCHEMA ecr_s FROM ecr_vedernikoff;
+
+
+connection c_ecr user=ecr_vedernikoff password=ecr_pw
+statement error
+CREATE INDEX ecr_i ON ecr_s.ecr_t (a);
+----
+db error: ERROR: permission denied for schema ecr_s
+
+
+statement ok
+CREATE SCHEMA ecr_own AUTHORIZATION ecr_vedernikoff;
+
+
+connection c_ecr user=ecr_vedernikoff password=ecr_pw
+statement error
+ALTER SCHEMA ecr_own OWNER TO ecr_team;
+----
+db error: ERROR: permission denied for database <slt:ignore>
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO ecr_vedernikoff;
+
+
+connection c_ecr user=ecr_vedernikoff password=ecr_pw
+statement ok
+ALTER SCHEMA ecr_own OWNER TO ecr_team;
+
+
+query
+SELECT nspowner::regrole::text AS owner FROM pg_namespace WHERE nspname = 'ecr_own';
+----
+owner
+ecr_team
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM ecr_vedernikoff;
+
+
+statement ok
+DROP SCHEMA ecr_own CASCADE;
+
+
+statement ok
+DROP SCHEMA ecr_s CASCADE;
+
+
+statement ok
+DROP ROLE ecr_vedernikoff;
+
+
+statement ok
+DROP ROLE ecr_team;

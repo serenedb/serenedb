@@ -1,0 +1,206 @@
+statement ok
+DROP SCHEMA IF EXISTS aord_s CASCADE;
+
+
+statement ok
+DROP DATABASE IF EXISTS aord_db;
+
+
+statement ok
+DROP ROLE IF EXISTS aord_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS aord_bob;
+
+
+statement ok
+DROP ROLE IF EXISTS aord_carol;
+
+
+statement ok
+CREATE ROLE aord_alice LOGIN PASSWORD 'aord_pw';
+
+
+statement ok
+CREATE ROLE aord_bob;
+
+
+statement ok
+CREATE ROLE aord_carol LOGIN PASSWORD 'aord_pw';
+
+
+statement ok
+CREATE SCHEMA aord_s;
+
+
+statement ok
+GRANT USAGE ON SCHEMA aord_s TO aord_alice;
+
+
+statement ok
+GRANT USAGE ON SCHEMA aord_s TO aord_carol;
+
+
+statement ok
+CREATE FUNCTION aord_s.aord_f(a int) RETURNS int LANGUAGE sql AS 'SELECT a + 1';
+
+
+statement ok
+CREATE PROCEDURE aord_s.aord_p() LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_alice;
+
+
+statement ok
+ALTER PROCEDURE aord_s.aord_p() OWNER TO aord_alice;
+
+
+query
+SELECT proname::text AS proname, proowner::regrole::text AS owner
+FROM pg_proc
+WHERE pronamespace = 'aord_s'::regnamespace
+ORDER BY proname;
+----
+proname	owner
+aord_f	aord_alice
+aord_p	aord_alice
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement error
+ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_bob;
+----
+db error: ERROR: must be able to SET ROLE "aord_bob"
+
+
+statement ok
+GRANT aord_bob TO aord_alice;
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement error
+ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_bob;
+----
+db error: ERROR: permission denied for schema aord_s
+
+
+statement ok
+GRANT CREATE ON SCHEMA aord_s TO aord_bob;
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement ok
+ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_bob;
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement ok
+ALTER ROUTINE aord_s.aord_p() OWNER TO aord_bob;
+
+
+query
+SELECT proname::text AS proname, proowner::regrole::text AS owner
+FROM pg_proc
+WHERE pronamespace = 'aord_s'::regnamespace
+ORDER BY proname;
+----
+proname	owner
+aord_f	aord_bob
+aord_p	aord_bob
+
+
+connection c_carol user=aord_carol password=aord_pw
+statement error
+ALTER FUNCTION aord_s.aord_f(int) OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of function aord_f
+
+
+onlyif postgres
+connection c_carol user=aord_carol password=aord_pw
+statement error
+ALTER PROCEDURE aord_s.aord_p() OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of function aord_p
+
+
+skipif postgres
+connection c_carol user=aord_carol password=aord_pw
+statement error
+ALTER PROCEDURE aord_s.aord_p() OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of procedure aord_p
+
+
+statement ok
+CREATE DATABASE aord_db;
+
+
+statement ok
+ALTER DATABASE aord_db OWNER TO aord_alice;
+
+
+query
+SELECT datdba::regrole::text AS owner FROM pg_database WHERE datname = 'aord_db';
+----
+owner
+aord_alice
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement error
+ALTER DATABASE aord_db OWNER TO aord_bob;
+----
+db error: ERROR: permission denied to change owner of database
+
+
+statement ok
+ALTER ROLE aord_alice CREATEDB;
+
+
+connection c_alice user=aord_alice password=aord_pw
+statement ok
+ALTER DATABASE aord_db OWNER TO aord_bob;
+
+
+query
+SELECT datdba::regrole::text AS owner FROM pg_database WHERE datname = 'aord_db';
+----
+owner
+aord_bob
+
+
+connection c_carol user=aord_carol password=aord_pw
+statement error
+ALTER DATABASE aord_db OWNER TO aord_carol;
+----
+db error: ERROR: must be owner of database aord_db
+
+
+statement error
+ALTER DATABASE aord_nosuch OWNER TO aord_carol;
+----
+db error: ERROR: database "aord_nosuch" does not exist
+
+
+statement ok
+DROP DATABASE aord_db;
+
+
+statement ok
+DROP SCHEMA aord_s CASCADE;
+
+
+statement ok
+DROP ROLE aord_alice;
+
+
+statement ok
+DROP ROLE aord_bob;
+
+
+statement ok
+DROP ROLE aord_carol;

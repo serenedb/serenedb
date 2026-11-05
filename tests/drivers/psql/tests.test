@@ -862,10 +862,12 @@ skipif postgres
 > |      Name      |  Owner   | Handler | Validator |
 > +----------------+----------+---------+-----------+
 > | clickhouse_fdw | postgres | -       | -         |
+> | duckdb_fdw     | postgres | -       | -         |
 > | iceberg_fdw    | postgres | -       | -         |
 > | postgres_fdw   | postgres | -       | -         |
+> | serenedb_fdw   | postgres | -       | -         |
 > +----------------+----------+---------+-----------+
-> (3 rows)
+> (5 rows)
 
 \dy
 ----
@@ -977,17 +979,11 @@ skipif postgres
 ----
 > \prompt: missing required argument
 
-# psql's \password queries `password_encryption` to pick a hash algo;
-# serened doesn't expose that GUC. PG accepts an empty password with a
-# NOTICE; serened errors. Test asserts serened's own output.
-skipif postgres
 \password
 ----
 > Enter new password for user "postgres":
 > Enter it again:
-> ERROR:  unrecognized configuration parameter "password_encryption"
->
-> Did you mean: "s3_endpoint"
+> NOTICE:  empty string is not a valid password, clearing password
 
 \cd
 ----

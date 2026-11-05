@@ -20,24 +20,33 @@
 
 #include "catalog/entry/foreign_server.h"
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/strip.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_set.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/extension_helper.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "catalog/boot.h"
+#include "catalog/catalog.h"
 
 namespace sdb::catalog {
 namespace {
@@ -50,12 +59,61 @@ std::string ConnectionString(const ServerOptions& options) {
   });
 }
 
+bool OwnedBySuperuser(duckdb::ClientContext& context, duckdb::idx_t owner) {
+  return owner == 0 || context.AccessOf(owner).is_superuser;
+}
+
 }  // namespace
 
+void ForeignServerCatalogEntry::CheckRestrictedOwner(
+  duckdb::optional_ptr<const duckdb::StorageExtension> storage) const {
+  if (!storage || storage->user_options.empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG("permission denied for foreign-data wrapper ", _fdw_name),
+      ERR_DETAIL("Only roles with the SUPERUSER attribute may "
+                 "own a ",
+                 _fdw_name, " server."));
+  }
+  bool password = false;
+  for (const auto& [key, value] : _options) {
+    if (!absl::c_linear_search(storage->user_options, key)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                      ERR_MSG("permission denied to use option \"", key, "\""),
+                      ERR_DETAIL("Only roles with the SUPERUSER attribute may "
+                                 "own a server that sets it."));
+    }
+    password |=
+      absl::c_linear_search(storage->password_options, key) && !value.empty();
+  }
+  if (!password) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
+      ERR_MSG("password is required"),
+      ERR_DETAIL("A server owned by a role without the SUPERUSER attribute "
+                 "must set a password in its options."));
+  }
+}
+
 void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
+  Attach(context, OwnedBySuperuser(context, permissions.owner),
+         duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
+}
+
+void ForeignServerCatalogEntry::Attach(
+  duckdb::ClientContext& context, bool superuser_owner,
+  duckdb::OnCreateConflict on_conflict) const {
+  const bool restricted = !superuser_owner;
   const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
+  const auto storage = duckdb::StorageExtension::Find(
+    duckdb::DBConfig::GetConfig(context),
+    duckdb::ExtensionHelper::ApplyExtensionAlias(std::string{type}));
+  if (restricted) {
+    CheckRestrictedOwner(storage.get());
+  }
   duckdb::AttachInfo info;
   info.name = name;
+  info.on_conflict = on_conflict;
   auto access_mode = duckdb::AccessMode::READ_WRITE;
   if (type == "clickhouse") {
     info.path = ConnectionString(_options);
@@ -76,9 +134,60 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
       access_mode = type == "serenedb" ? duckdb::AccessMode::READ_ONLY
                                        : duckdb::AccessMode::AUTOMATIC;
     }
+    if (restricted) {
+      for (const auto& [key, value] : storage->user_forced_options) {
+        info.options.insert_or_assign(key, value);
+      }
+    }
   }
+  if (!restricted) {
+    catalog::Attach(context, info, type, access_mode,
+                    duckdb::AttachVisibility::SHOWN);
+    return;
+  }
+  const auto owner = context.AccessOf(permissions.owner);
+  const duckdb::ClientContext::AccessScope scope{.role = &owner};
+  absl::Cleanup restore_scope =
+    [&context, previous = std::exchange(context.access_scope, &scope)] {
+      context.access_scope = previous;
+    };
   catalog::Attach(context, info, type, access_mode,
                   duckdb::AttachVisibility::SHOWN);
+}
+
+void ForeignServerCatalogEntry::FollowOwner(
+  duckdb::ClientContext& context, duckdb::idx_t previous_owner) const {
+  if (permissions.owner == previous_owner) {
+    return;
+  }
+  const bool superuser = OwnedBySuperuser(context, permissions.owner);
+  if (superuser != OwnedBySuperuser(context, previous_owner)) {
+    Attach(context, superuser, duckdb::OnCreateConflict::REPLACE_ON_CONFLICT);
+  }
+}
+
+void FollowOwnerStatus(duckdb::ClientContext& context, duckdb::idx_t owner,
+                       bool superuser) {
+  std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
+  for (const auto& db :
+       SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    if (db->IsReadOnly()) {
+      continue;
+    }
+    auto& catalog = db->GetCatalog();
+    catalog.Cast<duckdb::DuckCatalog>()
+      .GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
+      .Scan(catalog.GetCatalogTransaction(context),
+            [&](duckdb::CatalogEntry& entry) {
+              if (entry.permissions.owner == owner) {
+                servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
+              }
+            });
+  }
+  for (const auto& server : servers) {
+    server.get().Attach(context, superuser,
+                        duckdb::OnCreateConflict::REPLACE_ON_CONFLICT);
+  }
 }
 
 void ForeignServerCatalogEntry::OnDrop() {

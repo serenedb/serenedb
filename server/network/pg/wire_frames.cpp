@@ -138,6 +138,21 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "FEATURE_NOT_SUPPORTED") {
     return ERRCODE_FEATURE_NOT_SUPPORTED;
   }
+  if (subtype == "CANT_CHANGE_RUNTIME_PARAM") {
+    return ERRCODE_CANT_CHANGE_RUNTIME_PARAM;
+  }
+  if (subtype == "RESERVED_NAME") {
+    return ERRCODE_RESERVED_NAME;
+  }
+  if (subtype == "INVALID_NAME") {
+    return ERRCODE_INVALID_NAME;
+  }
+  if (subtype == "INVALID_GRANT_OPERATION") {
+    return ERRCODE_INVALID_GRANT_OPERATION;
+  }
+  if (subtype == "AMBIGUOUS_FUNCTION") {
+    return ERRCODE_AMBIGUOUS_FUNCTION;
+  }
   if (subtype == "STATEMENT_TOO_COMPLEX") {
     return ERRCODE_STATEMENT_TOO_COMPLEX;
   }
@@ -165,7 +180,8 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
     if (kind.find("Function") != std::string_view::npos) {
       return dup ? ERRCODE_DUPLICATE_FUNCTION : ERRCODE_UNDEFINED_FUNCTION;
     }
-    if (kind == "Type") {
+    if (kind == "Type" || kind == "Role" || kind == "Language" ||
+        kind == "Foreign Data Wrapper") {
       return dup ? ERRCODE_DUPLICATE_OBJECT : ERRCODE_UNDEFINED_OBJECT;
     }
     if (kind == "prepared statement") {

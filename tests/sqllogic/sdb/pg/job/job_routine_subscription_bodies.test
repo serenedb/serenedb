@@ -1,0 +1,182 @@
+statement ok
+CREATE FUNCTION jrsb_f(x integer) RETURNS integer LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+CREATE PROCEDURE jrsb_p() LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE JOB jrsb_01 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub ENABLE;
+
+
+statement ok
+CREATE JOB jrsb_02 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub DISABLE;
+
+
+statement ok
+CREATE JOB jrsb_03 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub CONNECTION 'host=localhost dbname=jrsb';
+
+
+statement ok
+CREATE JOB jrsb_04 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub SET PUBLICATION jrsb_pub, jrsb_pub2 WITH (refresh = false);
+
+
+statement ok
+CREATE JOB jrsb_05 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub ADD PUBLICATION jrsb_pub3;
+
+
+statement ok
+CREATE JOB jrsb_06 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub DROP PUBLICATION jrsb_pub3 WITH (refresh = false);
+
+
+statement ok
+CREATE JOB jrsb_07 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub REFRESH PUBLICATION WITH (copy_data = false);
+
+
+statement ok
+CREATE JOB jrsb_08 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub SKIP (lsn = '0/14C0378');
+
+
+statement ok
+CREATE JOB jrsb_09 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub RENAME TO jrsb_sub2;
+
+
+statement ok
+CREATE JOB jrsb_10 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub SET (synchronous_commit = 'off');
+
+
+statement ok
+CREATE JOB jrsb_11 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f(integer) RENAME TO jrsb_g;
+
+
+statement ok
+CREATE JOB jrsb_12 AFTER 1 HOUR SUSPENDED AS ALTER ROUTINE IF EXISTS jrsb_f RENAME TO jrsb_g;
+
+
+statement ok
+CREATE JOB jrsb_13 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f(integer) SECURITY DEFINER IMMUTABLE STRICT;
+
+
+statement ok
+CREATE JOB jrsb_14 AFTER 1 HOUR SUSPENDED AS ALTER PROCEDURE jrsb_p() SECURITY INVOKER STABLE CALLED ON NULL INPUT;
+
+
+statement ok
+CREATE JOB jrsb_15 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f VOLATILE SET search_path TO public;
+
+
+statement ok
+CREATE JOB jrsb_16 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f(integer) SET search_path FROM CURRENT;
+
+
+statement ok
+CREATE JOB jrsb_17 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f(integer) RESET ALL;
+
+
+statement ok
+CREATE JOB jrsb_18 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub SET (binary = true, streaming = off);
+
+
+query
+SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jrsb_') ORDER BY job_name;
+----
+job_name	body
+jrsb_01	ALTER SUBSCRIPTION jrsb_sub ENABLE;
+jrsb_02	ALTER SUBSCRIPTION jrsb_sub DISABLE;
+jrsb_03	ALTER SUBSCRIPTION jrsb_sub CONNECTION 'host=localhost dbname=jrsb';
+jrsb_04	ALTER SUBSCRIPTION jrsb_sub SET PUBLICATION jrsb_pub, jrsb_pub2 WITH (refresh = false);
+jrsb_05	ALTER SUBSCRIPTION jrsb_sub ADD PUBLICATION jrsb_pub3;
+jrsb_06	ALTER SUBSCRIPTION jrsb_sub DROP PUBLICATION jrsb_pub3 WITH (refresh = false);
+jrsb_07	ALTER SUBSCRIPTION jrsb_sub REFRESH PUBLICATION WITH (copy_data = false);
+jrsb_08	ALTER SUBSCRIPTION jrsb_sub SKIP (lsn = '0/14C0378');
+jrsb_09	ALTER SUBSCRIPTION jrsb_sub RENAME TO jrsb_sub2;
+jrsb_10	ALTER SUBSCRIPTION jrsb_sub SET (synchronous_commit = 'off');
+jrsb_11	ALTER FUNCTION jrsb_f(INTEGER) RENAME TO jrsb_g;
+jrsb_12	ALTER ROUTINE IF EXISTS jrsb_f RENAME TO jrsb_g;
+jrsb_13	ALTER FUNCTION jrsb_f(INTEGER) SECURITY DEFINER IMMUTABLE STRICT;
+jrsb_14	ALTER PROCEDURE jrsb_p() SECURITY INVOKER STABLE CALLED ON NULL INPUT;
+jrsb_15	ALTER FUNCTION jrsb_f VOLATILE SET search_path TO public;
+jrsb_16	ALTER FUNCTION jrsb_f(INTEGER) SET search_path FROM CURRENT;
+jrsb_17	ALTER FUNCTION jrsb_f(INTEGER) RESET ALL;
+jrsb_18	ALTER SUBSCRIPTION jrsb_sub SET (binary = true, streaming = 'off');
+
+
+statement ok
+DROP JOB jrsb_01;
+
+
+statement ok
+DROP JOB jrsb_02;
+
+
+statement ok
+DROP JOB jrsb_03;
+
+
+statement ok
+DROP JOB jrsb_04;
+
+
+statement ok
+DROP JOB jrsb_05;
+
+
+statement ok
+DROP JOB jrsb_06;
+
+
+statement ok
+DROP JOB jrsb_07;
+
+
+statement ok
+DROP JOB jrsb_08;
+
+
+statement ok
+DROP JOB jrsb_09;
+
+
+statement ok
+DROP JOB jrsb_10;
+
+
+statement ok
+DROP JOB jrsb_11;
+
+
+statement ok
+DROP JOB jrsb_12;
+
+
+statement ok
+DROP JOB jrsb_13;
+
+
+statement ok
+DROP JOB jrsb_14;
+
+
+statement ok
+DROP JOB jrsb_15;
+
+
+statement ok
+DROP JOB jrsb_16;
+
+
+statement ok
+DROP JOB jrsb_17;
+
+
+statement ok
+DROP JOB jrsb_18;
+
+
+statement ok
+DROP PROCEDURE jrsb_p;
+
+
+statement ok
+DROP FUNCTION jrsb_f;

@@ -22,7 +22,9 @@
 
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 
 namespace sdb::pg {
 
@@ -66,6 +68,22 @@ duckdb::unique_ptr<duckdb::Expression> BindNull(
   duckdb::FunctionBindExpressionInput& input) {
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
     duckdb::Value{input.bound_function.GetReturnType()});
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindCallerRole(
+  duckdb::BindScalarFunctionInput& input) {
+  if (!input.HasBinder() || !input.GetBinder().current_role) {
+    return nullptr;
+  }
+  return duckdb::make_uniq<CallerRole>(input.GetBinder().current_role->role);
+}
+
+duckdb::RoleAccess CallerAccess(duckdb::ExpressionState& state) {
+  auto& context = state.GetContext();
+  const auto& caller =
+    state.expr.Cast<duckdb::BoundFunctionExpression>().BindInfo();
+  return caller ? context.AccessOf(caller->Cast<CallerRole>().role)
+                : context.CurrentRole();
 }
 
 void RegisterFunctions(duckdb::DatabaseInstance& db) {

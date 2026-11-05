@@ -305,6 +305,9 @@ void RegisterClusterStorage(duckdb::DBConfig& config,
   extension->storage_info = std::move(layout);
   duckdb::StorageExtension::Register(config, ClusterCatalog::kStorageType,
                                      std::move(extension));
+  config.cluster_catalog = duckdb::Identifier{ClusterCatalog::kDatabaseName};
+  config.bootstrap_role = pg::kRootUser;
+  config.database_owner_role = pg::kPgDatabaseOwnerRole;
 }
 
 void InitCatalog(std::string_view directory) {
@@ -407,6 +410,7 @@ void InitCatalog(std::string_view directory) {
         servers.emplace_back(entry.Cast<ForeignServerCatalogEntry>());
       });
   }
+  context.RefreshSecurity();
   for (auto& server : servers) {
     try {
       context.RunFunctionInTransaction([&] { server.get().Attach(context); });

@@ -4,8 +4,7 @@
 # one entry that both rewrite.
 #
 # Each catalog keeps its own manager and an edge is kept by the dependent's, so
-# no single manager holds the whole graph -- a table names a role that belongs to
-# no database, and a role's dependents belong to all of them. The readers that
+# no single manager holds the whole graph. The readers that
 # must see across attachments fan out. sdb_catalog_sets() reports an edge with no
 # schema name; entry_oid is the referenced object and the name is the dependent.
 #
@@ -155,9 +154,6 @@ statement ok
 DROP SCHEMA cds CASCADE
 
 
-# A role reference is an edge too -- the one DROP ROLE consults and the one
-# pg_shdepend projects. It is the only edge that cascades nowhere: postgres
-# does not drop a role's tables with it, it refuses the drop.
 statement ok
 CREATE ROLE cds_owner
 

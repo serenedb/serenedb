@@ -333,7 +333,108 @@ absl::Mutex gBuiltinsLock;
 std::shared_ptr<const BuiltinFunctions> gBuiltins
   ABSL_GUARDED_BY(gBuiltinsLock);
 
+duckdb::idx_t EntryNamespace(const duckdb::CatalogEntry& function) {
+  const auto schema = function.ParentSchemaName();
+  if (schema == duckdb::Identifier{irs::StaticStrings::kInformationSchema}) {
+    return kPgInformationSchema;
+  }
+  return schema == duckdb::Identifier{irs::StaticStrings::kDocsSchema}
+           ? kInvalidOid
+           : kPgCatalogSchema;
+}
+
+std::vector<duckdb::idx_t> OverloadArgTypes(
+  const duckdb::CatalogEntry& function, duckdb::idx_t overload) {
+  using enum duckdb::CatalogType;
+  switch (function.type) {
+    case SCALAR_FUNCTION_ENTRY:
+      return ArgTypes(function.Cast<duckdb::ScalarFunctionCatalogEntry>()
+                        .functions.functions[overload]
+                        ->GetSignature());
+    case AGGREGATE_FUNCTION_ENTRY:
+      return ArgTypes(function.Cast<duckdb::AggregateFunctionCatalogEntry>()
+                        .functions.functions[overload]
+                        ->GetSignature());
+    case WINDOW_FUNCTION_ENTRY:
+      return ArgTypes(function.Cast<duckdb::WindowFunctionCatalogEntry>()
+                        .functions.functions[overload]
+                        ->GetSignature());
+    case TABLE_FUNCTION_ENTRY:
+      return ArgTypes(function.Cast<duckdb::TableFunctionCatalogEntry>()
+                        .functions.functions[overload]
+                        ->GetSignature());
+    case PRAGMA_FUNCTION_ENTRY:
+      return ArgTypes(function.Cast<duckdb::PragmaFunctionCatalogEntry>()
+                        .functions.functions[overload]
+                        ->GetSignature());
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      return ArgTypes(
+        *function.Cast<duckdb::MacroCatalogEntry>().macros[overload]);
+    default:
+      return {};
+  }
+}
+
+std::string FunctionKey(duckdb::idx_t nsp, std::string_view name,
+                        std::span<const duckdb::idx_t> argtypes) {
+  return absl::StrCat(nsp, ".", name, "(", absl::StrJoin(argtypes, ","), ")");
+}
+
 }  // namespace
+
+std::string BuiltinFunctionKey(const BuiltinFunction& function) {
+  return FunctionKey(function.nsp, function.name, function.argtypes);
+}
+
+std::string BuiltinFunctionKey(const duckdb::CatalogEntry& function,
+                               duckdb::idx_t overload) {
+  const auto nsp = EntryNamespace(function);
+  if (nsp == kInvalidOid) {
+    return {};
+  }
+  return FunctionKey(nsp, function.name.GetIdentifierName(),
+                     OverloadArgTypes(function, overload));
+}
+
+duckdb::optional_ptr<const duckdb::Permissions> BuiltinFunctionGrant(
+  duckdb::ClientContext& context, const BuiltinFunction& function) {
+  const auto& security = context.security;
+  if (!security || !security->HasFunctionGrants()) {
+    return nullptr;
+  }
+  const auto database = duckdb::DatabaseManager::TryGetDefaultDatabase(context);
+  if (!security->HasFunctionGrants(database.GetIdentifierName())) {
+    return nullptr;
+  }
+  return security->FunctionPermissions(database.GetIdentifierName(),
+                                       BuiltinFunctionKey(function));
+}
+
+duckdb::optional_ptr<const duckdb::Permissions> BuiltinTypeGrant(
+  duckdb::ClientContext& context, duckdb::idx_t type) {
+  const auto& security = context.security;
+  if (!security || !security->HasTypeGrants()) {
+    return nullptr;
+  }
+  const auto database = duckdb::DatabaseManager::TryGetDefaultDatabase(context);
+  return security->TypePermissions(database.GetIdentifierName(), type);
+}
+
+std::string BuiltinSignatureKey(
+  const duckdb::CatalogEntry& function,
+  const duckdb::vector<duckdb::LogicalType>& arguments) {
+  const auto nsp = EntryNamespace(function);
+  if (nsp == kInvalidOid) {
+    return {};
+  }
+  std::vector<duckdb::idx_t> argtypes;
+  argtypes.reserve(arguments.size());
+  for (const auto& type : arguments) {
+    argtypes.emplace_back(TypeOid(type));
+  }
+  return FunctionKey(nsp, function.name.GetIdentifierName(), argtypes);
+}
 
 BuiltinFunctions::BuiltinFunctions(duckdb::idx_t version,
                                    std::vector<BuiltinFunction> functions)

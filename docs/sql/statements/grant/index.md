@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, or type) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
+The `GRANT` statement has two forms. The first grants privileges on an object (a table, sequence, function, database, schema, type, foreign server, or foreign-data wrapper) to a role. The second grants membership in a role to another role, so the member inherits the role's privileges.
 
 ## Examples
 
@@ -54,6 +54,12 @@ The second form grants role membership — `doc_staff` now inherits everything g
 
 Only the unquoted keyword means every role: a quoted `"PUBLIC"` names a role called `PUBLIC`.
 
+`WITH GRANT OPTION` can only be granted to roles: granting it to `PUBLIC`, with `GRANT` or `ALTER DEFAULT PRIVILEGES`, reports `grant options can only be granted to roles`.
+
+In `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES`, a grantee may be written `GROUP name`, which means the same as `name`.
+
+Wherever a role is named, as a grantee, after `GRANTED BY`, as the member of a role, in `ALTER ROLE` and `ALTER DEFAULT PRIVILEGES FOR ROLE`, `CURRENT_USER` and `CURRENT_ROLE` stand for the role the session acts as and `SESSION_USER` for the role it logged in as (or set with `SET SESSION AUTHORIZATION`). As with `PUBLIC`, a quoted `"current_user"` names a role.
+
 Granting to a role that does not exist is an error:
 
 <SqlLogicTest id="sql/statements/grant/index/example_012" />
@@ -68,11 +74,15 @@ Granting to a role that does not exist is an error:
 | `DATABASE` | `CREATE`, `CONNECT`, `TEMPORARY` |
 | `SCHEMA` | `CREATE`, `USAGE` |
 | `TYPE` | `USAGE` |
+| `FOREIGN SERVER` | `USAGE` |
+| `FOREIGN DATA WRAPPER` | `USAGE` |
+| `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 ## Notes
 
 - Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, the `CREATEROLE` attribute, or superuser.
 - The object's owner always holds all privileges on it, and the owner of a granted role's privileges flow to members automatically.
+- Several objects, grantees, granted roles and members can be listed, separated by commas: `GRANT SELECT ON t1, t2 TO r1, r2` grants on every pair, and if any part fails, such as a missing table, nothing is granted. `ALTER DEFAULT PRIVILEGES FOR ROLE` and `IN SCHEMA` take lists the same way.
 - Unlike PostgreSQL, an unknown privilege keyword (e.g. `GRANT FLY ON t TO r`) is a syntax error rather than a semantic one.
 
 ## See also

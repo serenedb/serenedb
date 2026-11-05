@@ -470,7 +470,13 @@ std::optional<ViewFastPath> ResolveViewFastPath(
     return std::nullopt;
   }
   auto binder = duckdb::Binder::CreateBinder(context);
-  binder->SetSearchPath(view_catalog, view.GetQualifiedName().Schema());
+  const auto& schema = view.GetQualifiedName().Schema();
+  if (view_catalog.Compatibility() == duckdb::SqlCompatibility::POSTGRES &&
+      !view_catalog.IsTemporaryCatalog()) {
+    binder->SetSearchPath(view_catalog, schema, view.name_bindings);
+  } else {
+    binder->SetSearchPath(view_catalog, schema);
+  }
   if (body->source.type == duckdb::TableReferenceType::BASE_TABLE) {
     return ResolveTableSource(*binder, std::move(*body), key_columns);
   }

@@ -1,0 +1,99 @@
+statement ok
+DROP VIEW IF EXISTS public.vifp_v CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS vifp_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS vifp_ved CASCADE;
+
+
+statement ok
+CREATE SCHEMA vifp_quas;
+
+
+statement ok
+CREATE SCHEMA vifp_ved;
+
+
+statement ok
+CREATE TABLE vifp_quas.vifp_docs (id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+INSERT INTO vifp_quas.vifp_docs VALUES (1, 'alpha', 'quas');
+
+
+statement ok
+CREATE TABLE vifp_ved.vifp_docs (id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+INSERT INTO vifp_ved.vifp_docs VALUES (1, 'alpha', 'ved');
+
+
+statement ok
+SET search_path = vifp_quas, public;
+
+
+statement ok
+CREATE VIEW public.vifp_v AS SELECT id, body, tag FROM vifp_docs;
+
+
+statement ok
+CREATE INDEX vifp_idx ON public.vifp_v USING inverted (id, body);
+
+
+statement ok
+SET search_path = vifp_ved, public;
+
+
+query
+SELECT id, tag FROM public.vifp_v ORDER BY id;
+----
+id	tag
+1	quas
+
+
+query
+SELECT id, tag FROM public.vifp_idx ORDER BY id;
+----
+id	tag
+1	quas
+
+
+statement ok
+CREATE TEMP TABLE vifp_docs (id INTEGER PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+INSERT INTO vifp_docs VALUES (1, 'alpha', 'temp');
+
+
+query
+SELECT id, tag FROM public.vifp_idx ORDER BY id;
+----
+id	tag
+1	quas
+
+
+statement ok
+DROP TABLE vifp_docs;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP VIEW public.vifp_v CASCADE;
+
+
+statement ok
+DROP SCHEMA vifp_quas CASCADE;
+
+
+statement ok
+DROP SCHEMA vifp_ved CASCADE;

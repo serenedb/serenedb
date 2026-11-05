@@ -183,12 +183,12 @@ void Config::OnSet(std::string_view name, bool is_local,
   }
 }
 
-void Config::SetSettingChecked(std::string_view key, std::string value,
-                               bool is_local) {
-  duckdb::PhysicalSet::SetVariable(
-    _client_ctx, duckdb::Identifier{key},
-    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
-    duckdb::Value{std::move(value)});
+void Config::SetSettingChecked(std::string_view key, std::string value) {
+  _client_ctx.RunFunctionInTransaction([&] {
+    duckdb::PhysicalSet::SetVariable(_client_ctx, duckdb::Identifier{key},
+                                     duckdb::SetScope::SESSION,
+                                     duckdb::Value{std::move(value)});
+  });
 }
 
 bool Config::IsExplicitTransaction() const {
@@ -232,6 +232,10 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
     }
     duckdb::ExtensionOption ext;
     if (!db_config.TryGetExtensionOption(setting, ext)) {
+      if (duckdb::Settings::IsValidCustomName(key)) {
+        _client_ctx.config.custom_settings[key] =
+          is_reset ? duckdb::Value{std::string{}} : std::move(value);
+      }
       return;
     }
     // Only session/local SETs are tracked (setting_change_handler skips

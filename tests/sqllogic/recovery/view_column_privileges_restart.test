@@ -1,0 +1,66 @@
+control substitution on
+
+statement ok
+CREATE ROLE vcpr_vedernikoff;
+
+
+statement ok
+CREATE TABLE vcpr_iceberg (a int, b int);
+
+
+statement ok
+CREATE VIEW vcpr_clickclack AS SELECT a, b FROM vcpr_iceberg;
+
+
+statement ok
+GRANT SELECT (a) ON vcpr_clickclack TO vcpr_vedernikoff;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_wal
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  has_column_privilege('vcpr_vedernikoff', 'vcpr_clickclack', 'a', 'SELECT') AS a_select,
+  has_column_privilege('vcpr_vedernikoff', 'vcpr_clickclack', 'b', 'SELECT') AS b_select;
+----
+a_select	b_select
+t	f
+
+
+connection after_wal
+statement ok
+CHECKPOINT;
+
+
+connection after_wal
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_wal
+statement error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  has_column_privilege('vcpr_vedernikoff', 'vcpr_clickclack', 'a', 'SELECT') AS a_select,
+  has_column_privilege('vcpr_vedernikoff', 'vcpr_clickclack', 'b', 'SELECT') AS b_select;
+----
+a_select	b_select
+t	f
+
+
+connection after_checkpoint
+statement error
+DROP ROLE vcpr_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "vcpr_vedernikoff" because there are entries that depend on it.<slt:ignore>

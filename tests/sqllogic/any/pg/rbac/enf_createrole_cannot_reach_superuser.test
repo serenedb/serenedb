@@ -1,0 +1,90 @@
+statement ok
+DROP ROLE IF EXISTS ecrs_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS ecrs_super;
+
+
+statement ok
+DROP ROLE IF EXISTS ecrs_made;
+
+
+statement ok
+CREATE ROLE ecrs_admin LOGIN CREATEROLE PASSWORD 'ecrs_pw';
+
+
+statement ok
+CREATE ROLE ecrs_super SUPERUSER LOGIN PASSWORD 'ecrs_super_pw';
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+ALTER ROLE ecrs_super PASSWORD 'taken';
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+ALTER ROLE ecrs_super NOLOGIN;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+CREATE ROLE ecrs_made SUPERUSER;
+----
+db error: ERROR: permission denied to create role
+DETAIL: Only roles with the SUPERUSER attribute may create roles with the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+ALTER ROLE ecrs_admin SUPERUSER;
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+GRANT ecrs_super TO ecrs_admin;
+----
+db error: ERROR: permission denied to grant role "ecrs_super"
+DETAIL: Only roles with the SUPERUSER attribute may grant roles with the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+DROP ROLE ecrs_super;
+----
+db error: ERROR: permission denied to drop role
+DETAIL: Only roles with the SUPERUSER attribute may drop roles with the SUPERUSER attribute.
+
+
+connection c_ecrs user=ecrs_admin password=ecrs_pw
+statement error
+ALTER ROLE ecrs_super RENAME TO ecrs_renamed;
+----
+db error: ERROR: permission denied to rename role
+DETAIL: Only roles with the SUPERUSER attribute may rename roles with the SUPERUSER attribute.
+
+
+connection c_ecrs_super user=ecrs_super password=ecrs_super_pw
+query
+SELECT rolname FROM pg_roles WHERE rolname = current_user;
+----
+rolname
+ecrs_super
+
+
+statement ok
+DROP ROLE ecrs_super;
+
+
+statement ok
+DROP ROLE ecrs_admin;

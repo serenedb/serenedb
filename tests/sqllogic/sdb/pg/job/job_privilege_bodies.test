@@ -1,0 +1,304 @@
+control substitution on
+
+
+statement ok
+CREATE JOB jpb_01 AFTER 1 HOUR SUSPENDED AS GRANT USAGE, SELECT ON SEQUENCE jpb_seq TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_02 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON FUNCTION jpb_f(integer) TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_03 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON PROCEDURE jpb_p() TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_04 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON ROUTINE jpb_f(integer) TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_05 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON TYPE jpb_ty TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_06 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON FOREIGN SERVER jpb_srv TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_07 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_08 AFTER 1 HOUR SUSPENDED AS GRANT SET, ALTER SYSTEM ON PARAMETER work_mem TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_09 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON LANGUAGE sql TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_10 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_11 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_12 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_13 AFTER 1 HOUR SUSPENDED AS GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_14 AFTER 1 HOUR SUSPENDED AS ALTER DEFAULT PRIVILEGES FOR ROLE jpb_r, jpb_r2 IN SCHEMA public GRANT USAGE ON SEQUENCES TO jpb_r3;
+
+
+statement ok
+CREATE JOB jpb_15 AFTER 1 HOUR SUSPENDED AS ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_16 AFTER 1 HOUR SUSPENDED AS ALTER DEFAULT PRIVILEGES REVOKE USAGE ON TYPES FROM PUBLIC;
+
+
+statement ok
+CREATE JOB jpb_17 AFTER 1 HOUR SUSPENDED AS ALTER DEFAULT PRIVILEGES GRANT CREATE ON SCHEMAS TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_18 AFTER 1 HOUR SUSPENDED AS GRANT SELECT ON ALL TABLES IN SCHEMA ${__DATABASE__}.public TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_19 AFTER 1 HOUR SUSPENDED AS GRANT SELECT ON jpb_t TO jpb_r GRANTED BY postgres;
+
+
+statement ok
+CREATE JOB jpb_20 AFTER 1 HOUR SUSPENDED AS REVOKE jpb_g FROM jpb_r CASCADE;
+
+
+statement ok
+CREATE JOB jpb_21 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jpb_r PASSWORD NULL;
+
+
+statement ok
+CREATE JOB jpb_22 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jpb_r WITH LOGIN PASSWORD 'jpb_pw';
+
+
+statement ok
+CREATE JOB jpb_23 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jpb_r RESET work_mem;
+
+
+statement ok
+CREATE JOB jpb_24 AFTER 1 HOUR SUSPENDED AS ALTER ROLE jpb_r SET work_mem FROM CURRENT;
+
+
+statement ok
+CREATE JOB jpb_25 AFTER 1 HOUR SUSPENDED AS ALTER ROLE ALL IN DATABASE ${__DATABASE__} SET work_mem = '8MB';
+
+
+statement ok
+CREATE JOB jpb_26 AFTER 1 HOUR SUSPENDED AS ALTER DATABASE ${__DATABASE__} SET work_mem = '8MB';
+
+
+statement ok
+CREATE JOB jpb_27 AFTER 1 HOUR SUSPENDED AS ALTER DATABASE ${__DATABASE__} ALLOW_CONNECTIONS false CONNECTION LIMIT 5;
+
+
+statement ok
+CREATE JOB jpb_29 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jpb_f(integer) OWNER TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_30 AFTER 1 HOUR SUSPENDED AS ALTER PROCEDURE jpb_p() OWNER TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_31 AFTER 1 HOUR SUSPENDED AS CREATE ROLE jpb_r4 VALID UNTIL '2030-01-02 03:04:05+00' PASSWORD 'jpb_pw';
+
+
+statement ok
+CREATE JOB jpb_32 AFTER 1 HOUR SUSPENDED AS DROP FUNCTION jpb_f(integer);
+
+
+statement ok
+CREATE JOB jpb_33 AFTER 1 HOUR SUSPENDED AS ALTER DATABASE ${__DATABASE__} OWNER TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_34 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jpb_f(integer) SET search_path = jpb_a, public;
+
+
+query
+SELECT job_name, replace(body, current_database(), 'DB') AS body FROM sdb_jobs() WHERE starts_with(job_name, 'jpb_') ORDER BY job_name;
+----
+job_name	body
+jpb_01	GRANT SELECT, USAGE ON SEQUENCE jpb_seq TO jpb_r;
+jpb_02	GRANT EXECUTE ON FUNCTION jpb_f(INTEGER) TO jpb_r;
+jpb_03	GRANT EXECUTE ON PROCEDURE jpb_p() TO jpb_r;
+jpb_04	GRANT EXECUTE ON ROUTINE jpb_f(INTEGER) TO jpb_r;
+jpb_05	GRANT USAGE ON TYPE jpb_ty TO jpb_r;
+jpb_06	GRANT USAGE ON FOREIGN SERVER jpb_srv TO jpb_r;
+jpb_07	GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO jpb_r;
+jpb_08	GRANT SET, ALTER SYSTEM ON PARAMETER work_mem TO jpb_r;
+jpb_09	GRANT USAGE ON LANGUAGE "sql" TO jpb_r;
+jpb_10	GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jpb_r;
+jpb_11	GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO jpb_r;
+jpb_12	GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO jpb_r;
+jpb_13	GRANT EXECUTE ON ALL ROUTINES IN SCHEMA public TO jpb_r;
+jpb_14	ALTER DEFAULT PRIVILEGES FOR ROLE jpb_r, jpb_r2 IN SCHEMA public GRANT USAGE ON SEQUENCES TO jpb_r3;
+jpb_15	ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO jpb_r;
+jpb_16	ALTER DEFAULT PRIVILEGES REVOKE USAGE ON TYPES FROM PUBLIC;
+jpb_17	ALTER DEFAULT PRIVILEGES GRANT CREATE ON SCHEMAS TO jpb_r;
+jpb_18	GRANT SELECT ON ALL TABLES IN SCHEMA DB.public TO jpb_r;
+jpb_19	GRANT SELECT ON TABLE jpb_t TO jpb_r GRANTED BY postgres;
+jpb_20	REVOKE jpb_g FROM jpb_r CASCADE;
+jpb_21	ALTER ROLE jpb_r WITH PASSWORD NULL;
+jpb_22	ALTER ROLE jpb_r WITH LOGIN PASSWORD 'jpb_pw';
+jpb_23	ALTER ROLE jpb_r RESET work_mem;
+jpb_24	ALTER ROLE jpb_r SET work_mem FROM CURRENT;
+jpb_25	ALTER ROLE ALL IN DATABASE DB SET work_mem TO '8MB';
+jpb_26	ALTER DATABASE DB SET work_mem TO '8MB';
+jpb_27	ALTER DATABASE DB ALLOW_CONNECTIONS FALSE CONNECTION LIMIT 5;
+jpb_29	ALTER FUNCTION jpb_f(INTEGER) OWNER TO jpb_r;
+jpb_30	ALTER PROCEDURE jpb_p() OWNER TO jpb_r;
+jpb_31	CREATE ROLE jpb_r4 WITH NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOLOGIN NOREPLICATION NOBYPASSRLS VALID UNTIL '2030-01-02 03:04:05+00' PASSWORD 'jpb_pw';
+jpb_32	DROP FUNCTION jpb_f(INTEGER);
+jpb_33	ALTER DATABASE DB OWNER TO jpb_r;
+jpb_34	ALTER FUNCTION jpb_f(INTEGER) SET search_path TO jpb_a, public;
+
+
+statement ok
+DROP JOB jpb_01;
+
+
+statement ok
+DROP JOB jpb_02;
+
+
+statement ok
+DROP JOB jpb_03;
+
+
+statement ok
+DROP JOB jpb_04;
+
+
+statement ok
+DROP JOB jpb_05;
+
+
+statement ok
+DROP JOB jpb_06;
+
+
+statement ok
+DROP JOB jpb_07;
+
+
+statement ok
+DROP JOB jpb_08;
+
+
+statement ok
+DROP JOB jpb_09;
+
+
+statement ok
+DROP JOB jpb_10;
+
+
+statement ok
+DROP JOB jpb_11;
+
+
+statement ok
+DROP JOB jpb_12;
+
+
+statement ok
+DROP JOB jpb_13;
+
+
+statement ok
+DROP JOB jpb_14;
+
+
+statement ok
+DROP JOB jpb_15;
+
+
+statement ok
+DROP JOB jpb_16;
+
+
+statement ok
+DROP JOB jpb_17;
+
+
+statement ok
+DROP JOB jpb_18;
+
+
+statement ok
+DROP JOB jpb_19;
+
+
+statement ok
+DROP JOB jpb_20;
+
+
+statement ok
+DROP JOB jpb_21;
+
+
+statement ok
+DROP JOB jpb_22;
+
+
+statement ok
+DROP JOB jpb_23;
+
+
+statement ok
+DROP JOB jpb_24;
+
+
+statement ok
+DROP JOB jpb_25;
+
+
+statement ok
+DROP JOB jpb_26;
+
+
+statement ok
+DROP JOB jpb_27;
+
+
+statement ok
+DROP JOB jpb_29;
+
+
+statement ok
+DROP JOB jpb_30;
+
+
+statement ok
+DROP JOB jpb_31;
+
+
+statement ok
+DROP JOB jpb_32;
+
+
+statement ok
+DROP JOB jpb_33;
+
+
+statement ok
+DROP JOB jpb_34;

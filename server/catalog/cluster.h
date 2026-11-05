@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
@@ -35,7 +36,6 @@
 #include <string>
 #include <string_view>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "catalog/snapshot.h"
@@ -70,7 +70,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final;
-  bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
     duckdb::CreateDatabaseInfo& info) final {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);
@@ -96,10 +95,13 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
 
-  auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
 
  private:
+  void ApplyAlter(duckdb::CatalogTransaction transaction,
+                  duckdb::AlterInfo& info);
+  void RevokeMembership(duckdb::CatalogTransaction transaction,
+                        duckdb::AlterRoleInfo& alter);
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
 
@@ -107,13 +109,17 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
-  auth::RoleCache _roles;
   CatalogSnapshots _snapshots{*this};
 };
+
+inline constexpr std::string_view kRootRole = "postgres";
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
+
+duckdb::shared_ptr<const duckdb::SecuritySnapshot> RolesOf(
+  duckdb::ClientContext* context);
 
 inline bool ReadDatabase(
   std::string_view name,

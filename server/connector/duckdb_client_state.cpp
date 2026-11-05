@@ -27,10 +27,18 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/parsed_data/extra_drop_info.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/planner/operator/logical_attach.hpp>
+#include <duckdb/planner/operator/logical_create.hpp>
+#include <duckdb/planner/operator/logical_drop.hpp>
+#include <duckdb/planner/operator/logical_execute.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
@@ -45,10 +53,9 @@
 #include <iresearch/utils/system_compiler.hpp>
 #include <utility>
 
-#include "auth/enforce.h"
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "connector/duckdb_storage_extension.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -68,6 +75,7 @@ SereneDBClientState& SereneDBClientState::Register(
   source->user = registered._connection_ctx->user();
   source->database = registered._connection_ctx->GetDatabase();
   source->client_backend = client_backend;
+  source->role = registered._connection_ctx->GetLoginRoleId();
   source->backend_start_us = duckdb::Timestamp::GetCurrentTimestamp().value;
   source->ctx = &client_ctx;
   registered.progress_source = std::move(source);
@@ -81,71 +89,47 @@ SereneDBClientState& SereneDBClientState::Register(
                        ERR_MSG("there is no transaction in progress")));
       return true;
     }
+    if (absl::StrContains(message, "can only be used in transaction blocks")) {
+      GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION), ERR_MSG(message)));
+      return true;
+    }
     GetSereneDBContext(ctx).AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
     return true;
   };
 
-  client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
-                                         const std::string& name,
-                                         duckdb::SetScope scope) {
-    // Refused the way PG refuses a postmaster-scoped GUC. Checked before the
-    // SetScope::GLOBAL return below, since some of these are global and would
-    // otherwise slip past it. DuckDB routes SET and RESET, for built-in
-    // settings and extension options alike, through this handler, and does so
-    // before invoking an option's own set_function -- so an entry here needs
-    // no callback of its own.
-    if (IsUnchangeableSetting(name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
-                      ERR_MSG("parameter \"", name, "\" cannot be changed"));
-    }
-    // Resolve AUTOMATIC against the setting's target scope so the downstream
-    // check works uniformly regardless of how the user wrote the SET.
-    if (scope == duckdb::SetScope::AUTOMATIC) {
-      auto& db_config = duckdb::DBConfig::GetConfig(ctx);
+  client_ctx.setting_change_handler =
+    [](duckdb::ClientContext& ctx, const std::string& name,
+       duckdb::SetScope scope) {
       const duckdb::Identifier setting{name};
-      duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-      if (db_config.TryGetSettingIndex(setting, option).IsValid() && option) {
-        scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
-                 option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
-                  ? duckdb::SetScope::GLOBAL
-                  : duckdb::SetScope::SESSION;
-      } else {
-        duckdb::ExtensionOption ext;
-        if (db_config.TryGetExtensionOption(setting, ext)) {
-          scope = ext.default_scope;
-        }
+      if (const auto option = duckdb::DBConfig::GetOptionByName(setting)) {
+        scope = duckdb::PhysicalSet::GetSettingScope(*option, scope);
+      } else if (duckdb::ExtensionOption ext;
+                 duckdb::DBConfig::GetConfig(ctx).TryGetExtensionOption(setting,
+                                                                        ext)) {
+        scope = duckdb::PhysicalSet::GetSettingScope(ext, scope);
       }
-    }
-    // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
-    // user_settings / custom session store) and is not rolled back with the
-    // transaction -- only session/local changes are tracked.
-    if (scope == duckdb::SetScope::GLOBAL) {
-      RequireSuperuserToSetGlobal(ctx, name);
-      return;
-    }
-    auto& sdb_ctx = GetSereneDBContext(ctx);
-    // A reported GUC may have changed -- flag it so the wire layer re-emits
-    // ParameterStatus at the next ReadyForQuery (a cheap version bump; the
-    // GUC poll itself is skipped entirely when nothing changed).
-    sdb_ctx.MarkSettingsChanged();
-    // Outside an explicit transaction there's nothing to roll back --
-    // the map stays empty.
-    if (!sdb_ctx.IsExplicitTransaction() || IsNonTransactionalSetting(name)) {
-      return;
-    }
-    duckdb::Value old_value;
-    ctx.TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
-    sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL, std::move(old_value));
-  };
-
-  client_ctx.setting_visibility = [](duckdb::ClientContext&,
-                                     const std::string& name) {
-    static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-      "sdb_faults", "debug_verification", "is_superuser", "role",
-      "session_authorization"};
-    return !kHidden.contains(name);
-  };
+      const bool global = scope == duckdb::SetScope::GLOBAL;
+      // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
+      // user_settings / custom session store) and is not rolled back with the
+      // transaction -- only session/local changes are tracked.
+      if (global) {
+        return;
+      }
+      auto& sdb_ctx = GetSereneDBContext(ctx);
+      // A reported GUC may have changed -- flag it so the wire layer re-emits
+      // ParameterStatus at the next ReadyForQuery (a cheap version bump; the
+      // GUC poll itself is skipped entirely when nothing changed).
+      sdb_ctx.MarkSettingsChanged();
+      if (IsNonTransactionalSetting(name)) {
+        return;
+      }
+      duckdb::Value old_value;
+      ctx.TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
+      sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL,
+                    std::move(old_value));
+    };
 
   client_ctx.isolation_level_validator =
     [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {
@@ -352,7 +336,47 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,
                                       duckdb::Binder& binder,
                                       duckdb::LogicalOperator& plan) {
-  auth::EnforcePlan(context, *_connection_ctx, binder, plan);
+  const auto discard_all = [](const duckdb::DropInfo& info) {
+    return info.type == duckdb::CatalogType::PREPARED_STATEMENT &&
+           info.extra_drop_info &&
+           info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
+             duckdb::DiscardTarget::ALL;
+  };
+  auto* root = &plan;
+  if ((plan.type == duckdb::LogicalOperatorType::LOGICAL_PREPARE ||
+       plan.type == duckdb::LogicalOperatorType::LOGICAL_EXECUTE) &&
+      !plan.children.empty()) {
+    root = plan.children[0].get();
+  }
+  switch (root->type) {
+    case duckdb::LogicalOperatorType::LOGICAL_ATTACH:
+      RequireDatabaseNotBeingCreated(
+        context, root->Cast<duckdb::LogicalAttach>().info->name);
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_DROP:
+      if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
+        _connection_ctx->PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_CREATE_VIEW:
+      SDB_IF_FAILURE("view_without_name_bindings") {
+        root->Cast<duckdb::LogicalCreate>()
+          .info->Cast<duckdb::CreateViewInfo>()
+          .name_bindings.clear();
+      }
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_EXECUTE: {
+      const auto& unbound =
+        root->Cast<duckdb::LogicalExecute>().prepared->unbound_statement;
+      if (unbound && unbound->type == duckdb::StatementType::DROP_STATEMENT &&
+          discard_all(*unbound->Cast<duckdb::DropStatement>().info)) {
+        _connection_ctx->PreventInTransactionBlock("DISCARD ALL");
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
@@ -366,8 +390,10 @@ ConnectionContext* GetSereneDBContextPtr(duckdb::ClientContext& context) {
 
 ConnectionContext& GetSereneDBContext(duckdb::ClientContext& context) {
   auto* ctx = GetSereneDBContextPtr(context);
-  SDB_ASSERT(ctx, "SereneDB client state not registered; active query: ",
-             context.GetCurrentQuery());
+  if (!ctx) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("this operation needs a client session"));
+  }
   return *ctx;
 }
 

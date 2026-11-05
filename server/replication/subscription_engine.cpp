@@ -37,9 +37,9 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/on.hpp>
 
-#include "auth/role_closure.h"
 #include "backup/restore.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/io_context.h"
@@ -126,9 +126,9 @@ ReplicationTarget MakeReplicationTarget(
   target.skip_lsn = config.skip_lsn;
   target.relations.assign(config.relations.begin(), config.relations.end());
   target.owner_id = config.permissions.owner;
-  auto roles = auth::RolesOf(nullptr);
+  auto roles = catalog::RolesOf(nullptr);
   target.owner_name = roles->NameOf(target.owner_id);
-  const auto* owner = roles->Find(target.owner_id);
+  const auto owner = roles->Access(target.owner_id);
   target.require_password =
     config.password_required && !(owner && owner->is_superuser);
   if (target.conninfo.user.empty()) {

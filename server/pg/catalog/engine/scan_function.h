@@ -47,6 +47,8 @@ struct SystemTableBindData final : duckdb::FunctionData {
            entry == data.entry;
   }
 
+  duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
+
   const SystemTable& table;
   duckdb::DuckCatalog& catalog;
   catalog::SystemTableEntry* entry;

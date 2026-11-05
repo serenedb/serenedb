@@ -78,18 +78,10 @@ std::string_view GetOriginalName(std::string_view name);
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms);
 
-bool IsUnchangeableSetting(std::string_view name);
-
 bool IsNonTransactionalSetting(std::string_view name);
-
-void RequireSuperuserToSetGlobal(duckdb::ClientContext& ctx,
-                                 std::string_view name);
 
 class Config {
  public:
-  // Per-key tracking for a currently-open transaction. Populated when
-  // `setting_change_handler` sees a SET or RESET inside an explicit txn;
-  // cleared on COMMIT / ROLLBACK.
   struct TxnVariable {
     // Value to restore on ROLLBACK. Captured on the first tracked event
     // for this key and never updated after.
@@ -132,7 +124,6 @@ class Config {
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
 
-  // Record a SET / SET LOCAL event inside an explicit txn.
   //   old_value -- value currently in effect (pre-event snapshot).
   void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
 
@@ -144,8 +135,7 @@ class Config {
   // casting and the option's set_callback run as if the client had issued a
   // `SET key = value` statement. Throws on unknown settings or validation
   // failure -- callers translate to the appropriate PG error.
-  void SetSettingChecked(std::string_view key, std::string value,
-                         bool is_local);
+  void SetSettingChecked(std::string_view key, std::string value);
 
   // Monotonic counter bumped whenever a session/local setting changes (via the
   // setting_change_handler) or is reverted at txn end. Lets the wire layer skip

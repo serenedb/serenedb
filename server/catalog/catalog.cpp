@@ -550,7 +550,7 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.SetQualifiedName(duckdb::QualifiedName(
     {duckdb::Identifier{irs::StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions = pg::SchemaPermissions();
+  info.permissions = pg::PublicSchemaPermissions();
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);
@@ -686,13 +686,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   return entry;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
-  duckdb::CatalogTransaction transaction,
-  duckdb::CreateSubscriptionInfo& info) {
-  DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateSubscription(transaction, info);
-}
-
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
@@ -710,17 +703,29 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
        info.type == duckdb::AlterType::ALTER_INDEX)) {
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
-  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
-      type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+  if (type == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+    AlterSubscription(transaction, info);
+    return;
+  }
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;
   }
   DeclareModified(transaction, *this);
   const auto& name = info.GetQualifiedName().Name();
-  if (!GetCatalogSet(type).AlterEntry(transaction, name, info)) {
+  auto& servers = GetCatalogSet(type);
+  const auto previous = servers.GetEntry(transaction, name);
+  const auto previous_owner = previous ? previous->permissions.owner : 0;
+  if (!servers.AlterEntry(transaction, name, info)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG(duckdb::CatalogTypeToString(type), " with name ",
                             name.GetIdentifierName(), " does not exist!"));
+  }
+  if (transaction.HasContext() &&
+      info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
+    servers.GetEntry(transaction, name)
+      ->Cast<ForeignServerCatalogEntry>()
+      .FollowOwner(transaction.GetContext(), previous_owner);
   }
 }
 
@@ -729,13 +734,6 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropForeignServer(transaction, info);
-}
-
-void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
-                                       duckdb::DropInfo& info) {
-  DeclareModified(transaction, *this,
-                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
 duckdb::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> SereneDBDatabases(

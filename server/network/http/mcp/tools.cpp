@@ -29,12 +29,15 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/query_result.hpp>
+#include <duckdb/parser/sql_statement.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -414,95 +417,6 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
   co_return ToolResult{std::move(text)};
 }
 
-struct Statement {
-  bool single = true;
-  bool explain = false;
-};
-
-size_t SkipQuoted(std::string_view sql, size_t at) {
-  const auto quote = sql[at];
-  for (auto i = at + 1; i < sql.size(); ++i) {
-    if (sql[i] == quote) {
-      if (i + 1 < sql.size() && sql[i + 1] == quote) {
-        ++i;
-        continue;
-      }
-      return i + 1;
-    }
-  }
-  return sql.size();
-}
-
-size_t SkipDollarQuoted(std::string_view sql, size_t at) {
-  const auto close = sql.find('$', at + 1);
-  if (close == std::string_view::npos) {
-    return at + 1;
-  }
-  const auto tag = sql.substr(at, close - at + 1);
-  if (!absl::c_all_of(tag.substr(1, tag.size() - 2), [](char c) {
-        return absl::ascii_isalnum(static_cast<unsigned char>(c)) || c == '_';
-      })) {
-    return at + 1;
-  }
-  const auto end = sql.find(tag, close + 1);
-  return end == std::string_view::npos ? sql.size() : end + tag.size();
-}
-
-size_t SkipBlockComment(std::string_view sql, size_t at) {
-  size_t depth = 0;
-  for (auto i = at; i + 1 < sql.size(); ++i) {
-    if (sql[i] == '/' && sql[i + 1] == '*') {
-      ++depth;
-      ++i;
-    } else if (sql[i] == '*' && sql[i + 1] == '/') {
-      ++i;
-      if (--depth == 0) {
-        return i + 1;
-      }
-    }
-  }
-  return sql.size();
-}
-
-Statement Classify(std::string_view sql) {
-  Statement statement;
-  bool first = true;
-  bool ended = false;
-  for (size_t i = 0; i < sql.size();) {
-    const auto c = sql[i];
-    if (absl::ascii_isspace(static_cast<unsigned char>(c))) {
-      ++i;
-      continue;
-    }
-    if (sql.substr(i).starts_with("--")) {
-      const auto eol = sql.find('\n', i);
-      i = eol == std::string_view::npos ? sql.size() : eol + 1;
-      continue;
-    }
-    if (sql.substr(i).starts_with("/*")) {
-      i = SkipBlockComment(sql, i);
-      continue;
-    }
-    if (ended) {
-      statement.single = false;
-      break;
-    }
-    if (first) {
-      statement.explain = absl::StartsWithIgnoreCase(sql.substr(i), "explain");
-      first = false;
-    }
-    if (c == '\'' || c == '"') {
-      i = SkipQuoted(sql, i);
-    } else if (c == '$') {
-      i = SkipDollarQuoted(sql, i);
-    } else {
-      ended = c == ';';
-      ++i;
-    }
-  }
-  return statement;
-}
-
 std::string WithoutExplain(std::string error) {
   constexpr std::string_view kLine = "LINE 1: EXPLAIN ";
   const auto at = error.find(kLine);
@@ -525,11 +439,21 @@ yaclib::Task<ToolResult> CheckSql(RequestContext& ctx, const ToolArgs& args) {
   if (sql.empty()) {
     co_return Error("check_sql: sql must not be empty");
   }
-  const auto statement = Classify(sql);
-  if (!statement.single) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> statements;
+  std::optional<duckdb::ErrorData> invalid;
+  try {
+    statements = ctx.Connection().ExtractStatements(sql, nullptr, false);
+  } catch (const std::exception& e) {
+    invalid.emplace(e);
+    ctx.Connection().context->ProcessError(*invalid, sql);
+  }
+  if (invalid) {
+    co_return ToolResult{absl::StrCat("Invalid: ", invalid->Message())};
+  }
+  if (statements.size() != 1) {
     co_return Error("check_sql: pass one statement at a time");
   }
-  if (statement.explain) {
+  if (statements.front()->type == duckdb::StatementType::EXPLAIN_STATEMENT) {
     co_return Error(
       "check_sql: pass the statement itself; check_sql plans it with EXPLAIN "
       "and never runs it");

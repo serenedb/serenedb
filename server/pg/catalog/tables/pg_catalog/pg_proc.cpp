@@ -176,22 +176,31 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     Col<"proargtypes">(&BuiltinFunction::argtypes),
     Col<"prosrc">([](const auto& function) -> std::string_view {
       return function.src.empty() ? function.name : function.src;
+    }),
+    Col<"proacl">([](const auto& function, SystemScan& scan) -> const auto& {
+      static const duckdb::vector<duckdb::AclItem> kDefault;
+      const auto granted = BuiltinFunctionGrant(scan.Context(), function);
+      return granted ? granted->acl : kDefault;
     }));
 
   static constexpr auto kMacro = Shape<kSql, const Macro>(
-    Col<"oid">([](const auto& row) { return row.entry.oid; }),
+    Col<"oid">(
+      [](const auto& row) { return row.entry.OverloadOid(row.macro); }),
     Col<"proname">(
       [](const auto& row) -> const auto& { return row.entry.name; }),
     Col<"pronamespace">(
       [](const auto& row) { return row.entry.ParentSchemaOid(); }),
-    Col<"proowner">(
-      [](const auto& row) { return row.entry.permissions.owner; }),
+    Col<"proowner">([](const auto& row) {
+      return row.entry.OverloadPermissions(row.macro).owner;
+    }),
     Col<"prolang">([](const auto&) { return kPgSqlLanguage; }),
     Col<"procost">([](const auto&) { return 100.0F; }),
     Col<"prorows">(
       [](const auto& row) { return ReturnsSet(row.macro) ? 1000.0F : 0.0F; }),
     Col<"prokind">(
       [](const auto& row) { return row.macro.is_procedure ? 'p' : 'f'; }),
+    Col<"prosecdef">(
+      [](const auto& row) { return row.macro.security_definer; }),
     Col<"proisstrict">([](const auto& row) { return row.macro.strict; }),
     Col<"proretset">([](const auto& row) { return ReturnsSet(row.macro); }),
     Col<"provolatile">([](const auto& row) {
@@ -238,8 +247,12 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
                : std::optional{names};
     }),
     Col<"prosrc">([](const auto& row) { return MacroBody(row.macro); }),
+    Col<"proconfig">([](const auto& row) {
+      return row.macro.config.empty() ? std::nullopt
+                                      : std::optional{row.macro.config};
+    }),
     Col<"proacl">([](const auto& row) -> const auto& {
-      return row.entry.permissions.acl;
+      return row.entry.OverloadPermissions(row.macro).acl;
     }));
 
   void Row(const BuiltinFunction& function) {
@@ -248,7 +261,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
 
   void Row(const duckdb::MacroCatalogEntry& entry) {
     for (const auto& macro : entry.macros) {
-      Emit<kMacro>({entry, *macro}, Visible(entry.oid));
+      Emit<kMacro>({entry, *macro}, Visible(entry.OverloadOid(*macro)));
     }
   }
 };

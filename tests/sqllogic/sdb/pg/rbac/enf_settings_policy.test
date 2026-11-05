@@ -1,0 +1,488 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS esp_vedernikoff;
+
+
+statement ok
+CREATE ROLE esp_vedernikoff LOGIN PASSWORD 'esp_pw';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET GLOBAL threads = 2;
+----
+db error: ERROR: permission denied to set parameter "threads"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET memory_limit = '1GB';
+----
+db error: ERROR: permission denied to set parameter "memory_limit"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET lock_configuration = true;
+----
+db error: ERROR: permission denied to set parameter "lock_configuration"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SELECT set_config('max_memory', '1GB', false);
+----
+db error: ERROR: permission denied to set parameter "max_memory"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+CALL enable_profiling(format := 'json', save_location := '${__TEST_DIR__}/esp_profile.json');
+----
+db error: ERROR: permission denied to set parameter "profiling_output"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+CALL enable_profiling(format := 'json');
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+CALL disable_profiling();
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+SET sdb_job_history_size = 10;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+skipif pg-wire-extended
+statement error
+RESET GLOBAL threads;
+----
+db error: ERROR: permission denied to set parameter "threads"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET SESSION profiling_output = '${__TEST_DIR__}/esp_profile.json';
+----
+db error: ERROR: permission denied to set parameter "profiling_output"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET log_query_path = '${__TEST_DIR__}/esp_queries.log';
+----
+db error: ERROR: permission denied to set parameter "log_query_path"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+ALTER ROLE esp_vedernikoff SET null_order = 'nulls_first';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+ALTER ROLE esp_vedernikoff SET memory_limit = '1GB';
+----
+db error: ERROR: permission denied to set parameter "memory_limit"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+ALTER ROLE esp_vedernikoff RESET ALL;
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET SESSION enable_logging = true;
+----
+db error: ERROR: permission denied to set parameter "enable_logging"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET Calendar = 'gregorian';
+----
+db error: ERROR: permission denied to set parameter "calendar"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET sdb_ai_text_default_secret = 'esp_other';
+----
+db error: ERROR: permission denied to set parameter "sdb_ai_text_default_secret"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('http_proxy_password');
+----
+db error: ERROR: permission denied to examine "http_proxy_password"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW http_proxy_username;
+----
+db error: ERROR: permission denied to examine "http_proxy_username"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW Calendar;
+----
+db error: ERROR: permission denied to examine "calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW hba;
+----
+db error: ERROR: permission denied to examine "hba"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('hba');
+----
+db error: ERROR: permission denied to examine "hba"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name = 'hba';
+----
+shown
+0
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name = 'hba';
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name = 'hba';
+----
+shown
+1
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('http_proxy_password', true);
+----
+db error: ERROR: permission denied to examine "http_proxy_password"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting(name, true) FROM (VALUES ('Calendar')) AS t(name);
+----
+db error: ERROR: permission denied to examine "Calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT current_setting(name) = current_setting('search_path') AS same FROM (VALUES ('search_path')) AS t(name);
+----
+same
+t
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting(name) FROM (VALUES ('Calendar')) AS t(name);
+----
+db error: ERROR: permission denied to examine "Calendar"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+0
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('Calendar', 'http_proxy_password');
+----
+shown
+2
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SHOW temp_directory;
+----
+db error: ERROR: permission denied to examine "temp_directory"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SELECT current_setting('secret_directory');
+----
+db error: ERROR: permission denied to examine "secret_directory"
+DETAIL: Only roles with privileges of the "pg_read_all_settings" role may examine this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT count(*) AS shown FROM pg_settings WHERE name IN ('temp_directory', 'secret_directory', 'profile_output', 'profiling_output');
+----
+shown
+0
+
+
+query
+SELECT count(*) AS shown FROM duckdb_settings() WHERE name IN ('temp_directory', 'secret_directory');
+----
+shown
+2
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET search_path = public;
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+query
+SELECT current_setting('search_path') = 'public' AS changed;
+----
+changed
+t
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET statement_timeout = '5min';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET explain_output = 'all';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET SESSION default_null_order = 'nulls_first';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET debug_force_external = true;
+----
+db error: ERROR: permission denied to set parameter "debug_force_external"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET SESSION auto_checkpoint_skip_wal_threshold = 0;
+----
+db error: ERROR: permission denied to set parameter "auto_checkpoint_skip_wal_threshold"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET sdb_ai_allow_insecure_endpoint = true;
+----
+db error: ERROR: permission denied to set parameter "sdb_ai_allow_insecure_endpoint"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement error
+SET recovery_replay_depth = 1;
+----
+db error: ERROR: permission denied to set parameter "recovery_replay_depth"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+SET SESSION enable_profiling = 'no_output';
+
+
+connection c_ved user=esp_vedernikoff password=esp_pw
+statement ok
+RESET ALL;
+
+
+query
+SELECT name FROM pg_settings WHERE context = 'user' ORDER BY lower(name);
+----
+name
+application_name
+approximate_join_order_threshold
+arrow_large_buffer_size
+arrow_lossless_conversion
+arrow_output_list_view
+arrow_output_version
+asof_loop_join_threshold
+bytea_output
+catalog_error_max_schemas
+cleanup_interval_step
+client_encoding
+client_min_messages
+compaction_floor_segment_bytes
+compaction_interval
+compaction_max_segments
+compaction_max_segments_bytes
+copy_csv_header_default
+createrole_self_grant
+DateStyle
+default_collation
+default_null_order
+default_order
+default_transaction_invalidation_policy
+default_transaction_isolation
+default_transaction_read_only
+delim_join_as_cte
+dialect_compatibility_mode
+disable_timestamptz_casts
+disabled_optimizers
+dynamic_or_filter_threshold
+enable_optimizer
+enable_profiling
+enable_progress_bar
+error_on_division_by_zero
+errors_as_json
+explain_output
+explain_output_format
+extra_float_digits
+filter_reorder
+ieee_floating_point_ops
+ignore_unknown_crs
+immediate_transaction_mode
+index_scan_max_count
+index_scan_percentage
+integer_datetimes
+integer_division
+integer_overflow
+IntervalStyle
+late_materialization_lookup_max_rows
+late_materialization_max_rows
+legacy_disable_null_type
+match_recognize_max_states
+max_execution_time
+max_parallel_workers_per_gather
+max_streaming_buffer_size
+merge_join_threshold
+nested_loop_join_threshold
+null_order
+operator_memory_limit
+order_by_non_integer_literal
+ordered_aggregate_threshold
+partitioned_write_flush_threshold
+partitioned_write_max_open_files
+password_encryption
+perfect_ht_threshold
+pivot_filter_threshold
+pivot_limit
+prefer_range_joins
+preserve_identifier_case
+preserve_insertion_order
+profiling_coverage
+profiling_renderer_settings
+progress_bar_time
+refresh_interval
+regex_match_operator_semantics
+reindex_interval
+row_group_size
+scalar_subquery_error_on_multiple_rows
+schema
+scram_iterations
+sdb_ai_embedding_max_batch_size
+sdb_ai_max_api_calls_per_query
+sdb_ai_max_concurrent_requests
+sdb_ai_max_output_tokens_per_query
+sdb_ai_max_retries
+sdb_ai_request_timeout
+sdb_ai_retry_initial_delay_ms
+sdb_ai_throw_on_error
+sdb_ai_throw_on_quota_exceeded
+sdb_ann_force_exact
+sdb_ann_rescore_width
+sdb_compact_target_segments
+sdb_disable_top_k_optimization
+sdb_hnsw_column_filter
+sdb_hnsw_ef_search
+sdb_hnsw_filter_mode
+sdb_ivf_max_search_fanout
+sdb_ivf_min_search_fanout
+sdb_ivf_posting_size
+sdb_ivf_sample_factor
+sdb_ivf_search_nprobe
+sdb_levenshtein_max_terms
+sdb_lookup_join_source_hop
+sdb_scan_no_split_row_groups
+sdb_scan_order
+sdb_scan_split
+search_backfill_group_bytes
+search_path
+segment_docs_max
+segment_memory_max
+show_behavior
+standard_conforming_strings
+statement_timeout
+streaming_buffer_size
+table_function_identifier_conversion
+threads
+TimeZone
+tracked_metrics
+transaction_isolation
+worker_threads
+xmloption
+
+
+statement ok
+DROP ROLE esp_vedernikoff;

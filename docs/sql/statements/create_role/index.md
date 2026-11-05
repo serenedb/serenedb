@@ -12,6 +12,8 @@ The `CREATE ROLE` statement adds a new role. Roles are cluster-wide: one role ex
 
 `CREATE USER` is the same statement, except the new role gets `LOGIN` by default; `CREATE ROLE` defaults to `NOLOGIN`.
 
+`CREATE GROUP` is another name for `CREATE ROLE`, and `USER` a name for its `ROLE` list of members. `DROP GROUP` is `DROP ROLE`, `ALTER GROUP name RENAME TO new_name` renames the role, and `ALTER GROUP name ADD USER member, ...` and `ALTER GROUP name DROP USER member, ...` grant and revoke membership in it, as `GRANT name TO member` and `REVOKE name FROM member` do.
+
 ## Examples
 
 Create a role. By default it cannot log in — a plain role is a bundle of privileges to grant to others:
@@ -49,7 +51,7 @@ Role names are unique across the server:
 ## Notes
 
 - `SUPERUSER` roles bypass all permission checks. Only a superuser can create another superuser.
-- `CONNECTION LIMIT` is accepted and stored (visible in `pg_roles.rolconnlimit`) but is not currently enforced at connect time.
+- `CONNECTION LIMIT` caps the sessions the role may have open at once, over the PostgreSQL protocol and the HTTP APIs together (`pg_roles.rolconnlimit`); a login beyond it fails with `too many connections for role`. Superusers are not limited.
 - `REPLICATION`, `BYPASSRLS`, and `SYSID` are accepted for PostgreSQL compatibility and have no effect.
 
 ## See also

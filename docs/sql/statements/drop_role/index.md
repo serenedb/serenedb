@@ -40,6 +40,7 @@ Without it, it is:
 
 - Dropping roles requires the `CREATEROLE` attribute (or superuser); dropping a superuser role requires superuser.
 - If the role owns objects or is referenced by grants in any database, `DROP ROLE` fails with `Cannot drop entry "..." because there are entries that depend on it.` and lists the objects that depend on the role. `DROP ROLE` has no `CASCADE`.
+- The roles of one `DROP ROLE` are dropped together. Memberships in a listed role, and the memberships a listed role holds, are removed first, so a membership that one listed role granted to another does not stop the drop, whatever order the roles are listed in.
 - The same holds between concurrent transactions: a `DROP ROLE` and a transaction that grants to the role or makes it an owner cannot both commit. Whichever commits second fails at `COMMIT` and changes nothing.
 
 ## See also

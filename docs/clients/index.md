@@ -10,6 +10,8 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 
 PostgreSQL connections require a user name. If the startup packet omits the database name or sends an empty one, SereneDB connects to the database named after that user. An explicit database name takes precedence.
 
+Any other parameter in the startup packet, such as `search_path`, `TimeZone` or `role`, is applied as if the session ran `SET` with the user's privileges, after the user's [role defaults](../sql/statements/alter_role/index.md). A parameter the user may not set, such as a `role` the user cannot `SET ROLE` to, refuses the connection. The `options` parameter is not supported and is ignored.
+
 ## Apps
 
 | App | Purpose | Guide |

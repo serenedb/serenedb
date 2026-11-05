@@ -1,0 +1,106 @@
+statement ok
+DROP SCHEMA IF EXISTS aod_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS aod_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS aod_bob;
+
+
+statement ok
+CREATE ROLE aod_alice LOGIN PASSWORD 'aod_pw';
+
+
+statement ok
+CREATE ROLE aod_bob;
+
+
+statement ok
+CREATE SCHEMA aod_s;
+
+
+statement ok
+GRANT USAGE ON SCHEMA aod_s TO aod_alice;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY aod_s.aod_dict AS keyword() WITH (frequency);
+
+
+statement ok
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_dict OWNER TO aod_alice;
+
+
+query
+SELECT dictname::text AS dictname, dictowner::regrole::text AS owner
+FROM pg_ts_dict
+WHERE dictnamespace = 'aod_s'::regnamespace;
+----
+dictname	owner
+aod_dict	aod_alice
+
+
+connection c_alice user=aod_alice password=aod_pw
+statement error
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_dict OWNER TO aod_bob;
+----
+db error: ERROR: must be able to SET ROLE "aod_bob"
+
+
+statement ok
+GRANT aod_bob TO aod_alice;
+
+
+connection c_alice user=aod_alice password=aod_pw
+statement error
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_dict OWNER TO aod_bob;
+----
+db error: ERROR: permission denied for schema aod_s
+
+
+statement ok
+GRANT CREATE ON SCHEMA aod_s TO aod_bob;
+
+
+connection c_alice user=aod_alice password=aod_pw
+statement ok
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_dict OWNER TO aod_bob;
+
+
+query
+SELECT dictowner::regrole::text AS owner FROM pg_ts_dict WHERE dictname = 'aod_dict';
+----
+owner
+aod_bob
+
+
+statement ok
+REVOKE aod_bob FROM aod_alice;
+
+
+connection c_alice user=aod_alice password=aod_pw
+statement error
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_dict OWNER TO aod_alice;
+----
+db error: ERROR: must be owner of text search dictionary aod_dict
+
+
+statement error
+ALTER TEXT SEARCH DICTIONARY aod_s.aod_nosuch OWNER TO aod_alice;
+----
+db error: ERROR: text search dictionary "aod_s.aod_nosuch" does not exist
+
+
+statement ok
+DROP SCHEMA aod_s CASCADE;
+
+
+statement ok
+DROP ROLE aod_alice;
+
+
+statement ok
+DROP ROLE aod_bob;

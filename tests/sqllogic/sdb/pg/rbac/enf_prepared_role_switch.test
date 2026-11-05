@@ -1,0 +1,148 @@
+control substitution on
+
+statement ok
+CREATE ROLE eprs_reader_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE eprs_search (pk INTEGER PRIMARY KEY, v INTEGER)
+  WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+INSERT INTO eprs_search SELECT i, i FROM range(10) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eprs_search;
+
+
+statement ok
+CREATE TABLE eprs_vectors (pk INTEGER PRIMARY KEY, v INTEGER, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX eprs_vectors_idx ON eprs_vectors
+  USING inverted(pk, v, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO eprs_vectors SELECT i, i, [i, 0]::FLOAT[2] FROM range(10) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) eprs_vectors;
+
+
+statement ok
+CREATE TABLE eprs_log (id INTEGER);
+
+
+statement ok
+CREATE SEQUENCE eprs_seq;
+
+
+statement ok
+PREPARE eprs_q1 AS SELECT count(*) AS n FROM eprs_search;
+
+
+statement ok
+PREPARE eprs_q2 AS SELECT pk FROM eprs_vectors_idx ORDER BY emb <-> [3, 0]::FLOAT[2] LIMIT 1;
+
+
+statement ok
+PREPARE eprs_q3 AS INSERT INTO eprs_log VALUES (1);
+
+
+statement ok
+PREPARE eprs_q4 AS SELECT nextval('eprs_seq') AS n;
+
+
+query
+EXECUTE eprs_q1;
+----
+n
+10
+
+
+query
+EXECUTE eprs_q2;
+----
+pk
+3
+
+
+statement ok
+SET ROLE eprs_reader_${__DATABASE__};
+
+
+statement error
+SELECT count(*) AS n FROM eprs_search;
+----
+db error: ERROR: permission denied for table eprs_search
+
+
+statement error
+EXECUTE eprs_q1;
+----
+db error: ERROR: permission denied for table eprs_search
+
+
+statement error
+EXECUTE eprs_q2;
+----
+db error: ERROR: permission denied for table eprs_vectors
+
+
+statement error
+EXECUTE eprs_q3;
+----
+db error: ERROR: permission denied for table eprs_log
+
+
+statement error
+EXECUTE eprs_q4;
+----
+db error: ERROR: permission denied for sequence eprs_seq
+
+
+statement ok
+RESET ROLE;
+
+
+query
+EXECUTE eprs_q1;
+----
+n
+10
+
+
+query
+SELECT count(*) AS n FROM eprs_log;
+----
+n
+0
+
+
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP TABLE eprs_log;
+
+
+statement ok
+DROP SEQUENCE eprs_seq;
+
+
+statement ok
+DROP TABLE eprs_vectors;
+
+
+statement ok
+DROP TABLE eprs_search;
+
+
+statement ok
+DROP ROLE eprs_reader_${__DATABASE__};

@@ -284,9 +284,15 @@ class Transport : public TransportBase {
 
   std::optional<asio_ns::ip::address> ClientAddress() {
     asio_ns::error_code ec;
-    const auto address = _proxy_client
-                           ? asio_ns::ip::make_address(*_proxy_client, ec)
-                           : _socket.Lowest().remote_endpoint(ec).address();
+    asio_ns::ip::address address;
+    if (_proxy_client) {
+      address = asio_ns::ip::make_address(*_proxy_client, ec);
+    } else if constexpr (Kind == SocketKind::Unix ||
+                         Kind == SocketKind::Client) {
+      return std::nullopt;
+    } else {
+      address = _socket.Lowest().remote_endpoint(ec).address();
+    }
     if (ec) {
       return std::nullopt;
     }

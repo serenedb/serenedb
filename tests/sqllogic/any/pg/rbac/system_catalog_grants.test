@@ -1,0 +1,335 @@
+statement ok
+DROP ROLE IF EXISTS scg_monitor;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_reader;
+
+
+statement ok
+CREATE ROLE scg_monitor;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid,
+       has_table_privilege('scg_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+authid	class
+f	t
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_authid TO scg_monitor;
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS object, objsubid, deptype
+FROM pg_shdepend WHERE refobjid = 'scg_monitor'::regrole;
+----
+class	object	objsubid	deptype
+pg_class	pg_authid	0	a
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+t
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE oid = 'pg_catalog.pg_authid'::regclass;
+----
+acl
+postgres=arwdDxtm/postgres,scg_monitor=r/postgres
+
+
+statement ok
+REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_class', 'SELECT') AS class;
+----
+class
+f
+
+
+statement ok
+SET ROLE scg_monitor;
+
+
+query
+SELECT count(*) > 0 AS has_rows FROM pg_catalog.pg_authid;
+----
+has_rows
+t
+
+
+statement error
+SELECT count(*) FROM pg_catalog.pg_class;
+----
+db error: ERROR: permission denied for table pg_class
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_class TO PUBLIC;
+
+
+query
+SELECT array_to_string(relacl, ',') AS acl FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+acl
+postgres=arwdDxtm/postgres,=r/postgres
+
+
+skipif serenedb
+statement error
+DROP ROLE scg_monitor;
+----
+db error: ERROR: role "scg_monitor" cannot be dropped because some objects depend on it
+DETAIL: privileges for table pg_authid
+
+
+onlyif serenedb
+statement error
+DROP ROLE scg_monitor;
+----
+db error: ERROR: Cannot drop entry "scg_monitor" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP OWNED BY scg_monitor;
+
+
+query
+SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+f
+
+
+statement ok
+DROP ROLE scg_monitor;
+
+
+statement ok
+CREATE ROLE scg_reader;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA pg_catalog TO scg_reader;
+
+
+query
+SELECT has_table_privilege('scg_reader', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+t
+
+
+statement ok
+REVOKE SELECT ON ALL TABLES IN SCHEMA pg_catalog FROM scg_reader;
+
+
+query
+SELECT has_table_privilege('scg_reader', 'pg_catalog.pg_authid', 'SELECT') AS authid;
+----
+authid
+f
+
+
+statement ok
+DROP ROLE scg_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_columns;
+
+
+statement ok
+CREATE ROLE scg_columns;
+
+
+statement error
+GRANT SELECT (no_such_column) ON pg_catalog.pg_authid TO scg_columns;
+----
+db error: ERROR: column "no_such_column" of relation "pg_authid" does not exist
+
+
+statement ok
+GRANT SELECT (rolname, rolsuper) ON pg_catalog.pg_authid TO scg_columns;
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS object, objsubid, deptype
+FROM pg_shdepend WHERE refobjid = 'scg_columns'::regrole ORDER BY objsubid;
+----
+class	object	objsubid	deptype
+pg_class	pg_authid	2	a
+pg_class	pg_authid	3	a
+
+
+query
+SELECT has_table_privilege('scg_columns', 'pg_catalog.pg_authid', 'SELECT') AS whole,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolpassword', 'SELECT') AS rolpassword,
+       has_any_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'SELECT') AS any_column;
+----
+whole	rolname	rolpassword	any_column
+f	t	f	t
+
+
+query
+SELECT attname, array_to_string(attacl, ',') AS acl
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_authid'::regclass AND cardinality(attacl) > 0
+ORDER BY attnum;
+----
+attname	acl
+rolname	scg_columns=r/postgres
+rolsuper	scg_columns=r/postgres
+
+
+statement ok
+SET ROLE scg_columns;
+
+
+query
+SELECT rolname, rolsuper FROM pg_catalog.pg_authid WHERE rolname = 'scg_columns';
+----
+rolname	rolsuper
+scg_columns	f
+
+
+query
+SELECT count(*) > 0 AS has_rows FROM pg_catalog.pg_authid;
+----
+has_rows
+t
+
+
+query
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'pg_catalog' AND table_name = 'pg_authid'
+ORDER BY column_name;
+----
+column_name
+rolname
+rolsuper
+
+
+statement error
+SELECT rolname, rolpassword FROM pg_catalog.pg_authid;
+----
+db error: ERROR: permission denied for table pg_authid
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE SELECT (rolsuper) ON pg_catalog.pg_authid FROM scg_columns;
+
+
+query
+SELECT has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname,
+       has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolsuper', 'SELECT') AS rolsuper;
+----
+rolname	rolsuper
+t	f
+
+
+skipif serenedb
+statement error
+DROP ROLE scg_columns;
+----
+db error: ERROR: role "scg_columns" cannot be dropped because some objects depend on it
+DETAIL: privileges for column rolname of table pg_authid
+
+
+onlyif serenedb
+statement error
+DROP ROLE scg_columns;
+----
+db error: ERROR: Cannot drop entry "scg_columns" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP OWNED BY scg_columns;
+
+
+query
+SELECT has_column_privilege('scg_columns', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname;
+----
+rolname
+f
+
+
+statement ok
+DROP ROLE scg_columns;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_member;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_lead;
+
+
+statement ok
+CREATE ROLE scg_lead;
+
+
+statement ok
+CREATE ROLE scg_member;
+
+
+statement ok
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO scg_lead WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE scg_lead;
+
+
+statement ok
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO scg_member;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_column_privilege('scg_member', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname;
+----
+rolname
+t
+
+
+statement ok
+REVOKE SELECT (rolname) ON pg_catalog.pg_authid FROM scg_lead CASCADE;
+
+
+query
+SELECT has_column_privilege('scg_member', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS member,
+       has_column_privilege('scg_lead', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS lead;
+----
+member	lead
+f	f
+
+
+statement ok
+DROP ROLE scg_member;
+
+
+statement ok
+DROP ROLE scg_lead;

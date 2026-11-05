@@ -85,7 +85,7 @@ constexpr SystemMacro kMacros[] = {
              NULL::INTEGER AS leader_pid,
              NULL::BIGINT AS query_id
       FROM pg_catalog.sdb_progress AS S
-           LEFT JOIN pg_catalog.pg_authid AS U ON (S.usename = U.rolname)
+           LEFT JOIN pg_catalog.pg_roles AS U ON (S.usename = U.rolname)
       WHERE target_pid IS NULL OR S.pid = target_pid)"},
 
   {"pg_catalog", "pg_stat_get_progress_info",
@@ -388,7 +388,6 @@ constexpr SystemMacro kMacros[] = {
   // mode), so both are constant false. pgAdmin calls these on every connect.
   {"pg_catalog", "pg_is_in_recovery", "() AS false"},
   {"pg_catalog", "pg_is_wal_replay_paused", "() AS false"},
-  {"pg_catalog", "shobj_description", "(oid, catalog) AS CAST(NULL AS TEXT)"},
 
   {"pg_catalog", "pg_relation_is_publishable", "(a) AS false"},
   {"pg_catalog", "pg_partition_ancestors", "(relid) AS CAST(relid AS regclass)"},

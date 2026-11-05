@@ -52,8 +52,8 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
         [](const auto& database) { return database.permissions.owner; }),
       Col<"encoding">([](const auto&) { return kUtf8Encoding; }),
       Col<"datlocprovider">([](const auto&) { return 'c'; }),
-      Col<"datallowconn">([](const auto&) { return true; }),
-      Col<"datconnlimit">([](const auto&) { return -1; }),
+      Col<"datallowconn">(&catalog::DatabaseCatalogEntry::AllowConnections),
+      Col<"datconnlimit">(&catalog::DatabaseCatalogEntry::ConnLimit),
       Col<"dattablespace">([](const auto&) { return kPgDefaultTablespace; }),
       Col<"datcollate">(kLocale), Col<"datctype">(kLocale),
       Col<"datacl">([](const auto& database) -> const auto& {

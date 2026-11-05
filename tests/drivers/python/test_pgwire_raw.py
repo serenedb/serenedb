@@ -406,6 +406,26 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def test_startup_role_parameter_sets_the_current_role():
+    other = WireConn()
+    try:
+        other.run_ok("CREATE ROLE ns_startup_role")
+        try:
+            m = _startup_collect({"role": "ns_startup_role"})
+            assert "Z" in types(m) and "E" not in types(m), types(m)
+            assert dict(param_status(m)).get("is_superuser") == "off", param_status(m)
+        finally:
+            other.run_ok("DROP ROLE ns_startup_role")
+    finally:
+        other.close()
+
+
+def test_startup_search_path_parameter_applies():
+    m = _startup_collect({"search_path": "pg_catalog"})
+    assert "Z" in types(m) and "E" not in types(m), types(m)
+    assert dict(param_status(m)).get("search_path") == "pg_catalog", param_status(m)
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")
@@ -3609,6 +3629,55 @@ def test_discard_all_in_a_transaction_block_is_25001(conn):
     assert not errors(conn.run("DISCARD ALL"))
 
 
+def _execute_named(conn, name):
+    conn.bind("", name)
+    conn.execute("")
+    conn.sync()
+    return conn.drain_to_ready()
+
+
+def test_transaction_block_rules_follow_the_block_at_execute(conn):
+    other = WireConn()
+    try:
+        _parse_ok(conn, "ns_block_drop", "DROP DATABASE IF EXISTS ns_block_absent")
+        _parse_ok(conn, "ns_block_discard", "DISCARD ALL")
+        other.run_ok("CREATE ROLE ns_block_role")
+        try:
+            m = _execute_named(conn, "ns_block_drop")
+            assert not errors(m), errors(m)
+            assert not errors(_simple(conn, "BEGIN"))
+            assert sqlstates(_execute_named(conn, "ns_block_drop")) == ["25001"]
+            assert not errors(_simple(conn, "ROLLBACK"))
+            m = _execute_named(conn, "ns_block_discard")
+            assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_block_role")
+    finally:
+        other.close()
+
+
+def test_prepared_statement_counts_one_plan_per_execution(conn):
+    other = WireConn()
+    try:
+        conn.run_ok("PREPARE ns_counted AS SELECT 1")
+        _parse_ok(conn, "ns_counted_execute", "EXECUTE ns_counted")
+        other.run_ok("CREATE ROLE ns_counted_role")
+        try:
+            for _ in range(2):
+                m = _execute_named(conn, "ns_counted_execute")
+                assert not errors(m), errors(m)
+        finally:
+            other.run_ok("DROP ROLE ns_counted_role")
+        m = conn.run_ok(
+            "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
+            "WHERE name = 'ns_counted'"
+        )
+        assert all_fields(m) == [b"2", b"0"], all_fields(m)
+    finally:
+        other.close()
+        conn.run_ok("DEALLOCATE ALL")
+
+
 def test_sql_execute_runs_protocol_statement(conn):
     _parse_ok(conn, "ns_exec", "select $1::int4 + 1", oids=(23,))
     m = _simple(conn, "EXECUTE ns_exec(41)")
@@ -3787,3 +3856,37 @@ def test_like_and_similar_to_escape_errors(conn, query, sqlstate, message, hint)
     assert [(e["C"], e["M"], e.get("H")) for e in errors(m)] == [
         (sqlstate, message, hint)
     ]
+
+
+def _int4_array(dims, values):
+    payload = struct.pack("!iii", len(dims), 0, 23)
+    for size in dims:
+        payload += struct.pack("!ii", size, 1)
+    for value in values:
+        payload += struct.pack("!ii", 4, value)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "dims, values, expected",
+    [([2], [7, 9], b"2"), ([3, 0], [], b"0"), ([0x7FFFFFFF, 0], [], b"0")],
+)
+def test_int4_array_binary_param(conn, dims, values, expected):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, values),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == expected
+
+
+@pytest.mark.parametrize("dims", [[0x7FFFFFFF], [0x10000, 0x10000]])
+def test_int4_array_binary_param_with_more_elements_than_bytes(conn, dims):
+    conn.parse("", "select cardinality($1::int4[])", oids=(1007,))
+    conn.bind("", "", params=(_int4_array(dims, [1]),), formats=(1,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert errors(m), m
+    conn.run_ok("select 1")

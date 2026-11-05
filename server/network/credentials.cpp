@@ -24,6 +24,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -53,7 +55,17 @@ std::string Md5Hex(std::string_view data) {
     {reinterpret_cast<const char*>(digest), sizeof(digest)});
 }
 
+std::string SaslPrep(std::string_view password) {
+  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
+  return std::string{password};
+}
+
 }  // namespace
+
+bool PasswordExpired(const Credential& credential) {
+  return credential.valid_until != 0 &&
+         absl::ToUnixMicros(absl::Now()) >= credential.valid_until;
+}
 
 std::optional<std::string> Base64Decode(std::string_view in) {
   std::string out;
@@ -65,11 +77,6 @@ std::optional<std::string> Base64Decode(std::string_view in) {
 
 bool RandomBytes(std::span<uint8_t> out) {
   return RAND_bytes(out.data(), static_cast<int>(out.size())) == 1;
-}
-
-std::string SaslPrep(std::string_view password) {
-  // ASCII passthrough; full RFC 4013 NFKC normalization is a follow-up.
-  return std::string{password};
 }
 
 std::optional<ScramVerifier> BuildScramVerifier(std::string_view password) {

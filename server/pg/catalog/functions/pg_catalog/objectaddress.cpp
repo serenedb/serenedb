@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -39,8 +40,8 @@
 #include <string_view>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
@@ -202,12 +203,12 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
     kind = builtin->kind;
     schema = FindSystemObject(kSystemNamespaces, builtin->nsp)->name;
   } else {
-    const auto* macro = FindMacro(session, oid);
-    if (!macro) {
+    const auto found = FindMacro(session, oid);
+    if (!found.entry) {
       return Missing("routine");
     }
-    kind = macro->macros.front()->is_procedure ? 'p' : 'f';
-    schema = NameOf(*session.transaction, *macro).schema;
+    kind = found.macro->is_procedure ? 'p' : 'f';
+    schema = NameOf(*session.transaction, *found.entry).schema;
   }
   std::string_view type = "function";
   if (kind == 'a') {
@@ -258,7 +259,7 @@ ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
-  const auto roles = auth::RolesOf(session.context);
+  const auto roles = catalog::RolesOf(session.context);
   const std::string name{roles->NameOf(oid)};
   if (name.empty()) {
     return Missing("role");
@@ -454,15 +455,36 @@ std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
       return relation->permissions->acl;
     }
     if (const auto* column = TableColumn(*relation, objsubid)) {
-      return column->Acl();
+      return ColumnAclOf(*relation, *column);
     }
     return std::nullopt;
   }
-  if (classid == kPgProcTable || classid == kPgTypeTable ||
-      classid == kPgNamespaceTable) {
+  if (classid == kPgProcTable) {
+    if (objid < kMaxSystem) {
+      const auto builtins = GetBuiltinFunctions(*session.context);
+      const auto* builtin = builtins->Find(objid);
+      if (const auto granted =
+            builtin ? BuiltinFunctionGrant(*session.context, *builtin)
+                    : nullptr) {
+        return granted->acl;
+      }
+      return std::nullopt;
+    }
+    if (const auto found = FindMacro(session, objid); found.entry) {
+      return found.entry->OverloadPermissions(*found.macro).acl;
+    }
+    return std::nullopt;
+  }
+  if (classid == kPgTypeTable && objid < kMaxSystem) {
+    if (const auto granted = BuiltinTypeGrant(*session.context, objid)) {
+      return granted->acl;
+    }
+    return std::nullopt;
+  }
+  if (classid == kPgTypeTable || classid == kPgNamespaceTable) {
     if (const auto entry = ObjectEntry(session, objid);
         entry && CatalogClassOid(entry->type) == classid) {
-      return entry->permissions.acl;
+      return duckdb::EffectivePermissions(*session.context, *entry).acl;
     }
   }
   return std::nullopt;
@@ -541,7 +563,7 @@ void PgIdentifyObjectFunction(duckdb::DataChunk& args,
 void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto roles = auth::RolesOf(&state.GetContext());
+  const auto roles = catalog::RolesOf(&state.GetContext());
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
       result, args.size());

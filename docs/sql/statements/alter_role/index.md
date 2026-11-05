@@ -47,8 +47,11 @@ Altering a role that does not exist is an error:
 ## Notes
 
 - Changing role attributes requires the `CREATEROLE` attribute (or superuser); only a superuser can grant or remove `SUPERUSER`.
+- Granting or removing `SUPERUSER` reconnects the [foreign servers](../create_server/index.md#servers-owned-by-roles-without-superuser) the role owns under the rules for their new owner, and fails if one of them breaks those rules or cannot connect under them.
 - `PASSWORD NULL` removes the stored password, disabling password authentication for the role.
-- `CONNECTION LIMIT` is accepted and stored but is not currently enforced at connect time.
+- A new `CONNECTION LIMIT` applies to the logins that follow; sessions already open stay open.
+- `SET name = value` stores a parameter default that every new session of the role starts with, before the parameters its client sends; `SET name FROM CURRENT` stores the value the parameter has in the current session; `RESET name`, `SET name TO DEFAULT` and `RESET ALL` remove stored defaults. A role may store defaults for itself and a role with `CREATEROLE` and the `ADMIN` option for the roles it administers, but only a superuser may store or `RESET` a parameter that only a superuser may change, and `RESET ALL` by any other role removes only the defaults that role may change. A session applies each default as if the role ran `SET` itself: a default the role may not set, or whose value is not valid, is skipped with a warning.
+- `ALTER ROLE ALL SET name = value` and `ALTER ROLE ALL RESET name` store and remove defaults for every role in every database; only a superuser may change them, and anyone else gets `permission denied to alter setting`. `ALTER ROLE name IN DATABASE db SET ...` and `ALTER ROLE ALL IN DATABASE db SET ...` store defaults for one database. At login the defaults apply from the widest to the narrowest, each overriding the one before: every role, the database, the role, the role in the database. `pg_db_role_setting` lists them, with `0` for every database or every role.
 
 ## See also
 

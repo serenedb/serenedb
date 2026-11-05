@@ -51,14 +51,16 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | Feature               | Support State | Details                                                      |
 |-----------------------|---------------|--------------------------------------------------------------|
 | CREATE ROLE           | Yes           | See [Database Roles](../security/roles.md) |
-| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, jobs; not databases or functions |
+| OWNER TO              | Yes           | Tables, views, sequences, schemas, types, functions and procedures, databases, text search dictionaries, subscriptions, jobs, foreign servers; see [Ownership](../security/privileges.md#ownership) |
 | ALTER ROLE            | Yes           | Attributes, passwords, `VALID UNTIL`, `RENAME TO` |
 | GRANT                 | Yes           | Privileges and role membership, incl. column grants; see [Privileges](../security/privileges.md) |
 | REVOKE                | Yes           | Incl. `GRANT OPTION FOR` |
 | SET ROLE              | Yes           | Enforced; membership required for non-superusers |
 | INHERIT               | Yes           | `INHERIT`/`NOINHERIT` attributes enforced |
-| ALTER DEFAULT PRIVILEGES | Yes        |                                                     |
-| Row Security Policies | No            | See [issue](https://github.com/serenedb/serenedb/issues/212) |
+| ALTER DEFAULT PRIVILEGES | Yes        | Applied to the objects the role creates afterwards, in the whole database or in one schema |
+| REASSIGN OWNED        | Yes           | Objects in the current database, databases and subscriptions; see [Dropping roles](../security/roles.md#dropping-roles) |
+| DROP OWNED            | Yes           | Objects in the current database; privileges in it and on databases; see [Dropping roles](../security/roles.md#dropping-roles) |
+| Row Security Policies | No            | `CREATE POLICY`, `ALTER POLICY`, `DROP POLICY` and `ALTER TABLE ... ROW LEVEL SECURITY` fail with `row-level security is not supported` |
 
 ### Indexes
 | Feature                 | Support State | Details                                                     |
@@ -81,7 +83,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | search_path                | Yes           |              |
 | Table Inheritance          | No            |                                                                |
 | Table Partitioning         | No            |                                                                |
-| Foreign Data Wrappers      | No            |                                                                |
+| Foreign Data Wrappers      | Partial       | Built-in wrappers for [`CREATE SERVER`](../sql/statements/create_server/index.md), with `GRANT USAGE ON FOREIGN DATA WRAPPER`; no `CREATE FOREIGN DATA WRAPPER`, user mappings or foreign tables |
 | Views                      | Yes           |      |
 | Databases                  | Yes           |  |
 | Scheduled Jobs             | Yes           | SereneDB extension, not PostgreSQL syntax: [`CREATE JOB`](../sql/statements/create_job/index.md) |
@@ -834,8 +836,8 @@ The `jsonb` type is a `json` value that keeps its text as written (see [`jsonb`]
 | acldefault                         | Yes           | Also `aclexplode` |
 | makeaclitem                        | Yes           |  |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
-| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
-| has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
+| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `duckdb_fdw`, `iceberg_fdw`, `postgres_fdw` and `serenedb_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| has_parameter_privilege            | Yes           | Reads the grants of `GRANT SET` and `GRANT ALTER SYSTEM ON PARAMETER` |
 | has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
 | pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |
 | unicode_version                    | Yes           | Also `icu_unicode_version` and `unicode_assigned`; both versions are `17.0` |

@@ -32,7 +32,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -44,7 +43,6 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
@@ -456,27 +454,14 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_IF_FAILURE("setup_connection_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  duckdb::idx_t database_id = 0;
-  duckdb::Permissions permissions;
-  if (!catalog::ReadDatabase(
-        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
-          database_id = database.oid;
-          permissions = database.permissions;
-        })) {
-    WriteFatalResponse(this->_send,
-                       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
-                                      ERR_MSG("database \"", DatabaseName(),
-                                              "\" is not accessible")));
-    return false;
-  }
-
   const std::string_view user = UserName();
-  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
+  auto login = sdb::pg::RequireLoginRole(user, DatabaseName());
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
   }
   const auto role = login.role;
+  const auto database_id = login.database;
   const bool superuser = login.superuser;
 
   _conn = irs::DuckDBEngine::Instance().CreateConnection();
@@ -530,12 +515,11 @@ bool PgWireSession<Kind>::SetupConnection() {
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
+  _connection_ctx->ApplyRoleSettings();
 
   const auto apply = [&](const std::string& name, const std::string& value) {
     try {
-      _connection_ctx->SetSettingChecked(name, value, false);
-    } catch (const duckdb::InternalException&) {
-      _connection_ctx->SetSetting(name, value, false);
+      _connection_ctx->SetSettingChecked(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -915,16 +899,10 @@ void PgWireSession<Kind>::WriteCommandTag(
   WriteCommandComplete(this->_send, prepared, rows);
 }
 
-// Capture the client's peer IP once, before auth. Unix sockets and capture
-// failures leave _peer_addr unspecified (no IP). A v4-mapped-v6 address is
-// normalized back to IPv4 so HBA family-strict matching stays PG-faithful and
-// is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind != SocketKind::Unix && Kind != SocketKind::Client) {
-    if (const auto address = this->ClientAddress()) {
-      _peer_addr = *address;
-    }
+  if (const auto address = this->ClientAddress()) {
+    _peer_addr = *address;
   }
 }
 
@@ -966,12 +944,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return closure->IsMember(group_oid);
+    return catalog::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(
+      group_oid);
   };
 
   hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
+  client.is_local = Kind == SocketKind::Unix && !this->_proxy_client;
   client.is_ssl = this->_socket.IsTls();
   client.is_gss = false;
   if (!_peer_addr.is_unspecified()) {
@@ -1033,12 +1011,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  // Method (from HBA) x stored form, matching PostgreSQL:
-  //  scram    : only a SCRAM secret works (md5 storage cannot do SCRAM).
-  //  md5      : an md5 secret drives an md5 exchange; a SCRAM secret falls back
-  //             to SCRAM (PG's md5-line-over-scram-password behavior); a
-  //             cleartext (flag) secret is hashed to the md5 form.
-  //  password : cleartext exchange verified against whatever is stored.
   bool ok = false;
   bool method_ok = true;
   if (hba_method == hba::Method::Scram) {
@@ -1052,9 +1024,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
       ok = co_await AuthenticateMd5(*credential->md5);
     } else if (credential->scram) {
       ok = co_await AuthenticateScram(*credential->scram);
-    } else if (credential->cleartext) {
-      ok = co_await AuthenticateMd5(
-        BuildMd5Verifier(UserName(), *credential->cleartext));
     } else {
       method_ok = false;
     }
@@ -1077,14 +1046,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  int64_t valid_until = 0;
-  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
-    if (role.HasValidUntil()) {
-      valid_until = role.ValidUntil();
-    }
-  });
-  if (valid_until != 0 &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
+  if (PasswordExpired(*credential)) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -1130,14 +1092,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
   const std::string given{payload};
   _frames.Consume(frame);
   bool ok = false;
-  if (credential.cleartext) {
-    const std::string given_prepared = SaslPrep(given);
-    const std::string want = SaslPrep(*credential.cleartext);
-    ok = ConstantTimeEqual(
-      {reinterpret_cast<const uint8_t*>(given_prepared.data()),
-       given_prepared.size()},
-      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
-  } else if (credential.scram) {
+  if (credential.scram) {
     ok = VerifyCleartextAgainstScram(*credential.scram, given);
   } else if (credential.md5) {
     ok = VerifyCleartextAgainstMd5(*credential.md5, UserName(), given);
@@ -2599,8 +2554,6 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   // cursor survives across Flush (which does not commit) but not Sync, as in
   // postgres. A leading BEGIN/COMMIT/ROLLBACK is excluded: it must reach the
   // transaction operator itself, not run wrapped in our block.
-  _connection_ctx->SetInTransactionBlock(
-    !this->_conn->context->transaction.IsAutoCommit());
   if (prepared.GetStatementType() !=
       duckdb::StatementType::TRANSACTION_STATEMENT) {
     _txn_state->Arm();
@@ -2855,9 +2808,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Negotiate() {
       co_return false;
     }
 
-    // PostgreSQL requires a non-empty user name in the startup packet; the role
-    // itself is verified later (once RBAC lands) via the CredentialProvider
-    // seam.
     const auto user = _params.find("user");
     if (user == _params.end() || user->second.empty()) {
       WriteFatalResponse(
@@ -3142,6 +3092,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     }
 
     _dispatch_consume = frame.recv_consume;
+    _connection_ctx->SetInTransactionBlock(
+      !this->_conn->context->transaction.IsAutoCommit());
     try {
       switch (type) {
         case PQ_MSG_QUERY:

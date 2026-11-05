@@ -38,6 +38,7 @@
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/enums/statement_type.hpp>
 #include <duckdb/common/types/timestamp.hpp>
@@ -101,12 +102,18 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, std::string_view index) {
-  return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    context,
-    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
-                          duckdb::Identifier{kEsSchema},
-                          duckdb::Identifier{index}},
+  auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::QualifiedName{
+        duckdb::DatabaseManager::GetDefaultDatabase(context),
+        duckdb::Identifier{kEsSchema}, duckdb::Identifier{index}}},
     duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return nullptr;
+  }
+  context.CheckEntryReference(context.CurrentRole(), *entry);
+  return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
 // Every inverted index over `table`, taken off the schema entry the table
@@ -388,17 +395,27 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-  {
+  const auto owner = GetSereneDBContext(context).GetRoleId();
+  auto binder = duckdb::Binder::CreateBinder(context);
+  if (!EsSchema(context)) {
+    binder->RequireDatabasePrivilege(db_catalog.GetName(),
+                                     duckdb::AclMode::Create);
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    binder->AssignOwner(info.permissions, db_catalog,
+                        duckdb::CatalogType::SCHEMA_ENTRY, nullptr, owner);
     db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
+  auto& schema = *EsSchema(context);
+  binder->RequireSchemaCreate(schema);
 
   auto options = duckdb::make_uniq<duckdb::CreateTableInfo>();
   options->SetTableName(duckdb::Identifier{data.index});
   options->SetSchema(duckdb::Identifier{kEsSchema});
   options->on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  binder->AssignOwner(options->permissions, db_catalog,
+                      duckdb::CatalogType::TABLE_ENTRY, &schema, owner);
   std::vector<std::string_view> text_columns;
 
   auto add_column = [&](std::string_view name, duckdb::LogicalType type) {
@@ -454,11 +471,15 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  if (!duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-        context, qname, duckdb::OnEntryNotFound::RETURN_NULL)) {
+  auto binder = duckdb::Binder::CreateBinder(context);
+  auto table = binder->EntryRetriever().GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
+  binder->RequireOwner(*table);
   duckdb::DropInfo drop;
   drop.type = duckdb::CatalogType::TABLE_ENTRY;
   drop.SetQualifiedName(qname);
@@ -564,8 +585,8 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     // index set from inside the relation set's own walk.
     std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
     if (auto schema = EsSchema(context)) {
-      schema->Scan(
-        context, duckdb::CatalogType::TABLE_ENTRY,
+      duckdb::Catalog::ScanListedEntries(
+        context, *schema, duckdb::CatalogType::TABLE_ENTRY,
         [&](duckdb::CatalogEntry& entry) {
           if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
             tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
@@ -1410,6 +1431,11 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
+  const auto& role = context.CurrentRole();
+  const auto may_maintain = [&](const duckdb::TableCatalogEntry& table) {
+    return role.Can(duckdb::CatalogType::TABLE_ENTRY, table.permissions,
+                    duckdb::AclMode::Maintain);
+  };
   auto refresh_table = [&](duckdb::TableCatalogEntry& table) {
     VisitInvertedIndexes(context, table, [&](duckdb::DuckIndexEntry& index) {
       if (const auto& storage =
@@ -1435,13 +1461,18 @@ void EsRefreshExecute(duckdb::ClientContext& context,
         });
     }
     for (auto table : tables) {
-      refresh_table(table.get());
+      if (may_maintain(table.get())) {
+        refresh_table(table.get());
+      }
     }
   } else {
     auto table = FindEsTable(context, data.index);
     if (!table) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                       ERR_MSG("no such index [", data.index, "]"));
+    }
+    if (!may_maintain(*table)) {
+      duckdb::ThrowPermissionDenied(*table);
     }
     refresh_table(*table);
   }

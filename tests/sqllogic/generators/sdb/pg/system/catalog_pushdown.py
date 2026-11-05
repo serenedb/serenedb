@@ -12,7 +12,7 @@ TEXT = {"kName", "kText", "kChar", "kPgNodeTree", "kCharacterData", "kSqlIdentif
         "kYesOrNo"}
 NUMBER = {"kInt2", "kInt4", "kInt8", "kOid", "kRegproc", "kXid", "kCardinalNumber"}
 GLOBAL = {"pg_authid", "pg_auth_members", "pg_database", "pg_db_role_setting",
-          "pg_default_acl", "pg_shdepend", "pg_foreign_server"}
+          "pg_default_acl", "pg_shdepend", "pg_foreign_server", "pg_replication_origin"}
 LIVE = {"sdb_progress"}
 STABLE = {"sdb_metrics": "metric, description, relation_id"}
 ROLES = "('spd_role'::regrole, 'spd_member'::regrole)"
@@ -24,6 +24,7 @@ SCOPED = {
     "pg_default_acl": "defaclacl::text LIKE '%spd_role%'",
     "pg_shdepend": f"refobjid IN {ROLES}",
     "pg_foreign_server": "srvname = 'spd_srv'",
+    "pg_replication_origin": "roname IN (SELECT 'pg_' || oid FROM pg_subscription WHERE subname = 'spd_sub')",
 }
 
 FIXTURE = [
@@ -240,9 +241,9 @@ t = Test("A filter a system relation evaluates while it scans returns the rows t
          "sdb_progress shows operations as they run and sdb_metrics counts them, so the "
          "first is left out and the second compared on the columns that stay put while a "
          "statement runs; the catalogs every database of the server shares show the "
-         "databases, roles, settings, default privileges and servers that files running "
-         "alongside create and drop, so they are compared on the rows of this file's own "
-         "database and objects.")
+         "databases, roles, settings, default privileges, servers and replication origins "
+         "that files running alongside create and drop, so they are compared on the rows of "
+         "this file's own database and objects.")
 for sql in FIXTURE:
     t.statement(sql)
 local = [r for r in relations() if r[0] not in GLOBAL]

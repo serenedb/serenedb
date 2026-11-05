@@ -751,3 +751,103 @@ DROP ROLE ccd_role_race;
 connection s1
 statement ok
 DROP TABLE ccd_role_t;
+
+
+statement ok
+CREATE ROLE ccd_role_late;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+DROP ROLE ccd_role_late;
+
+
+connection s1
+statement ok
+CREATE DATABASE ccd_late_db;
+
+
+connection s1
+statement ok
+CREATE TABLE ccd_late_db.public.ccd_late_t(a INTEGER);
+
+
+connection s1
+statement ok
+GRANT SELECT ON ccd_late_db.public.ccd_late_t TO ccd_role_late;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "ccd_role_late" because a dependency was created after the transaction started
+
+
+connection s1
+statement ok
+REVOKE SELECT ON ccd_late_db.public.ccd_late_t FROM ccd_role_late;
+
+
+connection s1
+statement ok
+DROP ROLE ccd_role_late;
+
+
+connection s1
+statement ok
+DROP DATABASE ccd_late_db;
+
+
+statement ok
+CREATE ROLE ccd_role_connect;
+
+
+statement ok
+CREATE DATABASE ccd_connect_db;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+DROP ROLE ccd_role_connect;
+
+
+connection s1
+statement ok
+GRANT CONNECT ON DATABASE ccd_connect_db TO ccd_role_connect;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "ccd_role_connect" because a dependency was created after the transaction started
+
+
+connection s1
+statement error
+DROP ROLE ccd_role_connect;
+----
+db error: ERROR: Cannot drop entry "ccd_role_connect" because there are entries that depend on it.
+database "ccd_connect_db" depends on role "ccd_role_connect".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection s1
+statement ok
+DROP DATABASE ccd_connect_db;
+
+
+connection s1
+statement ok
+DROP ROLE ccd_role_connect;

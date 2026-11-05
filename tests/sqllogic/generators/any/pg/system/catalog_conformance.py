@@ -13,8 +13,7 @@ CAUSES = {
     "index_am": "SereneDB indexes use access methods of their own",
     "index_desc": "CREATE INDEX drops DESC",
     "numeric": "A bare numeric is DECIMAL(38,10)",
-    "owner": "The bootstrap superuser has oid 16384, not 10, and public belongs to postgres, not "
-             "pg_database_owner",
+    "owner": "The bootstrap superuser has oid 16384, not 10",
     "pgonly": "Identity columns, referential actions, PL/pgSQL and DDL ORMs emit are not supported, and a jsonb column "
               "is json",
     "quoted_keywords": "quote_ident, regclass and regtype quote words only DuckDB reserves",
@@ -250,9 +249,8 @@ FROM pg_catalog.pg_tablespace
 ORDER BY oid""")
 check(f'''SELECT oid::regnamespace::text AS oid, nspname, pg_catalog.pg_get_userbyid(nspowner) AS nspowner, {acl("nspacl")}
 FROM pg_catalog.pg_namespace
-WHERE (oid IN {oids(MAIN)} OR nspname IN ('pg_catalog', 'public', 'information_schema'))
-  AND oid::regnamespace::text @NOT IN ('public')
-ORDER BY oid::regnamespace::text COLLATE "C"''', "owner")
+WHERE oid IN {oids(MAIN)} OR nspname IN ('pg_catalog', 'public', 'information_schema')
+ORDER BY oid::regnamespace::text COLLATE "C"''')
 
 
 def pg_class(scope):
@@ -495,9 +493,8 @@ WHERE inhrelid IN {relations(MAIN)} OR inhparent IN {relations(MAIN)}""")
 check(f'''SELECT {db("catalog_name")}, schema_name, schema_owner, {db("default_character_set_catalog")},
   default_character_set_schema, default_character_set_name, sql_path
 FROM information_schema.schemata
-WHERE (schema_name IN {quoted(MAIN)} OR schema_name IN ('pg_catalog', 'information_schema'))
-  AND schema_name @NOT IN ('public')
-ORDER BY schema_name::text COLLATE "C"''', "owner")
+WHERE schema_name IN {quoted(MAIN)} OR schema_name IN ('pg_catalog', 'information_schema')
+ORDER BY schema_name::text COLLATE "C"''')
 check(f'''SELECT {db("table_catalog")}, table_schema, table_name, table_type, self_referencing_column_name,
   reference_generation, {db("user_defined_type_catalog")}, user_defined_type_schema, user_defined_type_name,
   is_insertable_into, is_typed, commit_action
@@ -921,8 +918,7 @@ check('''SELECT q.c1::regnamespace::text AS oid, q.c2::regnamespace::text AS oid
 SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n left outer join pg_catalog.pg_description d on d.objoid=n.oid and d.objsubid=0 and d.classoid='pg_namespace'::regclass WHERE n.nspname NOT LIKE 'pg_temp%' AND n.nspname NOT LIKE 'pg_toast_temp%' ORDER BY nspname
 ) q(c1, c2, c3, c4, c5, c6)
 WHERE q.c3 IS DISTINCT FROM 'pg_toast'
-  AND q.c3 @NOT IN ('public')
-ORDER BY q.c3::text COLLATE "C"''', "owner")
+ORDER BY q.c3::text COLLATE "C"''')
 check('''SELECT q.c1::regclass::text AS oid, q.c2::regclass::text AS oid, q.c3 AS relname,
   q.c4::regnamespace::text AS relnamespace, q.c5::regtype::text AS reltype, q.c6 AS reloftype,
   pg_catalog.pg_get_userbyid(q.c7) AS relowner, q.c8 AS relam, q.c10 AS reltablespace, q.c16 AS relhasindex,
@@ -1736,8 +1732,7 @@ FROM pg_catalog.pg_namespace n
 WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
 ORDER BY 1
 ) q
-WHERE q."Name" @NOT IN ('public')
-ORDER BY q."Name"::text COLLATE "C"''', "owner")
+ORDER BY q."Name"::text COLLATE "C"''')
 check(r'''SELECT q."Schema", q."Name", q."Type",
   trim(regexp_replace(q."Access privileges", '[[:space:]]+', ' ', 'g')) AS "Access privileges", q."Column privileges",
   q."Policies" FROM (
@@ -1859,16 +1854,15 @@ pgonly("CREATE FUNCTION pgonly.touch() RETURNS trigger LANGUAGE plpgsql AS $$ BE
        'language "plpgsql" is not supported')
 pgonly("CREATE TRIGGER parent_touch BEFORE UPDATE ON pgonly.parent FOR EACH ROW EXECUTE FUNCTION pgonly.touch()",
        'syntax error at or near "EXECUTE"')
-pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY",
-       "Pragma Function with name serenedb_alter_table_row_security does not exist!")
+pgonly("ALTER TABLE pgonly.parent ENABLE ROW LEVEL SECURITY", "row-level security is not supported")
 pgonly("CREATE POLICY parent_reader ON pgonly.parent FOR SELECT TO conf_reader USING (id > 0)",
-       "Pragma Function with name serenedb_create_policy does not exist!")
+       "row-level security is not supported")
 pgonly("COMMENT ON SCHEMA pgonly IS 'Objects SereneDB cannot create yet'", "Adding comments to schemas is not implemented")
 pgonly("COMMENT ON CONSTRAINT identity_tab_qty_check ON pgonly.identity_tab IS 'Allowed quantities'",
        'syntax error at or near "CONSTRAINT"')
-pgonly("COMMENT ON FUNCTION pgonly.touch() IS 'Trigger function'", 'syntax error at or near "\\("')
+pgonly("COMMENT ON FUNCTION pgonly.touch() IS 'Trigger function'", "Macro Function with name touch does not exist!")
 pgonly("CREATE FOREIGN DATA WRAPPER conf_fdw", 'syntax error at or near "FOREIGN"')
-pgonly("CREATE SERVER conf_srv FOREIGN DATA WRAPPER conf_fdw", "LOAD is not supported by SereneDB")
+pgonly("CREATE SERVER conf_srv FOREIGN DATA WRAPPER conf_fdw", 'foreign-data wrapper "conf_fdw" does not exist')
 
 for dump in (pg_class, pg_attribute, pg_attribute_types, pg_type, pg_constraint, pg_sequence, pg_description, pg_depend,
              pg_shdepend, pg_trigger, pg_proc, columns, column_types):

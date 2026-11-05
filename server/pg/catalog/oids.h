@@ -75,6 +75,8 @@ inline constexpr std::array kForeignDataWrappers{
   SystemObject{kMinSystem + 500, "clickhouse_fdw"},
   SystemObject{kMinSystem + 501, "iceberg_fdw"},
   SystemObject{kMinSystem + 502, "postgres_fdw"},
+  SystemObject{kMinSystem + 503, "duckdb_fdw"},
+  SystemObject{kMinSystem + 504, "serenedb_fdw"},
 };
 
 inline constexpr std::array kSystemNamespaces{

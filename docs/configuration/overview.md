@@ -79,6 +79,12 @@ SereneDB has a [Secrets manager](../sql/statements/create_secret/index.md), whic
 
 The Scope column gives the scope a plain `SET` changes: a `GLOBAL` option changes for every session on the server, a `SESSION` option only for the current session. `SET GLOBAL`, `SET SESSION` and `SET LOCAL` name the [scope](../sql/statements/set/index.md#scopes) explicitly, for the options that take it. The options are grouped by the part of the system they affect.
 
+Who may change an option:
+
+- Changing an option for every session (`SET GLOBAL`, `RESET GLOBAL`, a plain `SET` or `RESET` of a `GLOBAL` option, `set_config` of one) requires a superuser; anyone else gets `permission denied to set parameter`.
+- For a single session, anyone may change the options whose `context` in `pg_settings` is `user`: query behavior, output formats, planner and search tuning, and the defaults of index and table options. Every other option can be set or reset only by a superuser, also for a single session, while `RESET ALL` returns it to its default for anyone: among them the options that name server files or control logging and profiling output (`allowed_directories`, `allowed_paths`, `enable_logging`, `enabled_log_types`, `file_search_path`, `home_directory`, `log_query_path`, `logging_level`, `logging_storage`, `profiling_output`, `secret_directory`), the `debug_*` options, storage and checkpoint options such as `auto_checkpoint_skip_wal_threshold`, the AI default secrets (`sdb_ai_text_default_secret`, `sdb_ai_embedding_default_secret`, `sdb_ai_system_one_default_secret`), `sdb_ai_allow_insecure_endpoint`, and the options of the database connectors and object stores (for example `s3_region` or `s3_secret_access_key`).
+- The connector and object store options and `http_proxy_username` and `http_proxy_password` hold credentials, `hba` holds the authentication rules, and the options that name server directories and files (`temp_directory`, `secret_directory`, `home_directory`, `file_search_path`, `log_query_path`, `profiling_output`, `allowed_directories`, `allowed_paths` and the extension directories) show where the server keeps its data: only a superuser or a member of `pg_read_all_settings` can read them (`current_setting`, `SHOW`), and listings such as `duckdb_settings()` and `pg_settings` leave them out for everyone else.
+
 To search the reference rather than read it, query the catalog -- every option on this page is a `setting` object:
 
 ```sql
@@ -297,7 +303,9 @@ Authentication, authorization and what the server is allowed to reach.
 | `allow_unsigned_extensions` | Allow to load extensions with invalid or missing signatures | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc) | `BOOLEAN` | `GLOBAL` | `true` |
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
+| `createrole_self_grant` | When a role with `CREATEROLE` creates a role, also grant the new role to the creator with these options: `set`, `inherit` or both, separated by commas. Empty, the default, grants only the `ADMIN OPTION` every creator gets. See [Grantors](../security/role_membership.md#grantors). | `VARCHAR` | `SESSION` |  |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
+| `password_encryption` | How `CREATE ROLE` and `ALTER ROLE` store a password given in cleartext: `scram-sha-256` stores a SCRAM-SHA-256 verifier, `md5` an MD5 hash, which only `md5` authentication accepts. A password given already hashed is stored as it is. | `VARCHAR` | `SESSION` | `scram-sha-256` |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
 | `secret_directory` | Set the directory to which persistent secrets are stored | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
 

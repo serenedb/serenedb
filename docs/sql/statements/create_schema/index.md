@@ -32,6 +32,8 @@ Compute a join between tables from two schemas:
 
 <SqlLogicTest id="sql/statements/create_schema/index/example_005" />
 
+`AUTHORIZATION role` makes `role` the owner of the new schema; the creating role must be able to `SET ROLE` to it. Without a schema name, the schema is named after the role. `CURRENT_USER`, `CURRENT_ROLE` and `SESSION_USER` name the role the session acts as or logged in as.
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

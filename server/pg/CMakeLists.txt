@@ -1,4 +1,3 @@
-add_subdirectory(commands)
 target_sources(
     sereneserver
     PRIVATE
@@ -51,12 +50,14 @@ target_sources(
         catalog/tables/pg_catalog/pg_language.cpp
         catalog/tables/pg_catalog/pg_namespace.cpp
         catalog/tables/pg_catalog/pg_opclass.cpp
+        catalog/tables/pg_catalog/pg_parameter_acl.cpp
         catalog/tables/pg_catalog/pg_proc.cpp
         catalog/tables/pg_catalog/pg_range.cpp
         catalog/tables/pg_catalog/pg_replication_origin.cpp
         catalog/tables/pg_catalog/pg_rewrite.cpp
         catalog/tables/pg_catalog/pg_sequence.cpp
         catalog/tables/pg_catalog/pg_shdepend.cpp
+        catalog/tables/pg_catalog/pg_shdescription.cpp
         catalog/tables/pg_catalog/pg_subscription.cpp
         catalog/tables/pg_catalog/pg_subscription_rel.cpp
         catalog/tables/pg_catalog/pg_tablespace.cpp
@@ -70,6 +71,7 @@ target_sources(
         catalog/utils/columns.cpp
         catalog/utils/lookup.cpp
         catalog/utils/session.cpp
+        catalog/views/information_schema/foreign_server_options.cpp
         catalog/views/information_schema/triggers.cpp
         catalog/views/pg_catalog/pg_stat_progress_basebackup.cpp
         catalog/views/pg_catalog/pg_stat_progress_create_index.cpp

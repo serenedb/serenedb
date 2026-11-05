@@ -4,12 +4,6 @@ control substitution on
 # GRANT is persisted through the catalog-definition path and re-synthesized
 # byte-identically on reload, and the real RBAC check (has_table_privilege)
 # gives the same answers after recovery as before.
-#
-# Vedernikoff audits the clickclack ledger. iceberg (a non-superuser group)
-# gets SELECT,INSERT; PUBLIC gets SELECT WITH GRANT OPTION. The owner self-grant
-# (postgres=arwdDxtm, no '*' -- owner goptions are implicit, not stored), the
-# iceberg entry (ar), and the PUBLIC entry ('' grantee, r*) must all re-render
-# identically after the crash.
 
 statement ok
 DROP TABLE IF EXISTS rbac_acl_tg_ledger;
@@ -32,23 +26,21 @@ CREATE ROLE rbac_acl_tg_iceberg LOGIN;
 
 
 statement ok
-GRANT SELECT, INSERT ON rbac_acl_tg_ledger TO rbac_acl_tg_iceberg;
+GRANT SELECT, INSERT ON rbac_acl_tg_ledger TO rbac_acl_tg_iceberg WITH GRANT OPTION;
 
 
 statement ok
-GRANT SELECT ON rbac_acl_tg_ledger TO PUBLIC WITH GRANT OPTION;
+GRANT SELECT ON rbac_acl_tg_ledger TO PUBLIC;
 
 
-# relacl BEFORE the crash: owner self-grant (all table privs, no '*'),
-# iceberg=ar, PUBLIC ('')=r* (grant option). Unnest sorted for determinism.
 query
 SELECT unnest(relacl::text[]) AS e FROM pg_class
 WHERE relname = 'rbac_acl_tg_ledger' ORDER BY e;
 ----
 e
-=r*/postgres
+=r/postgres
 postgres=arwdDxtm/postgres
-rbac_acl_tg_iceberg=ar/postgres
+rbac_acl_tg_iceberg=a*r*/postgres
 
 
 query
@@ -85,9 +77,9 @@ SELECT unnest(relacl::text[]) AS e FROM pg_class
 WHERE relname = 'rbac_acl_tg_ledger' ORDER BY e;
 ----
 e
-=r*/postgres
+=r/postgres
 postgres=arwdDxtm/postgres
-rbac_acl_tg_iceberg=ar/postgres
+rbac_acl_tg_iceberg=a*r*/postgres
 
 
 # has_table_privilege gives the same answers after recovery.

@@ -115,8 +115,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   };
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {
-    schema.get().Scan(
-      context, duckdb::CatalogType::JOB_ENTRY,
+    duckdb::Catalog::ScanListedEntries(
+      context, schema.get(), duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
         result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
@@ -206,12 +206,27 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   absl::flat_hash_set<duckdb::idx_t> databases;
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    databases.insert(database->oid);
-  }
-  for (auto& run : scheduler->GetHistory()) {
-    if (databases.contains(run.database_oid)) {
-      result->runs.emplace_back(std::move(run));
+    if (context.CanSeeDatabase(*database)) {
+      databases.insert(database->oid);
     }
+  }
+  const bool superuser = context.CurrentRole().is_superuser;
+  for (auto& run : scheduler->GetHistory()) {
+    if (!databases.contains(run.database_oid)) {
+      continue;
+    }
+    if (!superuser) {
+      auto job = duckdb::Catalog::GetEntry(
+        context,
+        duckdb::EntryLookupInfo{
+          duckdb::CatalogType::JOB_ENTRY,
+          duckdb::QualifiedName{run.catalog, run.schema, run.name}},
+        duckdb::OnEntryNotFound::RETURN_NULL);
+      if (!job || !context.CanSee(*job)) {
+        continue;
+      }
+    }
+    result->runs.emplace_back(std::move(run));
   }
   return result;
 }
@@ -258,7 +273,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  duckdb::Binder::RegisterEntryRead(input.binder, context, *entry);
+  input.binder->RequireOwner(*entry);
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

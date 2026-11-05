@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -52,15 +53,16 @@ namespace {
 
 catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
                                           std::string_view dict_name) {
-  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(dict_name),
+  auto dict = duckdb::CatalogEntryRetriever{context}.GetEntry(
+    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
+                            duckdb::QualifiedName::Parse(dict_name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("text search dictionary \"", dict_name, "\" does not exist"));
   }
-  return dict->GetTokenizer();
+  return dict->Cast<catalog::TokenizerCatalogEntry>().GetTokenizer();
 }
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(

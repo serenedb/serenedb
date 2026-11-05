@@ -65,18 +65,17 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/await_on.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
 #include "network/server.h"
-#include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
+#include "pg/types/pg_lsn.h"
 #include "replication/repl_source.h"
 #include "replication/settings.h"
 

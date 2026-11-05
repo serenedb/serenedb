@@ -166,8 +166,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                                         : duckdb::idx_t{0};
     }),
     Col<"reltype">(&RelationRowType),
-    Col<"relacl">([](const auto& relation) -> const auto& {
-      return relation.permissions.acl;
+    Col<"relacl">([](const auto& relation, SystemScan& scan) -> const auto& {
+      return duckdb::EffectivePermissions(scan.Context(), relation).acl;
     }));
 
   static constexpr auto kOrdinary = Shape<kSql, const Ordinary>(
@@ -278,8 +278,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         }
         return absl::StrSplit(system->options, ',');
       }),
-    Col<"relacl">(
-      [](const auto& view) -> const auto& { return view.permissions.acl; }));
+    Col<"relacl">([](const auto& view, SystemScan& scan) -> const auto& {
+      return duckdb::EffectivePermissions(scan.Context(), view).acl;
+    }));
 
   static constexpr auto kSequence =
     Shape<kSql, const duckdb::SequenceCatalogEntry>(

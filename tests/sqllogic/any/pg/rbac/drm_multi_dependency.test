@@ -174,7 +174,8 @@ db error: ERROR: Cannot drop entry "dmd_vedernikoff" because there are entries t
 statement error
 REVOKE SELECT ON drm_mop FROM dmd_vedernikoff RESTRICT;
 ----
-db error: ERROR: dependent privileges exist<slt:ignore>
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # DROP ROLE is therefore still refused after the failed revoke (nothing changed).

@@ -231,7 +231,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       !IndexNameTaken(context, *_info, _relation)) {
     auto& search_table = _relation.Cast<catalog::SearchTableEntry>();
     search_table.Storage()->ClaimLayout(context,
-                                        search_table.name.GetIdentifierName());
+                                        search_table.name.GetIdentifierName(),
+                                        search::TableChange::Layout);
   }
   if (IsReindexPass()) {
     // The pass carries the index's name, resolved in the schema the statement

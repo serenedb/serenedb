@@ -702,21 +702,32 @@ void Store::MergeIndexConfig(
     _layout.building_index);
 }
 
-void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name) {
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->ClaimSearchLayout(
-      shared_from_this(),
-      duckdb::MetaTransaction::Get(context).global_transaction_id, name);
+void Store::ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                        TableChange change) {
+  auto* connection = connector::GetSereneDBContextPtr(context);
+  if (!connection) {
+    SDB_ASSERT(change == TableChange::Layout);
+    return;
   }
+  if (change == TableChange::Schema &&
+      connection->SearchTxn().HasWritesFor(GetId())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG("ALTER TABLE on a search-backed table cannot run in a "
+              "transaction that has already written to \"",
+              name, "\""));
+  }
+  connection->ClaimSearchLayout(
+    shared_from_this(),
+    duckdb::MetaTransaction::Get(context).global_transaction_id, name, change);
 }
 
-bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name) {
+bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
+                          TableChange change) {
   SDB_ASSERT(owner != kNoLayoutOwner);
   absl::MutexLock lock{&_layout_mutex};
-  if (_layout.owner == owner) {
-    return false;
-  }
-  if (_layout.owner != kNoLayoutOwner) {
+  const bool acquired = _layout.owner != owner;
+  if (acquired && _layout.owner != kNoLayoutOwner) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_OBJECT_IN_USE),
       ERR_MSG("search table \"", name,
@@ -724,40 +735,32 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name) {
       ERR_HINT("Retry once that transaction commits or rolls back."));
   }
   _layout.owner = owner;
-  return true;
+  if (change == TableChange::Schema) {
+    SDB_ASSERT(IsSearchTable());
+    if (!_layout.schema_undo) {
+      _layout.schema_undo = SchemaUndo{
+        .epoch = _schema_epoch.load(),
+        .table_columns = *_table_columns,
+        .compression = _compression,
+      };
+    }
+    _schema_epoch.fetch_add(1);
+  }
+  return acquired;
 }
 
-void Store::ReleaseLayout(duckdb::transaction_t owner) noexcept {
+void Store::ReleaseLayout(duckdb::transaction_t owner,
+                          bool committed) noexcept {
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
   _layout.owner = kNoLayoutOwner;
-  if (auto undo = std::exchange(_layout.schema_undo, std::nullopt)) {
+  auto undo = std::exchange(_layout.schema_undo, std::nullopt);
+  if (undo && !committed) {
     _schema_epoch.store(undo->epoch);
     _table_columns = std::move(undo->table_columns);
     _compression = std::move(undo->compression);
     RebuildConfig(_layout.configs, _layout.building_index);
   }
-}
-
-uint64_t Store::BeginSchemaChange(duckdb::transaction_t owner) {
-  absl::MutexLock lock{&_layout_mutex};
-  SDB_ASSERT(_layout.owner == owner);
-  const auto epoch = _schema_epoch.load();
-  if (!_layout.schema_undo) {
-    _layout.schema_undo = SchemaUndo{
-      .epoch = epoch,
-      .table_columns = *_table_columns,
-      .compression = _compression,
-    };
-  }
-  _schema_epoch.store(epoch + 1);
-  return epoch + 1;
-}
-
-void Store::KeepSchemaChange(duckdb::transaction_t owner) noexcept {
-  absl::MutexLock lock{&_layout_mutex};
-  SDB_ASSERT(_layout.owner == owner);
-  _layout.schema_undo.reset();
 }
 
 void Store::AddTableColumns(const duckdb::ColumnList& columns) {

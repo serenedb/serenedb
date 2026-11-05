@@ -730,7 +730,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 void InvertedIndexEntry::BeforeDrop(duckdb::CatalogTransaction transaction) {
   if (_search_table && transaction.HasContext()) {
     _search_table->ClaimLayout(transaction.GetContext(),
-                               GetTableName().GetIdentifierName());
+                               GetTableName().GetIdentifierName(),
+                               search::TableChange::Layout);
   }
 }
 

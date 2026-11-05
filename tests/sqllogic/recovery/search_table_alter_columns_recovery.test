@@ -54,6 +54,19 @@ INSERT INTO sacr VALUES (6, 'six', 600, 'y');
 
 
 statement ok
+CREATE TABLE sacs (id SERIAL, v INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sacs (v) VALUES (10), (20);
+
+
+statement ok
+ALTER TABLE sacs ALTER COLUMN id TYPE BIGINT;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -77,6 +90,41 @@ id	b	c	d	ct
 4	four	400	x	bigint
 5	five	500	x	bigint
 6	six	600	y	bigint
+
+
+connection restarted
+query
+SELECT pg_get_serial_sequence('sacs', 'id') AS seq;
+----
+seq
+public.sacs_id_seq
+
+
+connection restarted
+statement ok
+INSERT INTO sacs (v) VALUES (30);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) sacs;
+
+
+connection restarted
+query
+SELECT id, v, pg_typeof(id) AS t FROM sacs WHERE v < 30 ORDER BY id;
+----
+id	v	t
+1	10	bigint
+2	20	bigint
+
+
+connection restarted
+query
+SELECT id > 2 AS from_sequence FROM sacs WHERE v = 30;
+----
+from_sequence
+t
 
 
 connection restarted

@@ -40,9 +40,6 @@ using ColumnId = irs::field_id;
 inline constexpr ColumnId kInvalidColumnId = irs::field_limits::invalid();
 
 inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
-  if (column.HasFieldId()) {
-    return ColumnId{column.FieldId()};
-  }
   return column.CatalogOid() != 0 ? ColumnId{column.CatalogOid()}
                                   : ColumnId{column.Oid()};
 }

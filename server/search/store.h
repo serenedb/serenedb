@@ -94,6 +94,11 @@ StorageDirectory OpenStorageDirectory(
   const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
+enum class TableChange : uint8_t {
+  Layout,
+  Schema,
+};
+
 // The iresearch index the server owns for a search table, for an inverted
 // index of a DuckDB table and for an inverted index of a view. Lives in the
 // SearchEngine registry keyed by its oid, not in the catalog snapshot.
@@ -234,14 +239,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   void RemoveIndexConfig(duckdb::idx_t index_oid);
   void ReleaseRetiredConfig(duckdb::idx_t index_oid) noexcept;
 
-  void ClaimLayout(duckdb::ClientContext& context, std::string_view name);
+  void ClaimLayout(duckdb::ClientContext& context, std::string_view name,
+                   TableChange change);
   [[nodiscard]] bool AcquireLayout(duckdb::transaction_t owner,
-                                   std::string_view name);
-  void ReleaseLayout(duckdb::transaction_t owner) noexcept;
+                                   std::string_view name, TableChange change);
+  void ReleaseLayout(duckdb::transaction_t owner, bool committed) noexcept;
 
   uint64_t SchemaEpoch() const noexcept { return _schema_epoch.load(); }
-  uint64_t BeginSchemaChange(duckdb::transaction_t owner);
-  void KeepSchemaChange(duckdb::transaction_t owner) noexcept;
   void AddTableColumns(const duckdb::ColumnList& columns);
   void SetTableColumns(const duckdb::ColumnList& columns);
   void SyncPublished();

@@ -96,9 +96,8 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<ByNestedQuery>(
-    ctx.memory, segment, parent, std::move(prepared_child), merge_type, match,
-    sub_boost);
+  auto query = memory::make_managed<ByNestedQuery>(
+    segment, parent, std::move(prepared_child), merge_type, match, sub_boost);
   query->SetStats(ctx.Record());
   return query;
 }

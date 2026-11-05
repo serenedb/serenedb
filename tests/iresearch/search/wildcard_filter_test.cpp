@@ -115,8 +115,6 @@ TEST(by_wildcard_test, equal) {
 }
 
 TEST(by_wildcard_test, boost) {
-  MaxMemoryCounter counter;
-
   // the boost reaches the filter
   {
     irs::Filter::ptr q = MakeWildcard(kFieldId, "bar*");
@@ -134,13 +132,10 @@ TEST(by_wildcard_test, boost) {
 
     // a segment without the field matches nothing, and nothing carries no
     // boost -- so the boost is only observable where the field exists
-    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 }
 
 TEST(by_wildcard_test, type_of_lowered_filter) {

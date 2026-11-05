@@ -60,7 +60,6 @@ struct PreparedStateVisitor;
 
 struct PrepareContext {
   PrepareCollector* collector = nullptr;
-  IResourceManager& memory = IResourceManager::gNoop;
   const AttributeProvider* ctx = nullptr;
   const DocumentMaskBuilder* pending_docs_mask = nullptr;
   score_t boost = kNoBoost;

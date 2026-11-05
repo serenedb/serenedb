@@ -57,12 +57,13 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
 
-using DocIdMapT = ManagedVector<doc_id_t>;
+using DocIdMapT = TrackedVector<doc_id_t>;
 
 struct MergedMember {
   IndexFeatures features = IndexFeatures::None;
@@ -810,7 +811,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
 }
 
 bool ComputeDocMappingsAndFieldMeta(
-  ManagedVector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
+  std::vector<MergeWriter::ReaderCtx>& readers, SegmentMeta& segment,
   FieldMetaMapT& field_meta_map, CompoundFieldIterator& fields_itr,
   IndexFeatures& index_features, const IndexFieldOptions* field_options) {
   doc_id_t base_id = doc_limits::min();
@@ -842,7 +843,7 @@ bool ComputeDocMappingsAndFieldMeta(
 
 void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
                    std::string_view segment_name,
-                   ManagedVector<MergeWriter::ReaderCtx>& readers,
+                   std::vector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
@@ -862,9 +863,8 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
 
 }  // namespace
 
-MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
-                                  IResourceManager& rm) noexcept
-  : reader{reader}, remap{rm} {
+MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader) noexcept
+  : reader{reader} {
   SDB_ASSERT(this->reader);
 }
 

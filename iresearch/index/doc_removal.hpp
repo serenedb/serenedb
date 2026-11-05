@@ -29,6 +29,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -61,7 +62,7 @@ struct DocRemoval {
 };
 
 struct KeyRemoval {
-  std::vector<int64_t> keys;
+  TrackedVector<int64_t> keys;
 };
 
 class DocRemovalBuilder {

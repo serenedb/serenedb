@@ -24,6 +24,7 @@
 #include <pcg_random.hpp>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -793,7 +794,7 @@ class BinaryQuantizerReader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return _cb->Binary(); }
 
   bool PreparePairTerms(const byte_type* /*base*/, uint32_t /*record_size*/,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     terms.assign(rows, 0.f);
     return rows != 0;
   }

@@ -38,6 +38,7 @@
 #include "iresearch/formats/index/term_dict_ranges.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -110,7 +111,7 @@ class FieldWriter final {
   RecordOutput _record;
   BlockBuilder _block;
   RangeWriter _ranges;
-  bstring _inline;
+  basic_string<byte_type, TrackedAllocator<byte_type>> _inline;
   FsstEncoder _fsst;
   std::string _fsst_table;
   bstring _samples;

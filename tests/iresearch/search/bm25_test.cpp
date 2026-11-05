@@ -145,7 +145,6 @@ void Bm25TestCase::TestQueryNorms() {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   // by_range multiple
@@ -166,7 +165,7 @@ void Bm25TestCase::TestQueryNorms() {
     constexpr std::array kExpected{7, 3, 0, 1, 5};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     fetcher.Clear();
 
@@ -192,9 +191,6 @@ void Bm25TestCase::TestQueryNorms() {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple (3 values)
   {
@@ -214,7 +210,7 @@ void Bm25TestCase::TestQueryNorms() {
     const auto expected = std::array{0, 7, 5, 3, 2, 1};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     fetcher.Clear();
 
@@ -240,9 +236,6 @@ void Bm25TestCase::TestQueryNorms() {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(Bm25TestCase, consts) {
@@ -336,12 +329,11 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
   auto index = open_reader(irs::tests::DefaultReaderOptions());
   ASSERT_EQ(1, index->size());
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   auto collect = [&](const irs::Filter& filter) {
     std::map<irs::doc_id_t, irs::score_t> scores;
-    tests::PreparedFilter prepared_filter{filter, *index, impl.get(), counter};
+    tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -424,9 +416,6 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
     ASSERT_FLOAT_EQ(left_value + right->second, merged->second);
   }
   ASSERT_GT(overlapped, 0);
-
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 }
 
 TEST_P(Bm25TestCase, test_phrase) {
@@ -472,7 +461,6 @@ TEST_P(Bm25TestCase, test_phrase) {
   ASSERT_EQ(1, index->size());
   auto& segment = *(index.begin());
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   // "jumps high" with order
@@ -492,7 +480,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       "Q",   // jumps high jumps left jumps right jumps down walks back
       "R"};  // jumps high jumps left jumps right walks down walks back
 
-    tests::PreparedFilter prepared_filter{filter, *index, impl.get(), counter};
+    tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
 
     fetcher.Clear();
 
@@ -520,9 +508,6 @@ TEST_P(Bm25TestCase, test_phrase) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
@@ -554,7 +539,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       "SPWLC3"};  // cookies cake pie biscuet marshmallows cake meringue
 
     tests::PreparedFilter prepared_filter{*Lower(std::move(filter), impl.get()),
-                                          *index, impl.get(), counter};
+                                          *index, impl.get()};
 
     fetcher.Clear();
 
@@ -582,9 +567,6 @@ TEST_P(Bm25TestCase, test_phrase) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(Bm25TestCase, test_query) {
@@ -615,7 +597,6 @@ TEST_P(Bm25TestCase, test_query) {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   // by_term
@@ -631,7 +612,7 @@ TEST_P(Bm25TestCase, test_query) {
     constexpr std::array kExpected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -656,9 +637,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by term multi-segment, same term (same score for all docs)
   {
@@ -735,7 +713,7 @@ TEST_P(Bm25TestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
     for (size_t i = 0; auto& segment : reader) {
@@ -767,9 +745,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_term disjunction multi-segment, different terms (same score for all
   // docs)
@@ -861,7 +836,7 @@ TEST_P(Bm25TestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     for (size_t i = 0; auto& segment : reader) {
       fetcher.Clear();
@@ -892,9 +867,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_prefix empty multi-segment, different terms (same score for all docs)
   {
@@ -974,7 +946,7 @@ TEST_P(Bm25TestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
     for (size_t i = 0; auto& segment : reader) {
@@ -1006,9 +978,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range single
   {
@@ -1028,7 +997,7 @@ TEST_P(Bm25TestCase, test_query) {
     constexpr std::array kExpected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1052,9 +1021,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range single
   {
@@ -1074,7 +1040,7 @@ TEST_P(Bm25TestCase, test_query) {
     constexpr std::array kExpected{3, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1098,9 +1064,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple
   {
@@ -1120,7 +1083,7 @@ TEST_P(Bm25TestCase, test_query) {
     constexpr std::array kExpected{7, 3, 0, 1, 5};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1144,9 +1107,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple (3 values)
   {
@@ -1166,7 +1126,7 @@ TEST_P(Bm25TestCase, test_query) {
     constexpr std::array kExpected{7, 0, 5, 3, 2, 1};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1190,9 +1150,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by phrase
   {
@@ -1212,7 +1169,7 @@ TEST_P(Bm25TestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1237,9 +1194,6 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(expected_entry.second, entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // all
   {
@@ -1248,7 +1202,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::All filter;
     filter.SetBoost(1.5f);
 
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1265,9 +1219,6 @@ TEST_P(Bm25TestCase, test_query) {
     }
     ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // all
   {
@@ -1276,7 +1227,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::All filter;
     filter.SetBoost(0.f);
 
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1295,9 +1246,6 @@ TEST_P(Bm25TestCase, test_query) {
     }
     ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(Bm25TestCase, test_make) {
@@ -1371,7 +1319,6 @@ TEST_P(Bm25TestCase, test_order) {
   auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   irs::ByTerm query;
@@ -1398,7 +1345,7 @@ TEST_P(Bm25TestCase, test_order) {
 
         irs::BytesViewInput in;
         query.SetBoost(boost);
-        tests::PreparedFilter prepared{query, reader, &sort, counter};
+        tests::PreparedFilter prepared{query, reader, &sort};
         fetcher.Clear();
         auto docs = prepared.ExecuteScored(0, fetcher);
         auto score = docs->PrepareScore();
@@ -1421,9 +1368,6 @@ TEST_P(Bm25TestCase, test_order) {
           [](const auto& lhs, uint64_t rhs) { return lhs.second == rhs; });
         EXPECT_TRUE(eq);
       }
-      EXPECT_EQ(counter.current, 0);
-      EXPECT_GT(counter.max, 0);
-      counter.Reset();
     }
   }
 }

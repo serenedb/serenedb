@@ -175,31 +175,23 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
   auto& segment = rdr[0];
 
   {
-    MaxMemoryCounter counter;
-
     // no terms no field
     {
       irs::ByNGramSimilarity q;
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_EQ(counter.max, 0);
-    counter.Reset();
 
     // simple disjunction
     {
       irs::ByNGramSimilarity q = MakeFilter(kFieldFieldId, {"1", "2"}, 0.5f);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
 
     // multiple terms
     {
@@ -207,18 +199,13 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
         MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 
   // with boost
   {
-    MaxMemoryCounter counter;
-
     irs::score_t boost = 1.5f;
 
     // no terms, return empty query
@@ -227,12 +214,9 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_EQ(counter.max, 0);
-    counter.Reset();
 
     // simple disjunction
     {
@@ -240,12 +224,9 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(boost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
 
     // multiple terms
     {
@@ -254,12 +235,9 @@ TEST_P(NGramSimilarityFilterTestCase, boost) {
       q.SetBoost(boost);
 
       tests::PreparedFilter prepared{*tests::Optimized(std::move(q)), segment,
-                                     nullptr, counter};
+                                     nullptr};
       ASSERT_EQ(boost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 }
 
@@ -306,8 +284,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
@@ -315,7 +291,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -335,9 +311,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
@@ -354,8 +327,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
@@ -363,7 +334,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -385,9 +356,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
@@ -402,8 +370,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
@@ -411,7 +377,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -433,9 +399,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
@@ -450,15 +413,13 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 0.5f);
 
   CustomNGramScorer sort;
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -480,9 +441,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
@@ -499,8 +457,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "1"}, 0.5f);
 
@@ -508,7 +464,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -530,9 +486,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
@@ -546,15 +499,13 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {"1", "1"}, 1.0f);
 
   CustomNGramScorer sort;
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -576,9 +527,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
@@ -594,8 +542,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4"}, 0.5f);
 
@@ -603,7 +549,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -625,9 +571,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
@@ -642,8 +585,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "5", "6", "2"}, 0.5f);
 
@@ -651,7 +592,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -673,9 +614,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
@@ -692,8 +630,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"1", "2", "3", "4", "5", "1"}, 0.5f);
 
@@ -701,7 +637,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
   NGramAttrs attrs;
   CaptureNGramAttrs(sort, attrs);
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -723,9 +659,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
@@ -737,8 +670,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
-
-  MaxMemoryCounter counter;
 
   irs::ByNGramSimilarity filter = MakeFilter(kFieldFieldId, {""}, 0.5f);
 
@@ -758,7 +689,7 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
     return irs::ScoreFunction::Constant(0.f);
   };
   {
-    tests::PreparedFilter prepared{filter, rdr, &sort, counter};
+    tests::PreparedFilter prepared{filter, rdr, &sort};
     for (size_t i = 0; [[maybe_unused]] const auto& sub : rdr) {
       irs::ColumnArgsFetcher fetcher;
       auto docs = prepared.ExecuteScored(i, fetcher);
@@ -777,9 +708,6 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
       ++i;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
@@ -791,13 +719,11 @@ TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"ee", "we", "qq", "rr", "ff", "never_match"}, 0.1f);
 
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
 
@@ -805,9 +731,6 @@ TEST_P(NGramSimilarityFilterTestCase, no_match_case) {
       ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
@@ -819,22 +742,17 @@ TEST_P(NGramSimilarityFilterTestCase, no_serial_match_case) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"ee", "ss", "pa", "rr"}, 0.5f);
 
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
       ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
       ASSERT_TRUE(irs::doc_limits::eof(docs->Value()));
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
@@ -846,8 +764,6 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"ee", "ss", "qq", "rr", "ff", "never_match"}, 0.1f);
 
@@ -855,7 +771,7 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
   const size_t expected_size = expected.size();
   {
     tests::PreparedFilter prepared{*tests::Optimized(std::move(filter)), rdr,
-                                   nullptr, counter};
+                                   nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -870,9 +786,6 @@ TEST_P(NGramSimilarityFilterTestCase, one_match_case) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
@@ -884,15 +797,13 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"at", "tl", "la", "as", "ll", "never_match"}, 0.5f);
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   const size_t expected_size = expected.size();
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -907,9 +818,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_test) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
@@ -921,15 +829,13 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
 
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   const size_t expected_size = expected.size();
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -944,9 +850,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_test) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
@@ -958,15 +861,13 @@ TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"at", "tl", "la", "as", "ll", "never_match"}, 0.33f);
 
   Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
   const size_t expected_size = expected.size();
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -981,9 +882,6 @@ TEST_P(NGramSimilarityFilterTestCase, not_miss_match_for_tail) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
@@ -995,8 +893,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId, {"at", "never_match", "la", "as", "ll"}, 0.333f);
 
@@ -1004,7 +900,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
   const size_t expected_size = expected.size();
 
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -1019,9 +915,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle_test) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
@@ -1033,8 +926,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter =
     MakeFilter(kFieldFieldId,
                {"at", "never_match", "never_match2", "la", "as", "ll"}, 0.5f);
@@ -1043,7 +934,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
   const size_t expected_size = expected.size();
 
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -1058,9 +949,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle2_test) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
@@ -1072,8 +960,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId,
     {"at", "never_match", "tl", "never_match2", "la", "as", "ll"}, 0.28f);
@@ -1082,7 +968,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
   const size_t expected_size = expected.size();
 
   {
-    tests::PreparedFilter prepared{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared{filter, rdr, nullptr};
     size_t count = 0;
     for (size_t i = 0, end = prepared.size(); i < end; ++i) {
       auto docs = prepared.Execute(i);
@@ -1097,9 +983,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
     ASSERT_EQ(expected_size, count);
     ASSERT_EQ(0, expected.size());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 struct TestScoreFunctionImpl : public irs::ScoreOperator {
@@ -1383,14 +1266,12 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
   Docs expected{1, 2, 5, 8, 11, 12, 13};
   auto expected_it = std::begin(expected);
   {
-    tests::PreparedFilter prepared_filter{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared_filter{filter, rdr, nullptr};
     for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
       auto docs = prepared_filter.Execute(i);
       ASSERT_EQ(irs::doc_limits::invalid(), docs->Value());
@@ -1413,9 +1294,6 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
     }
     ASSERT_EQ(expected_it, std::end(expected));
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, seek) {
@@ -1427,14 +1305,12 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNGramSimilarity filter = MakeFilter(
     kFieldFieldId, {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
   Docs seek_tagrets{2, 5, 8, 13};
   auto seek_it = std::begin(seek_tagrets);
   {
-    tests::PreparedFilter prepared_filter{filter, rdr, nullptr, counter};
+    tests::PreparedFilter prepared_filter{filter, rdr, nullptr};
     for (size_t i = 0, end = prepared_filter.size(); i < end; ++i) {
       while (std::end(seek_tagrets) != seek_it) {
         auto docs = prepared_filter.Execute(i);
@@ -1453,9 +1329,6 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
     }
     ASSERT_EQ(std::end(seek_tagrets), seek_it);
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NGramSimilarityFilterTestCase, negation_regression) {

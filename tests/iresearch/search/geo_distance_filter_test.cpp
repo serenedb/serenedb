@@ -454,32 +454,13 @@ TEST(GeoDistanceFilterTest, query) {
   ASSERT_EQ(docs.size(), reader->live_docs_count());
 
   auto execute_query = [&reader](GeoDistanceFilter q,
-                                 const std::vector<uint64_t>& costs,
-                                 size_t at_least = 0) {
+                                 const std::vector<uint64_t>& costs) {
     std::set<std::string> actual_results;
 
     auto optimized = ::tests::Optimized(std::move(q));
 
-    struct MaxMemoryCounter final : irs::IResourceManager {
-      void Reset() noexcept {
-        current = 0;
-        max = 0;
-      }
-
-      void Increase(size_t value) final {
-        current += value;
-        max = std::max(max, current);
-      }
-
-      void Decrease(size_t value) noexcept final { current -= value; }
-
-      size_t current{0};
-      size_t max{0};
-    };
-
-    MaxMemoryCounter counter;
     std::optional<::tests::PreparedFilter> prepared{std::in_place, *optimized,
-                                                    *reader, nullptr, counter};
+                                                    *reader, nullptr};
     auto expected_cost = costs.begin();
     for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);
@@ -537,8 +518,6 @@ TEST(GeoDistanceFilterTest, query) {
     EXPECT_EQ(expected_cost, costs.end());
 
     prepared.reset();
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GE(counter.max, at_least);
 
     return actual_results;
   };
@@ -555,7 +534,7 @@ TEST(GeoDistanceFilterTest, query) {
     range.max_type = irs::BoundType::Inclusive;
     range.max = 300;
 
-    ASSERT_EQ(expected, execute_query(q, {1, 1}, 1));
+    ASSERT_EQ(expected, execute_query(q, {1, 1}));
   }
 
   {

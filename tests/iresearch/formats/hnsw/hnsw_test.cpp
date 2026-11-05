@@ -1323,7 +1323,7 @@ void CheckWalkAsksPerHop() {
     std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
                       std::greater<>{});
     truth.resize(kK);
-    const auto hits = [&](std::vector<irs::HnswCandidate> nearest) {
+    const auto hits = [&](irs::TrackedVector<irs::HnswCandidate> nearest) {
       std::ranges::sort(nearest, [](const auto& l, const auto& r) {
         return l.score > r.score;
       });
@@ -1508,7 +1508,7 @@ TEST(HnswInsertTest, NodesInsertedTowardsTheGraphStayReachable) {
   for (const float at : {1500.4f, 1499.6f, 1200.4f, 2200.4f, 10.4f}) {
     query[0] = at;
     irs::HnswSearchTopK(graph, dist, irs::kHnswDefaultEfSearch, s);
-    std::vector<irs::HnswCandidate> nearest = s.nearest;
+    auto nearest = s.nearest;
     std::ranges::sort(
       nearest, [](const auto& l, const auto& r) { return l.score > r.score; });
     nearest.resize(std::min(nearest.size(), kK));

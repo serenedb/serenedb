@@ -40,6 +40,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -162,12 +163,12 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     });
 }
 
-std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const SubReader& segment) {
+TrackedVector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
+                                    const SubReader& segment) {
   const auto it_mask = segment.MaskedDocs();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
-  std::vector<ScoreDoc> hits;
+  TrackedVector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
@@ -183,12 +184,12 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
-std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const SubReader& segment,
-                                  std::span<const score_t> spreads,
-                                  std::vector<score_t>& spread_out) {
+TrackedVector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
+                                    const SubReader& segment,
+                                    std::span<const score_t> spreads,
+                                    TrackedVector<score_t>& spread_out) {
   SDB_ASSERT(spreads.size() == found.size());
-  std::vector<uint32_t> order(found.size());
+  TrackedVector<uint32_t> order(found.size());
   std::iota(order.begin(), order.end(), 0);
   absl::c_sort(order, [&](uint32_t l, uint32_t r) {
     return found[l].node < found[r].node;
@@ -196,7 +197,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   const auto it_mask = segment.MaskedDocs();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
-  std::vector<ScoreDoc> hits;
+  TrackedVector<ScoreDoc> hits;
   hits.reserve(found.size());
   spread_out.clear();
   spread_out.reserve(found.size());
@@ -739,7 +740,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
 }
 
 void HnswQuery::PrepareDistance() const {
-  absl::call_once(_distance_prepared, [&] {
+  std::call_once(_distance_prepared, [&] {
     std::span<const float> query = _query;
     if (_data->rotation) {
       _panorama =
@@ -787,7 +788,7 @@ void HnswQuery::ScanColumn(HnswSearchScratch& s) const {
 }
 
 void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-                      std::vector<score_t>& spreads) const {
+                      TrackedVector<score_t>& spreads) const {
   auto& nearest = scratch.nearest;
   const size_t n = nearest.size();
   if (n == 0) {
@@ -828,11 +829,11 @@ void HnswQuery::Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
   nearest.resize(kept);
 }
 
-std::vector<ScoreDoc> HnswQuery::RunSearch(
+TrackedVector<ScoreDoc> HnswQuery::RunSearch(
   detail::TableFilter* table, detail::TableFilter* columns,
-  std::vector<score_t>* spreads) const {
+  TrackedVector<score_t>* spreads) const {
   HnswSearchScratch scratch;
-  std::vector<score_t> widened;
+  TrackedVector<score_t> widened;
   bool wide = false;
   if (table && !table->Foldable()) {
     table = nullptr;

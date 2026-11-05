@@ -42,6 +42,7 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -113,7 +114,7 @@ struct LeafCursor {
 };
 
 template<typename InputType, LeafShape Shape>
-class PostingLeaf {
+class PostingLeaf : public Tracked {
  public:
   static constexpr bool kDefaultInit = true;
 

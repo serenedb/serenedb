@@ -272,7 +272,9 @@ absl::Status IndexDurability::Refresh(
       }
     } catch (...) {
       _pending_checkpoint = 0;
-      MarkOutOfSync();
+      if (!writer.FailedBatchKept()) {
+        MarkOutOfSync();
+      }
       throw;
     }
     if (!were_changes) {
@@ -332,7 +334,9 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
     }
   } catch (...) {
     _pending_checkpoint = 0;
-    MarkOutOfSync();
+    if (!writer.FailedBatchKept()) {
+      MarkOutOfSync();
+    }
     throw;
   }
   SyncDirectory();
@@ -420,6 +424,10 @@ void IndexDurability::SyncDirectory() {
 
 absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
   try {
+    const auto lock = LockRefresh(_refresh_mutex);
+    if (IsOutOfSync()) {
+      return absl::OkStatus();
+    }
     SyncDirectory();
     irs::directory_utils::RemoveAllUnreferenced(dir);
   } catch (const std::exception& e) {

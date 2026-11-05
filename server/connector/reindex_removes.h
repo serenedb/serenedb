@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -34,6 +35,6 @@ namespace sdb::connector {
 std::shared_ptr<const irs::DocRemoval> ResolveRemoves(
   const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
-  std::vector<std::pair<uint64_t, int64_t>> eq_rows);
+  irs::TrackedVector<std::pair<uint64_t, int64_t>> eq_rows);
 
 }  // namespace sdb::connector

@@ -2498,6 +2498,88 @@ TEST_F(IndexAdoptTest, TransactionsListedBeforeThePooledOneJoinItsFlush) {
   EXPECT_EQ(2, counts.at("commit"))
     << "the transaction listed before the pooled one stayed in the next flush";
 }
+
+TEST_F(IndexAdoptTest, ACommitThatFailsAfterItsFlushKeepsItsBatch) {
+  for (const auto* value : {"a", "b"}) {
+    auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
+    ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "1")));
+    ASSERT_TRUE(InsertDoc(trx, absl::StrCat(value, "2")));
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(_writer->RefreshCommit());
+  }
+  const auto sources = CommittedNames(*_writer);
+  ASSERT_EQ(2, sources.size());
+
+  auto del = _writer->GetBatch();
+  del.Remove(Positions(_writer->GetSnapshot(),
+                       {{sources.front(), {2}}, {sources.back(), {1}}}));
+  ASSERT_TRUE(_writer->Compact(FullMerge()));
+  ASSERT_TRUE(del.Commit());
+  auto added = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(added, "c1"));
+  ASSERT_TRUE(added.Commit());
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("IndexWriter::PrepareFlush"));
+  EXPECT_ANY_THROW(_writer->RefreshCommit());
+  duckdb::FaultPoints::Clear();
+  EXPECT_TRUE(_writer->FailedBatchKept());
+  EXPECT_EQ(sources, CommittedNames(*_writer));
+  EXPECT_EQ(4, _writer->GetSnapshot().live_docs_count());
+
+  auto late = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(late, "d1"));
+  ASSERT_TRUE(late.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  for (const auto& name : CommittedNames(*_writer)) {
+    EXPECT_FALSE(absl::c_linear_search(sources, name)) << name;
+  }
+  auto counts = LiveDocsByName(_writer->GetSnapshot());
+  EXPECT_EQ(1, counts["a1"]);
+  EXPECT_EQ(0, counts["a2"]);
+  EXPECT_EQ(0, counts["b1"]);
+  EXPECT_EQ(1, counts["b2"]);
+  EXPECT_EQ(1, counts["c1"]);
+  EXPECT_EQ(1, counts["d1"]);
+}
+
+TEST_F(IndexAdoptTest, ACommitThatFailsToApplyItsMetaKeepsItsBatch) {
+  auto seed = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(seed, "a"));
+  ASSERT_TRUE(InsertDoc(seed, "b"));
+  ASSERT_TRUE(seed.Commit());
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  auto change = _writer->GetBatch();
+  change.Remove(ByName("a"));
+  ASSERT_TRUE(InsertDoc(change, "c"));
+  ASSERT_TRUE(change.Commit());
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("IndexWriter::ApplyFlush"));
+  EXPECT_ANY_THROW(_writer->RefreshCommit());
+  duckdb::FaultPoints::Clear();
+  EXPECT_TRUE(_writer->FailedBatchKept());
+  ASSERT_TRUE(_writer->RefreshCommit());
+
+  Restart(/*cleanup_on_open=*/true);
+  auto counts = LiveDocsByName(_writer->GetSnapshot());
+  EXPECT_EQ(0, counts["a"]);
+  EXPECT_EQ(1, counts["b"]);
+  EXPECT_EQ(1, counts["c"]);
+}
+
+TEST_F(IndexAdoptTest, ACommitThatFailsInItsFlushLosesItsBatch) {
+  auto trx = _writer->GetBatch();
+  ASSERT_TRUE(InsertDoc(trx, "a"));
+  ASSERT_TRUE(trx.Commit());
+
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("IndexWriter::Flush"));
+  EXPECT_ANY_THROW(_writer->RefreshCommit());
+  duckdb::FaultPoints::Clear();
+  EXPECT_FALSE(_writer->FailedBatchKept());
+  _writer->RefreshCommit();
+  EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count());
+}
 #endif
 
 TEST_F(IndexAdoptTest, RefreshesRacingCommitsNeverSplitOne) {

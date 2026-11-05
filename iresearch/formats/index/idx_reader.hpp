@@ -41,7 +41,6 @@ namespace irs {
 
 struct Directory;
 struct AnnIndex;
-struct IResourceManager;
 
 struct IvfCentroidMeta {
   uint64_t tree_offset = 0;

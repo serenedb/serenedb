@@ -353,7 +353,7 @@ class ExportHandler final : public HttpHandler {
     }
     // One copy of the body, padded so the JSON parser reads it in place. The
     // decoded model's text points into it (protobuf) or into the parser.
-    const std::string buffer = FlattenBody(request.body, kJsonPadding);
+    const auto buffer = FlattenBody(request.body, kJsonPadding);
     const std::string_view raw{buffer.data(), buffer.size() - kJsonPadding};
     if (raw.empty()) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,

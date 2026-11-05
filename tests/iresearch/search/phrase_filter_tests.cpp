@@ -7024,7 +7024,6 @@ TEST(by_phrase_test, boost) {
 
   // with boost
   {
-    MaxMemoryCounter counter;
     irs::score_t boost = 1.5f;
 
     // no terms, return empty query
@@ -7048,13 +7047,10 @@ TEST(by_phrase_test, boost) {
 
       // a segment without the field matches nothing, and nothing carries no
       // boost -- so the boost is only observable where the field exists
-      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                     counter};
+      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
       ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    counter.Reset();
 
     // single multiple terms
     {

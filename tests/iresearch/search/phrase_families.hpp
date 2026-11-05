@@ -112,8 +112,7 @@ class FamilyIndex {
 
   std::map<irs::doc_id_t, irs::score_t> ScoresBy(
     const irs::Scorer& scorer, const irs::Filter& filter) const {
-    MaxMemoryCounter counter;
-    PreparedFilter prepared{filter, *_reader, &scorer, counter};
+    PreparedFilter prepared{filter, *_reader, &scorer};
     std::map<irs::doc_id_t, irs::score_t> out;
     for (size_t i = 0; i != prepared.size(); ++i) {
       irs::ColumnArgsFetcher fetcher;
@@ -175,8 +174,7 @@ class FamilyIndex {
       }
     }
 
-    MaxMemoryCounter counter;
-    PreparedFilter prepared{filter, *_reader, &scorer, counter};
+    PreparedFilter prepared{filter, *_reader, &scorer};
     for (size_t i = 0; i != prepared.size(); ++i) {
       const auto* query = prepared.Query(i);
       if (!query || irs::QueryBuilder::IsEmpty(*query)) {

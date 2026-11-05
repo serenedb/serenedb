@@ -264,6 +264,5 @@ class DynamicBitset {
 
 // TODO(mbkkt) move to tests?
 using bitset = DynamicBitset<std::allocator<size_t>>;
-using ManagedBitset = DynamicBitset<ManagedTypedAllocator<size_t>>;
 
 }  // namespace irs

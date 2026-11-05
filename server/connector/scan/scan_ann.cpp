@@ -24,6 +24,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iterator>
 
 #include "connector/scan/scan_plan.h"
@@ -261,13 +262,14 @@ void Merge(ScanGlobalState& g) {
   PlanFetch(g);
 }
 
-std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
-                                       uint64_t per_segment) {
+irs::TrackedVector<irs::ScoreDoc> RankExactly(ScanGlobalState& g,
+                                              RankedLocalState& l,
+                                              uint64_t per_segment) {
   auto vs = *g.vector_scorer;
   vs.exact = true;
   const auto filter =
     MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
-  std::vector<irs::ScoreDoc> ranked;
+  irs::TrackedVector<irs::ScoreDoc> ranked;
   for (const auto seg : g.segment_order) {
     l.Classify(g, seg);
     if (l.seg_cls.segment_dead) {
@@ -322,7 +324,8 @@ void FillShortAnswer(ScanGlobalState& g, RankedLocalState& l) {
 }  // namespace
 
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                RankedLocalState& l, std::vector<irs::ScoreDoc>& row_hits) {
+                RankedLocalState& l,
+                irs::TrackedVector<irs::ScoreDoc>& row_hits) {
   const auto& t = g.topk;
   const size_t want = t.limit;
   auto ranked = t.ranked;
@@ -330,8 +333,8 @@ void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
   size_t step = std::max<size_t>(verified, want);
   bool widened =
     g.vector_scorer->exact || ranked.size() >= g.reader->live_docs_count();
-  std::vector<irs::ScoreDoc> exact;
-  std::vector<irs::ScoreDoc> hits;
+  irs::TrackedVector<irs::ScoreDoc> exact;
+  irs::TrackedVector<irs::ScoreDoc> hits;
   duckdb::DataChunk batch;
   batch.Initialize(ctx, g.projected_types);
   while (row_hits.size() < want) {

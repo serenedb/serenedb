@@ -47,6 +47,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/index/directory_reader.hpp>
@@ -63,6 +64,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <memory>
@@ -864,23 +866,18 @@ irs::BooleanFilter MakeDisjunctionEquivalentN(
   return q;
 }
 
-// Tracks peak allocated bytes; reset between iterations.
-struct MaxMemoryCounter final : irs::IResourceManager {
-  void Reset() noexcept {
-    current = 0;
-    max = 0;
+int64_t TrackedMemory() {
+  auto* manager = irs::DuckDBEngine::TrackingBufferManager();
+  if (!manager) {
+    return 0;
   }
-
-  void Increase(size_t value) final {
-    current += value;
-    max = std::max(max, current);
+  for (const auto& info : manager->GetMemoryUsageInfo()) {
+    if (info.tag == irs::kMemoryTag) {
+      return static_cast<int64_t>(info.size);
+    }
   }
-
-  void Decrease(size_t value) noexcept final { current -= value; }
-
-  size_t current{0};
-  size_t max{0};
-};
+  return 0;
+}
 
 // Per-segment prepared queries for unscored execution: the NoCollector shape
 // of tests::PreparedFilter, inlined here because the bench target has no
@@ -894,16 +891,11 @@ struct BenchPrepared {
 };
 
 template<typename Filter>
-BenchPrepared Prepare(
-  const Filter& q, const irs::DirectoryReader& rdr,
-  irs::IResourceManager& memory = irs::IResourceManager::gNoop) {
+BenchPrepared Prepare(const Filter& q, const irs::DirectoryReader& rdr) {
   BenchPrepared out;
   out.queries.reserve(rdr.size());
   for (const auto& sub : rdr) {
-    out.queries.emplace_back(q.PrepareSegment(sub, {
-                                                     .collector = nullptr,
-                                                     .memory = memory,
-                                                   }));
+    out.queries.emplace_back(q.PrepareSegment(sub, {.collector = nullptr}));
   }
   return out;
 }
@@ -920,15 +912,20 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
     }
   }
 
-  MaxMemoryCounter counter;
+  int64_t max = 0;
   for (auto _ : state) {
-    counter.Reset();
+    state.PauseTiming();
+    const auto base = TrackedMemory();
+    state.ResumeTiming();
     auto q = make();
-    auto prepared = Prepare(q, rdr, counter);
+    auto prepared = Prepare(q, rdr);
+    state.PauseTiming();
+    max = std::max(max, TrackedMemory() - base);
+    state.ResumeTiming();
     benchmark::DoNotOptimize(prepared);
   }
 
-  state.counters["prepare_mem_bytes"] = static_cast<double>(counter.max);
+  state.counters["prepare_mem_bytes"] = static_cast<double>(max);
 }
 
 template<typename MakeFn>

@@ -32,7 +32,7 @@
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/search/queries/term_state.hpp"
-#include "iresearch/utils/resource_manager.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -41,16 +41,13 @@ struct TermReader;
 
 class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
  public:
-  using Filters = ManagedVector<QueryBuilder::ptr>;
+  using Filters = std::vector<QueryBuilder::ptr>;
 
   struct PreparedBucket {
-    ManagedVector<detail::PostingClause> postings;
-    ManagedVector<detail::AllDocsClause> all_docs;
+    TrackedVector<detail::PostingClause> postings;
+    std::vector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
-
-    explicit PreparedBucket(IResourceManager& memory)
-      : postings{{memory}}, all_docs{{memory}}, filters{{memory}} {}
 
     size_t size() const noexcept {
       return postings.size() + all_docs.size() + filters.size();
@@ -144,16 +141,11 @@ extern template class QueryBuilderImpl<BooleanQuery>;
 
 class BooleanBuilder {
  public:
-  BooleanBuilder(const SubReader& segment, IResourceManager& memory,
-                 uint32_t min_should_match, score_t boost,
-                 ScoreMergeType merge_type,
+  BooleanBuilder(const SubReader& segment, uint32_t min_should_match,
+                 score_t boost, ScoreMergeType merge_type,
                  PrepareCollector* collector = nullptr,
                  bool needs_terms = false)
-    : _clauses{BooleanQuery::PreparedBucket{memory},
-               BooleanQuery::PreparedBucket{memory},
-               BooleanQuery::PreparedBucket{memory}},
-      _segment{segment},
-      _memory{memory},
+    : _segment{segment},
       _collector{collector},
       _msm{min_should_match},
       _boost{boost},
@@ -208,7 +200,6 @@ class BooleanBuilder {
 
   BooleanQuery::Clauses _clauses;
   const SubReader& _segment;
-  IResourceManager& _memory;
   PrepareCollector* _collector;
   uint32_t _msm;
   score_t _boost;

@@ -103,8 +103,8 @@ QueryBuilder::ptr PrepareCells(const SubReader& segment,
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+  auto query = memory::make_managed<MultiTermQuery>(segment, kNoBoost,
+                                                    ScoreMergeType::Noop);
   auto& state = query->State();
   state.Prepare(reader);
   for (const auto term : sorted_terms) {
@@ -133,8 +133,8 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
   }
   const auto store_field_id = options.store_field_id;
   if (!field_limits::valid(store_field_id)) {
-    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
-                                                   std::move(cells), boost);
+    auto query =
+      memory::make_managed<ApproxQuery>(segment, std::move(cells), boost);
     query->SetStats(ctx.Record());
     return query;
   }
@@ -145,9 +145,9 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
   return std::visit(
     [&]<typename Parser, typename Acceptor>(
       Parser&& parser, const Acceptor& acceptor) -> QueryBuilder::ptr {
-      auto query = memory::make_tracked<GeoQuery<Parser, Acceptor>>(
-        ctx.memory, segment, std::move(cells), store_field_id,
-        std::move(parser), Acceptor{acceptor}, boost);
+      auto query = memory::make_managed<GeoQuery<Parser, Acceptor>>(
+        segment, std::move(cells), store_field_id, std::move(parser),
+        Acceptor{acceptor}, boost);
       query->SetStats(ctx.Record());
       return query;
     },

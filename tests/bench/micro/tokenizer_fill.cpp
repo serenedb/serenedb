@@ -849,7 +849,7 @@ void BM_FillResolve(benchmark::State& state, Factory make, CorpusFn corpus_fn) {
   auto stream = MakeBound(make);
   const auto values = AsValues(corpus_fn());
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-  TermDictionary dict{arena, IResourceManager::gNoop};
+  TermDictionary dict{arena};
   size_t consumed = 0;
   struct ResolveSink final : TokenConsumer, StoreSink {
     ResolveSink(TermDictionary& d, size_t& c) : dict(d), c(c) {

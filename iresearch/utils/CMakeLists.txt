@@ -25,6 +25,7 @@ target_sources(
         remap_executable.cpp
         string_utils.cpp
         timer_utils.cpp
+        tracked.cpp
         wildcard_utils.cpp
 )
 

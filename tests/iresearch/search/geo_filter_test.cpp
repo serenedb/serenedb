@@ -463,26 +463,8 @@ TEST(GeoFilterTest, query) {
                                  const std::vector<uint64_t>& costs) {
     std::set<std::string> actual_results;
 
-    struct MaxMemoryCounter final : irs::IResourceManager {
-      void Reset() noexcept {
-        current = 0;
-        max = 0;
-      }
-
-      void Increase(size_t value) final {
-        current += value;
-        max = std::max(max, current);
-      }
-
-      void Decrease(size_t value) noexcept final { current -= value; }
-
-      size_t current{0};
-      size_t max{0};
-    };
-
-    MaxMemoryCounter counter;
     std::optional<::tests::PreparedFilter> prepared{std::in_place, q, *reader,
-                                                    nullptr, counter};
+                                                    nullptr};
     auto expected_cost = costs.begin();
     for (size_t i = 0; auto& segment : *reader) {
       const auto* column = segment.Column(kName);
@@ -540,8 +522,6 @@ TEST(GeoFilterTest, query) {
     EXPECT_EQ(expected_cost, costs.end());
 
     prepared.reset();
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
 
     return actual_results;
   };

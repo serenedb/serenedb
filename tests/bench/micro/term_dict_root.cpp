@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <benchmark/benchmark.h>
 
@@ -34,6 +35,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/conjunction_acceptor.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
@@ -209,8 +211,7 @@ void Open(Data& data) {
     return meta;
   }()};
   data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
-  data.fields =
-    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
   data.field = data.fields->fields(1).front();
@@ -235,8 +236,9 @@ void Open(Data& data) {
   }
 }
 
+std::unique_ptr<Data> gData;
+
 const Data& Load(const std::string& base) {
-  static std::unique_ptr<Data> gData;
   if (gData && gData->base == base) {
     return *gData;
   }
@@ -328,8 +330,9 @@ struct Prepared {
   std::string error;
 };
 
+std::unique_ptr<Prepared> gPrepared;
+
 const Prepared& Prepare(const std::string& base, std::string_view name) {
-  static std::unique_ptr<Prepared> gPrepared;
   static std::string gKey;
   const auto key = absl::StrCat(base, "/", name);
   if (gPrepared && gKey == key) {
@@ -609,6 +612,13 @@ std::vector<std::string> Bases() {
 }
 
 int Main(int argc, char** argv) {
+  auto& engine = irs::DuckDBEngine::Instance();
+  engine.Initialize();
+  absl::Cleanup shutdown = [&] {
+    gPrepared.reset();
+    gData.reset();
+    engine.Shutdown();
+  };
   for (const auto& base : Bases()) {
     benchmark::RegisterBenchmark(
       absl::StrCat("lookup_hit/", base),

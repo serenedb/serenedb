@@ -153,8 +153,6 @@ TEST(by_edit_distance_test, equal) {
 }
 
 TEST(by_edit_distance_test, boost) {
-  MaxMemoryCounter counter;
-
   // no boost
   {
     irs::ByEditDistance q;
@@ -181,13 +179,10 @@ TEST(by_edit_distance_test, boost) {
 
     // a segment without the field matches nothing, and nothing carries no
     // boost -- so the boost is only observable where the field exists
-    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 }
 
 TEST(by_edit_distance_test, type_of_lowered_filter) {
@@ -554,7 +549,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   ASSERT_NE(nullptr, index);
   ASSERT_EQ(1, index->size());
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   {
@@ -569,8 +563,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     auto docs = prepared.ExecuteScored(0, fetcher);
@@ -599,9 +592,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   {
     irs::ByEditDistance filter;
@@ -615,8 +605,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
@@ -643,9 +632,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // with prefix
   {
@@ -661,8 +647,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
@@ -692,9 +677,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   {
     irs::ByEditDistance filter;
@@ -708,8 +690,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
@@ -759,9 +740,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   {
     irs::ByEditDistance filter;
@@ -775,8 +753,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
@@ -825,9 +802,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // with prefix
   {
@@ -843,8 +817,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     irs::Filter::ptr lowered =
       std::make_unique<irs::ByEditDistance>(std::move(filter));
     irs::Optimize(lowered, {.scored = true});
-    tests::PreparedFilter prepared{*lowered, *index, order.front().get(),
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, *index, order.front().get()};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     fetcher.Clear();
@@ -893,9 +866,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       ++expected_doc;
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(ByEditDistanceTestCase, visit) {
@@ -1112,12 +1082,11 @@ TEST_P(ByEditDistanceTestCase, blends_document_frequency) {
   ASSERT_EQ(1, rdr.size());
 
   auto scorer = irs::BM25::Make(irs::BM25::Options{});
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   const auto scores_of = [&](const irs::Filter& filter) {
     std::map<irs::doc_id_t, irs::score_t> scores;
-    tests::PreparedFilter prepared{filter, rdr, scorer.get(), counter};
+    tests::PreparedFilter prepared{filter, rdr, scorer.get()};
     fetcher.Clear();
     auto docs = prepared.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();

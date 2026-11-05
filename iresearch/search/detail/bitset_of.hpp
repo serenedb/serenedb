@@ -346,8 +346,8 @@ bool TakeProbeBitset(Terms terms, const IndexInput& doc, doc_id_t docs_count,
 }
 
 inline uint64_t FoldConjunctionCost(
-  std::span<const std::vector<PostingClause>> clauses, size_t lead, size_t seed,
-  doc_id_t docs_count) noexcept {
+  std::span<const TrackedVector<PostingClause>> clauses, size_t lead,
+  size_t seed, doc_id_t docs_count) noexcept {
   const auto words = SegmentWords(docs_count);
   uint64_t cost = words;
   for (size_t i = 0; i != clauses.size(); ++i) {
@@ -363,7 +363,7 @@ inline uint64_t FoldConjunctionCost(
 }
 
 inline uint64_t WalkConjunctionCost(
-  std::span<const std::vector<PostingClause>> clauses, size_t lead,
+  std::span<const TrackedVector<PostingClause>> clauses, size_t lead,
   uint64_t candidates) noexcept {
   uint64_t terms = 0;
   for (size_t i = 0; i != clauses.size(); ++i) {

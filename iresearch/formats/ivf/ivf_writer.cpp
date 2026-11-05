@@ -46,6 +46,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -94,13 +95,13 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
     });
   const size_t n_clusters = centroids.NumClusters();
 
-  std::vector<float> train;
+  TrackedVector<float> train;
   size_t train_seen = 0;
   pcg32 train_rng{kTrainSeed};
 
-  std::vector<uint32_t> doc_cluster;
+  TrackedVector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);
-  std::vector<doc_id_t> valid_rows;
+  TrackedVector<doc_id_t> valid_rows;
   valid_rows.reserve(rows);
 
   {

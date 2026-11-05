@@ -38,8 +38,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
-  ManagedVector<const FieldsMap::value_type*> sorted{
-    ManagedTypedAllocator<const FieldsMap::value_type*>{_mem.rm}};
+  std::vector<const FieldsMap::value_type*> sorted;
   sorted.reserve(_fields_map.size());
   for (const auto& item : _fields_map) {
     const auto& entry = item.second;
@@ -69,15 +68,14 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
     return lhs->first < rhs->first;
   });
 
-  ManagedVector<const BasicTermReader*> sorted_extra{
-    ManagedTypedAllocator<const BasicTermReader*>{_mem.rm}};
+  std::vector<const BasicTermReader*> sorted_extra;
   sorted_extra.assign(extra.begin(), extra.end());
   absl::c_sort(sorted_extra,
                [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
                  return lhs->id() < rhs->id();
                });
 
-  ScatterScratch scratch{_mem.rm};
+  ScatterScratch scratch;
   ScatteredField scattered{_mem, scratch};
   ColumnarTermReader terms;
 

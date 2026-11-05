@@ -204,8 +204,7 @@ template<typename ScorerT>
 std::vector<irs::score_t> Scores(const irs::Filter& filter,
                                  const irs::IndexReader& reader) {
   ScorerT scorer;
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, reader, &scorer, counter};
+  tests::PreparedFilter prepared{filter, reader, &scorer};
   std::vector<irs::score_t> out;
   for (size_t i = 0; i != prepared.size(); ++i) {
     irs::ColumnArgsFetcher fetcher;

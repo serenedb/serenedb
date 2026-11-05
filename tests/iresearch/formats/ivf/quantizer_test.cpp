@@ -36,6 +36,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -1428,6 +1429,33 @@ TEST(pq_quantizer_test, subspace_errors_survive_the_stats_roundtrip) {
   }
 }
 
+TEST(pq_quantizer_test, stats_charge_the_faiss_centroids) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 4;
+  constexpr size_t n = 512;
+  const auto pts = MakeSpread(d, n, 41);
+  for (const bool row_major : {false, true}) {
+    auto writer =
+      MakeQuantizerWriter({.kind = VectorQuantization::PQ, .pq_m = pq_m}, d,
+                          VectorMetric::L2Sqr, 0, row_major);
+    ASSERT_NE(writer, nullptr);
+    writer->Train(pts.data(), n);
+    const bstring blob = SerializeStats(*writer);
+    const size_t centroids = size_t{d} * (row_major ? 256 : 16) * sizeof(float);
+    const size_t transposed = row_major ? centroids : 0;
+    const auto base = TrackedMemory();
+    {
+      auto stats = MakeQuantizerStats(VectorQuantization::PQ, d, blob,
+                                      VectorMetric::L2Sqr, row_major);
+      ASSERT_NE(stats, nullptr);
+      EXPECT_LE(base + static_cast<int64_t>(centroids + transposed),
+                TrackedMemory())
+        << "row_major " << row_major;
+    }
+    EXPECT_EQ(base, TrackedMemory()) << "row_major " << row_major;
+  }
+}
+
 TEST(pq_quantizer_test, l2_error_is_twice_the_inner_product_error) {
   constexpr uint32_t d = 32;
   constexpr uint32_t pq_m = 4;
@@ -1851,7 +1879,7 @@ TEST_P(code_rekey_test, pair_scores_track_the_keyed_reader) {
       GTEST_SKIP() << "quantizer has no symmetric estimator";
     }
 
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     ASSERT_FALSE(terms.empty());
@@ -2584,7 +2612,7 @@ TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
       const std::vector<float> scratch(d, 0.f);
       auto reader = MakeKeyedReader(f, scratch, centroid.data());
       ASSERT_TRUE(reader->SupportsPairScores());
-      std::vector<float> terms;
+      irs::TrackedVector<float> terms;
       ASSERT_TRUE(
         reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
 
@@ -3098,7 +3126,7 @@ TEST(bq_quantizer_test, binary_pair_scores_match_the_keyed_reader) {
     const std::vector<float> scratch(d, 0.f);
     auto reader = MakeKeyedReader(f, scratch, nullptr);
     ASSERT_TRUE(reader->SupportsPairScores());
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     std::vector<float> decoded(d);
@@ -3153,7 +3181,7 @@ TEST(bq_quantizer_test, build_codebook_is_binary_for_every_query_width) {
       std::vector<score_t> keyed(n);
       build->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
                              keyed.data());
-      std::vector<float> terms;
+      irs::TrackedVector<float> terms;
       ASSERT_TRUE(
         build->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
       std::vector<score_t> pair(n);
@@ -3312,7 +3340,7 @@ TEST(osq_quantizer_test, pair_scores_match_a_reader_keyed_on_the_row) {
       BuildOsqCodes(d, mode, VectorMetric::InnerProduct, points, n, zero);
     auto reader = MakeKeyedReader(f, zero, zero.data());
     ASSERT_TRUE(reader->SupportsPairScores());
-    std::vector<float> terms;
+    irs::TrackedVector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
     std::vector<float> decoded(d);

@@ -33,13 +33,14 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::hits {
 namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, const SubReader& segment,
+  HnswHits(TrackedVector<ScoreDoc>&& hits, const SubReader& segment,
            ColumnArgsFetcher& fetcher, const irs::detail::ScoreArgs& args)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }},

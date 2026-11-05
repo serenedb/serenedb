@@ -26,11 +26,12 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {
 
-struct Node : memory::Managed {
+struct Node : memory::Managed, Tracked {
   using ptr = memory::managed_ptr<Node>;
 
   virtual doc_id_t Probe(doc_id_t target) = 0;

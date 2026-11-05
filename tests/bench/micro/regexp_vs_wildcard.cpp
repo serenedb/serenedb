@@ -423,9 +423,8 @@ irs::ByRegexp MakeRegexp(std::string_view pattern) {
 //                    items_per_second column.
 //
 // Both helpers pass only the required field of PrepareContext /
-// ExecutionContext (index / segment) and rely on defaults for memory,
-// scorer, ctx, boost. Default memory tracking is IResourceManager::
-// gNoop
+// ExecutionContext (index / segment) and rely on defaults for scorer, ctx,
+// boost.
 
 template<typename MakeFn>
 void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,

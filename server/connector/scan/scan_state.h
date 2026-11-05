@@ -42,6 +42,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -260,11 +261,11 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool Ordered() const noexcept { return ordered; }
 
   struct TsDictCounts {
-    std::unique_ptr<std::atomic_uint64_t[]> slots;
+    irs::TrackedArray<std::atomic_uint64_t> slots;
     uint32_t terms = 0;
 
     void Reset(uint32_t n) {
-      slots = std::make_unique<std::atomic_uint64_t[]>(n + 1);
+      slots = irs::MakeTrackedArray<std::atomic_uint64_t>(n + 1);
       terms = n;
       for (uint32_t i = 0; i <= n; ++i) {
         slots[i].store(0, std::memory_order_relaxed);
@@ -281,7 +282,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::atomic<irs::score_t> global_kth_score{
       std::numeric_limits<irs::score_t>::lowest()};
     uint32_t pool = 0;
-    std::vector<irs::ScoreDoc> hits;
+    irs::TrackedVector<irs::ScoreDoc> hits;
     std::unique_ptr<std::atomic_uint32_t[]> accepted;
     std::atomic_uint32_t published{0};
     ScanBarrier merge_barrier;
@@ -293,7 +294,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
       uint32_t first;
       uint32_t count;
     };
-    std::vector<irs::ScoreDoc> answer;
+    irs::TrackedVector<irs::ScoreDoc> answer;
     std::span<const irs::ScoreDoc> ranked;
     uint32_t verify_first = std::numeric_limits<uint32_t>::max();
     std::vector<FetchUnit> fetch_units;
@@ -313,8 +314,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     ABSL_CACHELINE_ALIGNED std::atomic<irs::score_t> rescore_bar{
       std::numeric_limits<irs::score_t>::lowest()};
     ABSL_CACHELINE_ALIGNED absl::Mutex best_mutex;
-    std::vector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
-    std::vector<irs::ScoreDoc> rescored ABSL_GUARDED_BY(best_mutex);
+    irs::TrackedVector<irs::ScoreDoc> best ABSL_GUARDED_BY(best_mutex);
+    irs::TrackedVector<irs::ScoreDoc> rescored ABSL_GUARDED_BY(best_mutex);
   };
   AnnState ann;
 
@@ -408,7 +409,7 @@ struct RankedLocalState : public ScanLocalState, FetchLocalState {
   duckdb::idx_t emitted = 0;
   duckdb::DataChunk fetch_tmp;
   std::unique_ptr<duckdb::DataChunk> answer_chunk;
-  std::vector<uint32_t> answer_order;
+  irs::TrackedVector<uint32_t> answer_order;
   duckdb::SelectionVector emit_sel;
   duckdb::buffer_ptr<duckdb::SelectionData> emit_sel_data;
 };
@@ -422,8 +423,8 @@ struct AnnLocalState final : public RankedLocalState {
   std::optional<irs::ann::SharedFloor> segment_floor;
   std::optional<irs::ann::Collector> collector;
   uint32_t pool_seg = std::numeric_limits<uint32_t>::max();
-  std::vector<irs::ScoreDoc> pending;
-  std::vector<irs::ScoreDoc> rescored;
+  irs::TrackedVector<irs::ScoreDoc> pending;
+  irs::TrackedVector<irs::ScoreDoc> rescored;
   std::vector<std::unique_ptr<irs::detail::RawVectorReader>> rescorers;
   std::vector<irs::doc_id_t> rescore_docs;
   std::vector<irs::score_t> rescore_scores;
@@ -525,9 +526,10 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      RankedLocalState& l, const duckdb::DataChunk& fetched,
                      duckdb::Vector& pk, std::span<const irs::ScoreDoc> hits,
                      duckdb::DataChunk& batch,
-                     std::vector<irs::ScoreDoc>& row_hits);
+                     irs::TrackedVector<irs::ScoreDoc>& row_hits);
 void VerifyMore(duckdb::ClientContext& ctx, ScanGlobalState& g,
-                RankedLocalState& l, std::vector<irs::ScoreDoc>& row_hits);
+                RankedLocalState& l,
+                irs::TrackedVector<irs::ScoreDoc>& row_hits);
 void RunAnswerStages(duckdb::ClientContext& ctx,
                      duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      RankedLocalState& l, duckdb::DataChunk& output,

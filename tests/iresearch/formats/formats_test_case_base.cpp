@@ -733,7 +733,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name", nullptr};
-    irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader_obj;
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});

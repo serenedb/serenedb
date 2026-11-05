@@ -93,11 +93,9 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir},
     _scorer{options.scorer},
-    _docs_context{options.resource_manager},
     _fields{InverterMemory{
       duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
-        .GetBufferAllocator(),
-      options.resource_manager}},
+        .GetBufferAllocator()}},
     _db{DerefDb(options.db)},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},

@@ -1,0 +1,189 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/cleanup/cleanup.h>
+
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enums/memory_tag.hpp>
+#include <memory>
+#include <new>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+namespace irs {
+
+inline constexpr duckdb::MemoryTag kMemoryTag = duckdb::MemoryTag::ALLOCATOR;
+
+void ReserveMemory(duckdb::MemoryTag tag, size_t size);
+void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept;
+duckdb::Allocator& TrackedDuckAllocator();
+
+// NOLINTBEGIN
+template<typename T, duckdb::MemoryTag Tag = kMemoryTag,
+         typename Base = std::allocator<T>>
+struct TrackedAllocator {
+  static_assert(std::is_empty_v<Base>);
+
+  using value_type = T;
+  using propagate_on_container_copy_assignment = std::true_type;
+  using propagate_on_container_move_assignment = std::true_type;
+  using propagate_on_container_swap = std::true_type;
+  using is_always_equal = std::true_type;
+
+  template<typename U>
+  struct rebind {
+    using other = TrackedAllocator<
+      U, Tag, typename std::allocator_traits<Base>::template rebind_alloc<U>>;
+  };
+
+  TrackedAllocator() = default;
+
+  template<typename U, typename B>
+  TrackedAllocator(const TrackedAllocator<U, Tag, B>&) noexcept {}
+
+  T* allocate(size_t n) {
+    ReserveMemory(Tag, n * sizeof(T));
+    absl::Cleanup release = [&] { FreeReservedMemory(Tag, n * sizeof(T)); };
+    auto* p = Base{}.allocate(n);
+    std::move(release).Cancel();
+    return p;
+  }
+
+  void deallocate(T* p, size_t n) noexcept {
+    Base{}.deallocate(p, n);
+    FreeReservedMemory(Tag, n * sizeof(T));
+  }
+
+  template<typename U, typename... Args>
+  void construct(U* p, Args&&... args) {
+    using UBase =
+      typename std::allocator_traits<Base>::template rebind_alloc<U>;
+    UBase base;
+    std::allocator_traits<UBase>::construct(base, p,
+                                            std::forward<Args>(args)...);
+  }
+
+  friend bool operator==(const TrackedAllocator&,
+                         const TrackedAllocator&) noexcept {
+    return true;
+  }
+};
+// NOLINTEND
+
+struct Tracked {
+  static void* operator new(size_t size) {
+    ReserveMemory(kMemoryTag, size);
+    absl::Cleanup release = [&] { FreeReservedMemory(kMemoryTag, size); };
+    auto* p = ::operator new(size);
+    std::move(release).Cancel();
+    return p;
+  }
+
+  static void* operator new(size_t size, std::align_val_t alignment) {
+    ReserveMemory(kMemoryTag, size);
+    absl::Cleanup release = [&] { FreeReservedMemory(kMemoryTag, size); };
+    auto* p = ::operator new(size, alignment);
+    std::move(release).Cancel();
+    return p;
+  }
+
+  static void* operator new(size_t, void* p) noexcept { return p; }
+
+  static void operator delete(void* p, size_t size) noexcept {
+    ::operator delete(p, size);
+    FreeReservedMemory(kMemoryTag, size);
+  }
+
+  static void operator delete(void* p, size_t size,
+                              std::align_val_t alignment) noexcept {
+    ::operator delete(p, size, alignment);
+    FreeReservedMemory(kMemoryTag, size);
+  }
+};
+
+class MemoryCharge {
+ public:
+  MemoryCharge() = default;
+  explicit MemoryCharge(size_t bytes) { Resize(bytes); }
+  MemoryCharge(MemoryCharge&& other) noexcept
+    : _bytes{std::exchange(other._bytes, 0)} {}
+  MemoryCharge& operator=(MemoryCharge&& other) noexcept {
+    if (this != &other) {
+      Release();
+      _bytes = std::exchange(other._bytes, 0);
+    }
+    return *this;
+  }
+  ~MemoryCharge() { Release(); }
+
+  void Resize(size_t bytes) {
+    if (bytes > _bytes) {
+      ReserveMemory(kMemoryTag, bytes - _bytes);
+    } else if (bytes < _bytes) {
+      FreeReservedMemory(kMemoryTag, _bytes - bytes);
+    }
+    _bytes = bytes;
+  }
+
+  size_t Bytes() const noexcept { return _bytes; }
+
+ private:
+  void Release() noexcept {
+    if (_bytes != 0) {
+      FreeReservedMemory(kMemoryTag, std::exchange(_bytes, 0));
+    }
+  }
+
+  size_t _bytes = 0;
+};
+
+template<typename T>
+using TrackedVector = std::vector<T, TrackedAllocator<T>>;
+
+using TrackedString =
+  std::basic_string<char, std::char_traits<char>, TrackedAllocator<char>>;
+
+template<typename T>
+struct TrackedArrayDelete {
+  size_t size = 0;
+
+  void operator()(T* p) const noexcept {
+    std::destroy_n(p, size);
+    TrackedAllocator<T>{}.deallocate(p, size);
+  }
+};
+
+template<typename T>
+using TrackedArray = std::unique_ptr<T[], TrackedArrayDelete<T>>;
+
+template<typename T>
+TrackedArray<T> MakeTrackedArray(size_t size) {
+  auto* p = TrackedAllocator<T>{}.allocate(size);
+  absl::Cleanup release = [&] { TrackedAllocator<T>{}.deallocate(p, size); };
+  std::uninitialized_value_construct_n(p, size);
+  std::move(release).Cancel();
+  return TrackedArray<T>{p, TrackedArrayDelete<T>{size}};
+}
+
+}  // namespace irs

@@ -51,10 +51,34 @@ BANNED = [
         ),
         "fast_float::from_chars",
     ),
+    (
+        re.compile(
+            r"\b(IResourceManager|ResourceManagementOptions|Managed\w*Allocator)\b"
+        ),
+        "the irs::Tracked* types",
+    ),
 ]
 
+FILE_LAYER = {"IResourceManager", "ResourceManagementOptions"}
+
 EXCEPTIONS = {
+    "iresearch/index/index_reader.cpp": FILE_LAYER,
+    "iresearch/store/directory.hpp": FILE_LAYER,
+    "iresearch/store/fs_directory.cpp": FILE_LAYER,
+    "iresearch/store/fs_directory.hpp": FILE_LAYER,
+    "iresearch/store/memory_directory.cpp": FILE_LAYER,
+    "iresearch/store/memory_directory.hpp": FILE_LAYER | {"ManagedTypedAllocator"},
+    "iresearch/store/mmap_directory.cpp": FILE_LAYER,
+    "iresearch/store/mmap_directory.hpp": FILE_LAYER,
+    "iresearch/utils/container_utils.hpp": FILE_LAYER | {"ManagedTypedAllocator"},
     "iresearch/utils/crash_handler.cpp": {"snprintf"},
+    "iresearch/utils/managed_allocator.hpp": {"ManagedAllocator"},
+    "iresearch/utils/mmap_utils.hpp": FILE_LAYER,
+    "iresearch/utils/resource_manager.hpp": FILE_LAYER
+    | {"ManagedStdAllocator", "ManagedTypedAllocator"},
+    "server/docs/docs_search.cpp": FILE_LAYER,
+    "server/search/store.cpp": FILE_LAYER,
+    "server/search/store.h": FILE_LAYER,
 }
 
 

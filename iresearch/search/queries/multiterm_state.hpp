@@ -28,6 +28,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -40,9 +41,6 @@ class MultiTermState {
     score_t boost = kNoBoost;
     const byte_type* stats = nullptr;
   };
-
-  explicit MultiTermState(IResourceManager& memory) noexcept
-    : _terms{{memory}} {}
 
   void Prepare(const TermReader* reader) {
     SDB_ASSERT(reader);
@@ -65,7 +63,7 @@ class MultiTermState {
  private:
   const TermReader* _reader = nullptr;
 
-  ManagedVector<Entry> _terms;
+  TrackedVector<Entry> _terms;
 };
 
 }  // namespace irs

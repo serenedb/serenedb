@@ -137,8 +137,6 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
     auto rdr = open_reader();
 
-    MaxMemoryCounter counter;
-
     // long - seq = [7..7]
     {
       irs::byte_type min_stream_buf[irs::numeric_utils::kNumericTermMaxSize];
@@ -153,7 +151,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         MakeFilter(kSeqFieldId, min_term, irs::BoundType::Inclusive, max_term,
                    irs::BoundType::Inclusive);
 
-      tests::PreparedFilter prepared{query, rdr, nullptr, counter};
+      tests::PreparedFilter prepared{query, rdr, nullptr};
 
       std::vector<irs::doc_id_t> expected{8};
       std::vector<irs::doc_id_t> actual;
@@ -167,9 +165,6 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       }
       ASSERT_EQ(expected, actual);
     }
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
 
     // long - seq = [1..7]
     {

@@ -142,8 +142,6 @@ void TfidfTestCase::TestQueryNorms() {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  MaxMemoryCounter counter;
-
   // by_range multiple
   {
     irs::tests::BlobPointReader values{segment, *column};
@@ -164,7 +162,7 @@ void TfidfTestCase::TestQueryNorms() {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -189,9 +187,6 @@ void TfidfTestCase::TestQueryNorms() {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple (3 values)
   {
@@ -213,7 +208,7 @@ void TfidfTestCase::TestQueryNorms() {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -240,9 +235,6 @@ void TfidfTestCase::TestQueryNorms() {
       ASSERT_EQ(kExpected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(TfidfTestCase, consts) {
@@ -355,7 +347,6 @@ TEST_P(TfidfTestCase, test_phrase) {
   ASSERT_EQ(1, index->size());
   auto& segment = *(index.begin());
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   // "jumps high" with order
@@ -377,7 +368,7 @@ TEST_P(TfidfTestCase, test_phrase) {
       "R"   // jumps high jumps left jumps right walks down walks back
     };
 
-    tests::PreparedFilter prepared_filter{filter, *index, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, *index, &scorer};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -405,9 +396,6 @@ TEST_P(TfidfTestCase, test_phrase) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // "cookies ca* p_e bisKuit meringue|marshmallows" with order
   {
@@ -440,7 +428,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     };
 
     tests::PreparedFilter prepared_filter{*Lower(std::move(filter), &scorer),
-                                          *index, &scorer, counter};
+                                          *index, &scorer};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -468,9 +456,6 @@ TEST_P(TfidfTestCase, test_phrase) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(TfidfTestCase, test_query) {
@@ -501,7 +486,6 @@ TEST_P(TfidfTestCase, test_query) {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   // by_term
@@ -517,7 +501,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -543,9 +527,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by term multi-segment, same term (same score for all docs)
   {
@@ -622,7 +603,7 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
@@ -652,9 +633,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_term disjunction multi-segment, different terms (same score for all
   // docs)
@@ -746,7 +724,7 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
@@ -778,9 +756,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_prefix empty multi-segment, different terms (same score for all docs)
   {
@@ -860,7 +835,7 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kSeq);
@@ -892,9 +867,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range single
   {
@@ -914,7 +886,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -937,9 +909,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range single
   {
@@ -959,7 +928,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{3, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -982,9 +951,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple
   {
@@ -1004,7 +970,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{7, 0, 1, 3, 5};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1027,9 +993,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_range multiple (3 values)
   {
@@ -1049,7 +1012,7 @@ TEST_P(TfidfTestCase, test_query) {
     std::vector<uint64_t> expected{0, 7, 5, 1, 3, 2};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1072,9 +1035,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected[i++], entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // by_phrase
   {
@@ -1095,7 +1055,7 @@ TEST_P(TfidfTestCase, test_query) {
     };
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1119,9 +1079,6 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_EQ(expected_entry.second, entry.second);
     }
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // all
   {
@@ -1130,7 +1087,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::All filter;
     filter.SetBoost(1.5f);
 
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1149,9 +1106,6 @@ TEST_P(TfidfTestCase, test_query) {
     }
     ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // all
   {
@@ -1160,7 +1114,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::All filter;
     filter.SetBoost(0.f);
 
-    tests::PreparedFilter prepared_filter{filter, reader, &scorer, counter};
+    tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1179,9 +1133,6 @@ TEST_P(TfidfTestCase, test_query) {
     }
     ASSERT_EQ(irs::doc_limits::eof(), docs->Value());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(TfidfTestCase, test_make) {
@@ -1237,7 +1188,6 @@ TEST_P(TfidfTestCase, test_order) {
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
 
-  MaxMemoryCounter counter;
   irs::ColumnArgsFetcher fetcher;
 
   {
@@ -1250,7 +1200,7 @@ TEST_P(TfidfTestCase, test_order) {
     std::vector<uint64_t> expected{0, 1, 5, 7};
 
     irs::BytesViewInput in;
-    tests::PreparedFilter prepared{query, reader, &scorer, counter};
+    tests::PreparedFilter prepared{query, reader, &scorer};
     fetcher.Clear();
     auto docs = prepared.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -1273,9 +1223,6 @@ TEST_P(TfidfTestCase, test_order) {
                  [](const auto& lhs, auto rhs) { return lhs.second == rhs; });
     ASSERT_TRUE(eq);
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

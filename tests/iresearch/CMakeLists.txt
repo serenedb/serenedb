@@ -194,6 +194,7 @@ add_executable(
     utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
+    utils/tracked_test.cpp
     utils/utf8_path_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp

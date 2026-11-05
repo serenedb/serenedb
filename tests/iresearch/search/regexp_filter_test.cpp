@@ -155,7 +155,6 @@ TEST(by_regexp_test, equal) {
 }
 
 TEST(by_regexp_test, boost) {
-  MaxMemoryCounter counter;
   {
     irs::ByRegexp q = MakeFilter("field", "bar.*");
     ASSERT_EQ(irs::kNoBoost, OptimizedMove(std::move(q))->GetBoost());
@@ -167,47 +166,40 @@ TEST(by_regexp_test, boost) {
     auto lowered = OptimizedMove(std::move(q));
     ASSERT_EQ(boost, lowered->GetBoost());
 
-    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{*lowered, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 }
 
 TEST(by_regexp_test, type_of_prepared_query) {
-  MaxMemoryCounter counter;
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>("foo", "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     tests::PreparedFilter rhs{*OptimizedMove(MakeFilter("foo", "bar")),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
-  counter.Reset();
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByPrefix>("foo", "bar"),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     tests::PreparedFilter rhs{*OptimizedMove(MakeFilter("foo", "bar.*")),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
-  counter.Reset();
   {
     tests::PreparedFilter lhs{MakeFilter<irs::ByTerm>("foo", ""),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     tests::PreparedFilter rhs{*OptimizedMove(MakeFilter("foo", "")),
-                              irs::SubReader::empty(), nullptr, counter};
+                              irs::SubReader::empty(), nullptr};
     auto& lhs_ref = *lhs.Query(0);
     auto& rhs_ref = *rhs.Query(0);
     ASSERT_EQ(typeid(lhs_ref), typeid(rhs_ref));
   }
-  counter.Reset();
 }
 
 // Parametrized tests
@@ -633,7 +625,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_frequency_sort) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
-  MaxMemoryCounter counter;
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -645,12 +636,10 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
     irs::score_t boost = 2.5f;
     auto q = MakeFilter("prefix", ".*c.*");
     q.SetBoost(boost);
-    tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{*OptimizedMove(std::move(q)), rdr, nullptr};
     ASSERT_NE(nullptr, prepared.Query(0));
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
-  counter.Reset();
 }
 
 // Match all / match nothing
@@ -780,15 +769,12 @@ TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
 // Filter reuse
 
 TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
-  MaxMemoryCounter counter;
   auto q = OptimizedMove(MakeFilter("same", ".*"));
   {
-    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{*q, irs::SubReader::empty(), nullptr};
     ASSERT_NE(nullptr, prepared.Query(0));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  counter.Reset();
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1001,7 +987,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
   auto q = OptimizedMove(MakeFilter("term", "foo.*bar"));
   Docs run1, run2;
   {
-    tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
+    tests::PreparedFilter p{*q, rdr, nullptr};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
       while (d->Next() != irs::doc_limits::eof()) {
@@ -1011,7 +997,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
     }
   }
   {
-    tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
+    tests::PreparedFilter p{*q, rdr, nullptr};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
       while (d->Next() != irs::doc_limits::eof()) {
@@ -1081,7 +1067,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_compaction) {
     ASSERT_EQ(1, rdr.size());
     Docs result;
     auto q = OptimizedMove(MakeFilter("same", ".*"));
-    tests::PreparedFilter p{*q, rdr, nullptr, irs::IResourceManager::gNoop};
+    tests::PreparedFilter p{*q, rdr, nullptr};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = p.Execute(i);
       while (d->Next() != irs::doc_limits::eof()) {
@@ -1562,8 +1548,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
 
   auto collect = [&](const irs::Filter& q) {
     Docs out;
-    tests::PreparedFilter prepared{q, rdr, nullptr,
-                                   irs::IResourceManager::gNoop};
+    tests::PreparedFilter prepared{q, rdr, nullptr};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = prepared.Execute(i);
       while (d->Next() != irs::doc_limits::eof()) {
@@ -1606,8 +1591,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
                  irs::RegexpSyntax syntax) {
     auto q = OptimizedMove(MakeFilter(field, pattern, syntax));
     Docs out;
-    tests::PreparedFilter prepared{*q, rdr, nullptr,
-                                   irs::IResourceManager::gNoop};
+    tests::PreparedFilter prepared{*q, rdr, nullptr};
     for (size_t i = 0; [[maybe_unused]] auto& s : rdr) {
       auto d = prepared.Execute(i);
       while (d->Next() != irs::doc_limits::eof()) {

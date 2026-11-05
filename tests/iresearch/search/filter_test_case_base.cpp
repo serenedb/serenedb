@@ -33,9 +33,8 @@ namespace tests {
 PreparedFilter::PreparedFilter(const irs::Filter& filter,
                                const irs::IndexReader& index,
                                const irs::Scorer* scorer,
-                               irs::IResourceManager& memory,
                                const irs::AttributeProvider* ctx,
-                               CollectMode mode, irs::IResourceManager*)
+                               CollectMode mode)
   : _scorer{scorer} {
   _queries.reserve(index.size());
 
@@ -49,7 +48,6 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
     for (const auto& sub : index) {
       _queries.emplace_back(filter.PrepareSegment(sub, {
                                                          .collector = nullptr,
-                                                         .memory = memory,
                                                          .ctx = ctx,
                                                        }));
     }
@@ -75,7 +73,6 @@ PreparedFilter::PreparedFilter(const irs::Filter& filter,
     _queries.emplace_back(
       filter.PrepareSegment(sub, {
                                    .collector = _collector->Get(),
-                                   .memory = memory,
                                    .ctx = ctx,
                                    .thread = seg++ % threads,
                                  }));

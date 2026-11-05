@@ -39,7 +39,7 @@
 namespace irs::detail {
 
 inline bool ClauseTerms(const QueryBuilder& child,
-                        std::vector<PostingClause>& terms) {
+                        TrackedVector<PostingClause>& terms) {
   if (child.Kind() != QueryKind::Terms) {
     return false;
   }

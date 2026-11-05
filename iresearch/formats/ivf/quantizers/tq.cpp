@@ -31,6 +31,7 @@
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/shuffle.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -1298,7 +1299,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     if (!SupportsPairScores()) {
       return false;
     }

@@ -21,6 +21,7 @@
 #include <limits>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -651,7 +652,7 @@ class OsqQuantizerReader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return _cluster; }
 
   bool PreparePairTerms(const byte_type* /*base*/, uint32_t /*record_size*/,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     if (!SupportsPairScores()) {
       return false;
     }

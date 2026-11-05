@@ -25,6 +25,7 @@
 #include <span>
 
 #include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -38,28 +39,16 @@ struct ScatterScratch {
     uint32_t id;
   };
 
-  explicit ScatterScratch(IResourceManager& rm)
-    : blocks{ManagedTypedAllocator<duckdb::AllocatedData>{rm}},
-      cursors{ManagedTypedAllocator<uint32_t>{rm}},
-      bounds{ManagedTypedAllocator<uint32_t>{rm}},
-      ranked{ManagedTypedAllocator<RankedTerm>{rm}},
-      ranked_alt{ManagedTypedAllocator<RankedTerm>{rm}},
-      radix_counts{ManagedTypedAllocator<uint32_t>{rm}},
-      docs{ManagedTypedAllocator<uint32_t*>{rm}},
-      pos{ManagedTypedAllocator<uint32_t*>{rm}},
-      offs_start{ManagedTypedAllocator<uint32_t*>{rm}},
-      offs_end{ManagedTypedAllocator<uint32_t*>{rm}} {}
-
-  ManagedVector<duckdb::AllocatedData> blocks;
-  ManagedVector<uint32_t> cursors;
-  ManagedVector<uint32_t> bounds;
-  ManagedVector<RankedTerm> ranked;
-  ManagedVector<RankedTerm> ranked_alt;
-  ManagedVector<uint32_t> radix_counts;
-  ManagedVector<uint32_t*> docs;
-  ManagedVector<uint32_t*> pos;
-  ManagedVector<uint32_t*> offs_start;
-  ManagedVector<uint32_t*> offs_end;
+  std::vector<duckdb::AllocatedData> blocks;
+  TrackedVector<uint32_t> cursors;
+  TrackedVector<uint32_t> bounds;
+  TrackedVector<RankedTerm> ranked;
+  TrackedVector<RankedTerm> ranked_alt;
+  std::vector<uint32_t> radix_counts;
+  std::vector<uint32_t*> docs;
+  std::vector<uint32_t*> pos;
+  std::vector<uint32_t*> offs_start;
+  std::vector<uint32_t*> offs_end;
 };
 
 class ScatteredField : util::Noncopyable {
@@ -114,7 +103,7 @@ class ScatteredField : util::Noncopyable {
   void RekeyPastSharedPrefix(std::span<const duckdb::string_t> entries,
                              uint64_t min_key, uint64_t max_key);
   uint64_t PrefixSums();
-  uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
+  uint32_t** AssignBlocks(std::vector<uint32_t*>& col, size_t nblocks,
                           size_t& next);
   void RadixSortByKey();
 

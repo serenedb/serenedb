@@ -33,6 +33,7 @@
 #include <deque>
 #include <functional>
 #include <limits>
+#include <list>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -408,6 +409,8 @@ class IndexWriter : private util::Noncopyable {
     return _segments_active.load(std::memory_order_acquire) != 0;
   }
 
+  bool FailedBatchKept() const noexcept { return _failed_batch_kept; }
+
   void Clear(const SourcePosition& position = {});
 
   CompactionResult Compact(const CompactionPolicy& policy,
@@ -575,8 +578,8 @@ class IndexWriter : private util::Noncopyable {
     std::atomic_size_t buffered_docs{0};
     RefTrackingDirectory dir;
 
-    ManagedVector<Queued> queries;
-    ManagedVector<FlushedSegment> flushed;
+    std::vector<Queued> queries;
+    std::vector<FlushedSegment> flushed;
 
     segment_meta_generator_t meta_generator;
 
@@ -684,9 +687,9 @@ class IndexWriter : private util::Noncopyable {
 
     CompactingSegments segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
-    // pinned reader in `incoming`. A deque so an append never invalidates the
+    // pinned reader in `incoming`. A list so an append never invalidates the
     // views already handed to segment_mask.
-    std::deque<std::string> masked_names;
+    std::list<std::string> masked_names;
 
     FlushContext() = default;
 
@@ -709,6 +712,7 @@ class IndexWriter : private util::Noncopyable {
 
   void Cleanup(FlushContext& curr) noexcept;
   void SwapDocMaps(FlushContext& flushed) noexcept;
+  bool Requeue(FlushContext& failed) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
@@ -798,6 +802,7 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _seg_counter;
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
+  bool _failed_batch_kept = false;
   IndexMetaWriter _writer;
   IndexLock::ptr _write_lock;
   IndexFileRefs::ref_t _write_lock_file_ref;

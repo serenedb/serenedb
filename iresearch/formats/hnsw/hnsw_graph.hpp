@@ -40,6 +40,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 namespace irs {
 
 class DataOutput;
@@ -230,8 +231,8 @@ struct HnswFrontierOrder {
 struct HnswSearchScratch {
   HnswVisited visited;
   HnswVisited visited_hop2;
-  std::vector<HnswCandidate> nearest;
-  std::vector<HnswCandidate> frontier;
+  TrackedVector<HnswCandidate> nearest;
+  TrackedVector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
   std::vector<uint32_t> hop;
   std::vector<uint32_t> bridges;
@@ -610,7 +611,7 @@ IRS_FORCE_INLINE void HnswBatchUnvisited(std::span<const uint32_t> links,
 }
 
 inline IRS_FORCE_INLINE void HnswKeepNearest(
-  std::vector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
+  TrackedVector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
   nearest.push_back(cand);
   std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
   if (nearest.size() > ef) {

@@ -183,8 +183,8 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_EQ(n, _reader->docs_count());
     AssertQuantizedPath((*_reader)[0]);
     _filter = MakeKnnFilter();
-    _prepared.emplace(_filter, *_reader, nullptr, irs::IResourceManager::gNoop,
-                      nullptr, ::tests::PreparedFilter::CollectMode::Single);
+    _prepared.emplace(_filter, *_reader, nullptr, nullptr,
+                      ::tests::PreparedFilter::CollectMode::Single);
     ASSERT_EQ(1U, _prepared->size());
   }
 

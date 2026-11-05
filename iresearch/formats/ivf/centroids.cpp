@@ -42,6 +42,7 @@
 #include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shuffle.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -85,11 +86,11 @@ struct LayerLayout {
   }
 };
 
-std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
-                                        uint64_t rows, uint32_t d,
-                                        ReadContext& ctx, uint64_t n_train,
-                                        uint32_t seed) {
-  std::vector<float> sample(static_cast<size_t>(n_train) * d);
+TrackedVector<float> GatherTrainingSample(const ColumnReader& vector_column,
+                                          uint64_t rows, uint32_t d,
+                                          ReadContext& ctx, uint64_t n_train,
+                                          uint32_t seed) {
+  TrackedVector<float> sample(static_cast<size_t>(n_train) * d);
   pcg32 rng{seed};
   uint64_t seen = 0;
   const auto reservoir_sink = [&](uint64_t /*first*/, duckdb::idx_t n,
@@ -259,7 +260,9 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
                          static_cast<uint32_t>(kClusterRedos),
                          ClusteringAlgo::Auto, rotation_for(sample_size, 1));
         nodes.emplace_back(CentroidsBuilder::Node{
-          .centroids = std::move(centroids), .children = {0}, .leafs = 1});
+          .centroids = {centroids.begin(), centroids.end()},
+          .children = {0},
+          .leafs = 1});
       }
       // centroid from parent will route to this posting
       continue;
@@ -292,8 +295,8 @@ void Build(std::vector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     if (entry.parent < nodes.size()) {
       nodes[entry.parent].children.emplace_back(nodes.size());
     }
-    nodes.emplace_back(
-      CentroidsBuilder::Node{.centroids = std::move(centroids)});
+    nodes.emplace_back(CentroidsBuilder::Node{
+      .centroids = {centroids.begin(), centroids.end()}});
     ForEachGroup(entry.ids, n_built, [&](size_t, size_t start, size_t count) {
       centroids_build.emplace_back(CentroidsEntry{
         .parent = nodes.size() - 1,
@@ -445,8 +448,8 @@ CentroidsTree CentroidsTree::Deserialize(IndexInput& in,
 }
 
 void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
-                           uint32_t nprobe, std::vector<uint32_t>& out_ids,
-                           std::vector<float>* out_centroids,
+                           uint32_t nprobe, TrackedVector<uint32_t>& out_ids,
+                           TrackedVector<float>* out_centroids,
                            uint32_t beam) const {
   if (_root.size == 0) {
     out_ids.push_back(0);
@@ -488,7 +491,7 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
   });
 }
 
-void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
+void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
                                  size_t max_fanout) {
   BuildSettings settings{
     .posting_size = std::max<size_t>(1, leaf_size),
@@ -509,7 +512,7 @@ void CentroidsBuilder::BuildTree(std::vector<float> sample, size_t leaf_size,
   }
 }
 
-CentroidsBuilder CentroidsBuilder::BuildFromSample(std::vector<float> sample,
+CentroidsBuilder CentroidsBuilder::BuildFromSample(TrackedVector<float> sample,
                                                    uint32_t d,
                                                    VectorMetric metric,
                                                    size_t leaf_size,
@@ -547,7 +550,7 @@ CentroidsBuilder CentroidsBuilder::Create(const ColumnReader& vector_column,
 }
 
 CentroidsBuilder CentroidsBuilder::CreateFromSample(
-  std::vector<float> sample, uint32_t d, VectorMetric metric,
+  TrackedVector<float> sample, uint32_t d, VectorMetric metric,
   const CentroidsBuildParams& params) {
   SDB_ASSERT(params.posting_size > 0);
   return BuildFromSample(std::move(sample), d, metric, params.posting_size,

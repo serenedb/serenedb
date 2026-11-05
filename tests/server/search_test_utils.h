@@ -108,23 +108,39 @@ inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   return docs;
 }
 
-inline const irs::DirectoryReader& OneRowSegments() {
-  static irs::MemoryDirectory dir;
-  static const irs::DirectoryReader reader = [] {
-    irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
-    auto writer =
-      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
-    for (int64_t value = 0; value != 8; ++value) {
-      auto trx = writer->GetBatch(/*exclusive_segment=*/true);
-      WriteValues(trx, std::array{value});
-      EXPECT_TRUE(trx.Commit());
-      writer->RefreshCommit();
-    }
-    return writer->GetSnapshot();
-  }();
-  return reader;
+inline irs::DirectoryReader BuildOneRowSegments(irs::MemoryDirectory& dir) {
+  irs::IndexWriterOptions options;
+  options.db = &EngineDb();
+  options.reader_options.db = &EngineDb();
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  for (int64_t value = 0; value != 8; ++value) {
+    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
+    WriteValues(trx, std::array{value});
+    EXPECT_TRUE(trx.Commit());
+    writer->RefreshCommit();
+  }
+  return writer->GetSnapshot();
 }
+
+struct OneRowIndex {
+  OneRowIndex() : reader{BuildOneRowSegments(dir)} {}
+
+  irs::MemoryDirectory dir;
+  irs::DirectoryReader reader;
+};
+
+inline std::unique_ptr<OneRowIndex> gOneRowIndex;
+
+inline const irs::DirectoryReader& OneRowSegments() {
+  if (!gOneRowIndex) {
+    gOneRowIndex = std::make_unique<OneRowIndex>();
+  }
+  return gOneRowIndex->reader;
+}
+
+class OneRowSegmentsTest : public ::testing::Test {
+ protected:
+  static void TearDownTestSuite() { gOneRowIndex.reset(); }
+};
 
 }  // namespace sdb::test

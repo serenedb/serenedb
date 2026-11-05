@@ -29,7 +29,6 @@
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_utils.hpp"
 
@@ -102,26 +101,6 @@ struct OnHeap final : Base {
   void Destroy() const noexcept final { delete this; }
 };
 
-template<typename Base>
-struct Tracked final : Base {
-  static_assert(std::is_base_of_v<Managed, Base>);
-
-  template<typename... Args>
-  Tracked(IResourceManager& rm, Args&&... args)
-    : Base{std::forward<Args>(args)...}, _rm{rm} {
-    rm.Increase(sizeof(*this));
-  }
-
- private:
-  void Destroy() const noexcept final {
-    auto& rm = _rm;
-    delete this;
-    rm.Decrease(sizeof(*this));
-  }
-
-  IResourceManager& _rm;
-};
-
 struct ManagedDeleter {
   void operator()(const Managed* p) noexcept {
     SDB_ASSERT(p != nullptr);  // std::unique_ptr doesn't call dtor on nullptr
@@ -144,8 +123,6 @@ class [[clang::trivial_abi]] managed_ptr final
 
   template<typename Base, typename Derived, typename... Args>
   friend managed_ptr<Base> make_managed(Args&&... args);
-  template<typename Base, typename Derived, typename... Args>
-  friend managed_ptr<Base> make_tracked(IResourceManager&, Args&&... args);
 
   constexpr explicit managed_ptr(T* p) noexcept : Ptr{p} {}
 
@@ -201,12 +178,6 @@ constexpr managed_ptr<Base> to_managed(Derived& p) noexcept {
 template<typename Base, typename Derived = Base, typename... Args>
 managed_ptr<Base> make_managed(Args&&... args) {
   return managed_ptr<Base>{new OnHeap<Derived>{std::forward<Args>(args)...}};
-}
-
-template<typename Base, typename Derived = Base, typename... Args>
-managed_ptr<Base> make_tracked(IResourceManager& rm, Args&&... args) {
-  return managed_ptr<Base>{
-    new Tracked<Derived>{rm, std::forward<Args>(args)...}};
 }
 // NOLINTEND
 

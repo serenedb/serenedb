@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -115,10 +116,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
   HyperLogLogMerger hyperloglog;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
+  std::vector<std::vector<std::optional<TrackedVector<duckdb::sel_t>>>>
     kept_cache(sources.size());
   auto kept_for = [&](size_t si, const SubReader& reader,
-                      uint64_t pos) -> const std::vector<duckdb::sel_t>& {
+                      uint64_t pos) -> const TrackedVector<duckdb::sel_t>& {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
     if (windows.size() <= w) {

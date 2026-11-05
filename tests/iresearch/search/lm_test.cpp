@@ -210,8 +210,7 @@ std::map<irs::doc_id_t, irs::score_t> RunQuery(irs::IndexReader& index,
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, index, &scorer, counter};
+  tests::PreparedFilter prepared{filter, index, &scorer};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

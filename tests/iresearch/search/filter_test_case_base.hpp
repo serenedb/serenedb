@@ -209,8 +209,7 @@ class FilterWrapper : public irs::Filter {
     if (irs::QueryBuilder::IsEmpty(*query)) {
       return query;
     }
-    return irs::memory::make_tracked<QueryWrapper>(ctx.memory, segment,
-                                                   std::move(query));
+    return irs::memory::make_managed<QueryWrapper>(segment, std::move(query));
   }
 
   // Only ever reached through `Filter::MakeCollector`, which has already
@@ -483,10 +482,8 @@ class PreparedFilter {
 
   PreparedFilter(const irs::Filter& filter, const irs::IndexReader& index,
                  const irs::Scorer* scorer = nullptr,
-                 irs::IResourceManager& memory = irs::IResourceManager::gNoop,
                  const irs::AttributeProvider* ctx = nullptr,
-                 CollectMode mode = CollectMode::Single,
-                 irs::IResourceManager* exec_memory = nullptr);
+                 CollectMode mode = CollectMode::Single);
 
   size_t size() const noexcept { return _queries.size(); }
 

@@ -308,8 +308,8 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
     return QueryBuilder::Empty();
   }
 
-  auto query = memory::make_tracked<MultiTermQuery>(
-    ctx.memory, segment, ctx.memory, ctx.boost * boost, ScoreMergeType::Max);
+  auto query = memory::make_managed<MultiTermQuery>(segment, ctx.boost * boost,
+                                                    ScoreMergeType::Max);
   auto* collector =
     ctx.collector ? &irs::utils::downCast<BlendedTermsCollector>(*ctx.collector)
                   : nullptr;

@@ -26,7 +26,6 @@
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -40,7 +39,6 @@ class DocContexts final {
   };
 
   DocContexts() = default;
-  explicit DocContexts(IResourceManager& rm) : _runs{Allocator{rm}} {}
 
   DocContexts(const DocContexts&) = default;
   DocContexts& operator=(const DocContexts&) = default;
@@ -49,7 +47,7 @@ class DocContexts final {
     : _runs{std::move(other._runs)}, _size{std::exchange(other._size, 0)} {}
 
   DocContexts& operator=(DocContexts&& other) noexcept(
-    std::is_nothrow_move_assignable_v<ManagedVector<Run>>) {
+    std::is_nothrow_move_assignable_v<std::vector<Run>>) {
     _runs = std::move(other._runs);
     _size = std::exchange(other._size, 0);
     return *this;
@@ -140,13 +138,7 @@ class DocContexts final {
     return _runs.capacity() * sizeof(Run);
   }
 
-  IResourceManager& ResourceManager() const noexcept {
-    return _runs.get_allocator().Manager();
-  }
-
  private:
-  using Allocator = ManagedTypedAllocator<Run>;
-
   void PushOrMerge(size_t begin, uint64_t tick, bool committed) noexcept {
     if (!_runs.empty() && _runs.back().tick == tick &&
         _runs.back().committed == committed) {
@@ -155,7 +147,7 @@ class DocContexts final {
     _runs.push_back(Run{tick, static_cast<uint32_t>(begin), committed});
   }
 
-  ManagedVector<Run> _runs;
+  std::vector<Run> _runs;
   size_t _size{0};
 };
 

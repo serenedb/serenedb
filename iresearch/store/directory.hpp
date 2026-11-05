@@ -30,6 +30,7 @@
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
 

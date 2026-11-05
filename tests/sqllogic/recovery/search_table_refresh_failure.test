@@ -1,0 +1,42 @@
+# A refresh that fails while it flushes loses its batch. The segments a large
+# INSERT wrote itself stay on disk until the table catches up, so a restart
+# replays the batch from the write-ahead log.
+
+control substitution on
+
+statement ok
+CREATE TABLE stf_notes (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO stf_notes SELECT i, 'note ' || i FROM range(100000) t(i);
+
+statement ok
+INSERT INTO stf_notes VALUES (-1, 'small');
+
+statement ok
+SET sdb_faults = 'IndexWriter::Flush';
+
+statement error
+VACUUM (REFRESH_TABLE) stf_notes;
+----
+db error: ERROR: failed to refresh search table 'stf_notes': caught exception while refreshing search table <slt:ignore>: intentional debug error
+
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+VACUUM (REFRESH_TABLE) stf_notes;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM stf_notes;
+----
+count
+100001

@@ -35,6 +35,7 @@
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -45,10 +46,10 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
             QueryBuilder::ptr&& index_only, AnnQueryCache* cache);
 
-  std::vector<ScoreDoc> RunSearch(
+  TrackedVector<ScoreDoc> RunSearch(
     detail::TableFilter* table = nullptr,
     detail::TableFilter* columns = nullptr,
-    std::vector<score_t>* spreads = nullptr) const;
+    TrackedVector<score_t>* spreads = nullptr) const;
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
@@ -75,12 +76,12 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   void ScanColumn(HnswSearchScratch& scratch) const;
 
   void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
-             std::vector<score_t>& spreads) const;
+             TrackedVector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
   mutable std::shared_ptr<const QuantizerCodebook> _codebook;
   mutable std::shared_ptr<const PanoramaQuery> _panorama;
-  mutable absl::once_flag _distance_prepared;
+  mutable std::once_flag _distance_prepared;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   QueryBuilder::ptr _index_only;

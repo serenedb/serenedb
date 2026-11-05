@@ -26,6 +26,7 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/system_compiler.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -35,7 +36,7 @@ class BitsetStorage;
 }
 namespace irs::fill {
 
-struct Node : memory::Managed {
+struct Node : memory::Managed, Tracked {
   using ptr = memory::managed_ptr<Node>;
 
   virtual doc_id_t FillOr(doc_id_t, doc_id_t, uint64_t* IRS_RESTRICT) {

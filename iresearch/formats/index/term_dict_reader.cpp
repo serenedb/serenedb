@@ -200,7 +200,6 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
   key_width = head.width;
-  uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));
   _max_key.assign(prefix);
@@ -218,11 +217,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   uint64_t inline_size = 0;
   if (_blocks > 1) {
     _root = Root{Slice(separators, _first_block, _blocks - 1), key_width != 0};
-    bytes += _root.MemoryBytes();
     if (!head.text.prefixes.empty()) {
       _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
         ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
-      bytes += _prefixes->MemoryBytes();
     }
   } else if (!head.text.prefixes.empty()) {
     corrupted();
@@ -235,7 +232,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     }
   }
   if (!head.ranges.counts.empty()) {
-    bytes += ReadRanges(owner, in, head.ranges);
+    ReadRanges(owner, in, head.ranges);
   } else if (head.ranges.size != 0) {
     corrupted();
   }
@@ -251,11 +248,10 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       }
     }
   }
-  owner.Account(bytes);
 }
 
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
-                                    const RangesHead& ranges) {
+void TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
+                                const RangesHead& ranges) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = ranges.offset;
   const auto size = ranges.size;
@@ -302,7 +298,6 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
   if (static_cast<uint64_t>(end - p) != kSlack) {
     corrupted();
   }
-  return _levels.capacity() * sizeof(RangeLevel);
 }
 
 void TermReaderImpl::SampleTerms(

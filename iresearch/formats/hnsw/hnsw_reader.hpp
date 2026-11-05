@@ -20,10 +20,9 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
-
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
@@ -32,6 +31,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -98,7 +98,7 @@ class HnswIndex final : public AnnIndex {
   HnswMeta _meta;
   field_id _field;
   HnswBases* _bases;
-  mutable absl::once_flag _once;
+  mutable std::once_flag _once;
   mutable std::shared_ptr<const HnswData> _data;
 };
 

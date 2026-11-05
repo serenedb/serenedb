@@ -144,8 +144,7 @@ TEST_P(DFIIndexTest, scores_nonnegative_and_only_fire_above_expected) {
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
+  tests::PreparedFilter prepared{filter, *index, impl.get()};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

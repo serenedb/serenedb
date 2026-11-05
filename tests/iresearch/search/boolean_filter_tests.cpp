@@ -1247,8 +1247,6 @@ TEST(boolean_query_boost, or_filter) {
 }
 
 TEST(boolean_query_estimation, or_filter) {
-  MaxMemoryCounter counter;
-
   // estimated subqueries
   {
     irs::BooleanFilter root;
@@ -1266,7 +1264,7 @@ TEST(boolean_query_estimation, or_filter) {
     AsDisjunction(root);
 
     detail::SegmentReaderMock segment_reader{1000};
-    tests::PreparedFilter prep{root, segment_reader, nullptr, counter};
+    tests::PreparedFilter prep{root, segment_reader, nullptr};
 
     for (auto* est_query : estimated) {
       ASSERT_TRUE(est_query->evaluated);
@@ -1274,9 +1272,6 @@ TEST(boolean_query_estimation, or_filter) {
 
     ASSERT_EQ(531, prep.Estimate(0));
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   // unestimated subqueries
   {
@@ -5233,8 +5228,7 @@ TEST_P(BooleanFilterTestCase, and_or_no_collector) {
 
   const auto collect = [&](const irs::Filter& filter,
                            PreparedFilter::CollectMode mode) {
-    PreparedFilter prepared{filter,  rdr, nullptr, irs::IResourceManager::gNoop,
-                            nullptr, mode};
+    PreparedFilter prepared{filter, rdr, nullptr, nullptr, mode};
     Docs docs;
     for (size_t i = 0, n = prepared.size(); i < n; ++i) {
       auto it = prepared.Execute(i);

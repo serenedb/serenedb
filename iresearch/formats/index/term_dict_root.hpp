@@ -33,6 +33,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -107,8 +108,8 @@ IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
 uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
 
 struct Separators {
-  bstring arena;
-  std::vector<uint32_t> offsets{0};
+  basic_string<byte_type, TrackedAllocator<byte_type>> arena;
+  TrackedVector<uint32_t> offsets{0};
 };
 
 inline constexpr uint32_t kNoSeparators[]{0};
@@ -140,11 +141,6 @@ inline size_t SeparatorCount(SeparatorsView separators) noexcept {
 inline bytes_view SeparatorAt(SeparatorsView separators, size_t i) noexcept {
   return {separators.arena + separators.offsets[i],
           separators.offsets[i + 1] - separators.offsets[i]};
-}
-
-inline size_t SeparatorBytes(const Separators& separators) noexcept {
-  return separators.arena.capacity() +
-         separators.offsets.capacity() * sizeof(uint32_t);
 }
 
 class SeparatorRoot {
@@ -190,7 +186,7 @@ class EytzingerRoot : public SeparatorRoot {
   size_t Outside(bytes_view key) const noexcept;
   size_t Resolve(size_t k) const noexcept;
 
-  std::vector<Node> _storage;
+  TrackedVector<Node> _storage;
   const Node* _nodes = nullptr;
   bytes_view _prefix;
   size_t _count = 0;
@@ -233,7 +229,7 @@ class TreeRoot : public SeparatorRoot {
   }
 
   bytes_view _prefix;
-  std::vector<Node> _nodes;
+  TrackedVector<Node> _nodes;
   std::vector<size_t> _levels;
   size_t _leaves = 0;
   size_t _count = 0;
@@ -257,7 +253,7 @@ class ArtRoot : public SeparatorRoot {
   size_t Leaf(const uint64_t* child, size_t depth,
               bytes_view key) const noexcept;
 
-  std::vector<uint64_t> _words;
+  TrackedVector<uint64_t> _words;
   uint64_t _visits = 0;
 };
 

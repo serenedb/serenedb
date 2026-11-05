@@ -31,13 +31,14 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::ann {
 namespace {
 
 class HnswHits : public Root {
  public:
-  HnswHits(std::vector<ScoreDoc>&& hits, std::vector<score_t>&& spreads,
+  HnswHits(TrackedVector<ScoreDoc>&& hits, TrackedVector<score_t>&& spreads,
            const SubReader& segment, ColumnArgsFetcher& fetcher,
            irs::detail::TableFilter* table, const irs::detail::ScoreArgs& args)
     : _hits{std::move(hits)},
@@ -76,8 +77,8 @@ class HnswHits : public Root {
   }
 
  private:
-  std::vector<ScoreDoc> _hits;
-  std::vector<score_t> _spreads;
+  TrackedVector<ScoreDoc> _hits;
+  TrackedVector<score_t> _spreads;
   irs::detail::ScaleProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
@@ -97,7 +98,7 @@ namespace irs {
 ann::Root::ptr HnswQuery::PlanAnn(const ann::Context& ctx) const {
   auto* const narrow =
     ctx.table && !ctx.table->Foldable() ? ctx.table : nullptr;
-  std::vector<score_t> spreads;
+  TrackedVector<score_t> spreads;
   auto hits = RunSearch(ctx.table, ctx.columns, &spreads);
   if (hits.empty()) {
     return ann::MakeEmpty();

@@ -566,8 +566,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
     _reader.reset();
     _meta.name = kSegment;
     _idx = std::make_unique<irs::IdxReader>(from, kSegment, nullptr);
-    _reader = std::make_unique<irs::term_dict::FieldReader>(
-      irs::IResourceManager::gNoop);
+    _reader = std::make_unique<irs::term_dict::FieldReader>();
     _reader->prepare(
       irs::ReaderState{.dir = &from, .meta = &_meta, .idx = _idx.get()});
   }
@@ -3342,7 +3341,7 @@ TEST_P(TermDictTest, inline_postings_at_the_region_end) {
     counting.SetLength(std::numeric_limits<uint64_t>::max());
     irs::IdxReader idx{counting, kSegment, nullptr};
     counting.SetLength(length);
-    irs::term_dict::FieldReader reader{irs::IResourceManager::gNoop};
+    irs::term_dict::FieldReader reader;
     reader.prepare(
       irs::ReaderState{.dir = &counting, .meta = &_meta, .idx = &idx});
   };

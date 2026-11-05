@@ -47,6 +47,7 @@
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -598,7 +599,7 @@ WriteChunk& ColumnWriter::OpenChunk() {
     return _staged[_staged_chunks - 1];
   }
   if (_staged_chunks == _staged.size()) {
-    auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
+    auto& alloc = TrackedDuckAllocator();
     auto& cache =
       _staged_caches.emplace_back(alloc, _type, STANDARD_VECTOR_SIZE);
     _staged.push_back(WriteChunk{duckdb::Vector{cache}, 0});

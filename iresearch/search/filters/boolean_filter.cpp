@@ -383,9 +383,8 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
                      : nullptr;
   const auto composite_boost = ctx.boost * GetBoost();
 
-  BooleanBuilder builder{segment,         ctx.memory,  _min_should_match,
-                         composite_boost, _merge_type, compound,
-                         ctx.needs_terms};
+  BooleanBuilder builder{segment,     _min_should_match, composite_boost,
+                         _merge_type, compound,          ctx.needs_terms};
 
   PrepareContext child = ctx;
   uint32_t idx = 0;

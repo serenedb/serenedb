@@ -483,7 +483,9 @@ TEST_F(SearchRowRemovalTest, StalePositionsAfterAReopenNeedTheMapsTheyCarry) {
 constexpr uint64_t kGone = 1000000;
 constexpr uint64_t kAlsoGone = 1000001;
 
-TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
+class ReplayRemovalTest : public test::OneRowSegmentsTest {};
+
+TEST_F(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
   const auto live = IdOf(OneRowSegments()[2]);
   const auto removal =
     search::ReplayRemoval(Rows({{live, 1}}), OneRowSegments(), {});
@@ -496,7 +498,7 @@ TEST(ReplayRemovalTest, ARecoveredSegmentKeepsItsDocsAndSlot) {
             removal->groups[0].maps);
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
+TEST_F(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   const auto live = IdOf(OneRowSegments()[3]);
   MapsBySource maps;
   maps.emplace(
@@ -515,12 +517,12 @@ TEST(ReplayRemovalTest, AGoneSegmentFollowsItsMapsToARecoveredOne) {
   EXPECT_TRUE(removal->groups[0].docs.Contains(6));
 }
 
-TEST(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
+TEST_F(ReplayRemovalTest, AGoneSegmentWithoutMapsIsDropped) {
   EXPECT_TRUE(search::ReplayRemoval(Rows({{kGone, 1}}), OneRowSegments(), {})
                 ->groups.empty());
 }
 
-TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
+TEST_F(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   const auto live = IdOf(OneRowSegments()[2]);
   MapsBySource maps;
   maps.emplace(
@@ -533,7 +535,7 @@ TEST(ReplayRemovalTest, AMapOfARecoveredSegmentIsIgnored) {
   EXPECT_EQ(live, removal->groups[0].segment);
 }
 
-TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
+TEST_F(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -556,7 +558,7 @@ TEST(ReplayRemovalTest, ASourceSplitAcrossTargetsKeepsEveryWindow) {
   EXPECT_TRUE(removal->groups[1].docs.Contains(5));
 }
 
-TEST(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
+TEST_F(ReplayRemovalTest, AWindowWithoutRemovedDocsGetsNoGroup) {
   const auto first = IdOf(OneRowSegments()[1]);
   const auto second = IdOf(OneRowSegments()[4]);
   MapsBySource maps;
@@ -821,7 +823,7 @@ TEST_F(SearchRowRemovalTest, RowIdKeysReachAMergedInSegment) {
   Insert(std::span{rowids}.subspan(2000));
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   const std::vector<int64_t> victims{7, 1999, 2000, 3999};
-  Commit(irs::KeyRemoval{victims}, victims);
+  Commit(irs::KeyRemoval{{victims.begin(), victims.end()}}, victims);
   ASSERT_EQ(1, _writer->GetSnapshot().size());
   ExpectModel();
 }
@@ -850,7 +852,7 @@ TEST_F(SearchRowRemovalTest, RowIdKeysPassACopyTheirCommitCarriesOut) {
       merge.join();
       FAIL() << "the merge never reached its progress callback";
     }
-    Commit(irs::KeyRemoval{keys}, keys);
+    Commit(irs::KeyRemoval{{keys.begin(), keys.end()}}, keys);
     for (const auto key : keys) {
       Insert(std::vector<int64_t>{key});
     }
@@ -865,7 +867,7 @@ TEST_F(SearchRowRemovalTest, RowIdKeysPassACopyTheirCommitCarriesOut) {
     EXPECT_EQ(irs::CompactionError::Pending, merged.error);
     _writer->RefreshFinish();
     _model.insert(base + 6);
-    Commit(irs::KeyRemoval{keys}, keys);
+    Commit(irs::KeyRemoval{{keys.begin(), keys.end()}}, keys);
     ExpectModel();
   }
 }

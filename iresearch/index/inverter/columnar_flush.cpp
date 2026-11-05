@@ -272,7 +272,7 @@ uint64_t ScatteredField::PrefixSums() {
   return sum;
 }
 
-uint32_t** ScatteredField::AssignBlocks(ManagedVector<uint32_t*>& col,
+uint32_t** ScatteredField::AssignBlocks(std::vector<uint32_t*>& col,
                                         size_t nblocks, size_t& next) {
   auto& pool = _s->blocks;
   col.resize(nblocks);

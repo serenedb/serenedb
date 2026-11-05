@@ -136,8 +136,7 @@ std::map<irs::doc_id_t, irs::score_t> IdfIndexTest::Score(
   *filter.mutable_field_id() = kBodyId;
   filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
 
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, *index, impl.get(), counter};
+  tests::PreparedFilter prepared{filter, *index, impl.get()};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);

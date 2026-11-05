@@ -30,6 +30,7 @@
 
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -141,7 +142,7 @@ class QuantizerReader {
 
   virtual bool PreparePairTerms(const byte_type* /*base*/,
                                 uint32_t /*record_size*/, uint64_t /*rows*/,
-                                std::vector<float>& /*terms*/) {
+                                TrackedVector<float>& /*terms*/) {
     return false;
   }
 

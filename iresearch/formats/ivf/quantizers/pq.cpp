@@ -30,6 +30,7 @@
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -52,6 +53,10 @@ struct PqStatsHeader {
   uint32_t m;
   uint32_t ksub;
 };
+
+size_t CentroidBytes(const faiss::ProductQuantizer& pq) noexcept {
+  return pq.centroids.capacity() * sizeof(float);
+}
 
 std::vector<float> SubspaceErrors(const faiss::ProductQuantizer& pq,
                                   const float* vecs, size_t n) {
@@ -291,6 +296,7 @@ class ProductQuantizerStats final : public QuantizerStats {
     std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
                 want);
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -305,6 +311,7 @@ class ProductQuantizerStats final : public QuantizerStats {
 
  private:
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _errors;
 };
 
@@ -972,6 +979,7 @@ class ProductQuantizer8Stats final : public QuantizerStats {
       }
     }
     _errors = ReadSubspaceErrors(stats, sizeof(PqStatsHeader) + want, _pq.M);
+    _charge.Resize(CentroidBytes(_pq));
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -989,9 +997,10 @@ class ProductQuantizer8Stats final : public QuantizerStats {
 
  private:
   faiss::ProductQuantizer _pq;
+  MemoryCharge _charge;
   std::vector<float> _norms;
-  std::vector<float> _cent_t;
-  std::vector<uint16_t> _cent_h;
+  TrackedVector<float> _cent_t;
+  TrackedVector<uint16_t> _cent_h;
   std::vector<float> _errors;
 };
 
@@ -1161,7 +1170,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   bool SupportsPairScores() const noexcept final { return true; }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
-                        uint64_t rows, std::vector<float>& terms) final {
+                        uint64_t rows, TrackedVector<float>& terms) final {
     const float* norms = _cb->StatsPtr()->CentroidNorms();
     terms.assign(rows, 0.f);
     for (uint64_t row = 0; row < rows; ++row) {

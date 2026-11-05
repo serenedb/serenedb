@@ -29,6 +29,7 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -72,7 +73,7 @@ class Replay {
   std::optional<Feeder> _feeder;
   irs::IndexWriter::Transaction _head;
   irs::IndexWriter::Transaction _tail;
-  std::vector<int64_t> _keys;
+  irs::TrackedVector<int64_t> _keys;
   irs::DocRemoval _positions;
   irs::containers::FlatHashMap<uint64_t, std::vector<irs::DocMap>> _doc_maps;
 };

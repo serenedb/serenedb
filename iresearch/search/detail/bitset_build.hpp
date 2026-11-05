@@ -41,6 +41,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -361,8 +362,8 @@ inline void ReadFill(FillNode& node, doc_id_t end,
 }
 
 struct BitsetBuckets {
-  std::vector<std::vector<PostingClause>> must;
-  std::vector<PostingClause> must_not;
+  std::vector<TrackedVector<PostingClause>> must;
+  TrackedVector<PostingClause> must_not;
   std::vector<FillNode::ptr> fills;
   std::vector<FillNode::ptr> exclude_fills;
   const SubReader* masked = nullptr;

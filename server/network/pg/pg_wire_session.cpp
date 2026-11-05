@@ -3105,6 +3105,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
                        ERR_MSG("incoming message exceeds maximum size")));
       co_return {};
     }
+    if (frame.status == FrameStatus::OutOfMemory) {
+      WriteFatalResponse(
+        this->_send,
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                       ERR_MSG("out of memory reading an incoming message")));
+      co_return {};
+    }
     if (frame.status != FrameStatus::Ok || frame.type == PQ_MSG_TERMINATE) {
       co_return {};
     }

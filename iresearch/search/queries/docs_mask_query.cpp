@@ -83,14 +83,13 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
     return query;
   }
 
-  auto mask = memory::make_tracked<MaskQuery>(ctx.memory, segment, masked);
+  auto mask = memory::make_managed<MaskQuery>(segment, masked);
   if (ctx.collector != nullptr && query->Kind() == QueryKind::Boolean) {
     const auto& nested = irs::utils::downCast<BooleanQuery>(*query);
     const auto stats = nested.Stats();
-    BooleanBuilder builder{
-      segment,        ctx.memory,         nested.DeclaredMinShouldMatch(),
-      nested.Boost(), nested.MergeType(), ctx.collector,
-      ctx.needs_terms};
+    BooleanBuilder builder{segment,        nested.DeclaredMinShouldMatch(),
+                           nested.Boost(), nested.MergeType(),
+                           ctx.collector,  ctx.needs_terms};
     builder.Inherit(nested);
     builder.Add(std::move(mask), Occur::MustNot);
     auto flat = builder.Finish();
@@ -100,9 +99,8 @@ QueryBuilder::ptr WithDocsMask(QueryBuilder::ptr query,
     return flat;
   }
 
-  BooleanBuilder builder{segment,        ctx.memory,          0,
-                         kNoBoost,       ScoreMergeType::Sum, ctx.collector,
-                         ctx.needs_terms};
+  BooleanBuilder builder{
+    segment, 0, kNoBoost, ScoreMergeType::Sum, ctx.collector, ctx.needs_terms};
   builder.Add(std::move(query), Occur::Must);
   builder.Add(std::move(mask), Occur::MustNot);
   return builder.Finish();

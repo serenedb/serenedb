@@ -26,28 +26,21 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/resource_manager.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
 struct TermReader;
 
 struct PostingsState {
-  explicit PostingsState(IResourceManager& memory) noexcept : metas{{memory}} {}
-
-  ManagedVector<PostingMeta> metas;
+  TrackedVector<PostingMeta> metas;
   const TermReader* reader{};
   detail::PhraseHandles handles;
 };
 
-struct NGramState : PostingsState {
-  using PostingsState::PostingsState;
-};
+struct NGramState : PostingsState {};
 
 struct PhraseState : PostingsState {
-  explicit PhraseState(IResourceManager& memory) noexcept
-    : PostingsState{memory}, boosts{{memory}}, offsets{{memory}} {}
-
   size_t Slots() const noexcept {
     SDB_ASSERT(!offsets.empty());
     return offsets.size() - 1;
@@ -57,8 +50,8 @@ struct PhraseState : PostingsState {
     return metas.size() == Slots() && boosts.empty();
   }
 
-  ManagedVector<score_t> boosts;
-  ManagedVector<uint32_t> offsets;
+  TrackedVector<score_t> boosts;
+  std::vector<uint32_t> offsets;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<NGramState>);

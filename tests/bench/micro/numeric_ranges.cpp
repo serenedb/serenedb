@@ -482,8 +482,7 @@ void Prepare(Data& data, const Shape& shape,
     return meta;
   }()};
   data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
-  data.fields =
-    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
     .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
   data.field = data.fields->fields(1).front();

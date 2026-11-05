@@ -81,6 +81,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -293,7 +294,7 @@ class PassConnection {
 bool CollectDeadRows(duckdb::ClientContext& context,
                      ConnectionContext& conn_ctx, const ReindexTarget& target,
                      duckdb::unique_ptr<duckdb::ParsedExpression> condition,
-                     std::vector<std::pair<uint64_t, int64_t>>& rows) {
+                     irs::TrackedVector<std::pair<uint64_t, int64_t>>& rows) {
   // Statement object, no SQL text: values travel verbatim.
   auto select = duckdb::make_uniq<duckdb::SelectNode>();
   select->select_list.emplace_back(
@@ -358,7 +359,7 @@ struct EqConjunct {
   uint64_t pos;
   duckdb::Value value;
 };
-using EqRow = std::vector<EqConjunct>;
+using EqRow = irs::TrackedVector<EqConjunct>;
 
 // One applicable-delete set and the covered files it applies to.
 struct EqGroup {
@@ -411,7 +412,7 @@ std::vector<EqGroup> GroupCoveredFiles(const IcebergObserve& observe) {
 // Empty = no road (a column outside the view output, or no rows). Only
 // IS-NULL-carrying rows are deduplicated: they become an
 // OR branch each; NULL-free rows feed an IN semi-join, repeats can't hurt.
-std::vector<EqRow> ParseEqRows(
+irs::TrackedVector<EqRow> ParseEqRows(
   const duckdb::vector<
     duckdb::reference<const duckdb::IcebergEqualityDeleteFile>>& delete_files,
   const IcebergObserve& observe, const ViewFastPath& fast_path,
@@ -443,7 +444,7 @@ std::vector<EqRow> ParseEqRows(
     }
     return pos;
   };
-  std::vector<EqRow> rows;
+  irs::TrackedVector<EqRow> rows;
   irs::containers::FlatHashSet<std::string> seen_null_rows;
   std::string row_key;
   for (const auto& delete_file : delete_files) {
@@ -504,7 +505,8 @@ duckdb::unique_ptr<duckdb::ParsedExpression> CombineExprs(
 // nodes), planned as a hash semi-join. IS-NULL rows cannot ride IN (NULL
 // never matches) and stay plain OR branches.
 duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
-  const std::vector<EqRow>& rows, const duckdb::CreateViewInfo& view_info) {
+  const irs::TrackedVector<EqRow>& rows,
+  const duckdb::CreateViewInfo& view_info) {
   const auto column_ref = [&](uint64_t pos) {
     return duckdb::make_uniq<duckdb::ColumnRefExpression>(view_info.names[pos]);
   };
@@ -561,7 +563,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildEqWhere(
       types.push_back(view_info.types[conjunct.pos]);
       names.push_back(view_info.names[conjunct.pos]);
     }
-    auto& allocator = duckdb::Allocator::DefaultAllocator();
+    auto& allocator = irs::TrackedDuckAllocator();
     auto collection =
       duckdb::make_uniq<duckdb::ColumnDataCollection>(allocator, types);
     duckdb::DataChunk chunk;
@@ -634,11 +636,10 @@ duckdb::unique_ptr<duckdb::ParsedExpression> BuildFileScope(
 }
 
 // False = no road -- the caller demotes the covered files to rescans.
-bool RunEqualityRemoves(duckdb::ClientContext& context,
-                        ConnectionContext& conn_ctx,
-                        const ReindexTarget& target, const Source& src,
-                        IcebergObserve& observe,
-                        std::vector<std::pair<uint64_t, int64_t>>& dead_rows) {
+bool RunEqualityRemoves(
+  duckdb::ClientContext& context, ConnectionContext& conn_ctx,
+  const ReindexTarget& target, const Source& src, IcebergObserve& observe,
+  irs::TrackedVector<std::pair<uint64_t, int64_t>>& dead_rows) {
   const auto& view_info = *target.view_info;
   if (absl::c_any_of(view_info.names, [](const duckdb::Identifier& name) {
         return name == "file_index";
@@ -727,7 +728,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
               Observe& observe, const search::FileManifest& manifest,
               search::Store& storage) {
   constexpr bool kIceberg = std::is_same_v<Observe, IcebergObserve>;
-  std::vector<std::pair<uint64_t, int64_t>> eq_rows;
+  irs::TrackedVector<std::pair<uint64_t, int64_t>> eq_rows;
   if constexpr (kIceberg) {
     // Kind 3 first: a group with no road demotes its covered files into
     // kind 1's input.

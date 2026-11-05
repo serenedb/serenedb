@@ -657,30 +657,25 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
   InitDataSet();
   auto reader = open_reader(irs::tests::DefaultReaderOptions());
 
-  MaxMemoryCounter counter;
-
   irs::ByNestedFilter filter;
   auto& opts = *filter.mutable_options();
   opts.child = MakeByNumericTerm(kCount, 2);
   opts.parent = MakeParentProvider(kParent);
   opts.match = [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
     const irs::All all;
-    tests::PreparedFilter prepared{all, segment, nullptr, counter};
+    tests::PreparedFilter prepared{all, segment, nullptr};
     return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
       prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
   };
 
   {
     CheckQuery(filter, Docs{13, 20}, Costs{20}, reader, SOURCE_LOCATION);
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 
   auto make_match = [&]() -> irs::ByNestedOptions::MatchType {
     return [&](const irs::SubReader& segment) -> irs::lead::Node::ptr {
       const irs::All all;
-      tests::PreparedFilter prepared{all, segment, nullptr, counter};
+      tests::PreparedFilter prepared{all, segment, nullptr};
       return irs::memory::make_managed<irs::lead::Node, ChildIterator>(
         prepared.Execute(0), std::set{6U, 13U, 15U, 20U});
     };
@@ -701,9 +696,6 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 
   if constexpr (false) {
@@ -719,9 +711,6 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 
   {
@@ -739,9 +728,6 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
-    EXPECT_EQ(counter.current, 0);
-    EXPECT_GT(counter.max, 0);
-    counter.Reset();
   }
 }
 

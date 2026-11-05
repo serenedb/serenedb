@@ -154,20 +154,15 @@ TEST(by_terms_test, equal) {
 class TermsFilterTestCase : public tests::FilterTestCaseBase {};
 
 TEST_P(TermsFilterTestCase, boost) {
-  MaxMemoryCounter counter;
-
   // no boost
   {
     irs::BooleanFilter q =
       MakeFilter(kFieldId, {{"bar", 0.5f}, {"baz", 0.25f}});
 
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 
   // with boost
   {
@@ -180,13 +175,10 @@ TEST_P(TermsFilterTestCase, boost) {
 
     // A segment without the field matches nothing, and nothing carries no
     // boost -- so the boost is only observable where the field exists.
-    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                   counter};
+    tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
     ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
     ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  counter.Reset();
 
   // with boost
   {
@@ -203,12 +195,9 @@ TEST_P(TermsFilterTestCase, boost) {
       MakeFilter(kDuplicatedId, {{"abcd", 0.5f}, {"vczc", 0.25f}});
     q.SetBoost(boost);
 
-    tests::PreparedFilter prepared{q, *rdr, nullptr, counter};
+    tests::PreparedFilter prepared{q, *rdr, nullptr};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(TermsFilterTestCase, simple_sequential_order) {

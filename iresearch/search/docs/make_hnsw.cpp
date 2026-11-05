@@ -25,13 +25,14 @@
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::docs {
 namespace {
 
 class HnswHits : public Root {
  public:
-  explicit HnswHits(std::vector<ScoreDoc>&& hits)
+  explicit HnswHits(TrackedVector<ScoreDoc>&& hits)
     : _hits{hits.size(),
             [&](ScoreDoc& slot, size_t i) noexcept { slot = hits[i]; }} {}
 

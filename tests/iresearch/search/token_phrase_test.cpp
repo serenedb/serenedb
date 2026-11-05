@@ -1496,7 +1496,7 @@ TEST(TokenPhraseFilterTest, parts_conjunction_keeps_one_clause_per_word) {
   EXPECT_EQ((std::vector<irs::bstring>{
               irs::bstring{Bytes("cat")}, irs::bstring{Bytes("hat")},
               irs::bstring{Bytes("in")}, irs::bstring{Bytes("the")}}),
-            std::ranges::to<std::vector>(
+            std::ranges::to<std::vector<irs::bstring>>(
               all.Terms(irs::Occur::Must) |
               std::views::transform(&irs::TermClause::term)));
 }
@@ -1599,8 +1599,9 @@ TEST(TokenPhraseIndexTest, constant_score_conjunction_scores_like_the_phrase) {
 
   const auto expected = index.ScoresBy(constant, phrase);
   const auto actual = index.ScoresBy(constant, *conjunction);
-  EXPECT_EQ((std::vector<irs::doc_id_t>{0, 1, 3, 4}),
-            std::ranges::to<std::vector>(std::views::keys(expected)));
+  EXPECT_EQ(
+    (std::vector<irs::doc_id_t>{0, 1, 3, 4}),
+    std::ranges::to<std::vector<irs::doc_id_t>>(std::views::keys(expected)));
   for (const auto& [doc, score] : expected) {
     const auto it = actual.find(doc);
     ASSERT_NE(actual.end(), it) << doc;
@@ -1779,8 +1780,8 @@ TEST(TokenPhraseIndexTest, rows_past_the_stored_column_never_match) {
   EXPECT_EQ(expected, families.docs);
   EXPECT_EQ(expected, families.fill);
   EXPECT_EQ(expected, families.probe);
-  EXPECT_EQ(expected,
-            std::ranges::to<std::vector>(std::views::keys(families.hits)));
+  EXPECT_EQ(expected, std::ranges::to<std::vector<irs::doc_id_t>>(
+                        std::views::keys(families.hits)));
   EXPECT_EQ(expected.size(), families.top_total);
 }
 
@@ -1800,8 +1801,7 @@ TEST(TokenPhraseIndexTest, table_filters_narrow_count_and_top) {
     const auto filter =
       PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>());
     irs::BM25 scorer;
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, index.Reader(), &scorer, counter};
+    tests::PreparedFilter prepared{filter, index.Reader(), &scorer};
     ASSERT_EQ(1U, prepared.size());
     const auto* query = prepared.Query(0);
     ASSERT_NE(nullptr, query);
@@ -1831,8 +1831,7 @@ struct Top {
 Top TopOf(const Index& index, const irs::Filter& filter,
           const irs::Scorer& scorer, bool prune,
           irs::detail::TableFilter* table = nullptr, size_t k = tests::kTop) {
-  MaxMemoryCounter counter;
-  tests::PreparedFilter prepared{filter, index.Reader(), &scorer, counter};
+  tests::PreparedFilter prepared{filter, index.Reader(), &scorer};
   std::vector<irs::ScoreDoc> hits(k);
   std::atomic<irs::score_t> threshold{
     std::numeric_limits<irs::score_t>::lowest()};
@@ -1995,8 +1994,8 @@ void ExpectFamiliesScoreAlike(const tests::Families& expected,
   tests::ExpectScores(expected.fill_scores, actual.hits);
   tests::ExpectScores(expected.fill_scores, actual.fill_scores);
   tests::ExpectScores(expected.fill_scores, actual.probe_scores);
-  auto top =
-    std::ranges::to<std::vector>(std::views::values(expected.fill_scores));
+  auto top = std::ranges::to<std::vector<irs::score_t>>(
+    std::views::values(expected.fill_scores));
   absl::c_sort(top, std::greater<>{});
   top.resize(std::min(top.size(), tests::kTop));
   ASSERT_EQ(top.size(), actual.top.size());

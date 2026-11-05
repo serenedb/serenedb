@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
@@ -39,18 +40,14 @@ class InlinePages {
               uint64_t size);
 
   Span Of(uint32_t block) const noexcept;
-  size_t MemoryBytes() const noexcept {
-    return (_ones.capacity() + _empty.capacity() + _samples.capacity()) *
-           sizeof(uint64_t);
-  }
 
  private:
   uint64_t Select(uint64_t rank) const noexcept;
   uint64_t Next(uint64_t at) const noexcept;
 
-  std::vector<uint64_t> _ones;
-  std::vector<uint64_t> _empty;
-  std::vector<uint64_t> _samples;
+  TrackedVector<uint64_t> _ones;
+  TrackedVector<uint64_t> _empty;
+  TrackedVector<uint64_t> _samples;
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint32_t _blocks = 0;

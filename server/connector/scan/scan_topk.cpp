@@ -27,6 +27,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/top/make.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <numeric>
 
 #include "connector/index_source_factory.h"
@@ -269,7 +270,7 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      RankedLocalState& l, const duckdb::DataChunk& fetched,
                      duckdb::Vector& pk, std::span<const irs::ScoreDoc> hits,
                      duckdb::DataChunk& batch,
-                     std::vector<irs::ScoreDoc>& row_hits) {
+                     irs::TrackedVector<irs::ScoreDoc>& row_hits) {
   batch.Reset();
   CopyFetched(g, l, fetched, batch, hits.size(), 0);
   const auto rows = l.index_source->Materialize(ctx, pk, hits.size(), batch);
@@ -290,7 +291,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
   l.answer_chunk = duckdb::make_uniq<duckdb::DataChunk>();
   l.answer_chunk->Initialize(ctx, g.projected_types,
                              std::max<size_t>(1, total));
-  std::vector<irs::ScoreDoc> row_hits;
+  irs::TrackedVector<irs::ScoreDoc> row_hits;
   if (!g.needs_lookup) {
     for (uint32_t u = 0; u < t.fetch_units.size(); ++u) {
       l.answer_chunk->Append(*t.fetched[u],

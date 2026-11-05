@@ -160,8 +160,6 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
 
     auto& segment = (*rdr)[0];
 
-    MaxMemoryCounter counter;
-
     // without boost
     {
       irs::ByGranularRange q;
@@ -173,13 +171,10 @@ class GranularRangeFilterTestCase : public tests::FilterTestCaseBase {
       q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
       q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
 
-      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr,
-                                     counter};
+      tests::PreparedFilter prepared{q, irs::SubReader::empty(), nullptr};
       ASSERT_TRUE(irs::QueryBuilder::IsEmpty(*prepared.Query(0)));
       ASSERT_EQ(irs::kNoBoost, prepared.Query(0)->Boost());
     }
-    EXPECT_EQ(counter.current, 0);
-    counter.Reset();
 
     // with boost
     {

@@ -55,6 +55,7 @@
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 namespace {
@@ -297,11 +298,11 @@ uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
   return delivered;
 }
 
-std::vector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
-                               uint64_t rows, uint32_t d, bool normalize,
-                               std::span<uint8_t> valid,
-                               std::vector<float>& buf) {
-  std::vector<float> vectors(static_cast<size_t>(rows) * d);
+TrackedVector<float> LoadVectors(const ColumnReader& col, ReadContext& ctx,
+                                 uint64_t rows, uint32_t d, bool normalize,
+                                 std::span<uint8_t> valid,
+                                 std::vector<float>& buf) {
+  TrackedVector<float> vectors(static_cast<size_t>(rows) * d);
   ScanVectors(col, ctx, rows, d, normalize, buf,
               [&](const float* src, size_t n, uint64_t first,
                   const duckdb::ValidityMask& mask) {
@@ -403,7 +404,7 @@ void FanOut(const AnnBuildEnv* env, size_t tasks,
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
-                  std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
+                  TrackedVector<uint8_t>& valid, const AnnBuildEnv* env) {
   HnswCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
                        rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
                        kHnswMaxWorkers))};
@@ -595,7 +596,7 @@ struct HnswCodeDistFactory {
     return dec && dist.query_reader->SetQuery(dist.decoded_query);
   }
 
-  bool PreparePairTerms(uint64_t rows, std::vector<float>& terms) const {
+  bool PreparePairTerms(uint64_t rows, TrackedVector<float>& terms) const {
     auto reader = MakeReader();
     if (!reader->SupportsPairScores()) {
       return false;
@@ -634,12 +635,12 @@ struct HnswCodeDistFactory {
   }
 };
 
-HnswCodeDistFactory MakeCodeFactory(const bstring& codes, uint32_t record_size,
+HnswCodeDistFactory MakeCodeFactory(bytes_view codes, uint32_t record_size,
                                     const QuantizerStats& stats,
                                     const std::vector<float>& centroid,
                                     uint32_t d, const float* resident,
                                     uint64_t rows,
-                                    std::vector<float>& pair_terms) {
+                                    TrackedVector<float>& pair_terms) {
   HnswCodeDistFactory factory{
     .codes = codes.data(),
     .record_size = record_size,
@@ -746,9 +747,9 @@ struct HnswInsertJob {
   std::vector<std::unique_ptr<WorkerSlot>> _slots;
 };
 
-std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
-                                std::span<const uint8_t> valid, uint32_t m,
-                                uint64_t seed) {
+TrackedVector<uint32_t> SeedGraph(HnswGraphWriter& graph,
+                                  std::span<const uint8_t> valid, uint32_t m,
+                                  uint64_t seed) {
   const auto rows = valid.size();
   graph.Reset(rows, m);
 
@@ -777,7 +778,7 @@ std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
   }
   graph.SetEntryPoint(entry);
 
-  std::vector<uint32_t> nodes;
+  TrackedVector<uint32_t> nodes;
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if (valid[i] == 0 || static_cast<uint32_t>(i) == entry) {
@@ -835,7 +836,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   const auto src_rows = src_graph.Size();
   const auto rows = valid.size();
 
-  std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
+  TrackedVector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
   auto mask = MakeGenericDocsMask(donor.reader->docs_mask());
   uint32_t live[detail::kWindowDocs + doc_limits::kDocsSlack];
@@ -957,7 +958,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
     graph.SetEntryPoint(delta_entry);
   }
 
-  std::vector<uint32_t> nodes;
+  TrackedVector<uint32_t> nodes;
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
     if ((i >= donor.out_base && i < donor_end) || valid[i] == 0 ||
@@ -1027,7 +1028,7 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     crew.Join();
   };
 
-  std::vector<float> window;
+  TrackedVector<float> window;
   window.reserve(static_cast<size_t>(kHnswOriginalsWindow) * d);
   std::vector<float> batch_buf;
   size_t next = 0;
@@ -1100,14 +1101,14 @@ bool PanoramaEnough(std::span<const uint8_t> valid, uint32_t d) {
   return static_cast<size_t>(absl::c_count(valid, uint8_t{1})) >= floor;
 }
 
-std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
+std::vector<float> TrainPanoramaBasis(std::span<const float> vectors,
                                       std::span<const uint8_t> valid,
                                       uint32_t d) {
   const size_t rows = valid.size();
   const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
   const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
   const size_t step = std::max<size_t>(1, live / want);
-  std::vector<float> sample;
+  TrackedVector<float> sample;
   sample.reserve(std::min(live, want) * d);
   for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
        ++row) {
@@ -1122,7 +1123,7 @@ std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
   return std::move(TrainPcaRotation(sample.data(), sample.size() / d, d).A);
 }
 
-void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
+void RotateForPanorama(std::span<float> vectors, size_t rows, uint32_t d,
                        std::span<const float> basis, const AnnBuildEnv* env,
                        std::vector<float>& rotation) {
   SDB_ASSERT(basis.size() == size_t{d} * d);
@@ -1142,9 +1143,9 @@ void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
          });
 }
 
-std::vector<float> RowNorms(const std::vector<float>& vectors, size_t rows,
-                            uint32_t d) {
-  std::vector<float> norms(rows);
+TrackedVector<float> RowNorms(std::span<const float> vectors, size_t rows,
+                              uint32_t d) {
+  TrackedVector<float> norms(rows);
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
   }
@@ -1180,7 +1181,7 @@ void ForEachValidRun(std::span<const uint8_t> valid, Fn&& fn) {
 
 HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
                               const MergeDonor& donor,
-                              const std::vector<float>& vectors,
+                              std::span<const float> vectors,
                               std::span<const uint8_t> valid, uint32_t d,
                               bool enough) {
   HnswBases::Basis basis;
@@ -1205,7 +1206,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
 
 void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
                       uint32_t record_size, size_t rows, uint32_t d,
-                      const AnnBuildEnv* env, std::vector<float>& tails) {
+                      const AnnBuildEnv* env, TrackedVector<float>& tails) {
   const uint32_t stride = HnswCodeTails(d);
   tails.assign(rows * stride, 0.f);
   FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
@@ -1266,7 +1267,7 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
     if (needs_centroid) {
       _centroid.assign(_d, 0.f);
     }
-    std::vector<float> train_buf;
+    TrackedVector<float> train_buf;
     const uint64_t sample =
       train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
     const uint64_t trained_rows = ScanValidVectors(
@@ -1325,7 +1326,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     co_return {};
   }
 
-  std::vector<uint8_t> valid(_rows, 1);
+  TrackedVector<uint8_t> valid(_rows, 1);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
@@ -1350,7 +1351,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     if (basis && enough) {
       RotateForPanorama(vectors, valid.size(), _d, *basis, env, _rotation);
       const auto stats = EncodeRotated(vectors, valid, env);
-      std::vector<float> pair_terms;
+      TrackedVector<float> pair_terms;
       const auto factory = MakeCodeFactory(_codes, _record_size, *stats, {}, _d,
                                            vectors.data(), _rows, pair_terms);
       co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
@@ -1389,7 +1390,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   if (stats && !raw_build) {
-    std::vector<float> pair_terms;
+    TrackedVector<float> pair_terms;
     const auto factory = MakeCodeFactory(
       _codes, _record_size, *stats, _centroid, _d, nullptr, _rows, pair_terms);
     const HnswOriginals originals{
@@ -1408,7 +1409,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     "raw-float build of ",
     _rows, " x ", _d, " vectors");
 
-  std::vector<float> build_vectors;
+  TrackedVector<float> build_vectors;
   if (raw_build) {
     build_vectors =
       LoadVectors(col, ctx, _rows, _d, normalize, valid, batch_buf);

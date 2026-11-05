@@ -36,6 +36,7 @@
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -161,7 +162,7 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer) {
 }
 
 struct DocTee {
-  std::vector<doc_id_t>* docs = nullptr;
+  TrackedVector<doc_id_t>* docs = nullptr;
   size_t limit = 0;
 };
 

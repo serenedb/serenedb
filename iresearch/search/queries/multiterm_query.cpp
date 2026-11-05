@@ -87,11 +87,11 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     const auto& entry = terms.front();
     if (!ctx.KeepsTerms() &&
         entry.cookie.docs_count == query->_segment.docs_count()) {
-      return memory::make_tracked<AllQuery>(ctx.memory, query->_segment,
+      return memory::make_managed<AllQuery>(query->_segment,
                                             entry.boost * query->_boost);
     }
-    return MakeTermQuery(ctx.memory, query->_segment, query->_state.Reader(),
-                         entry.cookie, entry.boost * query->_boost,
+    return MakeTermQuery(query->_segment, query->_state.Reader(), entry.cookie,
+                         entry.boost * query->_boost,
                          detail::StatsRecord{entry.stats, ctx.Record().scorer});
   }
   query->SetStats(ctx.Record());

@@ -31,6 +31,7 @@ enum class FrameStatus : uint8_t {
   NeedMore,
   TooLarge,
   Malformed,
+  OutOfMemory,
 };
 
 // Startup-phase frames carry no type byte (just a length-prefixed body);

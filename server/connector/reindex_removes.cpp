@@ -332,7 +332,7 @@ class SegmentRemoves {
 std::shared_ptr<const irs::DocRemoval> ResolveRemoves(
   const irs::DirectoryReader& snapshot, std::vector<uint64_t> deleted_files,
   std::vector<IcebergObserve::DeleteMask> masks,
-  std::vector<std::pair<uint64_t, int64_t>> eq_rows) {
+  irs::TrackedVector<std::pair<uint64_t, int64_t>> eq_rows) {
   // Delete kind 1 -- deleted files: every row of the file.
   absl::c_sort(deleted_files);
   // Delete kind 2 -- changed bitmasks (iceberg): the dead rows of kept files.

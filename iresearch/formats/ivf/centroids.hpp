@@ -32,6 +32,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -55,12 +56,12 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
-  std::vector<std::vector<float>> centroids;
+  std::vector<TrackedVector<float>> centroids;
   std::vector<std::vector<size_t>> child_offsets;
 };
 
 struct CentroidsNode {
-  std::vector<float> centroids;
+  TrackedVector<float> centroids;
   std::vector<size_t> child_offsets;
   size_t size;
   size_t level;
@@ -157,8 +158,8 @@ class CentroidsTree {
   static CentroidsTree Deserialize(IndexInput& in, uint64_t root_byte_size);
 
   void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t beam = 0) const;
+              TrackedVector<uint32_t>& out_ids,
+              TrackedVector<float>* out_centroids, uint32_t beam = 0) const;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
@@ -197,7 +198,7 @@ struct CentroidsBuildParams {
 class CentroidsBuilder {
  public:
   struct Node {
-    std::vector<float> centroids;
+    TrackedVector<float> centroids;
     std::vector<size_t> children;
     size_t leafs = 0;
 
@@ -212,7 +213,7 @@ class CentroidsBuilder {
                                  const CentroidsBuildParams& params = {});
 
   static CentroidsBuilder CreateFromSample(
-    std::vector<float> sample, uint32_t d, VectorMetric metric,
+    TrackedVector<float> sample, uint32_t d, VectorMetric metric,
     const CentroidsBuildParams& params = {});
 
   CentroidsSpan Serialize(IndexOutput& out) const;
@@ -224,11 +225,11 @@ class CentroidsBuilder {
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
  private:
-  static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
-                                          VectorMetric metric, size_t leaf_size,
-                                          size_t max_fanout);
+  static CentroidsBuilder BuildFromSample(TrackedVector<float> sample,
+                                          uint32_t d, VectorMetric metric,
+                                          size_t leaf_size, size_t max_fanout);
 
-  void BuildTree(std::vector<float> sample, size_t leaf_size,
+  void BuildTree(TrackedVector<float> sample, size_t leaf_size,
                  size_t max_fanout);
 
   void AssignCentroidsImpl(

@@ -114,6 +114,8 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 
 Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 
+[`memory_limit`](../../../configuration/overview.md) caps the memory of all writes, index builds and merges together, on top of the buffer manager. A write, `CREATE INDEX` or `VACUUM` that needs more fails with an out-of-memory error and leaves the index as it was; a background compaction that needs more is retried at its next interval.
+
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB

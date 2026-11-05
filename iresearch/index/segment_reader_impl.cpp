@@ -90,8 +90,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data = std::make_shared<ColumnData>();
   reader->_data->Open(dir, meta, options, options.index);
-  reader->_field_reader =
-    std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
+  reader->_field_reader = std::make_shared<term_dict::FieldReader>();
   if (options.index) {
     reader->_field_reader->prepare(ReaderState{
       .dir = &dir,

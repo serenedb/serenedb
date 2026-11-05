@@ -52,13 +52,18 @@ std::string SqlIdentifier(std::string_view name) {
   return out;
 }
 
-std::string FlattenBody(const message::SequenceView& body, size_t padding) {
+size_t BodyBytes(const message::SequenceView& body) {
   size_t size = 0;
   for (const auto buffer : body) {
     size += buffer.size();
   }
-  std::string out;
-  out.reserve(size + padding);
+  return size;
+}
+
+irs::TrackedString FlattenBody(const message::SequenceView& body,
+                               size_t padding) {
+  irs::TrackedString out;
+  out.reserve(BodyBytes(body) + padding);
   for (const auto buffer : body) {
     out.append(reinterpret_cast<const char*>(buffer.data()), buffer.size());
   }

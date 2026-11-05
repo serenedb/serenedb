@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -307,7 +308,14 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Store> weak, std::string_view name,
         stretch = 0;
         continue;
       }
-      switch (tick(weak)) {
+      auto result = LoopTick::kIdle;
+      try {
+        result = tick(weak);
+      } catch (const duckdb::OutOfMemoryException& ex) {
+        SDB_WARN(SEARCH, name,
+                 " postponed: ", duckdb::ErrorData{ex}.RawMessage());
+      }
+      switch (result) {
         case LoopTick::kProgress:
           stretch = 0;
           break;

@@ -55,13 +55,13 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   }
   if (collector) {
     collector->Term(ctx.thread, 0).Collect(meta);
-    return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost,
+    return MakeTermQuery(segment, reader, meta, ctx.boost,
                          collector->Record(0));
   }
   if (meta.docs_count == segment.docs_count() && !ctx.needs_terms) {
     return MakeAllQuery(segment, ctx, kNoBoost);
   }
-  return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost);
+  return MakeTermQuery(segment, reader, meta, ctx.boost);
 }
 
 PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,

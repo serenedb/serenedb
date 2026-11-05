@@ -52,16 +52,13 @@ TEST_P(AllFilterTestCase, all_sequential) {
 
   CheckQuery(irs::All(), docs, cost, rdr);
 
-  MaxMemoryCounter counter;
   {
     const irs::All all_filter;
-    tests::PreparedFilter prepared{all_filter, *rdr, nullptr, counter};
+    tests::PreparedFilter prepared{all_filter, *rdr, nullptr};
     auto it = prepared.Execute(0);
     ASSERT_NE(nullptr, it);
     ASSERT_EQ(docs.size(), prepared.Estimate(0));
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
 }
 
 TEST_P(AllFilterTestCase, all_order) {

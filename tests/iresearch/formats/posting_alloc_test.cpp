@@ -22,10 +22,8 @@
 //
 // Building a posting iterator is the per-term cost of every scored query, so it
 // is the place where an extra allocation is paid once per term per segment
-// rather than once per query. `memory::make_managed` is plain `new`, so
-// `IResourceManager` cannot see any of it -- a counting resource manager reads
-// zero here. jemalloc's own per-thread accounting can, and it needs no
-// production change to read.
+// rather than once per query. jemalloc's own per-thread accounting counts the
+// allocations themselves, and it needs no production change to read.
 //
 // This reports a NUMBER rather than asserting a bound: the useful comparison is
 // against the same number on another build, so the test prints bytes and count

@@ -36,6 +36,7 @@
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/queries/vector_state.hpp"
 #include "iresearch/utils/string.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -110,8 +111,8 @@ inline bool PrepareVectorState(
   }
   const bool needs_centroids = QuantizerNeedsCentroid(opts.quant);
 
-  std::vector<uint32_t> fine_ids;
-  std::vector<float> probed_centroids;
+  TrackedVector<uint32_t> fine_ids;
+  TrackedVector<float> probed_centroids;
   ivf.Search(query, *idx_in, nprobe, fine_ids,
              needs_centroids ? &probed_centroids : nullptr, beam);
   if (fine_ids.empty()) {

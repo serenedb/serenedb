@@ -1,0 +1,24 @@
+# DOCS_TEST: example_021
+
+statement ok
+CREATE SCHEMA billing;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SEQUENCE invoice_numbers START 100;
+
+query
+SELECT nextval('invoice_numbers') AS nextval;
+----
+nextval
+100
+
+statement ok
+ALTER SEQUENCE invoice_numbers SET SCHEMA billing;
+
+query
+SELECT nextval('billing.invoice_numbers') AS nextval;
+----
+nextval
+101

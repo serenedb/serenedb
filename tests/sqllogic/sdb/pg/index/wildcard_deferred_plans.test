@@ -100,7 +100,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: false                       │ │
 │ ╰─────────────────────────────────────╯ │
 │ Table Filter:                           │
@@ -109,7 +109,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: table filter                │ │
 │ ╰─────────────────────────────────────╯ │
 │ Projections: id                         │
@@ -162,7 +162,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: true                       │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: false                       │ │
 │ ╰─────────────────────────────────────╯ │
 │ Table Filter:                           │
@@ -171,7 +171,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: true                       │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: table filter                │ │
 │ ╰─────────────────────────────────────╯ │
 │ Projections: id                         │
@@ -230,7 +230,7 @@ QUERY PLAN
 │ │ Values: 'house'     │  │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ ╰─────────────────────╯  │ Syntax: perl                        │ │
 │                          │ Has Pos: false                      │ │
-│                          │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│                          │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │                          │ Verify: false                       │ │
 │                          ╰─────────────────────────────────────╯ │
 │ Table Filter:                                                    │
@@ -239,7 +239,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │                          │
 │ │ Syntax: perl                        │                          │
 │ │ Has Pos: false                      │                          │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │                          │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │                          │
 │ │ Verify: table filter                │                          │
 │ ╰─────────────────────────────────────╯                          │
 │ Score: bm25(k1=1.2, b=0.75)                                      │
@@ -260,7 +260,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: false                       │ │
 │ ╰─────────────────────────────────────╯ │
 │ Table Filter:                           │
@@ -269,7 +269,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: table filter                │ │
 │ ╰─────────────────────────────────────╯ │
 │ Projections: id                         │
@@ -318,7 +318,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Aab.*\\z │ │
 │ │ Syntax: perl          │ │
 │ │ Has Pos: false        │ │
-│ │ Query: "\\x1fab"       │ │
+│ │ Query: "\\xffab"       │ │
 │ │ Verify: false         │ │
 │ ╰───────────────────────╯ │
 │ Table Filter:             │
@@ -327,7 +327,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Aab.*\\z │ │
 │ │ Syntax: perl          │ │
 │ │ Has Pos: false        │ │
-│ │ Query: "\\x1fab"       │ │
+│ │ Query: "\\xffab"       │ │
 │ │ Verify: table filter  │ │
 │ ╰───────────────────────╯ │
 │ Projections: id           │
@@ -367,7 +367,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Aadmin_.*\\z │ │
 │ │ Syntax: perl              │ │
 │ │ Has Pos: false            │ │
-│ │ Query: "\\x1fadmin_"       │ │
+│ │ Query: "\\xffadmin_"       │ │
 │ │ Verify: false             │ │
 │ ╰───────────────────────────╯ │
 │ Table Filter:                 │
@@ -376,7 +376,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Aadmin_.*\\z │ │
 │ │ Syntax: perl              │ │
 │ │ Has Pos: false            │ │
-│ │ Query: "\\x1fadmin_"       │ │
+│ │ Query: "\\xffadmin_"       │ │
 │ │ Verify: table filter      │ │
 │ ╰───────────────────────────╯ │
 │ Projections: id               │
@@ -397,7 +397,7 @@ QUERY PLAN
 │ │ Syntax: perl                                                                                                                                   │ │
 │ │ Has Pos: false                                                                                                                                 │ │
 │ │ Query:                                                                                                                                         │ │
-│ │ Or("\\x1fuser-0", "\\x1fuser-1", "\\x1fuser-2", "\\x1fuser-3", "\\x1fuser-4", "\\x1fuser-5", "\\x1fuser-6", "\\x1fuser-7", "\\x1fuser-8", "\\x1fuser-9") │ │
+│ │ Or("\\xffuser-0", "\\xffuser-1", "\\xffuser-2", "\\xffuser-3", "\\xffuser-4", "\\xffuser-5", "\\xffuser-6", "\\xffuser-7", "\\xffuser-8", "\\xffuser-9") │ │
 │ │ Verify: false                                                                                                                                  │ │
 │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Table Filter:                                                                                                                                      │
@@ -407,7 +407,7 @@ QUERY PLAN
 │ │ Syntax: perl                                                                                                                                   │ │
 │ │ Has Pos: false                                                                                                                                 │ │
 │ │ Query:                                                                                                                                         │ │
-│ │ Or("\\x1fuser-0", "\\x1fuser-1", "\\x1fuser-2", "\\x1fuser-3", "\\x1fuser-4", "\\x1fuser-5", "\\x1fuser-6", "\\x1fuser-7", "\\x1fuser-8", "\\x1fuser-9") │ │
+│ │ Or("\\xffuser-0", "\\xffuser-1", "\\xffuser-2", "\\xffuser-3", "\\xffuser-4", "\\xffuser-5", "\\xffuser-6", "\\xffuser-7", "\\xffuser-8", "\\xffuser-9") │ │
 │ │ Verify: table filter                                                                                                                           │ │
 │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
 │ Projections: id                                                                                                                                    │
@@ -427,7 +427,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*\\z │ │
 │ │ Syntax: perl             │ │
 │ │ Has Pos: false           │ │
-│ │ Query: "\\x1fuser-"       │ │
+│ │ Query: "\\xffuser-"       │ │
 │ │ Verify: false            │ │
 │ ╰──────────────────────────╯ │
 │ Column Filter: x > 20        │
@@ -437,7 +437,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*\\z │ │
 │ │ Syntax: perl             │ │
 │ │ Has Pos: false           │ │
-│ │ Query: "\\x1fuser-"       │ │
+│ │ Query: "\\xffuser-"       │ │
 │ │ Verify: table filter     │ │
 │ ╰──────────────────────────╯ │
 │ Projections: id              │
@@ -460,7 +460,7 @@ QUERY PLAN
 │ │ Values: 7          │  │ Pattern: (?s)\\Auser-.*\\z │ │
 │ ╰────────────────────╯  │ Syntax: perl             │ │
 │                         │ Has Pos: false           │ │
-│                         │ Query: "\\x1fuser-"       │ │
+│                         │ Query: "\\xffuser-"       │ │
 │                         │ Verify: inline           │ │
 │                         ╰──────────────────────────╯ │
 │ Projections: id                                      │
@@ -480,7 +480,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: false                       │ │
 │ ╰─────────────────────────────────────╯ │
 │ Table Filter:                           │
@@ -489,7 +489,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: table filter                │ │
 │ ╰─────────────────────────────────────╯ │
 │ Projections: id                         │
@@ -509,7 +509,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: false                       │ │
 │ ╰─────────────────────────────────────╯ │
 │ Table Filter:                           │
@@ -518,7 +518,7 @@ QUERY PLAN
 │ │ Pattern: (?s)\\Auser-.*-abc\\z        │ │
 │ │ Syntax: perl                        │ │
 │ │ Has Pos: false                      │ │
-│ │ Query: And("\\x1fuser-", "-abc\\x1f") │ │
+│ │ Query: And("\\xffuser-", "-abc\\xff") │ │
 │ │ Verify: table filter                │ │
 │ ╰─────────────────────────────────────╯ │
 │ Projections: id                         │
@@ -538,7 +538,7 @@ QUERY PLAN
 │ │ Pattern: (abc|cba)                      │ │
 │ │ Syntax: perl                            │ │
 │ │ Has Pos: false                          │ │
-│ │ Query: Or("\\x1fabc\\x1f", "\\x1fcba\\x1f") │ │
+│ │ Query: Or("\\xffabc\\xff", "\\xffcba\\xff") │ │
 │ │ Verify: false                           │ │
 │ ╰─────────────────────────────────────────╯ │
 │ Table Filter:                               │
@@ -547,7 +547,7 @@ QUERY PLAN
 │ │ Pattern: (abc|cba)                      │ │
 │ │ Syntax: perl                            │ │
 │ │ Has Pos: false                          │ │
-│ │ Query: Or("\\x1fabc\\x1f", "\\x1fcba\\x1f") │ │
+│ │ Query: Or("\\xffabc\\xff", "\\xffcba\\xff") │ │
 │ │ Verify: table filter                    │ │
 │ ╰─────────────────────────────────────────╯ │
 │ Projections: id                             │

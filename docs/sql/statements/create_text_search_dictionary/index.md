@@ -76,6 +76,12 @@ Because `english_dict` stems its input, the query term `searching` is reduced to
 
 <SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_003" />
 
+`ALTER TEXT SEARCH DICTIONARY ... SET SCHEMA` moves a dictionary to another schema:
+
+<SqlLogicTest id="sql/statements/create_text_search_dictionary/index/example_008" />
+
+The move needs the `CREATE` privilege on the target schema, which must not already hold a dictionary of that name, and moving a dictionary into the schema it is already in changes nothing. A dictionary that an index uses can't be moved.
+
 ## Templates
 
 A stage is a call to a template. Twenty-three templates analyze text, and each one is documented together with its function form under [tokenizer functions](../../functions/search/tokenizers/index.md): the splitters, the HTML stripper, the token filters, the n-gram and shingle wrappers, the synonym expanders, the geospatial encoders and the fastText models.

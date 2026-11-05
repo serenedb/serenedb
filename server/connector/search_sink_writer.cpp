@@ -28,7 +28,9 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_tokenizer.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iterator>
@@ -240,6 +242,13 @@ class InetTermWriter {
     ERR_MSG("JSON expression indexed by an inverted index must point to "
             "a primitive (string/number/boolean/null) leaf; got an "
             "object or array"));
+}
+
+void SetByteInput(irs::analysis::Tokenizer& tokenizer) {
+  if (tokenizer.type() == irs::Type<irs::analysis::WildcardTokenizer>::id()) {
+    irs::utils::downCast<irs::analysis::WildcardTokenizer>(tokenizer)
+      .SetByteInput(true);
+  }
 }
 
 }  // namespace
@@ -915,9 +924,12 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     }
     if (child_kind == duckdb::LogicalTypeId::VARCHAR ||
         child_kind == duckdb::LogicalTypeId::BLOB) {
+      auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(
-        ResolveTokenizer(field_id),
-        {.layout = _layout, .member = irs::DictMember::Strings});
+        tokenizer, {.layout = _layout, .member = irs::DictMember::Strings});
+      if (child_kind == duckdb::LogicalTypeId::BLOB) {
+        SetByteInput(*tokenizer.analyzer);
+      }
     } else if (term_dict::IsNumeric(child_kind)) {
       _field.PrepareForNumericValue(
         {.layout = _layout, .member = irs::DictMember::Numbers});
@@ -944,6 +956,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
       if (kind == duckdb::LogicalTypeId::GEOMETRY) {
         irs::analysis::GeoTokenizer::Cast(*tokenizer.analyzer)
           .SetWkbInput(true);
+      } else if (kind == duckdb::LogicalTypeId::BLOB) {
+        SetByteInput(*tokenizer.analyzer);
       }
       append_stored();
       if (_field.keyword) {

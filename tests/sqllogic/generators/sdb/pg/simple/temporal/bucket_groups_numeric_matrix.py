@@ -77,6 +77,8 @@ t.statement("SET error_on_division_by_zero = false;")
 t.query("SELECT count(*) AS c, count(b) AS nn FROM (SELECT x // 0 AS b, count(*) AS c FROM num GROUP BY 1);",
         ["c", "nn"])
 t.statement("RESET error_on_division_by_zero;")
+t.statement("SET ieee_floating_point_ops = true;")
 t.query("SELECT count(*) AS c FROM (SELECT floor(d / 0) AS b, count(*) AS c FROM num GROUP BY 1);", ["c"])
+t.statement("RESET ieee_floating_point_ops;")
 
 t.write()

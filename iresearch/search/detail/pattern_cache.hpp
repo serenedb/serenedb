@@ -45,11 +45,23 @@ enum class PatternKind : uint8_t {
   Wildcard,
   Fused,
   Union,
+  RegexpPerlBytes,
+  RegexpPosixEreBytes,
+  WildcardBytes,
 };
 
-constexpr PatternKind RegexpPattern(RegexpSyntax syntax) noexcept {
+constexpr PatternKind RegexpPattern(RegexpSyntax syntax,
+                                    bool bytes = false) noexcept {
+  if (bytes) {
+    return syntax == RegexpSyntax::Perl ? PatternKind::RegexpPerlBytes
+                                        : PatternKind::RegexpPosixEreBytes;
+  }
   return syntax == RegexpSyntax::Perl ? PatternKind::RegexpPerl
                                       : PatternKind::RegexpPosixEre;
+}
+
+constexpr PatternKind WildcardPattern(bool bytes) noexcept {
+  return bytes ? PatternKind::WildcardBytes : PatternKind::Wildcard;
 }
 
 void AppendUnionPart(bstring& key, RegexpAcceptor::PartKind kind,

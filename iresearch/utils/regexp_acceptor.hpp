@@ -90,6 +90,9 @@ class RegexpAcceptor {
     Wildcard,
     Perl,
     PosixEre,
+    WildcardBytes,
+    PerlBytes,
+    PosixEreBytes,
   };
 
   struct Part {

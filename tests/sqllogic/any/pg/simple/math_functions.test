@@ -46,34 +46,16 @@ dlog1	dlog1	dlog1	dlog1	dlog1	dlog1
 0	1	2.302585092994046	Infinity	NaN	NULL
 
 
-onlyif postgres
 statement error
 SELECT dlog1(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
-skipif postgres
-query
-SELECT dlog1(0);
-----
-dlog1
--Infinity
-
-
-onlyif postgres
 statement error
 SELECT dlog1(-1);
 ----
 db error: ERROR: cannot take logarithm of a negative number
-
-
-skipif postgres
-query
-SELECT dlog1(-1);
-----
-dlog1
-NaN
 
 
 # dlog10
@@ -85,34 +67,16 @@ dlog10	dlog10	dlog10	dlog10	dlog10	dlog10
 0	3	-3	0.3010299956639812	Infinity	NULL
 
 
-onlyif postgres
 statement error
 SELECT dlog10(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
-skipif postgres
-query
-SELECT dlog10(0);
-----
-dlog10
--Infinity
-
-
-onlyif postgres
 statement error
 SELECT dlog10('-Infinity');
 ----
 db error: ERROR: cannot take logarithm of a negative number
-
-
-skipif postgres
-query
-SELECT dlog10('-Infinity');
-----
-dlog10
-NaN
 
 
 # dround
@@ -174,49 +138,22 @@ numeric_exp	numeric_ln	numeric_log	numeric_sqrt	numeric_sqrt
 1	0	6	2	NULL
 
 
-onlyif postgres
 statement error
 SELECT numeric_sqrt(-1);
 ----
 db error: ERROR: cannot take square root of a negative number
 
 
-skipif postgres
-query
-SELECT numeric_sqrt(-1);
-----
-numeric_sqrt
-NaN
-
-
-onlyif postgres
 statement error
 SELECT numeric_ln(0);
 ----
 db error: ERROR: cannot take logarithm of zero
 
 
-skipif postgres
-query
-SELECT numeric_ln(0);
-----
-numeric_ln
--Infinity
-
-
-onlyif postgres
 statement error
 SELECT numeric_ln(-2);
 ----
 db error: ERROR: cannot take logarithm of a negative number
-
-
-skipif postgres
-query
-SELECT numeric_ln(-2);
-----
-numeric_ln
-NaN
 
 
 statement error
@@ -253,19 +190,10 @@ dsqrt	dsqrt	dsqrt	dsqrt
 1.4142135623730951	0	NaN	NULL
 
 
-onlyif postgres
 statement error
 SELECT dsqrt(-1);
 ----
 db error: ERROR: cannot take square root of a negative number
-
-
-skipif postgres
-query
-SELECT dsqrt(-1);
-----
-dsqrt
-NaN
 
 
 # dexp, dlog1, dlog10, dround and dtrunc

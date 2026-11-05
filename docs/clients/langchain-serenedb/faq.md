@@ -26,6 +26,7 @@ Questions that come up when working with the integration, each with the cause an
 | `fts_query` on a scored search raises | [Use `similarity_search()` for hybrid](#scored-hybrid) |
 | MMR results ignore the keyword half | [MMR is always dense](#mmr) |
 | `from_texts()` raises `NotImplementedError` | [Create the table, then `create_sync()`](#from-texts) |
+| A synchronous method raises `RuntimeError` about the event loop | [Await the `a`-prefixed method](#sync-on-loop) |
 | `await store.aadd_texts(...)` is slower than expected | [Use `AsyncSereneDBVectorStore`](#async) |
 | An `IVFIndex` changed after being passed to the store | [It is mutated in place](#mutation) |
 | `concurrently=True` still locks | [The flag is ignored](#concurrently) |
@@ -201,6 +202,16 @@ store.add_texts(texts)
 ```
 
 `from_documents()` raises through the same path. On the async class, [`afrom_texts()`](./async.md#afrom_texts) and `afrom_documents()` do work, but they also require an existing table. See [Not implemented](./vector-store.md#not-implemented).
+
+### Why does a synchronous method raise `RuntimeError` inside my async code? {#sync-on-loop}
+
+The method was called from the thread running the engine's event loop — typically from a coroutine, on an engine built with `from_pool(pool, loop=asyncio.get_running_loop())`. A synchronous method blocks its caller until that loop has run the work, which can never happen while the loop's own thread is the one blocked, so it raises instead of hanging:
+
+```text
+RuntimeError: A synchronous SereneDBEngine/SereneDBVectorStore method was called from the event loop the engine runs on; waiting for it there would block forever. ...
+```
+
+Await the `a`-prefixed form (`await engine.ainit_vectorstore_table(...)`, or [`AsyncSereneDBVectorStore`](./async.md) for the store). If you need the synchronous form, run it off the loop with `await asyncio.to_thread(...)`. See [`from_pool()`](./engine.md#from_pool).
 
 ### Why is awaiting a method on `SereneDBVectorStore` slower than expected? {#async}
 

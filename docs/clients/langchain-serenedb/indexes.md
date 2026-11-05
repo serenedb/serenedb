@@ -82,7 +82,7 @@ Option combinations are validated by the database at `CREATE INDEX` time, not in
 
 `get_index_metric()` returns the metric string the current `distance_strategy` implies.
 
-See [Quantization](../../sql/indexes/inverted/vector-search.md#quantization) for the recall/memory trade-offs, and note that quantized indexes benefit from [`rerank_factor`](#ivfqueryoptions).
+See [Quantization](../../sql/indexes/inverted/vector-search.md#quantization) for the recall/memory trade-offs, and [`rescore_width`](#ivfqueryoptions) for tuning how much of a quantized index's recall is recovered at query time.
 
 ## Building and dropping the index {#index-lifecycle}
 
@@ -209,9 +209,9 @@ Per-query IVF tuning, passed once as `index_query_options` to the store factory 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `nprobe` | `Optional[int]` | `None` | IVF cluster lists scanned per query, as `sdb_ivf_search_nprobe`. Higher means better recall and slower queries. |
-| `rerank_factor` | `Optional[int]` | `None` | For a **quantized** index, the exact-distance rescore pool is `rerank_factor * k`, as `sdb_ann_oversample`. `0` answers from the codes; ignored for unquantized indexes. |
+| `rescore_width` | `Optional[float]` | `None` | For a **quantized** index, as `sdb_ann_rescore_width`: a candidate is read back at full precision while its code score plus `rescore_width` times the code's estimated error could still beat the `k`-th best exact score. Larger values rescore more candidates and miss fewer neighbours; `0` answers from the codes alone. Ignored for unquantized indexes. |
 
-A field left `None` is omitted, so SereneDB's own default applies (`-1` for both, which lets the engine choose).
+A field left `None` is omitted, so SereneDB's own default applies (`-1` for both, which lets the engine choose — for `rescore_width`, a width suited to the index's quantizer). See [Re-scoring](../../sql/indexes/inverted/vector-search.md#rescoring) for the widths the engine picks.
 
 ```python
 from langchain_serenedb import IVFQueryOptions
@@ -225,7 +225,7 @@ store = SereneDBVectorStore.create_sync(
 
 ```python
 IVFQueryOptions().to_parameter()                            # []
-IVFQueryOptions(nprobe=10, rerank_factor=4).to_parameter()  # ["sdb_ivf_search_nprobe = 10", "sdb_ann_oversample = 4"]
+IVFQueryOptions(nprobe=10, rescore_width=3).to_parameter()  # ["sdb_ivf_search_nprobe = 10", "sdb_ann_rescore_width = 3"]
 ```
 
 `to_string()` is **deprecated** -- it joins the same values with `"; "` and emits a `DeprecationWarning`. Use `to_parameter()`.

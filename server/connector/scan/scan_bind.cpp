@@ -132,6 +132,16 @@ search::Writes::PinnedSearchTable PinnedSearchTable(
   return conn_ctx->SearchTxn().EnsureSearchTable(store);
 }
 
+search::StoreSnapshotPtr IndexSnapshot(
+  duckdb::ClientContext& context, duckdb::idx_t oid,
+  const std::shared_ptr<search::Store>& storage) {
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return storage->Snapshot();
+  }
+  return conn_ctx->EnsureSearchSnapshot(oid, storage);
+}
+
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
   return [store = table.Storage()](
@@ -486,8 +496,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     AcquireSnapshot(*data, context,
                     [oid = entry.oid, storage = entry.Storage()](
                       duckdb::ClientContext& ctx) -> search::StoreSnapshotPtr {
-                      return GetSereneDBContext(ctx).EnsureSearchSnapshot(
-                        oid, storage);
+                      return IndexSnapshot(ctx, oid, storage);
                     });
   }
   data->relation.inverted_config = entry.Config();

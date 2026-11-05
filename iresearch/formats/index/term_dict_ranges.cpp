@@ -38,7 +38,6 @@ constexpr uint32_t kLeafFanout = 64;
 constexpr uint32_t kFanout = 16;
 constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
 constexpr uint64_t kTopPieces = 16;
-constexpr uint64_t kHeavyTermDocs = uint64_t{1} << 12;
 constexpr byte_type kZeros[kSlack]{};
 
 uint32_t Load32(const byte_type* p, uint32_t i) noexcept {
@@ -175,12 +174,12 @@ DocTee RangeWriter::Tee() noexcept {
 
 void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
   auto& group = _levels[0].group;
-  const bool apart = meta.docs_count >= kHeavyTermDocs;
-  if (apart) {
+  if (meta.docs_count >= _heavy) {
     group.docs.resize(group.docs_count);
   }
   SDB_ASSERT(group.docs.size() ==
-             group.docs_count + (apart ? 0 : meta.docs_count));
+             group.docs_count +
+               (meta.docs_count >= _heavy ? 0 : meta.docs_count));
   Push(0, {
             .key = term,
             .meta = meta,
@@ -200,10 +199,7 @@ void RangeWriter::Keep(Piece& piece, const PostingMeta& meta) noexcept {
 
 void RangeWriter::Push(size_t level, const Child& child) {
   auto& range = _levels[level];
-  const bool apart = level == 0 ? child.docs_count >= kHeavyTermDocs
-                                : child.docs_count >= _heavy ||
-                                    child.docs.size() != child.docs_count;
-  if (apart) {
+  if (child.docs_count >= _heavy) {
     SDB_ASSERT(child.meta.inline_size == 0);
     Close(level);
     Release(level);

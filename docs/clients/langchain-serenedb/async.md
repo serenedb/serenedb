@@ -25,7 +25,7 @@ Awaiting an `a`-prefixed method on the **synchronous** store does not give you a
 
 ## The event loop model {#event-loop}
 
-[`SereneDBEngine.from_connection_string()`](./engine.md#from_connection_string) creates one event loop on a daemon thread the first time it is called, stores it on the class, and shares it across every engine built that way. The connection pool is constructed unopened and opened lazily on that loop, because an `AsyncConnectionPool` must be opened from inside the loop that drives it.
+[`SereneDBEngine.from_connection_string()`](./engine.md#from_connection_string) creates one event loop on a daemon thread the first time it is called, stores it on the class, and shares it across every engine built that way. The connection pool is constructed unopened and opened on that loop, because an `AsyncConnectionPool` must be opened from inside the loop that drives it; the factory opens it right away to run the [server version check](./engine.md#version-check).
 
 That indirection is what makes the synchronous API possible, and it is harmless for async callers: an `await` on an async method hands the coroutine to the background loop with `run_coroutine_threadsafe` and awaits the result on your own loop.
 
@@ -47,7 +47,7 @@ engine = SereneDBEngine.from_pool(pool, loop=asyncio.get_running_loop())
 store = await AsyncSereneDBVectorStore.create(engine, embeddings, "my_docs")
 ```
 
-Pass `loop` even for a purely async application: without it, any synchronous method — including the DDL helpers such as [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) — raises `Exception("Engine was initialized without a background loop and cannot call sync methods.")`. The pool must also already be open, since `from_pool()` marks the engine as opened.
+Pass `loop` even for a purely async application: without it, any synchronous method — including the DDL helpers such as [`init_vectorstore_table()`](./engine.md#init_vectorstore_table) — raises `Exception("Engine was initialized without a background loop and cannot call sync methods.")`. The pool must also already be open, since `from_pool()` marks the engine as opened. Because `loop` here is the loop you are running on, `from_pool()` cannot wait for the [server version check](./engine.md#version-check) during creation; it runs before the engine's first query instead, and an unsupported server raises from that first `await`.
 
 ## Creating an async store {#creating}
 

@@ -1236,3 +1236,29 @@ SELECT id, txt FROM dup_tok_stack_idx WHERE txt @@ 'gamma';
 ----
 id	txt
 3	gamma
+
+
+statement ok
+CREATE TABLE dup_ann (id INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement error
+CREATE INDEX dup_ann_mix_idx ON dup_ann USING inverted(id, emb ivf (metric = 'l2'), emb hnsw (metric = 'cosine'));
+----
+db error: ERROR: Column 'emb' is listed more than once with a vector opclass; the catalog stores a single vector index per indexed column. Remove the duplicate.
+
+
+statement error
+CREATE INDEX dup_ann_same_idx ON dup_ann USING inverted(id, emb hnsw (metric = 'l2'), emb hnsw (metric = 'l2'));
+----
+db error: ERROR: Column 'emb' is listed more than once with a vector opclass; the catalog stores a single vector index per indexed column. Remove the duplicate.
+
+
+statement ok
+CREATE TABLE dup_ann_search (id INTEGER PRIMARY KEY, emb FLOAT[3]) WITH (storage = 'search');
+
+
+statement error
+CREATE INDEX dup_ann_search_idx ON dup_ann_search USING inverted(id, emb hnsw (metric = 'l2'), emb ivf (metric = 'l2'));
+----
+db error: ERROR: Column 'emb' is listed more than once with a vector opclass; the catalog stores a single vector index per indexed column. Remove the duplicate.

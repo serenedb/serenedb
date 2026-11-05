@@ -203,6 +203,11 @@ const ColumnReader* FilteredColumn(const ColumnReader& column,
   return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
 }
 
+void SetNullColumn(duckdb::Vector& vector) {
+  vector.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::ConstantVector::SetNull(vector, true);
+}
+
 }  // namespace
 
 ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
@@ -293,9 +298,9 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       row.chunk = &states.Chunk(context, *spec.filter, spec.row_types);
       for (const auto field : spec.row_fields) {
         const auto* column = col_reader.Column(field);
-        SDB_ASSERT(column);
         row.readers.push_back(column);
-        row.scans.push_back(column->InitScan(ctx));
+        row.scans.push_back(column ? column->InitScan(ctx)
+                                   : irs::ColumnReader::ScanState{});
       }
       row.points.resize(row.readers.size());
       row.leaves = spec.row_leaves;
@@ -608,6 +613,10 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
     auto& chunk = *row.chunk;
     chunk.Reset();
     for (size_t j = 0; j < row.readers.size(); ++j) {
+      if (!row.readers[j]) {
+        SetNullColumn(chunk.data[j]);
+        continue;
+      }
       row.readers[j]->GatherDense(row.scans[j], anchor, sel, survivors, span,
                                   chunk.data[j]);
     }
@@ -630,6 +639,10 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = r.readers[j];
+      if (!reader) {
+        SetNullColumn(vector);
+        continue;
+      }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
           *_col_reader, *reader);
@@ -700,6 +713,9 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
+      if (!reader) {
+        continue;
+      }
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
@@ -900,7 +916,9 @@ void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   }
   for (auto& r : _rows) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
-      r.scans[j] = r.readers[j]->InitScan(ctx);
+      if (r.readers[j]) {
+        r.scans[j] = r.readers[j]->InitScan(ctx);
+      }
     }
   }
 }

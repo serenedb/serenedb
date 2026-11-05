@@ -33,6 +33,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -85,10 +86,12 @@ struct SearchInsertLocalState final : duckdb::LocalSinkState {
 SereneDBSearchInsert::SereneDBSearchInsert(
   duckdb::PhysicalPlan& plan, const catalog::SearchTableEntry& table,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, bool return_chunk)
+  duckdb::idx_t estimated_cardinality, bool return_chunk,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> constraints)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(&table),
+    _constraints(std::move(constraints)),
     _return_chunk(return_chunk) {}
 
 SereneDBSearchInsert::SereneDBSearchInsert(
@@ -120,6 +123,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
   conn_ctx.SearchTxn().RegisterWriter(target.store, *table);
+  table->RequireCurrentSchema();
 
   const auto& columns = table->GetColumns();
   target.column_ids.reserve(columns.LogicalColumnCount());
@@ -161,6 +165,10 @@ duckdb::SinkResultType SereneDBSearchInsert::Sink(
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  for (const auto& constraint : _constraints) {
+    duckdb::DataTable::VerifyRowConstraint(context.client, *_table, *constraint,
+                                           chunk);
   }
   lstate.rows.Append(context.client, gstate.table, chunk);
 

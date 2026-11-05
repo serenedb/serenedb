@@ -25,8 +25,11 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
+#include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/type_limits.hpp>
 
 namespace sdb::connector {
 
@@ -47,6 +50,7 @@ FullScanner::FullScanner(
     const auto* column_reader =
       reader.Column(static_cast<irs::field_id>(projection.column_id));
     if (!column_reader) {
+      _absent.push_back(projection.output_slot);
       continue;
     }
     // A projected column that is also a filter column materializes as part of
@@ -120,6 +124,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
         "AND-combines into out_vec");
       b.reader->Scan(*b.state, out, count);
     }
+    FillAbsent(output);
     return count;
   }
 
@@ -161,7 +166,50 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     }
     b.reader->GatherDense(*b.state, start_row, *sel, survivors, count, out);
   }
+  FillAbsent(output);
   return survivors;
+}
+
+void FullScanner::FillAbsent(duckdb::DataChunk& output) const {
+  for (const auto slot : _absent) {
+    auto& out = output.data[slot];
+    out.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    duckdb::ConstantVector::SetNull(out, true);
+  }
+}
+
+void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
+                  std::span<const irs::ColumnstoreProjection> projections,
+                  irs::ColFilterStateCache& filter_states,
+                  duckdb::SelectionVector& live, duckdb::DataChunk& chunk,
+                  absl::FunctionRef<bool(duckdb::DataChunk&)> visit) {
+  const auto* col_reader = segment.GetColReader();
+  SDB_ENSURE(col_reader, "search table segment has no columnstore");
+  FullScanner scanner{*col_reader, projections, {}, &context, filter_states};
+  const bool has_mask = segment.docs_mask() != nullptr;
+  auto mask = irs::MakeGenericDocsMask(segment.docs_mask());
+  const uint64_t docs = segment.Meta().docs_count;
+  for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
+    const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
+    chunk.Reset();
+    const auto produced = scanner.Scan(row, take, chunk);
+    SDB_ASSERT(produced == take, "unfiltered scan produced fewer rows");
+    chunk.SetChildCardinality(produced);
+    if (has_mask) {
+      const duckdb::idx_t keep =
+        mask.FillLive(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()),
+                      static_cast<uint32_t>(produced), live.data());
+      if (keep == 0) {
+        continue;
+      }
+      if (keep != produced) {
+        chunk.Slice(live, keep);
+      }
+    }
+    if (!visit(chunk)) {
+      return;
+    }
+  }
 }
 
 }  // namespace sdb::connector

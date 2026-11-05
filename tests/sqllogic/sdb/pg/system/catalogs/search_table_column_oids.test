@@ -1,0 +1,67 @@
+statement ok
+CREATE SEQUENCE stco_seq;
+
+
+statement ok
+CREATE TABLE stco_s (id INT, n BIGINT DEFAULT nextval('stco_seq'), m INT DEFAULT 5) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE stco_d (id INT, n BIGINT DEFAULT nextval('stco_seq'), m INT DEFAULT 5);
+
+
+query
+SELECT attrelid::regclass AS rel, attname, atthasdef FROM pg_attribute
+WHERE attrelid IN ('stco_s'::regclass, 'stco_d'::regclass) AND attnum > 0 ORDER BY 1, attnum;
+----
+rel	attname	atthasdef
+stco_s	id	f
+stco_s	n	t
+stco_s	m	t
+stco_d	id	f
+stco_d	n	t
+stco_d	m	t
+
+
+query
+SELECT adrelid::regclass AS rel, adnum, pg_get_expr(adbin, adrelid) AS expr FROM pg_attrdef
+WHERE adrelid IN ('stco_s'::regclass, 'stco_d'::regclass) ORDER BY 1, 2;
+----
+rel	adnum	expr
+stco_s	2	nextval('stco_seq')
+stco_s	3	5
+stco_d	2	nextval('stco_seq')
+stco_d	3	5
+
+
+statement ok
+CREATE TABLE stco_so (body TEXT, id INT) WITH (storage = 'search');
+
+
+statement ok
+CREATE SEQUENCE stco_so_id_seq OWNED BY stco_so.id;
+
+
+query
+SELECT pg_get_serial_sequence('stco_so', 'body') AS body, pg_get_serial_sequence('stco_so', 'id') AS id;
+----
+body	id
+NULL	public.stco_so_id_seq
+
+
+query
+SELECT refobjsubid FROM pg_depend WHERE objid = 'stco_so_id_seq'::regclass AND deptype = 'a';
+----
+refobjsubid
+2
+
+
+statement ok
+ALTER TABLE stco_so DROP COLUMN id;
+
+
+query
+SELECT count(*) AS sequences FROM pg_class WHERE relname = 'stco_so_id_seq';
+----
+sequences
+0

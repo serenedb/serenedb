@@ -29,6 +29,7 @@
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
@@ -40,6 +41,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -187,6 +189,52 @@ std::vector<duckdb::CatalogEntry*> VisibleEntries(
   return entries;
 }
 
+void QualifyUserFunctions(duckdb::ClientContext& context,
+                          const duckdb::Catalog& catalog,
+                          duckdb::ParsedExpression& expression) {
+  if (expression.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
+    auto& function = expression.Cast<duckdb::FunctionExpression>();
+    if (function.GetQualifiedName().Schema().empty()) {
+      duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+      for (const auto type : {duckdb::CatalogType::SCALAR_FUNCTION_ENTRY,
+                              duckdb::CatalogType::MACRO_ENTRY}) {
+        entry = duckdb::Catalog::GetEntry(
+          context, duckdb::EntryLookupInfo{type, function.GetQualifiedName()},
+          duckdb::OnEntryNotFound::RETURN_NULL);
+        if (entry) {
+          break;
+        }
+      }
+      if (entry && !entry->internal &&
+          !entry->ParentCatalog().IsSystemCatalog() &&
+          !entry->ParentCatalog().IsTemporaryCatalog()) {
+        auto qualified =
+          entry->Cast<duckdb::StandardEntry>().GetQualifiedName(entry->name);
+        if (&entry->ParentCatalog() == &catalog) {
+          qualified.StripCatalog();
+        }
+        function.SetQualifiedName(std::move(qualified));
+      }
+    }
+  }
+  duckdb::ParsedExpressionIterator::EnumerateChildren(
+    expression, [&](duckdb::ParsedExpression& child) {
+      QualifyUserFunctions(context, catalog, child);
+    });
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> RowConstraints(
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>& constraints) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> result;
+  for (auto& constraint : constraints) {
+    if (constraint->type == duckdb::ConstraintType::NOT_NULL ||
+        constraint->type == duckdb::ConstraintType::CHECK) {
+      result.push_back(std::move(constraint));
+    }
+  }
+  return result;
+}
+
 }  // namespace
 
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
@@ -220,7 +268,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   }
   SDB_ASSERT(plan);
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
-    *entry, op.types, op.estimated_cardinality, op.return_chunk);
+    *entry, op.types, op.estimated_cardinality, op.return_chunk,
+    RowConstraints(op.bound_constraints));
   insert.children.emplace_back(*plan);
   return insert;
 }
@@ -277,7 +326,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   }
   auto& update = planner.Make<connector::SereneDBSearchUpdate>(
     *entry, op.columns, std::move(op.expressions), op.types,
-    op.estimated_cardinality, op.return_chunk, op.row_id_handling);
+    op.estimated_cardinality, op.return_chunk, op.row_id_handling,
+    RowConstraints(op.bound_constraints));
   update.children.emplace_back(plan);
   return update;
 }
@@ -301,6 +351,15 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     for (const auto& [name, value] : info.options) {
       RequireSearchTableIndexOption(name);
     }
+  }
+  for (auto* expressions : {&info.expressions, &info.parsed_expressions}) {
+    for (auto& expression : *expressions) {
+      QualifyUserFunctions(binder.context, table.ParentCatalog(), *expression);
+    }
+  }
+  if (info.where_clause) {
+    QualifyUserFunctions(binder.context, table.ParentCatalog(),
+                         *info.where_clause);
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);

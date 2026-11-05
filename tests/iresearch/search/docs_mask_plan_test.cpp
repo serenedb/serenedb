@@ -28,6 +28,7 @@
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/window.hpp>
+#include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -487,8 +488,9 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       ASSERT_EQ(expected.size(), pieces);
     }
 
-    {
-      auto docs = query->PlanDocs({});
+    for (const doc_id_t span : {doc_id_t{0}, irs::detail::kWindowDocs}) {
+      SCOPED_TRACE(testing::Message("span ") << span);
+      auto docs = irs::docs::MakeRoot(*query, {.span = span});
       ASSERT_NE(nullptr, docs);
       constexpr doc_id_t kWindow = 3000;
       std::vector<doc_id_t> buf(kWindow + irs::doc_limits::kDocsSlack);

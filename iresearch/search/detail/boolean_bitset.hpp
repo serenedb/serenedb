@@ -175,6 +175,29 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
   return TakeFold(cost < walk, terms, doc, docs_count);
 }
 
+inline bool TakeNegationFold(std::span<const PostingClause> terms,
+                             std::span<const QueryBuilder::ptr> filters,
+                             const ExcludeFills& fills, const IndexInput& doc,
+                             doc_id_t docs_count) noexcept {
+  const auto windows = static_cast<double>(SegmentWindows(docs_count));
+  const auto words = static_cast<double>(SegmentWords(docs_count));
+  const auto leaves = static_cast<double>(terms.size() + filters.size());
+  double window = windows * leaves * kWindowTestCost;
+  double fold = words * (kBitClearCost + kFoldWordCost) + fills.cost;
+  for (const auto& term : terms) {
+    const auto docs = term.state.cookie.docs_count;
+    const auto d = static_cast<double>(docs);
+    window += std::min(windows, d) * kWindowRefillCost + d * kFilledCost;
+    fold += PostingBuildCost(docs, docs_count, kClearCost);
+  }
+  for (const auto& child : filters) {
+    const auto clause = ChildClauseCost(*child, docs_count);
+    window += clause.fill + windows * (clause.nested ? kWindowNestedRefillCost
+                                                     : kWindowChildRefillCost);
+  }
+  return TakeFold(fold < window, terms.size(), doc, docs_count);
+}
+
 template<typename Result>
 Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
                           TableFilter* table) {
@@ -184,19 +207,15 @@ Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
   if (doc == nullptr) {
     return {};
   }
-  const ExcludeCosts<PostingClause> exclusion{
-    groups.must_not, groups.must_not_filters, docs_count, docs_count,
-    docs_count,      ExcludeUse::PerDoc};
-  if (!TakeFold(exclusion.Windowed(true) == ExcludeForm::Bitset,
-                groups.must_not.size(), *doc, docs_count)) {
-    return {};
-  }
   BitsetBuckets buckets;
-  buckets.fills.emplace_back(fill::MakeAllDocs(segment));
   const auto split = SplitMask(groups.must_not_filters);
   ExcludeFills fills;
   CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
                         buckets, fills);
+  if (!TakeNegationFold(groups.must_not, split.rest, fills, *doc, docs_count)) {
+    return {};
+  }
+  buckets.fills.emplace_back(fill::MakeAllDocs(segment));
   if (split.masked) {
     buckets.masked = &segment;
   }

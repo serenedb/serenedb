@@ -118,38 +118,16 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
-search::Writes::PinnedSearchTable PinnedSearchTable(
-  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::Store>& store) {
-  const auto make = [&] {
-    auto config = store->ScanConfig();
-    return search::Writes::PinnedSearchTable{
-      .reader =
-        std::make_shared<irs::DirectoryReader>(store->GetDirectoryReader()),
-      .config = std::move(config),
-    };
-  };
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    return make();
-  }
-  return conn_ctx->SearchTxn().EnsureSearchTable(database_oid, oid, make);
-}
-
-irs::DirectoryReader PinnedSearchReader(
-  duckdb::ClientContext& context, duckdb::idx_t database_oid, duckdb::idx_t oid,
-  const std::shared_ptr<search::Store>& store) {
-  return irs::DirectoryReader{
-    *PinnedSearchTable(context, database_oid, oid, store).reader};
-}
-
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
-  return [database_oid = table.catalog.GetOid(), oid = table.oid,
-          store = table.Storage()](
+  return [store = table.Storage()](
            duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
     return std::make_shared<search::StoreSnapshot>(
-      PinnedSearchReader(context, database_oid, oid, store), nullptr);
+      irs::DirectoryReader{*GetSereneDBContext(context)
+                              .SearchTxn()
+                              .EnsureSearchTable(*store)
+                              .reader},
+      nullptr);
   };
 }
 
@@ -526,7 +504,7 @@ duckdb::TableFunction BindSearchTableScan(
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
   data->relation.inverted_config =
-    PinnedSearchTable(context, entry.catalog.GetOid(), entry.oid, store).config;
+    GetSereneDBContext(context).SearchTxn().EnsureSearchTable(*store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);

@@ -485,21 +485,22 @@ query
 EXPLAIN UPDATE pg SET v = 'x' WHERE id = 3;
 ----
 QUERY PLAN
-╭─ EXTENSION ───────────╮
-╰───────────┬───────────╯
-╭─ PROJECTION ──────────╮
-│ Projections: 'x', #0, │
-│              rowid    │
-│ ~1 row                │
-╰───────────┬───────────╯
-╭─ IRESEARCH_SCAN ──────╮
-│ Index: pg             │
-│ Lookup: search        │
-│ Projections: id,      │
-│              rowid    │
-│ Column Filter: id = 3 │
-│ ~1 row                │
-╰───────────────────────╯
+╭─ SEARCH_UPDATE ────────╮
+│ Table: pg              │
+│ Row Ids: ASSUME_UNIQUE │
+╰────────────┬───────────╯
+╭─ PROJECTION ───────────╮
+│ Projections: 'x', #0,  │
+│              rowid     │
+│ ~1 row                 │
+╰────────────┬───────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: pg              │
+│ Lookup: search         │
+│ Projections: id, rowid │
+│ Column Filter: id = 3  │
+│ ~1 row                 │
+╰────────────────────────╯
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY pg_bm AS split_text(case := 'lower') WITH (frequency, position, norm);

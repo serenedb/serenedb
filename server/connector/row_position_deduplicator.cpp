@@ -92,7 +92,7 @@ duckdb::idx_t RowPositionDeduplicator::KeepFirst(duckdb::DataChunk& chunk,
                                                  duckdb::idx_t rowid) {
   const auto count = chunk.size();
   auto places = chunk.data[rowid].Values<int64_t>();
-  duckdb::SelectionVector keep{count};
+  duckdb::SelectionVector keep;
   duckdb::idx_t kept = 0;
   for (duckdb::idx_t i = 0; i < count;) {
     const auto first = static_cast<uint64_t>(places.GetValueUnsafe(i));
@@ -106,12 +106,22 @@ duckdb::idx_t RowPositionDeduplicator::KeepFirst(duckdb::DataChunk& chunk,
     }
     const auto mask =
       (run == kWordBits ? ~uint64_t{0} : (uint64_t{1} << run) - 1) << shift;
-    auto fresh = (mask & ~WordOf(RowPositionIndex(first), doc)
-                            .fetch_or(mask, std::memory_order_relaxed)) >>
-                 shift;
-    while (fresh != 0) {
-      keep.set_index(kept++, i + std::countr_zero(fresh));
-      fresh &= fresh - 1;
+    const auto seen = mask & WordOf(RowPositionIndex(first), doc)
+                               .fetch_or(mask, std::memory_order_relaxed);
+    if (seen == 0 && !keep.IsSet()) {
+      kept += run;
+    } else {
+      if (!keep.IsSet()) {
+        keep.Initialize(count);
+        for (duckdb::idx_t j = 0; j < kept; ++j) {
+          keep.set_index(j, j);
+        }
+      }
+      auto fresh = (mask & ~seen) >> shift;
+      while (fresh != 0) {
+        keep.set_index(kept++, i + std::countr_zero(fresh));
+        fresh &= fresh - 1;
+      }
     }
     i += run;
   }

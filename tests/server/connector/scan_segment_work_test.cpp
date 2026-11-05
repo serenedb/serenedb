@@ -20,7 +20,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <roaring/roaring.hh>
 #include <vector>
 
 #include "connector/scan/scan_state.h"
@@ -32,11 +31,7 @@ namespace {
 void CheckLive(uint32_t rg_count, const std::vector<uint32_t>& live) {
   SegmentWork work;
   work.rg_count = rg_count;
-  roaring::Roaring set;
-  for (const auto rg : live) {
-    set.add(rg);
-  }
-  work.SetLive(std::move(set));
+  work.SetLive(live);
   EXPECT_EQ(work.all_live, live.size() == rg_count);
   EXPECT_EQ(work.LiveCount(), live.size());
   for (uint32_t rg = 0; rg <= rg_count; ++rg) {
@@ -57,11 +52,9 @@ TEST(ScanSegmentWork, AllLiveKeepsNothing) {
   CheckLive(130, live);
   SegmentWork work;
   work.rg_count = 130;
-  roaring::Roaring set;
-  set.addRange(0, 130);
-  work.SetLive(std::move(set));
+  work.SetLive(live);
   EXPECT_TRUE(work.all_live);
-  EXPECT_TRUE(work.live.isEmpty());
+  EXPECT_TRUE(work.live_rgs.empty());
 }
 
 TEST(ScanSegmentWork, NoneLive) { CheckLive(130, {}); }
@@ -76,10 +69,6 @@ TEST(ScanSegmentWork, LongRun) {
     live.push_back(rg);
   }
   CheckLive(300, live);
-}
-
-TEST(ScanSegmentWork, AcrossContainers) {
-  CheckLive(70000, {5, 65535, 65536, 69999});
 }
 
 }  // namespace

@@ -47,7 +47,6 @@
 #include <limits>
 #include <memory>
 #include <optional>
-#include <roaring/roaring.hh>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -127,32 +126,30 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
   bool all_live = true;
-  uint32_t live_count = 0;
-  roaring::Roaring live;
+  std::vector<uint32_t> live_rgs;
   std::unique_ptr<OrderedUnits> ordered;
 
-  void SetLive(roaring::Roaring set) {
-    live_count = static_cast<uint32_t>(set.cardinality());
-    all_live = live_count == rg_count;
-    live = all_live ? roaring::Roaring{} : std::move(set);
+  void SetLive(std::vector<uint32_t> rgs) {
+    all_live = rgs.size() == rg_count;
+    live_rgs = all_live ? std::vector<uint32_t>{} : std::move(rgs);
   }
 
   uint32_t LiveBefore(uint32_t rg) const noexcept {
-    return all_live || rg == 0 ? rg : static_cast<uint32_t>(live.rank(rg - 1));
+    return all_live ? rg
+                    : static_cast<uint32_t>(absl::c_lower_bound(live_rgs, rg) -
+                                            live_rgs.begin());
   }
 
   uint32_t LiveCount() const noexcept {
-    return all_live ? rg_count : live_count;
+    return all_live ? rg_count : static_cast<uint32_t>(live_rgs.size());
   }
 
   uint32_t LiveAt(uint32_t k) const noexcept {
     if (all_live) {
       return k;
     }
-    SDB_ASSERT(k < live_count);
-    uint32_t rg = 0;
-    live.select(k, &rg);
-    return rg;
+    SDB_ASSERT(k < live_rgs.size());
+    return live_rgs[k];
   }
 };
 

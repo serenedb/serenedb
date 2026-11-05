@@ -37,7 +37,6 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
-#include <roaring/roaring.hh>
 #include <span>
 #include <vector>
 
@@ -513,15 +512,13 @@ void LiveRowGroups(const irs::ColReader& col_reader,
   if (!pruned) {
     return;
   }
-  roaring::Roaring set;
+  std::vector<uint32_t> rgs;
   for (uint32_t rg = 0; rg != work.rg_count; ++rg) {
     if (live(rg)) {
-      set.add(rg);
+      rgs.emplace_back(rg);
     }
   }
-  set.runOptimize();
-  set.shrinkToFit();
-  work.SetLive(std::move(set));
+  work.SetLive(std::move(rgs));
 }
 
 }  // namespace

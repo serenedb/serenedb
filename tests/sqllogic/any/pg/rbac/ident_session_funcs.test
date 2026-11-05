@@ -192,19 +192,19 @@ SELECT * FROM ident_iceberg;
 db error: ERROR: permission denied for table ident_iceberg<slt:ignore>
 
 
+query
+SELECT current_user = current_user AS same, current_user = session_user AS session;
+----
+same	session
+t	t
+
+
 # ============================================================================
 # Cleanup.
 # ============================================================================
 
 statement ok
 DROP TABLE ident_iceberg;
-
-
-query
-SELECT current_user = current_user AS same, current_user = session_user AS session;
-----
-same	session
-t	t
 
 
 statement ok

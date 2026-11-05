@@ -92,8 +92,6 @@ SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya', 'nosuchcol', 'SELEC
 db error: ERROR: column "nosuchcol"<slt:ignore>
 
 
-# ---- cleanup ----
-
 statement error
 GRANT SELECT (no_such_column) ON cpn_kostya TO cpn_vedernikoff;
 ----
@@ -139,6 +137,8 @@ db error: ERROR: column privileges are only valid for relations
 statement ok
 DROP SEQUENCE cpn_sequence;
 
+
+# ---- cleanup ----
 
 statement ok
 DROP TABLE cpn_kostya;

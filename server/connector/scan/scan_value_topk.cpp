@@ -161,7 +161,7 @@ void CollectSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
   const auto mask = seg.MaskedDocs();
-  const auto limit = g.topk.limit;
+  const auto limit = spec.limit;
   auto& shared = g.value;
   l.hits.clear();
   bool going = true;
@@ -210,7 +210,7 @@ void PublishSegment(ScanGlobalState& g, ValueTopKLocalState& l) {
   if (l.hits.empty()) {
     return;
   }
-  const auto limit = g.topk.limit;
+  const auto limit = g.Bind().value_order->limit;
   auto& shared = g.value;
   absl::MutexLock lock{&shared.mutex};
   auto& best = shared.best;
@@ -236,8 +236,7 @@ void Merge(ScanGlobalState& g) {
   auto& shared = g.value;
   absl::MutexLock lock{&shared.mutex};
   t.answer.clear();
-  t.answer.reserve(shared.best.size());
-  for (size_t rank = 0; rank != shared.best.size(); ++rank) {
+  for (size_t rank = g.top_offset; rank < shared.best.size(); ++rank) {
     const auto& hit = shared.best[rank];
     t.answer.push_back({.score = -static_cast<irs::score_t>(rank),
                         .doc = hit.doc,
@@ -293,8 +292,7 @@ std::optional<ValueOrderSpec> ValueOrderOf(
 
 void InitValueTopKGlobal(ScanGlobalState& g) {
   auto& t = g.topk;
-  t.limit = *g.top_k;
-  t.offset = g.top_offset;
+  t.limit = *g.top_k - std::min(*g.top_k, g.top_offset);
   t.shared_fetch = t.limit > STANDARD_VECTOR_SIZE;
 }
 

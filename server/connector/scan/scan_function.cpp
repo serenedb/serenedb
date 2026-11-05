@@ -240,7 +240,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
-  SDB_ENSURE(state->shape != ScanShape::ValueTopK || state->col_filters.empty(),
+  SDB_ENSURE(state->shape != ScanShape::ValueTopK ||
+               (state->col_filters.empty() && !state->has_lookup_filter),
              "a scan that orders by an indexed value takes no column filters");
 
   if (state->shape == ScanShape::TsDict) {

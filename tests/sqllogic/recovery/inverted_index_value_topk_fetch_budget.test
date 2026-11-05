@@ -1,0 +1,72 @@
+# `ORDER BY <indexed number> LIMIT k OFFSET n` reads columns for the k rows it
+# returns, never for the n it skips. The `TopKFetchBudget` failure point fails
+# the query once more rows are read; its count spans the process, so it is armed
+# for one query in a fresh serened.
+
+statement ok
+CREATE TABLE vb (id INTEGER PRIMARY KEY, v BIGINT)
+
+
+statement ok
+CREATE INDEX vb_idx ON vb USING inverted (id, v) WITH (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO vb SELECT i, (i * 7919) % 5003 FROM range(5000) r(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) vb
+
+
+query
+EXPLAIN SELECT id, v FROM vb_idx ORDER BY v LIMIT 10 OFFSET 1000;
+----
+QUERY PLAN
+╭─ LOOKUP_JOIN ────────╮
+│ Key: rowid           │
+│ ~10 rows             │
+╰───────────┬──────────╯
+            ├──────────────────────╮
+╭─ IRESEARCH_SCAN ─────╮  ╭─ INDEX_SOURCE ──╮
+│ Index: vb_idx        │  │ Lookup: table   │
+│ Lookup: table        │  │ Projections: id │
+│ Top: 10, offset 1000 │  │ ~10 rows        │
+│ Order: v NULLS LAST  │  ╰─────────────────╯
+│ Projections: v, pk   │
+│ ~5,000 rows          │
+╰──────────────────────╯
+
+
+statement ok
+SET sdb_faults = 'TopKFetchBudget';
+
+
+query
+SELECT id, v FROM vb_idx ORDER BY v LIMIT 10 OFFSET 1000;
+----
+id	v
+2519	1000
+1656	1001
+793	1002
+4933	1003
+4070	1004
+3207	1005
+2344	1006
+1481	1007
+618	1008
+4758	1009
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT (SELECT list(id ORDER BY v) FROM (SELECT id, v FROM vb_idx ORDER BY v
+                                         LIMIT 10 OFFSET 1000))
+     = (SELECT list(id ORDER BY v) FROM (SELECT id, v FROM vb ORDER BY v
+                                         LIMIT 10 OFFSET 1000)) AS same;
+----
+same
+t

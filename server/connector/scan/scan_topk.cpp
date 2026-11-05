@@ -171,9 +171,10 @@ FetchedHits FetchHits(duckdb::ClientContext& ctx, ScanGlobalState& g,
     const auto fetched =
       gFetchedRows.fetch_add(hits.size(), std::memory_order_relaxed) +
       hits.size();
-    if (fetched > t.limit) {
+    const auto returned = t.limit - std::min(t.limit, t.offset);
+    if (fetched > returned) {
       THROW_SQL_ERROR(ERR_MSG("top-k read columns for ", fetched,
-                              " rows against a limit of ", t.limit));
+                              " rows against a limit of ", returned));
     }
   }
   auto chunk = duckdb::make_uniq<duckdb::DataChunk>();

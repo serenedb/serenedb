@@ -119,6 +119,12 @@ class PostingPos {
     return {std::cend(_docs) - _left_in_leaf, _left_in_leaf};
   }
 
+  std::span<const doc_id_t> Onward() const noexcept {
+    const auto* const current = std::cend(_docs) - _left_in_leaf - 1;
+    SDB_ASSERT(*current == _doc);
+    return {current, _left_in_leaf + 1};
+  }
+
   Position& Positions() noexcept { return _pos; }
 
   const BlockIndex* Blocks() {

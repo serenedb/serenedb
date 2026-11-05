@@ -829,6 +829,68 @@ TEST(PhrasePositionsTest, repeated_terms_agree_with_reference_across_docs) {
   }
 }
 
+TEST(PhrasePositionsTest,
+     rarely_shared_terms_agree_with_reference_across_docs) {
+  struct Terms {
+    std::string_view lead;
+    std::string_view other;
+    double lead_share;
+    double other_share;
+    double shared;
+    double late_shared;
+  };
+  constexpr Terms kTerms[] = {
+    {"p", "q", 0.2, 0.2, 0.2, 0.2},
+    {"s", "t", 0.05, 0.25, 0.05, 0.05},
+    {"u", "v", 0.1, 0.1, 0.01, 0.01},
+    {"m", "n", 0.3, 0.2, 0.9, 0.25},
+  };
+  std::mt19937 rng{20261105};
+  std::vector<std::vector<std::string_view>> docs(6000);
+  std::vector<std::string> values;
+  values.reserve(docs.size());
+  for (auto& doc : docs) {
+    const bool late = &doc - docs.data() >= std::ssize(docs) / 2;
+    for (const auto& terms : kTerms) {
+      const bool lead = std::bernoulli_distribution{terms.lead_share}(rng);
+      const bool other = std::bernoulli_distribution{
+        !lead ? terms.other_share
+              : (late ? terms.late_shared : terms.shared)}(rng);
+      if (lead && other && std::bernoulli_distribution{0.5}(rng)) {
+        doc.push_back(terms.lead);
+        doc.push_back(terms.other);
+        continue;
+      }
+      if (other) {
+        doc.push_back(terms.other);
+      }
+      doc.push_back("x");
+      if (lead) {
+        doc.push_back(terms.lead);
+      }
+    }
+    values.push_back(absl::StrJoin(doc, " "));
+  }
+  const PhraseIndex index{values};
+  ASSERT_EQ(1U, index.Reader().size());
+
+  for (const auto text : {"p q", "q p", "s t", "t s", "u v", "v u", "m n",
+                          "n m", "p q x", "x u v"}) {
+    const auto slots = Adjacent(text);
+    std::vector<Outcome> outcomes;
+    outcomes.reserve(docs.size());
+    for (const auto& doc : docs) {
+      outcomes.push_back(Reference(doc, slots));
+    }
+    irs::ByPhrase filter;
+    *filter.mutable_field_id() = kField;
+    *filter.mutable_options() = Phrase(text);
+    SCOPED_TRACE(text);
+    tests::ExpectFamilies(Expected(outcomes),
+                          index.Run(filter, tests::sort::FrequencyScore{}));
+  }
+}
+
 TEST(PhraseTokenBatchTest, matches_across_token_batches) {
   constexpr size_t kBatch = irs::TokenBatch::kCapacity;
   const auto text =

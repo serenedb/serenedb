@@ -917,8 +917,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       std::vector<irs::bstring> keys;
       std::vector<irs::doc_id_t> actual;
       reader.VisitRange(
-        from, to,
-        [&](irs::bytes_view key, const irs::PostingMeta& meta, bool) {
+        from, to, [&](irs::bytes_view key, const irs::PostingMeta& meta, bool) {
           keys.emplace_back(key);
           const auto docs = DocsOf(reader, meta);
           actual.insert(actual.end(), docs.begin(), docs.end());
@@ -2306,6 +2305,90 @@ TEST_P(TermDictTest, infix_walks_match_coded_and_raw_blocks) {
   }
 }
 
+TEST_P(TermDictTest, infix_walks_skip_empty_blocks_and_keep_split_matches) {
+  std::mt19937 rng{29};
+  constexpr std::string_view kLetters = "abcdhkmnprstuvwxyz";
+  const auto word = [&](size_t length) {
+    std::string out;
+    for (size_t i = 0; i != length; ++i) {
+      out += kLetters[rng() % kLetters.size()];
+    }
+    return out;
+  };
+  std::vector<std::string> hosts;
+  for (size_t i = 0; i != 200; ++i) {
+    hosts.push_back(word(6));
+  }
+  const auto path = [&] {
+    return absl::StrCat("h/", hosts[rng() % hosts.size()], "/",
+                        word(3 + rng() % 18));
+  };
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 20000; ++i) {
+    keys.push_back(Bytes(path()));
+  }
+  for (size_t i = 0; i != 64; ++i) {
+    const auto split = absl::StrCat(path(), "p", i, "/");
+    keys.push_back(Bytes(split + "gooa"));
+    keys.push_back(Bytes(absl::StrCat(split, "google", word(2))));
+    const auto near = absl::StrCat(path(), "q", i, "/");
+    keys.push_back(Bytes(near + "gooa"));
+    keys.push_back(Bytes(near + "goog"));
+    keys.push_back(Bytes(near + "googlx"));
+    const auto dense = absl::StrCat(path(), "r", i, "/");
+    keys.push_back(Bytes(dense + "abcda"));
+    keys.push_back(Bytes(absl::StrCat(dense, "abcdhkm", word(2))));
+    keys.push_back(Bytes(absl::StrCat(path(), "s", i, "/xgooglex")));
+  }
+  std::vector<irs::bstring> next;
+  for (size_t i = 0; i != 100; ++i) {
+    next.push_back(Bytes(absl::StrCat("google", i)));
+  }
+  const auto entries = MakeEntries(keys);
+  const Field fields[]{
+    {.id = 1, .entries = entries, .sample = false},
+    {.id = 2, .entries = entries},
+    {.id = 3, .entries = MakeEntries(next), .sample = false},
+  };
+  Write(fields);
+  const auto split_by_prefix = [](const irs::term_dict::TermReaderImpl& impl,
+                                  std::string_view literal) {
+    irs::term_dict::Cursor cursor{impl};
+    cursor.First();
+    do {
+      const auto key = irs::ViewCast<char>(cursor.Key());
+      const auto at = key.find(literal);
+      const auto lcp =
+        irs::term_dict::HeaderAt(cursor.View(), cursor.Entry()).lcp;
+      if (cursor.Entry() % irs::term_dict::kRestartInterval != 0 &&
+          at != std::string_view::npos && at < lcp &&
+          lcp < at + literal.size()) {
+        return true;
+      }
+    } while (cursor.Advance());
+    return false;
+  };
+  for (const auto& field : std::span{fields}.first(2)) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    const auto& impl = Blocks(*reader);
+    ASSERT_EQ(
+      field.sample,
+      BlockKinds(
+        impl)[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] > 1);
+    ASSERT_TRUE(split_by_prefix(impl, "google"));
+    ASSERT_TRUE(split_by_prefix(impl, "abcdhkm"));
+    for (const std::string_view pattern :
+         {"%google%", "%oogle%", "%gle%", "%abcdhkm%", "%gglle%"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(*reader, field.entries,
+                 irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                     irs::ViewCast<irs::byte_type>(pattern)});
+    }
+  }
+}
+
 TEST_P(TermDictTest, suffix_walks_match_coded_and_raw_blocks) {
   const auto keys = Words(4000, 17);
   auto escaped = keys;
@@ -3306,11 +3389,9 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
         .to = round == 0 ? irs::bstring{} : bounds[rng() % bounds.size()],
         .metas = {},
       });
-      reader->VisitRange(
-        visit.from, visit.to,
-        [&](irs::bytes_view, const irs::PostingMeta& meta, bool) {
-          visit.metas.push_back(meta);
-        });
+      reader->VisitRange(visit.from, visit.to,
+                         [&](irs::bytes_view, const irs::PostingMeta& meta,
+                             bool) { visit.metas.push_back(meta); });
     }
     {
       auto it = reader->iterator();
@@ -3597,13 +3678,13 @@ TEST_P(TermDictTest, point_range_visits_only_its_term) {
     to.push_back(0);
     std::vector<irs::bstring> keys;
     std::vector<irs::doc_id_t> docs;
-    reader->VisitRange(key, to,
-                       [&](irs::bytes_view visited, const irs::PostingMeta& meta,
-                           bool piece) {
-                         ASSERT_FALSE(piece);
-                         keys.emplace_back(visited);
-                         docs = DocsOf(*reader, meta);
-                       });
+    reader->VisitRange(
+      key, to,
+      [&](irs::bytes_view visited, const irs::PostingMeta& meta, bool piece) {
+        ASSERT_FALSE(piece);
+        keys.emplace_back(visited);
+        docs = DocsOf(*reader, meta);
+      });
     return std::pair{std::move(keys), std::move(docs)};
   };
   for (const size_t i :

@@ -292,6 +292,14 @@ class InfixFilter {
     _checked = false;
   }
 
+  uint32_t FirstLiveGroup(const Cursor& cursor) {
+    if (_checks != kInfixProbe || cursor.View().fixed) {
+      return 0;
+    }
+    LoadHits(cursor);
+    return LiveGroup(cursor, 0);
+  }
+
   void Share(size_t lcp) noexcept { _lcp = std::min(_lcp, lcp); }
 
   IRS_FORCE_INLINE bool Rejects(Cursor& cursor) {
@@ -341,17 +349,25 @@ class InfixFilter {
           while (hit != count && hits[hit] < from) {
             ++hit;
           }
-          return (_literals[data[0]] & Boundary(header.lcp, before)) == 0 &&
+          return !Spans(data, header.len, Boundary(header.lcp, before)) &&
                  (header.len < m || hit == count ||
                   hits[hit] >= from + header.len - m + 1);
         });
     }
     _hit = hit;
+    if (cursor.AtGroupEnd()) {
+      const auto next = cursor.NextGroup();
+      if (const auto group = LiveGroup(cursor, next); group != next) {
+        cursor.SkipGroups(group);
+      }
+    }
     return lcp;
   }
 
  private:
   static constexpr uint32_t kInfixProbe = 256;
+  static constexpr uint32_t kSparseProbe = 64;
+  static constexpr uint32_t kSparseCandidates = 1;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
   void BuildLiterals() {
@@ -362,6 +378,7 @@ class InfixFilter {
     }
     for (size_t k = 1; k != m; ++k) {
       _before[_infix[k - 1]] |= uint64_t{1} << k;
+      _prefix_ends.Add(_infix[k - 1]);
     }
   }
 
@@ -497,6 +514,105 @@ class InfixFilter {
     }
   }
 
+  uint32_t LiveGroup(const Cursor& cursor, uint32_t group) {
+    const auto& view = cursor.View();
+    const uint32_t stop = cursor.Stop();
+    const auto records = static_cast<uint32_t>(view.records - view.suffixes);
+    for (; group * kRestartInterval < stop; ++group) {
+      const uint32_t first = group * kRestartInterval;
+      const uint32_t from = SuffixOffset(view, group);
+      const uint32_t to =
+        group + 1 < view.restarts ? SuffixOffset(view, group + 1) : records;
+      while (_hit != _hits.size() && _hits[_hit] < from) {
+        ++_hit;
+      }
+      if (_hit != _hits.size() && _hits[_hit] < to) {
+        return group;
+      }
+      if (Straddles(view, first, std::min(first + kRestartInterval, stop),
+                    view.suffixes + from)) {
+        return group;
+      }
+    }
+    return group;
+  }
+
+  bool Straddles(const BlockView& view, uint32_t first, uint32_t end,
+                 const byte_type* sp) noexcept {
+    uint32_t entry = first + 1;
+    if (!_sparse) {
+      sp += HeaderAt(view, first).len;
+      for (; entry < end; ++entry) {
+        const auto header = HeaderAt(view, entry);
+        if (Crosses(view, sp, header, view.befores[entry])) {
+          return true;
+        }
+        sp += header.len;
+      }
+      return false;
+    }
+    uint32_t candidates =
+      ClassifyByteSet16(view.befores + first, _prefix_ends) &
+      analysis::classify::LowBits(end - first) & ~uint32_t{1};
+    if (_probed != kSparseProbe) {
+      _probed_candidates += std::popcount(candidates);
+      if (++_probed == kSparseProbe &&
+          _probed_candidates > kSparseProbe * kSparseCandidates) {
+        _sparse = false;
+      }
+    }
+    if (candidates == 0) {
+      return false;
+    }
+    sp += HeaderAt(view, first).len;
+    do {
+      for (const uint32_t next = first + std::countr_zero(candidates);
+           entry != next; ++entry) {
+        sp += ColumnAt(view.lens, view.width, entry);
+      }
+      const auto header = HeaderAt(view, entry);
+      if (Crosses(view, sp, header, view.befores[entry])) {
+        return true;
+      }
+      sp += header.len;
+      ++entry;
+      candidates &= candidates - 1;
+    } while (candidates != 0);
+    return false;
+  }
+
+  IRS_FORCE_INLINE bool Crosses(const BlockView& view, const byte_type* sp,
+                                Header header,
+                                byte_type before) const noexcept {
+    const uint64_t across = Boundary(header.lcp, before);
+    if (view.coded) {
+      const auto* p = sp;
+      return (NextCode(p) & across) != 0;
+    }
+    return Spans(sp, header.len, across);
+  }
+
+  IRS_FORCE_INLINE bool Spans(const byte_type* suffix, uint32_t size,
+                              uint64_t across) const noexcept {
+    const auto pieces = _literals[suffix[0]] & across;
+    if (pieces == 0) [[likely]] {
+      return false;
+    }
+    return SpansRest(suffix, size, pieces);
+  }
+
+  IRS_NO_INLINE bool SpansRest(const byte_type* suffix, uint32_t size,
+                               uint64_t pieces) const noexcept {
+    for (; pieces != 0; pieces &= pieces - 1) {
+      const auto rest = _infix.substr(std::countr_zero(pieces));
+      if (size >= rest.size() &&
+          std::memcmp(suffix, rest.data(), rest.size()) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   IRS_FORCE_INLINE size_t SeekHit(size_t hit, uint32_t from) const {
     if (hit != 0 && _hits[hit - 1] >= from) {
       return absl::c_lower_bound(_hits, from) - _hits.begin();
@@ -583,7 +699,7 @@ class InfixFilter {
       _end = kNone;
       return false;
     }
-    if ((_literals[suffix->data[0]] & across) != 0) {
+    if (Spans(suffix->data, suffix->size, across)) {
       return Confirm(cursor);
     }
     if (suffix->size < m || !HitIn(from, from + suffix->size - m + 1)) {
@@ -601,10 +717,14 @@ class InfixFilter {
   bool _checked = false;
   bool _off = false;
   bool _coded = false;
+  bool _sparse = true;
+  uint32_t _probed = 0;
+  uint32_t _probed_candidates = 0;
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
   std::vector<uint32_t> _hits;
   ByteSet _anchors;
+  ByteSet _prefix_ends;
   bstring _decoded;
   bytes_view _infix;
   re2::LiteralFinder _finder;
@@ -639,6 +759,11 @@ class KeyFilter {
     if (auto* infix = std::get_if<InfixFilter>(&_filter)) {
       infix->Share(lcp);
     }
+  }
+
+  uint32_t FirstLiveGroup(const Cursor& cursor) {
+    auto* infix = std::get_if<InfixFilter>(&_filter);
+    return infix ? infix->FirstLiveGroup(cursor) : 0;
   }
 
   IRS_FORCE_INLINE bool Rejects(Cursor& cursor, size_t prefix) {
@@ -1302,8 +1427,21 @@ class AcceptorIterator : public SeekTermIterator {
       return false;
     }
     if (_by_literal) {
-      _cursor.Load(next);
-      _cursor.Next();
+      for (auto block = next;; ++block) {
+        _cursor.Load(block);
+        const auto group = _filter.FirstLiveGroup(_cursor);
+        if (group == 0) {
+          _cursor.Next();
+          break;
+        }
+        if (group * kRestartInterval < _cursor.Stop()) {
+          _cursor.Group(group);
+          break;
+        }
+        if (block + 1 == field.Blocks()) {
+          return false;
+        }
+      }
       _filter.Restart();
       _check = true;
       _valid = _k;

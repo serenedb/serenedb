@@ -552,6 +552,34 @@ class Cursor {
   bool AtBlockEnd() const noexcept {
     return _entry != kNoEntry && _entry + 1 == _stop;
   }
+  uint32_t Stop() const noexcept { return _stop; }
+  bool AtGroupEnd() const noexcept {
+    return !_view.fixed && _entry != kNoEntry && _entry + 1 == _restart &&
+           _restart < _stop;
+  }
+  uint32_t NextGroup() const noexcept { return _restart / kRestartInterval; }
+
+  void Group(uint32_t group) {
+    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
+    _restart = group * kRestartInterval;
+    _sp = _view.suffixes + SuffixOffset(_view, group);
+    Next();
+  }
+
+  void SkipGroups(uint32_t group) noexcept {
+    SDB_ASSERT(AtGroupEnd() && group > NextGroup());
+    _pendings = 0;
+    _partial = true;
+    _size = _mat;
+    const uint32_t restart = group * kRestartInterval;
+    if (restart >= _stop) {
+      _entry = _stop - 1;
+      return;
+    }
+    _entry = restart - 1;
+    _restart = restart;
+    _sp = _view.suffixes + SuffixOffset(_view, group);
+  }
 
   int ByteAt(size_t depth) {
     if (depth < _mat) {
@@ -933,13 +961,6 @@ class Cursor {
     };
   }
 
-  void Group(uint32_t group) {
-    _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
-    _restart = group * kRestartInterval;
-    _sp = _view.suffixes + SuffixOffset(_view, group);
-    Next();
-  }
-
   bool ScanTo(Probe probe, size_t matched) {
     SDB_ASSERT(_pendings == 0);
     const auto* fsst = _view.coded ? _field->Fsst() : nullptr;
@@ -1056,14 +1077,29 @@ class Cursor {
     }
     const uint64_t end = _field->BlockOffset(block + 1);
     for (uint64_t at = _field->BlockOffset(block); at < end; at += kLine) {
-      __builtin_prefetch(base + at);
+      __builtin_prefetch(base + at, 0, 2);
     }
   }
 
   void Watch(uint32_t block) {
-    const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
+    if (block >= _warm_from && block < _warm_to &&
+        file_utils::ResidencyEpoch() == _warm_epoch) {
+      _warm_read += size;
+      return;
+    }
+    const auto& in = _field->Owner().Input();
+    const uint32_t last = std::min(block + kWarmBlocks, _field->Blocks());
+    const uint64_t window = _field->BlockOffset(last) - offset;
+    const uint64_t read = std::exchange(_warm_read, 0) + size;
+    _warm_to = _warm_from;
+    if (in.Warm(offset, window) == window && !file_utils::PollResidency(read)) {
+      _warm_from = block;
+      _warm_to = last;
+      _warm_epoch = file_utils::ResidencyEpoch();
+      return;
+    }
     if (file_utils::Evicted(in, offset, size, _epoch)) {
       _blocks_ahead.ahead = uint64_t{block} + 1;
       _blocks_ahead.issued = 0;
@@ -1106,6 +1142,7 @@ class Cursor {
     Running,
   };
 
+  static constexpr uint32_t kWarmBlocks = 32;
   static constexpr uint32_t kFirstWindow = 4;
   static constexpr uint32_t kLastWindow =
     file_utils::kMaxReadahead / file_utils::kPage;
@@ -1140,6 +1177,10 @@ class Cursor {
   };
   uint32_t _end;
   uint32_t _epoch = 0;
+  uint32_t _warm_from = 0;
+  uint32_t _warm_to = 0;
+  uint32_t _warm_epoch = 0;
+  uint64_t _warm_read = 0;
   ColdBlocks* _cold = nullptr;
   InlineState _inline_state = InlineState::Off;
   bool _eager = false;

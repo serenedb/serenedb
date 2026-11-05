@@ -233,4 +233,34 @@ n
 t
 
 statement ok
+ALTER TABLE curve_forms RENAME COLUMN x TO x2;
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE curve(ROW(x2, y)) @@ ts_between(ROW(0, 0), ROW(1, 1), true, true);
+----
+n
+16
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x2 BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1;
+----
+n
+16
+
+statement error
+ALTER TABLE curve_forms ALTER COLUMN y TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of this column: an index depends on it!
+
+
+statement ok
+ALTER TABLE curve_forms DROP COLUMN y;
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'curve_forms_idx';
+----
+n
+0
+
+statement ok
 DROP TABLE curve_forms;

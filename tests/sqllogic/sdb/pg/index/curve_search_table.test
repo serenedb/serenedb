@@ -45,4 +45,34 @@ id
 15
 
 statement ok
+ALTER TABLE curve_st RENAME COLUMN x TO x2;
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE curve(ROW(x2, y)) @@ ts_between(ROW(10, 10), ROW(20, 30), true, true);
+----
+n
+105
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE x2 BETWEEN 10 AND 20 AND y BETWEEN 10 AND 30;
+----
+n
+105
+
+statement error
+ALTER TABLE curve_st ALTER COLUMN y TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of column "y": index "curve_st_idx" depends on it
+
+
+statement ok
+ALTER TABLE curve_st DROP COLUMN y;
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'curve_st_idx';
+----
+n
+0
+
+statement ok
 DROP TABLE curve_st;

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <span>
 #include <type_traits>
 #include <utility>
 
@@ -44,6 +45,13 @@ class GeoVerifier {
 
   bool Check(doc_id_t doc) {
     return MatchShape(_parser, _cursor.FetchDoc(doc), _shape, _acceptor);
+  }
+
+  void Check(std::span<const doc_id_t> docs, std::span<bool> matched) {
+    _cursor.FetchDocs(docs);
+    for (size_t i = 0; i < docs.size(); ++i) {
+      matched[i] = MatchShape(_parser, _cursor.Fetched(i), _shape, _acceptor);
+    }
   }
 
  private:

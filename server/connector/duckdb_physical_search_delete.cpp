@@ -23,12 +23,11 @@
 #include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 
-#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -108,6 +107,16 @@ SereneDBSearchDelete::SereneDBSearchDelete(
   SDB_ASSERT(!_return_chunk || _return_columns.size() == GetTypes().size());
 }
 
+std::string SereneDBSearchDelete::GetName() const { return "SEARCH_DELETE"; }
+
+duckdb::InsertionOrderPreservingMap<std::string>
+SereneDBSearchDelete::ParamsToString() const {
+  duckdb::InsertionOrderPreservingMap<std::string> result;
+  result["Table"] = _table->name.GetIdentifierName();
+  result["Row Ids"] = duckdb::EnumUtil::ToString(_row_id_handling);
+  return result;
+}
+
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& conn_ctx = GetSereneDBContext(context);
@@ -130,11 +139,6 @@ SereneDBSearchDelete::GetGlobalSinkState(duckdb::ClientContext& context) const {
 duckdb::unique_ptr<duckdb::LocalSinkState>
 SereneDBSearchDelete::GetLocalSinkState(
   duckdb::ExecutionContext& context) const {
-  if (context.pipeline && context.pipeline->GetMaxThreads() > 1) {
-    SDB_IF_FAILURE("search_delete_parallel_sink_fails") {
-      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-    }
-  }
   auto lstate = duckdb::make_uniq<SearchDeleteLocalState>();
   if (_return_chunk) {
     lstate->returned.emplace(context.client, GetTypes());

@@ -25,6 +25,7 @@
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "catalog/entry/search_table.h"
@@ -42,6 +43,9 @@ class SereneDBSearchUpdate final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality, bool return_chunk,
     duckdb::RowIdHandling row_id_handling);
+
+  std::string GetName() const final;
+  duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
 
   bool IsSink() const final { return true; }
   bool ParallelSink() const final { return true; }

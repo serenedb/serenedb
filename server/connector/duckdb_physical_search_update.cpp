@@ -22,13 +22,12 @@
 
 #include <absl/synchronization/mutex.h>
 
-#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -93,6 +92,16 @@ SereneDBSearchUpdate::SereneDBSearchUpdate(
     _return_chunk(return_chunk),
     _row_id_handling(row_id_handling) {}
 
+std::string SereneDBSearchUpdate::GetName() const { return "SEARCH_UPDATE"; }
+
+duckdb::InsertionOrderPreservingMap<std::string>
+SereneDBSearchUpdate::ParamsToString() const {
+  duckdb::InsertionOrderPreservingMap<std::string> result;
+  result["Table"] = _table.name.GetIdentifierName();
+  result["Row Ids"] = duckdb::EnumUtil::ToString(_row_id_handling);
+  return result;
+}
+
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SearchUpdateGlobalState>();
@@ -149,11 +158,6 @@ SereneDBSearchUpdate::GetLocalSinkState(
   auto& gstate = sink_state->Cast<SearchUpdateGlobalState>();
   const auto threads =
     context.pipeline ? context.pipeline->GetMaxThreads() : duckdb::idx_t{1};
-  if (threads > 1) {
-    SDB_IF_FAILURE("search_update_parallel_sink_fails") {
-      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-    }
-  }
   auto lstate = duckdb::make_uniq<SearchUpdateLocalState>(
     gstate.table.buffer_bytes / std::max<duckdb::idx_t>(1, threads));
   if (_return_chunk) {

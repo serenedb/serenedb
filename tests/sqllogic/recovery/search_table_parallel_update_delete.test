@@ -92,69 +92,11 @@ segs
 8
 
 
-statement ok
-CREATE TABLE pud_src AS
-  SELECT i AS a, j FROM range(0, 8000, 2) t(i), range(3) r(j);
-
-
-statement ok
-SET sdb_faults = 'search_update_parallel_sink_fails';
-
-
-statement ok
-SET sdb_faults = 'search_delete_parallel_sink_fails';
-
-
-statement error
-UPDATE pud SET b = 'none' WHERE md5(b) = '';
+query
+EXPLAIN UPDATE pud SET b = 'u1_' || a;
 ----
-db error: ERROR: intentional debug error
-
-
-statement error
-UPDATE pud SET b = 'none' FROM pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
-----
-db error: ERROR: intentional debug error
-
-
-statement error
-DELETE FROM pud WHERE md5(b) = '';
-----
-db error: ERROR: intentional debug error
-
-
-statement error
-DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
-----
-db error: ERROR: intentional debug error
-
-
-statement ok
-SET threads = 1;
-
-
-statement count 0
-UPDATE pud SET b = 'none' WHERE md5(b) = '';
-
-
-statement count 0
-UPDATE pud SET b = 'none' FROM pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
-
-
-statement count 0
-DELETE FROM pud WHERE md5(b) = '';
-
-
-statement count 0
-DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND md5(pud_src.j::TEXT) = '';
-
-
-statement ok
-SET threads = 4;
-
-
-statement ok
-RESET sdb_faults;
+QUERY PLAN
+╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
 
 
 statement count 8000
@@ -200,6 +142,18 @@ only_search	only_plain
 0	0
 
 
+statement ok
+CREATE TABLE pud_src AS
+  SELECT i AS a FROM range(0, 8000, 2) t(i), range(3) r(j);
+
+
+query
+EXPLAIN UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
+----
+QUERY PLAN
+╭─ SEARCH_UPDATE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
+
+
 statement count 4000
 UPDATE pud SET b = 'u2_' || pud.a FROM pud_src WHERE pud.a = pud_src.a;
 
@@ -217,6 +171,13 @@ SELECT count(*) AS n, count(DISTINCT a) AS d, count(*) FILTER (WHERE b LIKE 'u2!
 ----
 n	d	updated
 8000	8000	4000
+
+
+query
+EXPLAIN DELETE FROM pud USING pud_src WHERE pud.a = pud_src.a AND pud.a % 4 = 0;
+----
+QUERY PLAN
+╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: KEEP_FIRST<slt:ignore>
 
 
 statement count 2000
@@ -306,6 +267,13 @@ INSERT INTO pud VALUES (100001, 'ins1'), (100002, 'ins2');
 
 statement ok
 UPDATE pud SET b = 'u4_' || a WHERE a % 2 = 1;
+
+
+query
+EXPLAIN DELETE FROM pud WHERE a % 8 = 6;
+----
+QUERY PLAN
+╭─ SEARCH_DELETE<slt:ignore>Table: pud<slt:ignore>Row Ids: ASSUME_UNIQUE<slt:ignore>
 
 
 statement ok

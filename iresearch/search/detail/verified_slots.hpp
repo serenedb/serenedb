@@ -23,32 +23,43 @@
 #include <tuple>
 #include <utility>
 
-#include "iresearch/search/queries/geo_query.hpp"
+#include "iresearch/search/detail/verified_batch.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
 
-template<typename Parser, typename Acceptor, typename Cells>
-class GeoSlots {
+template<typename Approx, typename Recipe, bool Lead>
+class VerifiedSlots {
  public:
-  using Recipe = typename GeoQuery<Parser, Acceptor>::Recipe;
+  template<typename ApproxArgs>
+  VerifiedSlots(std::piecewise_construct_t, ApproxArgs&& approx,
+                const Recipe& recipe)
+    : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
+      _verifier{recipe.Make()} {}
 
-  template<typename CellsArgs>
-  GeoSlots(std::piecewise_construct_t, CellsArgs&& cells, const Recipe& recipe)
-    : _cells{std::make_from_tuple<Cells>(std::forward<CellsArgs>(cells))},
-      _shape{recipe.Make()} {}
+  doc_id_t Seek(doc_id_t target) {
+    return _batch.Seek(_approx, _verifier, target);
+  }
 
-  doc_id_t Seek(doc_id_t target) { return _cells.Seek(target); }
+  doc_id_t Next(doc_id_t) { return _batch.Next(_approx, _verifier); }
 
-  doc_id_t Next(doc_id_t) { return _cells.Next(); }
+  doc_id_t Probe(doc_id_t target) { return _approx.Probe(target); }
 
-  doc_id_t Probe(doc_id_t target) { return _cells.Probe(target); }
-
-  bool Match(doc_id_t doc) { return _shape.Check(doc); }
+  bool Match(doc_id_t doc) {
+    if constexpr (Lead) {
+      return _batch.Match(doc);
+    } else {
+      return _verifier.Check(doc);
+    }
+  }
 
  private:
-  Cells _cells;
-  typename GeoQuery<Parser, Acceptor>::Verifier _shape;
+  using Verifier = decltype(std::declval<const Recipe&>().Make());
+
+  Approx _approx;
+  Verifier _verifier;
+  [[no_unique_address]] utils::Need<Lead, VerifiedBatch<Verifier>> _batch;
 };
 
 }  // namespace irs::detail

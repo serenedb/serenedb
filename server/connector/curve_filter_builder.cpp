@@ -36,7 +36,7 @@
 #include "connector/curve_index.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_query_codec.h"
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {
@@ -142,7 +142,7 @@ void AddBoxCandidates(irs::BooleanFilter& root, const SearchColumnInfo& info,
   auto candidates = std::make_unique<irs::BooleanFilter>();
   candidates->SetScorer(&irs::ForceConstScore());
   for (const auto& term : terms) {
-    AddTerm({candidates.get(), irs::Occur::Should}, info.field_id,
+    AddTerm({candidates.get(), irs::Occur::Should}, info.field_id, TextOf(info),
             irs::ViewCast<irs::byte_type>(std::string_view{term}),
             irs::kNoBoost, &irs::ForceConstScore());
   }

@@ -69,7 +69,11 @@ struct Sample {
       points.emplace_back(point);
       if (method != 0) {
         PointTerms(point, options, [&](std::span<const uint8_t> term) {
-          curve[std::string{term.begin(), term.end()}].emplace_back(id);
+          const std::string_view key{
+            reinterpret_cast<const char*>(term.data()),
+            term.size(),
+          };
+          curve[key].emplace_back(id);
         });
       }
     }

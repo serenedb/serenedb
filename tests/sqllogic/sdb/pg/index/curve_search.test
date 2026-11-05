@@ -230,16 +230,28 @@ SELECT curve(ROW(1));
 db error: ERROR: curve(): takes 2 to 8 coordinates, got 1
 
 
-statement error No function matches the given name and argument types 'curve\(INTEGER_LITERAL\)'
+statement error
 SELECT curve(1);
+----
+db error: ERROR: No function matches the given name and argument types 'curve(INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
-statement error No function matches the given name and argument types 'curve\(STRING_LITERAL\)'
+statement error
 SELECT curve('1, 2');
+----
+db error: ERROR: No function matches the given name and argument types 'curve(STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
-statement error No function matches the given name and argument types 'curve\(INTEGER\[\]\)'
+statement error
 SELECT curve([1, 2]);
+----
+db error: ERROR: No function matches the given name and argument types 'curve(INTEGER[])'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -272,8 +284,12 @@ SELECT curve(ROW(ROW(1, 2), 3));
 db error: ERROR: curve(): coordinate 1 must be an integer, FLOAT, DOUBLE, DATE, TIMESTAMP, TIMESTAMPTZ or INET, got TUPLE(INTEGER, INTEGER)
 
 
-statement error No function matches the given name and argument types 'curve\(INTEGER_LITERAL, INTEGER_LITERAL\)'
+statement error
 SELECT curve(1, 2);
+----
+db error: ERROR: No function matches the given name and argument types 'curve(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 query
@@ -344,8 +360,12 @@ SELECT curve(ROW(1, 2), kind := 'peano');
 db error: ERROR: curve(): option "kind" must be 'morton' or 'hilbert', got 'peano'
 
 
-statement error No function matches the given name and argument types 'curve\(.*, "kinds" := STRING_LITERAL\)'
+statement error
 SELECT curve(ROW(1, 2), kinds := 'hilbert');
+----
+db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "kinds" := STRING_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -391,8 +411,12 @@ SELECT curve(ROW(x, y), max_cells := id) FROM curve_points;
 db error: ERROR: curve(): option "max_cells" must be a constant
 
 
-statement error curve\(point STRUCT, /, \*, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL\) -> BLOB
+statement error
 SELECT curve(ROW(1, 2), level := 3);
+----
+db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "level" := INTEGER_LITERAL)'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error

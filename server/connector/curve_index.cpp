@@ -36,7 +36,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/inet_terms.h"
-#include "connector/pg_logical_types.h"
+#include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {

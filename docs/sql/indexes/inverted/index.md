@@ -35,6 +35,7 @@ One inverted index can serve several kinds of search, each documented on its own
 | Find nearest vectors / semantic similarity | Vector / ANN search (IVF, HNSW) | [Vector Search](./vector-search.md) |
 | Combine a lexical signal with a vector signal | Hybrid search | [Hybrid Search](./hybrid-search.md) |
 | Query points, shapes and distances | Geospatial search (`ST_*`) | [Geospatial Search](./geospatial-search.md) |
+| Filter a box over several columns at once | `curve(ROW(...))` with `@@ ts_between` or ordinary ranges | [Multidimensional Search](./curve-search.md) |
 | Match exact values, ids, tags, enums | Verbatim columns + range predicates | [Full-Text Search](./full-text-search.md#range-queries) |
 
 ## Creating an inverted index
@@ -140,7 +141,7 @@ An inverted index is **eventually consistent**: after a write, the new rows beco
 ## See also
 
 - [Text Analysis](./text-analysis.md) · [What to Index](./modeling.md)
-- [Full-Text Search](./full-text-search.md) · [Ranking](./ranking.md) · [Vector Search](./vector-search.md) · [Hybrid Search](./hybrid-search.md) · [Geospatial Search](./geospatial-search.md)
+- [Full-Text Search](./full-text-search.md) · [Ranking](./ranking.md) · [Vector Search](./vector-search.md) · [Hybrid Search](./hybrid-search.md) · [Geospatial Search](./geospatial-search.md) · [Multidimensional Search](./curve-search.md)
 - [Indexing Views](./views.md) · [Indexing External Data](./external-data.md) · [Maintenance & Introspection](./maintenance.md)
 - [`CREATE INDEX … USING inverted`](../../statements/create_index/inverted.md) — full syntax reference
 - [Migrating from Elasticsearch](./migrating-from-elasticsearch.md) · [Search cookbook](../../../cookbook/search/index.md)

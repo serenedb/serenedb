@@ -91,7 +91,7 @@ db error: ERROR: curve(): coordinate 1 needs bounds with lower < upper, got 10 a
 statement error
 SELECT curve(ROW(1, 2.5::DOUBLE), lower := ROW(0, '-inf'::DOUBLE), upper := ROW(10, 10));
 ----
-db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, got -inf and 10
+db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, got -Infinity and 10
 
 
 statement error
@@ -100,12 +100,20 @@ SELECT curve(ROW(1, 2), lower := ROW(0, 0, 0), upper := ROW(10, 10, 10));
 db error: ERROR: curve(): option "lower" must be a ROW of 2 values, got TUPLE(INTEGER, INTEGER, INTEGER)
 
 
-statement error No function matches the given name and argument types 'curve\(TUPLE\(INTEGER, INTEGER\), "lower" := INTEGER_LITERAL, "upper" := TUPLE\(INTEGER, INTEGER\)\)'
+statement error
 SELECT curve(ROW(1, 2), lower := 5, upper := ROW(10, 10));
+----
+db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "lower" := INTEGER_LITERAL, "upper" := TUPLE(INTEGER, INTEGER))'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
-statement error No function matches the given name and argument types 'curve\(TUPLE\(INTEGER, INTEGER\), "lower" := INTEGER\[\], "upper" := TUPLE\(INTEGER, INTEGER\)\)'
+statement error
 SELECT curve(ROW(1, 2), lower := [0, 0], upper := ROW(10, 10));
+----
+db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "lower" := INTEGER[], "upper" := TUPLE(INTEGER, INTEGER))'. You might need to add explicit type casts.
+	Candidate functions:
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error

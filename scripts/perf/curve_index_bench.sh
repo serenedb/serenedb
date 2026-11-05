@@ -109,7 +109,7 @@ SCALE=$((ROWS >= 1000 ? ROWS / 1000 : 1))
 sql "CREATE TABLE ind(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
 sql "INSERT INTO ind SELECT i, ((i*48271)%${X_MOD})::DOUBLE/${SCALE},
 	((i*69621+123)%${Y_MOD})::DOUBLE/${SCALE}, ((i*40699+321)%${Z_MOD})::DOUBLE/${SCALE}
-	FROM generate_series(1, ${ROWS}) g(i)"
+	FROM generate_series(1::BIGINT, ${ROWS}::BIGINT) g(i)"
 sql "CREATE TABLE cor(id BIGINT PRIMARY KEY, x DOUBLE, y DOUBLE, z DOUBLE)"
 sql "INSERT INTO cor SELECT id, x, x+(id%7-3)*0.1, x+(id%11-5)*0.1 FROM ind"
 

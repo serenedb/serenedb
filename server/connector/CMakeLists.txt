@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         key_encoding.cpp
         primary_key.cpp
+        search_key_unique.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
         search_sink_writer.cpp

@@ -146,6 +146,18 @@ void RemovalLog::Clear() noexcept {
   _doc_maps.clear();
 }
 
+void RemovalLog::Merge(RemovalLog&& other) {
+  _keys.insert(_keys.end(), other._keys.begin(), other._keys.end());
+  auto& groups = _positions.groups;
+  groups.insert(groups.end(),
+                std::make_move_iterator(other._positions.groups.begin()),
+                std::make_move_iterator(other._positions.groups.end()));
+  for (auto& [source, maps] : other._doc_maps) {
+    _doc_maps.insert_or_assign(source, std::move(maps));
+  }
+  other.Clear();
+}
+
 std::vector<int64_t> RemovalLog::TakeKeys() {
   auto keys = std::move(_keys);
   _keys.clear();

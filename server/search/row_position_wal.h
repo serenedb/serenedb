@@ -59,7 +59,13 @@ class RemovalLog {
   void AddMaps(std::shared_ptr<const duckdb::data_t> entry, uint64_t source,
                std::span<const duckdb::WALFrozenRowPositionMap> maps);
   void Clear() noexcept;
+  // Folds a staged run in, for a reader that must hold a batch's removals back
+  // until it knows the batch committed. Leaves `other` cleared.
+  void Merge(RemovalLog&& other);
 
+  bool Empty() const noexcept {
+    return _keys.empty() && _positions.groups.empty();
+  }
   bool HasKeys() const noexcept { return !_keys.empty(); }
   bool HasPositions() const noexcept { return !_positions.groups.empty(); }
 

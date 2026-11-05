@@ -26,7 +26,8 @@ VACUUM (REFRESH_TABLE) slr;
 
 
 query
-SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('slr');
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slr'::regclass;
 ----
 segments	docs
 1	262144

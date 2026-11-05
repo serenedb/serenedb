@@ -21,6 +21,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <filesystem>
@@ -59,17 +60,21 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
     _dropped.store(true, std::memory_order_release);
   }
 
-  void MarkDetached() noexcept {
-    _detached.store(true, std::memory_order_release);
+  uint64_t Attach() noexcept {
+    return _attachment.fetch_add(1, std::memory_order_acq_rel) + 1;
   }
-  bool Detached() const noexcept {
-    return _detached.load(std::memory_order_acquire);
+  void Detach(uint64_t attachment) noexcept {
+    _attachment.compare_exchange_strong(attachment, attachment + 1,
+                                        std::memory_order_acq_rel);
+  }
+  bool Detached(uint64_t attachment) const noexcept {
+    return _attachment.load(std::memory_order_acquire) != attachment;
   }
 
  private:
   std::filesystem::path _path;
   std::atomic_bool _dropped{false};
-  std::atomic_bool _detached{false};
+  std::atomic_uint64_t _attachment{0};
 };
 
 }  // namespace sdb::catalog

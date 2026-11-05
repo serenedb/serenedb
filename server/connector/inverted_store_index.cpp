@@ -656,9 +656,10 @@ PublishedInvertedIndex PublishInvertedIndex(
                             "table that has been altered or dropped"));
   }
   const auto options = catalog::ResolveSettings(entry.options);
+  const auto& database = entry.catalog.Cast<catalog::SereneDBCatalog>();
   auto storage = std::make_shared<search::Store>(
-    entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
-    entry.catalog.InMemory(), false, entry.catalog.GetOid(), entry.oid, options,
+    database.Directory(), database.Attachment(), entry.catalog.InMemory(),
+    false, entry.catalog.GetOid(), entry.oid, options,
     entry.Config()->top_k_scorer, entry.Config()->sort, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);

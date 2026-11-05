@@ -174,9 +174,9 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(std::make_shared<search::Store>(
-      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
-      ResolveSettings(entry->options), entry->Config()->top_k_scorer,
-      entry->Config()->sort, false));
+      _directory, _attachment, InMemory(), GetAttached().IsReadOnly(), GetOid(),
+      entry->oid, ResolveSettings(entry->options),
+      entry->Config()->top_k_scorer, entry->Config()->sort, false));
   }
   return std::move(entry);
 }
@@ -576,7 +576,7 @@ std::string SereneDBCatalog::GetCatalogType() {
 }
 
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
-  if (GetAttached().IsReadOnly() || _directory->Detached()) {
+  if (GetAttached().IsReadOnly() || _directory->Detached(_attachment)) {
     return nullptr;
   }
   return ClusterOf(GetDatabase()).CatalogLog();
@@ -654,7 +654,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 }
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
-  _directory->MarkDetached();
+  _directory->Detach(_attachment);
   if (GetAttached().IsReadOnly()) {
     duckdb::DuckCatalog::OnDetach(context);
     return;

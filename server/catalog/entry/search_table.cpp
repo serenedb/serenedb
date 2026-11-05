@@ -356,8 +356,9 @@ SearchTableEntry::SearchTableEntry(
   _options = ResolveOptions(base.options);
   _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
   if (!_storage) {
+    const auto& database = catalog.Cast<SereneDBCatalog>();
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
+      database.Directory(), database.Attachment(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
       _options, GetColumns(), SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));

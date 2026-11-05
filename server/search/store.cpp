@@ -115,11 +115,13 @@ struct Store::ReplaySession {
 };
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
+             uint64_t attachment, bool in_memory, bool read_only,
+             duckdb::idx_t db_id, duckdb::idx_t id,
+             const catalog::InvertedIndexSettings& options,
              const std::optional<irs::ScorerOptions>& top_k_scorer,
              std::vector<irs::SortKey> sort, bool is_new)
   : _directory{std::move(directory)},
+    _attachment{attachment},
     _sort{std::move(sort)},
     _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
     _id{id},
@@ -142,11 +144,12 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
 }
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, bool is_new,
+             uint64_t attachment, bool in_memory, bool read_only,
+             duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
              const catalog::SearchTableOptions& options,
              const duckdb::ColumnList& columns, std::vector<irs::SortKey> sort)
   : _directory{std::move(directory)},
+    _attachment{attachment},
     _sort{std::move(sort)},
     _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
     _id{id},

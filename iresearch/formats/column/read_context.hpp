@@ -92,7 +92,7 @@ class ReadContext final : public BlockManager,
 
   const InputFile* _file = nullptr;
   IndexInput _in;
-  duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
+  duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
   size_t _live_handles = 0;

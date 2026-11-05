@@ -89,11 +89,8 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetFile(const InputFile* file) {
   _file = file;
   _in = file ? IndexInput{*file} : IndexInput{};
-  _mapping.reset();
+  _mapping = file ? file->Mapping() : nullptr;
   _ranges.clear();
-  if (const auto span = file ? file->Span() : bytes_view{}; !span.empty()) {
-    _mapping = duckdb::make_uniq<ColMapping>(span.data(), span.size());
-  }
 }
 
 duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,

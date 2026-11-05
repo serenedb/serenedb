@@ -76,6 +76,7 @@ class InputFile {
     return std::holds_alternative<MappedSpan>(_kind);
   }
   bytes_view Span() const noexcept { return _span; }
+  duckdb::MemoryMappedFile* Mapping() const noexcept;
   bool Paged() const noexcept;
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;

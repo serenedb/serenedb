@@ -75,6 +75,11 @@ const std::string& InputFile::Path() const noexcept {
   return std::get_if<CacheBlocks>(&_kind)->blocks->GetPath();
 }
 
+duckdb::MemoryMappedFile* InputFile::Mapping() const noexcept {
+  const auto* span = std::get_if<MappedSpan>(&_kind);
+  return span && !_span.empty() ? span->mapping.get() : nullptr;
+}
+
 bool InputFile::Paged() const noexcept {
   const auto* span = std::get_if<MappedSpan>(&_kind);
   return span && span->paged;
@@ -111,7 +116,7 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
     return {};
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  auto pin = blocks->cache->PinBytes(blocks->blocks, offset, size);
+  auto pin = blocks->cache->PinBytes(*blocks->blocks, offset, size);
   return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
 }
 

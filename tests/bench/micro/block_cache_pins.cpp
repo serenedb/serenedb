@@ -52,7 +52,7 @@ void Fill() {
 void BmPinSameBlock(benchmark::State& state) {
   auto& cache = Cache();
   for (auto _ : state) {
-    auto pin = cache.Pin(gFile, 0);
+    auto pin = cache.Pin(*gFile, 0);
     benchmark::DoNotOptimize(pin.Ptr());
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
@@ -62,7 +62,7 @@ void BmPinOwnBlock(benchmark::State& state) {
   auto& cache = Cache();
   const auto block = static_cast<duckdb::idx_t>(state.thread_index()) % kBlocks;
   for (auto _ : state) {
-    auto pin = cache.Pin(gFile, block);
+    auto pin = cache.Pin(*gFile, block);
     benchmark::DoNotOptimize(pin.Ptr());
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()));
@@ -73,7 +73,7 @@ void BmPinRange(benchmark::State& state) {
   const auto first = static_cast<duckdb::idx_t>(state.thread_index()) *
                      kRangeBlocks % (kBlocks - kRangeBlocks + 1);
   for (auto _ : state) {
-    auto pins = cache.PinRange(gFile, first * duckdb::BlockCache::BLOCK_SIZE,
+    auto pins = cache.PinRange(*gFile, first * duckdb::BlockCache::BLOCK_SIZE,
                                kRangeBlocks * duckdb::BlockCache::BLOCK_SIZE);
     benchmark::DoNotOptimize(pins.data());
   }

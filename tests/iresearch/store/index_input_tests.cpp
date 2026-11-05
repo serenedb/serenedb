@@ -159,7 +159,7 @@ TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
   auto file = cache.CreateUnbackedFile("memory://block_input_test/loading");
   AppendBlocks(cache, file, 2);
   duckdb::BufferManager::GetBufferManager(*db.instance).SetMemoryLimit(kBlock);
-  cache.Pin(file, 1);
+  cache.Pin(*file, 1);
   ASSERT_TRUE(cache.TryPinRange(*file, 0, kBlock).empty());
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   ASSERT_TRUE(duckdb::FaultPoints::Arm("block_load_before_loaded"));

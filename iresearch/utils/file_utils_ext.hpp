@@ -49,20 +49,6 @@ void InvalidateResidency() noexcept;
 void SyncResidency() noexcept;
 bool PollResidency(uint64_t bytes) noexcept;
 
-template<typename Input>
-bool Evicted(const Input& in, uint64_t offset, uint64_t size,
-             uint32_t& epoch) noexcept {
-  if (in.Warm(offset, size) == size && !PollResidency(size)) {
-    return false;
-  }
-  const auto current = ResidencyEpoch();
-  if (current == epoch) {
-    return false;
-  }
-  epoch = current;
-  return true;
-}
-
 class ResidencyMap {
  public:
   void Reset(size_t pages);

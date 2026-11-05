@@ -24,8 +24,36 @@
 #include <cstdint>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
+#include <iresearch/utils/number_utils.hpp>
 
+namespace irs {
+
+template<typename StringType,
+         typename TraitsType = typename StringType::traits_type>
+StringType ToString(const byte_type* begin) {
+  const auto size = irs::vread<uint32_t>(begin);
+  return StringType(
+    reinterpret_cast<const typename TraitsType::char_type*>(begin), size);
+}
+
+inline void WriteZV64(DataOutput& out, int64_t v) {
+  out.WriteV64(irs::ZigZagEncode64(v));
+}
+
+int64_t ReadZV64(auto& in) { return irs::ZigZagDecode64(in.ReadV64()); }
+
+template<typename StringType>
+StringType ReadString(auto& in) {
+  StringType str(in.ReadV32(), 0);
+  in.ReadData(reinterpret_cast<byte_type*>(str.data()), str.size());
+  return str;
+}
+
+}  // namespace irs
 namespace tests {
+
+uint16_t ReadU16(irs::IndexInput& in);
 
 void WriteZvfloat(irs::DataOutput& out, float_t v);
 

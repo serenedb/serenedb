@@ -468,8 +468,8 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     if (probe.block != parsed) {
       parsed = probe.block;
       const uint64_t offset = BlockOffset(parsed);
-      if (hinted && file_utils::Evicted(
-                      in, offset, BlockOffset(parsed + 1) - offset, epoch)) {
+      if (hinted &&
+          in.Evicted(offset, BlockOffset(parsed + 1) - offset, epoch)) {
         DropBefore(blocks, offset);
         if (!inlines.empty()) {
           DropBefore(inlines, InlineSpan(parsed).from);

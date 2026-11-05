@@ -102,10 +102,10 @@ IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name) {
   return ref;
 }
 
-size_t RemoveUnreferenced(const Directory& dir) {
+void RemoveUnreferenced(const Directory& dir) {
   const auto files = dir.Unobserved();
-  return dir.Refs().RemoveUnused(
-    [&](std::vector<std::string>& names) { return files.Remove(names); });
+  dir.Refs().RemoveUnused(
+    [&](std::vector<std::string>& names) { files.Remove(names); });
 }
 
 void RemoveAllUnreferenced(const Directory& dir) {

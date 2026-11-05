@@ -25,6 +25,13 @@
 
 namespace tests {
 
+uint16_t ReadU16(irs::IndexInput& in) {
+  irs::byte_type bytes[sizeof(uint16_t)];
+  in.ReadData(bytes, sizeof bytes);
+  const irs::byte_type* it = bytes;
+  return irs::read<uint16_t>(it);
+}
+
 void WriteZvfloat(irs::DataOutput& out, float_t v) {
   const int32_t iv = irs::numeric_utils::Ftoi32(v);
 
@@ -53,7 +60,7 @@ float_t ReadZvfloat(irs::IndexInput& in) {
   }
 
   // positive float (ensure read order)
-  const auto part = uint16_t(in.ReadI16());
+  const auto part = ReadU16(in);
 
   return irs::numeric_utils::I32tof((b << 24) | (std::byteswap(part) << 8) |
                                     uint32_t(in.ReadByte()));
@@ -98,7 +105,7 @@ double_t ReadZvdouble(irs::IndexInput& in) {
 
   // positive double (ensure read order)
   const auto part1 = uint64_t(std::byteswap(uint32_t(in.ReadI32())));
-  const auto part2 = uint64_t(std::byteswap(uint16_t(in.ReadI16())));
+  const auto part2 = uint64_t(std::byteswap(ReadU16(in)));
 
   return irs::numeric_utils::I64tod((b << 56) | (part1 << 24) | (part2 << 8) |
                                     uint64_t(in.ReadByte()));

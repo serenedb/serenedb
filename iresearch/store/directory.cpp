@@ -239,9 +239,9 @@ bool Directory::Remove(std::string_view name) const {
   return true;
 }
 
-size_t Directory::Remove(std::span<const std::string> names) const {
+void Directory::Remove(std::span<const std::string> names) const {
   if (names.empty()) {
-    return 0;
+    return;
   }
   duckdb::vector<std::string> paths;
   paths.reserve(names.size());
@@ -260,7 +260,6 @@ size_t Directory::Remove(std::span<const std::string> names) const {
       observer->Removed(*this, name);
     }
   }
-  return names.size();
 }
 
 void Directory::Rename(std::string_view src, std::string_view dst) const {

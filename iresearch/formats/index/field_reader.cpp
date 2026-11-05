@@ -157,7 +157,7 @@ void FieldReader::prepare(const ReaderState& state) {
     return;
   }
 
-  _base = _in->Contiguous() ? _in->Span().data() : nullptr;
+  _base = _in->Span().data();
   const auto& heads = terms.fields;
   if (!heads.empty()) {
     Bind(terms);

@@ -77,7 +77,7 @@ class RefTracker final : public Directory::Observer {
 
 IndexFileRefs::ref_t Reference(const Directory& dir, std::string_view name);
 
-size_t RemoveUnreferenced(const Directory& dir);
+void RemoveUnreferenced(const Directory& dir);
 
 void RemoveAllUnreferenced(const Directory& dir);
 

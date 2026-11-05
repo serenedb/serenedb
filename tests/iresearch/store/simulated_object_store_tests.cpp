@@ -272,8 +272,10 @@ TEST(SimulatedObjectStoreTest,
   store.ResetRequests();
   const auto in_file = files.Open("written", duckdb::MappedFileAccess::NORMAL);
   EXPECT_EQ(0, store.Requests().head);
-  store.Publish(files.Path("written"), std::string(400000, '\0'));
-  duckdb::BlockCache::Get(db).Clear();
+  store.Publish(absl::StrCat(files.Root(), "written"),
+                std::string(400000, '\0'));
+  duckdb::BlockCache::Get(db).SetEnabled(false);
+  duckdb::BlockCache::Get(db).SetEnabled(true);
 
   irs::IndexInput in{*in_file};
   const auto error = Error([&] { in.ReadI32(); });

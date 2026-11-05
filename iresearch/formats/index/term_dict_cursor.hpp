@@ -1066,7 +1066,7 @@ class Cursor {
     const auto& in = _field->Owner().Input();
     const uint64_t offset = _field->BlockOffset(block);
     const uint64_t size = _field->BlockOffset(block + 1) - offset;
-    if (file_utils::Evicted(in, offset, size, _epoch)) {
+    if (in.Evicted(offset, size, _epoch)) {
       _blocks_ahead.ahead = uint64_t{block} + 1;
       _blocks_ahead.issued = 0;
       ReadAhead(block);

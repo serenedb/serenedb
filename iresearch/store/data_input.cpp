@@ -29,6 +29,17 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
+
+template<typename... Args>
+void TryPrefetch(duckdb::BlockCache& cache, Args&&... args) noexcept {
+  try {
+    cache.Prefetch(std::forward<Args>(args)...);
+  } catch (...) {
+  }
+}
+
+}  // namespace
 
 void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
   const auto* file = in.File();
@@ -138,11 +149,8 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
     return;
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  try {
-    blocks->cache->Prefetch(blocks->blocks, offset, size,
-                            duckdb::BlockCachePrefetch::HINT);
-  } catch (...) {
-  }
+  TryPrefetch(*blocks->cache, blocks->blocks, offset, size,
+              duckdb::BlockCachePrefetch::HINT);
 }
 
 void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
@@ -163,11 +171,8 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
     }
     return;
   }
-  try {
-    blocks->cache->Prefetch(blocks->blocks, extents,
-                            duckdb::BlockCachePrefetch::NEED);
-  } catch (...) {
-  }
+  TryPrefetch(*blocks->cache, blocks->blocks, extents,
+              duckdb::BlockCachePrefetch::NEED);
 }
 
 void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
@@ -182,6 +187,19 @@ uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
   }
   const auto& span = *std::get_if<MappedSpan>(&_kind);
   return span.paged ? Warm(span, offset, size) : size;
+}
+
+bool InputFile::Evicted(uint64_t offset, uint64_t size,
+                        uint32_t& epoch) const noexcept {
+  if (Warm(offset, size) == size && !file_utils::PollResidency(size)) {
+    return false;
+  }
+  const auto current = file_utils::ResidencyEpoch();
+  if (current == epoch) {
+    return false;
+  }
+  epoch = current;
+  return true;
 }
 
 uint64_t InputFile::Warm(const MappedSpan& span, uint64_t offset,
@@ -245,8 +263,9 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
   }
   offset += warm;
   size -= warm;
-  const bool fetch =
-    size <= file_utils::kPrefetchChunk || !Resident(offset, size);
+  const auto window = SpanWindow(offset, size);
+  const bool fetch = size <= file_utils::kPrefetchChunk || window.empty() ||
+                     !file_utils::IsResident(window.data(), window.size());
   if (fetch) {
     span.mapping->Prefetch(offset, size);
   }

@@ -60,6 +60,11 @@ duckdb::DatabaseInstance& Db() {
   return irs::DuckDBEngine::Instance().instance();
 }
 
+void DropCachedBlocks(duckdb::BlockCache& cache) {
+  cache.SetEnabled(false);
+  cache.SetEnabled(true);
+}
+
 std::string Root() {
   static std::atomic<uint64_t> count{0};
   return absl::StrCat(irs::SimulatedObjectStore::kPrefix, "bucket/index-",
@@ -82,7 +87,7 @@ void WriteSegments(const irs::Directory& dir, size_t segments) {
 irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   auto& store = tests::ObjectStore();
   const irs::Directory restarted{Db(), root};
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.ResetRequests();
   const irs::DirectoryReader reader{restarted,
                                     irs::tests::DefaultReaderOptions()};
@@ -110,7 +115,7 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   const irs::Directory restarted{Db(), root};
   const irs::DirectoryReader reader{restarted,
                                     irs::tests::DefaultReaderOptions()};
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.ResetRequests();
 
   const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
@@ -156,7 +161,7 @@ TEST(ObjectStoreIndexTest, writer_opens_segments_in_parallel) {
   const auto root = Root();
   WriteSegments(irs::Directory{Db(), root}, kSegments);
   const irs::Directory restarted{Db(), root};
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.SetLatency(kLatency);
   absl::Cleanup no_latency = [&] {
     store.SetLatency(std::chrono::microseconds{0});
@@ -242,7 +247,7 @@ std::unique_ptr<irs::InputFile> WriteUncached(const irs::Directory& dir) {
     }
     out->Close();
   }
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   auto file = dir.Open("blocks", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
   return file;
@@ -253,7 +258,7 @@ TEST(ObjectStoreIndexTest, sequential_reads_fetch_ahead) {
   const irs::Directory dir{Db(), Root()};
   const auto file = WriteUncached(dir);
   irs::IndexInput in{*file};
-  while (!in.IsEOF()) {
+  while (in.Position() < in.Length()) {
     std::ignore = in.ReadByte();
   }
   EXPECT_EQ(4, tests::ObjectStore().Requests().get);
@@ -381,7 +386,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
     column->CollectBlocks(rows.front(), rows.back(), extents);
   }
   auto& cache = duckdb::BlockCache::Get(Db());
-  cache.Clear();
+  DropCachedBlocks(cache);
   for (auto& extent : extents) {
     reader.PrefetchExtents({&extent, 1});
   }
@@ -443,7 +448,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
   column->CollectBlocks(rows.front(), rows.back(), extents);
   ASSERT_FALSE(extents.empty());
   auto& cache = duckdb::BlockCache::Get(Db());
-  cache.Clear();
+  DropCachedBlocks(cache);
   for (auto& extent : extents) {
     reader.PrefetchExtents({&extent, 1});
   }
@@ -542,7 +547,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   either.SetMinShouldMatch(1);
   const auto terms_query = either.PrepareSegment(segment, {});
   auto& cache = duckdb::BlockCache::Get(Db());
-  cache.Clear();
+  DropCachedBlocks(cache);
   irs::PrefetchPostingHeads(*only_query, 2);
   EXPECT_FALSE(words.doc->Resident(long_list.doc_start, 1));
   irs::PrefetchPostingHeads(*terms_query, 2);
@@ -560,7 +565,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   const auto phrase_query = phrase.PrepareSegment(segment, {});
   const auto [text, quick] = meta(kText, "quick");
   ASSERT_NE(nullptr, text.pos);
-  cache.Clear();
+  DropCachedBlocks(cache);
   EXPECT_FALSE(text.pos->Resident(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*phrase_query, 1);
   EXPECT_TRUE(text.doc->Resident(quick.doc_start, 1));
@@ -571,7 +576,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   prefix.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view{"sh"});
   const auto prefix_query = prefix.PrepareSegment(segment, {});
-  cache.Clear();
+  DropCachedBlocks(cache);
   EXPECT_FALSE(words.doc->Resident(short_list.doc_start, 1));
   irs::PrefetchPostingHeads(*prefix_query, 1);
   EXPECT_TRUE(words.doc->Resident(short_list.doc_start, 1));
@@ -583,7 +588,7 @@ TEST(ObjectStoreIndexTest, posting_heads_prefetch_every_clause) {
   variadic.mutable_options()->push_back<irs::ByTermOptions>().term =
     irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
   const auto variadic_query = variadic.PrepareSegment(segment, {});
-  cache.Clear();
+  DropCachedBlocks(cache);
   EXPECT_FALSE(text.pos->Resident(quick.pos_start, 1));
   irs::PrefetchPostingHeads(*variadic_query, 1);
   EXPECT_TRUE(text.doc->Resident(quick.doc_start, 1));
@@ -618,7 +623,7 @@ TEST(ObjectStoreIndexTest, a_long_one_time_read_fetches_every_block_in_runs) {
     }
     out->Close();
   }
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   const auto file = dir.Open("long", duckdb::MappedFileAccess::NORMAL);
   tests::ObjectStore().ResetRequests();
   irs::IndexInput in{*file};
@@ -687,7 +692,7 @@ TEST(ObjectStoreIndexTest, written_files_read_back_from_their_cache_blocks) {
   ReadValues(dir, checksum);
   EXPECT_EQ(0, tests::ObjectStore().Requests().get);
 
-  duckdb::BlockCache::Get(Db()).Clear();
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   ReadValues(dir, checksum);
   EXPECT_NE(0, tests::ObjectStore().Requests().get);
 }

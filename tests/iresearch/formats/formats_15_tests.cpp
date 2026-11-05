@@ -37,6 +37,7 @@
 
 #include "formats_test_case_base.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 

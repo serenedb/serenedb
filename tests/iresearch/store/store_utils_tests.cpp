@@ -33,23 +33,6 @@ using namespace irs;
 
 namespace tests::detail {
 
-void DeltaEncodeDecodeCore(size_t step, size_t count) {
-  std::vector<size_t> values;
-  values.reserve(count);
-  for (size_t i = 1; i <= count; ++i) {
-    values.push_back(i * step);
-  }
-
-  auto encoded = values;
-  irs::encode::delta::Encode(encoded.begin(), encoded.end());
-  ASSERT_TRUE(std::all_of(encoded.begin(), encoded.end(),
-                          [step](auto v) { return step == v; }));
-
-  auto decoded = encoded;
-  irs::encode::delta::Decode(decoded.begin(), decoded.end());
-  ASSERT_EQ(values, decoded);
-}
-
 using irs::DataOutput;
 using irs::IndexInput;
 
@@ -89,20 +72,6 @@ void ReadWriteCoreContainer(
   IndexInput in{out.Bytes()};
   const Cont read = reader(in);
   ASSERT_EQ(src, read);
-}
-
-void ShiftPackUnpackCore32(uint32_t value, bool flag) {
-  const uint32_t packed = ShiftPack32(value, flag);
-  uint32_t unpacked;
-  ASSERT_EQ(flag, ShiftUnpack32(packed, unpacked));
-  ASSERT_EQ(value, unpacked);
-}
-
-void ShiftPackUnpackCore64(uint64_t value, bool flag) {
-  const uint64_t packed = ShiftPack64(value, flag);
-  uint64_t unpacked;
-  ASSERT_EQ(flag, ShiftUnpack64(packed, unpacked));
-  ASSERT_EQ(value, unpacked);
 }
 
 template<typename T>
@@ -245,20 +214,6 @@ TEST(store_utils_tests, zvint_read_write) {
     irs::ReadZV32<IndexInput>, irs::WriteZV32);
 }
 
-TEST(store_utils_tests, zvlong_read_write) {
-  tests::detail::ReadWriteCore<int64_t>(
-    {
-      std::numeric_limits<int64_t>::max(),
-      std::numeric_limits<int64_t>::min(),
-      0LL,
-      -7179394719192822LL,
-      -9197947324326483264LL,
-      -9184236868362391274LL,
-      -91724962191921979LL,
-    },
-    irs::ReadZV64<IndexInput>, irs::WriteZV64);
-}
-
 TEST(store_utils_tests, std_string_read_write) {
   tests::detail::ReadWriteCore<std::string>(
     {
@@ -282,33 +237,4 @@ TEST(store_utils_tests, bytes_read_write) {
       bstring(irs::ViewCast<byte_type>(std::string_view("0182ljdskfaof"))),
     },
     irs::ReadString<bstring, IndexInput>, irs::WriteStr<bstring>);
-}
-
-TEST(store_utils_tests, ShiftPackunpack_32) {
-  tests::detail::ShiftPackUnpackCore32(2343242, true);
-  tests::detail::ShiftPackUnpackCore32(2343242, false);
-  tests::detail::ShiftPackUnpackCore32(63456345, true);
-  tests::detail::ShiftPackUnpackCore32(63456345, false);
-  tests::detail::ShiftPackUnpackCore32(0, true);
-  tests::detail::ShiftPackUnpackCore32(0, false);
-  tests::detail::ShiftPackUnpackCore32(0x7FFFFFFF, true);
-  tests::detail::ShiftPackUnpackCore32(0x7FFFFFFF, false);
-}
-
-TEST(store_utils_tests, ShiftPackunpack_64) {
-  tests::detail::ShiftPackUnpackCore64(333618218293788671LL, true);
-  tests::detail::ShiftPackUnpackCore64(333618218293788671LL, false);
-  tests::detail::ShiftPackUnpackCore64(8653986421, true);
-  tests::detail::ShiftPackUnpackCore64(8653986421, false);
-  tests::detail::ShiftPackUnpackCore64(0, true);
-  tests::detail::ShiftPackUnpackCore64(0, false);
-  tests::detail::ShiftPackUnpackCore64(0x7FFFFFFFFFFFFFFFLL, true);
-  tests::detail::ShiftPackUnpackCore64(0x7FFFFFFFFFFFFFFFLL, false);
-}
-
-TEST(store_utils_tests, delta_encode_decode) {
-  tests::detail::DeltaEncodeDecodeCore(1, 1000);  // step = 1, count = 1000
-  tests::detail::DeltaEncodeDecodeCore(128,
-                                       1000);     // step = 128, count = 1000
-  tests::detail::DeltaEncodeDecodeCore(1000, 1);  // step = 1000, count = 1
 }

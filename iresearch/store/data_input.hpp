@@ -88,6 +88,7 @@ class InputFile {
   bool Resident(uint64_t offset, uint64_t size) const noexcept;
   uint64_t Warm(uint64_t offset, uint64_t size) const noexcept;
   void MarkWarm(uint64_t offset, uint64_t size) const noexcept;
+  bool Evicted(uint64_t offset, uint64_t size, uint32_t& epoch) const noexcept;
 
  private:
   struct MappedSpan {
@@ -178,7 +179,6 @@ class BasicInput {
     SDB_ASSERT(_pos < _end);
     return *_pos++;
   }
-  IRS_FORCE_INLINE int16_t ReadI16() { return ReadFixed<uint16_t>(); }
   IRS_FORCE_INLINE int32_t ReadI32() { return ReadFixed<uint32_t>(); }
   IRS_FORCE_INLINE int64_t ReadI64() { return ReadFixed<uint64_t>(); }
   IRS_FORCE_INLINE uint32_t ReadV32() { return ReadVarint<uint32_t>(); }
@@ -216,7 +216,6 @@ class BasicInput {
     }
     return static_cast<uint64_t>(_end - _begin);
   }
-  bool IsEOF() const noexcept { return Position() >= Length(); }
 
   IRS_FORCE_INLINE void Seek(uint64_t position) {
     if constexpr (Contiguous) {

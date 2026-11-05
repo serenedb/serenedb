@@ -103,7 +103,7 @@ class RefCounter : public util::Noncopyable {
   }
 
   template<typename Remove>
-  auto RemoveUnused(const Remove& remove) {
+  void RemoveUnused(const Remove& remove) {
     std::vector<Key> claimed;
     {
       absl::MutexLock lock{&_lock};
@@ -128,9 +128,8 @@ class RefCounter : public util::Noncopyable {
         _removing.erase(key);
       }
     };
-    auto result = remove(removed);
+    remove(removed);
     finished = true;
-    return result;
   }
 
  private:

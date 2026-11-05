@@ -99,7 +99,7 @@ class StorageDirectory final {
   std::string StoragePath(duckdb::idx_t oid) const;
 
   std::string CreateStorage(duckdb::idx_t oid) const;
-  std::optional<std::string> OpenStorage(duckdb::idx_t oid) const;
+  bool OpenStorage(duckdb::idx_t oid) const;
   void RemoveStorage(duckdb::idx_t oid) const;
 
  private:

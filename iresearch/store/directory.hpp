@@ -79,7 +79,7 @@ class Directory {
   bstring ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const;
-  size_t Remove(std::span<const std::string> names) const;
+  void Remove(std::span<const std::string> names) const;
   void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
   void SyncDirectory() const;
@@ -89,7 +89,6 @@ class Directory {
   duckdb::DatabaseInstance& Db() const noexcept { return _state->db; }
   StorageKind Kind() const noexcept { return _state->kind; }
   const std::string& Root() const noexcept { return _state->root; }
-  std::string Path(std::string_view name) const;
   IndexFileRefs& Refs() const noexcept { return _state->refs; }
 
   Directory Observed(Observer& observer) const;
@@ -107,6 +106,7 @@ class Directory {
     IndexFileRefs refs;
   };
 
+  std::string Path(std::string_view name) const;
   IndexOutput::ptr Create(std::string_view name, bool cached) const;
   std::unique_ptr<InputFile> OpenMapped(const std::string& path,
                                         duckdb::MappedFileAccess access) const;

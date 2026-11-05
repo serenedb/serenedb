@@ -32,11 +32,11 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/column_list.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
-#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <limits>
 #include <memory>

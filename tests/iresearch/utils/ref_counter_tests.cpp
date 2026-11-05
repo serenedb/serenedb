@@ -48,10 +48,12 @@ class RefCounterTests : public ::testing::Test {
 
 template<typename Key>
 std::vector<Key> RemoveUnused(irs::RefCounter<Key>& refs) {
-  return refs.RemoveUnused([](std::vector<Key>& unused) {
+  std::vector<Key> removed;
+  refs.RemoveUnused([&](std::vector<Key>& unused) {
     absl::c_sort(unused);
-    return unused;
+    removed = unused;
   });
+  return removed;
 }
 
 }  // namespace tests
@@ -163,10 +165,9 @@ TEST_F(RefCounterTests, test_ref_counter_waits_only_for_keys_being_removed) {
   std::vector<std::jthread> threads;
   absl::Cleanup release = [&] { proceed.Notify(); };
   threads.emplace_back([&] {
-    refs.RemoveUnused([&](std::vector<int>& unused) {
+    refs.RemoveUnused([&](std::vector<int>&) {
       removing.Notify();
       proceed.WaitForNotification();
-      return unused.size();
     });
   });
   removing.WaitForNotification();
@@ -192,10 +193,7 @@ TEST_F(RefCounterTests, test_ref_counter_keeps_what_was_not_removed) {
   refs.add(1);
   refs.add(2);
 
-  refs.RemoveUnused([](std::vector<int>& unused) {
-    std::erase(unused, 2);
-    return 0;
-  });
+  refs.RemoveUnused([](std::vector<int>& unused) { std::erase(unused, 2); });
   ASSERT_EQ(std::vector<int>{2}, RemoveUnused(refs));
   ASSERT_TRUE(RemoveUnused(refs).empty());
 }

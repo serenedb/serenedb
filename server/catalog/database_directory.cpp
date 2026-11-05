@@ -305,14 +305,10 @@ std::string StorageDirectory::CreateStorage(duckdb::idx_t oid) const {
   return path;
 }
 
-std::optional<std::string> StorageDirectory::OpenStorage(
-  duckdb::idx_t oid) const {
-  auto path = StoragePath(oid);
+bool StorageDirectory::OpenStorage(duckdb::idx_t oid) const {
   auto& fs = StorageFileSystem();
-  if (Remote() ? fs.FileExists(MarkerPath(oid)) : fs.DirectoryExists(path)) {
-    return path;
-  }
-  return std::nullopt;
+  return Remote() ? fs.FileExists(MarkerPath(oid))
+                  : fs.DirectoryExists(StoragePath(oid));
 }
 
 void StorageDirectory::RemoveStorage(duckdb::idx_t oid) const {

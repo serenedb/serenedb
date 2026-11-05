@@ -43,6 +43,8 @@
 #include <string>
 #include <string_view>
 
+#include "utils/write_helpers.hpp"
+
 namespace irs::tests {
 
 // Production code reserves norm ids on the catalog side and the writer

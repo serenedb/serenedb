@@ -121,8 +121,6 @@ class Writes {
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
 
-  static PinnedSearchTable MakePinnedSearchTable(const Store& store);
-
   const PinnedSearchTable& EnsureSearchTable(const Store& store);
   const irs::DirectoryReader& PinnedReader(const Store& store) const;
 

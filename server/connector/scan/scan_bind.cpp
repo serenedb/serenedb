@@ -118,21 +118,13 @@ const duckdb::ColumnDefinition* FindColumnById(
   return nullptr;
 }
 
-search::Writes::PinnedSearchTable PinnedSearchTable(
-  duckdb::ClientContext& context, const search::Store& store) {
-  auto* conn_ctx = GetSereneDBContextPtr(context);
-  if (!conn_ctx) {
-    return search::Writes::MakePinnedSearchTable(store);
-  }
-  return conn_ctx->SearchTxn().EnsureSearchTable(store);
-}
-
 decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   const catalog::SearchTableEntry& table) {
   return [store = table.Storage()](
            duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
     return std::make_shared<search::StoreSnapshot>(
-      irs::DirectoryReader{*PinnedSearchTable(context, *store).reader},
+      irs::DirectoryReader{
+        *GetSereneDBContext(context).SearchTxn().EnsureSearchTable(*store).reader},
       nullptr);
   };
 }
@@ -509,7 +501,8 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search");
   AcquireSnapshot(*data, context, SearchTableSnapshot(entry));
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = PinnedSearchTable(context, *store).config;
+  data->relation.inverted_config =
+    GetSereneDBContext(context).SearchTxn().EnsureSearchTable(*store).config;
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);

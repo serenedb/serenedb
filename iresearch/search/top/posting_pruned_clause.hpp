@@ -35,7 +35,6 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   using Base::_doc;
   using Base::_docs;
   using Base::_freqs;
-  using Base::_gather;
   using Base::_lazy;
   using Base::_leaf;
   using Base::_left_in_list;
@@ -98,8 +97,10 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     }
     ScoreMask hits = 0;
     for (uint32_t j = 0; j != n; ++j) {
-      hits |= static_cast<ScoreMask>(Probe(docs[j]) == docs[j]) << j;
-      freqs[j] = Freq();
+      const bool hit = Probe(docs[j]) == docs[j];
+      hits |= static_cast<ScoreMask>(hit) << j;
+      DecodeLazyFreqs(hit);
+      freqs[j] = _freqs.data[_leaf.Index()];
     }
     return hits;
   }
@@ -184,6 +185,8 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     }
     return _doc = _leaf.Find(std::begin(_docs), _base, target);
   }
+
+  ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
 };
 
 }  // namespace irs::top

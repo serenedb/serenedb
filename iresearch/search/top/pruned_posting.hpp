@@ -190,9 +190,8 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
     if (kept == 0) {
       return;
     }
-    _fetcher->Fetch(std::span<const doc_id_t>{kept_docs, kept});
     _provider.freq.value = kept_freqs;
-    _score.Score(kept_scores, static_cast<scores_size_t>(kept));
+    FetchAndScore(*_fetcher, _score, kept_docs, kept_scores, kept);
     _provider.freq.value = _freqs.data;
     visit(kept_docs, kept, kept_scores);
   }

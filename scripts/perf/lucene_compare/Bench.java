@@ -105,16 +105,17 @@ public final class Bench {
   }
 
   static final class Visit extends SimpleCollector {
+    final int[] window = new int[2048];
     long hits;
 
     @Override
     public void collect(int doc) {
-      ++hits;
+      window[(int) (hits++ & 2047)] = doc;
     }
 
     @Override
     public void collect(DocIdStream stream) throws IOException {
-      hits += stream.count();
+      stream.forEach(doc -> window[(int) (hits++ & 2047)] = doc);
     }
 
     @Override
@@ -787,7 +788,7 @@ public final class Bench {
         threads, segments, byExtension(luceneFiles), sdbSegments, byExtension(sdbFiles), pgParts, pgVacuum));
 
     out.append("Median query latency, µs. Lucene `count` may answer from index statistics; "
-        + "Lucene `visit` collects every matching document:\n\n");
+        + "Lucene `visit` writes every matching document id into a 2048-entry window:\n\n");
     out.append("| query | rows (reference) | Lucene count, µs | Lucene visit, µs | SereneDB, µs |");
     for (PgVariant v : variants) {
       out.append(" PG ").append(v.label()).append(", µs |");

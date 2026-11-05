@@ -43,7 +43,7 @@ Seeded, so `prepare` always writes the same files.
 
 ## Engines
 
-- **Lucene**, in-process in the benchmark JVM: `InetAddressPoint` for hosts, `InetAddressRange` for networks, `IntPoint`, `LongPoint`, `StringField`; query cache off. Each query is timed twice: `IndexSearcher.count`, and a "visit" that collects every matching document into a counting collector, so Lucene builds the document set the way a query that needs the rows would. Ingestion is parse + `addDocument` on N threads + `commit` + opening the reader.
+- **Lucene**, in-process in the benchmark JVM: `InetAddressPoint` for hosts, `InetAddressRange` for networks, `IntPoint`, `LongPoint`, `StringField`; query cache off. Each query is timed twice: `IndexSearcher.count`, and a "visit" whose collector writes every matching document id into a 2048-entry window, also from the dense document sets Lucene could otherwise count with one popcount, so Lucene produces the documents the way SereneDB's scan emits row ids. Ingestion is parse + `addDocument` on N threads + `commit` + opening the reader.
 - **SereneDB**: `CREATE INDEX ... USING inverted (col)` on an empty table, then `COPY` and `VACUUM (REFRESH_TABLE)`; queries read the index (`FROM <index>`).
 - **PostgreSQL**: `COPY`, `VACUUM (ANALYZE)` (reported, not counted), then `CREATE INDEX`. Hosts and networks get a B-tree plus GiST `inet_ops`, then the GiST index is replaced with SP-GiST `inet_ops` and every query runs again. `INTEGER` gets a B-tree, `VARCHAR` a B-tree on a `COLLATE "C"` column, so `LIKE 'abc%'` and ranges can use it. The plan column says which index PostgreSQL chose; it may prefer a seq scan.
 

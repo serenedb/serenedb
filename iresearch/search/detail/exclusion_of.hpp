@@ -237,8 +237,7 @@ class ExcludeCosts {
       probed > 0 ? probed * (1.0 - std::exp(-d / probed)) : 0.0;
     return probed * kLeafProbeCost +
            advances * static_cast<double>(kProbeSteps) +
-           std::min(advances, std::max(1.0, d / leaf)) *
-             (kStepBaseCost + kStepJumpCost + leaf * kDecodeCost) +
+           std::min(advances, std::max(1.0, d / leaf)) * kLeafDocsReadCost +
            clause.matches * share * clause.hit;
   }
 

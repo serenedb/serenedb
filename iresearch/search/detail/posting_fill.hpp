@@ -233,25 +233,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       return static_cast<uint32_t>(
         BranchlessLowerBound<kBlock>(_docs.data(), target) - _docs.data());
     }
-#ifdef __AVX2__
-    const auto key = _mm256_set1_epi32(static_cast<int32_t>(target));
-    for (;;) {
-      const auto docs =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(_docs.data() + at));
-      const auto below = static_cast<uint32_t>(
-        _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(key, docs))));
-      const auto step = static_cast<uint32_t>(std::countr_one(below));
-      at += step;
-      if (step != 8) {
-        return at;
-      }
-    }
-#else
-    while (_docs[at] < target) {
-      ++at;
-    }
-    return at;
-#endif
+    return ScanIn(at, target);
   }
 
   IRS_FORCE_INLINE uint32_t ScanIn(uint32_t at,
@@ -469,28 +451,25 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
         return kept;
       }
       const auto last = _last;
+      const auto sweep = [&](auto&& contains) IRS_FORCE_INLINE {
+        do {
+          const auto doc = in[i];
+          out[kept] = doc;
+          kept += static_cast<uint32_t>(contains(doc) == Keep);
+        } while (++i != n && in[i] <= last);
+      };
       if (_kind == Kind::Docs) [[likely]] {
         auto at = _at;
-        do {
-          const auto doc = in[i];
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE {
           at = SeekIn(at, doc);
-          out[kept] = doc;
-          kept += static_cast<uint32_t>((_docs[at] == doc) == Keep);
-        } while (++i != n && in[i] <= last);
+          return _docs[at] == doc;
+        });
         _at = at;
       } else if (_kind == Kind::Bitset) {
-        do {
-          const auto doc = in[i];
-          out[kept] = doc;
-          kept += static_cast<uint32_t>(HasBit(doc) == Keep);
-        } while (++i != n && in[i] <= last);
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE { return HasBit(doc); });
       } else {
         const auto base = _cursor.base;
-        do {
-          const auto doc = in[i];
-          out[kept] = doc;
-          kept += static_cast<uint32_t>((doc > base) == Keep);
-        } while (++i != n && in[i] <= last);
+        sweep([&](doc_id_t doc) IRS_FORCE_INLINE { return doc > base; });
       }
     }
     return kept;

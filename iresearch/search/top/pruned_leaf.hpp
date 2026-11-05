@@ -631,18 +631,10 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   }
 
   IRS_NO_INLINE void DecodeFreqs() noexcept {
-    using Codec = block_io::Codec;
-    const auto len = _leaf.Len();
-    if (len == kBlock) {
-      Codec::DecodeValuesBlock<block_io::kFreqBias>(_lazy, _freqs.data);
-    } else {
-      Codec::DecodeValuesTail<block_io::kFreqBias>(
-        _lazy, len, _freqs.data + (kBlock - len));
-    }
+    block_io::DecodeTail<block_io::kFreqBias>(_lazy, _leaf.Len(), _freqs.data);
     _lazy = nullptr;
   }
 
-  ABSL_CACHELINE_ALIGNED uint32_t _gather[kScoreBlock]{};
   const byte_type* _lazy = nullptr;
   detail::MaskedLeaf _leaf;
   uint32_t _reads = 0;

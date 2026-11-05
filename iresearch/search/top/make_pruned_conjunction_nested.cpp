@@ -286,17 +286,16 @@ Root::ptr MakeNestedPrunedConjunction(
         });
     };
     const auto make = [&]<typename Lead>(auto&& lead) -> Root::ptr {
-      if (constants) {
-        using Others = PrunedLeaves<ErasedClause>;
-        return build.template operator()<Lead, Others>(
+      const auto erasing = [&]<typename Clause> {
+        return build.template operator()<Lead, PrunedLeaves<Clause>>(
           std::forward<decltype(lead)>(lead),
           [&](size_t i) { return std::make_tuple(erased(i + 1)); });
+      };
+      if (constants) {
+        return erasing.template operator()<ErasedClause>();
       }
       if (phrases) {
-        using Others = PrunedLeaves<ErasedProbeClause>;
-        return build.template operator()<Lead, Others>(
-          std::forward<decltype(lead)>(lead),
-          [&](size_t i) { return std::make_tuple(erased(i + 1)); });
+        return erasing.template operator()<ErasedProbeClause>();
       }
       using Others = PrunedLeaves<Group>;
       return build.template operator()<Lead, Others>(

@@ -199,23 +199,12 @@ class PrunedDisjunction : public Root {
   }
 
   doc_id_t SkipAlone(doc_id_t min, score_t threshold) {
-    Entry* alone = nullptr;
-    doc_id_t first = doc_limits::eof();
-    doc_id_t second = doc_limits::eof();
-    for (auto& entry : _entries) {
-      const auto doc = std::max(entry.leaf.Value(), min);
-      if (doc < first) {
-        second = first;
-        first = doc;
-        alone = &entry;
-      } else if (doc < second) {
-        second = doc;
-      }
+    const auto lead = FindLead(min);
+    if (lead.first == lead.second) {
+      return lead.first;
     }
-    if (alone == nullptr || first == second) {
-      return first;
-    }
-    return alone->leaf.SkipNonCompetitive(first, second, threshold);
+    return lead.entry->leaf.SkipNonCompetitive(lead.first, lead.second,
+                                               threshold);
   }
 
   bool Split(score_t score_threshold) {
@@ -420,10 +409,10 @@ class PrunedDisjunction : public Root {
     doc_id_t second = doc_limits::eof();
   };
 
-  Lead FindLead() noexcept {
+  Lead FindLead(doc_id_t min = 0) noexcept {
     Lead lead;
     for (auto& entry : _entries) {
-      const auto doc = entry.leaf.Value();
+      const auto doc = std::max(entry.leaf.Value(), min);
       if (doc < lead.first) {
         lead.second = lead.first;
         lead.first = doc;

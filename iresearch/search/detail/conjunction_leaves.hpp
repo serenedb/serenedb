@@ -131,18 +131,10 @@ class ConjunctionLeaves {
           ((probe = ProbeOf(_leaves[I + 1], target, I + 1)) == target) && ...));
         return probe;
       }(std::make_index_sequence<N - 1>{});
-    } else if constexpr (kDeferrable) {
-      for (size_t i = 1; i != _leaves.size(); ++i) {
-        if (const auto probe = ProbeOf(_leaves[i], target, i);
-            probe != target) {
-          return probe;
-        }
-      }
-      return target;
     } else {
-      for (auto it = _leaves.begin() + 1, end = _leaves.end(); it != end;
-           ++it) {
-        if (const auto probe = it->Probe(target); probe != target) {
+      auto* const leaves = _leaves.begin();
+      for (size_t i = 1, size = _leaves.size(); i != size; ++i) {
+        if (const auto probe = ProbeOf(leaves[i], target, i); probe != target) {
           return probe;
         }
       }

@@ -330,17 +330,9 @@ class PostingPos {
   }
 
   IRS_NO_INLINE void DecodeDeferred() noexcept {
-    using Codec = block_io::Codec;
-    auto& deferral = _deferral;
-    const auto len = deferral.len;
-    if (len == doc_limits::kBlockSize) {
-      Codec::DecodeValuesBlock<block_io::kFreqBias>(deferral.freqs,
-                                                    _freqs.data);
-    } else {
-      Codec::DecodeValuesTail<block_io::kFreqBias>(
-        deferral.freqs, len, _freqs.data + (doc_limits::kBlockSize - len));
-    }
-    deferral.freqs = nullptr;
+    block_io::DecodeTail<block_io::kFreqBias>(_deferral.freqs, _deferral.len,
+                                              _freqs.data);
+    _deferral.freqs = nullptr;
   }
 
   void ReadLeaf(doc_id_t prev) {

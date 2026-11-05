@@ -123,8 +123,10 @@ decltype(SearchSpec::acquire_snapshot) SearchTableSnapshot(
   return [store = table.Storage()](
            duckdb::ClientContext& context) -> search::StoreSnapshotPtr {
     return std::make_shared<search::StoreSnapshot>(
-      irs::DirectoryReader{
-        *GetSereneDBContext(context).SearchTxn().EnsureSearchTable(*store).reader},
+      irs::DirectoryReader{*GetSereneDBContext(context)
+                              .SearchTxn()
+                              .EnsureSearchTable(*store)
+                              .reader},
       nullptr);
   };
 }

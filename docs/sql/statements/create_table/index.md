@@ -203,6 +203,7 @@ A search table can keep its rows sorted by a key, given after the column list as
 -   Rows close in key order are stored together, so filters on the key columns skip more data and those columns compress better.
 -   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported. Renaming a key column keeps it in the key.
 -   A key is a stored column: an expression, a `COLLATE` clause, a column declared with a collation or a generated column is rejected.
+-   A column of type `VARIANT`, `INTERVAL`, `TIMETZ` or `BIT`, or a struct, list or array holding one, is rejected as a key, because `ORDER BY` orders these values by a normalized form rather than as stored; a `MAP` or `UNION` holding one is accepted.
 -   Regular tables reject `SORTED BY`.
 
 ## Partition Keys

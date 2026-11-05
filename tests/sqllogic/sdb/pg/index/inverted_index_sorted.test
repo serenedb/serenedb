@@ -47,6 +47,26 @@ DROP TABLE iis_collated;
 
 
 statement ok
+CREATE TABLE iis_converted (v VARIANT, spans INTERVAL[], body VARCHAR);
+
+
+statement error
+CREATE INDEX iis_bad ON iis_converted USING inverted (body) SORTED BY (v);
+----
+db error: ERROR: SORTED BY cannot use column "v" of type VARIANT
+
+
+statement error
+CREATE INDEX iis_bad ON iis_converted USING inverted (body) SORTED BY (spans DESC);
+----
+db error: ERROR: SORTED BY cannot use column "spans" of type INTERVAL[]
+
+
+statement ok
+DROP TABLE iis_converted;
+
+
+statement ok
 CREATE INDEX iis_art ON iis (k DESC NULLS FIRST);
 
 

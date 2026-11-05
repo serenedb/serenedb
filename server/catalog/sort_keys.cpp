@@ -20,6 +20,8 @@
 
 #include "catalog/sort_keys.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/enums/order_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -29,6 +31,37 @@
 #include "connector/column_id.h"
 
 namespace sdb::catalog {
+namespace {
+
+bool OrdersThroughConversion(const duckdb::LogicalType& type) {
+  if (!type.HasAlias()) {
+    if (duckdb::StructType::IsStruct(type)) {
+      return absl::c_any_of(duckdb::StructType::GetChildTypes(type),
+                            [](const auto& child) {
+                              return OrdersThroughConversion(child.second);
+                            });
+    }
+    if (type.id() == duckdb::LogicalTypeId::LIST) {
+      return OrdersThroughConversion(duckdb::ListType::GetChildType(type));
+    }
+    if (type.id() == duckdb::LogicalTypeId::ARRAY) {
+      return OrdersThroughConversion(duckdb::ArrayType::GetChildType(type));
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      return !duckdb::StringType::GetCollation(type).empty();
+    case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::INTERVAL:
+    case duckdb::LogicalTypeId::TIME_TZ:
+    case duckdb::LogicalTypeId::BIT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
 
 std::vector<SortKey> ResolveSortKeys(
   const duckdb::ColumnList& columns,
@@ -64,6 +97,12 @@ std::vector<SortKey> ResolveSortKeys(
           ERR_MSG("SORTED BY cannot use column \"", name.GetIdentifierName(),
                   "\" with collation \"", collation, "\""));
       }
+    }
+    if (OrdersThroughConversion(column.Type())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("SORTED BY cannot use column \"", name.GetIdentifierName(),
+                "\" of type ", column.Type().ToString()));
     }
     const bool desc = order.type == duckdb::OrderType::DESCENDING;
     keys.emplace_back(

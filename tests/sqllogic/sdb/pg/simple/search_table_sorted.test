@@ -281,6 +281,36 @@ db error: ERROR: SORTED BY cannot use column "a" with collation "nocase"
 
 
 statement error
+CREATE TABLE srt_bad (a INTERVAL) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type INTERVAL
+
+
+statement error
+CREATE TABLE srt_bad (a TIMETZ) SORTED BY (a DESC) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type TIME WITH TIME ZONE
+
+
+statement error
+CREATE TABLE srt_bad (a BIT) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type BIT
+
+
+statement error
+CREATE TABLE srt_bad (a STRUCT(n INTEGER, span INTERVAL)) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type STRUCT(n INTEGER, span INTERVAL)
+
+
+statement error
+CREATE TABLE srt_bad (a TIMETZ[2]) SORTED BY (a) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY cannot use column "a" of type TIME WITH TIME ZONE[2]
+
+
+statement error
 CREATE TABLE srt_bad (a INTEGER) SORTED BY (srt_bad.a) WITH (storage = 'search');
 ----
 db error: ERROR: SORTED BY takes column names, not "srt_bad.a"
@@ -320,7 +350,7 @@ statement ok
 DROP TABLE srt_alter;
 
 query
-SELECT count(*) AS tables FROM duckdb_tables() WHERE table_name LIKE 'srt%';
+SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = current_database() AND table_name LIKE 'srt%';
 ----
 tables
 0

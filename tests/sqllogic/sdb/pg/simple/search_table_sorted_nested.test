@@ -1,0 +1,341 @@
+statement ok
+CREATE TABLE srtn_list (id INTEGER, k INTEGER[])
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_list SELECT i, CASE WHEN i = 4321 THEN NULL ELSE [i % 7, (i * 7919) % 5000] END FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_list;
+
+statement ok
+INSERT INTO srtn_list SELECT i, [i % 7, i] FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_list;
+
+query
+SELECT count(DISTINCT rowid >> 32) > 1 AS several_segments FROM srtn_list;
+----
+several_segments
+t
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_list;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n, count(*) FILTER (WHERE k IS NULL) AS null_keys FROM srtn_list;
+----
+segments	n	null_keys
+1	7000	1
+
+query
+SELECT count(*) AS wrong FROM srtn_list
+WHERE k IS DISTINCT FROM CASE WHEN id = 4321 THEN NULL WHEN id < 5000 THEN [id % 7, (id * 7919) % 5000] ELSE [id % 7, id] END;
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST) AS logical
+  FROM srtn_list) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_struct (id INTEGER, k STRUCT(tag VARCHAR, n INTEGER))
+  SORTED BY (k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_struct SELECT i, CASE WHEN i = 1234 THEN NULL ELSE {'tag': 'a_long_tag_value_' || (i % 13), 'n': i} END FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_struct;
+
+statement ok
+INSERT INTO srtn_struct SELECT i, {'tag': 'a_long_tag_value_' || (i % 13), 'n': i} FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_struct;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_struct;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n, count(*) FILTER (WHERE k IS NULL) AS null_keys FROM srtn_struct;
+----
+segments	n	null_keys
+1	7000	1
+
+query
+SELECT count(*) AS wrong FROM srtn_struct
+WHERE k IS DISTINCT FROM CASE WHEN id = 1234 THEN NULL ELSE {'tag': 'a_long_tag_value_' || (id % 13), 'n': id} END;
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k DESC NULLS FIRST) AS logical
+  FROM srtn_struct) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_map (id INTEGER, k MAP(VARCHAR, INTEGER))
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_map SELECT i, MAP {'a_long_map_key_' || (i % 5): i} FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_map;
+
+statement ok
+INSERT INTO srtn_map SELECT i, MAP {'a_long_map_key_' || (i % 5): i} FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_map;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_map;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srtn_map;
+----
+segments	n
+1	7000
+
+query
+SELECT count(*) AS wrong FROM srtn_map WHERE k IS DISTINCT FROM MAP {'a_long_map_key_' || (id % 5): id};
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST) AS logical
+  FROM srtn_map) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_array (id INTEGER, k INTEGER[2])
+  SORTED BY (k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_array SELECT i, [i % 7, i]::INTEGER[2] FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_array;
+
+statement ok
+INSERT INTO srtn_array SELECT i, [i % 7, i]::INTEGER[2] FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_array;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_array;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srtn_array;
+----
+segments	n
+1	7000
+
+query
+SELECT count(*) AS wrong FROM srtn_array WHERE k IS DISTINCT FROM [id % 7, id]::INTEGER[2];
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k DESC NULLS FIRST) AS logical
+  FROM srtn_array) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_union (id INTEGER, k UNION(n INTEGER, s VARCHAR))
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_union SELECT i, CASE WHEN i % 2 = 0 THEN union_value(n := i)::UNION(n INTEGER, s VARCHAR) ELSE union_value(s := 'a_long_union_text_' || i)::UNION(n INTEGER, s VARCHAR) END FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_union;
+
+statement ok
+INSERT INTO srtn_union SELECT i, CASE WHEN i % 2 = 0 THEN union_value(n := i)::UNION(n INTEGER, s VARCHAR) ELSE union_value(s := 'a_long_union_text_' || i)::UNION(n INTEGER, s VARCHAR) END FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_union;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_union;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srtn_union;
+----
+segments	n
+1	7000
+
+query
+SELECT count(*) AS wrong FROM srtn_union
+WHERE k IS DISTINCT FROM CASE WHEN id % 2 = 0 THEN union_value(n := id)::UNION(n INTEGER, s VARCHAR) ELSE union_value(s := 'a_long_union_text_' || id)::UNION(n INTEGER, s VARCHAR) END;
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST) AS logical
+  FROM srtn_union) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement error
+CREATE TABLE srtn_variant (id INTEGER, k VARIANT)
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: SORTED BY cannot use column "k" of type VARIANT
+
+
+statement error
+CREATE TABLE srtn_variant (id INTEGER, k STRUCT(tag VARCHAR, payload VARIANT))
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: SORTED BY cannot use column "k" of type STRUCT(tag VARCHAR, payload VARIANT)
+
+
+statement error
+CREATE TABLE srtn_variant (id INTEGER, k VARIANT[])
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: SORTED BY cannot use column "k" of type VARIANT[]
+
+
+statement ok
+CREATE TABLE srtn_map_interval (id INTEGER, k MAP(VARCHAR, INTERVAL))
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_map_interval VALUES (1, MAP {'a': INTERVAL '40 days'}), (2, MAP {'a': INTERVAL '1 month'}), (3, MAP {'a': INTERVAL '29 days'}), (4, MAP {'a': INTERVAL '1 month 1 day'});
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_map_interval;
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST) AS logical
+  FROM srtn_map_interval) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_deep (id INTEGER, k STRUCT(tags VARCHAR[], score INTEGER))
+  SORTED BY (k)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_deep SELECT i, {'tags': ['tag_' || (i % 3), 'a_long_tag_for_row_' || i], 'score': i % 11} FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_deep;
+
+statement ok
+INSERT INTO srtn_deep SELECT i, {'tags': ['tag_' || (i % 3), 'a_long_tag_for_row_' || i], 'score': i % 11} FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_deep;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_deep;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srtn_deep;
+----
+segments	n
+1	7000
+
+query
+SELECT count(*) AS wrong FROM srtn_deep
+WHERE k IS DISTINCT FROM {'tags': ['tag_' || (id % 3), 'a_long_tag_for_row_' || id], 'score': id % 11};
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY k ASC NULLS LAST) AS logical
+  FROM srtn_deep) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+CREATE TABLE srtn_mixed (id INTEGER, g INTEGER, k VARCHAR[])
+  SORTED BY (g, k DESC)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO srtn_mixed SELECT i, i % 4, ['element_' || (i % 3), 'a_long_element_value_' || i] FROM range(5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_mixed;
+
+statement ok
+INSERT INTO srtn_mixed SELECT i, i % 4, ['element_' || (i % 3), 'a_long_element_value_' || i] FROM range(5000, 7000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) srtn_mixed;
+
+statement ok
+VACUUM (COMPACT_TABLE) srtn_mixed;
+
+query
+SELECT count(DISTINCT rowid >> 32) AS segments, count(*) AS n FROM srtn_mixed;
+----
+segments	n
+1	7000
+
+query
+SELECT count(*) AS wrong FROM srtn_mixed
+WHERE g IS DISTINCT FROM id % 4 OR k IS DISTINCT FROM ['element_' || (id % 3), 'a_long_element_value_' || id];
+----
+wrong
+0
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY rowid) AS physical,
+         row_number() OVER (ORDER BY g ASC NULLS LAST, k DESC NULLS FIRST) AS logical
+  FROM srtn_mixed) WHERE physical <> logical;
+----
+misplaced
+0

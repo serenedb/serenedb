@@ -69,6 +69,10 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
         out.Reference(duckdb::Value{column.type}, duckdb::count_t{count});
         continue;
       }
+      if (count == 1 && column.type.IsNested()) {
+        ProbeRow(column, begin, out);
+        continue;
+      }
       if (count == 1) {
         if (!column.point) {
           column.point =
@@ -118,6 +122,7 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
     explicit Column(const duckdb::LogicalType& type)
       : type{type},
         scratch{type},
+        probe_scratch{type},
         value_cache{duckdb::Allocator::DefaultAllocator(), type, 1},
         value{value_cache} {}
 
@@ -125,12 +130,34 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
     const ColumnReader* reader = nullptr;
     ColumnReader::ScanState state;
     ColumnReader::VectorScratch scratch;
+    std::shared_ptr<ReadContext> probe_ctx;
+    ColumnReader::ScanState probe;
+    ColumnReader::VectorScratch probe_scratch;
+    uint64_t probe_position = 0;
     std::unique_ptr<ColumnReader::PointReader> point;
     duckdb::VectorCache value_cache;
     duckdb::Vector value;
     uint64_t position = 0;
     bool scanning = false;
   };
+
+  void ProbeRow(Column& column, uint64_t row, duckdb::Vector& out) {
+    if (!column.probe_ctx) {
+      column.probe_ctx = std::make_shared<ReadContext>(*_cs);
+      column.probe_ctx->SetCache(_cache);
+      column.probe = column.reader->InitScan(column.probe_ctx);
+    } else if (row < column.probe_position) {
+      column.probe = column.reader->InitScan(column.probe_ctx);
+      column.probe_position = 0;
+    }
+    if (row > column.probe_position) {
+      column.reader->Skip(column.probe, row - column.probe_position);
+    }
+    auto& value = column.probe_scratch.Reset();
+    column.reader->Scan(column.probe, value, 1);
+    column.probe_position = row + 1;
+    out.Reference(value);
+  }
 
   const ColReader* _cs;
   duckdb::ObjectCache* _cache;

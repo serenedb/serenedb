@@ -1460,6 +1460,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       _compacting.segments.erase(candidate->Meta().name);
     }
   };
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_compaction_registered");
 
   // validate candidates: no duplicates and all should be from committed reader
 #ifdef SDB_DEV

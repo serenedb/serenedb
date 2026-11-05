@@ -7,7 +7,7 @@ split: page
 
 # LangChain
 
-[`langchain-serenedb`](https://github.com/serenedb/langchain-serenedb) is a [LangChain](https://docs.langchain.com/oss/python/langchain/overview) vector store backed by SereneDB. SereneDB speaks the PostgreSQL wire protocol, so the package connects with [psycopg 3](https://www.psycopg.org/psycopg3/) and maps the `VectorStore` contract onto SereneDB's native features: fixed-size `FLOAT[N]` vector columns, the [inverted index](../../sql/indexes/inverted/index.md) with an `ivf` operator class for approximate nearest neighbor search, and BM25 relevance scoring for the lexical half of a hybrid query.
+[`langchain-serenedb`](https://github.com/serenedb/langchain-serenedb) is a [LangChain](https://docs.langchain.com/oss/python/langchain/overview) vector store backed by SereneDB. SereneDB speaks the PostgreSQL wire protocol, so the package connects with [psycopg 3](https://www.psycopg.org/psycopg3/) and maps the `VectorStore` contract onto SereneDB's native features: fixed-size `FLOAT[N]` vector columns, the [inverted index](../../sql/indexes/inverted/index.md) with an `ivf` or `hnsw` operator class for approximate nearest neighbor search, and BM25 relevance scoring for the lexical half of a hybrid query.
 
 ## What it maps onto SereneDB {#mapping}
 
@@ -15,7 +15,7 @@ split: page
 | :--- | :--- | :--- |
 | Embedding column | `FLOAT[N]` array column | [Array](../../sql/data_types/array.md) |
 | Distance metrics | `<->`, `<=>`, `<#>`, `<+>` and their named functions | [Vector functions](../../sql/functions/vector.md) |
-| ANN index | `CREATE INDEX ... USING inverted (embedding ivf (metric = '...'))` | [Vector search](../../sql/indexes/inverted/vector-search.md) |
+| ANN index | `CREATE INDEX ... USING inverted (embedding ivf (metric = '...'))`, or `hnsw (...)` | [Vector search](../../sql/indexes/inverted/vector-search.md) |
 | Hybrid retrieval | One inverted index over the content **and** embedding columns, scored with `BM25()` | [Hybrid search](../../sql/indexes/inverted/hybrid-search.md) |
 | Metadata | A `JSON` column, plus optional typed columns | [Indexes and Tuning](./indexes.md#metadata-index) |
 | Metadata filters | Index-covered predicates, including `@@` full-text matches | [Metadata Filtering](./filtering.md) |
@@ -80,7 +80,7 @@ This gives you a `my_docs` table holding both documents — each with its text, 
 | [Vector Store](./vector-store.md) | `SereneDBVectorStore` — adding documents, searching, scores, retrievers |
 | [Metadata Filtering](./filtering.md) | The `filter` dict: comparison, set, pattern, logical and full-text operators |
 | [Hybrid Search](./hybrid-search.md) | `HybridIndexConfig`, `HybridSearchConfig`, `FusionStrategy` — fusing BM25 and vector rankings in one query |
-| [Indexes and Tuning](./indexes.md) | `DistanceStrategy`, `IVFIndex`, `IVFQueryOptions`, `MetadataIndexConfig`, `MetadataColumnIndex`, `JsonFieldIndex` |
+| [Indexes and Tuning](./indexes.md) | `DistanceStrategy`, `IVFIndex`, `HNSWIndex`, `IVFQueryOptions`, `HNSWQueryOptions`, `MetadataIndexConfig`, `MetadataColumnIndex`, `JsonFieldIndex` |
 | [Async API](./async.md) | `AsyncSereneDBVectorStore` — the async core, the event loop model, async-only methods |
 | [FAQ](./faq.md) | Common problems and their fixes, indexed by symptom |
 

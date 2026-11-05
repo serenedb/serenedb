@@ -75,7 +75,7 @@ store = await AsyncSereneDBVectorStore.create(
 | `k` | `int` | `4` | Default number of results. |
 | `fetch_k` | `int` | `20` | Default MMR candidate pool. |
 | `lambda_mult` | `float` | `0.5` | Default MMR diversity weight. |
-| `index_query_options` | `Optional[QueryOptions]` | `None` | See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions). |
+| `index_query_options` | `Optional[QueryOptions]` | `None` | See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions) and [`HNSWQueryOptions`](./indexes.md#hnswqueryoptions). |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | `None` | Query-time fusion settings; the combined index must already exist. See [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | See [Metadata index configuration](./indexes.md#metadata-index). |
 | `sync_load` | `bool` | `True` | When `False`, writes do not auto-refresh the inverted index. |

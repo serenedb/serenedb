@@ -83,8 +83,9 @@ class MergeTarget {
   void Compact(const search::PlannedMerge& planned,
                const irs::MergeProgress& progress,
                const irs::IndexFieldOptions* field_options,
-               const irs::AnnBuildEnv* env, search::MergeOrigin origin,
-               utils::DrainGate::Pass maintenance,
+               const irs::AnnBuildEnv* env,
+               duckdb::shared_ptr<duckdb::DedicatedPool> pool,
+               search::MergeOrigin origin, utils::DrainGate::Pass maintenance,
                search::MergeResult& merged) const;
   search::MergeRunner::Lease TakeOver() const {
     return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
@@ -116,6 +117,7 @@ class ManualCompaction {
   const MergeTarget& _target;
   std::shared_ptr<const irs::IndexFieldOptions> _options;
   duckdb::ClientContext& _context;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _pool;
   MergeRequest _request;
   search::MergeRoundPlan _plan;
   size_t _next = 0;

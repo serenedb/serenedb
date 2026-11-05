@@ -97,12 +97,10 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() noexcept {
 }
 
 void SearchEngine::start() {
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance());
-  _merge_pool = scheduler.CreateDedicatedPool(
-    static_cast<duckdb::idx_t>(MaxConcurrentCompactions()));
-  _manual_merge_pool =
-    scheduler.CreateDedicatedPool(scheduler.NumberOfThreads());
+  _merge_pool = duckdb::TaskScheduler::GetScheduler(
+                  irs::DuckDBEngine::Instance().instance())
+                  .CreateDedicatedPool(
+                    static_cast<duckdb::idx_t>(MaxConcurrentCompactions()));
   _merges = std::make_unique<MergeRunner>(
     BackgroundScheduler::instance().executor(),
     2 * static_cast<size_t>(MaxConcurrentCompactions()));

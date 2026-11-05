@@ -21,8 +21,11 @@
 #include "iresearch/index/merge/merge_executor.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/thread_annotations.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/random/distributions.h>
 #include <absl/random/random.h>
+#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +33,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -45,42 +49,48 @@ class MergeRun {
   MergeRun(const MergeRun&) = delete;
   MergeRun& operator=(const MergeRun&) = delete;
 
-  void Start(duckdb::TaskExecutor& executor) {
-    Submit(executor, std::move(_roots));
-  }
+  void Start(duckdb::TaskExecutor& executor) { Submit(executor, _roots); }
 
-  void Run(duckdb::TaskExecutor& executor, size_t unit);
+  void RunNext(duckdb::TaskExecutor& executor);
 
   bool Failed() const noexcept {
     return _failed.load(std::memory_order_relaxed);
   }
 
  private:
-  void Submit(duckdb::TaskExecutor& executor, std::vector<size_t> ready);
+  bool Lower(size_t lhs, size_t rhs) const noexcept {
+    return _rank[lhs] != _rank[rhs] ? _rank[lhs] < _rank[rhs] : lhs > rhs;
+  }
+
+  void Submit(duckdb::TaskExecutor& executor, std::span<const size_t> ready);
+  size_t Take();
 
   MergePlan& _plan;
   std::vector<std::vector<size_t>> _dependents;
   std::vector<std::atomic<size_t>> _waiting;
+  std::vector<uint64_t> _rank;
   std::vector<size_t> _roots;
+  absl::Mutex _mutex;
+  std::vector<size_t> _ready ABSL_GUARDED_BY(_mutex);
   std::atomic_bool _failed{false};
 };
 
 class UnitTask final : public duckdb::BaseExecutorTask {
  public:
-  UnitTask(duckdb::TaskExecutor& executor, MergeRun& run, size_t unit) noexcept
-    : BaseExecutorTask{executor}, _run{run}, _unit{unit} {}
+  UnitTask(duckdb::TaskExecutor& executor, MergeRun& run) noexcept
+    : BaseExecutorTask{executor}, _run{run} {}
 
-  void ExecuteTask() final { _run.Run(executor, _unit); }
+  void ExecuteTask() final { _run.RunNext(executor); }
 
  private:
   MergeRun& _run;
-  size_t _unit;
 };
 
 MergeRun::MergeRun(MergePlan& plan)
   : _plan{plan},
     _dependents(plan.Units().size()),
-    _waiting(plan.Units().size()) {
+    _waiting(plan.Units().size()),
+    _rank(plan.Units().size()) {
   const auto units = plan.Units();
   for (size_t unit = 0; unit != units.size(); ++unit) {
     const auto& deps = units[unit].deps;
@@ -90,30 +100,29 @@ MergeRun::MergeRun(MergePlan& plan)
       _dependents[dep].push_back(unit);
     }
   }
-  std::vector<uint64_t> rank(units.size());
   for (size_t unit = units.size(); unit-- != 0;) {
     uint64_t after = 0;
     for (const auto next : _dependents[unit]) {
-      after = std::max(after, rank[next]);
+      after = std::max(after, _rank[next]);
     }
-    rank[unit] = units[unit].cost + after;
+    _rank[unit] = units[unit].cost + after;
     if (units[unit].deps.empty()) {
       _roots.push_back(unit);
     }
   }
-  const auto longer = [&rank](size_t lhs, size_t rhs) {
-    return rank[lhs] != rank[rhs] ? rank[lhs] > rank[rhs] : lhs < rhs;
-  };
-  absl::c_sort(_roots, longer);
-  for (auto& dependents : _dependents) {
-    absl::c_sort(dependents, longer);
+  SDB_IF_FAILURE("irs::ExecuteMerge::Shuffle") {
+    absl::BitGen random;
+    for (auto& rank : _rank) {
+      rank = absl::Uniform<uint64_t>(random);
+    }
   }
 }
 
-void MergeRun::Run(duckdb::TaskExecutor& executor, size_t unit) {
+void MergeRun::RunNext(duckdb::TaskExecutor& executor) {
   if (Failed()) {
     return;
   }
+  const auto unit = Take();
   absl::Cleanup abort = [this]() noexcept {
     _failed.store(true, std::memory_order_relaxed);
     _plan.Abort();
@@ -127,21 +136,36 @@ void MergeRun::Run(duckdb::TaskExecutor& executor, size_t unit) {
       ready.push_back(next);
     }
   }
-  Submit(executor, std::move(ready));
+  Submit(executor, ready);
   std::move(abort).Cancel();
 }
 
 void MergeRun::Submit(duckdb::TaskExecutor& executor,
-                      std::vector<size_t> ready) {
-  SDB_IF_FAILURE("irs::ExecuteMerge::Shuffle") {
-    absl::c_shuffle(ready, absl::BitGen{});
+                      std::span<const size_t> ready) {
+  if (ready.empty() || Failed()) {
+    return;
   }
-  for (const auto unit : ready) {
-    if (Failed()) {
-      return;
+  const auto lower = [this](size_t lhs, size_t rhs) { return Lower(lhs, rhs); };
+  {
+    absl::MutexLock lock{&_mutex};
+    for (const auto unit : ready) {
+      _ready.push_back(unit);
+      absl::c_push_heap(_ready, lower);
     }
-    executor.ScheduleTask(duckdb::make_uniq<UnitTask>(executor, *this, unit));
   }
+  for (size_t task = 0; task != ready.size(); ++task) {
+    executor.ScheduleTask(duckdb::make_uniq<UnitTask>(executor, *this));
+  }
+}
+
+size_t MergeRun::Take() {
+  const auto lower = [this](size_t lhs, size_t rhs) { return Lower(lhs, rhs); };
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(!_ready.empty());
+  absl::c_pop_heap(_ready, lower);
+  const auto unit = _ready.back();
+  _ready.pop_back();
+  return unit;
 }
 
 }  // namespace

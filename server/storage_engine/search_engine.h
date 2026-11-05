@@ -65,10 +65,6 @@ class SearchEngine final {
   const duckdb::shared_ptr<duckdb::DedicatedPool>& MergePool() const noexcept {
     return _merge_pool;
   }
-  const duckdb::shared_ptr<duckdb::DedicatedPool>& ManualMergePool()
-    const noexcept {
-    return _manual_merge_pool;
-  }
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them.
@@ -115,7 +111,6 @@ class SearchEngine final {
   std::atomic<uint32_t> _running_ann_workers{0};
   std::unique_ptr<MergeRunner> _merges;
   duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
-  duckdb::shared_ptr<duckdb::DedicatedPool> _manual_merge_pool;
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.

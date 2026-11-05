@@ -34,7 +34,6 @@
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -208,13 +207,11 @@ search::MergeRoundPlan MergeTarget::Plan(
     });
 }
 
-void MergeTarget::Compact(const search::PlannedMerge& planned,
-                          const irs::MergeProgress& progress,
-                          const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env,
-                          search::MergeOrigin origin,
-                          utils::DrainGate::Pass maintenance,
-                          search::MergeResult& merged) const {
+void MergeTarget::Compact(
+  const search::PlannedMerge& planned, const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool, search::MergeOrigin origin,
+  utils::DrainGate::Pass maintenance, search::MergeResult& merged) const {
   merged = {};
   irs::MergeStats inputs;
   const auto planner = [&](const irs::IndexReader& index,
@@ -254,16 +251,12 @@ void MergeTarget::Compact(const search::PlannedMerge& planned,
   if (tickets.empty()) {
     return;
   }
-  const auto& pool = search::GetSearchEngine().ManualMergePool();
-  pool->SetThreads(duckdb::TaskScheduler::GetScheduler(
-                     irs::DuckDBEngine::Instance().instance())
-                     .NumberOfThreads());
   merged =
     irs::GetBlocking(BackgroundScheduler::instance()
                        .Run([&] {
                          return _store->RunMergeAsync(
                            std::move(maintenance), std::move(tickets.front()),
-                           progress, field_options, env, pool);
+                           progress, field_options, env, std::move(pool));
                        })
                        .On(nullptr));
 }
@@ -291,6 +284,8 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
   : _target{target},
     _options{target.PinOptions()},
     _context{context},
+    _pool{duckdb::TaskScheduler::GetScheduler(context).CreateDedicatedPool(
+      duckdb::TaskScheduler::QueryThreads(context))},
     _request{std::move(request)} {
   _target.Publish();
   search::GetSearchEngine().Maintenance().Enter(context).reset();
@@ -319,9 +314,10 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
   }
   const auto& planned = _plan.merges[_next++];
   do {
-    _target.Compact(
-      planned, progress, _options.get(), search::ManualCompactionSlot::AnnEnv(),
-      origin, search::GetSearchEngine().Maintenance().Enter(_context), merge);
+    _target.Compact(planned, progress, _options.get(),
+                    search::ManualCompactionSlot::AnnEnv(), _pool, origin,
+                    search::GetSearchEngine().Maintenance().Enter(_context),
+                    merge);
   } while (merge.backup);
   auto& stats = merge.outcome.stats;
   if (search::Produced(search::OutcomeOf(merge.outcome))) {

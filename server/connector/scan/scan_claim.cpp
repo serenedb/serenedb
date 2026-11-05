@@ -305,13 +305,13 @@ void TakeUnit(ScanGlobalState& g, ScanLocalState& l, ScanUnit unit) {
 
 uint32_t ClaimEnd(const ScanGlobalState& g, const SegmentWork& work,
                   uint32_t begin) {
-  if (work.all_live) {
+  if (work.AllLive()) {
     return begin + std::max<uint32_t>(1, (work.rg_count - begin) / g.workers);
   }
   const auto first = work.LiveBefore(begin);
   const auto take =
     std::max<uint32_t>(1, (work.LiveCount() - first) / g.workers);
-  return first + take < work.LiveCount() ? work.live_rgs[first + take]
+  return first + take < work.LiveCount() ? work.LiveAt(first + take)
                                          : work.rg_count;
 }
 
@@ -452,7 +452,7 @@ void LiveRowGroups(const irs::ColReader& col_reader,
                    std::span<const irs::ColFilterSpec> specs,
                    duckdb::ClientContext& context,
                    irs::ColFilterStateCache& states, uint64_t rows,
-                   uint64_t rg_size, std::vector<uint32_t>& live) {
+                   uint64_t rg_size, SegmentWork& work) {
   struct Zonemap {
     const irs::ColumnReader* reader = nullptr;
     const duckdb::ExpressionFilter* expr = nullptr;
@@ -486,14 +486,19 @@ void LiveRowGroups(const irs::ColReader& col_reader,
     }
     return true;
   };
-  live.clear();
-  for (uint64_t begin = 0; begin < rows; begin += rg_size) {
+  if (zonemaps.empty()) {
+    return;
+  }
+  std::vector<uint64_t> bits((work.rg_count + 63) / 64);
+  for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
+    const auto begin = uint64_t{rg} * rg_size;
     const auto end = std::min(rows, begin + rg_size);
     if (absl::c_none_of(
           zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
-      live.emplace_back(static_cast<uint32_t>(begin / rg_size));
+      bits[rg / 64] |= uint64_t{1} << (rg % 64);
     }
   }
+  work.SetLive(std::move(bits));
 }
 
 }  // namespace
@@ -563,8 +568,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
           work.rg_count > threads) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
         LiveRowGroups(*col_reader, cls.active, context, states, docs, g.rg_size,
-                      work.live_rgs);
-        work.all_live = work.live_rgs.size() == work.rg_count;
+                      work);
       }
     }
     work.run_end = run_end;

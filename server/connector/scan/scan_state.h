@@ -26,6 +26,7 @@
 #include <absl/synchronization/notification.h>
 
 #include <atomic>
+#include <bit>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/filter/table_filter_functions.hpp>
@@ -124,17 +125,60 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
-  bool all_live = true;
-  std::vector<uint32_t> live_rgs;
+  std::vector<uint64_t> live_bits;
+  std::vector<uint32_t> live_rank;
   std::unique_ptr<OrderedUnits> ordered;
 
-  uint32_t LiveBefore(uint32_t rg) const noexcept {
-    return all_live ? rg
-                    : static_cast<uint32_t>(absl::c_lower_bound(live_rgs, rg) -
-                                            live_rgs.begin());
+  void SetLive(std::vector<uint64_t> bits) {
+    live_bits.clear();
+    live_rank.clear();
+    uint32_t live = 0;
+    for (const auto word : bits) {
+      live += static_cast<uint32_t>(std::popcount(word));
+    }
+    if (live == rg_count) {
+      return;
+    }
+    live_rank.reserve(bits.size() + 1);
+    live = 0;
+    for (const auto word : bits) {
+      live_rank.emplace_back(live);
+      live += static_cast<uint32_t>(std::popcount(word));
+    }
+    live_rank.emplace_back(live);
+    live_bits = std::move(bits);
   }
+
+  bool AllLive() const noexcept { return live_bits.empty(); }
+
+  uint32_t LiveBefore(uint32_t rg) const noexcept {
+    if (AllLive()) {
+      return rg;
+    }
+    const auto word = rg / 64;
+    const auto bit = rg % 64;
+    if (bit == 0) {
+      return live_rank[word];
+    }
+    const auto below = live_bits[word] & ((uint64_t{1} << bit) - 1);
+    return live_rank[word] + static_cast<uint32_t>(std::popcount(below));
+  }
+
   uint32_t LiveCount() const noexcept {
-    return all_live ? rg_count : static_cast<uint32_t>(live_rgs.size());
+    return AllLive() ? rg_count : live_rank.back();
+  }
+
+  uint32_t LiveAt(uint32_t k) const noexcept {
+    if (AllLive()) {
+      return k;
+    }
+    const auto word = static_cast<uint32_t>(absl::c_upper_bound(live_rank, k) -
+                                            live_rank.begin() - 1);
+    auto bits = live_bits[word];
+    for (auto skip = k - live_rank[word]; skip != 0; --skip) {
+      bits &= bits - 1;
+    }
+    return word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
   }
 };
 

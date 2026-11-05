@@ -190,7 +190,7 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
   }
 
   void Entry(duckdb::idx_t database, duckdb::idx_t role,
-             const duckdb::CatalogEntry& entry) {
+             duckdb::CatalogEntry& entry) {
     const auto classid = CatalogClassOid(entry.type);
     if (classid == kInvalidOid ||
         entry.type == duckdb::CatalogType::INDEX_ENTRY ||
@@ -217,11 +217,12 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
       Depend(database, classid, entry.oid, 0, role, 'a');
     }
     if (entry.type == duckdb::CatalogType::VIEW_ENTRY) {
-      int32_t attnum = 0;
-      for (const auto& acl :
-           entry.Cast<duckdb::ViewCatalogEntry>().column_acls) {
-        ++attnum;
-        if (Names(acl, role)) {
+      auto& view = entry.Cast<duckdb::ViewCatalogEntry>();
+      for (const auto& column : view.column_acls) {
+        if (!Names(column.acl, role)) {
+          continue;
+        }
+        if (const auto attnum = ViewAttnum(Context(), view, column.column)) {
           Depend(database, classid, entry.oid, attnum, role, 'a');
         }
       }

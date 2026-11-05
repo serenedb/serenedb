@@ -94,6 +94,38 @@ db error: ERROR: column "nosuchcol"<slt:ignore>
 
 # ---- cleanup ----
 
+statement error
+GRANT SELECT (no_such_column) ON cpn_kostya TO cpn_vedernikoff;
+----
+db error: ERROR: column "no_such_column" of relation "cpn_kostya" does not exist
+
+
+statement ok
+CREATE VIEW cpn_kostya_view (renamed_id, payload) AS SELECT id, payload FROM cpn_kostya;
+
+
+statement error
+GRANT SELECT (id) ON cpn_kostya_view TO cpn_vedernikoff;
+----
+db error: ERROR: column "id" of relation "cpn_kostya_view" does not exist
+
+
+statement ok
+GRANT SELECT (renamed_id) ON cpn_kostya_view TO cpn_vedernikoff;
+
+
+query
+SELECT has_column_privilege('cpn_vedernikoff', 'cpn_kostya_view', 'renamed_id', 'SELECT') AS renamed,
+       has_column_privilege('cpn_vedernikoff', 'cpn_kostya_view', 'payload', 'SELECT') AS payload;
+----
+renamed	payload
+t	f
+
+
+statement ok
+DROP VIEW cpn_kostya_view;
+
+
 statement ok
 CREATE SEQUENCE cpn_sequence;
 

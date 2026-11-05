@@ -492,15 +492,13 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
                         RelationRights(relation)};
     if (!target.owner_only) {
       target.any_column = TableColumns(relation);
-      if (relation.column_acls) {
-        for (const auto& column : *relation.column_acls) {
-          target.columns.emplace_back(column.acl);
-        }
+      const auto* rows = relation.column_acls;
+      if (!rows && RelationType(relation) == CatalogType::VIEW_ENTRY) {
+        rows = &relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls;
       }
-      if (RelationType(relation) == CatalogType::VIEW_ENTRY) {
-        for (const auto& acl :
-             relation.entry->Cast<duckdb::ViewCatalogEntry>().column_acls) {
-          target.columns.emplace_back(acl);
+      if (rows) {
+        for (const auto& column : *rows) {
+          target.columns.emplace_back(column.acl);
         }
       }
     }

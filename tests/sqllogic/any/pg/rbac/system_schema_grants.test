@@ -158,4 +158,39 @@ postgres=UC/postgres,=U/postgres
 
 
 statement ok
+DROP ROLE IF EXISTS ssg_holder;
+
+
+statement ok
+CREATE ROLE ssg_holder;
+
+
+statement ok
+GRANT CREATE ON SCHEMA information_schema TO ssg_holder;
+
+
+skipif serenedb
+statement error
+DROP ROLE ssg_holder;
+----
+db error: ERROR: role "ssg_holder" cannot be dropped because some objects depend on it
+DETAIL: privileges for schema information_schema
+
+
+onlyif serenedb
+statement error
+DROP ROLE ssg_holder;
+----
+db error: ERROR: Cannot drop entry "ssg_holder" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE CREATE ON SCHEMA information_schema FROM ssg_holder;
+
+
+statement ok
+DROP ROLE ssg_holder;
+
+
+statement ok
 DROP ROLE ssg_reader, ssg_other;

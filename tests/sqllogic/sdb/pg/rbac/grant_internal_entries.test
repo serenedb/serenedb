@@ -1,0 +1,79 @@
+statement ok
+DROP ROLE IF EXISTS gie_r;
+
+
+statement ok
+CREATE ROLE gie_r;
+
+
+statement ok
+GRANT SELECT (foreign_data_wrapper_name) ON information_schema._pg_foreign_data_wrappers TO gie_r;
+
+
+query
+SELECT has_column_privilege('gie_r', 'information_schema._pg_foreign_data_wrappers', 'foreign_data_wrapper_name', 'SELECT') AS name_select,
+       has_table_privilege('gie_r', 'information_schema._pg_foreign_data_wrappers', 'SELECT') AS table_select;
+----
+name_select	table_select
+t	f
+
+
+statement error
+GRANT SELECT (no_such_column) ON information_schema._pg_foreign_data_wrappers TO gie_r;
+----
+db error: ERROR: column "no_such_column" of relation "_pg_foreign_data_wrappers" does not exist
+
+
+statement ok
+REVOKE SELECT (foreign_data_wrapper_name) ON information_schema._pg_foreign_data_wrappers FROM gie_r;
+
+
+query
+SELECT has_column_privilege('gie_r', 'information_schema._pg_foreign_data_wrappers', 'foreign_data_wrapper_name', 'SELECT') AS name_select;
+----
+name_select
+f
+
+
+statement ok
+GRANT USAGE ON TYPE hugeint TO gie_r;
+
+
+statement ok
+REVOKE USAGE ON TYPE hugeint FROM gie_r;
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO gie_r;
+
+
+statement ok
+SET ROLE gie_r;
+
+
+statement ok
+CREATE TABLE gie_t (h HUGEINT);
+
+
+statement ok
+DROP TABLE gie_t;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO PUBLIC;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM gie_r;
+
+
+statement ok
+DROP ROLE gie_r;

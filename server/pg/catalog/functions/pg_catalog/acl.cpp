@@ -43,6 +43,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -535,7 +536,9 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       auto& view =
         relation.entry.get_mutable()->Cast<duckdb::ViewCatalogEntry>();
       if (const auto attnum = ViewAttnum(*session.context, view, name)) {
-        return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
+        return ObjectTarget{
+          relation.permissions,
+          {duckdb::ColumnAclAt(view, relation.column_acls, attnum - 1)}};
       }
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -577,7 +580,9 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       if (static_cast<duckdb::idx_t>(attnum) > info->types.size()) {
         return std::nullopt;
       }
-      return ObjectTarget{relation.permissions, {view.ColumnAcl(attnum - 1)}};
+      return ObjectTarget{
+        relation.permissions,
+        {duckdb::ColumnAclAt(view, relation.column_acls, attnum - 1)}};
     }
     if (static_cast<duckdb::idx_t>(attnum) > count) {
       return std::nullopt;
@@ -1232,8 +1237,12 @@ void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
   std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text) {
-  auto item = items.begin();
-  for (auto& child : writer.WriteList(items.size())) {
+  const auto granting = [](const duckdb::AclItem& item) {
+    return !item.GrantsNothing();
+  };
+  auto granted = items | std::views::filter(granting);
+  auto item = granted.begin();
+  for (auto& child : writer.WriteList(absl::c_count_if(items, granting))) {
     text.clear();
     AppendAcl(text, *item++, roles);
     child.WriteValue(duckdb::string_t{text});

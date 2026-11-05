@@ -159,5 +159,33 @@ statement ok
 PRAGMA disable_progress_bar;
 
 
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/ess_export';
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+LOAD 'ess_missing_extension';
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+UPDATE EXTENSIONS;
+----
+db error: ERROR: permission denied: superuser required
+
+
+connection c_ved user=ess_vedernikoff password=ess_pw
+statement error
+COPY FROM DATABASE ${__DATABASE__} TO ess_target_${__DATABASE__};
+----
+db error: ERROR: permission denied: superuser required
+
+
 statement ok
 DROP ROLE ess_vedernikoff;

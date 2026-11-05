@@ -131,4 +131,20 @@ ALTER ROLE ers_vedernikoff RESET ALL;
 
 
 statement ok
+CREATE ROLE ers_other;
+
+
+connection c_ved user=ers_vedernikoff password=ers_pw
+statement error
+ALTER ROLE ers_other SET work_mem = '1MB';
+----
+db error: ERROR: permission denied to alter role
+DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "ers_other" may alter this role.
+
+
+statement ok
+DROP ROLE ers_other;
+
+
+statement ok
 DROP ROLE ers_vedernikoff;

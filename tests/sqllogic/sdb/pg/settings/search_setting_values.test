@@ -1,0 +1,74 @@
+statement error
+SET sdb_ivf_sample_factor = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_sample_factor": "0"
+
+
+statement error
+SET sdb_ivf_sample_factor = 1.5;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_sample_factor": "1.5"
+
+
+statement ok
+SET sdb_ivf_sample_factor = 0.5;
+
+
+statement ok
+RESET sdb_ivf_sample_factor;
+
+
+statement error
+SET sdb_ivf_posting_size = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_posting_size": "0"
+
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+
+statement ok
+RESET sdb_ivf_posting_size;
+
+
+statement error
+SET sdb_scan_split = 'sometimes';
+----
+db error: ERROR: invalid value for parameter "sdb_scan_split": "sometimes" (auto, tail, always or never)
+
+
+statement ok
+SET sdb_scan_split = 'NEVER';
+
+
+statement ok
+RESET sdb_scan_split;
+
+
+statement error
+SET sdb_scan_order = 'random';
+----
+db error: ERROR: invalid value for parameter "sdb_scan_order": "random" (auto, smallest_first, largest_first or order)
+
+
+statement ok
+SET sdb_scan_order = 'smallest_first';
+
+
+statement ok
+RESET sdb_scan_order;
+
+
+statement error
+SET sdb_scan_no_split_row_groups = 0;
+----
+db error: ERROR: sdb_scan_no_split_row_groups must be at least 1
+
+
+statement ok
+SET sdb_scan_no_split_row_groups = 2;
+
+
+statement ok
+RESET sdb_scan_no_split_row_groups;

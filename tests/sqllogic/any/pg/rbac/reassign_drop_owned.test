@@ -329,4 +329,53 @@ DROP OWNED BY rdo_carol;
 
 
 statement ok
+GRANT USAGE ON LANGUAGE sql TO rdo_bob;
+
+
+statement ok
+GRANT SELECT ON pg_catalog.pg_class TO rdo_bob;
+
+
+statement ok
+GRANT CREATE ON SCHEMA information_schema TO rdo_bob;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION upper(text) TO rdo_bob;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO rdo_bob;
+
+
+statement ok
+DROP OWNED BY rdo_carol;
+
+
+query
+SELECT position('rdo_bob=U/postgres' IN (SELECT array_to_string(lanacl, ',') FROM pg_language WHERE lanname = 'sql')) > 0 AS language,
+       position('rdo_bob=r/postgres' IN array_to_string(relacl, ',')) > 0 AS relation,
+       has_schema_privilege('rdo_bob', 'information_schema', 'CREATE') AS schema,
+       position('rdo_bob=X/postgres' IN (SELECT array_to_string(proacl, ',') FROM pg_proc WHERE oid = 'upper(text)'::regprocedure)) > 0 AS function,
+       position('rdo_bob=U/postgres' IN (SELECT array_to_string(typacl, ',') FROM pg_type WHERE oid = 'integer'::regtype)) > 0 AS type
+FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+language	relation	schema	function	type
+t	t	t	t	t
+
+
+statement ok
+DROP OWNED BY rdo_bob;
+
+
+query
+SELECT position('rdo_bob' IN array_to_string(relacl, ',')) > 0 AS relation,
+       has_schema_privilege('rdo_bob', 'information_schema', 'CREATE') AS schema
+FROM pg_class WHERE oid = 'pg_catalog.pg_class'::regclass;
+----
+relation	schema
+f	f
+
+
+statement ok
 DROP ROLE rdo_bob, rdo_carol;

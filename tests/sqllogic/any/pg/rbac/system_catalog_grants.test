@@ -23,6 +23,14 @@ GRANT SELECT ON pg_catalog.pg_authid TO scg_monitor;
 
 
 query
+SELECT classid::regclass::text AS class, objid::regclass::text AS object, objsubid, deptype
+FROM pg_shdepend WHERE refobjid = 'scg_monitor'::regrole;
+----
+class	object	objsubid	deptype
+pg_class	pg_authid	0	a
+
+
+query
 SELECT has_table_privilege('scg_monitor', 'pg_catalog.pg_authid', 'SELECT') AS authid;
 ----
 authid
@@ -155,6 +163,15 @@ db error: ERROR: column "no_such_column" of relation "pg_authid" does not exist
 
 statement ok
 GRANT SELECT (rolname, rolsuper) ON pg_catalog.pg_authid TO scg_columns;
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS object, objsubid, deptype
+FROM pg_shdepend WHERE refobjid = 'scg_columns'::regrole ORDER BY objsubid;
+----
+class	object	objsubid	deptype
+pg_class	pg_authid	2	a
+pg_class	pg_authid	3	a
 
 
 query

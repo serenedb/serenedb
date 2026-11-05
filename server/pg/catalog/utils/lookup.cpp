@@ -299,8 +299,10 @@ std::optional<RelationAccess> RelationByOid(
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation},
-                          &PrivilegePermissions(*session.context, *entry)};
+    return RelationAccess{
+      {*relation},
+      &PrivilegePermissions(*session.context, *entry),
+      duckdb::EffectiveColumnAcls(*session.context, *entry).get()};
   }
   if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
     const auto table_oid =

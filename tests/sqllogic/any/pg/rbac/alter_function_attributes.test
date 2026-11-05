@@ -197,6 +197,54 @@ SELECT afa_read(1);
 db error: ERROR: permission denied for function afa_read
 
 
+onlyif postgres
+statement error
+ALTER FUNCTION afa_missing(int) STABLE;
+----
+db error: ERROR: function afa_missing(integer) does not exist
+
+
+skipif postgres
+statement error
+ALTER FUNCTION afa_missing(int) STABLE;
+----
+db error: ERROR: function afa_missing(INTEGER) does not exist
+
+
+statement error
+ALTER FUNCTION afa_missing STABLE;
+----
+db error: ERROR: could not find a function named "afa_missing"
+
+
+onlyif postgres
+connection c_user user=afa_user password=afa_pw
+statement error
+ALTER FUNCTION lower(text) STABLE;
+----
+db error: ERROR: must be owner of function lower
+
+
+skipif postgres
+connection c_user user=afa_user password=afa_pw
+statement error
+ALTER FUNCTION lower(text) STABLE;
+----
+db error: ERROR: permission denied for function lower
+
+
+onlyif postgres
+statement ok
+ALTER FUNCTION afa_ov(int) STRICT;
+
+
+skipif postgres
+statement error
+ALTER FUNCTION afa_ov(int) STRICT;
+----
+db error: ERROR: ALTER FUNCTION cannot change whether a function is strict
+
+
 statement ok
 DROP FUNCTION afa_read(int);
 

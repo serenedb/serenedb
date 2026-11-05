@@ -167,7 +167,7 @@ SELECT pg_get_userbyid(relowner) AS owner,
 FROM pg_class WHERE relname = 'ccr_m'
 ----
 owner	acl
-ccr_owner	ccr_grantee=r/ccr_owner
+ccr_owner	ccr_owner=arwdDxtm/ccr_owner|ccr_grantee=r/ccr_owner
 
 
 statement ok

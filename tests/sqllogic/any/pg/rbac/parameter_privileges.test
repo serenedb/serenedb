@@ -177,6 +177,20 @@ grants
 
 
 statement ok
+SET ROLE gsp_user;
+
+
+statement error
+GRANT SET ON PARAMETER session_replication_role TO gsp_group;
+----
+db error: ERROR: permission denied for parameter session_replication_role
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
 DROP ROLE gsp_user;
 
 

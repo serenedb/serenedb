@@ -1,0 +1,91 @@
+control substitution on
+
+
+statement ok
+DROP ROLE IF EXISTS giad_r;
+
+
+statement ok
+CREATE ROLE giad_r;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA main GRANT SELECT ON TABLES TO giad_r;
+
+
+query
+SELECT count(*) AS n FROM pg_default_acl WHERE defaclnamespace = 'main'::regnamespace;
+----
+n
+1
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA main REVOKE SELECT ON TABLES FROM giad_r;
+
+
+query
+SELECT count(*) AS n FROM pg_default_acl WHERE defaclnamespace = 'main'::regnamespace;
+----
+n
+0
+
+
+statement ok
+ATTACH ':memory:' AS giad_mem_${__DATABASE__};
+
+
+statement ok
+USE giad_mem_${__DATABASE__};
+
+
+statement error
+GRANT EXECUTE ON FUNCTION lower(text) TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+GRANT USAGE ON TYPE int4 TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+GRANT USAGE ON LANGUAGE sql TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement error
+ALTER DEFAULT PRIVILEGES IN SCHEMA main GRANT SELECT ON TABLES TO giad_r;
+----
+db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+
+
+statement ok
+DROP OWNED BY giad_r;
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DETACH giad_mem_${__DATABASE__};
+
+
+statement ok
+DROP ROLE giad_r;

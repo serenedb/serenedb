@@ -84,6 +84,8 @@ The grantee can then pass the privilege on:
 
 <SqlLogicTest id="security/privileges_advanced/example_002" />
 
+An object whose `*acl` column is `NULL` has its default privileges, such as `EXECUTE` for `PUBLIC` on a function. Once every grant on it is revoked, the column shows an empty list, `{}`: no role holds a privilege on the object, `PUBLIC` included, apart from its owner and superusers.
+
 ## PUBLIC
 
 `PUBLIC` is a pseudo-role meaning every role, present and future:
@@ -117,6 +119,8 @@ When a privilege was passed on via `WITH GRANT OPTION`, those onward grants depe
 Ownership can be transferred with `ALTER ... OWNER TO`. The new owner immediately holds every privilege on the object, including the right to drop it:
 
 <SqlLogicTest id="security/privileges/example_008" />
+
+The new owner takes the previous owner's place in the object's access-control list and in those of its columns. Grants the previous owner made stay in place, recorded as granted by the new owner, and the new owner may revoke them.
 
 `OWNER TO` works on tables, views, sequences, schemas, types, functions and procedures (`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER ROUTINE`), databases, text search dictionaries, subscriptions, jobs and foreign servers. A role that is not a superuser must own the object and be able to `SET ROLE` to the new owner. The new owner of an object in a schema needs `CREATE` on that schema, and changing the owner of a schema or a subscription needs `CREATE` on the database. Changing the owner of a database needs the `CREATEDB` attribute. [`REASSIGN OWNED BY`](roles.md#dropping-roles) transfers every object a role owns at once.
 

@@ -123,6 +123,46 @@ t	f	t
 
 
 statement ok
+DROP ROLE IF EXISTS prr_maint;
+
+
+statement ok
+CREATE ROLE prr_maint;
+
+
+statement ok
+GRANT INSERT ON prr_s.prr_t TO prr_maint;
+
+
+query
+SELECT has_table_privilege('prr_reader', 'prr_s.prr_t', 'SELECT') AS reader_select,
+       has_table_privilege('prr_maint', 'prr_s.prr_t', 'MAINTAIN') AS maint_maintain;
+----
+reader_select	maint_maintain
+t	f
+
+
+statement ok
+GRANT pg_maintain TO prr_maint;
+
+
+query
+SELECT has_table_privilege('prr_maint', 'prr_s.prr_t', 'MAINTAIN') AS can_maintain,
+       has_table_privilege('prr_maint', 'prr_s.prr_t', 'SELECT') AS can_select;
+----
+can_maintain	can_select
+t	f
+
+
+statement ok
+REVOKE INSERT ON prr_s.prr_t FROM prr_maint;
+
+
+statement ok
+DROP ROLE prr_maint;
+
+
+statement ok
 GRANT pg_write_all_data TO prr_writer;
 
 

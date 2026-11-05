@@ -100,6 +100,13 @@ ALTER ROLE erda_child CONNECTION LIMIT 3;
 
 connection c_creator user=erda_creator password=erda_pw
 statement error
+GRANT erda_missing TO erda_child;
+----
+db error: ERROR: role "erda_missing" does not exist
+
+
+connection c_creator user=erda_creator password=erda_pw
+statement error
 ALTER ROLE erda_child CREATEDB;
 ----
 db error: ERROR: permission denied to alter role

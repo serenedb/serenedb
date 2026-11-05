@@ -941,8 +941,9 @@ class SystemScan {
 
   template<duckdb::PhysicalType E, bool Nullable, typename R>
   void PutList(const SystemVector& target, R& items) {
-    if constexpr (Nullable && std::is_same_v<std::ranges::range_value_t<R>,
-                                             duckdb::AclItem>) {
+    constexpr bool kAcl =
+      std::is_same_v<std::ranges::range_value_t<R>, duckdb::AclItem>;
+    if constexpr (Nullable && kAcl) {
       if (std::ranges::empty(items)) {
         target.validity->SetInvalid(_row);
         return;
@@ -950,18 +951,23 @@ class SystemScan {
     }
     auto& vector = *target.vector;
     const auto offset = duckdb::ListVector::GetListSize(vector);
-    const auto length = static_cast<duckdb::idx_t>(std::ranges::size(items));
-    duckdb::ListVector::Reserve(vector, offset + length);
+    duckdb::ListVector::Reserve(
+      vector, offset + static_cast<duckdb::idx_t>(std::ranges::size(items)));
     auto& child = duckdb::ListVector::GetChildMutable(vector);
     const SystemVector elements{&child,
                                 duckdb::FlatVector::GetDataMutable(child),
                                 &duckdb::FlatVector::ValidityMutable(child)};
     auto row = offset;
     for (const auto& item : items) {
+      if constexpr (kAcl) {
+        if (item.GrantsNothing()) {
+          continue;
+        }
+      }
       Put<E>(elements, row++, item);
     }
-    Cells<duckdb::list_entry_t>(target)[_row] = {offset, length};
-    duckdb::ListVector::SetListSize(vector, offset + length);
+    Cells<duckdb::list_entry_t>(target)[_row] = {offset, row - offset};
+    duckdb::ListVector::SetListSize(vector, row);
   }
 
   template<const SystemSql& Sql, uint32_t C>

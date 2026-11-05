@@ -161,3 +161,48 @@ t
 
 statement ok retry 40 backoff 250ms
 DROP ROLE lgp_user;
+
+
+statement ok
+DROP ROLE IF EXISTS lgp_lang;
+
+
+statement ok
+CREATE ROLE lgp_lang;
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO lgp_lang;
+
+
+query
+SELECT objid = (SELECT oid FROM pg_language WHERE lanname = 'sql') AS sql, objsubid, deptype
+FROM pg_shdepend
+WHERE refobjid = 'lgp_lang'::regrole AND classid = 'pg_language'::regclass
+  AND dbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+sql	objsubid	deptype
+t	0	a
+
+
+skipif serenedb
+statement error
+DROP ROLE lgp_lang;
+----
+db error: ERROR: role "lgp_lang" cannot be dropped because some objects depend on it
+DETAIL: privileges for language sql
+
+
+onlyif serenedb
+statement error
+DROP ROLE lgp_lang;
+----
+db error: ERROR: Cannot drop entry "lgp_lang" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON LANGUAGE sql FROM lgp_lang;
+
+
+statement ok
+DROP ROLE lgp_lang;

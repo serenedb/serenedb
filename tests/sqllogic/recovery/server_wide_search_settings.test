@@ -1,0 +1,42 @@
+statement ok
+SET sdb_pattern_cache_size = 1048576;
+
+
+query
+SELECT current_setting('sdb_pattern_cache_size') AS size;
+----
+size
+1048576
+
+
+statement ok
+RESET sdb_pattern_cache_size;
+
+
+query
+SELECT current_setting('sdb_pattern_cache_size') AS size;
+----
+size
+0
+
+
+statement ok
+SET GLOBAL recovery_replay_depth = 8;
+
+
+query
+SELECT current_setting('recovery_replay_depth') AS depth;
+----
+depth
+8
+
+
+statement ok
+RESET GLOBAL recovery_replay_depth;
+
+
+query
+SELECT current_setting('recovery_replay_depth') AS depth;
+----
+depth
+0

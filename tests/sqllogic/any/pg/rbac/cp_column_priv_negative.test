@@ -95,6 +95,20 @@ db error: ERROR: column "nosuchcol"<slt:ignore>
 # ---- cleanup ----
 
 statement ok
+CREATE SEQUENCE cpn_sequence;
+
+
+statement error
+GRANT SELECT (id) ON SEQUENCE cpn_sequence TO cpn_vedernikoff;
+----
+db error: ERROR: column privileges are only valid for relations
+
+
+statement ok
+DROP SEQUENCE cpn_sequence;
+
+
+statement ok
 DROP TABLE cpn_kostya;
 
 

@@ -185,7 +185,60 @@ postgres=U/postgres,=U/postgres
 
 
 statement ok
+REVOKE USAGE ON TYPE int4 FROM PUBLIC;
+
+
+statement ok
+SET ROLE btg_other;
+
+
+onlyif postgres
+statement error
+GRANT USAGE ON TYPE int4 TO btg_user;
+----
+db error: ERROR: permission denied for type int4
+
+
+skipif postgres
+statement error
+GRANT USAGE ON TYPE int4 TO btg_user;
+----
+db error: ERROR: permission denied for type integer
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO PUBLIC;
+
+
+statement ok
 REVOKE CREATE ON SCHEMA public FROM btg_other;
+
+
+statement ok
+GRANT USAGE ON TYPE int4 TO btg_other;
+
+
+skipif serenedb
+statement error
+DROP ROLE btg_other;
+----
+db error: ERROR: role "btg_other" cannot be dropped because some objects depend on it
+DETAIL: privileges for type integer
+
+
+onlyif serenedb
+statement error
+DROP ROLE btg_other;
+----
+db error: ERROR: Cannot drop entry "btg_other" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+REVOKE USAGE ON TYPE int4 FROM btg_other;
 
 
 statement ok

@@ -1,0 +1,362 @@
+statement ok
+DROP DATABASE IF EXISTS rtea_db;
+
+
+statement ok
+DROP TABLE IF EXISTS rtea_t;
+
+
+statement ok
+DROP ROLE IF EXISTS rtea_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS rtea_other;
+
+
+statement ok
+DROP ROLE IF EXISTS rtea_new;
+
+
+statement ok
+CREATE ROLE rtea_owner;
+
+
+statement ok
+CREATE ROLE rtea_other;
+
+
+statement ok
+CREATE ROLE rtea_new;
+
+
+statement ok
+CREATE FUNCTION rtea_f() RETURNS integer LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+ALTER FUNCTION rtea_f() OWNER TO rtea_owner;
+
+
+statement ok
+SET ROLE rtea_owner;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION rtea_f() FROM PUBLIC;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION rtea_f() FROM rtea_owner;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_function_privilege('rtea_other', 'rtea_f()', 'EXECUTE') AS other_execute;
+----
+other_execute
+f
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'rtea_f';
+----
+acl
+(empty)
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_proc'::regclass, 'rtea_f()'::regprocedure, 0), ',') AS acl;
+----
+acl
+(empty)
+
+
+statement ok
+SET ROLE rtea_other;
+
+
+statement error
+SELECT rtea_f();
+----
+db error: ERROR: permission denied for function rtea_f
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+CREATE TYPE rtea_ty AS ENUM ('a');
+
+
+statement ok
+ALTER TYPE rtea_ty OWNER TO rtea_owner;
+
+
+statement ok
+SET ROLE rtea_owner;
+
+
+statement ok
+REVOKE USAGE ON TYPE rtea_ty FROM PUBLIC;
+
+
+statement ok
+REVOKE USAGE ON TYPE rtea_ty FROM rtea_owner;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_type_privilege('rtea_other', 'rtea_ty', 'USAGE') AS other_usage;
+----
+other_usage
+f
+
+
+query
+SELECT array_to_string(typacl, ',') AS acl FROM pg_type WHERE typname = 'rtea_ty';
+----
+acl
+(empty)
+
+
+statement ok
+REVOKE USAGE ON LANGUAGE sql FROM PUBLIC;
+
+
+statement ok
+REVOKE USAGE ON LANGUAGE sql FROM postgres;
+
+
+query
+SELECT has_language_privilege('rtea_other', 'sql', 'USAGE') AS other_usage;
+----
+other_usage
+f
+
+
+query
+SELECT array_to_string(lanacl, ',') AS acl FROM pg_language WHERE lanname = 'sql';
+----
+acl
+(empty)
+
+
+statement ok
+GRANT USAGE ON LANGUAGE sql TO PUBLIC;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM PUBLIC;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION lower(text) FROM postgres;
+
+
+query
+SELECT has_function_privilege('rtea_other', 'lower(text)', 'EXECUTE') AS other_execute;
+----
+other_execute
+f
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE oid = 'lower(text)'::regprocedure;
+----
+acl
+(empty)
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION lower(text) TO PUBLIC;
+
+
+statement ok
+CREATE DATABASE rtea_db;
+
+
+statement ok
+ALTER DATABASE rtea_db OWNER TO rtea_owner;
+
+
+statement ok
+SET ROLE rtea_owner;
+
+
+statement ok
+REVOKE ALL ON DATABASE rtea_db FROM PUBLIC;
+
+
+statement ok
+REVOKE ALL ON DATABASE rtea_db FROM rtea_owner;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_database_privilege('rtea_other', 'rtea_db', 'CONNECT') AS other_connect;
+----
+other_connect
+f
+
+
+query
+SELECT array_to_string(datacl, ',') AS acl FROM pg_database WHERE datname = 'rtea_db';
+----
+acl
+(empty)
+
+
+statement ok
+DROP DATABASE rtea_db;
+
+
+statement ok
+CREATE FUNCTION rtea_g() RETURNS integer LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+ALTER FUNCTION rtea_g() OWNER TO rtea_owner;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION rtea_g() FROM PUBLIC;
+
+
+statement ok
+ALTER FUNCTION rtea_g() OWNER TO rtea_new;
+
+
+query
+SELECT has_function_privilege('rtea_other', 'rtea_g()', 'EXECUTE') AS other_execute;
+----
+other_execute
+f
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'rtea_g';
+----
+acl
+rtea_new=X/rtea_new
+
+
+statement ok
+CREATE TABLE rtea_t (a integer);
+
+
+statement ok
+ALTER TABLE rtea_t OWNER TO rtea_owner;
+
+
+statement ok
+SET ROLE rtea_owner;
+
+
+statement ok
+GRANT SELECT (a) ON rtea_t TO rtea_other;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+ALTER TABLE rtea_t OWNER TO rtea_new;
+
+
+query
+SELECT array_to_string(attacl, ',') AS acl FROM pg_attribute WHERE attrelid = 'rtea_t'::regclass AND attname = 'a';
+----
+acl
+rtea_other=r/rtea_new
+
+
+statement ok
+SET ROLE rtea_new;
+
+
+statement ok
+REVOKE SELECT (a) ON rtea_t FROM rtea_other;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_column_privilege('rtea_other', 'rtea_t', 'a', 'SELECT') AS other_select;
+----
+other_select
+f
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rtea_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE rtea_owner REVOKE EXECUTE ON FUNCTIONS FROM rtea_owner;
+
+
+query
+SELECT array_to_string(defaclacl, ',') AS acl FROM pg_default_acl WHERE defaclrole = 'rtea_owner'::regrole;
+----
+acl
+(empty)
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO rtea_owner;
+
+
+statement ok
+SET ROLE rtea_owner;
+
+
+statement ok
+CREATE FUNCTION rtea_h() RETURNS integer LANGUAGE sql AS 'SELECT 3';
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT array_to_string(proacl, ',') AS acl FROM pg_proc WHERE proname = 'rtea_h';
+----
+acl
+NULL
+
+
+query
+SELECT has_function_privilege('rtea_other', 'rtea_h()', 'EXECUTE') AS other_execute;
+----
+other_execute
+t
+
+
+statement ok
+DROP OWNED BY rtea_owner, rtea_new;
+
+
+statement ok
+DROP ROLE rtea_owner;
+
+
+statement ok
+DROP ROLE rtea_other;
+
+
+statement ok
+DROP ROLE rtea_new;

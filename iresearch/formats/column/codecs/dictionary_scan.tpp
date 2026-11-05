@@ -238,18 +238,18 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     return Bound([&](std::string_view v) { return v <= key; });
   }
 
-  std::pair<uint32_t, uint32_t> EqualRange(std::string_view key) {
+  EntryRange EqualRange(std::string_view key) {
     return {Lower(key), Upper(key)};
   }
 
-  std::optional<EntryRanges> ResolveFilter(const duckdb::TableFilter& filter) {
+  bool ResolveFilter(const duckdb::TableFilter& filter, EntryRanges& out) {
     if (filter.filter_type != duckdb::TableFilterType::EXPRESSION_FILTER) {
-      return std::nullopt;
+      return false;
     }
-    return Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr);
+    return Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, out);
   }
 
-  std::optional<EntryRanges> Resolve(const duckdb::Expression& expr) {
+  bool Resolve(const duckdb::Expression& expr, EntryRanges& out) {
     const uint32_t n = entries.header.entry_count;
     switch (expr.GetExpressionClass()) {
       case duckdb::ExpressionClass::BOUND_OPERATOR: {
@@ -257,91 +257,92 @@ struct DictionaryScan final : duckdb::SegmentScanState {
         const auto& children = op.GetChildren();
         if (children.empty() ||
             !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
-          return std::nullopt;
+          return false;
         }
         switch (op.GetExpressionType()) {
           case duckdb::ExpressionType::OPERATOR_IS_NULL:
           case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL:
             if (children.size() != 1) {
-              return std::nullopt;
+              return false;
             }
-            return op.GetExpressionType() ==
-                       duckdb::ExpressionType::OPERATOR_IS_NULL
-                     ? EntryRanges{{0, 1}}
-                     : Normalize({{1, n}});
+            out =
+              op.GetExpressionType() == duckdb::ExpressionType::OPERATOR_IS_NULL
+                ? EntryRanges{{0, 1}}
+                : Normalize({{1, n}});
+            return true;
           case duckdb::ExpressionType::COMPARE_IN:
             if constexpr (Sorted(Leaf::kCodec)) {
-              return ResolveIn(children);
+              return ResolveIn(children, out);
             } else {
-              return std::nullopt;
+              return false;
             }
           default:
-            return std::nullopt;
+            return false;
         }
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
         if constexpr (Sorted(Leaf::kCodec)) {
-          return ResolveComparison(
-            expr.Cast<duckdb::BoundFunctionExpression>());
+          return ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
+                                   out);
         } else {
-          return std::nullopt;
+          return false;
         }
       case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
         const auto& conjunction =
           expr.Cast<duckdb::BoundConjunctionExpression>();
         const auto kind = conjunction.GetExpressionType();
-        if (kind != duckdb::ExpressionType::CONJUNCTION_AND &&
-            kind != duckdb::ExpressionType::CONJUNCTION_OR) {
-          return std::nullopt;
+        const auto& children = conjunction.GetChildren();
+        if ((kind != duckdb::ExpressionType::CONJUNCTION_AND &&
+             kind != duckdb::ExpressionType::CONJUNCTION_OR) ||
+            children.empty() || !Resolve(*children[0], out)) {
+          return false;
         }
-        std::optional<EntryRanges> acc;
-        for (const auto& child : conjunction.GetChildren()) {
-          auto ranges = Resolve(*child);
-          if (!ranges) {
-            return std::nullopt;
+        EntryRanges ranges;
+        for (size_t i = 1; i < children.size(); ++i) {
+          if (!Resolve(*children[i], ranges)) {
+            return false;
           }
-          if (!acc) {
-            acc = std::move(ranges);
-          } else if (kind == duckdb::ExpressionType::CONJUNCTION_AND) {
-            acc = Intersect(*acc, *ranges);
+          if (kind == duckdb::ExpressionType::CONJUNCTION_AND) {
+            out = Intersect(out, ranges);
           } else {
-            acc->insert(acc->end(), ranges->begin(), ranges->end());
-            acc = Normalize(std::move(*acc));
+            out.insert(out.end(), ranges.begin(), ranges.end());
+            out = Normalize(std::move(out));
           }
         }
-        return acc;
+        return true;
       }
       default:
-        return std::nullopt;
+        return false;
     }
   }
 
-  std::optional<EntryRanges> ResolveIn(const auto& children) {
-    EntryRanges out;
+  bool ResolveIn(const auto& children, EntryRanges& out) {
+    EntryRanges ranges;
     for (size_t i = 1; i < children.size(); ++i) {
       const auto* value = StringConstant(*children[i]);
       if (!value) {
-        return std::nullopt;
+        return false;
       }
       if (!value->IsNull()) {
-        out.push_back(EqualRange(duckdb::StringValue::Get(*value)));
+        ranges.emplace_back(EqualRange(duckdb::StringValue::Get(*value)));
       }
     }
-    return Normalize(std::move(out));
+    out = Normalize(std::move(ranges));
+    return true;
   }
 
-  std::optional<EntryRanges> ResolveComparison(
-    const duckdb::BoundFunctionExpression& fn) {
+  bool ResolveComparison(const duckdb::BoundFunctionExpression& fn,
+                         EntryRanges& out) {
     const uint32_t n = entries.header.entry_count;
     auto comparison = fn.GetExpressionType();
     if (!duckdb::BoundComparisonExpression::IsComparison(comparison)) {
-      return std::nullopt;
+      return false;
     }
     const auto constant =
       duckdb::ExpressionFilter::TryGetColumnConstantComparison(fn, comparison);
     const auto* value = constant ? StringConstant(*constant) : nullptr;
     if (!value) {
-      return std::nullopt;
+      return false;
     }
     switch (comparison) {
       case duckdb::ExpressionType::COMPARE_EQUAL:
@@ -352,28 +353,36 @@ struct DictionaryScan final : duckdb::SegmentScanState {
       case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
         break;
       default:
-        return std::nullopt;
+        return false;
     }
     if (value->IsNull()) {
-      return EntryRanges{};
+      out.clear();
+      return true;
     }
     const std::string_view key = duckdb::StringValue::Get(*value);
     switch (comparison) {
       case duckdb::ExpressionType::COMPARE_EQUAL:
-        return Normalize({EqualRange(key)});
+        out = Normalize({EqualRange(key)});
+        break;
       case duckdb::ExpressionType::COMPARE_NOTEQUAL: {
         const auto [lo, hi] = EqualRange(key);
-        return Normalize({{1, lo}, {hi, n}});
+        out = Normalize({{1, lo}, {hi, n}});
+        break;
       }
       case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        return Normalize({{1, Lower(key)}});
+        out = Normalize({{1, Lower(key)}});
+        break;
       case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-        return Normalize({{1, Upper(key)}});
+        out = Normalize({{1, Upper(key)}});
+        break;
       case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-        return Normalize({{Upper(key), n}});
+        out = Normalize({{Upper(key), n}});
+        break;
       default:
-        return Normalize({{Lower(key), n}});
+        out = Normalize({{Lower(key), n}});
+        break;
     }
+    return true;
   }
 
   const duckdb::SelectionVector& Codes(idx_t start, idx_t count) {
@@ -468,10 +477,10 @@ struct DictionaryScan final : duckdb::SegmentScanState {
     SDB_ASSERT(!entries.streams);
     const auto dict_count = entries.header.entry_count;
     if (verdicts.empty()) {
-      if (const auto ranges = ResolveFilter(filter)) {
+      if (EntryRanges ranges; ResolveFilter(filter, ranges)) {
         verdicts.assign(dict_count, kRejected);
         idx_t matched = 0;
-        for (const auto& [lo, hi] : *ranges) {
+        for (const auto& [lo, hi] : ranges) {
           std::memset(verdicts.data() + lo, kAccepted, hi - lo);
           matched += hi - lo;
         }

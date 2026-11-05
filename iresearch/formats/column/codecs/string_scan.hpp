@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <compare>
 #include <cstdint>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
@@ -100,7 +101,14 @@ NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h);
 const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
                                    const Header& header);
 
-using EntryRanges = std::vector<std::pair<uint32_t, uint32_t>>;
+struct EntryRange {
+  uint32_t lo;
+  uint32_t hi;
+
+  auto operator<=>(const EntryRange&) const noexcept = default;
+};
+
+using EntryRanges = std::vector<EntryRange>;
 
 EntryRanges Normalize(EntryRanges ranges);
 

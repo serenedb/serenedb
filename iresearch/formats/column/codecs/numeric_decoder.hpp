@@ -239,11 +239,11 @@ class FrameDecoder {
       if (_raw.size() < m.frame.raw_len) {
         _raw.resize(m.frame.raw_len);
       }
-      SDB_ENSURE(Lz4::Decompressor::DecompressPrefix(
-                   reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
-                   reinterpret_cast<char*>(_raw.data()), need,
-                   m.frame.raw_len) != 0,
-                 "numeric codec: corrupted frame");
+      SDB_ENSURE(
+        Lz4::Decompressor::DecompressPrefix(
+          reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
+          reinterpret_cast<char*>(_raw.data()), need, m.frame.raw_len) != 0,
+        "numeric codec: corrupted frame");
       _source = _raw.data();
     } else {
       _source = Inflated(m, nullptr, f, _source_held);

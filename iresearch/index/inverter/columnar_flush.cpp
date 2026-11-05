@@ -32,7 +32,9 @@
 #include <utility>
 #include <variant>
 
+#include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 namespace {
@@ -44,17 +46,6 @@ constexpr uint32_t kRekeyMaxSkip = 64;
 uint64_t PrefixKey(const duckdb::string_t& term) noexcept {
   uint64_t key;
   std::memcpy(&key, term.GetData(), sizeof key);
-  return duckdb::BSwapIfLE(key);
-}
-
-uint64_t PrefixKeyAt(const duckdb::string_t& term, uint32_t skip) noexcept {
-  const uint32_t size = term.GetSize();
-  if (size <= skip) {
-    return 0;
-  }
-  uint64_t key = 0;
-  std::memcpy(&key, term.GetData() + skip,
-              std::min<uint32_t>(sizeof key, size - skip));
   return duckdb::BSwapIfLE(key);
 }
 
@@ -355,7 +346,7 @@ void ScatteredField::RekeyPastSharedPrefix(
     min_key = std::numeric_limits<uint64_t>::max();
     max_key = 0;
     for (auto& term : ranked) {
-      const auto key = PrefixKeyAt(entries[term.id], skip);
+      const auto key = HeadAt(AsBytesView(entries[term.id]), skip);
       term.key = key;
       min_key = std::min(min_key, key);
       max_key = std::max(max_key, key);

@@ -77,8 +77,8 @@ EntryRanges Normalize(EntryRanges ranges) {
     if (lo >= hi) {
       continue;
     }
-    if (kept != 0 && lo <= ranges[kept - 1].second) {
-      ranges[kept - 1].second = std::max(ranges[kept - 1].second, hi);
+    if (kept != 0 && lo <= ranges[kept - 1].hi) {
+      ranges[kept - 1].hi = std::max(ranges[kept - 1].hi, hi);
     } else {
       ranges[kept++] = {lo, hi};
     }
@@ -92,12 +92,12 @@ EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {
   size_t i = 0;
   size_t j = 0;
   while (i < a.size() && j < b.size()) {
-    const auto lo = std::max(a[i].first, b[j].first);
-    const auto hi = std::min(a[i].second, b[j].second);
+    const auto lo = std::max(a[i].lo, b[j].lo);
+    const auto hi = std::min(a[i].hi, b[j].hi);
     if (lo < hi) {
       out.emplace_back(lo, hi);
     }
-    if (a[i].second < b[j].second) {
+    if (a[i].hi < b[j].hi) {
       ++i;
     } else {
       ++j;

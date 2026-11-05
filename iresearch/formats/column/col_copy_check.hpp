@@ -20,77 +20,24 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
-
 #include <cstddef>
 #include <cstdint>
-#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <memory>
 
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/reencode_cache.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/types.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
-namespace codecs {
-
-class TrainedDictionary;
-
-}  // namespace codecs
-
-class ColReader;
-class ColumnReader;
 
 inline constexpr size_t kReencodeSampleRowGroups = 2;
 inline constexpr size_t kCopyMinRowGroups = 4 * kReencodeSampleRowGroups;
 inline constexpr uint64_t kReencodeMinSavingsPercent = 10;
 
-struct ReencodeEstimate {
-  uint64_t stored_bytes = 0;
-  uint64_t reencoded_bytes = 0;
-  bool codec_changed = false;
-};
-
 bool ReencodePays(const ReencodeEstimate& estimate) noexcept;
-
-struct ReencodeKey {
-  bool skip_validity = false;
-  duckdb::CompressionType compression =
-    duckdb::CompressionType::COMPRESSION_AUTO;
-  ColCodecParams codec_params;
-  uint32_t row_group_size = 0;
-
-  friend bool operator==(const ReencodeKey&, const ReencodeKey&) = default;
-};
-
-class ReencodeCache {
- public:
-  template<typename Trial>
-  ReencodeEstimate Estimate(field_id column, const ReencodeKey& key,
-                            Trial&& trial) {
-    if (ReencodeEstimate cached; Find(column, key, cached)) {
-      return cached;
-    }
-    const ReencodeEstimate estimate = trial();
-    Store(column, key, estimate);
-    return estimate;
-  }
-
- private:
-  struct Entry {
-    ReencodeKey key;
-    ReencodeEstimate estimate;
-  };
-
-  bool Find(field_id column, const ReencodeKey& key,
-            ReencodeEstimate& estimate) const;
-  void Store(field_id column, const ReencodeKey& key,
-             const ReencodeEstimate& estimate);
-
-  mutable absl::Mutex _mutex;
-  irs::containers::FlatHashMap<field_id, Entry> _entries;
-};
 
 ReencodeEstimate EstimateReencode(
   const ColReader& reader, const ColumnReader& column,

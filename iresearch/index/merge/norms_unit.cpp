@@ -220,6 +220,7 @@ const NormColumnReader* SourceNormColumn(const MergeSource& source,
 LiveNormStats ComputeLiveNormStats(field_id id,
                                    std::span<const MergeSource> sources) {
   LiveNormStats stats;
+  std::vector<uint32_t> values;
   for (const auto& src : sources) {
     const auto* column = SourceNormColumn(src, id);
     if (!column) {
@@ -230,11 +231,18 @@ LiveNormStats ComputeLiveNormStats(field_id id,
     stats.non_zero += column->NonZeroCount();
     if (const auto* removed = src.reader->docs_mask()) {
       removed->ForEachRun(nullptr, [&](doc_id_t first, doc_id_t end) {
-        for (auto doc = first; doc != end; ++doc) {
-          uint32_t value = 0;
-          column->Decode(doc, 1, &value);
-          stats.sum -= value;
-          stats.non_zero -= value != 0;
+        for (auto doc = first; doc != end;) {
+          const auto n = std::min<size_t>(
+            {end - doc, column->Locate(doc).end_doc - doc, kNormMergeChunk});
+          if (values.size() < n) {
+            values.resize(n);
+          }
+          column->Decode(doc, n, values.data());
+          for (const auto value : std::span{values}.first(n)) {
+            stats.sum -= value;
+            stats.non_zero -= value != 0;
+          }
+          doc += static_cast<doc_id_t>(n);
         }
         return true;
       });

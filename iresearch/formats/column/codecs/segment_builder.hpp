@@ -25,7 +25,6 @@
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/string_type.hpp>
-#include <duckdb/common/vector_size.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <optional>
@@ -185,7 +184,6 @@ class SegmentBuilder {
   void Finish(Leaf& leaf, Segment& out) {
     SDB_ASSERT(_rows != 0);
     if (_shape == Shape::Dedup) {
-      _codes.resize(_rows);
       if constexpr (Sorted(Leaf::kCodec)) {
         SortEntries();
       }
@@ -266,10 +264,7 @@ class SegmentBuilder {
       ++_runs;
     }
     _last_code = code;
-    if (_rows == _codes.size()) {
-      _codes.resize(std::max<size_t>(2 * _rows, STANDARD_VECTOR_SIZE));
-    }
-    _codes[_rows] = code;
+    _codes.push_back(code);
   }
 
   uint64_t Estimate() const noexcept;

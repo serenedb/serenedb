@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
-#include <iresearch/formats/column/col_copy_check.hpp>
+#include <iresearch/formats/column/reencode_cache.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>

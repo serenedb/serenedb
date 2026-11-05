@@ -30,8 +30,8 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/column/reencode_cache.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/directory.hpp"

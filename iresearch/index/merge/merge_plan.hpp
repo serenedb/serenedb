@@ -34,7 +34,6 @@
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
-#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/merge.hpp"
@@ -56,11 +55,6 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 enum class MergeUnitKind : uint8_t {
@@ -155,19 +149,13 @@ class MergePlan {
                                           std::vector<ColumnRange> unsplit,
                                           uint64_t target) const;
 
-  uint64_t AddColumns();
+  uint64_t AddColumns(const std::vector<size_t>& after_norms);
 
   void PlanUnits(std::span<const field_id> norm_fields, uint64_t term_volume);
 
   uint64_t PlanTermRanges();
 
   bool MergeColumn(const MergeUnit& unit);
-
-  bool MergeTermRange(const MergeUnit& unit);
-
-  bool WriteColumnsFooter();
-
-  void BuildAnn(field_id column);
 
   bool MergePostings(MergeStepClock& clock);
 
@@ -203,7 +191,6 @@ class MergePlan {
   std::unique_ptr<ColReader> _col_reader;
   std::optional<InputNormProvider> _norms;
   std::optional<ReadContext> _ivf_ctx;
-  std::vector<const BasicTermReader*> _cluster_readers;
   std::unique_ptr<TermRangeSink> _term_sink;
   std::vector<std::unique_ptr<TermRangeMerge>> _term_ranges;
 };

@@ -20,28 +20,25 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <span>
 
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 
-struct BasicTermReader;
-struct FlushState;
-class IdxWriter;
-class TermRangeMerge;
-
-using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
+using MergedNormIdMap = containers::FlatHashMap<field_id, field_id>;
 
 inline bool IsIndexField(const IndexFieldOptions* field_options, field_id id) {
   return !field_options || field_options->GetFieldKind(id) == FieldKind::Index;

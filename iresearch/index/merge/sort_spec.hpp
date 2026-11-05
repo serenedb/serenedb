@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/common/enums/order_type.hpp>
-#include <vector>
 
 #include "iresearch/types.hpp"
 

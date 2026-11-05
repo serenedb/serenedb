@@ -33,21 +33,19 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
-#include <limits>
 #include <optional>
 #include <span>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/merge.hpp"
-#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
-#include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/input_norms.hpp"
@@ -115,13 +113,18 @@ void ComputeFieldMeta(MergedFieldMap& field_meta_map,
       auto& merged = Member(field, term_reader->meta().dict.member);
       const auto features = term_reader->meta().index_features;
       index_features |= features;
-      merged.features = merged.present ? merged.features & features : features;
-      merged.keyed = merged.keyed || term_reader->size() != 1 ||
-                     (merged.present && merged.single != term_reader->min());
       if (!merged.present) {
-        merged.single = term_reader->min();
-        merged.present = true;
+        merged = {
+          .features = features,
+          .single = term_reader->min(),
+          .present = true,
+          .keyed = term_reader->size() != 1,
+        };
+        continue;
       }
+      merged.features &= features;
+      merged.keyed = merged.keyed || term_reader->size() != 1 ||
+                     merged.single != term_reader->min();
     }
   }
 }
@@ -286,11 +289,7 @@ std::vector<MergePlan::ColumnRange> MergePlan::SplitStretches(
   return out;
 }
 
-uint64_t MergePlan::AddColumns() {
-  std::vector<size_t> after_norms;
-  if (!_units.empty()) {
-    after_norms.push_back(_units.size() - 1);
-  }
+uint64_t MergePlan::AddColumns(const std::vector<size_t>& after_norms) {
   std::vector<std::vector<ColumnRange>> unsplit;
   uint64_t bytes = 0;
   uint64_t total = 0;
@@ -346,19 +345,17 @@ uint64_t MergePlan::AddColumns() {
 
 void MergePlan::PlanUnits(std::span<const field_id> norm_fields,
                           uint64_t term_volume) {
+  std::vector<size_t> after_norms;
   for (const auto id : norm_fields) {
-    std::vector<size_t> after;
-    if (!_units.empty()) {
-      after.push_back(_units.size() - 1);
-    }
-    AddUnit({
+    const auto norms = AddUnit({
       .kind = MergeUnitKind::Norms,
       .id = id,
       .cost = _segment.docs_count,
-      .deps = std::move(after),
+      .deps = after_norms,
     });
+    after_norms = {norms};
   }
-  const auto column_bytes = AddColumns();
+  const auto column_bytes = AddColumns(after_norms);
   const auto footer = AddUnit({.kind = MergeUnitKind::ColumnsFooter});
   for (size_t unit = 0; unit != footer; ++unit) {
     _units[footer].deps.push_back(unit);
@@ -389,12 +386,12 @@ void MergePlan::PlanUnits(std::span<const field_id> norm_fields,
   const uint64_t postings_bytes =
     input_bytes > column_bytes ? input_bytes - column_bytes : 0;
   uint64_t ranged_bytes = 0;
-  std::vector<size_t> parts;
+  std::vector<size_t> before_postings;
   for (const auto& range : _term_ranges) {
     const auto bytes = Share(postings_bytes, range->Volume(), term_volume);
     ranged_bytes += bytes;
     for (uint32_t part = 0; part != range->PartCount(); ++part) {
-      parts.push_back(AddUnit({
+      before_postings.push_back(AddUnit({
         .kind = MergeUnitKind::TermRange,
         .id = range->Key().id,
         .member = range->Key().member,
@@ -403,14 +400,14 @@ void MergePlan::PlanUnits(std::span<const field_id> norm_fields,
       }));
     }
   }
-  const auto postings = AddUnit({
+  if (_ivf) {
+    before_postings.push_back(last_ann);
+  }
+  AddUnit({
     .kind = MergeUnitKind::Postings,
     .cost = postings_bytes - ranged_bytes + ranged_bytes / kCopyCostDivisor,
-    .deps = std::move(parts),
+    .deps = std::move(before_postings),
   });
-  if (_ivf) {
-    _units[postings].deps.push_back(last_ann);
-  }
   const auto index = AddUnit({.kind = MergeUnitKind::Index});
   for (size_t unit = footer; unit != index; ++unit) {
     _units[index].deps.push_back(unit);
@@ -483,34 +480,15 @@ bool MergePlan::MergeColumn(const MergeUnit& unit) {
                                  range.end, *_col_writer, _progress);
 }
 
-bool MergePlan::MergeTermRange(const MergeUnit& unit) {
-  auto* range =
-    FindTermRange(_term_ranges, {.id = unit.id, .member = unit.member});
-  SDB_ASSERT(range);
-  return range->MergePart(unit.part);
-}
-
-bool MergePlan::WriteColumnsFooter() {
-  _col_writer->SetIdxWriter(*_idx);
-  return _col_writer->Commit(_segment.docs_count, _progress);
-}
-
-void MergePlan::BuildAnn(field_id column) {
-  if (!_ann_reader) {
-    _ann_reader = std::make_unique<ColReader>(_col_dir, _segment.name, _db,
-                                              IOAdvice::SEQUENTIAL);
-  }
-  GetBlocking(_col_writer->ComputeAnn(column, *_ann_reader, _env).ToFuture());
-}
-
 bool MergePlan::MergePostings(MergeStepClock& clock) {
+  std::vector<const BasicTermReader*> cluster_readers;
   if (_ivf && _segment.docs_count != 0) {
     _ann_writers = _col_writer->TakeAnnWriters();
     _col_reader = std::make_unique<ColReader>(_col_dir, _segment.name, _db,
                                               IOAdvice::SEQUENTIAL);
-    _cluster_readers =
+    cluster_readers =
       PrepareIvfClusterReaders(_ann_writers, _col_reader.get(), _ivf_ctx);
-    for (const auto* reader : _cluster_readers) {
+    for (const auto* reader : cluster_readers) {
       _index_features |= reader->properties().index_features;
     }
   }
@@ -531,7 +509,7 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
            state,
            _term_sink ? std::move(_term_sink->Outputs()) : PostingsOutputs{},
            _doc_map, static_cast<bool>(_key_order), _field_options, _progress,
-           _merged_norm_ids, *_idx, _cluster_readers, _term_ranges,
+           _merged_norm_ids, *_idx, cluster_readers, _term_ranges,
            KeyedDicts(_field_meta_map),
            duckdb::TaskScheduler::GetScheduler(_db), _threads);
 }
@@ -568,7 +546,6 @@ bool MergePlan::Prepare(size_t threads) {
   MergeStepClock clock{_profile};
   uint64_t live_docs = 0;
   for (const auto& input : _doc_map) {
-    SDB_ASSERT(input.reader);
     live_docs += input.reader->live_docs_count();
   }
   if (live_docs > kMergeDocsMax) {
@@ -691,7 +668,8 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::Norms: {
       const auto it = _merged_norm_ids.find(work.id);
       SDB_ASSERT(it != _merged_norm_ids.end());
-      MergeNormColumn(*_col_writer, work.id, it->second, _sources, Order());
+      MergeNormColumn(_col_writer->StreamNormColumn(it->second), work.id,
+                      _sources, Order());
       return lap(MergeStep::Norms);
     }
     case MergeUnitKind::Column:
@@ -701,12 +679,23 @@ bool MergePlan::RunUnit(size_t unit) {
       return _columns->Train(work.id, *_col_writer, _progress) &&
              lap(MergeStep::Columns);
     case MergeUnitKind::ColumnsFooter:
-      return WriteColumnsFooter() && lap(MergeStep::ColumnsCommit);
+      _col_writer->SetIdxWriter(*_idx);
+      return _col_writer->Commit(_segment.docs_count, _progress) &&
+             lap(MergeStep::ColumnsCommit);
     case MergeUnitKind::Ann:
-      BuildAnn(work.id);
+      if (!_ann_reader) {
+        _ann_reader = std::make_unique<ColReader>(_col_dir, _segment.name, _db,
+                                                  IOAdvice::SEQUENTIAL);
+      }
+      GetBlocking(
+        _col_writer->ComputeAnn(work.id, *_ann_reader, _env).ToFuture());
       return lap(MergeStep::Ann);
-    case MergeUnitKind::TermRange:
-      return MergeTermRange(work) && lap(MergeStep::Postings);
+    case MergeUnitKind::TermRange: {
+      auto* range =
+        FindTermRange(_term_ranges, {.id = work.id, .member = work.member});
+      SDB_ASSERT(range);
+      return range->MergePart(work.part) && lap(MergeStep::Postings);
+    }
     case MergeUnitKind::Postings:
       return MergePostings(clock) && lap(MergeStep::Postings);
     case MergeUnitKind::Index:

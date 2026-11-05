@@ -43,7 +43,6 @@
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 namespace {
@@ -71,8 +70,9 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   const FieldMeta& Meta() const noexcept { return _synthesized_meta; }
 
-  DictRef Dict() const noexcept {
-    return {.layout = _layout, .member = _current.member};
+  DictKey Key() const noexcept {
+    return {.id = _synthesized_meta.id,
+            .member = _synthesized_meta.dict.member};
   }
 
   field_id id() const noexcept final { return Meta().id; }
@@ -105,8 +105,6 @@ class CompoundFieldIterator final : public BasicTermReader {
   const TermReader* Current(FieldIteratorImpl& it) const;
 
   FieldProperties _props;
-  DictKey _current{.id = field_limits::invalid(), .member = {}};
-  DictLayout _layout = DictLayout::String;
   FieldMeta _synthesized_meta;
   std::vector<TermIteratorImpl> _field_iterator_mask;
   std::vector<FieldIteratorImpl> _field_iterators;
@@ -132,11 +130,7 @@ const TermReader* CompoundFieldIterator<Postings>::Current(
 
 template<typename Postings>
 bool CompoundFieldIterator<Postings>::Next() {
-  if (!Aborted()) {
-    _progress();
-  }
-
-  if (Aborted()) {
+  if (Aborted() || !_progress()) {
     _field_iterator_mask.clear();
     _field_iterators.clear();
     return false;
@@ -157,14 +151,14 @@ bool CompoundFieldIterator<Postings>::Next() {
     const auto& meta = field_terms->meta();
     const DictKey key{.id = field_itr.ids[field_itr.pos],
                       .member = meta.dict.member};
-    if (_field_iterator_mask.empty() || key < _current) {
+    if (_field_iterator_mask.empty() || key < Key()) {
       _field_iterator_mask.clear();
-      _current = key;
-      _layout = meta.dict.layout;
+      _synthesized_meta.id = key.id;
+      _synthesized_meta.dict = meta.dict;
       _synthesized_meta.index_features = meta.index_features;
       key_width = field_terms->key_width;
-    } else if (key == _current) {
-      SDB_ASSERT(meta.dict.layout == _layout);
+    } else if (key == Key()) {
+      SDB_ASSERT(meta.dict.layout == _synthesized_meta.dict.layout);
       _synthesized_meta.index_features &= meta.index_features;
       if (key_width != field_terms->key_width) {
         key_width = 0;
@@ -172,14 +166,10 @@ bool CompoundFieldIterator<Postings>::Next() {
     } else {
       continue;
     }
-    _field_iterator_mask.emplace_back(TermIteratorImpl{i, field_terms});
+    _field_iterator_mask.emplace_back(i, field_terms);
   }
 
-  if (_field_iterator_mask.empty()) {
-    return false;
-  }
-  _synthesized_meta.id = _current.id;
-  return true;
+  return !_field_iterator_mask.empty();
 }
 
 template<typename Postings>
@@ -199,7 +189,7 @@ template<typename Postings>
 TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
   _term_itr.Reset(Meta());
   for (const auto& segment : _field_iterator_mask) {
-    _term_itr.Add(*(segment.reader), *(_field_iterators[segment.itr_id].remap));
+    _term_itr.Add(*segment.reader, *_field_iterators[segment.itr_id].remap);
   }
   return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
@@ -224,7 +214,7 @@ void WriteParts(term_dict::FieldWriter& writer,
 }
 
 template<typename Postings>
-bool WriteFields(const irs::FlushState& flush_state, PostingsOutputs outputs,
+bool WriteFields(const FlushState& flush_state, PostingsOutputs outputs,
                  const MergeDocMap& inputs,
                  const IndexFieldOptions* field_options,
                  const MergeProgress& progress,
@@ -247,10 +237,7 @@ bool WriteFields(const irs::FlushState& flush_state, PostingsOutputs outputs,
                  return lhs->id() < rhs->id();
                });
   const auto extra_key = [](const BasicTermReader* reader) {
-    return DictKey{
-      .id = reader->id(),
-      .member = StringLayout::kStrings.member,
-    };
+    return DictKey{.id = reader->id(), .member = DictMember::Strings};
   };
   const auto write_extra = [&](const BasicTermReader& reader) {
     field_writer.write(StringLayout::kStrings, reader);
@@ -259,47 +246,47 @@ bool WriteFields(const irs::FlushState& flush_state, PostingsOutputs outputs,
   const size_t en = sorted_extra.size();
 
   while (field_itr.Next()) {
-    const auto dict = field_itr.Dict();
-    const DictKey key{.id = field_itr.Meta().id, .member = dict.member};
+    const auto& meta = field_itr.Meta();
+    const auto key = field_itr.Key();
     while (ei < en && extra_key(sorted_extra[ei]) < key) {
       write_extra(*sorted_extra[ei]);
       ++ei;
     }
 
     if (ei < en && extra_key(sorted_extra[ei]) == key) {
-      SDB_ASSERT(dict.layout == DictLayout::String);
+      SDB_ASSERT(meta.dict.layout == DictLayout::String);
       write_extra(*sorted_extra[ei]);
       ++ei;
       continue;
     }
 
-    if (IsSubsetOf(IndexFeatures::Vec, field_itr.Meta().index_features)) {
+    if (IsSubsetOf(IndexFeatures::Vec, meta.index_features)) {
       continue;
     }
 
-    if (!IsTermMember(dict.member)) {
+    if (!IsTermMember(meta.dict.member)) {
       if (auto terms = field_itr.iterator(); terms->next()) {
         SDB_ASSERT(terms->value() == kSlotTerm);
-        field_writer.WriteSlot(key.id, dict,
+        field_writer.WriteSlot(key.id, meta.dict,
                                *terms->postings(IndexFeatures::None));
       }
       continue;
     }
 
-    field_itr.SetProperties(MergedFieldProperties(
-      key.id, field_itr.Meta().index_features, merged_norm_ids));
+    field_itr.SetProperties(
+      MergedFieldProperties(key.id, meta.index_features, merged_norm_ids));
 
     if (auto* range = FindTermRange(ranges, key)) {
       const auto parts = range->Parts();
       WriteParts(
         field_writer,
-        field_writer.BeginParts(dict, field_itr, parts, range->DocCount()),
+        field_writer.BeginParts(meta.dict, field_itr, parts, range->DocCount()),
         scheduler, threads);
       range->ReleaseParts();
       continue;
     }
 
-    field_writer.write(dict, field_itr);
+    field_writer.write(meta.dict, field_itr);
   }
 
   while (ei < en) {
@@ -333,9 +320,11 @@ bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
                    uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
                    size_t threads) {
-  return (sorted ? WriteFields<SortedPostings> : WriteFields<CompoundPostings>)(
-    flush_state, std::move(outputs), inputs, field_options, progress,
-    merged_norm_ids, idx, extra, ranges, keyed_dicts, scheduler, threads);
+  const auto write =
+    sorted ? WriteFields<SortedPostings> : WriteFields<CompoundPostings>;
+  return write(flush_state, std::move(outputs), inputs, field_options, progress,
+               merged_norm_ids, idx, extra, ranges, keyed_dicts, scheduler,
+               threads);
 }
 
 }  // namespace irs

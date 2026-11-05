@@ -24,14 +24,13 @@
 #include <span>
 
 #include "iresearch/formats/column/merge.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class ColWriter;
-class MergeOrder;
-class NormColumnReader;
 
 const TermReader* MemberTerms(const SubReader& reader, field_id id,
                               DictMember member);
@@ -48,7 +47,7 @@ struct LiveNormStats {
 LiveNormStats ComputeLiveNormStats(field_id id,
                                    std::span<const MergeSource> sources);
 
-void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
+void MergeNormColumn(NormColumnWriter& writer, field_id id,
                      std::span<const MergeSource> sources,
                      const MergeOrder* order);
 

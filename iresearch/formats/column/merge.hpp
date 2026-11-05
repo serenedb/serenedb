@@ -28,22 +28,20 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
-
-struct SubReader;
-struct DocRemap;
-
-class ColReader;
-class ColWriter;
-class MergeOrder;
 
 struct MergeSource {
   const SubReader* reader;

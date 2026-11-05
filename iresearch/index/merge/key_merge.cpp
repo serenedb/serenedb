@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <atomic>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -38,8 +39,8 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/merge/partition_tasks.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -47,7 +48,10 @@
 namespace irs {
 namespace {
 
-using KeyColumn = KeyOrder::KeyColumn;
+struct KeyColumn {
+  field_id id;
+  duckdb::LogicalType type;
+};
 
 class SegmentKeyReader final : public duckdb::PresortedMergeReader {
  public:
@@ -55,8 +59,8 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
                    duckdb::ObjectCache* cache)
     : _cs{reader.GetColReader()}, _cache{cache} {
     for (const auto& key : keys) {
-      auto& column = *_columns.emplace_back(std::make_unique<Column>(key.type));
-      column.reader = _cs ? _cs->Column(key.id) : nullptr;
+      _columns.emplace_back(std::make_unique<Column>(
+        key.type, _cs ? _cs->Column(key.id) : nullptr));
     }
   }
 
@@ -79,19 +83,15 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
             std::make_unique<ColumnReader::PointReader>(*_cs, *column.reader);
           column.point->SetCache(_cache);
         }
-        column.value.ResetFromCache(column.value_cache);
-        column.point->FetchRow(begin, column.value, 0);
-        duckdb::FlatVector::SetSize(column.value, 1);
-        out.Reference(column.value);
+        auto& value = column.value.Reset();
+        column.point->FetchRow(begin, value, 0);
+        duckdb::FlatVector::SetSize(value, 1);
+        out.Reference(value);
         continue;
       }
-      if (!column.scanning) {
-        auto ctx = std::make_shared<ReadContext>(*_cs);
-        ctx->SetMergeRead(true);
-        ctx->SetCache(_cache);
-        ctx->SetStreams(StreamsFrames(column.type));
-        column.state = column.reader->InitScan(std::move(ctx));
-        column.scanning = true;
+      if (!column.state.ctx) {
+        column.state = column.reader->InitScan(
+          MergeReadContext(*_cs, _cache, StreamsFrames(column.type)));
       }
       SDB_ASSERT(begin >= column.position);
       if (begin > column.position) {
@@ -119,35 +119,32 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
 
  private:
   struct Column {
-    explicit Column(const duckdb::LogicalType& type)
+    explicit Column(const duckdb::LogicalType& type, const ColumnReader* reader)
       : type{type},
+        reader{reader},
         scratch{type},
         probe_scratch{type},
-        value_cache{duckdb::Allocator::DefaultAllocator(), type, 1},
-        value{value_cache} {}
+        value{type, 1} {}
 
     duckdb::LogicalType type;
-    const ColumnReader* reader = nullptr;
+    const ColumnReader* reader;
     ColumnReader::ScanState state;
     ColumnReader::VectorScratch scratch;
-    std::shared_ptr<ReadContext> probe_ctx;
     ColumnReader::ScanState probe;
     ColumnReader::VectorScratch probe_scratch;
     uint64_t probe_position = 0;
     std::unique_ptr<ColumnReader::PointReader> point;
-    duckdb::VectorCache value_cache;
-    duckdb::Vector value;
+    ColumnReader::VectorScratch value;
     uint64_t position = 0;
-    bool scanning = false;
   };
 
   void ProbeRow(Column& column, uint64_t row, duckdb::Vector& out) {
-    if (!column.probe_ctx) {
-      column.probe_ctx = std::make_shared<ReadContext>(*_cs);
-      column.probe_ctx->SetCache(_cache);
-      column.probe = column.reader->InitScan(column.probe_ctx);
+    if (!column.probe.ctx) {
+      auto ctx = std::make_shared<ReadContext>(*_cs);
+      ctx->SetCache(_cache);
+      column.probe = column.reader->InitScan(std::move(ctx));
     } else if (row < column.probe_position) {
-      column.probe = column.reader->InitScan(column.probe_ctx);
+      column.probe = column.reader->InitScan(column.probe.ctx);
       column.probe_position = 0;
     }
     if (row > column.probe_position) {
@@ -229,6 +226,7 @@ void KeyOrder::ConcatOrder() {
 
 bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
                        duckdb::TaskScheduler& scheduler, size_t threads) {
+  std::vector<KeyColumn> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
   for (const auto& key : _spec) {
@@ -238,8 +236,8 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
       if (!col) {
         continue;
       }
-      _keys.push_back({.id = key.column, .type = col->Type()});
-      types.push_back(col->Type());
+      keys.emplace_back(key.column, col->Type());
+      types.emplace_back(col->Type());
       modifiers.emplace_back(key.order, key.null_order);
       break;
     }
@@ -253,14 +251,14 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
                               doc_limits::eof());
   }
   _order.emplace(_doc_map.size(), rows, _doc_map.get_allocator().Manager());
-  if (_keys.empty() || rows == 0) {
+  if (keys.empty() || rows == 0) {
     ConcatOrder();
     return true;
   }
   duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> inputs;
   for (const auto& input : _doc_map) {
-    inputs.push_back(
-      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, _keys, _cache));
+    inputs.emplace_back(
+      duckdb::make_shared_ptr<SegmentKeys>(*input.reader, keys, _cache));
   }
   duckdb::PresortedMerge merge{std::move(types), std::move(modifiers),
                                std::move(inputs)};

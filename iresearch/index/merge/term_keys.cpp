@@ -30,6 +30,8 @@
 namespace irs {
 namespace {
 
+constexpr uint64_t kAnchorStep = 256;
+
 uint64_t SeekAnchor(SeekTermIterator& it, const TermKeys::TermAnchor& anchor) {
   const bool found = it.seek(anchor.term);
   SDB_ENSURE(found, "TermKeys: a term dictionary lost the term of row ",
@@ -67,7 +69,7 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
  private:
   void Step() {
     NextTerm(*_it, _keys, _next);
-    if (_next % TermKeys::kAnchorStep == 0) {
+    if (_next % kAnchorStep == 0) {
       _keys.Record(_next, _it->value());
     }
     ++_next;
@@ -75,7 +77,7 @@ class TermKeyReader final : public duckdb::PresortedMergeReader {
 
   void MoveTo(uint64_t row) {
     const auto want = row + 1;
-    if (want < _next || want - _next > TermKeys::kAnchorStep || _next == 0) {
+    if (want < _next || want - _next > kAnchorStep || _next == 0) {
       const auto anchor = _keys.Anchor(row);
       if (anchor.row != TermKeys::kNoAnchor &&
           (want < _next || anchor.row >= _next)) {

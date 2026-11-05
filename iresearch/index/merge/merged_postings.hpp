@@ -75,8 +75,8 @@ class CompoundPostings : public TermPostings {
     _current_itr = 0;
     _at = 0;
     _size = 0;
-    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
-    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
+    _has_freq = IsSubsetOf(IndexFeatures::Freq, features);
+    _has_pos = IsSubsetOf(IndexFeatures::Pos, features);
   }
 
   void Clear() noexcept { _iterators.clear(); }
@@ -117,8 +117,8 @@ class SortedPostings : public TermPostings {
   void Reset(Inputs& inputs, std::span<const size_t> group,
              IndexFeatures features) {
     RefillPostings(_iterators, inputs, group, features);
-    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
-    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
+    _has_freq = IsSubsetOf(IndexFeatures::Freq, features);
+    _has_pos = IsSubsetOf(IndexFeatures::Pos, features);
     _cursors.resize(_iterators.size());
     _heap.clear();
     for (size_t i = 0; i != _cursors.size(); ++i) {
@@ -128,7 +128,7 @@ class SortedPostings : public TermPostings {
       c.skip = 0;
       Settle(i);
       if (!doc_limits::eof(c.head)) {
-        _heap.push_back(static_cast<uint32_t>(i));
+        _heap.emplace_back(static_cast<uint32_t>(i));
       }
     }
     for (size_t pos = _heap.size() / 2; pos-- != 0;) {

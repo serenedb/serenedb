@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -33,20 +34,18 @@
 
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/term_parts.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/term_keys.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 
 namespace irs {
-
-struct NormProvider;
-struct TermReader;
 
 struct DictKey {
   field_id id;
@@ -73,7 +72,7 @@ class TermRangeSink {
  private:
   void Remove() noexcept;
 
-  Directory* _dir;
+  Directory& _dir;
   std::string _segment;
   absl::Mutex _mutex;
   PostingsOutputs _out;
@@ -110,7 +109,7 @@ class TermRangeMerge {
 
   bool MergePart(size_t part);
 
-  bool Done() const noexcept;
+  bool Done() const noexcept { return _appended == _parts.size(); }
 
   std::vector<TermPart> Parts() const;
 
@@ -122,7 +121,7 @@ class TermRangeMerge {
   struct Part;
 
   template<typename Postings>
-  bool WritePart(Part& part, size_t index);
+  bool WritePart(size_t index);
 
   DictKey _key;
   FieldProperties _props;
@@ -131,7 +130,7 @@ class TermRangeMerge {
   duckdb::PresortedMerge _merge;
   std::vector<std::unique_ptr<Part>> _parts;
   Target _target;
-  const MergeProgress* _progress;
+  const MergeProgress& _progress;
   bool _sorted;
   bool _ranged;
   size_t _appended = 0;

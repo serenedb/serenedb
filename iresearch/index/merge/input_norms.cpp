@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -292,10 +291,7 @@ InputNormProvider::InputNormProvider(std::span<const MergeSource> sources,
     SDB_ASSERT(source.remap);
     SDB_ASSERT(!source.remap->id_map.empty() || source.remap->base_id == next);
     const auto end = next + static_cast<doc_id_t>(source.alive_count);
-    _inputs.push_back({.source = &source,
-                       .first = next,
-                       .end = end,
-                       .docs = ManagedVector<doc_id_t>{{memory}}});
+    _inputs.emplace_back(&source, next, end, ManagedVector<doc_id_t>{{memory}});
     next = end;
   }
 }

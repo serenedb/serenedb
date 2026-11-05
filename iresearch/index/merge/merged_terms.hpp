@@ -24,20 +24,18 @@
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <limits>
+#include <memory>
 #include <vector>
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
-#include "iresearch/index/merge/merged_postings.hpp"
-#include "iresearch/index/merge/term_keys.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-struct TermReader;
 
 template<typename Postings>
 class CompoundTermIterator : public TermOnlyIterator {
@@ -45,11 +43,9 @@ class CompoundTermIterator : public TermOnlyIterator {
   CompoundTermIterator(const CompoundTermIterator&) = delete;
   CompoundTermIterator& operator=(const CompoundTermIterator&) = delete;
 
-  static constexpr size_t kProgressStepTerms = size_t{1} << 7;
-
   explicit CompoundTermIterator(const MergeProgress& progress)
     : _doc_itr{progress},
-      _proceed{&progress},
+      _proceed{progress},
       _progress{progress, kProgressStepTerms} {}
 
   bool Aborted() const {
@@ -62,17 +58,15 @@ class CompoundTermIterator : public TermOnlyIterator {
     _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
-    _keys.clear();
-    _merge.reset();
     _merge_state.reset();
+    _merge.reset();
+    _keys.clear();
     _runs.clear();
     _run = 0;
     _run_left = 0;
     _pending = kNoEntry;
     _pending_at_term = false;
   }
-
-  const FieldMeta& Meta() const noexcept { return *_meta; }
 
   void Add(const TermReader& reader, const DocRemap& remap);
 
@@ -88,6 +82,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   bytes_view value() const noexcept final { return _current_term; }
 
  private:
+  static constexpr size_t kProgressStepTerms = size_t{1} << 7;
   static constexpr size_t kNoEntry = std::numeric_limits<size_t>::max();
 
   struct TermIteratorImpl {
@@ -107,8 +102,8 @@ class CompoundTermIterator : public TermOnlyIterator {
   const FieldMeta* _meta{};
   std::vector<size_t> _term_iterator_mask;
   std::vector<TermIteratorImpl> _term_iterators;
-  std::vector<duckdb::shared_ptr<TermKeys>> _keys;
-  duckdb::shared_ptr<duckdb::PresortedMerge> _merge;
+  duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>> _keys;
+  std::unique_ptr<duckdb::PresortedMerge> _merge;
   duckdb::unique_ptr<duckdb::PresortedMergeState> _merge_state;
   duckdb::vector<duckdb::PresortedRun> _runs;
   size_t _run{0};
@@ -118,7 +113,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   bool _pending_at_term{false};
   bool _failed{false};
   mutable Postings _doc_itr;
-  const MergeProgress* _proceed;
+  const MergeProgress& _proceed;
   ProgressTracker _progress;
 };
 

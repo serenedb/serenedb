@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <memory>
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
@@ -41,9 +42,7 @@ void CompoundTermIterator<Postings>::Add(const TermReader& reader,
 
 template<typename Postings>
 void CompoundTermIterator<Postings>::Start() {
-  _merge = duckdb::make_shared_ptr<duckdb::PresortedMerge>(
-    duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>>(
-      _keys.begin(), _keys.end()));
+  _merge = std::make_unique<duckdb::PresortedMerge>(std::move(_keys));
   _merge->Partition(1);
   _merge_state = _merge->BeginMerge(0);
 }
@@ -54,7 +53,7 @@ bool CompoundTermIterator<Postings>::Refill() {
     return false;
   }
   _run = 0;
-  if (!NextTermRuns(*_merge, *_merge_state, _runs, *_proceed, Meta().id)) {
+  if (!NextTermRuns(*_merge, *_merge_state, _runs, _proceed, _meta->id)) {
     _failed = true;
     return false;
   }
@@ -80,7 +79,7 @@ bytes_view CompoundTermIterator<Postings>::Advance(size_t input) {
   auto& it = *_term_iterators[input].it;
   const bool next = it.next();
   SDB_ENSURE(next, "CompoundTermIterator: merge input ", input, " of field ",
-             Meta().id, " ran out of terms");
+             _meta->id, " ran out of terms");
   return it.value();
 }
 
@@ -141,7 +140,7 @@ bool CompoundTermIterator<Postings>::next() {
 template<typename Postings>
 TermPostings::ptr CompoundTermIterator<Postings>::postings(
   IndexFeatures /*features*/) const {
-  _doc_itr.Reset(_term_iterators, _term_iterator_mask, Meta().index_features);
+  _doc_itr.Reset(_term_iterators, _term_iterator_mask, _meta->index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 

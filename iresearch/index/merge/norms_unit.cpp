@@ -68,14 +68,14 @@ std::vector<NormPiece> NormPieces(field_id id,
     const auto* reader = SourceNormColumn(src, id);
     if (!reader) {
       if (src.alive_count != 0) {
-        pieces.push_back(
-          {&src, nullptr, 0, NormStats{.rows = src.alive_count, .min = 0}});
+        pieces.emplace_back(&src, nullptr, 0,
+                            NormStats{.rows = src.alive_count, .min = 0});
       }
       continue;
     }
     SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
     for (size_t r = 0; r != reader->RegionCount(); ++r) {
-      pieces.push_back({&src, reader, r, reader->Stats(r)});
+      pieces.emplace_back(&src, reader, r, reader->Stats(r));
     }
   }
   return pieces;
@@ -161,14 +161,13 @@ class OrderedNormInput {
   doc_id_t _doc = doc_limits::min();
 };
 
-void MergeOrderedNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
+void MergeOrderedNormColumn(NormColumnWriter& writer, field_id id,
                             std::span<const MergeSource> sources,
                             const MergeOrder& order) {
   NormStats planned;
   for (const auto& piece : NormPieces(id, sources)) {
     planned.Merge(piece.planned);
   }
-  auto& writer = col_writer.StreamNormColumn(out_id);
   writer.OpenRegion(planned);
   const auto rows = order.Inputs();
   if (planned.min == planned.max) {
@@ -244,15 +243,14 @@ LiveNormStats ComputeLiveNormStats(field_id id,
   return stats;
 }
 
-void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
+void MergeNormColumn(NormColumnWriter& writer, field_id id,
                      std::span<const MergeSource> sources,
                      const MergeOrder* order) {
   if (order) {
-    MergeOrderedNormColumn(col_writer, id, out_id, sources, *order);
+    MergeOrderedNormColumn(writer, id, sources, *order);
     return;
   }
   const auto pieces = NormPieces(id, sources);
-  auto& writer = col_writer.StreamNormColumn(out_id);
   std::vector<uint32_t> values;
   for (size_t i = 0; i != pieces.size();) {
     auto planned = pieces[i].planned;

@@ -23,7 +23,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <duckdb/common/types.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <limits>
@@ -35,18 +34,12 @@
 #include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs {
 
 class KeyOrder {
  public:
   static constexpr uint64_t kNotIsolated = std::numeric_limits<uint64_t>::max();
-
-  struct KeyColumn {
-    field_id id;
-    duckdb::LogicalType type;
-  };
 
   KeyOrder(MergeDocMap& doc_map, const std::vector<SortKey>& spec,
            duckdb::ObjectCache* cache)
@@ -95,7 +88,6 @@ class KeyOrder {
   MergeDocMap& _doc_map;
   const std::vector<SortKey>& _spec;
   duckdb::ObjectCache* _cache;
-  std::vector<KeyColumn> _keys;
   std::vector<uint64_t> _isolated;
   std::optional<MergeOrder> _order;
   std::vector<Part> _parts;

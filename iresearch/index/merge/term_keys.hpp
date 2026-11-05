@@ -36,7 +36,6 @@ namespace irs {
 
 class TermKeys final : public duckdb::PresortedMergeInput {
  public:
-  static constexpr uint64_t kAnchorStep = 256;
   static constexpr uint64_t kNoAnchor = std::numeric_limits<uint64_t>::max();
 
   struct TermAnchor {

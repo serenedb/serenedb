@@ -36,6 +36,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -54,27 +55,26 @@ std::vector<duckdb::shared_ptr<TermKeys>> KeysOf(
   return keys;
 }
 
-uint32_t KeyWidth(std::span<const TermRangeMerge::Input> inputs) noexcept {
-  if (inputs.empty()) {
-    return 0;
+bool Ranged(IndexFeatures features,
+            std::span<const TermRangeMerge::Input> inputs) noexcept {
+  if (!IsSubsetOf(IndexFeatures::Ranges, features) || inputs.empty()) {
+    return false;
   }
   const auto width = inputs.front().terms->key_width;
-  return absl::c_all_of(inputs,
-                        [&](const TermRangeMerge::Input& input) {
-                          return input.terms->key_width == width;
-                        })
-           ? width
-           : 0;
+  return width != 0 && width <= term_dict::kMaxStride &&
+         absl::c_all_of(inputs, [&](const TermRangeMerge::Input& input) {
+           return input.terms->key_width == width;
+         });
 }
 
 template<typename Postings>
-class RangeWriter {
+class TermRangeWriter {
  public:
-  RangeWriter(std::span<const TermRangeMerge::Input> sources,
-              std::span<const duckdb::shared_ptr<TermKeys>> keys,
-              const FieldProperties& props,
-              const TermRangeMerge::Target& target, Directory& dir,
-              const MergeProgress& progress, term_dict::RangeWriter* ranges)
+  TermRangeWriter(std::span<const TermRangeMerge::Input> sources,
+                  std::span<const duckdb::shared_ptr<TermKeys>> keys,
+                  const FieldProperties& props,
+                  const TermRangeMerge::Target& target, Directory& dir,
+                  const MergeProgress& progress, term_dict::RangeWriter* ranges)
     : _sources{sources},
       _keys{keys},
       _inputs(sources.size()),
@@ -221,7 +221,7 @@ class RangeWriter {
 
 TermRangeSink::TermRangeSink(Directory& dir, std::string_view segment,
                              IndexFeatures features)
-  : _dir{&dir}, _segment{segment} {
+  : _dir{dir}, _segment{segment} {
   absl::Cleanup remove = [this]() noexcept { Remove(); };
   PostingsWriter::PrepareOutputs(_out, {
                                          .dir = &dir,
@@ -240,7 +240,7 @@ void TermRangeSink::Remove() noexcept {
       return;
     }
     out.reset();
-    _dir->remove(FileName(_segment, ext));
+    _dir.remove(FileName(_segment, ext));
   };
   remove(_out.doc, PostingsWriter::kDocExt);
   remove(_out.pos, PostingsWriter::kPosExt);
@@ -267,12 +267,10 @@ TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
     _merge{duckdb::vector<duckdb::shared_ptr<duckdb::PresortedMergeInput>>(
       _keys.begin(), _keys.end())},
     _target{target},
-    _progress{&progress},
+    _progress{progress},
     _sorted{sorted},
+    _ranged{Ranged(_props.index_features, _inputs)},
     _docs(bitset::bits_to_words(target.doc_count + doc_limits::min())) {
-  const auto width = KeyWidth(_inputs);
-  _ranged = IsSubsetOf(IndexFeatures::Ranges, _props.index_features) &&
-            width != 0 && width <= term_dict::kMaxStride;
   _merge.Partition(parts, true, &scheduler, threads);
   for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
     for (size_t i = 0; i != _keys.size(); ++i) {
@@ -310,26 +308,26 @@ uint64_t TermRangeMerge::Volume() const {
 
 bool TermRangeMerge::MergePart(size_t part) {
   SDB_ASSERT(part < _parts.size());
-  auto& p = *_parts[part];
-  return _sorted ? WritePart<SortedPostings>(p, part)
-                 : WritePart<CompoundPostings>(p, part);
+  return _sorted ? WritePart<SortedPostings>(part)
+                 : WritePart<CompoundPostings>(part);
 }
 
 template<typename Postings>
-bool TermRangeMerge::WritePart(Part& part, size_t index) {
+bool TermRangeMerge::WritePart(size_t index) {
   SDB_ASSERT(_target.sink);
+  auto& part = *_parts[index];
   part.dir = std::make_unique<MemoryDirectory>();
-  RangeWriter<Postings> writer{_inputs,
-                               _keys,
-                               _props,
-                               _target,
-                               *part.dir,
-                               *_progress,
-                               _ranged ? &part.ranges : nullptr};
+  TermRangeWriter<Postings> writer{_inputs,
+                                   _keys,
+                                   _props,
+                                   _target,
+                                   *part.dir,
+                                   _progress,
+                                   _ranged ? &part.ranges : nullptr};
   const auto state = _merge.BeginMerge(index);
   duckdb::vector<duckdb::PresortedRun> runs;
   while (!state->Done()) {
-    if (!NextTermRuns(_merge, *state, runs, *_progress, _key.id) ||
+    if (!NextTermRuns(_merge, *state, runs, _progress, _key.id) ||
         !writer.Consume(runs)) {
       return false;
     }
@@ -371,10 +369,6 @@ bool TermRangeMerge::WritePart(Part& part, size_t index) {
     next.dir.reset();
   }
   return true;
-}
-
-bool TermRangeMerge::Done() const noexcept {
-  return _appended == _parts.size();
 }
 
 std::vector<TermPart> TermRangeMerge::Parts() const {

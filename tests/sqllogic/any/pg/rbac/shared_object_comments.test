@@ -193,6 +193,12 @@ statement ok
 DROP ROLE soc_admin;
 
 
+statement error
+COMMENT ON ROLE soc_target.member IS 'dotted';
+----
+db error: ERROR: syntax error at or near "."
+
+
 statement ok
 DROP ROLE soc_target;
 

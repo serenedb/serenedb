@@ -233,6 +233,37 @@ ALTER FUNCTION lower(text) STABLE;
 db error: ERROR: permission denied for function lower
 
 
+statement ok
+ALTER FUNCTION afa_read(int, OUT int) STABLE;
+
+
+query
+SELECT provolatile FROM pg_proc WHERE proname = 'afa_read';
+----
+provolatile
+s
+
+
+statement error
+ALTER FUNCTION afa_read(int) LANGUAGE sql;
+----
+db error: ERROR: syntax error at or near "LANGUAGE"
+
+
+onlyif postgres
+statement error
+ALTER FUNCTION afa_read(int) SET search_path = 1 + 1;
+----
+db error: ERROR: syntax error at or near "+"
+
+
+skipif postgres
+statement error
+ALTER FUNCTION afa_read(int) SET search_path = 1 + 1;
+----
+db error: ERROR: SET search_path: expected identifier or string literal
+
+
 onlyif postgres
 statement ok
 ALTER FUNCTION afa_ov(int) STRICT;

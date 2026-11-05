@@ -128,6 +128,18 @@ ALTER TABLE ddl_priv_rls_t ENABLE ROW LEVEL SECURITY;
 db error: ERROR: row-level security is not supported
 
 
+statement error
+CREATE POLICY ddl_priv_rls_p ON ddl_priv_rls_t USING (true);
+----
+db error: ERROR: row-level security is not supported
+
+
+statement error
+ALTER POLICY ddl_priv_rls_p ON ddl_priv_rls_t USING (false);
+----
+db error: ERROR: row-level security is not supported
+
+
 # ddl_misc: CREATE SCHEMA
 statement ok
 CREATE SCHEMA ddl_misc_schema1;

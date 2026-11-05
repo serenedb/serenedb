@@ -200,6 +200,13 @@ statement ok
 DROP TABLE ident_iceberg;
 
 
+query
+SELECT current_user = current_user AS same, current_user = session_user AS session;
+----
+same	session
+t	t
+
+
 statement ok
 DROP ROLE ident_kostya;
 

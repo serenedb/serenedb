@@ -142,6 +142,20 @@ db error: ERROR: permission denied to alter role
 DETAIL: Only roles with the CREATEROLE attribute and the ADMIN option on role "ers_other" may alter this role.
 
 
+onlyif postgres
+statement error
+ALTER ROLE ALL WITH LOGIN;
+----
+db error: ERROR: syntax error at or near "WITH"
+
+
+skipif postgres
+statement error
+ALTER ROLE ALL WITH LOGIN;
+----
+db error: ERROR: syntax error at or near "ALL"
+
+
 statement ok
 DROP ROLE ers_other;
 

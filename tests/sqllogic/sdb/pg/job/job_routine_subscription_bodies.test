@@ -74,6 +74,10 @@ statement ok
 CREATE JOB jrsb_17 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jrsb_f(integer) RESET ALL;
 
 
+statement ok
+CREATE JOB jrsb_18 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrsb_sub SET (binary = true, streaming = off);
+
+
 query
 SELECT job_name, body FROM sdb_jobs() WHERE starts_with(job_name, 'jrsb_') ORDER BY job_name;
 ----
@@ -95,6 +99,7 @@ jrsb_14	ALTER PROCEDURE jrsb_p() SECURITY INVOKER STABLE CALLED ON NULL INPUT;
 jrsb_15	ALTER FUNCTION jrsb_f VOLATILE SET search_path TO public;
 jrsb_16	ALTER FUNCTION jrsb_f(INTEGER) SET search_path FROM CURRENT;
 jrsb_17	ALTER FUNCTION jrsb_f(INTEGER) RESET ALL;
+jrsb_18	ALTER SUBSCRIPTION jrsb_sub SET (binary = true, streaming = 'off');
 
 
 statement ok
@@ -163,6 +168,10 @@ DROP JOB jrsb_16;
 
 statement ok
 DROP JOB jrsb_17;
+
+
+statement ok
+DROP JOB jrsb_18;
 
 
 statement ok

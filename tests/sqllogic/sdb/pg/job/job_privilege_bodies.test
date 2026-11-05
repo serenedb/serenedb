@@ -117,6 +117,22 @@ statement ok
 CREATE JOB jpb_30 AFTER 1 HOUR SUSPENDED AS ALTER PROCEDURE jpb_p() OWNER TO jpb_r;
 
 
+statement ok
+CREATE JOB jpb_31 AFTER 1 HOUR SUSPENDED AS CREATE ROLE jpb_r4 VALID UNTIL '2030-01-02 03:04:05+00' PASSWORD 'jpb_pw';
+
+
+statement ok
+CREATE JOB jpb_32 AFTER 1 HOUR SUSPENDED AS DROP FUNCTION jpb_f(integer);
+
+
+statement ok
+CREATE JOB jpb_33 AFTER 1 HOUR SUSPENDED AS ALTER DATABASE ${__DATABASE__} OWNER TO jpb_r;
+
+
+statement ok
+CREATE JOB jpb_34 AFTER 1 HOUR SUSPENDED AS ALTER FUNCTION jpb_f(integer) SET search_path = jpb_a, public;
+
+
 query
 SELECT job_name, replace(body, current_database(), 'DB') AS body FROM sdb_jobs() WHERE starts_with(job_name, 'jpb_') ORDER BY job_name;
 ----
@@ -150,6 +166,10 @@ jpb_26	ALTER DATABASE DB SET work_mem TO '8MB';
 jpb_27	ALTER DATABASE DB ALLOW_CONNECTIONS FALSE CONNECTION LIMIT 5;
 jpb_29	ALTER FUNCTION jpb_f(INTEGER) OWNER TO jpb_r;
 jpb_30	ALTER PROCEDURE jpb_p() OWNER TO jpb_r;
+jpb_31	CREATE ROLE jpb_r4 WITH NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOLOGIN NOREPLICATION NOBYPASSRLS VALID UNTIL '2030-01-02 03:04:05+00' PASSWORD 'jpb_pw';
+jpb_32	DROP FUNCTION jpb_f(INTEGER);
+jpb_33	ALTER DATABASE DB OWNER TO jpb_r;
+jpb_34	ALTER FUNCTION jpb_f(INTEGER) SET search_path TO jpb_a, public;
 
 
 statement ok
@@ -266,3 +286,19 @@ DROP JOB jpb_29;
 
 statement ok
 DROP JOB jpb_30;
+
+
+statement ok
+DROP JOB jpb_31;
+
+
+statement ok
+DROP JOB jpb_32;
+
+
+statement ok
+DROP JOB jpb_33;
+
+
+statement ok
+DROP JOB jpb_34;

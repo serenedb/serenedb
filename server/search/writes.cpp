@@ -183,6 +183,18 @@ void Writes::AddInlineRows(const std::shared_ptr<Store>& store,
                                                     catalog);
 }
 
+const Writes::PinnedSearchTable& Writes::EnsureSearchTable(const Store& store) {
+  auto& pinned =
+    _readers.try_emplace(std::pair{store.GetDatabaseId(), store.GetId()})
+      .first->second;
+  if (!pinned.reader) {
+    pinned.config = store.ScanConfig();
+    pinned.reader =
+      std::make_shared<irs::DirectoryReader>(store.GetDirectoryReader());
+  }
+  return pinned;
+}
+
 const irs::DirectoryReader& Writes::PinnedReader(const Store& store) const {
   const auto pinned =
     _readers.find(std::pair{store.GetDatabaseId(), store.GetId()});

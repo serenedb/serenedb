@@ -189,10 +189,12 @@ duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
   return total;
 }
 
-bool ZoneDead(duckdb::FilterPropagateResult verdict) noexcept {
-  return verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
-         verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL;
+void SetNullColumn(duckdb::Vector& vector) {
+  vector.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::ConstantVector::SetNull(vector, true);
 }
+
+}  // namespace
 
 const ColumnReader* FilteredColumn(const ColumnReader& column,
                                    const ColFilterSpec& spec) {
@@ -202,13 +204,6 @@ const ColumnReader* FilteredColumn(const ColumnReader& column,
   SDB_ASSERT(spec.extract_type);
   return DirectExtractLeaf(column, spec.extract_path, *spec.extract_type);
 }
-
-void SetNullColumn(duckdb::Vector& vector) {
-  vector.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-  duckdb::ConstantVector::SetNull(vector, true);
-}
-
-}  // namespace
 
 ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
   : _query{filter.PrepareSegment(segment, {})} {
@@ -942,54 +937,6 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
     }
   }
   return dead_end;
-}
-
-void LiveRowGroups(const ColReader& col_reader,
-                   std::span<const ColFilterSpec> specs,
-                   duckdb::ClientContext& context, ColFilterStateCache& states,
-                   uint64_t rows, uint64_t rg_size,
-                   std::vector<uint32_t>& live) {
-  struct Zonemap {
-    const ColumnReader* reader = nullptr;
-    const duckdb::ExpressionFilter* expr = nullptr;
-    duckdb::TableFilterState* state = nullptr;
-    mutable BlockWindow window;
-  };
-  std::vector<Zonemap> zonemaps;
-  for (const auto& spec : specs) {
-    if (spec.is_score || spec.row_gather) {
-      continue;
-    }
-    const auto* column = col_reader.Column(spec.field);
-    const auto* reader = column ? FilteredColumn(*column, spec) : nullptr;
-    if (!reader || reader->Type().IsNested()) {
-      continue;
-    }
-    zonemaps.emplace_back(reader,
-                          &spec.filter->Cast<duckdb::ExpressionFilter>(),
-                          &states.State(context, *spec.filter));
-  }
-  const auto dead = [](const Zonemap& z, uint64_t begin, uint64_t end) {
-    if (end > z.reader->RowCount()) {
-      return false;
-    }
-    for (auto row = begin; row < end; row = z.window.end) {
-      z.window = z.reader->Locate(row, z.window);
-      if (!ZoneDead(z.expr->CheckStatistics(
-            z.reader->RowGroupStatistics(z.window.block), *z.state))) {
-        return false;
-      }
-    }
-    return true;
-  };
-  live.clear();
-  for (uint64_t begin = 0; begin < rows; begin += rg_size) {
-    const auto end = std::min(rows, begin + rg_size);
-    if (absl::c_none_of(
-          zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
-      live.emplace_back(static_cast<uint32_t>(begin / rg_size));
-    }
-  }
 }
 
 void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,

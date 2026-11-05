@@ -23,15 +23,21 @@
 #include <algorithm>
 #include <array>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/table_filter_iterator.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "connector/scan/scan_state.h"
 #include "query/config.h"
@@ -442,6 +448,54 @@ bool Join(ScanGlobalState& g, ScanLocalState& l) {
   }
 }
 
+void LiveRowGroups(const irs::ColReader& col_reader,
+                   std::span<const irs::ColFilterSpec> specs,
+                   duckdb::ClientContext& context,
+                   irs::ColFilterStateCache& states, uint64_t rows,
+                   uint64_t rg_size, std::vector<uint32_t>& live) {
+  struct Zonemap {
+    const irs::ColumnReader* reader = nullptr;
+    const duckdb::ExpressionFilter* expr = nullptr;
+    duckdb::TableFilterState* state = nullptr;
+    mutable irs::BlockWindow window;
+  };
+  std::vector<Zonemap> zonemaps;
+  for (const auto& spec : specs) {
+    if (spec.is_score || spec.row_gather) {
+      continue;
+    }
+    const auto* column = col_reader.Column(spec.field);
+    const auto* reader = column ? irs::FilteredColumn(*column, spec) : nullptr;
+    if (!reader || reader->Type().IsNested()) {
+      continue;
+    }
+    zonemaps.emplace_back(reader,
+                          &spec.filter->Cast<duckdb::ExpressionFilter>(),
+                          &states.State(context, *spec.filter));
+  }
+  const auto dead = [](const Zonemap& z, uint64_t begin, uint64_t end) {
+    if (end > z.reader->RowCount()) {
+      return false;
+    }
+    for (auto row = begin; row < end; row = z.window.end) {
+      z.window = z.reader->Locate(row, z.window);
+      if (!irs::ZoneDead(z.expr->CheckStatistics(
+            z.reader->RowGroupStatistics(z.window.block), *z.state))) {
+        return false;
+      }
+    }
+    return true;
+  };
+  live.clear();
+  for (uint64_t begin = 0; begin < rows; begin += rg_size) {
+    const auto end = std::min(rows, begin + rg_size);
+    if (absl::c_none_of(
+          zonemaps, [&](const Zonemap& z) { return dead(z, begin, end); })) {
+      live.emplace_back(static_cast<uint32_t>(begin / rg_size));
+    }
+  }
+}
+
 }  // namespace
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
@@ -508,8 +562,8 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
           col_reader && !g.col_filters.empty() && threads > 1 &&
           work.rg_count > threads) {
         ClassifySegmentColFilters(sub, g, g.col_filters, states, cls, false);
-        irs::LiveRowGroups(*col_reader, cls.active, context, states, docs,
-                           g.rg_size, work.live_rgs);
+        LiveRowGroups(*col_reader, cls.active, context, states, docs, g.rg_size,
+                      work.live_rgs);
         work.all_live = work.live_rgs.size() == work.rg_count;
       }
     }

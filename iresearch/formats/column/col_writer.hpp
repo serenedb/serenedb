@@ -35,6 +35,8 @@
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -42,6 +44,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -49,10 +52,6 @@
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
-
-class AnnWriter;
-class IdxWriter;
-struct AnnBuildEnv;
 
 inline constexpr size_t kMaxColumnDictionaries = 8;
 

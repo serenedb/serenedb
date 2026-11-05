@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstddef>
+#include <duckdb/main/database.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -31,11 +32,6 @@
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/store/directory.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class PipelineMergeExecutor {

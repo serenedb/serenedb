@@ -31,8 +31,11 @@
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
+#include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/flush_order.hpp"
@@ -44,14 +47,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-struct FlushState;
-struct BasicTermReader;
-
-namespace term_dict {
-
-class FieldWriter;
-}
 
 struct InverterMemory {
   duckdb::Allocator& allocator;

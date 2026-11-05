@@ -26,11 +26,10 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
-
-class ColFileWriter;
 
 inline constexpr uint32_t kNormCodes = 16;
 inline constexpr uint32_t kNormDirect = kNormCodes - 1;

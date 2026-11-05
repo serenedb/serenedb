@@ -20,16 +20,12 @@
 
 #pragma once
 
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 
 #include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class WriteContext final : public BlockManager,

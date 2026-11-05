@@ -23,6 +23,7 @@
 #include <atomic>
 #include <deque>
 #include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
@@ -35,11 +36,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class ColReader;

@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,13 @@ class WildcardNGramVerifier {
 
   bool Check(doc_id_t doc) {
     return MatchStoredTerms(*_matcher, _cursor.FetchDoc(doc));
+  }
+
+  void Check(std::span<const doc_id_t> docs, std::span<bool> matched) {
+    _cursor.FetchDocs(docs);
+    for (size_t i = 0; i < docs.size(); ++i) {
+      matched[i] = MatchStoredTerms(*_matcher, _cursor.Fetched(i));
+    }
   }
 
  private:

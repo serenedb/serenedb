@@ -23,6 +23,8 @@
 // ColumnReader / ColumnOutput interfaces are gone from production; ported
 // tests use BLOB-typed cs columns through this thin layer.
 
+#include <absl/algorithm/container.h>
+
 #include <atomic>
 #include <duckdb/common/types/vector.hpp>
 #include <functional>
@@ -88,6 +90,15 @@ std::unique_ptr<ColWriter> MakeCsWriter(Directory& dir,
 // SegmentReader does the same check via `Has*` on the result).
 std::unique_ptr<ColReader> MakeCsReader(const Directory& dir,
                                         std::string_view segment_name);
+
+uint64_t ColFileId(ColReader& reader, const ColumnReader& col);
+
+inline bool NullsInData(const ColumnReader& column) {
+  return absl::c_any_of(column.DataBlocks(), [](const ColumnBlockMeta& m) {
+    return m.codec->validity ==
+           duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;
+  });
+}
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per

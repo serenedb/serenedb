@@ -69,7 +69,10 @@ catalog::CompressionByColumn DeclaredCompression(
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.Oid(), column.CompressionType());
+      compression.emplace(
+        column.Oid(),
+        catalog::DeclaredCodec{.type = column.CompressionType(),
+                               .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -285,6 +288,13 @@ void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
   segment_options.segment_memory_max = options.segment_memory_max;
   segment_options.segment_docs_max = options.segment_docs_max;
   _writer->Options(segment_options);
+}
+
+void Store::SetDeclaredCompression(const duckdb::ColumnList& columns) {
+  auto compression = DeclaredCompression(columns);
+  absl::MutexLock lock{&_layout_mutex};
+  _compression = std::move(compression);
+  RebuildConfig(_layout.configs, _layout.building_index);
 }
 
 void Store::StartTasks() {
@@ -645,12 +655,35 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   std::optional<duckdb::idx_t> skip) const {
   std::vector<catalog::InvertedIndexKey> keys;
   catalog::InvertedIndexFields fields;
+  auto declared_compression = _compression;
   const auto add = [&](const IndexConfig& index) {
     for (const auto& [id, field] : index.config->fields) {
       fields.emplace(id, field);
     }
     keys.insert(keys.end(), index.config->keys.begin(),
                 index.config->keys.end());
+    for (const auto& key : index.config->keys) {
+      if (key.field_id == key.column_id ||
+          !irs::field_limits::valid(key.column_id)) {
+        continue;
+      }
+      const auto* field = index.config->FindEntry(key.field_id);
+      if (!field) {
+        continue;
+      }
+      const auto& options = field->column_options;
+      const bool own_codec =
+        options.compression != duckdb::CompressionType::COMPRESSION_AUTO;
+      if (!own_codec && !options.hyperloglog) {
+        continue;
+      }
+      auto& declared = declared_compression[key.column_id];
+      if (own_codec) {
+        declared.type = options.compression;
+        declared.compression_level = options.compression_level;
+      }
+      declared.hyperloglog |= options.hyperloglog;
+    }
   };
   for (const auto& index : configs) {
     if (index.oid != skip) {
@@ -663,7 +696,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   merged->pk = catalog::PkColumnKind::None;
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
-  merged->declared_compression = _compression;
+  merged->declared_compression = std::move(declared_compression);
   merged->table_columns = *_table_columns;
   return merged;
 }

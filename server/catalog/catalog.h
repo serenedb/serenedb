@@ -94,6 +94,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::RowGroupCollection& source,
     const duckdb::vector<duckdb::StorageIndex>& mapped_column_ids,
     duckdb::row_t row_start, duckdb::ErrorData& error) final;
+  bool VerifyColumnCompression(
+    duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::StorageManager> storage_manager,
+    const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
+    const duckdb::LogicalType& type) const final;
 
   void Initialize(bool load_builtin) final;
   duckdb::idx_t DefaultSchemaOid() const final;

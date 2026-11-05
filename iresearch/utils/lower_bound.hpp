@@ -157,17 +157,14 @@ IRS_FORCE_INLINE It BranchlessPartitionPoint(It begin, size_t len,
 
 template<typename Pred>
 IRS_FORCE_INLINE size_t PartitionIndex(size_t lo, size_t hi, Pred&& pred) {
-  if (lo == hi) {
-    return lo;
-  }
   size_t base = lo;
-  size_t len = hi - lo;
+  size_t len = hi - lo + 1;
   while (len > 1) {
     const size_t half = len / 2;
     base += IRS_UNPREDICTABLE(pred(base + half - 1)) ? half : 0;
     len -= half;
   }
-  return base + (pred(base) ? 1 : 0);
+  return base;
 }
 
 template<typename Pred>

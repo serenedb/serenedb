@@ -88,6 +88,7 @@
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
@@ -222,6 +223,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
   insert.children.emplace_back(*plan);
+  connector::ShareScanPayloads(*plan);
   return insert;
 }
 
@@ -253,6 +255,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -279,6 +282,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk, op.row_id_handling);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 
@@ -441,6 +445,18 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
   }
   return {};
+}
+
+bool SereneDBCatalog::VerifyColumnCompression(
+  duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::StorageManager> storage_manager,
+  const duckdb::CreateTableInfo& info, const duckdb::ColumnDefinition& column,
+  const duckdb::LogicalType& type) const {
+  const auto engine = ReadStorageEngine(info.options);
+  CheckColumnCodec(context, storage_manager, column.Name().GetIdentifierName(),
+                   column.CompressionType(), column.CompressionLevel(), type,
+                   engine);
+  return engine == TableEngine::Search;
 }
 
 std::shared_ptr<const CatalogSnapshot> CatalogSnapshots::Get(

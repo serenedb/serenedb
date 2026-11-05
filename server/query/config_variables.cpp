@@ -35,7 +35,9 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -301,6 +303,20 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to set parameter \"", name, "\""),
                   ERR_DETAIL(detail));
+}
+
+void SetObjectCacheSize(duckdb::ClientContext& context,
+                        const duckdb::Value& value) {
+  RequireSuperuser(context, kObjectCacheSizeSetting,
+                   "Only roles with the SUPERUSER attribute may change the "
+                   "size of the server-wide object cache.");
+  auto& cache = duckdb::DatabaseInstance::GetDatabase(context).GetObjectCache();
+  if (const auto bytes = value.GetValue<uint64_t>(); bytes != 0) {
+    cache.SetMaxMemory(bytes);
+    return;
+  }
+  cache.SetAutomaticMaxMemory(
+    duckdb::DBConfig::GetConfig(context).options.maximum_memory);
 }
 
 template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
@@ -1229,6 +1245,23 @@ constexpr std::pair<std::string_view, VariableDescription>
         "whole table). Default 1073741824 (1GB).",
         [] { return duckdb::Value::UBIGINT(uint64_t{1} << 30); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      kObjectCacheSizeSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes the database's object cache may hold: decoded columnstore "
+        "dictionaries, idle tokenizers and other reusable objects, evicted "
+        "least recently used. 0 = an eighth of memory_limit, at least 256MB. "
+        "Default 0. Server-global; only a superuser may change it.",
+        [] { return duckdb::Value::UBIGINT(0); },
+        [](duckdb::ClientContext& context, duckdb::SetScope,
+           duckdb::Value& value) { SetObjectCacheSize(context, value); },
+        [](duckdb::ClientContext& context, duckdb::SetScope) {
+          SetObjectCacheSize(context, duckdb::Value::UBIGINT(0));
+        },
+        duckdb::SetScope::GLOBAL,
       },
     },
     {

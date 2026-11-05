@@ -188,6 +188,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   void ApplyOptions(const catalog::SearchTableOptions& options) {
     SetTasksSettings(options);
   }
+  void SetDeclaredCompression(const duckdb::ColumnList& columns);
 
   // The maintenance ops the loops invoke: RefreshUnsafe publishes pending
   // inserts, CompactUnsafe merges segments, CleanupUnsafe reclaims unreferenced
@@ -365,7 +366,8 @@ class Store final : public std::enable_shared_from_this<Store>,
     -> yaclib::Future<absl::Status>;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs, std::span<const IndexConfig> retired,
-    std::optional<duckdb::idx_t> skip) const;
+    std::optional<duckdb::idx_t> skip) const
+    ABSL_SHARED_LOCKS_REQUIRED(_layout_mutex);
   template<typename Configs>
   void RebuildConfig(Configs&& configs,
                      std::optional<duckdb::idx_t> building_index)
@@ -398,7 +400,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   // A search table's columns and layout; empty for an inverted index.
   std::optional<irs::containers::FlatHashSet<irs::field_id>> _table_columns;
   uint32_t _row_group_size = 0;
-  catalog::CompressionByColumn _compression;
+  catalog::CompressionByColumn _compression ABSL_GUARDED_BY(_layout_mutex);
   mutable absl::Mutex _layout_mutex;
   Layout _layout ABSL_GUARDED_BY(_layout_mutex);
   WriterGenerations _writers;

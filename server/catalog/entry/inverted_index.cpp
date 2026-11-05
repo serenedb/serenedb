@@ -256,7 +256,7 @@ std::vector<std::string> ParseKeyColumns(
 
 irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   irs::field_id id) const {
-  auto declared = duckdb::CompressionType::COMPRESSION_AUTO;
+  DeclaredCodec declared;
   if (const auto it = declared_compression.find(id);
       it != declared_compression.end()) {
     declared = it->second;
@@ -264,20 +264,25 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
   if (const auto* entry = FindEntry(id)) {
     auto options = entry->column_options;
     if (options.compression == duckdb::CompressionType::COMPRESSION_AUTO) {
-      options.compression = declared;
+      options.compression = declared.type;
+      options.compression_level = declared.compression_level;
     }
+    options.hyperloglog |= declared.hyperloglog;
     return options;
   }
   if (id <= connector::kMaxRealColumnIdValue) {
-    if (declared == duckdb::CompressionType::COMPRESSION_AUTO) {
+    if (declared.type == duckdb::CompressionType::COMPRESSION_AUTO) {
       for (const auto ann : AnnFields(id)) {
-        if (const auto compression = FindEntry(ann)->column_options.compression;
-            compression != duckdb::CompressionType::COMPRESSION_AUTO) {
-          declared = compression;
+        if (const auto& options = FindEntry(ann)->column_options;
+            options.compression != duckdb::CompressionType::COMPRESSION_AUTO) {
+          declared.type = options.compression;
+          declared.compression_level = options.compression_level;
         }
       }
     }
-    return {.compression = declared};
+    return {.compression = declared.type,
+            .hyperloglog = declared.hyperloglog,
+            .compression_level = declared.compression_level};
   }
   // The pk column is written for every row of every segment, so its validity
   // bitmap is always full. So is a sub-field's: it is only written where its

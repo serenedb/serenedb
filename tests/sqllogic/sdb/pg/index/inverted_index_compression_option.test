@@ -186,6 +186,29 @@ statement error
 CREATE INDEX compr_mismatch_num ON compr_bad_num USING inverted(txt compr_english)
   INCLUDE (pk, n included (compression = 'fsst'));
 
+statement ok
+CREATE TABLE compr_nested (pk INTEGER PRIMARY KEY, payload STRUCT(a INTEGER, b VARCHAR), txt VARCHAR);
+
+statement ok
+INSERT INTO compr_nested VALUES (1, ROW(10, 'x'), 'one'), (2, ROW(20, 'y'), 'two');
+
+statement ok
+CREATE INDEX compr_nested_idx ON compr_nested USING inverted(txt compr_english)
+  INCLUDE (pk, payload included (compression = 'uncompressed'));
+
+query
+SELECT pk, payload FROM compr_nested_idx WHERE txt @@ ts_phrase('two');
+----
+pk	payload
+2	(20,y)
+
+statement error
+CREATE INDEX compr_nested_zstd ON compr_nested USING inverted(txt compr_english)
+  INCLUDE (pk, payload included (compression = 'zstd'));
+----
+db error: ERROR: Can't compress column "payload" with type 'STRUCT(a INTEGER, b VARCHAR)' (physical: STRUCT) using compression type 'ZSTD'
+
+
 # --- 9. IVF accepts the compression boolean option ---------------------
 # `compression` is a boolean IVF opclass option (default true; false stores
 # the index vectors uncompressed). A non-boolean value is rejected.

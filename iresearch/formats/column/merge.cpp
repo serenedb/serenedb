@@ -142,9 +142,15 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                         ? field_options->GetColumnOptions(field_id_v)
                         : ColumnOptions{};
 
-    auto& cw =
-      output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        row_group_size, opts.compression, false);
+    auto& cw = output.OpenColumn(
+      field_id_v, first_col->Type(),
+      {
+        .skip_validity = opts.skip_validity,
+        .row_group_size = row_group_size,
+        .compression = opts.compression,
+        .codec_params =
+          field_options ? field_options->CodecParams(opts) : ColCodecParams{},
+      });
     if (field_options) {
       for (const auto ann : field_options->AnnFields(field_id_v)) {
         output

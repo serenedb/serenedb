@@ -1,11 +1,24 @@
 target_sources(
     iresearch
     PRIVATE
+        column/codecs/fsst.cpp
+        column/codecs/fsst_chain_encoder.cpp
+        column/codecs/lz4.cpp
+        column/codecs/numeric.cpp
+        column/codecs/registry.cpp
+        column/codecs/segment_builder.cpp
+        column/codecs/string_scan.cpp
+        column/codecs/string_writer.cpp
+        column/codecs/trained_dictionary.cpp
+        column/codecs/zstd.cpp
+        column/codecs/zxc.cpp
+        column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_reader.cpp
         column/column_writer.cpp
         column/internal/write_context.cpp
+        column/list_ingest.cpp
         column/merge.cpp
         column/norm_column_reader.cpp
         column/norm_writer.cpp

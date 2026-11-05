@@ -20,27 +20,22 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
-#include <absl/strings/str_cat.h>
-
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <duckdb/common/enums/compression_type.hpp>
+#include <atomic>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
-#include <map>
 #include <utility>
+#include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
+
+constinit std::atomic<uint64_t> gNextFileId{1};
 
 IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
                             IOAdvice advice) {
@@ -56,9 +51,13 @@ IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
   return dir.open(filename, advice);
 }
 
+bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
+  return size <= end && offset <= end - size;
+}
+
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  SDB_ENSURE(m.file_offset + m.byte_size <= footer_offset,
+  SDB_ENSURE(InRange(m.file_offset, m.byte_size, footer_offset),
              ".col reader: column data on column id ", id,
              " out of range (offset ", m.file_offset, ", size ", m.byte_size,
              ")");
@@ -71,13 +70,17 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   for (const auto& m : meta.validity) {
     CheckBlockRange(m, meta.id, footer_offset);
   }
+  for (const auto& d : meta.dictionaries) {
+    SDB_ENSURE(
+      d.byte_size != 0 && InRange(d.file_offset, d.byte_size, footer_offset),
+      ".col reader: dictionary on column id ", meta.id,
+      " out of range (offset ", d.file_offset, ", size ", d.byte_size, ")");
+  }
   for (const auto& c : meta.children) {
     CheckColumnMetaRanges(c, footer_offset);
   }
   for (const auto& rg : meta.variant_rgs) {
-    if (rg.unshredded) {
-      CheckColumnMetaRanges(*rg.unshredded, footer_offset);
-    }
+    CheckColumnMetaRanges(*rg.unshredded, footer_offset);
     if (rg.shredded) {
       CheckColumnMetaRanges(*rg.shredded, footer_offset);
     }
@@ -106,8 +109,7 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  SDB_ENSURE(r.file_offset + slots >= r.file_offset &&
-               r.file_offset + slots <= footer_offset,
+  SDB_ENSURE(InRange(r.file_offset, slots, footer_offset),
              ".col reader: norm data on column id ", id,
              " out of range (offset ", r.file_offset, ")");
   r.exceptions =
@@ -124,8 +126,7 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
                (r.exception_bytes == 2 || r.exception_bytes == 4),
              ".col reader: norm exceptions on column id ", id, " are corrupt");
   const auto table = NormTableSize(r);
-  SDB_ENSURE(r.table_offset + table >= r.table_offset &&
-               r.table_offset + table <= footer_offset,
+  SDB_ENSURE(InRange(r.table_offset, table, footer_offset),
              ".col reader: norm exceptions on column id ", id,
              " out of range (offset ", r.table_offset, ")");
   return r;
@@ -158,6 +159,7 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
     return;
   }
   auto fin = _ctx.In().Dup();
+  std::vector<ColumnMeta> metas;
   format_utils::ReadFooter(
     *fin, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
@@ -166,13 +168,8 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         kColFieldColumns, "columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            auto meta = DeserializeColumnMeta(obj);
+            auto& meta = metas.emplace_back(DeserializeColumnMeta(obj));
             CheckColumnMetaRanges(meta, data_size);
-            auto col = ColumnReader::Make(std::move(meta));
-            const auto id = col->Id();
-            const bool ok = _by_id.emplace(id, col.get()).second;
-            SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-            _columns.push_back(std::move(col));
           });
         });
       footer.ReadOptionalList(
@@ -183,13 +180,21 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
             auto column = std::make_unique<NormColumnReader>(
               id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
-            const bool ok = _norm_by_id.emplace(id, column.get()).second;
+            const bool ok =
+              _norm_by_id.try_emplace(id, std::move(column)).second;
             SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
-            _norm_columns.push_back(std::move(column));
           });
         });
       footer.Unset<duckdb::DatabaseInstance>();
     });
+  const auto file_id = gNextFileId.fetch_add(1, std::memory_order_relaxed);
+  for (auto& meta : metas) {
+    auto col = ColumnReader::Make(std::move(meta), file_id);
+    const auto id = col->Id();
+    const bool ok = _by_id.emplace(id, col.get()).second;
+    SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
+    _columns.push_back(std::move(col));
+  }
 }
 
 ColReader::~ColReader() = default;
@@ -201,7 +206,7 @@ const ColumnReader* ColReader::Column(field_id id) const noexcept {
 
 const NormColumnReader* ColReader::NormColumn(field_id id) const noexcept {
   auto it = _norm_by_id.find(id);
-  return it == _norm_by_id.end() ? nullptr : it->second;
+  return it == _norm_by_id.end() ? nullptr : it->second.get();
 }
 
 }  // namespace irs

@@ -24,12 +24,15 @@
 
 #include <cstdint>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/main/database.hpp>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -37,15 +40,7 @@
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
-
-class ColumnReader;
-class NormColumnReader;
 
 inline constexpr std::string_view kFormatExt = "col";
 
@@ -84,8 +79,9 @@ class ColReader final {
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
-  std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
-  irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
+  irs::containers::FlatHashMap<field_id,
+                               std::unique_ptr<const NormColumnReader>>
+    _norm_by_id;
 };
 
 }  // namespace irs

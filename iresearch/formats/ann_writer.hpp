@@ -30,6 +30,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -39,11 +40,20 @@ class ColumnReader;
 class IdxWriter;
 struct MergeSource;
 
+struct AnnFlushBound {
+  size_t compute = 0;
+  size_t kept = 0;
+  uint64_t terms = 0;
+};
+
 class AnnWriter {
  public:
   virtual ~AnnWriter() = default;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
+  void SetBudget(MemoryBudget* budget) noexcept { _budget = budget; }
+
+  virtual AnnFlushBound FlushBound(uint64_t rows) = 0;
 
   virtual AnnKind Kind() const noexcept = 0;
 
@@ -62,6 +72,7 @@ class AnnWriter {
 
  protected:
   IdxWriter* _idx = nullptr;
+  MemoryBudget* _budget = nullptr;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(

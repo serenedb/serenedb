@@ -1,0 +1,74 @@
+# A full segment is flushed when the next INSERT reaches it. When that flush
+# fails, the committed rows it held are dropped from the index: the index is
+# out of sync, checkpoints are refused, and a restart replays the rows.
+
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE ff (id BIGINT, msg TEXT);
+
+statement ok
+CREATE INDEX ff_idx ON ff USING inverted (id, msg)
+  WITH (refresh_interval = 0, compaction_interval = 0, segment_docs_max = 10);
+
+statement ok
+INSERT INTO ff SELECT i, 'm' || (i % 7) FROM range(5) t(i);
+
+statement ok
+INSERT INTO ff SELECT i, 'late' FROM range(5, 20) t(i);
+
+statement ok
+SET sdb_faults = 'IndexWriter::Flush';
+
+statement error
+INSERT INTO ff VALUES (20, 'last');
+----
+db error: ERROR: intentional debug error
+
+
+statement ok
+SET sdb_faults = '-IndexWriter::Flush';
+
+query
+SELECT count(*) AS n FROM ff;
+----
+n
+20
+
+statement error
+CHECKPOINT;
+----
+db error: ERROR: cannot checkpoint database "<slt:ignore>": inverted index <slt:ignore> is out of sync with its store table
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ff;
+----
+n
+20
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) ff;
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM ff_idx) AS total,
+       (SELECT count(*) FROM ff_idx WHERE msg @@ 'late') AS late;
+----
+total	late
+20	15
+
+connection after_crash
+statement ok
+CHECKPOINT;

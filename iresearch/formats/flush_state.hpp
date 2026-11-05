@@ -27,6 +27,7 @@
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
@@ -43,6 +44,7 @@ struct FlushState {
   ScorerPtr scorer = nullptr;
   const size_t doc_count;
   IndexFeatures index_features{IndexFeatures::None};
+  MemoryBudget* budget = nullptr;
 };
 
 }  // namespace irs

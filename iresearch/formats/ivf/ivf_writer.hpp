@@ -70,10 +70,14 @@ class IvfBuilder {
  public:
   explicit IvfBuilder(AnnInfo info) : _info{std::move(info)} {}
 
+  AnnFlushBound Bound(uint64_t rows, QuantizerWriter& qw) const;
+
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
-                   QuantizerWriter* qw) const;
+                   QuantizerWriter* qw, MemoryBudget* budget) const;
 
  private:
+  CentroidsBuildParams CentroidParams(MemoryBudget* budget) const noexcept;
+
   AnnInfo _info;
 };
 
@@ -136,6 +140,8 @@ class IvfWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return !_built; }
 
+  AnnFlushBound FlushBound(uint64_t rows) final;
+
   yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
                          const AnnBuildEnv* env) final;
 
@@ -154,6 +160,7 @@ class IvfWriter final : public AnnWriter {
 
   AnnInfo _info;
   Result _result;
+  std::unique_ptr<QuantizerWriter> _bound_qw;
   bool _built = false;
   std::unique_ptr<IvfTermReader> _reader;
 };

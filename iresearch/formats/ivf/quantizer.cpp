@@ -78,7 +78,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major) {
+  VectorMetric metric, bool row_major, MemoryBudget* budget) {
   switch (quant) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaStats(metric, d, stats);
@@ -90,7 +90,7 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
     case VectorQuantization::BF16:
       return quantizers::MakeScalarStats(metric, d, quant, stats);
     case VectorQuantization::PQ:
-      return quantizers::MakePqStats(metric, d, stats, row_major);
+      return quantizers::MakePqStats(metric, d, stats, row_major, budget);
     case VectorQuantization::TQ:
       return quantizers::MakeTurboQuantStats(metric, d, stats, row_major);
     case VectorQuantization::RaBitQ:

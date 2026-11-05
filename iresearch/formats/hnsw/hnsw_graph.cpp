@@ -55,10 +55,15 @@ void HnswGraphWriter::Reset(size_t nodes, uint32_t m) {
   SDB_ASSERT(m != 0);
   _graph._m = m;
   _graph._m0 = 2 * _graph._m;
+  const auto empty = [&]<typename T>(HugePageVector<T>& v) {
+    v = HugePageVector<T>{
+      typename HugePageVector<T>::allocator_type{_budget}};
+  };
+  empty(_graph._levels);
+  empty(_graph._offsets);
+  empty(_graph._base);
+  empty(_graph._upper);
   _graph._levels.assign(nodes, 0);
-  _graph._offsets.clear();
-  _graph._base.clear();
-  _graph._upper.clear();
   _graph._entry = kHnswInvalidNode;
   _graph._max_level = 0;
 }

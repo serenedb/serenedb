@@ -280,7 +280,9 @@ class ProductQuantizerWriter final : public QuantizerWriter {
 template<VectorMetric M>
 class ProductQuantizerStats final : public QuantizerStats {
  public:
-  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats,
+                        MemoryBudget* budget)
+    : _charge{budget, 0} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -943,7 +945,11 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
 template<VectorMetric M>
 class ProductQuantizer8Stats final : public QuantizerStats {
  public:
-  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats) {
+  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats,
+                         MemoryBudget* budget)
+    : _charge{budget, 0},
+      _cent_t{TrackedAllocator<float>{budget}},
+      _cent_h{TrackedAllocator<uint16_t>{budget}} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
     const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
     SDB_ASSERT(hdr.m != 0);
@@ -1516,11 +1522,12 @@ std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
 
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major) {
+  bool row_major, MemoryBudget* budget) {
   if (row_major) {
-    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats);
+    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats,
+                                                       budget);
   }
-  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
+  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats, budget);
 }
 
 }  // namespace irs::quantizers

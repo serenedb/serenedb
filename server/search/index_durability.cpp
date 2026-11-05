@@ -245,6 +245,9 @@ absl::Status IndexDurability::Refresh(
       FinishPendingSave(writer);
     }
 
+    if (writer.LostDocs()) {
+      MarkOutOfSync();
+    }
     if (!CanPersist()) {
       return absl::OkStatus();
     }
@@ -328,6 +331,9 @@ void IndexDurability::PrepareCheckpoint(irs::IndexWriter& writer,
   SDB_ASSERT(_pending_checkpoint == 0 || _pending_checkpoint == iteration);
   _checkpoint = iteration;
   absl::Cleanup reset = [&]() noexcept { _checkpoint = 0; };
+  if (writer.LostDocs()) {
+    MarkOutOfSync();
+  }
   try {
     if (writer.RefreshBegin({.payload_changed = PayloadChanged()})) {
       _directory_dirty.store(true, std::memory_order_relaxed);

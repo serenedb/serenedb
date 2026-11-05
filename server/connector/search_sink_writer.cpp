@@ -1000,6 +1000,7 @@ void SearchSinkInsertBaseImpl::FinishImpl() {
   _column_writers.clear();
   _pk_column_writer = nullptr;
   _document.reset();
+  _trx->ReserveFlush();
 }
 
 void SearchSinkInsertBaseImpl::AppendToColumn(irs::field_id field_id,

@@ -33,8 +33,35 @@ bool HasTerms(const FieldInverter* field) noexcept {
 
 }  // namespace
 
+FieldsInverter::FlushNeeds FieldsInverter::Needs() const noexcept {
+  FlushNeeds needs;
+  for (const auto& field : _fields) {
+    if (!HasTerms(&field)) {
+      continue;
+    }
+    const auto terms = field.Dictionary().Size();
+    needs.max_terms = std::max(needs.max_terms, terms);
+    needs.terms += terms;
+    needs.blocks =
+      std::max(needs.blocks, ScatteredField::Blocks(field, field.Log().Size()));
+    needs.ranges = needs.ranges || IsSubsetOf(IndexFeatures::Ranges,
+                                              field.Meta().index_features);
+  }
+  needs.terms += _docs.size();
+  return needs;
+}
+
+size_t FieldsInverter::FlushBound(size_t docs,
+                                  size_t extra_terms) const noexcept {
+  const auto needs = Needs();
+  return ScatterScratch::Bytes(needs.max_terms, needs.blocks) +
+         term_dict::FieldWriter::Bound(needs.terms + extra_terms, docs,
+                                       needs.ranges);
+}
+
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra) {
+                           std::span<const BasicTermReader* const> extra,
+                           uint64_t extra_terms) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
@@ -75,11 +102,14 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
                  return lhs->id() < rhs->id();
                });
 
-  ScatterScratch scratch;
-  ScatteredField scattered{_mem, scratch};
+  const auto needs = Needs();
+  InverterMemory mem{state.budget ? state.budget->Allocator() : _mem.allocator};
+  ScatterScratch scratch{state.budget};
+  scratch.Reserve(needs.max_terms, needs.blocks, mem.allocator);
+  ScatteredField scattered{mem, scratch};
   ColumnarTermReader terms;
 
-  fw.prepare(state, keyed_dicts);
+  fw.prepare(state, keyed_dicts, needs.terms + extra_terms);
   size_t ei = 0;
   for (const auto* item : sorted) {
     const auto id = item->first;

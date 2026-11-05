@@ -39,6 +39,16 @@ struct ScatterScratch {
     uint32_t id;
   };
 
+  explicit ScatterScratch(MemoryBudget* budget = nullptr)
+    : cursors{TrackedAllocator<uint32_t>{budget}},
+      bounds{TrackedAllocator<uint32_t>{budget}},
+      ranked{TrackedAllocator<RankedTerm>{budget}},
+      ranked_alt{TrackedAllocator<RankedTerm>{budget}} {}
+
+  static size_t Bytes(size_t terms, size_t blocks) noexcept;
+
+  void Reserve(size_t terms, size_t blocks, duckdb::Allocator& allocator);
+
   std::vector<duckdb::AllocatedData> blocks;
   TrackedVector<uint32_t> cursors;
   TrackedVector<uint32_t> bounds;
@@ -55,6 +65,8 @@ class ScatteredField : util::Noncopyable {
  public:
   ScatteredField(InverterMemory& mem, ScatterScratch& scratch) noexcept
     : _mem{&mem}, _s{&scratch} {}
+
+  static size_t Blocks(const FieldInverter& field, uint64_t nocc) noexcept;
 
   void Reset(const FieldInverter& field);
 

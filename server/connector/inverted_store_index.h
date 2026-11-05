@@ -92,6 +92,9 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> deleted_sel,
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
   bool RemovalNeedsColumnValues() const final { return false; }
+  void ReserveDelete(duckdb::ClientContext& context,
+                     duckdb::idx_t count) final;
+  void RevertAppend(duckdb::DataChunk&, duckdb::Vector&) final {}
 
   bool FinishReplay();
 

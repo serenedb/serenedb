@@ -94,7 +94,46 @@ IRS_FORCE_INLINE void Put(uint32_t** blocks, uint64_t i,
     value;
 }
 
+size_t ScatterColumns(const FieldInverter& field) noexcept {
+  return field.VisitLog([]<typename Log>(const Log&) -> size_t {
+    if constexpr (Log::kLayout == TokenLayout::Terms) {
+      return 1;
+    } else if constexpr (Log::kLayout == TokenLayout::TermsPos) {
+      return 2;
+    } else {
+      return 4;
+    }
+  });
+}
+
 }  // namespace
+
+size_t ScatterScratch::Bytes(size_t terms, size_t blocks) noexcept {
+  const size_t ranked = terms < kRadixThreshold ? 1 : 2;
+  return terms * (sizeof(uint32_t) + ranked * sizeof(RankedTerm)) +
+         (terms + 1) * sizeof(uint32_t) +
+         blocks * kBlockValues * sizeof(uint32_t);
+}
+
+void ScatterScratch::Reserve(size_t terms, size_t blocks,
+                             duckdb::Allocator& allocator) {
+  cursors.reserve(terms);
+  ranked.reserve(terms);
+  if (terms >= kRadixThreshold) {
+    ranked_alt.reserve(terms);
+  }
+  bounds.reserve(terms + 1);
+  this->blocks.reserve(blocks);
+  while (this->blocks.size() < blocks) {
+    this->blocks.push_back(allocator.Allocate(kBlockValues * sizeof(uint32_t)));
+  }
+}
+
+size_t ScatteredField::Blocks(const FieldInverter& field,
+                              uint64_t nocc) noexcept {
+  return ScatterColumns(field) *
+         ((nocc + ScatterScratch::kBlockMask) >> ScatterScratch::kBlockShift);
+}
 
 void ScatteredField::Reset(const FieldInverter& field) {
   _field = &field;

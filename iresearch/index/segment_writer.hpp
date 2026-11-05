@@ -127,6 +127,14 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
 
+  size_t FlushBound();
+  void ReserveFlush();
+  bool TryReserveFlush() noexcept;
+
+  void ReserveRemoval(size_t bytes);
+  MemoryBudget* TakeRemoval(size_t bytes) noexcept;
+  void DropRemovals() noexcept { _removal_reserve = 0; }
+
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
   bool initialized() const noexcept { return _initialized; }
@@ -253,12 +261,14 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
   void FlushFields(FlushState& state,
-                   std::span<const BasicTermReader* const> extra);
+                   std::span<const BasicTermReader* const> extra,
+                   uint64_t extra_terms);
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
   void ResetState() noexcept;
 
+  MemoryBudget _budget;
   TrackingDirectory _dir;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
@@ -281,6 +291,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;
+  bool _flush_reserved = false;
+  size_t _removal_reserve = 0;
 };
 
 }  // namespace irs

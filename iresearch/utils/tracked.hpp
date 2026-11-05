@@ -21,9 +21,11 @@
 #pragma once
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/mutex.h>
 
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/enums/memory_tag.hpp>
+#include <duckdb/storage/buffer/buffer_pool_reservation.hpp>
 #include <memory>
 #include <new>
 #include <string>
@@ -39,6 +41,40 @@ void ReserveMemory(duckdb::MemoryTag tag, size_t size);
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept;
 duckdb::Allocator& TrackedDuckAllocator();
 
+class MemoryBudget {
+ public:
+  MemoryBudget();
+  MemoryBudget(const MemoryBudget&) = delete;
+  MemoryBudget& operator=(const MemoryBudget&) = delete;
+  ~MemoryBudget();
+
+  void Reserve(size_t bytes);
+  void Release(size_t keep = 0) noexcept;
+
+  void Take(size_t bytes);
+  void Return(size_t bytes) noexcept;
+
+  duckdb::BufferPoolReservation Detach(size_t bytes);
+  void Attach(duckdb::BufferPoolReservation& reservation) noexcept;
+  void Reclaim(size_t bytes) noexcept;
+
+  size_t Reserved() const noexcept;
+  size_t Overflow() const noexcept;
+
+  duckdb::Allocator& Allocator() noexcept { return _allocator; }
+
+ private:
+  mutable absl::Mutex _mutex;
+  size_t _reserved = 0;
+  size_t _lent = 0;
+  size_t _overflow = 0;
+  duckdb::Allocator _allocator;
+};
+
+void ChargeMemory(MemoryBudget* budget, duckdb::MemoryTag tag, size_t size);
+void FreeCharge(MemoryBudget* budget, duckdb::MemoryTag tag,
+                size_t size) noexcept;
+
 // NOLINTBEGIN
 template<typename T, duckdb::MemoryTag Tag = kMemoryTag,
          typename Base = std::allocator<T>>
@@ -46,10 +82,10 @@ struct TrackedAllocator {
   static_assert(std::is_empty_v<Base>);
 
   using value_type = T;
-  using propagate_on_container_copy_assignment = std::true_type;
+  using propagate_on_container_copy_assignment = std::false_type;
   using propagate_on_container_move_assignment = std::true_type;
   using propagate_on_container_swap = std::true_type;
-  using is_always_equal = std::true_type;
+  using is_always_equal = std::false_type;
 
   template<typename U>
   struct rebind {
@@ -58,13 +94,19 @@ struct TrackedAllocator {
   };
 
   TrackedAllocator() = default;
+  explicit TrackedAllocator(MemoryBudget* budget) noexcept : budget{budget} {}
 
   template<typename U, typename B>
-  TrackedAllocator(const TrackedAllocator<U, Tag, B>&) noexcept {}
+  TrackedAllocator(const TrackedAllocator<U, Tag, B>& other) noexcept
+    : budget{other.budget} {}
+
+  TrackedAllocator select_on_container_copy_construction() const noexcept {
+    return {};
+  }
 
   T* allocate(size_t n) {
-    ReserveMemory(Tag, n * sizeof(T));
-    absl::Cleanup release = [&] { FreeReservedMemory(Tag, n * sizeof(T)); };
+    ChargeMemory(budget, Tag, n * sizeof(T));
+    absl::Cleanup release = [&] { FreeCharge(budget, Tag, n * sizeof(T)); };
     auto* p = Base{}.allocate(n);
     std::move(release).Cancel();
     return p;
@@ -72,7 +114,7 @@ struct TrackedAllocator {
 
   void deallocate(T* p, size_t n) noexcept {
     Base{}.deallocate(p, n);
-    FreeReservedMemory(Tag, n * sizeof(T));
+    FreeCharge(budget, Tag, n * sizeof(T));
   }
 
   template<typename U, typename... Args>
@@ -84,10 +126,12 @@ struct TrackedAllocator {
                                             std::forward<Args>(args)...);
   }
 
-  friend bool operator==(const TrackedAllocator&,
-                         const TrackedAllocator&) noexcept {
-    return true;
+  friend bool operator==(const TrackedAllocator& lhs,
+                         const TrackedAllocator& rhs) noexcept {
+    return lhs.budget == rhs.budget;
   }
+
+  MemoryBudget* budget = nullptr;
 };
 // NOLINTEND
 
@@ -126,11 +170,15 @@ class MemoryCharge {
  public:
   MemoryCharge() = default;
   explicit MemoryCharge(size_t bytes) { Resize(bytes); }
+  MemoryCharge(MemoryBudget* budget, size_t bytes) : _budget{budget} {
+    Resize(bytes);
+  }
   MemoryCharge(MemoryCharge&& other) noexcept
-    : _bytes{std::exchange(other._bytes, 0)} {}
+    : _budget{other._budget}, _bytes{std::exchange(other._bytes, 0)} {}
   MemoryCharge& operator=(MemoryCharge&& other) noexcept {
     if (this != &other) {
       Release();
+      _budget = other._budget;
       _bytes = std::exchange(other._bytes, 0);
     }
     return *this;
@@ -139,9 +187,9 @@ class MemoryCharge {
 
   void Resize(size_t bytes) {
     if (bytes > _bytes) {
-      ReserveMemory(kMemoryTag, bytes - _bytes);
+      ChargeMemory(_budget, kMemoryTag, bytes - _bytes);
     } else if (bytes < _bytes) {
-      FreeReservedMemory(kMemoryTag, _bytes - bytes);
+      FreeCharge(_budget, kMemoryTag, _bytes - bytes);
     }
     _bytes = bytes;
   }
@@ -151,10 +199,11 @@ class MemoryCharge {
  private:
   void Release() noexcept {
     if (_bytes != 0) {
-      FreeReservedMemory(kMemoryTag, std::exchange(_bytes, 0));
+      FreeCharge(_budget, kMemoryTag, std::exchange(_bytes, 0));
     }
   }
 
+  MemoryBudget* _budget = nullptr;
   size_t _bytes = 0;
 };
 
@@ -167,10 +216,11 @@ using TrackedString =
 template<typename T>
 struct TrackedArrayDelete {
   size_t size = 0;
+  MemoryBudget* budget = nullptr;
 
   void operator()(T* p) const noexcept {
     std::destroy_n(p, size);
-    TrackedAllocator<T>{}.deallocate(p, size);
+    TrackedAllocator<T>{budget}.deallocate(p, size);
   }
 };
 
@@ -178,12 +228,13 @@ template<typename T>
 using TrackedArray = std::unique_ptr<T[], TrackedArrayDelete<T>>;
 
 template<typename T>
-TrackedArray<T> MakeTrackedArray(size_t size) {
-  auto* p = TrackedAllocator<T>{}.allocate(size);
-  absl::Cleanup release = [&] { TrackedAllocator<T>{}.deallocate(p, size); };
+TrackedArray<T> MakeTrackedArray(size_t size, MemoryBudget* budget = nullptr) {
+  TrackedAllocator<T> allocator{budget};
+  auto* p = allocator.allocate(size);
+  absl::Cleanup release = [&] { allocator.deallocate(p, size); };
   std::uninitialized_value_construct_n(p, size);
   std::move(release).Cancel();
-  return TrackedArray<T>{p, TrackedArrayDelete<T>{size}};
+  return TrackedArray<T>{p, TrackedArrayDelete<T>{size, budget}};
 }
 
 }  // namespace irs

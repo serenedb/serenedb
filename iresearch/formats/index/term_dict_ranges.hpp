@@ -33,14 +33,17 @@ namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  static uint64_t Bound(uint64_t docs) noexcept;
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
+  void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget* budget);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   void Write(bstring& region, size_t prefix,
              std::vector<uint64_t>& counts) const;
   void Clear() noexcept;
+  void Release() noexcept;
 
  private:
   struct Piece {

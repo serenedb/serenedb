@@ -596,7 +596,7 @@ irs::TrackedVector<int64_t> Store::AppendDeleteLog(
   }
   const auto end = _delete_log_rowid_end.load(std::memory_order_relaxed);
   irs::TrackedVector<int64_t> logged;
-  irs::TrackedVector<int64_t> native;
+  irs::TrackedVector<int64_t> native{rows.get_allocator()};
   for (const auto row : rows) {
     (row >= end ? native : logged).push_back(row);
   }

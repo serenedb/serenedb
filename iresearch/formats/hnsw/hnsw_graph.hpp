@@ -231,8 +231,8 @@ struct HnswFrontierOrder {
 struct HnswSearchScratch {
   HnswVisited visited;
   HnswVisited visited_hop2;
-  TrackedVector<HnswCandidate> nearest;
-  TrackedVector<HnswCandidate> frontier;
+  std::vector<HnswCandidate> nearest;
+  std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
   std::vector<uint32_t> hop;
   std::vector<uint32_t> bridges;
@@ -322,6 +322,9 @@ class HnswGraphWriter {
  public:
   HnswGraphWriter() = default;
 
+  void SetBudget(MemoryBudget* budget) noexcept { _budget = budget; }
+  MemoryBudget* Budget() const noexcept { return _budget; }
+
   void Reset(size_t nodes, uint32_t m);
 
   void AllocateLinks();
@@ -378,6 +381,7 @@ class HnswGraphWriter {
   HnswGraph _graph;
   std::vector<uint32_t> _proc_offsets;
   std::vector<uint8_t> _processed;
+  MemoryBudget* _budget = nullptr;
 };
 
 uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept;
@@ -611,7 +615,7 @@ IRS_FORCE_INLINE void HnswBatchUnvisited(std::span<const uint32_t> links,
 }
 
 inline IRS_FORCE_INLINE void HnswKeepNearest(
-  TrackedVector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
+  std::vector<HnswCandidate>& nearest, HnswCandidate cand, uint32_t ef) {
   nearest.push_back(cand);
   std::push_heap(nearest.begin(), nearest.end(), HnswNearestOrder{});
   if (nearest.size() > ef) {

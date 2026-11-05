@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/column_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <cstring>
@@ -36,9 +37,11 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/storage/buffer/block_handle.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
 #include <memory>
@@ -253,6 +256,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   auto& db = ctx.Database();
   auto& out = Out();
   auto& bm = db.GetBufferManager();
+  auto* budget = _owner->Budget();
 
   duckdb::optional_ptr<duckdb::OverflowStringWriter> overflow_writer;
   duckdb::optional_ptr<duckdb::ColumnStreamWriter> stream_writer;
@@ -261,9 +265,33 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     stream_writer = &ctx;
   }
 
+  std::vector<duckdb::BufferHandle> funded;
+  duckdb::ColumnDataCheckpointData::CreateSegmentFn create_segment;
+  if (budget) {
+    create_segment = [&](const duckdb::CompressionFunction& function,
+                         duckdb::idx_t size,
+                         duckdb::BlockManager& block_manager) {
+      auto source = budget->Detach(duckdb::BufferManager::GetAllocSize(
+        size + block_manager.GetBlockHeaderSize()));
+      absl::Cleanup attach = [&] { budget->Attach(source); };
+      auto handle = bm.AllocateTransientMemory(size, block_manager, source);
+      auto segment = duckdb::ColumnSegment::CreateTransientSegment(
+        db, function, codec_type, size, handle.GetBlockHandle());
+      funded.push_back(std::move(handle));
+      return segment;
+    };
+  }
+
   auto capture = [&](duckdb::ColumnSegment& seg, duckdb::idx_t size,
                      const uint8_t* bytes) {
     CaptureSegment(seg, size, bytes, out, sink);
+    const auto it = absl::c_find_if(funded, [&](const auto& handle) {
+      return handle.GetBlockHandle() == seg.GetBlockHandle();
+    });
+    if (it != funded.end()) {
+      budget->Reclaim(it->GetBlockHandle()->GetMemory().GetMemoryUsage());
+      funded.erase(it);
+    }
   };
   auto capture_from_block = [&](duckdb::ColumnSegment& seg,
                                 duckdb::idx_t size) {
@@ -296,12 +324,15 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
     std::move(flush_fn),
     std::move(flush_internal_fn),
     ctx,
+    std::move(create_segment),
+    &duckdb::Allocator::DefaultAllocator(),
   };
   auto comp_state = picked.init_compression(ckp, std::move(state));
   for (auto& c : chunks) {
     picked.compress(*comp_state, c.data);
   }
   picked.compress_finalize(*comp_state);
+  SDB_ASSERT(funded.empty());
 }
 
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,

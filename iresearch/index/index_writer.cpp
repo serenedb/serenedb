@@ -788,6 +788,7 @@ bool IndexWriter::Transaction::CommitImpl(
   SDB_ASSERT(_staged);
   SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
   segment->Commit(_queries, _first_tick + _queries);
+  segment->writer->DropRemovals();
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
@@ -804,6 +805,7 @@ void IndexWriter::Transaction::Abort() noexcept {
   if (segment == nullptr) {
     return;  // nothing to do
   }
+  segment->writer->DropRemovals();
   _queries = 0;
   _staged = false;
   if (_active.Flush() == nullptr) {
@@ -852,19 +854,31 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
               ", memory limit=", _writer->_segment_limits.Memory(),
               ", options_match=", options_match);
 
-    try {
-      segment.Flush();
-    } catch (...) {
-      // TODO(mbkkt) What the goal are we want to achieve
-      //  with keeping already flushed data?
-      segment.Reset(true);
-      throw;
-    }
+    writer.ReserveFlush();
+    FlushReserved(segment);
   }
   // Hand the per-op options to the (pooled) writer before it materializes a
   // segment; a forced flush above reset it to the fallback, so set after it.
   writer.SetFieldOptions(_field_options);
   segment.Prepare();
+}
+
+void IndexWriter::Transaction::FlushReserved(SegmentContext& segment) {
+  const auto committed = segment.committed_buffered_docs;
+  Finally drop = [&, exceptions = std::uncaught_exceptions()]() noexcept {
+    if (std::uncaught_exceptions() <= exceptions) {
+      return;
+    }
+    segment.Reset(true);
+    if (committed != 0) {
+      _writer->_lost_docs.store(true, std::memory_order_relaxed);
+      SDB_WARN(IRESEARCH, "flushing a full segment failed and dropped ",
+               committed,
+               " committed documents from the index; the index is out of "
+               "sync until a restart replays them");
+    }
+  };
+  segment.Flush();
 }
 
 bool IndexWriter::FlushRequired(const SegmentWriter& segment) const noexcept {
@@ -1040,6 +1054,7 @@ void IndexWriter::FlushContext::FlushPending() {
   for (auto& entry : pending_segments) {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
+    segment->writer->TryReserveFlush();
     segment->Flush();
     for (auto& queued : segment->queries) {
       if (auto* adopted = std::get_if<Queued::Adopted>(&queued.op)) {

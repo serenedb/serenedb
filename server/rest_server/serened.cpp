@@ -28,7 +28,10 @@
 #include <cstring>
 #include <deque>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/logging/log_manager.hpp>
+#include <duckdb/storage/buffer/buffer_pool.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -75,6 +78,18 @@ using namespace sdb;
 using namespace sdb::app;
 
 const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+
+void RestoreMemoryLimit(duckdb::BufferManager& buffers, uint64_t limit) {
+  buffers.GetBufferPool().ForceLimit(limit);
+  if (const auto used = buffers.GetUsedMemory(); used > limit) {
+    SDB_WARN(STARTUP, "replaying the logs at startup took ",
+             duckdb::StringUtil::BytesToHumanReadableString(used),
+             " of memory, above memory_limit ",
+             duckdb::StringUtil::BytesToHumanReadableString(limit),
+             "; statements that need memory fail until the search indexes "
+             "flush the replayed rows");
+  }
+}
 
 void SetSanitizerThreadStackSize() {
 #if defined(__GLIBC__) &&                  \
@@ -177,6 +192,10 @@ int RunServer(int argc, char** argv) {
     network::pg::hba::SetHbaConfig(db_path.hbaConfigFile());
     background.start();
     up_background = true;
+    auto& buffers = duckdb::BufferManager::GetBufferManager(
+      irs::DuckDBEngine::Instance().instance());
+    const auto memory_limit = buffers.GetMaxMemory();
+    buffers.SetMemoryLimit();
     catalog::InitCatalog(db_path.directory());
     network.StartIoPool();
     up_network = true;
@@ -186,6 +205,7 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    RestoreMemoryLimit(buffers, memory_limit);
     jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;

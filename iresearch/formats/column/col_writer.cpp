@@ -240,6 +240,20 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   return out;
 }
 
+AnnFlushBound ColWriter::AnnBound(uint64_t rows) {
+  AnnFlushBound total;
+  for (auto& entry : _ann_writers) {
+    if (!entry->writer) {
+      continue;
+    }
+    const auto bound = entry->writer->FlushBound(rows);
+    total.compute = std::max(total.compute, total.kept + bound.compute);
+    total.kept += bound.kept;
+    total.terms += bound.terms;
+  }
+  return total;
+}
+
 void ColWriter::Rollback() noexcept { _out.reset(); }
 
 constexpr auto kNoCancel = [] { return true; };
@@ -281,6 +295,8 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     cw->SealRowGroup();
   }
+  static constexpr byte_type kMappingSlack[duckdb::Storage::SECTOR_SIZE]{};
+  _out->WriteData(kMappingSlack, sizeof(kMappingSlack));
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
       footer.WriteList(
@@ -320,6 +336,7 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!col) {
       continue;
     }
+    entry->writer->SetBudget(_budget);
     co_await entry->writer->Compute(*col, reader.Ctx(), env);
   }
   co_return true;

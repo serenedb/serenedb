@@ -311,12 +311,24 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return;
       }
-      try {
-        segment->Flush();
-      } catch (...) {
-        segment->Reset(true);
-        throw;
+      segment->writer->ReserveFlush();
+      FlushReserved(*segment);
+    }
+
+    void ReserveFlush() {
+      if (auto* segment = _active.Segment()) {
+        segment->writer->ReserveFlush();
       }
+    }
+
+    void ReserveRemoval(size_t bytes) {
+      UpdateSegment(true);
+      _active.Segment()->writer->ReserveRemoval(bytes);
+    }
+
+    MemoryBudget* TakeRemoval(size_t bytes) noexcept {
+      auto* segment = _active.Segment();
+      return segment ? segment->writer->TakeRemoval(bytes) : nullptr;
     }
 
     bool FlushRequired() const noexcept {
@@ -345,6 +357,7 @@ class IndexWriter : private util::Noncopyable {
    private:
     bool CommitImpl(const SourcePosition& position) noexcept;
     void UpdateSegment(bool disable_flush);
+    void FlushReserved(SegmentContext& segment);
 
     template<typename Op>
     void Queue(Op op) {
@@ -410,6 +423,10 @@ class IndexWriter : private util::Noncopyable {
   }
 
   bool FailedBatchKept() const noexcept { return _failed_batch_kept; }
+
+  bool LostDocs() const noexcept {
+    return _lost_docs.load(std::memory_order_relaxed);
+  }
 
   void Clear(const SourcePosition& position = {});
 
@@ -803,6 +820,7 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
   uint64_t _last_gen;
   bool _failed_batch_kept = false;
+  std::atomic_bool _lost_docs{false};
   IndexMetaWriter _writer;
   IndexLock::ptr _write_lock;
   IndexFileRefs::ref_t _write_lock_file_ref;

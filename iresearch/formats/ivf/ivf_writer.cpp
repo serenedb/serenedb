@@ -67,8 +67,44 @@ struct DocRowView {
 
 }  // namespace
 
+CentroidsBuildParams IvfBuilder::CentroidParams(
+  MemoryBudget* budget) const noexcept {
+  return {
+    .posting_size = _info.posting_size,
+    .sample_factor = _info.sample_factor,
+    .min_train_sample =
+      QuantizerNeedsCentroid(_info.quant.kind) ? kMinCentroidTrainSample : 0,
+    .budget = budget,
+  };
+}
+
+AnnFlushBound IvfBuilder::Bound(uint64_t rows, QuantizerWriter& qw) const {
+  const auto d = static_cast<size_t>(_info.d);
+  if (rows == 0 || d == 0) {
+    return {};
+  }
+  const auto centroids = CentroidsBuilder::Bound(
+    rows, static_cast<uint32_t>(_info.d), _info.metric, CentroidParams(nullptr));
+  const size_t train_cap = qw.TrainSamples(rows);
+  const size_t train =
+    train_cap != 0 && train_cap != QuantizerWriter::kTrainStreaming
+      ? std::min<size_t>(train_cap, rows)
+      : 0;
+  const size_t tree = sizeof(float) * d * centroids.cluster_rows;
+  const size_t docs = sizeof(doc_id_t) * rows;
+  const size_t build =
+    sizeof(float) * d * centroids.sample_rows + centroids.train_bytes;
+  const size_t assign = sizeof(float) * d * train + 3 * docs;
+  return {
+    .compute = tree + std::max(build, assign),
+    .kept = tree + docs,
+    .terms = centroids.cluster_rows,
+  };
+}
+
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
-                             ReadContext& ctx, QuantizerWriter* qw) const {
+                             ReadContext& ctx, QuantizerWriter* qw,
+                             MemoryBudget* budget) const {
   SDB_ASSERT(qw);
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
   const auto rows = vector_column.RowCount();
@@ -86,22 +122,21 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool sample_train = train_cap != 0 && !stream_train;
   const bool train_residuals = sample_train && needs_centroid;
 
-  auto centroids = CentroidsBuilder::Create(
-    vector_column, ctx, rows, _info.metric, d,
-    CentroidsBuildParams{
-      .posting_size = _info.posting_size,
-      .sample_factor = _info.sample_factor,
-      .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
-    });
+  auto centroids = CentroidsBuilder::Create(vector_column, ctx, rows,
+                                            _info.metric, d,
+                                            CentroidParams(budget));
   const size_t n_clusters = centroids.NumClusters();
 
-  TrackedVector<float> train;
+  TrackedVector<float> train{TrackedAllocator<float>{budget}};
+  if (sample_train) {
+    train.reserve(std::min<size_t>(train_cap, rows) * d);
+  }
   size_t train_seen = 0;
   pcg32 train_rng{kTrainSeed};
 
-  TrackedVector<uint32_t> doc_cluster;
+  TrackedVector<uint32_t> doc_cluster{TrackedAllocator<uint32_t>{budget}};
   doc_cluster.reserve(rows);
-  TrackedVector<doc_id_t> valid_rows;
+  TrackedVector<doc_id_t> valid_rows{TrackedAllocator<doc_id_t>{budget}};
   valid_rows.reserve(rows);
 
   {
@@ -192,6 +227,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   for (size_t c = 0; c < n_clusters; ++c) {
     result.cluster_offsets[c + 1] += result.cluster_offsets[c];
   }
+  result.cluster_docs =
+    TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
   result.cluster_docs.resize(valid_rows.size());
   {
     std::vector<uint64_t> cursor(result.cluster_offsets.begin(),
@@ -368,7 +405,7 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
 
   IvfBuilder builder{_info};
-  auto built = builder.Compute(col, ctx, qw.get());
+  auto built = builder.Compute(col, ctx, qw.get(), _budget);
   if (built.empty) {
     co_return {};
   }
@@ -408,6 +445,16 @@ const BasicTermReader* IvfWriter::ClusterReader(ReadContext& ctx,
       _info.metric == VectorMetric::Cosine);
   }
   return _reader.get();
+}
+
+AnnFlushBound IvfWriter::FlushBound(uint64_t rows) {
+  if (!_bound_qw) {
+    _bound_qw =
+      MakeQuantizerWriter(_info.quant, static_cast<uint32_t>(_info.d),
+                          EffectiveQuantMetric(_info.metric),
+                          kDefaultClusterIters);
+  }
+  return IvfBuilder{_info}.Bound(rows, *_bound_qw);
 }
 
 IvfWriter::IvfWriter(AnnInfo info) : _info{std::move(info)} {}

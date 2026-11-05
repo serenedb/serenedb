@@ -40,6 +40,10 @@ constexpr uint64_t kHeavyDocs = uint64_t{1} << 14;
 constexpr uint64_t kTopPieces = 16;
 constexpr byte_type kZeros[kSlack]{};
 
+constexpr uint64_t HeavyDocs(uint64_t docs) noexcept {
+  return std::max(kHeavyDocs, docs / kTopPieces);
+}
+
 uint32_t Load32(const byte_type* p, uint32_t i) noexcept {
   return absl::little_endian::Load32(p + uint64_t{i} * sizeof(uint32_t));
 }
@@ -160,9 +164,25 @@ class RangeWalk {
 
 }  // namespace
 
-void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs) noexcept {
+uint64_t RangeWriter::Bound(uint64_t docs) noexcept {
+  return kMaxRangeLevels * 4 * HeavyDocs(docs) * sizeof(doc_id_t);
+}
+
+void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
+                        MemoryBudget* budget) {
+  _heavy = HeavyDocs(docs);
+  for (auto& range : _levels) {
+    for (auto* piece : {&range.group, &range.held}) {
+      if (piece->docs.get_allocator().budget != budget) {
+        piece->docs =
+          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
+      }
+      if (budget) {
+        piece->docs.reserve(2 * _heavy);
+      }
+    }
+  }
   _pw = &pw;
-  _heavy = std::max(kHeavyDocs, docs / kTopPieces);
 }
 
 DocTee RangeWriter::Tee() noexcept {
@@ -342,6 +362,14 @@ void RangeWriter::Clear() noexcept {
   }
   _pw = nullptr;
   _height = 0;
+}
+
+void RangeWriter::Release() noexcept {
+  Clear();
+  for (auto& range : _levels) {
+    range.group.docs = {};
+    range.held.docs = {};
+  }
 }
 
 void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,

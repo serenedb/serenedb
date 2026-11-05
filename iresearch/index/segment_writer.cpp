@@ -56,6 +56,7 @@ duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
 doc_id_t SegmentWriter::begin(uint64_t tick, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
   _valid = true;
+  _flush_reserved = false;
   SDB_ASSERT(batch_size > 0);
 
   _batch_first_doc_id = LastDocId() + 1;
@@ -102,20 +103,61 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _hnsw_bases{options.hnsw_bases} {}
 
 void SegmentWriter::FlushFields(FlushState& state,
-                                std::span<const BasicTermReader* const> extra) {
+                                std::span<const BasicTermReader* const> extra,
+                                uint64_t extra_terms) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra);
+    _fields.Flush(*_field_writer, state, extra, extra_terms);
   } catch (...) {
     _field_writer.reset();
     throw;
   }
 }
 
+size_t SegmentWriter::FlushBound() {
+  if (!_initialized) {
+    return 0;
+  }
+  const auto docs = buffered_docs();
+  AnnFlushBound ann;
+  if (_col_writer) {
+    ann = _col_writer->AnnBound(docs);
+  }
+  return std::max({ColWriter::kSealBound, ann.compute,
+                   ann.kept + _fields.FlushBound(docs, ann.terms)});
+}
+
+void SegmentWriter::ReserveFlush() {
+  _flush_reserved = false;
+  _budget.Reserve(FlushBound() + _removal_reserve);
+  _flush_reserved = true;
+}
+
+void SegmentWriter::ReserveRemoval(size_t bytes) {
+  _budget.Reserve(FlushBound() + _removal_reserve + bytes);
+  _removal_reserve += bytes;
+}
+
+MemoryBudget* SegmentWriter::TakeRemoval(size_t bytes) noexcept {
+  _removal_reserve -= std::min(bytes, _removal_reserve);
+  return &_budget;
+}
+
+bool SegmentWriter::TryReserveFlush() noexcept {
+  try {
+    ReserveFlush();
+    return true;
+  } catch (const duckdb::OutOfMemoryException&) {
+    return false;
+  }
+}
+
 void SegmentWriter::flush(IndexSegment& segment,
                           DocumentMaskBuilder& docs_mask) {
   auto& meta = segment.meta;
+  [[maybe_unused]] const auto reserved = _flush_reserved;
+  [[maybe_unused]] const auto overflow = _budget.Overflow();
 
   FlushState state{
     .dir = &_dir,
@@ -123,12 +165,16 @@ void SegmentWriter::flush(IndexSegment& segment,
     .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
+    .budget = &_budget,
   };
 
   IdxWriter idx{_dir, _seg_name};
 
+  uint64_t cluster_terms = 0;
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
+    cluster_terms = _col_writer->AnnBound(state.doc_count).terms;
+    _col_writer->SetBudget(&_budget);
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     _col_writer->Commit(buffered_docs());
@@ -148,7 +194,7 @@ void SegmentWriter::flush(IndexSegment& segment,
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers);
+    FlushFields(state, cluster_readers, cluster_terms);
   }
 
   for (const auto& w : ann_writers) {
@@ -167,6 +213,7 @@ void SegmentWriter::flush(IndexSegment& segment,
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.files = _dir.FlushTracked(meta.byte_size);
+  SDB_ASSERT(!reserved || _budget.Overflow() == overflow);
 }
 
 void SegmentWriter::SetFieldOptions(
@@ -187,6 +234,8 @@ void SegmentWriter::SetFieldOptions(
 }
 
 void SegmentWriter::ResetState() noexcept {
+  _budget.Release(_removal_reserve);
+  _flush_reserved = false;
   _initialized = false;
   _dir.ClearTracked();
   _docs_context.Clear();

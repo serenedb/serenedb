@@ -335,7 +335,14 @@ bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
   return {out, out_length};
 }
 
-void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
+uint64_t FieldWriter::Bound(uint64_t terms, uint64_t docs,
+                            bool ranges) noexcept {
+  return InlineCapacity(terms) + kStringSlack +
+         (ranges ? RangeWriter::Bound(docs) : 0);
+}
+
+void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
+                          uint64_t terms) {
   SDB_ASSERT(_idx);
   if (keyed_dicts > OrdinalLimit(kMaxOrdinalBytes)) [[unlikely]] {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -344,6 +351,8 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts) {
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
+  _inline = InlineBytes{TrackedAllocator<byte_type>{state.budget}};
+  _inline.reserve(InlineCapacity(terms));
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
   _out = &_idx->BlocksOut();
@@ -415,7 +424,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   }
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
-    _ranges.Begin(_pw, _docs);
+    _ranges.Begin(_pw, _docs, _inline.get_allocator().budget);
   }
 
   const uint64_t first_inline = _inline.size();
@@ -790,6 +799,8 @@ void FieldWriter::end() {
     _idx->SetTerms(std::move(terms));
   }
   Reset();
+  _inline = {};
+  _ranges.Release();
   _idx = nullptr;
   _out = nullptr;
 }

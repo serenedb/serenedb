@@ -79,8 +79,11 @@ class FieldWriter final {
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
 
+  static uint64_t Bound(uint64_t terms, uint64_t docs, bool ranges) noexcept;
+
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state, uint64_t keyed_dicts);
+  void prepare(const FlushState& state, uint64_t keyed_dicts,
+               uint64_t terms = 0);
   void write(DictRef dict, const BasicTermReader& reader);
   void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
   void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
@@ -107,11 +110,19 @@ class FieldWriter final {
   void ResetField() noexcept;
   void Reset() noexcept;
 
+  using InlineBytes = basic_string<byte_type, TrackedAllocator<byte_type>>;
+
+  static constexpr uint64_t kStringSlack = 16;
+
+  static uint64_t InlineCapacity(uint64_t terms) noexcept {
+    return terms * PostingMeta::kInlineBytes;
+  }
+
   PostingsWriter _pw;
   RecordOutput _record;
   BlockBuilder _block;
   RangeWriter _ranges;
-  basic_string<byte_type, TrackedAllocator<byte_type>> _inline;
+  InlineBytes _inline;
   FsstEncoder _fsst;
   std::string _fsst_table;
   bstring _samples;

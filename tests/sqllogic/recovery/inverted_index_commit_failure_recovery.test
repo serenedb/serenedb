@@ -48,7 +48,7 @@ rows	indexed
 statement error
 CHECKPOINT;
 ----
-db error: ERROR: Checkpoint failed for database "<slt:ignore>". The database has been invalidated. Original error: inverted index <slt:ignore> is out of sync with its store table; refusing to checkpoint
+db error: ERROR: cannot checkpoint database "<slt:ignore>": inverted index <slt:ignore> is out of sync with its store table
 
 
 statement ok

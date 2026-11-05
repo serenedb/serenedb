@@ -193,6 +193,13 @@ struct CentroidsBuildParams {
   size_t max_fanout = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
+  MemoryBudget* budget = nullptr;
+};
+
+struct CentroidsBound {
+  size_t sample_rows = 0;
+  size_t cluster_rows = 0;
+  size_t train_bytes = 0;
 };
 
 class CentroidsBuilder {
@@ -216,6 +223,9 @@ class CentroidsBuilder {
     TrackedVector<float> sample, uint32_t d, VectorMetric metric,
     const CentroidsBuildParams& params = {});
 
+  static CentroidsBound Bound(size_t rows, uint32_t d, VectorMetric metric,
+                              const CentroidsBuildParams& params) noexcept;
+
   CentroidsSpan Serialize(IndexOutput& out) const;
 
   AssignedCentroids AssignCentroids(
@@ -227,10 +237,11 @@ class CentroidsBuilder {
  private:
   static CentroidsBuilder BuildFromSample(TrackedVector<float> sample,
                                           uint32_t d, VectorMetric metric,
-                                          size_t leaf_size, size_t max_fanout);
+                                          size_t leaf_size, size_t max_fanout,
+                                          MemoryBudget* budget);
 
   void BuildTree(TrackedVector<float> sample, size_t leaf_size,
-                 size_t max_fanout);
+                 size_t max_fanout, MemoryBudget* budget);
 
   void AssignCentroidsImpl(
     size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,

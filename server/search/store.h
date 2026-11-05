@@ -175,7 +175,9 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _durability.Position();
   }
   void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
-  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
+  bool IsOutOfSync() const noexcept {
+    return _durability.IsOutOfSync() || (_writer && _writer->LostDocs());
+  }
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();

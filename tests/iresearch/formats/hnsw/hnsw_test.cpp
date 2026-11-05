@@ -1323,7 +1323,7 @@ void CheckWalkAsksPerHop() {
     std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
                       std::greater<>{});
     truth.resize(kK);
-    const auto hits = [&](irs::TrackedVector<irs::HnswCandidate> nearest) {
+    const auto hits = [&](std::vector<irs::HnswCandidate> nearest) {
       std::ranges::sort(nearest, [](const auto& l, const auto& r) {
         return l.score > r.score;
       });

@@ -46,6 +46,8 @@ class HnswWriter final : public AnnWriter {
 
   bool Empty() const noexcept final { return _graph.Empty(); }
 
+  AnnFlushBound FlushBound(uint64_t rows) final;
+
   void SetMergeSources(std::span<const MergeSource> sources) noexcept final {
     _merge_sources = sources;
   }
@@ -65,6 +67,8 @@ class HnswWriter final : public AnnWriter {
   bool TrainQuantizer(const ColumnReader& col, ReadContext& ctx, bool normalize,
                       std::vector<float>& batch_buf, const AnnBuildEnv* env);
 
+  using Codes = basic_string<byte_type, TrackedAllocator<byte_type>>;
+
   AnnInfo _info;
   HnswBases* _bases;
   std::span<const MergeSource> _merge_sources;
@@ -73,9 +77,13 @@ class HnswWriter final : public AnnWriter {
   std::vector<float> _rotation;
   TrackedVector<float> _norms;
   TrackedVector<float> _tails;
-  basic_string<byte_type, TrackedAllocator<byte_type>> _codes;
+  Codes _codes;
   bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
+  std::unique_ptr<QuantizerWriter> _bound_qw;
+  pcg32 _level_rng;
+  uint64_t _level_draws = 0;
+  uint64_t _upper_levels = 0;
   std::vector<float> _centroid;
   uint32_t _d = 0;
   uint32_t _record_size = 0;

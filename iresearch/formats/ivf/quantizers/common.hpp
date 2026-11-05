@@ -525,7 +525,7 @@ std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                               bool row_major);
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major);
+  bool row_major, MemoryBudget* budget);
 
 std::unique_ptr<QuantizerWriter> MakeTurboQuantWriter(VectorMetric metric,
                                                       uint32_t d,

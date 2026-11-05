@@ -29,6 +29,8 @@
 #pragma intrinsic(_BitScanForward)
 #endif
 
+#include <absl/numeric/int128.h>
+
 #include <climits>
 #include <cmath>
 #include <numeric>
@@ -106,6 +108,14 @@ constexpr uint64_t Ceil64(uint64_t value, uint64_t step) noexcept {
 // value that is multiple of the specified 'step'.
 constexpr uint32_t Ceil32(uint32_t value, uint32_t step) noexcept {
   return DivCeil32(value, step) * step;
+}
+
+constexpr uint64_t Proportion(uint64_t total, uint64_t part,
+                              uint64_t whole) noexcept {
+  if (whole == 0) {
+    return 0;
+  }
+  return static_cast<uint64_t>(absl::uint128{total} * part / whole);
 }
 
 constexpr uint32_t Log(uint64_t x, uint64_t base) noexcept {

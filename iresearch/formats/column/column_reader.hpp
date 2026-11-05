@@ -332,6 +332,8 @@ class ColumnReader {
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
 
+    void SetCache(duckdb::ObjectCache* cache) noexcept { _ctx.SetCache(cache); }
+
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
     void FetchRows(std::span<const uint64_t> rows, duckdb::Vector& out,

@@ -2,7 +2,8 @@ control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 CREATE TABLE mr_s (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100);
+  WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100,
+        compaction_max_segments = 4);
 
 statement ok
 CREATE INDEX mr_s_idx ON mr_s USING inverted (body);
@@ -12,7 +13,8 @@ CREATE TABLE mr_t (id INT, body TEXT);
 
 statement ok
 CREATE INDEX mr_t_idx ON mr_t USING inverted (body)
-  WITH (refresh_interval = 100, compaction_interval = 100);
+  WITH (refresh_interval = 100, compaction_interval = 100,
+        compaction_max_segments = 4);
 
 statement ok
 RESET sdb_faults;

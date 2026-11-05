@@ -133,6 +133,10 @@ class ReadContext final : public BlockManager,
   std::atomic<size_t> _live_handles{0};
 };
 
+std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
+                                              duckdb::ObjectCache* cache,
+                                              bool streams = false);
+
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept;
 

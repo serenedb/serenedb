@@ -20,6 +20,7 @@
 
 #include "connector/inverted_index_bind.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
@@ -56,6 +57,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/sort_keys.h"
 #include "connector/column_id.h"
 #include "connector/geo_validate.h"
 #include "connector/index_expression.hpp"
@@ -1292,7 +1294,8 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
-  const duckdb::LogicalType& generated_pk_type) {
+  const duckdb::LogicalType& generated_pk_type,
+  std::span<const duckdb::OrderByNode> sort_orders) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto top_k_scorer = catalog::TopKScorer(context, entry.options);
   const auto pk = ResolvePkColumn(
@@ -1307,6 +1310,16 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   }
   config->top_k_scorer = std::move(top_k_scorer);
   config->pk = pk;
+  if (!sort_orders.empty()) {
+    const auto& columns =
+      relation.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    config->sort = catalog::SortSpecOf(
+      catalog::ResolveSortKeys(columns, sort_orders), columns);
+  }
+  SDB_ASSERT(absl::c_all_of(config->sort, [&](const irs::SortKey& key) {
+    const auto* field = config->FindEntry(key.column);
+    return field && field->IsStored();
+  }));
   return config;
 }
 

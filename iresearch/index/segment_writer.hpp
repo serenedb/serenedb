@@ -28,6 +28,7 @@
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/doc_contexts.hpp"
+#include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
@@ -125,7 +126,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
   DocContexts& docs_context() noexcept { return _docs_context; }
 
-  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
+  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask,
+             DocOrder& order);
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
@@ -253,7 +255,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
   void FlushFields(FlushState& state,
-                   std::span<const BasicTermReader* const> extra);
+                   std::span<const BasicTermReader* const> extra,
+                   const DocOrder& order);
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
@@ -274,6 +277,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // set.
   const IndexFieldOptions* _fallback_field_options = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  const std::vector<SortKey>* _sort = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;

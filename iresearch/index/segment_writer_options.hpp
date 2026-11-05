@@ -24,6 +24,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace duckdb {
@@ -44,10 +45,11 @@ struct SegmentWriterOptions {
   // extend at least until SegmentWriter::flush() returns.
   duckdb::DatabaseInstance* db = nullptr;
   // Non-owning. For a segment writer just the fallback (the owning override
-  // comes via SetFieldOptions); for a merge writer the whole config.
+  // comes via SetFieldOptions); for a merge the whole config.
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
+  const std::vector<SortKey>* sort = nullptr;
   HnswBases* hnsw_bases = nullptr;
 };
 

@@ -358,9 +358,9 @@ void CreateTextIndex(duckdb::ClientContext& context,
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);
   SDB_ASSERT(entry);
   auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
-  index_entry.SetConfig(BindInvertedIndexConfig(context, index_entry, table,
-                                                bound_expressions,
-                                                duckdb::LogicalType::INVALID));
+  index_entry.SetConfig(
+    BindInvertedIndexConfig(context, index_entry, table, bound_expressions,
+                            duckdb::LogicalType::INVALID, {}));
   PublishInvertedIndex(context, index_entry, table, bound_expressions);
   const auto& storage = index_entry.Storage();
   SDB_ASSERT(storage);

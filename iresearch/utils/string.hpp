@@ -22,8 +22,10 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
 #include <absl/hash/hash.h>
 
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -71,6 +73,29 @@ inline size_t CommonPrefixLength(basic_string_view<Char> lhs,
                                  basic_string_view<Char> rhs) noexcept {
   return absl::FindLongestCommonPrefix(ViewCast<char>(lhs), ViewCast<char>(rhs))
     .size();
+}
+
+IRS_FORCE_INLINE inline uint64_t LoadHead(const byte_type* p,
+                                          size_t size) noexcept {
+  if (size >= sizeof(uint64_t)) {
+    return absl::big_endian::Load64(p);
+  }
+  if (size >= sizeof(uint32_t)) {
+    return uint64_t{absl::big_endian::Load32(p)} << 32 |
+           uint64_t{absl::big_endian::Load32(p + size - sizeof(uint32_t))}
+             << (64 - 8 * size);
+  }
+  if (size >= sizeof(uint16_t)) {
+    return uint64_t{absl::big_endian::Load16(p)} << 48 |
+           uint64_t{absl::big_endian::Load16(p + size - sizeof(uint16_t))}
+             << (64 - 8 * size);
+  }
+  return size == 0 ? 0 : uint64_t{*p} << 56;
+}
+
+inline uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
+  return skip >= key.size() ? 0
+                            : LoadHead(key.data() + skip, key.size() - skip);
 }
 
 }  // namespace irs

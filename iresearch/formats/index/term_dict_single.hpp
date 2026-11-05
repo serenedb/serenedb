@@ -57,6 +57,7 @@ class SingleTermReader final : public TermReader {
   const FieldMeta& meta() const noexcept final { return _meta; }
   size_t size() const noexcept final { return 1; }
   uint64_t docs_count() const noexcept final { return _single.docs_count; }
+  uint64_t total_term_freq() const noexcept final { return _total_term_freq; }
   bytes_view min() const noexcept final { return _term; }
   bytes_view max() const noexcept final { return _term; }
   void SampleTerms(
@@ -66,7 +67,6 @@ class SingleTermReader final : public TermReader {
     visit({&term, 1});
   }
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
                                TermPostings::ptr reuse) const;
@@ -77,7 +77,7 @@ class SingleTermReader final : public TermReader {
   FieldMeta _meta;
   PostingMeta _single;
   bstring _term;
-  FreqAttr _freq;
+  uint64_t _total_term_freq;
   bool _has_score_bounds;
 };
 

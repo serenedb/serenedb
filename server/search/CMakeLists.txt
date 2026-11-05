@@ -1,6 +1,9 @@
 target_sources(
     sereneserver
     PRIVATE
+        compaction/merge_planner.cpp
+        compaction/merge_registry.cpp
+        compaction/merge_runner.cpp
         feeder.cpp
         index_durability.cpp
         replay.cpp

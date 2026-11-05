@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "iresearch/index/document_mask.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -67,6 +68,11 @@ inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
 
 inline bool HasRemovals(const SegmentInfo& meta) noexcept {
   return meta.live_docs_count != meta.docs_count;
+}
+
+inline uint64_t LiveBytes(const SegmentInfo& meta) noexcept {
+  return math::Proportion(meta.byte_size, meta.live_docs_count,
+                          meta.docs_count);
 }
 
 static_assert(std::is_nothrow_move_constructible_v<SegmentMeta>);

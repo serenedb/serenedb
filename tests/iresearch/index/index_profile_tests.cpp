@@ -27,11 +27,11 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/file_utils_ext.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 
@@ -441,8 +441,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
   void ProfileBulkIndexDedicatedCompact(size_t num_threads, size_t batch_size,
                                         size_t compact_interval) {
-    const auto policy =
-      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+    const auto policy = tests::MakePolicy(tests::CompactionCount());
     auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
 
@@ -454,7 +453,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::jthread compactor{
       [compact_interval, &working, &writer, &policy]() -> void {
         while (working.load()) {
-          writer->Compact(policy);
+          tests::Compact(*writer, policy);
           std::this_thread::sleep_for(
             std::chrono::milliseconds(compact_interval));
         }
@@ -473,7 +472,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       writer->RefreshCommit();
       EXPECT_FALSE(writer->RefreshCommit());
     }
-    ASSERT_TRUE(writer->Compact(policy));
+    ASSERT_TRUE(tests::Compact(*writer, policy));
     {
       std::unique_lock commit_lock{_commit_mutex};
       writer->RefreshCommit();

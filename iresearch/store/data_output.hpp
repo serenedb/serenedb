@@ -123,9 +123,6 @@ class IndexOutput : public DataOutput {
 
   virtual ~IndexOutput() = default;
 
-  // Flush output
-  virtual void Flush() = 0;
-
   // Flush and compute checksum output
   // TODO(mbkkt) maybe int64_t?
   virtual uint32_t Checksum() = 0;

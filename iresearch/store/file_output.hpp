@@ -54,7 +54,7 @@ class FileOutput final : public IndexOutput {
              const Directory::Observers& observers, bool remote,
              duckdb::BlockCache* cache);
 
-  void Flush() final;
+  void Flush();
   uint32_t Checksum() final;
   void CloseImpl() final;
   void Release() noexcept;

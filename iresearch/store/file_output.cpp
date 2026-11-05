@@ -30,7 +30,6 @@
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 namespace {
@@ -160,8 +159,6 @@ void FileOutput::Release() noexcept {
     gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
     gUploadingBytes.fetch_sub(_offset, std::memory_order_relaxed);
   }
-  _crc = Crc32c{};
-  _offset = 0;
 }
 
 void FileOutput::CloseImpl() {
@@ -198,39 +195,23 @@ void FileOutput::Overflow(const byte_type* data, size_t size) {
       SDB_ASSERT(_begin != _end);
     }
   }
-  auto remain = Remain();
-  SDB_ASSERT(size >= remain);
-  const auto option =
-    static_cast<size_t>(_pos != _begin) * 2 + static_cast<size_t>(remain != 0);
-  switch (option) {
-    case 2 + 1:
-      std::memcpy(_pos, data, remain);
-      _pos += remain;
-      data += remain;
-      size -= remain;
-      [[fallthrough]];
-    case 2 + 0:
-      Flush();
-      remain = Remain();
-      [[fallthrough]];
-    case 0 + 1:
-      if (remain <= size) {
-        const auto buffer_size = size % remain;
-        const auto direct_size = size - buffer_size;
-        WriteHandle(data, direct_size);
-        if (buffer_size == 0) {
-          return;
-        }
-        data += direct_size;
-        size = buffer_size;
-      }
-      if (size != 0) {
-        std::memcpy(_pos, data, size);
-        _pos += size;
-      }
-      break;
-    default:
-      SDB_UNREACHABLE();
+  SDB_ASSERT(size >= Remain());
+  if (_pos != _begin) {
+    const auto fill = Remain();
+    std::memcpy(_pos, data, fill);
+    _pos += fill;
+    data += fill;
+    size -= fill;
+    Flush();
+  }
+  if (const auto direct = size - size % kBufferSize; direct != 0) {
+    WriteHandle(data, direct);
+    data += direct;
+    size -= direct;
+  }
+  if (size != 0) {
+    std::memcpy(_pos, data, size);
+    _pos += size;
   }
 }
 

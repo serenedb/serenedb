@@ -34,7 +34,7 @@ Rotate credentials that expire, such as an S3 `SESSION_TOKEN` or an Azure shared
 
 ## Caching
 
-Index files on an object store are read through the external file cache, in blocks of 128 KiB. A refresh or a merge keeps the files it writes in the cache, so the first queries over new data read memory. A query that touches a part of an index that is not cached reads it from the store and caches it; later queries read it from memory until the cache evicts it. A read that goes through a file in order fetches the blocks ahead of it, in requests of up to 16 MiB, and a large read fetches all of its blocks with one request.
+Index files on an object store are read through the external file cache, in blocks of 128 KiB. A refresh or a merge keeps the files it writes in the cache, so the first queries over new data read memory. A query that touches a part of an index that is not cached reads it from the store and caches it; later queries read it from memory until the cache evicts it. A read that goes through a file in order fetches up to 8 MiB of blocks ahead of it, and a large read fetches all of its blocks at once, in concurrent requests of up to 4 MiB.
 
 A query over uncached data asks the store for what it needs in a few rounds rather than piece by piece: the term dictionaries of all segments together, then, for a ranked query, the start of every term's postings in every segment together, and at the end the columns of all its results together, also when a `LIMIT` query reads the remaining columns of its rows after sorting them. A scan of whole columns asks for the start of every column it filters on, or of every column it reads when it filters on none, in every segment together. A cold ranked query over many segments therefore waits about as long as one over a single segment.
 
@@ -42,7 +42,7 @@ A query over uncached data asks the store for what it needs in a few rounds rath
 
 - The cache shares `memory_limit` with queries: it uses memory that queries leave free, and blocks it holds are evicted when queries need the memory. Blocks of files on an object store keep `external_file_cache_min_memory`, 5% of `memory_limit` by default: below it, queries spill to the temporary directory first, so a large join or aggregate does not empty the cache of the blocks every search reads. The cache goes below it only when queries cannot spill.
 - A block of a file on an object store keeps a copy in the temporary directory (`temp_directory`) once it is evicted, so reading it again costs a disk read instead of a request. The copy is written once and stays while the file version is cached. `external_file_cache_spill_size` is the disk space the copies may take, half of `max_temp_directory_size` by default; past it, evicted blocks are dropped and fetched again, and `0` drops them all. Blocks of index files on local disk are dropped, and blocks of in-memory indexes are always kept.
-- `enable_external_file_cache = false` drops the cached blocks of files on object stores and reads them without caching.
+- `enable_external_file_cache = false` drops the cached blocks of files on object stores, and refreshes and merges stop keeping the files they write in the cache; index files are still read through it.
 
 The `sdb_metrics` system table reports how the cache and the uploads do, in rows with a `NULL` `relation_id`:
 

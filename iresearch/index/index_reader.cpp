@@ -61,6 +61,5 @@ const SubReader& SubReader::empty() noexcept { return kEmpty; }
 IResourceManager IResourceManager::gForbidden;
 #endif
 IResourceManager IResourceManager::gNoop;
-ResourceManagementOptions ResourceManagementOptions::gDefault;
 
 }  // namespace irs

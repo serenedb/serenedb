@@ -64,17 +64,13 @@ uint64_t SectorAligned(uint64_t size) noexcept {
 
 }  // namespace
 
-ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
-  : BlockManager{db, /*block_header_size=*/0} {}
-
 ReadContext::ReadContext(const ColReader& reader, bool random_access)
-  : ReadContext{reader.Database()} {
+  : ReadContext{reader.Database(), reader.File()} {
   _random_access = random_access;
-  ResetFile(reader.File());
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db, const InputFile* file)
-  : ReadContext{db} {
+  : BlockManager{db, /*block_header_size=*/0} {
   ResetFile(file);
 }
 
@@ -183,18 +179,13 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
                                           /*block_header_size=*/0);
 }
 
-void ReadContext::Read(duckdb::QueryContext context, duckdb::Block& block) {
+void ReadContext::Read(duckdb::QueryContext /*context*/, duckdb::Block& block) {
   const auto id = static_cast<size_t>(block.id);
   SDB_ENSURE(id < _ranges.size() && _file,
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");
-  if (Maps(offset, block.Size())) {
-    block.Read(context, *_mapping, offset);
-    return;
-  }
-  if (Wraps(offset, size)) {
-    SDB_ASSERT(!block.OwnsInternalBuffer());
+  if (!block.OwnsInternalBuffer()) {
     return;
   }
   _in.ReadData(offset, block.InternalBuffer(), size);

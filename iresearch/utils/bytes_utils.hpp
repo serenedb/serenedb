@@ -98,19 +98,6 @@ struct bytes_io<T, sizeof(uint32_t)> {
   static constexpr T kMask = 0x80;
 
   template<typename InputIterator>
-  static void vskip(InputIterator& in) {
-    static_assert(
-      std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
-                     byte_type>);
-    T v = *in;
-    ++in;
-    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
-      v = *in;
-      ++in;
-    }
-  }
-
-  template<typename InputIterator>
   static T vread(InputIterator& in) {
     static_assert(
       std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
@@ -210,19 +197,6 @@ template<typename T>
 struct bytes_io<T, sizeof(uint64_t)> {
   static constexpr T kMaxVSize = 10;
   static constexpr T kMask = 0x80;
-
-  template<typename InputIterator>
-  static void vskip(InputIterator& in) {
-    static_assert(
-      std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
-                     byte_type>);
-    T v = *in;
-    ++in;
-    for (T i = 1; i != kMaxVSize && (v & kMask) != 0; ++i) {
-      v = *in;
-      ++in;
-    }
-  }
 
   template<typename InputIterator>
   static T vread(InputIterator& in) {
@@ -353,12 +327,6 @@ struct bytes_io<T, sizeof(uint64_t)> {
     return (73 + 9 * log2) >> 6;
   }
 };
-
-/// @brief will increment 'in' to position after the end of the next value
-template<typename T, typename Iterator>
-inline void vskip(Iterator& in) {
-  bytes_io<T, sizeof(T)>::vskip(in);
-}
 
 /// @brief read a raw value of type T from 'in'
 ///        will increment 'in' to position after the end of the read value

@@ -81,11 +81,9 @@ TEST_P(DirectoryTestCase, rename) {
     auto stream0 = _dir->Create("foo");
     ASSERT_NE(nullptr, stream0);
     stream0->WriteByte(0);
-    stream0->Flush();
     auto stream1 = _dir->Create("bar");
     ASSERT_NE(nullptr, stream1);
     stream1->WriteU32(2);
-    stream1->Flush();
     stream0->Close();
     stream1->Close();
   }
@@ -3953,7 +3951,6 @@ TEST_P(DirectoryTestCase, smoke_store) {
 
     EXPECT_EQ(crc.checksum(), file->Checksum());
 
-    file->Flush();
     file->Close();
   }
 
@@ -4161,7 +4158,6 @@ TEST_P(DirectoryTestCase, smoke_store) {
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, sizeof buf);
       out->WriteData(buf, 691);
-      out->Flush();
       out->Close();
     }
 
@@ -4199,7 +4195,6 @@ TEST_P(DirectoryTestCase, directory_size) {
     ASSERT_EQ(0, file->Position());
 
     file->WriteU32(100);
-    file->Flush();
     file->Close();
   }
 
@@ -4938,7 +4933,6 @@ TEST_P(DirectoryTestCase, file_tracker) {
       auto file1 = track_dir.Create(file);
       ASSERT_FALSE(!file1);
       file1->WriteByte(42);
-      file1->Flush();
       file1->Close();
     }
     track_dir.Sync({&file, 1});

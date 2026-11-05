@@ -58,7 +58,7 @@ class MemoryIndexOutput final : public IndexOutput {
     _offset = file.Length();
   }
 
-  void Flush() final {
+  void Flush() {
     Append(_begin, static_cast<size_t>(_pos - _begin));
     _pos = _begin;
   }

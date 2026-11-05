@@ -228,27 +228,21 @@ DROP INDEX search_dml_inv_idx;
 
 
 statement error
-ALTER TABLE search_dml ADD COLUMN c INTEGER;
+ALTER TABLE search_dml DROP COLUMN a;
 ----
-db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
+db error: ERROR: Cannot drop column a because there is a PRIMARY KEY constraint that depends on it
 
 
 statement error
-ALTER TABLE search_dml DROP COLUMN b;
+ALTER TABLE search_dml ALTER COLUMN a TYPE BIGINT;
 ----
-db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
-
-
-statement error
-ALTER TABLE search_dml ALTER COLUMN b TYPE VARCHAR;
-----
-db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+db error: ERROR: Cannot change the type of a column that has a UNIQUE or PRIMARY KEY constraint specified
 
 
 statement error
 ALTER TABLE search_dml DROP CONSTRAINT search_dml_pkey;
 ----
-db error: ERROR: ALTER TABLE DROP CONSTRAINT on a search-backed table is not yet supported
+db error: ERROR: dropping a PRIMARY KEY or UNIQUE constraint of a search-backed table is not supported
 
 
 statement error
@@ -273,8 +267,10 @@ statement ok
 INSERT INTO search_dml (a) VALUES (101);
 
 
-statement ok
+statement error
 ALTER TABLE search_dml ALTER COLUMN b SET NOT NULL;
+----
+db error: ERROR: NOT NULL constraint failed: search_dml.b
 
 
 query
@@ -282,7 +278,7 @@ SELECT attnotnull FROM pg_attribute
 WHERE attrelid = 'search_dml'::regclass AND attname = 'b';
 ----
 attnotnull
-t
+f
 
 
 statement ok

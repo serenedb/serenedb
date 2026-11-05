@@ -1,0 +1,223 @@
+statement ok
+CREATE TABLE icr_art (id INT, b INT);
+
+
+statement ok
+CREATE TABLE icr_inv (id INT, b TEXT);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE icr_art RENAME COLUMN b TO c;
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement ok
+CREATE INDEX icr_art_b ON icr_art (b);
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Catalog write-write conflict on create with "icr_art_b": table "icr_art" was altered by a concurrent transaction
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE icr_inv RENAME COLUMN b TO c;
+
+
+connection s2
+statement ok
+CREATE INDEX icr_inv_b ON icr_inv USING inverted (b);
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Catalog write-write conflict on alter of "icr_inv": index "icr_inv_b" was created by a concurrent transaction
+
+
+query
+SELECT attname FROM pg_attribute
+WHERE attrelid IN ('icr_art'::regclass, 'icr_inv'::regclass) AND attnum > 0
+ORDER BY attrelid::regclass::text, attnum;
+----
+attname
+id
+c
+id
+b
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename IN ('icr_art', 'icr_inv') ORDER BY indexname;
+----
+indexname
+icr_inv_b
+
+
+statement ok
+INSERT INTO icr_inv VALUES (1, 'alpha');
+
+
+query ok retry 40 backoff 250ms
+SELECT id FROM icr_inv_b WHERE b @@ 'alpha';
+----
+id
+1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX icr_art_c ON icr_art (c);
+
+
+statement ok
+ALTER TABLE icr_art RENAME COLUMN c TO d;
+
+
+statement ok
+COMMIT;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+COMMENT ON COLUMN icr_inv.b IS 'body';
+
+
+connection s2
+statement ok
+CREATE INDEX icr_inv_id ON icr_inv USING inverted (id);
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename IN ('icr_art', 'icr_inv') ORDER BY indexname;
+----
+indexname
+icr_art_c
+icr_inv_b
+icr_inv_id
+
+
+statement ok
+CREATE TABLE icr_st (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+
+
+statement ok
+CREATE TABLE icr_st2 (id INT, b TEXT) WITH (storage = 'search', refresh_interval = 0);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+ALTER TABLE icr_st RENAME COLUMN b TO c;
+
+
+connection s2
+statement error
+CREATE INDEX icr_st_b ON icr_st USING inverted (b);
+----
+db error: ERROR: search table "icr_st" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE INDEX icr_st2_b ON icr_st2 USING inverted (b);
+
+
+connection s2
+statement error
+ALTER TABLE icr_st2 RENAME COLUMN b TO c;
+----
+db error: ERROR: search table "icr_st2" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+query
+SELECT attrelid::regclass AS rel, attname FROM pg_attribute
+WHERE attrelid IN ('icr_st'::regclass, 'icr_st2'::regclass) AND attnum > 0
+ORDER BY attrelid::regclass::text, attnum;
+----
+rel	attname
+icr_st	id
+icr_st	c
+icr_st2	id
+icr_st2	b
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename IN ('icr_st', 'icr_st2') ORDER BY indexname;
+----
+indexname
+icr_st2_b
+
+
+statement ok
+INSERT INTO icr_st2 VALUES (1, 'alpha');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) icr_st2;
+
+
+query
+SELECT id FROM icr_st2 WHERE b @@ 'alpha';
+----
+id
+1

@@ -26,15 +26,16 @@ Every method comes in a synchronous form and an `a`-prefixed asynchronous form; 
 ### `from_connection_string()` {#from_connection_string}
 
 ```python
-SereneDBEngine.from_connection_string(conninfo, **kwargs)
+SereneDBEngine.from_connection_string(conninfo, *, ignore_db_version=False, **kwargs)
 ```
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `conninfo` | `str` | — | libpq connection string, e.g. `"host=127.0.0.1 port=7890 user=postgres dbname=postgres"`. |
+| `ignore_db_version` | `bool` | `False` | Skip the [server version check](#version-check). |
 | `**kwargs` | `Any` | — | Forwarded to `psycopg_pool.AsyncConnectionPool` (`min_size`, `max_size`, `timeout`, …). A nested `kwargs={...}` entry is forwarded to each *connection* instead. |
 
-**How it works.** The first call creates a process-wide background event loop running on a daemon thread; every engine built this way shares it, which is what lets the synchronous API delegate to the async implementation. The pool itself is constructed with `open=False` and opened lazily on that loop before its first use, because an `AsyncConnectionPool` has to be opened from inside the loop that will drive it.
+**How it works.** The first call creates a process-wide background event loop running on a daemon thread; every engine built this way shares it, which is what lets the synchronous API delegate to the async implementation. The pool is constructed with `open=False` and opened on that loop, because an `AsyncConnectionPool` has to be opened from inside the loop that will drive it. The factory then opens it straight away and runs the [server version check](#version-check), so an unreachable server, bad credentials or an unsupported version fail here rather than on the first query. With `ignore_db_version=True` there is nothing to check, and the pool is opened lazily before its first use instead.
 
 Per-connection options go in the nested `kwargs` dict. `row_factory` is forced to psycopg's `dict_row` — the integration reads rows as dictionaries, so do not override it.
 
@@ -52,19 +53,43 @@ The bootstrap superuser `postgres` connects locally without a password; other ro
 ### `from_pool()` {#from_pool}
 
 ```python
-SereneDBEngine.from_pool(pool, loop=None)
+SereneDBEngine.from_pool(pool, loop=None, *, ignore_db_version=False)
 ```
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `pool` | `AsyncConnectionPool` | — | An **already open** psycopg pool. The engine will not open it. |
 | `loop` | `Optional[asyncio.AbstractEventLoop]` | `None` | The loop the pool is driven by. Required if you intend to call any synchronous method. |
+| `ignore_db_version` | `bool` | `False` | Skip the [server version check](#version-check). |
 
 Use this when your application already manages its own pool — a web framework's lifespan hook, for example.
+
+`from_pool()` is a plain (non-`async`) method, so it can only wait for the version check when `loop` runs on another thread. When `loop` is `None`, or is the loop you are calling from, the check runs instead just before the engine's first query, and an unsupported server raises there.
 
 :::caution
 An engine created with `loop=None` can only be used through the `a`-prefixed methods. Every synchronous method raises `Exception("Engine was initialized without a background loop and cannot call sync methods.")`, and that includes the synchronous store built on it. Pass the running loop, or use [`from_connection_string()`](#from_connection_string).
 :::
+
+### Server version check {#version-check}
+
+The integration supports SereneDB **26.11.2** and later. Each engine reads the server's release from `SELECT version()` — which reports, for example, `PostgreSQL 18.6 (SereneDB 26.11.2)` — and raises `UnsupportedServerVersionError` when it is older, or when the reply names no SereneDB release at all (a plain PostgreSQL server, for instance):
+
+```text
+UnsupportedServerVersionError: version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+```
+
+The check runs once per engine: when the engine is created, or before its first query for an engine from [`from_pool()`](#from_pool) that cannot wait during creation. `UnsupportedServerVersionError` is a `RuntimeError`, importable from `langchain_serenedb`.
+
+Pass `ignore_db_version=True` to either factory to skip the check — for instance, against a development build, which always reports patch level `0`. You then take the risk that some of the SQL the integration generates is rejected or behaves differently on that server.
+
+```python
+engine = SereneDBEngine.from_connection_string(
+    "host=127.0.0.1 port=7890 user=postgres dbname=postgres",
+    ignore_db_version=True,
+)
+```
+
+Once the check has passed, `engine.server_version` holds the release as a tuple of integers, such as `(26, 11, 2)`. It is `None` before the check runs, and always `None` on an engine created with `ignore_db_version=True`.
 
 ## Creating the table {#creating-the-table}
 

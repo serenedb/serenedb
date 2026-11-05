@@ -24,6 +24,7 @@
 #include <duckdb/common/enums/row_id_handling.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "catalog/entry/search_table.h"
@@ -46,10 +47,11 @@ class SereneDBSearchDelete final : public duckdb::PhysicalOperator {
     const duckdb::vector<duckdb::column_t>& returning_virtual_columns,
     duckdb::RowIdHandling row_id_handling);
 
+  std::string GetName() const final;
+  duckdb::InsertionOrderPreservingMap<std::string> ParamsToString() const final;
+
   bool IsSink() const final { return true; }
-  bool ParallelSink() const final {
-    return _row_id_handling == duckdb::RowIdHandling::ASSUME_UNIQUE;
-  }
+  bool ParallelSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(

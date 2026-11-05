@@ -634,8 +634,8 @@ struct EsWriteBindData final : duckdb::TableFunctionData {
 // The function's output schema IS the target table's schema, so the handler's
 // `INSERT INTO "es"."<index>" SELECT * FROM es_*(...)` lines up by position.
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
-  duckdb::ClientContext& context, std::string index,
-  duckdb::vector<duckdb::LogicalType>& return_types,
+  duckdb::ClientContext& context, duckdb::optional_ptr<duckdb::Binder> binder,
+  std::string index, duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
   data->index = std::move(index);
@@ -645,6 +645,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
   }
+  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t i = 0;
   for (const auto& column : table->GetColumns().Logical()) {
     const auto name = column.Name().GetIdentifierName();
@@ -663,15 +664,17 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
 }
 
 duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
-  duckdb::ClientContext& context, const duckdb::Value& index_arg,
+  duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
+  const auto& index_arg = input.inputs[0];
   if (index_arg.IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
   }
-  return BindWriteTarget(context, index_arg.GetValue<std::string>(),
-                         return_types, names);
+  return BindWriteTarget(context, input.binder,
+                         index_arg.GetValue<std::string>(), return_types,
+                         names);
 }
 
 [[noreturn]] void ThrowFieldParseError(std::string_view index,
@@ -912,7 +915,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsDocBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   if (input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("es_doc id and body cannot be NULL"));
@@ -1187,7 +1190,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   if (input.inputs[1].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("es_bulk body cannot be NULL"));
@@ -1209,7 +1212,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
-  auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
+  auto data = BindWriteTarget(context, input, return_types, names);
   data->from_side_channel = true;
   if (input.inputs.size() > 1 && input.inputs[1].GetValue<bool>()) {
     input.table_function.get_partition_data = EsBulkPartitionData;

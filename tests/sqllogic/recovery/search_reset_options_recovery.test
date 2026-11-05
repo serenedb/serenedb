@@ -1,0 +1,87 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rso_t (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100);
+
+
+statement ok
+CREATE TABLE rso_plain (id INT, body TEXT);
+
+
+statement ok
+CREATE INDEX rso_idx ON rso_plain USING inverted (body)
+WITH (refresh_interval = 100, compaction_interval = 100);
+
+
+statement ok
+CREATE TABLE rso_old (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100);
+
+
+statement ok
+SET refresh_interval = 0;
+
+
+statement ok
+SET compaction_interval = 0;
+
+
+statement ok
+ALTER TABLE rso_t RESET (refresh_interval, compaction_interval);
+
+
+statement ok
+ALTER INDEX rso_idx RESET (refresh_interval, compaction_interval);
+
+
+statement ok
+CREATE INDEX rso_old_idx ON rso_plain USING inverted (id)
+WITH (refresh_interval = 100, compaction_interval = 100);
+
+
+statement ok
+SET sdb_faults = 'reset_options_without_values';
+
+
+statement ok
+ALTER TABLE rso_old RESET (refresh_interval, compaction_interval);
+
+
+statement ok
+ALTER INDEX rso_old_idx RESET (refresh_interval, compaction_interval);
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT relname, list_filter(reloptions, lambda x: x LIKE 'refresh_interval=%' OR x LIKE 'compaction_interval=%') AS opts
+FROM pg_class WHERE relname IN ('rso_t', 'rso_idx', 'rso_old', 'rso_old_idx') ORDER BY relname;
+----
+relname	opts
+rso_idx	{refresh_interval=0,compaction_interval=0}
+rso_old	{refresh_interval=0,compaction_interval=0}
+rso_old_idx	{refresh_interval=0,compaction_interval=0}
+rso_t	{refresh_interval=0,compaction_interval=0}
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname, list_filter(reloptions, lambda x: x LIKE 'refresh_interval=%' OR x LIKE 'compaction_interval=%') AS opts
+FROM pg_class WHERE relname IN ('rso_t', 'rso_idx', 'rso_old', 'rso_old_idx') ORDER BY relname;
+----
+relname	opts
+rso_idx	{refresh_interval=0,compaction_interval=0}
+rso_old	{refresh_interval=1000,compaction_interval=1000}
+rso_old_idx	{refresh_interval=1000,compaction_interval=1000}
+rso_t	{refresh_interval=0,compaction_interval=0}

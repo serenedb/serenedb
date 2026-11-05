@@ -21,10 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <bit>
 #include <climits>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/number_utils.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <random>
 #include <vector>
 
@@ -199,6 +201,46 @@ TEST(bit_utils_test, select_in_word) {
         ASSERT_EQ(bit, irs::SelectInWord(word, rank)) << word << ' ' << rank;
         ++rank;
       }
+    }
+  }
+}
+
+TEST(bit_utils_test, materialize_word_lists_set_bits_then_pads) {
+  constexpr uint32_t kCanary = 0xDEADBEEF;
+  constexpr uint32_t kOffset = 4097;
+  constexpr size_t kPad = 8;
+  std::vector<uint64_t> words{
+    0,
+    ~uint64_t{0},
+    uint64_t{1},
+    uint64_t{1} << 63,
+    0x8000000100000001ULL,
+    0xAAAAAAAAAAAAAAAAULL,
+    0x00000000FFFF0000ULL,
+    0xFF00000000000000ULL,
+    0x0101010101010101ULL,
+  };
+  std::mt19937_64 rng{11};
+  for (size_t i = 0; i != 10000; ++i) {
+    const uint64_t a = rng();
+    words.push_back(a);
+    words.push_back(a & rng() & rng());
+    words.push_back(a | rng() | rng());
+  }
+  for (const uint64_t word : words) {
+    std::vector<uint32_t> buf(64 + irs::doc_limits::kDocsSlack, kCanary);
+    const auto count = static_cast<size_t>(
+      irs::MaterializeWord(kOffset, word, buf.data()) - buf.data());
+    ASSERT_EQ(static_cast<size_t>(std::popcount(word)), count) << word;
+    size_t at = 0;
+    for (uint32_t bit = 0; bit != 64; ++bit) {
+      if (irs::CheckBit(word, bit)) {
+        ASSERT_EQ(kOffset + bit, buf[at++]) << word << ' ' << bit;
+      }
+    }
+    for (size_t i = count; i != buf.size(); ++i) {
+      const bool padded = word != 0 && i < count + kPad;
+      ASSERT_EQ(padded ? kOffset : kCanary, buf[i]) << word << ' ' << i;
     }
   }
 }

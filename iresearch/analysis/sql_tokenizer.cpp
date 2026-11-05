@@ -67,20 +67,16 @@ void ValidateParsed(std::string_view owner, duckdb::ParsedExpression& expr) {
     case duckdb::ExpressionClass::FUNCTION: {
       auto& func = expr.Cast<duckdb::FunctionExpression>();
       const auto& name = func.GetQualifiedName();
-      if ((!name.Catalog().empty() && name.Catalog() != SYSTEM_CATALOG) ||
-          (!name.Schema().empty() && name.Schema() != DEFAULT_SCHEMA)) {
-        THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
-                                name.Name().GetIdentifierName(),
-                                "\": only built-in functions are allowed"));
-      }
       if (name.Name().GetIdentifierName().starts_with("ts_")) {
         THROW_SQL_ERROR(ERR_MSG(
           owner, ": text-search function \"", name.Name().GetIdentifierName(),
           "\" is not allowed in a ", owner,
           " tokenizer expression (it would recurse into the tokenizer)"));
       }
-      func.SetQualifiedName(duckdb::Identifier{SYSTEM_CATALOG},
-                            duckdb::Identifier{DEFAULT_SCHEMA}, name.Name());
+      if (name.Catalog().empty()) {
+        func.SetQualifiedName(duckdb::Identifier{SYSTEM_CATALOG},
+                              duckdb::Identifier{DEFAULT_SCHEMA}, name.Name());
+      }
     } break;
     default:
       break;
@@ -108,19 +104,41 @@ std::unique_ptr<duckdb::ParsedExpression> ParseInputExpression(
 void VerifyFunctionsExist(duckdb::ClientContext& ctx, std::string_view owner,
                           const duckdb::ParsedExpression& expr) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
-    const auto& name =
-      expr.Cast<duckdb::FunctionExpression>().GetQualifiedName().Name();
+    const auto& qname =
+      expr.Cast<duckdb::FunctionExpression>().GetQualifiedName();
     auto& sys = duckdb::Catalog::GetSystemCatalog(ctx);
-    const auto exists = [&](duckdb::CatalogType type) {
-      return sys
-               .GetEntry(ctx, type, duckdb::Identifier{DEFAULT_SCHEMA}, name,
-                         duckdb::OnEntryNotFound::RETURN_NULL)
+    auto& db =
+      duckdb::Catalog::GetCatalog(ctx, duckdb::Identifier::InvalidCatalog());
+
+    if (!qname.Catalog().empty() && qname.Catalog() != sys.GetName() &&
+        qname.Catalog() != db.GetName()) {
+      THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
+                              qname.Name().GetIdentifierName(),
+                              "\": only built-in functions are allowed"));
+    }
+
+    const auto exists = [&](duckdb::Catalog& cat, duckdb::CatalogType type) {
+      return cat
+               .GetEntry(ctx, type,
+                         qname.Schema().empty()
+                           ? duckdb::Identifier{DEFAULT_SCHEMA}
+                           : qname.Schema(),
+                         qname.Name(), duckdb::OnEntryNotFound::RETURN_NULL)
                .get() != nullptr;
     };
-    if (!exists(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) &&
-        !exists(duckdb::CatalogType::MACRO_ENTRY) &&
-        !exists(duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY)) {
-      THROW_SQL_ERROR(ERR_MSG(owner, ": function \"", name.GetIdentifierName(),
+
+    bool valid = false;
+    if (qname.Catalog().empty() || qname.Catalog() == sys.GetName()) {
+      valid = exists(sys, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) ||
+              exists(sys, duckdb::CatalogType::MACRO_ENTRY) ||
+              exists(sys, duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY);
+    }
+    if (!valid && (qname.Catalog().empty() || qname.Catalog() == db.GetName())) {
+      valid = exists(db, duckdb::CatalogType::MACRO_ENTRY);
+    }
+    if (!valid) {
+      THROW_SQL_ERROR(ERR_MSG(owner, ": function \"",
+                              qname.Name().GetIdentifierName(),
                               "\": only built-in functions are allowed"));
     }
   }

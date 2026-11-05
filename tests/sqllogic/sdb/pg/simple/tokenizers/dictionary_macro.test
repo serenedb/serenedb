@@ -1,0 +1,73 @@
+# User-defined macros in text search dictionary sql stages (#1174)
+
+statement ok
+CREATE MACRO my_upper(x) AS upper(x);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d_macro_stage AS my_upper();
+
+query
+SELECT ts_lexize('d_macro_stage', 'hello');
+----
+ts_lexize
+{HELLO}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY d_macro_lambda AS (lambda x: my_upper(x));
+
+query
+SELECT ts_lexize('d_macro_lambda', 'world');
+----
+ts_lexize
+{WORLD}
+
+# Table macros are rejected; only scalar macros can be a stage.
+statement ok
+CREATE MACRO my_table_macro(x) AS TABLE SELECT x;
+
+statement error only built-in functions are allowed
+CREATE TEXT SEARCH DICTIONARY d_table_macro AS my_table_macro();
+
+statement error only built-in functions are allowed
+CREATE TEXT SEARCH DICTIONARY d_table_macro_lambda AS (lambda x: my_table_macro(x));
+
+statement ok
+DROP MACRO my_table_macro;
+
+# A macro body calling a text-search function is rejected (recursion).
+statement ok
+CREATE MACRO sneaky_ts(x) AS ts_lexize('d_macro_stage', x);
+
+statement error is not allowed in a sql tokenizer expression
+CREATE TEXT SEARCH DICTIONARY d_recurse AS sneaky_ts();
+
+statement error is not allowed in a sql tokenizer expression
+CREATE TEXT SEARCH DICTIONARY d_recurse_lambda AS (lambda x: sneaky_ts(x));
+
+statement ok
+DROP MACRO sneaky_ts;
+
+# A volatile expression in the macro body is rejected.
+statement ok
+CREATE MACRO volatile_macro(x) AS x || random()::TEXT;
+
+statement error volatile expressions are not allowed
+CREATE TEXT SEARCH DICTIONARY d_volatile AS volatile_macro();
+
+statement ok
+DROP MACRO volatile_macro;
+
+# Dependency tracking: DROP MACRO under RESTRICT must fail because dictionaries depend on it.
+statement error (?i)cannot drop entry .*my_upper.* because there are entries that depend on it
+DROP MACRO my_upper;
+
+# DROP MACRO CASCADE drops dependent dictionaries.
+statement ok
+DROP MACRO my_upper CASCADE;
+
+query
+SELECT count(*) FROM pg_ts_dict WHERE dictname IN ('d_macro_stage', 'd_macro_lambda');
+----
+count
+0
+

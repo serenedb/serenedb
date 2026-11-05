@@ -27,6 +27,9 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <unordered_set>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/expression_type.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -408,7 +411,8 @@ class SpecCompiler {
   CompiledTSDictionary Compile(std::string_view spec) {
     const auto chain = CompileChain(*Parse(spec));
     return {.config = BuildChainConfig(chain, {_context}),
-            .definition = RenderChain(chain)};
+            .definition = RenderChain(chain),
+            .dependencies = std::move(_dependencies)};
   }
 
  private:
@@ -584,6 +588,7 @@ class SpecCompiler {
                  "(lambda x: upper(x))"));
     }
     RejectNestedAnalyzers(*body);
+    ResolveAndPinFunctions(*body);
     return {.kind = Stage::Kind::Sql, .name = body->ToString()};
   }
 
@@ -640,6 +645,7 @@ class SpecCompiler {
                  "lambda x: length(x) > 2"));
     }
     RejectNestedAnalyzers(*body);
+    ResolveAndPinFunctions(*body);
     return body->ToString();
   }
 
@@ -657,6 +663,7 @@ class SpecCompiler {
     args.insert(args.begin(), duckdb::FunctionArgument{
                                 duckdb::make_uniq<duckdb::ColumnRefExpression>(
                                   duckdb::Identifier{kInput})});
+    ResolveAndPinFunctions(*copy);
     return {.kind = Stage::Kind::Sql, .name = copy->ToString()};
   }
 
@@ -778,7 +785,113 @@ class SpecCompiler {
                     ERR_MSG(group.name, "(): option \"", name, "\": ", error));
   }
 
+
+  void CheckMacroExpressionRecursion(const duckdb::ParsedExpression& expr,
+                                     std::unordered_set<std::string>& visited) {
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
+      const auto& fn = expr.Cast<duckdb::FunctionExpression>();
+      const auto name = fn.GetQualifiedName().Name().GetIdentifierName();
+      if (name.starts_with("ts_")) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(kSqlName, ": text-search function \"", name,
+                  "\" is not allowed in a ", kSqlName,
+                  " tokenizer expression (it would recurse into the tokenizer)"));
+      }
+      if (visited.insert(name).second) {
+        duckdb::EntryLookupInfo lookup{duckdb::CatalogType::MACRO_ENTRY,
+                                      fn.GetQualifiedName()};
+        if (auto entry = duckdb::Catalog::GetEntry(
+              _context, lookup, duckdb::OnEntryNotFound::RETURN_NULL)) {
+          CheckMacroRecursion(entry->Cast<duckdb::MacroCatalogEntry>(), visited);
+        }
+      }
+    }
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](const duckdb::ParsedExpression& child) {
+        CheckMacroExpressionRecursion(child, visited);
+      });
+  }
+
+  void CheckMacroRecursion(const duckdb::MacroCatalogEntry& macro_entry,
+                           std::unordered_set<std::string>& visited) {
+    for (const auto& macro : macro_entry.macros) {
+      if (macro->type != duckdb::MacroType::SCALAR_MACRO) {
+        continue;
+      }
+      const auto& scalar = macro->Cast<duckdb::ScalarMacroFunction>();
+      if (scalar.expression) {
+        CheckMacroExpressionRecursion(*scalar.expression, visited);
+      }
+    }
+  }
+
+  void ResolveAndPinFunctions(duckdb::ParsedExpression& expr) {
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
+      auto& fn = expr.Cast<duckdb::FunctionExpression>();
+      const auto& qname = fn.GetQualifiedName();
+      const auto name_str = qname.Name().GetIdentifierName();
+
+      if (name_str.starts_with("ts_")) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(kSqlName, ": text-search function \"", name_str,
+                  "\" is not allowed in a ", kSqlName,
+                  " tokenizer expression (it would recurse into the tokenizer)"));
+      }
+
+      auto& sys = duckdb::Catalog::GetSystemCatalog(_context);
+      auto& db =
+        duckdb::Catalog::GetCatalog(_context, duckdb::Identifier::InvalidCatalog());
+
+      if (!qname.Catalog().empty() && qname.Catalog() != sys.GetName() &&
+          qname.Catalog() != db.GetName()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG(kSqlName, ": function \"", name_str,
+                                "\": only built-in functions are allowed"));
+      }
+
+      const auto sys_lookup = [&](duckdb::CatalogType type) {
+        return sys.GetEntry(_context, type, duckdb::Identifier{DEFAULT_SCHEMA},
+                            qname.Name(), duckdb::OnEntryNotFound::RETURN_NULL);
+      };
+
+      if (sys_lookup(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) ||
+          sys_lookup(duckdb::CatalogType::MACRO_ENTRY) ||
+          sys_lookup(duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY)) {
+        fn.SetQualifiedName(duckdb::Identifier{SYSTEM_CATALOG},
+                            duckdb::Identifier{DEFAULT_SCHEMA}, qname.Name());
+      } else {
+        duckdb::EntryLookupInfo lookup{duckdb::CatalogType::MACRO_ENTRY, qname};
+        auto entry = duckdb::Catalog::GetEntry(_context, lookup,
+                                               duckdb::OnEntryNotFound::RETURN_NULL);
+        if (!entry || entry->type != duckdb::CatalogType::MACRO_ENTRY) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                          ERR_MSG(kSqlName, ": function \"", name_str,
+                                  "\": only built-in functions are allowed"));
+        }
+
+        std::unordered_set<std::string> visited{name_str};
+        CheckMacroRecursion(entry->Cast<duckdb::MacroCatalogEntry>(), visited);
+
+        fn.SetQualifiedName(
+          duckdb::Identifier{entry->ParentCatalog().GetName()},
+          duckdb::Identifier{entry->ParentSchema().name}, entry->name);
+
+        if (!absl::c_linear_search(_dependencies, entry.get())) {
+          _dependencies.push_back(entry.get());
+        }
+      }
+    }
+
+    duckdb::ParsedExpressionIterator::EnumerateChildren(
+      expr, [&](duckdb::ParsedExpression& child) {
+        ResolveAndPinFunctions(child);
+      });
+  }
+
   duckdb::ClientContext& _context;
+  std::vector<duckdb::CatalogEntry*> _dependencies;
 };
 
 }  // namespace

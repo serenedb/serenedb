@@ -63,11 +63,12 @@ struct GramPlan {
   bool exact{false};
 };
 
-re2::RE2::Options RegexpOptions(RegexpSyntax syntax);
+re2::RE2::Options RegexpOptions(RegexpSyntax syntax, bool bytes = false);
 
 GramPlan ExtractGramQuery(bytes_view pattern, RegexpSyntax syntax,
                           size_t gram_size, byte_type boundary,
-                          const GramQueryLimits& limits = {});
+                          const GramQueryLimits& limits = {},
+                          bool bytes = false);
 
 size_t LeafCount(const GramQuery& query) noexcept;
 

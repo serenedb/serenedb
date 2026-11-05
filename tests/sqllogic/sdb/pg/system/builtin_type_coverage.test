@@ -51,7 +51,7 @@ c_float8	double precision
 c_int2	smallint
 c_int4	integer
 c_int8	bigint
-c_numeric	numeric(18,3)
+c_numeric	numeric(38,10)
 c_sql_identifier	information_schema.sql_identifier
 c_time	time without time zone
 c_time_stamp	information_schema.time_stamp

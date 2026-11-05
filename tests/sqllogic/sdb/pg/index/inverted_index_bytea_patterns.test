@@ -1,0 +1,270 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY bp_wild AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bp_wild_pos AS
+    generate_wildcard_ngrams(split_text_csv(' '), 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE bp (id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+INSERT INTO bp VALUES
+    (1, 'beast'),
+    (2, '\x6d72ff6265617374'),
+    (3, '\xc3bf'),
+    (4, '\x6265617374ff'),
+    (5, '\x62ff6561ff7374'),
+    (6, '\x6265617374c3')
+
+statement ok
+CREATE INDEX bp_wild_idx ON bp USING inverted (id, v bp_wild)
+
+statement ok
+CREATE INDEX bp_wild_pos_idx ON bp USING inverted (id, v bp_wild_pos)
+
+statement ok
+CREATE INDEX bp_kw_idx ON bp USING inverted (id, v)
+
+statement ok
+VACUUM (REFRESH_TABLE) bp
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE '%beast%'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('%beast%')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('%beast%')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('%beast%')
+ORDER BY src
+----
+src	ids
+keyword	{1,2,4,6}
+scan	{1,2,4,6}
+wild	{1,2,4,6}
+wild_pos	{1,2,4,6}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE '%beast'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('%beast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('%beast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('%beast')
+ORDER BY src
+----
+src	ids
+keyword	{1,2}
+scan	{1,2}
+wild	{1,2}
+wild_pos	{1,2}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE 'beast%'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('beast%')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('beast%')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('beast%')
+ORDER BY src
+----
+src	ids
+keyword	{1,4,6}
+scan	{1,4,6}
+wild	{1,4,6}
+wild_pos	{1,4,6}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE 'b%t'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('b%t')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('b%t')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('b%t')
+ORDER BY src
+----
+src	ids
+keyword	{1,5}
+scan	{1,5}
+wild	{1,5}
+wild_pos	{1,5}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE 'b_ea_st'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('b_ea_st')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('b_ea_st')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('b_ea_st')
+ORDER BY src
+----
+src	ids
+keyword	{5}
+scan	{5}
+wild	{5}
+wild_pos	{5}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE 'mr_beast'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('mr_beast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('mr_beast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('mr_beast')
+ORDER BY src
+----
+src	ids
+keyword	{2}
+scan	{2}
+wild	{2}
+wild_pos	{2}
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE '__'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('__')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('__')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('__')
+ORDER BY src
+----
+src	ids
+keyword	{3}
+scan	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'scan' AS src, count(*) AS n FROM bp WHERE v LIKE '_'
+UNION ALL SELECT 'wild', count(*) FROM bp_wild_idx WHERE v @@ ts_like('_')
+UNION ALL SELECT 'wild_pos', count(*) FROM bp_wild_pos_idx WHERE v @@ ts_like('_')
+UNION ALL SELECT 'keyword', count(*) FROM bp_kw_idx WHERE v @@ ts_like('_')
+ORDER BY src
+----
+src	n
+keyword	0
+scan	0
+wild	0
+wild_pos	0
+
+query
+SELECT 'scan' AS src, list(id ORDER BY id) AS ids FROM bp WHERE v LIKE '%ÿ%'
+UNION ALL SELECT 'wild', list(id ORDER BY id) FROM bp_wild_idx WHERE v @@ ts_like('%ÿ%')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_like('%ÿ%')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_like('%ÿ%')
+ORDER BY src
+----
+src	ids
+keyword	{3}
+scan	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('b.ea.st')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('b.ea.st')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('b.ea.st')
+ORDER BY src
+----
+src	ids
+keyword	{5}
+wild	{5}
+wild_pos	{5}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('.*beast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('.*beast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('.*beast')
+ORDER BY src
+----
+src	ids
+keyword	{1,2}
+wild	{1,2}
+wild_pos	{1,2}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('..')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('..')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('..')
+ORDER BY src
+----
+src	ids
+keyword	{3}
+wild	{3}
+wild_pos	{3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('mr\xffbeast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('mr\xffbeast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('mr\xffbeast')
+ORDER BY src
+----
+src	ids
+keyword	{2}
+wild	{2}
+wild_pos	{2}
+
+query
+SELECT 'wild' AS src, count(*) AS n FROM bp_wild_idx WHERE v @@ ts_regexp('mr\xfebeast')
+UNION ALL SELECT 'wild_pos', count(*) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('mr\xfebeast')
+UNION ALL SELECT 'keyword', count(*) FROM bp_kw_idx WHERE v @@ ts_regexp('mr\xfebeast')
+ORDER BY src
+----
+src	n
+keyword	0
+wild	0
+wild_pos	0
+
+query
+SELECT list(id ORDER BY id) AS ids FROM bp_kw_idx
+WHERE v @@ ts_like('%beast') OR v @@ ts_like('b_ea_st') OR v @@ ts_regexp('..')
+----
+ids
+{1,2,3,5}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('b.ea.st', 'posix')
+ORDER BY src
+----
+src	ids
+keyword	{5}
+wild	{5}
+wild_pos	{5}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('beast%')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('beast%')
+ORDER BY src
+----
+src	ids
+keyword	{1,2,4,5,6}
+wild	{1,2,4,5,6}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bp_wild_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bp_wild_pos_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bp_kw_idx WHERE v @@ ts_regexp('(?s)(mr|ms).beast')
+ORDER BY src
+----
+src	ids
+keyword	{2}
+wild	{2}
+wild_pos	{2}
+
+query
+EXPLAIN SELECT id FROM bp_kw_idx
+WHERE v @@ ts_regexp('mr.beast', 'posix') OR v @@ ts_regexp('b.ea.st') OR v @@ ts_like('%beast')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: bp_kw_idx                             │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Automaton ──────────────────────────────╮ │
+│ │ Field: v(string)                         │ │
+│ │ Pattern: (?:mr.beast)|(?:b.ea.st)|%beast │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+statement ok
+DROP TABLE bp
+
+statement ok
+DROP TEXT SEARCH DICTIONARY bp_wild_pos
+
+statement ok
+DROP TEXT SEARCH DICTIONARY bp_wild

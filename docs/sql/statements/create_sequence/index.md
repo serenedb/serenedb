@@ -97,6 +97,12 @@ You may also view the current number from the sequence. `currval` returns the va
 
 <SqlLogicTest id="sql/statements/create_sequence/restart/example_020" />
 
+### Moving a Sequence
+
+`ALTER SEQUENCE ... SET SCHEMA` moves a sequence to another schema, keeping its current value. It needs the `CREATE` privilege on the target schema, which must not already hold a relation of that name. A sequence that a table owns, such as that of a `SERIAL` column, moves only with its table through [`ALTER TABLE ... SET SCHEMA`](../alter_table/index.md#set-schema), and a sequence that a column default uses can't be moved.
+
+<SqlLogicTest id="sql/statements/create_sequence/set_schema/example_021" />
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

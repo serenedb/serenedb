@@ -32,6 +32,12 @@ Create a type alias:
 
 <SqlLogicTest id="sql/statements/create_type/index/example_004" />
 
+Move a type to another schema:
+
+<SqlLogicTest id="sql/statements/create_type/index/example_006" />
+
+`ALTER TYPE ... SET SCHEMA` needs the `CREATE` privilege on the target schema, which must not already hold a type, table or view of that name. Moving a type into the schema it is already in changes nothing. A type that a column or another object uses can't be moved.
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

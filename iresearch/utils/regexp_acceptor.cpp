@@ -759,6 +759,9 @@ class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
         return NarrowCharClass(re, flags);
       case re2::kRegexpAnyChar:
         SDB_ASSERT(nchild_args == 0);
+        if ((flags & re2::Regexp::Latin1) != 0) {
+          return re->Incref();
+        }
         return NarrowAnyChar(flags);
 
       // Acceptance does not depend on where the groups are.
@@ -828,7 +831,10 @@ re2::Regexp* AnyCodePoint() {
   return re2::Regexp::AlternateNoFactor(alts, 4, kWildcardFlags);
 }
 
-re2::Regexp* WildcardTree(bytes_view pattern) {
+re2::Regexp* WildcardTree(bytes_view pattern, bool bytes) {
+  const auto any = [bytes] {
+    return bytes ? ByteClass(0x00, RegexpAcceptor::kMaxLabel) : AnyCodePoint();
+  };
   std::vector<re2::Regexp*> parts;
   parts.reserve(pattern.size());
   bool escaped = false;
@@ -840,10 +846,10 @@ re2::Regexp* WildcardTree(bytes_view pattern) {
     }
     switch (c) {
       case WildcardMatch::kAnyStr:
-        parts.emplace_back(re2::Regexp::Star(AnyCodePoint(), kWildcardFlags));
+        parts.emplace_back(re2::Regexp::Star(any(), kWildcardFlags));
         break;
       case WildcardMatch::kAnyChr:
-        parts.emplace_back(AnyCodePoint());
+        parts.emplace_back(any());
         break;
       case WildcardMatch::kEscape:
         escaped = true;
@@ -874,14 +880,15 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
 
 constexpr std::string_view kTooComplex = "regular expression is too complex";
 
-re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax,
+re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax, bool bytes,
                         std::string& error) {
   const absl::string_view sv{reinterpret_cast<const char*>(pattern.data()),
                              pattern.size()};
   // The two dialects a term regexp is offered: Perl and POSIX ERE.
-  const auto flags = syntax == RegexpSyntax::Perl
-                       ? re2::Regexp::LikePerl
-                       : (re2::Regexp::ClassNL | re2::Regexp::OneLine);
+  const auto dialect = syntax == RegexpSyntax::Perl
+                         ? re2::Regexp::LikePerl
+                         : (re2::Regexp::ClassNL | re2::Regexp::OneLine);
+  const auto flags = bytes ? dialect | re2::Regexp::Latin1 : dialect;
 
   re2::RegexpStatus status;
   re2::Regexp* parsed = re2::Regexp::Parse(sv, flags, &status);
@@ -953,8 +960,8 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
 #ifdef SDB_DEV
   kBuilds.fetch_add(1, std::memory_order_relaxed);
 #endif
-  re2::Regexp* re =
-    wildcard ? WildcardTree(pattern) : RegexpTree(pattern, syntax, _error);
+  re2::Regexp* re = wildcard ? WildcardTree(pattern, false)
+                             : RegexpTree(pattern, syntax, false, _error);
   if (re) {
     _suffixes = SuffixesOf(re);
     NormalizeSuffixes(_suffixes);
@@ -997,13 +1004,22 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
         re = BytesTree(part.pattern, true);
         break;
       case PartKind::Wildcard:
-        re = WildcardTree(part.pattern);
+        re = WildcardTree(part.pattern, false);
         break;
       case PartKind::Perl:
-        re = RegexpTree(part.pattern, RegexpSyntax::Perl, _error);
+        re = RegexpTree(part.pattern, RegexpSyntax::Perl, false, _error);
         break;
       case PartKind::PosixEre:
-        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, _error);
+        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, false, _error);
+        break;
+      case PartKind::WildcardBytes:
+        re = WildcardTree(part.pattern, true);
+        break;
+      case PartKind::PerlBytes:
+        re = RegexpTree(part.pattern, RegexpSyntax::Perl, true, _error);
+        break;
+      case PartKind::PosixEreBytes:
+        re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, true, _error);
         break;
     }
     if (!re) {

@@ -50,7 +50,8 @@ t	t
 statement error
 REVOKE GRANT OPTION FOR SELECT (clickclack) ON ccdr_iceberg FROM ccdr_vedernikoff;
 ----
-db error: ERROR: dependent privileges exist<slt:ignore>
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement ok

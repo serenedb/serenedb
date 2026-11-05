@@ -414,6 +414,7 @@ late_materialization_max_rows
 legacy_disable_null_type
 match_recognize_max_states
 max_execution_time
+max_parallel_workers_per_gather
 max_streaming_buffer_size
 merge_join_threshold
 nested_loop_join_threshold

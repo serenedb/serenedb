@@ -100,14 +100,14 @@ const DefaultAcl kDefaultAcls[] = {
   ClassAcl('s', CatalogType::SEQUENCE_ENTRY),
   ClassAcl('d', CatalogType::DATABASE_ENTRY),
   ClassAcl('f', CatalogType::MACRO_ENTRY),
-  {'l', AclMode::Usage, AclMode::Usage},
+  ClassAcl('l', CatalogType::LANGUAGE_ENTRY),
   {'L', AclMode::NoRights, AclMode::Select | AclMode::Update},
   ClassAcl('n', CatalogType::SCHEMA_ENTRY),
   {'t', AclMode::NoRights, AclMode::Create},
-  {'F', AclMode::NoRights, AclMode::Usage},
+  ClassAcl('F', CatalogType::FOREIGN_DATA_WRAPPER_ENTRY),
   ClassAcl('S', CatalogType::FOREIGN_SERVER_ENTRY),
   ClassAcl('T', CatalogType::TYPE_ENTRY),
-  {'p', AclMode::NoRights, AclMode::Set | AclMode::AlterSystem},
+  ClassAcl('p', CatalogType::PARAMETER_ENTRY),
 };
 
 void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,

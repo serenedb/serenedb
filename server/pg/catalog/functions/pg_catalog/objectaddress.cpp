@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -459,15 +460,31 @@ std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
     return std::nullopt;
   }
   if (classid == kPgProcTable) {
+    if (objid < kMaxSystem) {
+      const auto builtins = GetBuiltinFunctions(*session.context);
+      const auto* builtin = builtins->Find(objid);
+      if (const auto granted =
+            builtin ? BuiltinFunctionGrant(*session.context, *builtin)
+                    : nullptr) {
+        return granted->acl;
+      }
+      return std::nullopt;
+    }
     if (const auto found = FindMacro(session, objid); found.entry) {
       return found.entry->OverloadPermissions(*found.macro).acl;
+    }
+    return std::nullopt;
+  }
+  if (classid == kPgTypeTable && objid < kMaxSystem) {
+    if (const auto granted = BuiltinTypeGrant(*session.context, objid)) {
+      return granted->acl;
     }
     return std::nullopt;
   }
   if (classid == kPgTypeTable || classid == kPgNamespaceTable) {
     if (const auto entry = ObjectEntry(session, objid);
         entry && CatalogClassOid(entry->type) == classid) {
-      return entry->permissions.acl;
+      return duckdb::EffectivePermissions(*session.context, *entry).acl;
     }
   }
   return std::nullopt;

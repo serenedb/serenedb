@@ -122,6 +122,7 @@ parquet_kv_metadata
 parquet_metadata
 parquet_scan
 parquet_schema
+pg_backup_stop
 pg_clear_cache
 pg_extension_update_paths
 pg_hba_file_rules

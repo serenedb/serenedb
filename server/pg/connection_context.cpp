@@ -74,16 +74,23 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
               ERR_MSG("too many connections for role \"", role.name, "\""))};
   }
+  const auto roles = catalog::RolesOf(nullptr);
+  duckdb::RoleAccess missing;
+  missing.role = role.oid;
+  const auto access = roles->Access(role.oid);
+  const auto& principal = access ? *access : missing;
   struct {
     duckdb::idx_t oid = 0;
-    duckdb::Permissions permissions;
+    bool connect = false;
     bool allow_connections = true;
     int32_t conn_limit = -1;
   } database;
   if (!catalog::ReadDatabase(
         dbname, [&](const catalog::DatabaseCatalogEntry& entry) {
           database.oid = entry.oid;
-          database.permissions = entry.permissions;
+          database.connect =
+            principal.Can(duckdb::CatalogType::DATABASE_ENTRY,
+                          entry.permissions, duckdb::AclMode::Connect);
           database.allow_connections = entry.AllowConnections();
           database.conn_limit = entry.ConnLimit();
         })) {
@@ -97,13 +104,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_MSG("database \"", dbname,
                       "\" is not currently accepting connections"))};
   }
-  const auto roles = catalog::RolesOf(nullptr);
-  duckdb::RoleAccess missing;
-  missing.role = role.oid;
-  const auto access = roles->Access(role.oid);
-  if (!(access ? *access : missing)
-         .Can(duckdb::CatalogType::DATABASE_ENTRY, database.permissions,
-              duckdb::AclMode::Connect)) {
+  if (!database.connect) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
               ERR_MSG("permission denied for database \"", dbname, "\""),

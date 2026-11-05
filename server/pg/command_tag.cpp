@@ -112,6 +112,14 @@ std::string_view DiscardTag(duckdb::DiscardTarget target) {
   return "DISCARD";
 }
 
+std::string_view AlterRoutineTag(bool include_functions,
+                                 bool include_procedures) {
+  if (!include_procedures) {
+    return "ALTER FUNCTION";
+  }
+  return include_functions ? "ALTER ROUTINE" : "ALTER PROCEDURE";
+}
+
 std::string_view AlterTag(const duckdb::AlterInfo& info) {
   using enum duckdb::AlterType;
   switch (info.type) {
@@ -124,10 +132,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "ALTER SEQUENCE";
     case ALTER_SCALAR_FUNCTION: {
       const auto& function = info.Cast<duckdb::AlterScalarFunctionInfo>();
-      if (!function.include_procedures) {
-        return "ALTER FUNCTION";
-      }
-      return function.include_functions ? "ALTER ROUTINE" : "ALTER PROCEDURE";
+      return AlterRoutineTag(function.include_functions,
+                             function.include_procedures);
     }
     case ALTER_TABLE_FUNCTION:
       return "ALTER FUNCTION";
@@ -169,13 +175,13 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       }
       if (!permissions.new_owner.empty()) {
         if (permissions.entry_catalog_type ==
-              duckdb::CatalogType::MACRO_ENTRY &&
-            permissions.include_functions && permissions.include_procedures) {
-          return "ALTER ROUTINE";
+              duckdb::CatalogType::MACRO_ENTRY ||
+            permissions.entry_catalog_type ==
+              duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+          return AlterRoutineTag(permissions.include_functions,
+                                 permissions.include_procedures);
         }
-        return TagsOf(permissions.entry_catalog_type,
-                      !permissions.include_functions)
-          .alter;
+        return TagsOf(permissions.entry_catalog_type, false).alter;
       }
       return permissions.revoke ? "REVOKE" : "GRANT";
     }

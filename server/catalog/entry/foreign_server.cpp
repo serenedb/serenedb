@@ -169,12 +169,12 @@ void ForeignServerCatalogEntry::FollowOwner(
 void FollowOwnerStatus(duckdb::ClientContext& context, duckdb::idx_t owner,
                        bool superuser) {
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
-  for (const auto& db : duckdb::DatabaseManager::Get(context).GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (catalog.GetCatalogType() != SereneDBCatalog::kStorageType ||
-        db->IsReadOnly()) {
+  for (const auto& db :
+       SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    if (db->IsReadOnly()) {
       continue;
     }
+    auto& catalog = db->GetCatalog();
     catalog.Cast<duckdb::DuckCatalog>()
       .GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
       .Scan(catalog.GetCatalogTransaction(context),

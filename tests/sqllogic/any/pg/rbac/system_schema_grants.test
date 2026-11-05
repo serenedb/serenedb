@@ -51,6 +51,13 @@ postgres=UC/postgres
 
 
 query
+SELECT array_to_string(pg_get_acl('pg_namespace'::regclass, 'information_schema'::regnamespace, 0), ',') AS acl;
+----
+acl
+postgres=UC/postgres
+
+
+query
 SELECT has_schema_privilege('ssg_reader', 'information_schema', 'USAGE') AS usage;
 ----
 usage

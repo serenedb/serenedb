@@ -3,6 +3,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fix_enum_trailing_comma import blanked  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLANNER = "third_party/duckdb/src/planner"
 FUNCTIONS = "third_party/duckdb/src/function"
@@ -16,7 +19,7 @@ ALLOWED = {
     f"{PLANNER}/binder/expression/bind_window_expression.cpp": 1,
     f"{PLANNER}/binder/statement/bind_alter.cpp": 3,
     f"{PLANNER}/binder/statement/bind_copy.cpp": 1,
-    f"{PLANNER}/binder/statement/bind_create.cpp": 5,
+    f"{PLANNER}/binder/statement/bind_create.cpp": 3,
     f"{PLANNER}/binder/statement/bind_create_table.cpp": 2,
     f"{PLANNER}/binder/statement/bind_delete.cpp": 2,
     f"{PLANNER}/binder/statement/bind_drop.cpp": 1,
@@ -44,7 +47,6 @@ ALLOWED = {
     f"{ICEBERG}/execution/scan/iceberg_task_executor.cpp": 1,
     f"{SERVER}/catalog/catalog_subscription.cpp": 1,
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
-    f"{SERVER}/connector/duckdb_physical_create_index.cpp": 1,
     f"{SERVER}/connector/functions/jobs.cpp": 1,
     f"{SERVER}/connector/index_source_external_lookup.cpp": 1,
     f"{SERVER}/connector/index_source_native.cpp": 1,
@@ -67,7 +69,7 @@ ROUTE = {
 
 def direct_lookups(path):
     with open(path, encoding="utf-8") as source:
-        text = source.read()
+        text = blanked(source.read())
     return [
         text.count("\n", 0, match.start()) + 1
         for match in DIRECT_LOOKUP.finditer(text)

@@ -113,6 +113,10 @@ statement ok
 CREATE JOB jrb_22 AFTER 1 HOUR SUSPENDED AS GRANT USAGE ON SCHEMA public TO PUBLIC;
 
 
+statement ok
+CREATE JOB jrb_23 AFTER 1 HOUR SUSPENDED AS ALTER SUBSCRIPTION jrb_sub OWNER TO jrb_r;
+
+
 query
 SELECT job_name, replace(body, current_database(), 'DB') AS body FROM sdb_jobs() WHERE starts_with(job_name, 'jrb_') ORDER BY job_name;
 ----
@@ -139,6 +143,7 @@ jrb_19	ALTER TABLE jrb_t2 OWNER TO jrb_r;
 jrb_20	REASSIGN OWNED BY jrb_r TO CURRENT_USER;
 jrb_21	DROP OWNED BY jrb_r, jrb_r2 CASCADE;
 jrb_22	GRANT USAGE ON SCHEMA public TO PUBLIC;
+jrb_23	ALTER SUBSCRIPTION jrb_sub OWNER TO jrb_r;
 
 
 statement ok
@@ -176,6 +181,7 @@ jrb_19	ALTER TABLE jrb_t2 OWNER TO jrb_r;
 jrb_20	REASSIGN OWNED BY jrb_r TO CURRENT_USER;
 jrb_21	DROP OWNED BY jrb_r, jrb_r2 CASCADE;
 jrb_22	GRANT USAGE ON SCHEMA public TO PUBLIC;
+jrb_23	ALTER SUBSCRIPTION jrb_sub OWNER TO jrb_r;
 
 
 connection r1

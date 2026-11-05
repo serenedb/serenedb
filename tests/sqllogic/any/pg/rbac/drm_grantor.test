@@ -140,7 +140,8 @@ db error: ERROR: Cannot drop entry "drm_vedernikoff" because there are entries t
 statement error
 REVOKE SELECT ON drm_kostya FROM drm_vedernikoff;
 ----
-db error: ERROR: dependent privileges exist<slt:ignore>
+db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 # REVOKE ... FROM <grantor> CASCADE removes the grantor's privilege and the

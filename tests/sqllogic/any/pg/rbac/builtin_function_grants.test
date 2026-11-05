@@ -91,6 +91,13 @@ acl
 postgres=X/postgres
 
 
+query
+SELECT array_to_string(pg_get_acl('pg_proc'::regclass, 'lower(text)'::regprocedure, 0), ',') AS acl;
+----
+acl
+postgres=X/postgres
+
+
 statement ok
 GRANT EXECUTE ON FUNCTION lower(text) TO PUBLIC;
 

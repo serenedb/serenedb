@@ -257,3 +257,62 @@ f
 
 statement ok
 DROP ROLE scg_columns;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_member;
+
+
+statement ok
+DROP ROLE IF EXISTS scg_lead;
+
+
+statement ok
+CREATE ROLE scg_lead;
+
+
+statement ok
+CREATE ROLE scg_member;
+
+
+statement ok
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO scg_lead WITH GRANT OPTION;
+
+
+statement ok
+SET ROLE scg_lead;
+
+
+statement ok
+GRANT SELECT (rolname) ON pg_catalog.pg_authid TO scg_member;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_column_privilege('scg_member', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS rolname;
+----
+rolname
+t
+
+
+statement ok
+REVOKE SELECT (rolname) ON pg_catalog.pg_authid FROM scg_lead CASCADE;
+
+
+query
+SELECT has_column_privilege('scg_member', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS member,
+       has_column_privilege('scg_lead', 'pg_catalog.pg_authid', 'rolname', 'SELECT') AS lead;
+----
+member	lead
+f	f
+
+
+statement ok
+DROP ROLE scg_member;
+
+
+statement ok
+DROP ROLE scg_lead;

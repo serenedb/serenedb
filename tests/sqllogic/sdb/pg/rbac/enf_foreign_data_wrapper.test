@@ -134,6 +134,7 @@ statement error
 REVOKE USAGE ON FOREIGN DATA WRAPPER postgres_fdw FROM efw_alice;
 ----
 db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement ok

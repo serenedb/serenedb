@@ -30,6 +30,13 @@ postgres=U/postgres,btg_user=U/postgres
 
 
 query
+SELECT array_to_string(pg_get_acl('pg_type'::regclass, 'integer'::regtype, 0), ',') AS acl;
+----
+acl
+postgres=U/postgres,btg_user=U/postgres
+
+
+query
 SELECT has_type_privilege('btg_user', 'integer', 'USAGE') AS user_usage,
        has_type_privilege('btg_other', 'integer', 'USAGE') AS other_usage,
        has_type_privilege('btg_other', 'integer[]', 'USAGE') AS other_array,

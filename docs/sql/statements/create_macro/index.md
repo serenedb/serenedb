@@ -128,11 +128,11 @@ An `OUT` parameter is a column of the result and an `INOUT` parameter is both an
 
 ### Moving to Another Schema
 
-`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema, with all its overloads:
+`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_048" />
 
-The move needs the `CREATE` privilege on the target schema, which must not already hold a function or macro of that name. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
+The move needs ownership of the function and the `CREATE` privilege on the target schema, which must not already hold a function or macro of that name. The statement takes no argument list, so a name with several overloads fails with `function name "..." is not unique`. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
 
 ## Overloading
 

@@ -261,8 +261,8 @@ struct PackedColumn {
 
   void Build(const std::vector<uint32_t>& values) {
     irs::ColFileWriter file{dir.create("norms")};
-    irs::NormColumnWriter writer{
-      1, kRgRows, [&]() -> irs::ColFileWriter& { return file; }, false};
+    irs::NormColumnWriter writer{1, kRgRows,
+                                 [&]() -> irs::ColFileWriter& { return file; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }

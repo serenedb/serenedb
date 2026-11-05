@@ -99,6 +99,8 @@ class SereneDBClientState final : public duckdb::ClientContextState {
 
   const network::pg::ProtocolState* protocol_state = nullptr;
 
+  bool lists_system_schemas = true;
+
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;
 

@@ -98,6 +98,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   void Initialize(bool load_builtin) final;
   duckdb::idx_t DefaultSchemaOid() const final;
 
+  using duckdb::DuckCatalog::ScanSchemas;
+  void ScanSchemas(
+    duckdb::ClientContext& context,
+    std::function<void(duckdb::SchemaCatalogEntry&)> callback) final;
+
   void OnDetach(duckdb::ClientContext& context) final;
 
   void Alter(duckdb::CatalogTransaction transaction,

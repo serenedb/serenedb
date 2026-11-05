@@ -560,6 +560,24 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
   return pg::kPgMainSchema;
 }
 
+void SereneDBCatalog::ScanSchemas(
+  duckdb::ClientContext& context,
+  std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
+  const auto state =
+    context.registered_state->Get<connector::SereneDBClientState>(
+      connector::kSereneDBClientStateKey);
+  if (!state || state->lists_system_schemas) {
+    duckdb::DuckCatalog::ScanSchemas(context, std::move(callback));
+    return;
+  }
+  duckdb::DuckCatalog::ScanSchemas(
+    context, [&](duckdb::SchemaCatalogEntry& schema) {
+      if (!pg::FindSystemObject(pg::kSystemNamespaces, schema.oid)) {
+        callback(schema);
+      }
+    });
+}
+
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
   if (GetAttached().IsReadOnly()) {

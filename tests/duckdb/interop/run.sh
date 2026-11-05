@@ -240,6 +240,9 @@ SELECT * FROM quack_query('$remote', 'CREATE TABLE v3 AS SELECT i AS id, ''n'' |
 SELECT * FROM quack_query('$remote', 'SELECT count(*) AS n, sum(id) AS s, count(DISTINCT name) AS d FROM v3', token := 'postgres:');
 SELECT * FROM quack_query('$remote', 'INSERT INTO v3 VALUES (1000, NULL)', token := 'postgres:');
 SELECT * FROM quack_query('$remote', 'SELECT id, name FROM v3 WHERE id >= 998 ORDER BY id', token := 'postgres:');
+ATTACH '$remote' AS s (TOKEN 'postgres:');
+SELECT count(*) AS n, max(name) AS m FROM s.public.v3;
+SELECT schema_name FROM duckdb_schemas() WHERE database_name = 's' AND schema_name IN ('public', 'pg_catalog', 'information_schema') ORDER BY schema_name;
 EOF
 	kill "$pid"
 	wait "$pid"
@@ -255,6 +258,10 @@ id,name
 998,n998
 999,n999
 1000,NULL
+n,m
+1001,n999
+schema_name
+public
 EOF
 	)
 }

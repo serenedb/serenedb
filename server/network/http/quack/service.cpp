@@ -49,6 +49,7 @@
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 
+#include "connector/duckdb_client_state.h"
 #include "network/cpu_resumer.h"
 #include "network/http/sql_connection.h"
 #include "network/pg/login.h"
@@ -196,6 +197,9 @@ class Session final : public TransportBase,
     _conn = std::move(sql.conn);
     _ctx = std::move(sql.context);
     _progress = std::move(sql.progress);
+    _conn->context->registered_state
+      ->Get<connector::SereneDBClientState>(connector::kSereneDBClientStateKey)
+      ->lists_system_schemas = false;
     std::move(unregister).Cancel();
   }
 

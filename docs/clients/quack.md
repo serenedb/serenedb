@@ -34,16 +34,21 @@ A client attaches over HTTPS unless the server address is `localhost`, `127.0.0.
 
 The endpoint speaks version 3 of the Quack protocol, as the `quack` extension of DuckDB 2.0 does. An older extension, such as DuckDB 1.5's, cannot connect.
 
-A DuckDB client runs statements on a SereneDB server with `quack_query`:
+A DuckDB client attaches a SereneDB server as it attaches a DuckDB one:
 
 ```sql
 LOAD quack;
 
+ATTACH 'quack:127.0.0.1:9494' AS shop (TOKEN 'postgres:');
+SELECT count(*) FROM shop.public.orders;
+```
+
+`quack_query` runs a statement on the server without attaching it:
+
+```sql
 SELECT *
 FROM quack_query('quack:127.0.0.1:9494', 'SELECT count(*) FROM orders', token := 'postgres:');
 ```
-
-A DuckDB client cannot `ATTACH` a SereneDB server: it binds every table the server lists, and the server's `pg_catalog` tables have PostgreSQL types that DuckDB does not have, so the `ATTACH` fails with `Failed to bind remote table pg_catalog...`.
 
 ## Authentication
 
@@ -83,4 +88,4 @@ ORDER BY query_started_at;
 ## Limits
 
 - One request body holds at most 64 MiB.
-- Only the tables and views users create are visible to a SereneDB client: the server's `pg_catalog` and `information_schema` tables are not.
+- Only the tables and views users create are visible to a client that attaches the server: the server's `pg_catalog` and `information_schema` are not.

@@ -48,6 +48,18 @@ id
 2
 
 query
+SELECT count(*) AS n FROM curve_float_bounds_morton WHERE curve(ROW(x, y)) @@ ts_between(ROW(16777217::DOUBLE, 0), ROW(16777217::DOUBLE, 0), true, true);
+----
+n
+0
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE x::BIGINT BETWEEN 16777217 AND 16777218 AND y = 0 ORDER BY id;
+----
+id
+2
+
+query
 SELECT id FROM curve_float_bounds_hilbert WHERE curve(ROW(x, y), kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)) @@ ts_between(ROW(16777217, 0), ROW(16777217, 0), true, true) ORDER BY id;
 ----
 id

@@ -49,3 +49,108 @@ db error: ERROR: ts_between: bound VARCHAR does not match coordinate 2 of type B
 
 statement ok
 DROP TABLE curve_bound_errors;
+
+
+statement ok
+CREATE TABLE curve_bound_types(id INTEGER PRIMARY KEY, i INTEGER, u UINTEGER, d DOUBLE, z TIMESTAMPTZ, ip INET);
+
+statement ok
+INSERT INTO curve_bound_types VALUES
+ (1, -5, 0, -1, '2026-01-01 00:00:00+00', '10.0.0.1'),
+ (2, 5, 5, 1, '2026-01-02 00:00:00+00', '10.0.0.2'),
+ (3, 2147483647, 4294967295, 9007199254740992, '2026-01-03 00:00:00+00', '2001:db8::1');
+
+statement ok
+CREATE INDEX curve_bound_types_idx ON curve_bound_types USING inverted(id, (curve(ROW(i, u, d, z, ip)))) INCLUDE (i, u, d, z, ip);
+
+statement ok
+CREATE INDEX curve_bound_types_inet ON curve_bound_types USING inverted(id, (curve(ROW(ip, i)))) INCLUDE (ip, i);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_bound_types;
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(0::UBIGINT, NULL, NULL, NULL, NULL), ROW(18446744073709551615::UBIGINT, NULL, NULL, NULL, NULL), true, true);
+----
+ids
+{2,3}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, -1, NULL, NULL, NULL), ROW(NULL, 5, NULL, NULL, NULL), true, true);
+----
+ids
+{1,2}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, 9007199254740993, NULL, NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+ids
+{3}
+
+query
+SELECT count(*) AS n FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, 9223372036854775807, NULL, NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+n
+0
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, 1::UBIGINT, NULL, NULL), ROW(NULL, NULL, 9007199254740993::UBIGINT, NULL, NULL), true, true);
+----
+ids
+{2,3}
+
+query
+SELECT count(*) AS n FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, 18446744073709551615::UBIGINT, NULL, NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+n
+0
+
+
+statement error
+SELECT id FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, '1', NULL, NULL, NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+db error: ERROR: ts_between: bound VARCHAR does not match coordinate 2 of type UINTEGER; cast the bound explicitly
+
+
+statement error
+SELECT id FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, '1', NULL, NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+db error: ERROR: ts_between: bound VARCHAR does not match coordinate 3 of type DOUBLE; cast the bound explicitly
+
+
+statement error
+SELECT id FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, NULL, TIMESTAMP '2026-01-01', NULL), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+db error: ERROR: ts_between: bound TIMESTAMP does not match coordinate 4 of type TIMESTAMP WITH TIME ZONE; cast the bound explicitly
+
+
+statement error
+SELECT id FROM curve_bound_types_idx WHERE curve(ROW(i, u, d, z, ip)) @@ ts_between(
+ ROW(NULL, NULL, NULL, NULL, 1), ROW(NULL, NULL, NULL, NULL, NULL), true, true);
+----
+db error: ERROR: ts_between: bound INTEGER does not match coordinate 5 of type INET; cast the bound explicitly
+
+
+query
+SELECT count(*) AS n FROM curve_bound_types_inet WHERE inet_sort_key(ip) BETWEEN 'a'::BLOB AND 'b'::BLOB AND i BETWEEN -10 AND 10;
+----
+n
+0
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_bound_types_inet WHERE ip >= '10.0.0.2' AND inet_sort_key(ip) <= 'zz'::BLOB AND i BETWEEN -10 AND 10;
+----
+ids
+{2}
+
+statement ok
+DROP TABLE curve_bound_types;

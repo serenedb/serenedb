@@ -238,6 +238,7 @@ inline std::vector<Cell> CoverBox(const Box& box, const Options& options) {
 
 namespace detail {
 
+#if !defined(__BMI2__)
 template<uint32_t Dimensions>
 inline constexpr auto kSpreadBytes = [] {
   std::array<uint64_t, 256> table;
@@ -258,6 +259,7 @@ inline uint64_t SpreadPairs(uint64_t value) noexcept {
   value = (value | (value << 2)) & 0x3333333333333333;
   return (value | (value << 1)) & 0x5555555555555555;
 }
+#endif
 
 template<uint32_t Dimensions>
 Code Encode(Point& point, bool hilbert) {

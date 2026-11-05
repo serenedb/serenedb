@@ -502,8 +502,7 @@ bool InvertedIndexConfig::IsKeywordField(
   if (!lookup.entry || !lookup.entry->IsTermDict()) {
     return false;
   }
-  return !lookup.entry->curve &&
-         (!lookup.entry->HasTextDictionary() || lookup.entry->is_keyword);
+  return !lookup.entry->HasTextDictionary() || lookup.entry->is_keyword;
 }
 
 duckdb::LogicalType InvertedIndexConfig::ExpressionType(

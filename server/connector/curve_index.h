@@ -27,6 +27,7 @@
 #include <duckdb/function/function.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/space_filling_curve.hpp>
 #include <optional>
 #include <span>
@@ -131,10 +132,8 @@ class CurveTokenizer final
   bool DoFill(duckdb::string_t value, irs::TokenSink& sink) {
     const std::span code{reinterpret_cast<const uint8_t*>(value.GetData()),
                          value.GetSize()};
-    if (code.size() !=
-        irs::curve::CodeSize(_options.dimensions, _options.max_level)) {
-      return false;
-    }
+    SDB_ASSERT(code.size() ==
+               irs::curve::CodeSize(_options.dimensions, _options.max_level));
     const auto emit = [&](std::span<const uint8_t> term) {
       sink.Emit<Layout>(term.data(), static_cast<uint32_t>(term.size()));
     };

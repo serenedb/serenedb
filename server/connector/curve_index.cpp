@@ -184,10 +184,8 @@ uint64_t InetKey(const InetValue& value) noexcept {
   if (value.ip_type == kInetV6) {
     return irs::curve::kSignBit | (absl::Uint128High64(value.network) >> 1);
   }
-  if (value.ip_type == kInetV4) {
-    return absl::Uint128Low64(value.network) << 31;
-  }
-  return 0;
+  SDB_ASSERT(value.ip_type == kInetV4);
+  return absl::Uint128Low64(value.network) << 31;
 }
 
 std::optional<InetValue> DecodeInet(const duckdb::Value& value) {
@@ -302,8 +300,8 @@ std::optional<RawBound> ToRaw(const CurveAxis& axis,
         const auto converted = static_cast<double>(value);
         return RawBound{
           .value = converted,
-          .exact = converted >= -0x1p63 && converted < 0x1p63 &&
-                   static_cast<int64_t>(converted) == value,
+          .exact =
+            converted < 0x1p63 && static_cast<int64_t>(converted) == value,
         };
       }
       if (is_unsigned) {
@@ -356,7 +354,7 @@ std::optional<RawBound> ToRaw(const CurveAxis& axis,
       return RawBound{.key = InetKey(*inet)};
     }
     case CurveFamily::Null:
-      return std::nullopt;
+      break;
   }
   return std::nullopt;
 }
@@ -382,25 +380,6 @@ uint64_t InetAxisKey(const CurveAxis& axis, InetValue value) noexcept {
 template<typename T>
 T Load(const duckdb::UnifiedVectorFormat& format, duckdb::idx_t index) {
   return duckdb::UnifiedVectorFormat::GetDataUnsafe<T>(format)[index];
-}
-
-bool IsValid(const CurveAxis& axis,
-             const duckdb::RecursiveUnifiedVectorFormat& format,
-             duckdb::idx_t row) {
-  const auto& unified = format.unified;
-  if (!unified.validity.RowIsValid(unified.sel->get_index(row))) {
-    return false;
-  }
-  if (axis.family != CurveFamily::Inet) {
-    return true;
-  }
-  for (const auto& child : format.children) {
-    const auto& part = child.unified;
-    if (!part.validity.RowIsValid(part.sel->get_index(row))) {
-      return false;
-    }
-  }
-  return true;
 }
 
 uint64_t AxisKey(const CurveAxis& axis,
@@ -450,8 +429,7 @@ uint64_t AxisKey(const CurveAxis& axis,
     case DOUBLE:
       return MapDouble(axis, Load<double>(unified, index));
     default:
-      SDB_ASSERT(false);
-      return 0;
+      SDB_UNREACHABLE();
   }
 }
 
@@ -466,7 +444,7 @@ void ReplaceOption(duckdb::unique_ptr<duckdb::Expression>& argument,
 duckdb::Value OptionValue(duckdb::ClientContext& context,
                           duckdb::unique_ptr<duckdb::Expression>& argument,
                           std::string_view name) {
-  if (!argument->IsFoldable() || argument->HasParameter()) {
+  if (!argument->IsFoldable()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("curve(): option \"", name, "\" must be a constant"));
@@ -478,11 +456,9 @@ duckdb::Value OptionValue(duckdb::ClientContext& context,
 
 uint32_t LimitOption(const duckdb::Value& value, std::string_view name,
                      uint32_t min, uint32_t max) {
-  if (!value.IsNull()) {
-    const auto n = value.GetValue<int64_t>();
-    if (n >= min && n <= max) {
-      return static_cast<uint32_t>(n);
-    }
+  const auto n = value.GetValue<int64_t>();
+  if (n >= min && n <= max) {
+    return static_cast<uint32_t>(n);
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                   ERR_MSG("curve(): option \"", name, "\" must be between ",
@@ -495,8 +471,7 @@ const duckdb::Value* BoundComponent(const duckdb::Value& bounds,
   if (bounds.IsNull()) {
     return nullptr;
   }
-  if (!duckdb::StructType::IsStruct(bounds.type()) ||
-      pg::IsInet(bounds.type()) ||
+  if (pg::IsInet(bounds.type()) ||
       duckdb::StructType::GetChildCount(bounds.type()) != dimensions) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -603,12 +578,11 @@ std::optional<CurveKey> CurveBoundKey(const CurveAxis& axis,
   if (!raw) {
     return std::nullopt;
   }
-  const bool injective = !Normalized(axis) && axis.family != CurveFamily::Inet;
   return CurveKey{
     .key = axis.family == CurveFamily::Float ? MapDouble(axis, raw->value)
                                              : MapKey(axis, raw->key),
     .step = uint64_t{1} << KeyShift(axis),
-    .exact = raw->exact && injective,
+    .exact = raw->exact && !Normalized(axis),
   };
 }
 
@@ -742,8 +716,7 @@ const CurveSpec* TryGetCurveSpec(const duckdb::Expression& expression) {
     return nullptr;
   }
   const auto& function = expression.Cast<duckdb::BoundFunctionExpression>();
-  if (function.Function().GetName().GetIdentifierName() != kCurveFunction ||
-      !function.BindInfo()) {
+  if (function.Function().GetName().GetIdentifierName() != kCurveFunction) {
     return nullptr;
   }
   return &function.BindInfo()->Cast<CurveSpec>();
@@ -793,7 +766,8 @@ void EncodeCurveCodes(const CurveSpec& spec, duckdb::DataChunk& args,
   for (duckdb::idx_t row = 0; row < count; ++row) {
     bool valid = validity.RowIsValid(row);
     for (uint32_t axis = 0; axis < dimensions && valid; ++axis) {
-      valid = IsValid(spec.axes[axis], formats[axis], row);
+      const auto& unified = formats[axis].unified;
+      valid = unified.validity.RowIsValid(unified.sel->get_index(row));
     }
     if (!valid) {
       duckdb::FlatVector::SetNull(result, row, true);

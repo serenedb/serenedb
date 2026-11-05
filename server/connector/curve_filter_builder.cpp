@@ -24,7 +24,6 @@
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
-#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
@@ -35,6 +34,7 @@
 
 #include "connector/curve_index.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
 #include "pg/types/logical.h"
 
@@ -43,36 +43,15 @@ namespace {
 
 inline constexpr std::string_view kInetSortKey = "inet_sort_key";
 
-const duckdb::Expression& PeelCast(const duckdb::Expression& expr) {
-  if (duckdb::BoundCastExpression::IsCast(expr)) {
-    const auto& child = duckdb::BoundCastExpression::Child(
-      expr.Cast<duckdb::BoundFunctionExpression>());
-    if (child.GetReturnType() == expr.GetReturnType()) {
-      return PeelCast(child);
-    }
-  }
-  return expr;
-}
-
 const duckdb::Expression& PeelSortKey(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return expr;
   }
   const auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (function.Function().GetName().GetIdentifierName() != kInetSortKey ||
-      function.GetChildren().size() != 1) {
+  if (function.Function().GetName().GetIdentifierName() != kInetSortKey) {
     return expr;
   }
   return *function.GetChildren()[0];
-}
-
-const duckdb::Expression& PeelCasts(const duckdb::Expression& expr) {
-  const auto* result = &expr;
-  while (duckdb::BoundCastExpression::IsCast(*result)) {
-    result = &duckdb::BoundCastExpression::Child(
-      result->Cast<duckdb::BoundFunctionExpression>());
-  }
-  return *result;
 }
 
 uint32_t IntegerWidth(duckdb::LogicalTypeId type) {
@@ -118,7 +97,7 @@ bool IsWideningCast(const duckdb::Expression& expression) {
 
 std::optional<duckdb::Value> Fold(duckdb::ClientContext& context,
                                   const duckdb::Expression& expression) {
-  if (!expression.IsFoldable() || expression.HasParameter()) {
+  if (!expression.IsFoldable()) {
     return std::nullopt;
   }
   auto copy = expression.Copy();
@@ -247,13 +226,6 @@ void CollectRanges(const duckdb::Expression& expression,
                      normalize,
                    std::vector<CurveRange>& ranges) {
   using enum duckdb::ExpressionType;
-  if (expression.GetExpressionType() == CONJUNCTION_AND) {
-    for (const auto& child :
-         expression.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-      CollectRanges(*child, normalize, ranges);
-    }
-    return;
-  }
   if (expression.GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_FUNCTION ||
       expression.HasParameter()) {
@@ -263,20 +235,18 @@ void CollectRanges(const duckdb::Expression& expression,
     [&](const duckdb::Expression& component, const duckdb::Expression* lower,
         const duckdb::Expression* upper, bool lower_inclusive = true,
         bool upper_inclusive = true) {
-      if (auto normalized = normalize(PeelCast(PeelSortKey(component)))) {
+      if (auto normalized = normalize(PeelSortKey(component))) {
         ranges.emplace_back(std::move(normalized), lower, upper,
                             lower_inclusive, upper_inclusive);
       }
     };
   const auto& function = expression.Cast<duckdb::BoundFunctionExpression>();
   if (expression.GetExpressionType() == COMPARE_BETWEEN) {
-    if (duckdb::BoundBetweenExpression::HasValidBindData(function)) {
-      add(duckdb::BoundBetweenExpression::Input(function),
-          &duckdb::BoundBetweenExpression::LowerBound(function),
-          &duckdb::BoundBetweenExpression::UpperBound(function),
-          duckdb::BoundBetweenExpression::LowerInclusive(function),
-          duckdb::BoundBetweenExpression::UpperInclusive(function));
-    }
+    add(duckdb::BoundBetweenExpression::Input(function),
+        &duckdb::BoundBetweenExpression::LowerBound(function),
+        &duckdb::BoundBetweenExpression::UpperBound(function),
+        duckdb::BoundBetweenExpression::LowerInclusive(function),
+        duckdb::BoundBetweenExpression::UpperInclusive(function));
     return;
   }
   if (!duckdb::BoundComparisonExpression::IsComparison(expression)) {
@@ -321,8 +291,7 @@ bool ClaimCurveMatch(
     return false;
   }
   const auto& match = conjunct.Cast<duckdb::BoundFunctionExpression>();
-  if (match.Function().GetName().GetIdentifierName() != kTSQueryMatch ||
-      match.GetChildren().size() != 2) {
+  if (match.Function().GetName().GetIdentifierName() != kTSQueryMatch) {
     return false;
   }
   const auto& curve = *match.GetChildren()[0];
@@ -331,15 +300,14 @@ bool ClaimCurveMatch(
     return false;
   }
   const auto info = expressions(curve);
-  if (!info || !info->tokenizer.analyzer ||
-      info->tokenizer.analyzer->type() != irs::Type<CurveTokenizer>::id()) {
+  if (!info) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("curve() @@ needs an index on the same curve() call"),
       ERR_HINT("Query the index relation and repeat the indexed call with the "
                "same coordinates and options."));
   }
-  const auto* query = &PeelCasts(*match.GetChildren()[1]);
+  const auto* query = &UnwrapTSQueryCast(*match.GetChildren()[1]);
   duckdb::unique_ptr<duckdb::Expression> parsed;
   if (query->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto parts = TryGetTSQueryParts(
@@ -350,15 +318,14 @@ bool ClaimCurveMatch(
     if (!parsed) {
       ThrowUnsupportedQuery();
     }
-    query = &PeelCasts(*parsed);
+    query = &UnwrapTSQueryCast(*parsed);
   }
   if (query->GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     ThrowUnsupportedQuery();
   }
   const auto& between = query->Cast<duckdb::BoundFunctionExpression>();
   const auto& args = between.GetChildren();
-  if (between.Function().GetName().GetIdentifierName() != kTSQBetween ||
-      args.size() != 4) {
+  if (between.Function().GetName().GetIdentifierName() != kTSQBetween) {
     ThrowUnsupportedQuery();
   }
   const auto lower = Fold(context, *args[0]);
@@ -453,9 +420,7 @@ bool AddCurveRangeCandidates(irs::BooleanFilter& root,
                              const SearchColumnInfo& info,
                              duckdb::ClientContext& context) {
   const auto* spec = TryGetCurveSpec(key);
-  if (!spec) {
-    return false;
-  }
+  SDB_ASSERT(spec);
   const auto coordinates = CurveCoordinates(key);
   if (coordinates.size() != spec->options.dimensions) {
     return false;
@@ -469,13 +434,13 @@ bool AddCurveRangeCandidates(irs::BooleanFilter& root,
     const auto limits = CurveLimits(target);
     box.min[axis] = limits.min;
     box.max[axis] = limits.max;
-    const auto& indexed = PeelCast(*coordinates[axis]);
+    const auto& indexed = *coordinates[axis];
     for (const auto& range : ranges) {
-      const auto* component = &PeelCast(*range.component);
+      const auto* component = range.component.get();
       bool matched = component->Equals(indexed);
       while (!matched && IsWideningCast(*component)) {
-        component = &PeelCast(duckdb::BoundCastExpression::Child(
-          component->Cast<duckdb::BoundFunctionExpression>()));
+        component = &duckdb::BoundCastExpression::Child(
+          component->Cast<duckdb::BoundFunctionExpression>());
         matched = component->Equals(indexed);
       }
       if (!matched) {
@@ -485,15 +450,13 @@ bool AddCurveRangeCandidates(irs::BooleanFilter& root,
       std::optional<CurveKey> upper;
       if (range.lower) {
         const auto value = Fold(context, *range.lower);
-        if (!value || value->IsNull() ||
-            !(lower = CurveBoundKey(target, *value))) {
+        if (!value || !(lower = CurveBoundKey(target, *value))) {
           continue;
         }
       }
       if (range.upper) {
         const auto value = Fold(context, *range.upper);
-        if (!value || value->IsNull() ||
-            !(upper = CurveBoundKey(target, *value))) {
+        if (!value || !(upper = CurveBoundKey(target, *value))) {
           continue;
         }
       }

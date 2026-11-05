@@ -95,6 +95,61 @@ db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, g
 
 
 statement error
+SELECT curve(ROW(1, 2.5::DOUBLE), lower := ROW(0, 0), upper := ROW(10, 'inf'::DOUBLE));
+----
+db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, got 0 and Infinity
+
+
+statement error
+SELECT curve(ROW(1, 2.5::DOUBLE), lower := ROW(0, 5), upper := ROW(10, 1));
+----
+db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, got 5 and 1
+
+
+statement error
+SELECT curve(ROW(1, 2), lower := ROW(0, 0));
+----
+db error: ERROR: curve(): "lower" and "upper" must both bound coordinate 1 or both leave it NULL
+
+
+statement error
+SELECT curve(ROW(1, 2), upper := ROW(0, 0));
+----
+db error: ERROR: curve(): "lower" and "upper" must both bound coordinate 1 or both leave it NULL
+
+
+statement error
+SELECT curve(ROW(NULL, 1), lower := ROW(1, 0), upper := ROW(2, 5));
+----
+db error: ERROR: curve(): lower bound INTEGER does not match coordinate 1 of type "NULL"; cast the bound explicitly
+
+
+statement error
+SELECT curve(ROW('10.0.0.1'::INET, 1), lower := ROW(1, 0), upper := ROW(2, 5));
+----
+db error: ERROR: curve(): lower bound INTEGER does not match coordinate 1 of type INET; cast the bound explicitly
+
+
+statement error
+SELECT curve(ROW('10.0.0.1'::INET, 1), lower := ROW('10.0.0.0'::INET, 0), upper := ROW(2, 5));
+----
+db error: ERROR: curve(): upper bound INTEGER does not match coordinate 1 of type INET; cast the bound explicitly
+
+
+statement error
+SELECT curve(ROW('10.0.0.1'::INET, 1), lower := ROW('2001:db8::'::INET, 0), upper := ROW('10.0.0.5'::INET, 5));
+----
+db error: ERROR: curve(): coordinate 1 needs INET bounds with lower < upper on the curve, which places a value at its network, got 2001:db8::/128 and 10.0.0.5/32
+
+
+query
+SELECT octet_length(curve(ROW('10.0.0.1'::INET, 1), lower := ROW('10.0.0.0'::INET, 0), upper := ROW('2001:db8::'::INET, 5))) AS n;
+----
+n
+16
+
+
+statement error
 SELECT curve(ROW(1, 2), lower := ROW(0, 0, 0), upper := ROW(10, 10, 10));
 ----
 db error: ERROR: curve(): option "lower" must be a ROW of 2 values, got TUPLE(INTEGER, INTEGER, INTEGER)

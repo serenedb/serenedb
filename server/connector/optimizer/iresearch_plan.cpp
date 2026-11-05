@@ -1492,6 +1492,52 @@ std::map<const duckdb::Expression*, connector::WideRanges> DecideColumnRanges(
   return modes;
 }
 
+bool ClaimCurveRanges(
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
+  duckdb::LogicalGet& get, connector::ScanBindData& scan,
+  irs::BooleanFilter& root,
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
+  duckdb::ClientContext& context) {
+  const auto& config = *scan.relation.inverted_config;
+  const auto is_curve = [&](const auto& key) {
+    const auto* field = config.FindEntry(key.field_id);
+    SDB_ASSERT(field);
+    return field->curve.has_value();
+  };
+  if (absl::c_none_of(config.keys, is_curve)) {
+    return false;
+  }
+  const auto projected_ids = BuildProjectedColumnIds(get, scan);
+  const auto dicts = scan.relation.ResolveTokenizers(context);
+  const auto ranges = connector::CollectCurveRanges(
+    filters,
+    [&](const duckdb::Expression& predicate)
+      -> duckdb::unique_ptr<duckdb::Expression> {
+      if (SingleReferencedTableIndex(predicate) != get.table_index) {
+        return nullptr;
+      }
+      return connector::NormalizeBoundExpression(predicate, scan.RelationId(),
+                                                 projected_ids, context);
+    });
+  bool any_claimed = false;
+  for (const auto& key : config.keys) {
+    if (!is_curve(key)) {
+      continue;
+    }
+    const auto curve =
+      connector::DeserializeBoundExpression(key.normalized_expression, context);
+    const auto info =
+      MakeSearchColumnInfo(key.field_id, config.FindEntry(key.field_id),
+                           key.type, dicts.Acquire(key.field_id));
+    if (connector::AddCurveRangeCandidates(root, ranges, *curve, info,
+                                           context)) {
+      any_claimed = true;
+      analyzed_fields.emplace(info.field_id);
+    }
+  }
+  return any_claimed;
+}
+
 bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::ScanBindData& scan,
@@ -1499,37 +1545,8 @@ bool ClaimSearchConjuncts(
   auto& [getter, expr_getter, analyzed_fields, column_id] = getters;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
-  bool any_claimed = false;
-  const auto& config = *scan.relation.inverted_config;
-  const auto projected_ids = BuildProjectedColumnIds(get, scan);
-  const auto normalize = [&](const duckdb::Expression& predicate)
-    -> duckdb::unique_ptr<duckdb::Expression> {
-    if (SingleReferencedTableIndex(predicate) != get.table_index) {
-      return nullptr;
-    }
-    return connector::NormalizeBoundExpression(predicate, scan.RelationId(),
-                                               projected_ids, context);
-  };
-  std::optional<std::vector<connector::CurveRange>> ranges;
-  const auto dicts = scan.relation.ResolveTokenizers(context);
-  for (const auto& key : config.keys) {
-    const auto* field = config.FindEntry(key.field_id);
-    if (!field || !field->curve || key.normalized_expression.empty()) {
-      continue;
-    }
-    if (!ranges) {
-      ranges = connector::CollectCurveRanges(filters, normalize);
-    }
-    const auto curve =
-      connector::DeserializeBoundExpression(key.normalized_expression, context);
-    const auto info = MakeSearchColumnInfo(key.field_id, field, key.type,
-                                           dicts.Acquire(key.field_id));
-    if (connector::AddCurveRangeCandidates(*root_and, *ranges, *curve, info,
-                                           context)) {
-      any_claimed = true;
-      analyzed_fields.emplace(info.field_id);
-    }
-  }
+  bool any_claimed =
+    ClaimCurveRanges(filters, get, scan, *root_and, analyzed_fields, context);
   connector::FilterScorers filter_scorers;
   DeferredClaimBuilder deferred;
   deferred.column_id = &column_id;

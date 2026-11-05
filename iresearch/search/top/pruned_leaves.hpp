@@ -42,6 +42,13 @@
 
 namespace irs::top {
 
+struct LeafHits {
+  ABSL_CACHELINE_ALIGNED uint32_t slots[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED doc_id_t docs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED uint32_t freqs[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED score_t scores[doc_limits::kBlockSize];
+};
+
 template<typename Leaf, size_t N = 0>
 class PrunedLeaves {
  public:
@@ -281,7 +288,7 @@ class PrunedLeaves {
 
   uint32_t AddOptional(doc_id_t* IRS_RESTRICT docs,
                        score_t* IRS_RESTRICT scores, uint32_t len,
-                       score_t threshold) {
+                       score_t threshold, LeafHits& matched) {
     SDB_ASSERT(len <= doc_limits::kBlockSize);
     for (size_t i = 0, count = _leaves.size(); i != count && len != 0; ++i) {
       if (const auto required = threshold - _suffix[i]; required > 0) {
@@ -299,19 +306,19 @@ class PrunedLeaves {
         for (auto found = leaf.Hits(docs + off, n, freqs); found != 0;
              found &= found - 1) {
           const auto j = static_cast<uint32_t>(std::countr_zero(found));
-          _hit_slots[hits] = off + j;
-          _hit_docs[hits] = docs[off + j];
-          _hit_freqs[hits] = freqs[j];
+          matched.slots[hits] = off + j;
+          matched.docs[hits] = docs[off + j];
+          matched.freqs[hits] = freqs[j];
           ++hits;
         }
       }
       if (hits == 0) {
         continue;
       }
-      _fetcher.Fetch(std::span<const doc_id_t>{_hit_docs, hits});
-      leaf.ScoreWith(_scorers[c], _hit_freqs, _hit_scores, hits);
+      _fetcher.Fetch(std::span<const doc_id_t>{matched.docs, hits});
+      leaf.ScoreWith(_scorers[c], matched.freqs, matched.scores, hits);
       for (uint32_t h = 0; h != hits; ++h) {
-        scores[_hit_slots[h]] += _hit_scores[h];
+        scores[matched.slots[h]] += matched.scores[h];
       }
     }
     return len == 0 ? 0
@@ -371,10 +378,6 @@ class PrunedLeaves {
   irs::containers::Fixed<ScoreMask, N> _held{_leaves.size()};
   irs::containers::Fixed<std::array<score_t, kScoreBlock>, N> _rows{
     _leaves.size()};
-  ABSL_CACHELINE_ALIGNED uint32_t _hit_slots[doc_limits::kBlockSize];
-  ABSL_CACHELINE_ALIGNED doc_id_t _hit_docs[doc_limits::kBlockSize];
-  ABSL_CACHELINE_ALIGNED uint32_t _hit_freqs[doc_limits::kBlockSize];
-  ABSL_CACHELINE_ALIGNED score_t _hit_scores[doc_limits::kBlockSize];
   uint32_t _dropped = 0;
 };
 

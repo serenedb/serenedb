@@ -632,7 +632,7 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
       const auto* reader = r.readers[j];
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
-          *_col_reader, *reader, true);
+          *_col_reader, *reader);
       }
       r.points[j]->FetchRow(row, vector, 0);
     }
@@ -715,8 +715,8 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
   SDB_ASSERT(_col_reader);
   for (auto& f : _cols) {
     if (!f.point) {
-      f.point = std::make_unique<irs::ColumnReader::PointReader>(
-        *_col_reader, *f.reader, true);
+      f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
+                                                                 *f.reader);
       f.point_scratch =
         std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
       f.point_heap =

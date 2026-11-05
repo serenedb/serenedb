@@ -22,7 +22,6 @@
 
 #include <optional>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/search/detail/make.hpp"
@@ -46,8 +45,7 @@ Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
     return {};
   }
   const auto make = [&]<bool Sloppy> -> Result {
-    constexpr bool kLead = !std::is_same_v<Result, ProbeNode::ptr>;
-    using Slots = TokenPhraseSlots<ApproxNode<Result>, Sloppy, kLead>;
+    using Slots = TokenPhraseSlots<ApproxNode<Result>, Sloppy>;
     return f.template operator()<Slots>(std::piecewise_construct,
                                         std::forward_as_tuple(std::move(node)),
                                         query, Scored);

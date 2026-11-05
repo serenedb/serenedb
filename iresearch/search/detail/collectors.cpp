@@ -22,9 +22,10 @@
 
 #include "collectors.hpp"
 
+#include <absl/base/internal/endian.h>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/term_reader.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 namespace {
@@ -33,11 +34,19 @@ byte_type* Mutable(const byte_type* stats) noexcept {
   return const_cast<byte_type*>(stats);
 }
 
+uint64_t TermOrderKey(bytes_view term) noexcept {
+  byte_type key[sizeof(uint64_t)]{};
+  std::memcpy(key, term.data(), std::min(term.size(), sizeof(key)));
+  return absl::big_endian::Load64(key);
+}
+
 }  // namespace
 
 void FieldCollector::Collect(const TermReader& field) noexcept {
   docs_with_field += field.docs_count();
-  total_term_freq += field.total_term_freq();
+  if (const auto* freq = irs::get<FreqAttr>(field)) {
+    total_term_freq += freq->value;
+  }
 }
 
 void FieldPrepareCollector::Finish(StatsArena&) {
@@ -109,7 +118,7 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
     ordered.clear();
     ordered.reserve(terms->size());
     for (const auto& entry : *terms) {
-      ordered.emplace_back(HeadAt(entry.first, 0), &entry);
+      ordered.emplace_back(TermOrderKey(entry.first), &entry);
     }
     absl::c_sort(ordered, [](const auto& lhs, const auto& rhs) {
       if (lhs.first != rhs.first) {

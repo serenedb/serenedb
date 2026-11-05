@@ -160,7 +160,6 @@ add_executable(
     search/token_phrase_test.cpp
     search/top_terms_selector_test.cpp
     search/vector_similarity_query_test.cpp
-    search/verified_batch_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp
     store/directory_cleaner_tests.cpp

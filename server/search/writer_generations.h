@@ -20,35 +20,58 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/functional/function_ref.h>
-#include <absl/synchronization/mutex.h>
-#include <absl/time/time.h>
-
+#include <atomic>
+#include <bit>
 #include <cstdint>
-#include <optional>
+#include <duckdb/main/client_context.hpp>
+#include <memory>
+
+#include "iresearch/utils/assert.hpp"
 
 namespace sdb::search {
 
-class WriterGenerations {
+class WriterGenerations final {
+  struct Leaver {
+    unsigned slot = 0;
+
+    void operator()(WriterGenerations* generations) const noexcept {
+      SDB_ASSERT(generations);
+      generations->Leave(slot);
+    }
+  };
+  struct Releaser {
+    void operator()(WriterGenerations* generations) const noexcept {
+      SDB_ASSERT(generations);
+      generations->ReleaseTruncate();
+    }
+  };
+
  public:
-  [[nodiscard]] std::optional<unsigned> Register();
-  void Deregister(unsigned slot) noexcept;
-  [[nodiscard]] bool ClaimTruncate();
-  void ReleaseTruncate() noexcept;
-  [[nodiscard]] bool Drain(absl::FunctionRef<bool()> cancelled,
-                           absl::Duration poll);
+  using Writer = std::unique_ptr<WriterGenerations, Leaver>;
+  using Truncate = std::unique_ptr<WriterGenerations, Releaser>;
+
+  [[nodiscard]] Writer Register() noexcept;
+  [[nodiscard]] Truncate ClaimTruncate() noexcept;
+  void Drain(duckdb::ClientContext& context);
 
  private:
-  bool WaitUntilEmpty(unsigned slot, absl::FunctionRef<bool()> cancelled,
-                      absl::Duration poll)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  static constexpr uint64_t kGeneration = 1;
+  static constexpr uint64_t kTruncating = 2;
+  static constexpr unsigned kFlagBits = std::bit_width(kTruncating);
+  static constexpr unsigned kWriterBits = 30;
 
-  absl::Mutex _mutex;
-  absl::CondVar _cv;
-  unsigned _generation ABSL_GUARDED_BY(_mutex) = 0;
-  uint64_t _writers[2] ABSL_GUARDED_BY(_mutex) = {0, 0};
-  bool _truncating ABSL_GUARDED_BY(_mutex) = false;
+  static constexpr uint64_t One(unsigned slot) noexcept {
+    return uint64_t{1} << (kFlagBits + kWriterBits * slot);
+  }
+  static constexpr uint64_t Writers(uint64_t state, unsigned slot) noexcept {
+    return (state >> (kFlagBits + kWriterBits * slot)) &
+           ((uint64_t{1} << kWriterBits) - 1);
+  }
+
+  void Leave(unsigned slot) noexcept;
+  void ReleaseTruncate() noexcept;
+
+  std::atomic<uint64_t> _state{0};
 };
 
 }  // namespace sdb::search

@@ -43,6 +43,7 @@
 #include <mutex>
 
 #include "catalog/database_directory.h"
+#include "utils/file_utils.h"
 
 namespace sdb::search {
 namespace {
@@ -358,11 +359,9 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
   return FinishPendingSave(writer);
 }
 
-void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
+bool IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
   std::unique_lock lock{_refresh_mutex, std::try_to_lock};
-  if (lock.owns_lock()) {
-    FinishPendingSave(writer);
-  }
+  return lock.owns_lock() && FinishPendingSave(writer);
 }
 
 bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {
@@ -410,7 +409,7 @@ void IndexDurability::SyncDirectory() {
     published = _published;
   }
   try {
-    catalog::SyncDirectory(_path);
+    utils::file_utils::SyncDirectory(_path);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;

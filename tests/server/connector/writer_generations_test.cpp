@@ -18,109 +18,117 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/synchronization/notification.h>
-#include <absl/time/time.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/main/connection.hpp>
 #include <future>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <thread>
 
 #include "search/writer_generations.h"
 
 namespace sdb::search {
 namespace {
 
-constexpr absl::Duration kPoll = absl::Milliseconds(10);
 constexpr auto kJoin = std::chrono::seconds(10);
+constexpr auto kBlocked = std::chrono::milliseconds(50);
+
+WriterGenerations::Writer RegisterInNextGeneration(WriterGenerations& gens) {
+  for (;;) {
+    auto writer = gens.Register();
+    if (writer.get_deleter().slot == 1) {
+      return writer;
+    }
+    std::this_thread::yield();
+  }
+}
 
 TEST(WriterGenerationsTest, DrainWaitsForPriorWritersOnly) {
   WriterGenerations gens;
-  const auto prior = *gens.Register();
+  auto prior = gens.Register();
+  ASSERT_TRUE(prior);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
 
-  absl::Notification polled;
-  auto drain = std::async(std::launch::async, [&] {
-    return gens.Drain(
-      [&] {
-        if (!polled.HasBeenNotified()) {
-          polled.Notify();
-        }
-        return false;
-      },
-      kPoll);
-  });
-  polled.WaitForNotification();
+  auto drain =
+    std::async(std::launch::async, [&] { gens.Drain(*connection->context); });
+  const auto later = RegisterInNextGeneration(gens);
+  EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
 
-  const auto later = *gens.Register();
-  gens.Deregister(prior);
-
-  const bool returned = drain.wait_for(kJoin) == std::future_status::ready;
-  EXPECT_TRUE(returned);
-  gens.Deregister(later);
-  EXPECT_TRUE(drain.get());
+  prior.reset();
+  ASSERT_EQ(drain.wait_for(kJoin), std::future_status::ready);
+  EXPECT_NO_THROW(drain.get());
 }
 
-TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByACancelledOne) {
+TEST(WriterGenerationsTest, TheNextDrainWaitsForWritersLeftByAnInterruptedOne) {
   WriterGenerations gens;
-  const auto before = *gens.Register();
+  auto before = gens.Register();
 
-  absl::Notification polled;
-  auto first = std::async(std::launch::async, [&] {
-    int polls = 0;
-    return gens.Drain(
-      [&] {
-        if (++polls == 1) {
-          polled.Notify();
-          return false;
-        }
-        return true;
-      },
-      kPoll);
-  });
-  polled.WaitForNotification();
-  const auto straddler = *gens.Register();
-  EXPECT_FALSE(first.get());
-  gens.Deregister(before);
+  auto first_connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& first_context = *first_connection->context;
+  auto first =
+    std::async(std::launch::async, [&] { gens.Drain(first_context); });
+  auto straddler = RegisterInNextGeneration(gens);
+  EXPECT_NE(first.wait_for(kBlocked), std::future_status::ready);
+  first_context.Interrupt();
+  ASSERT_EQ(first.wait_for(kJoin), std::future_status::ready);
+  EXPECT_THROW(first.get(), duckdb::InterruptException);
+  before.reset();
 
-  int polls = 0;
-  EXPECT_FALSE(gens.Drain(
-    [&] {
-      ++polls;
-      return true;
-    },
-    kPoll));
-  EXPECT_EQ(polls, 1);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& context = *connection->context;
+  context.Interrupt();
+  EXPECT_THROW(gens.Drain(context), duckdb::InterruptException);
 
-  gens.Deregister(straddler);
-  EXPECT_TRUE(gens.Drain([] { return true; }, kPoll));
+  straddler.reset();
+  EXPECT_NO_THROW(gens.Drain(context));
+}
+
+TEST(WriterGenerationsTest, WritersLeavingBeforeTheFlipDoNotHoldTheDrain) {
+  WriterGenerations gens;
+  auto before = gens.Register();
+  auto first_connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto& first_context = *first_connection->context;
+  auto first =
+    std::async(std::launch::async, [&] { gens.Drain(first_context); });
+  auto straddler = RegisterInNextGeneration(gens);
+  first_context.Interrupt();
+  ASSERT_EQ(first.wait_for(kJoin), std::future_status::ready);
+  EXPECT_THROW(first.get(), duckdb::InterruptException);
+
+  auto current = gens.Register();
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  auto drain =
+    std::async(std::launch::async, [&] { gens.Drain(*connection->context); });
+  EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
+  current.reset();
+  straddler.reset();
+  EXPECT_NE(drain.wait_for(kBlocked), std::future_status::ready);
+
+  before.reset();
+  ASSERT_EQ(drain.wait_for(kJoin), std::future_status::ready);
+  EXPECT_NO_THROW(drain.get());
 }
 
 TEST(WriterGenerationsTest, TruncateClaimExcludesOtherWriters) {
   WriterGenerations gens;
-  const auto truncator = *gens.Register();
-  const auto writer = *gens.Register();
+  const auto truncator = gens.Register();
+  auto writer = gens.Register();
   EXPECT_FALSE(gens.ClaimTruncate());
-  gens.Deregister(writer);
-  EXPECT_TRUE(gens.ClaimTruncate());
-  EXPECT_FALSE(gens.Register().has_value());
-  EXPECT_FALSE(gens.ClaimTruncate());
-  gens.ReleaseTruncate();
-  const auto after = gens.Register();
-  ASSERT_TRUE(after.has_value());
-  gens.Deregister(*after);
-  gens.Deregister(truncator);
-  EXPECT_TRUE(gens.Drain([] { return true; }, kPoll));
+  writer.reset();
+  auto truncate = gens.ClaimTruncate();
+  EXPECT_TRUE(truncate);
+  EXPECT_FALSE(gens.Register());
+  truncate.reset();
+  EXPECT_TRUE(gens.Register());
 }
 
-TEST(WriterGenerationsTest, DrainWithNoWritersReturnsWithoutPolling) {
+TEST(WriterGenerationsTest, DrainWithNoWritersIgnoresAnInterrupt) {
   WriterGenerations gens;
-  int polls = 0;
-  EXPECT_TRUE(gens.Drain(
-    [&] {
-      ++polls;
-      return true;
-    },
-    kPoll));
-  EXPECT_EQ(polls, 0);
+  auto connection = irs::DuckDBEngine::Instance().CreateConnection();
+  connection->context->Interrupt();
+  EXPECT_NO_THROW(gens.Drain(*connection->context));
 }
 
 }  // namespace

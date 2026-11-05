@@ -64,6 +64,7 @@ inline void MergeBoost(score_t& boost, score_t other,
 
 struct TermClause {
   field_id field = field_limits::invalid();
+  DictRef dict;
   const Scorer* scorer = nullptr;
   bstring term;
   score_t boost = kNoBoost;
@@ -71,16 +72,21 @@ struct TermClause {
   bool operator==(const TermClause& rhs) const noexcept = default;
 };
 
+inline bool SameField(const TermClause& lhs, const TermClause& rhs) noexcept {
+  return lhs.field == rhs.field && lhs.dict == rhs.dict;
+}
+
 struct TermPostingLess {
   bool operator()(const TermClause& lhs, const TermClause& rhs) const noexcept {
-    return std::tie(lhs.field, lhs.term) < std::tie(rhs.field, rhs.term);
+    return std::tie(lhs.field, lhs.dict, lhs.term) <
+           std::tie(rhs.field, rhs.dict, rhs.term);
   }
 };
 
 struct TermClauseLess {
   bool operator()(const TermClause& lhs, const TermClause& rhs) const noexcept {
-    return std::tie(lhs.field, lhs.term, lhs.scorer) <
-           std::tie(rhs.field, rhs.term, rhs.scorer);
+    return std::tie(lhs.field, lhs.dict, lhs.term, lhs.scorer) <
+           std::tie(rhs.field, rhs.dict, rhs.term, rhs.scorer);
   }
 };
 

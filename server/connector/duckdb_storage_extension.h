@@ -21,7 +21,11 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <memory>
 #include <string_view>
+#include <vector>
+
+#include "search/store.h"
 
 namespace sdb::catalog {
 
@@ -29,6 +33,9 @@ struct DataDirectory;
 
 }  // namespace sdb::catalog
 namespace sdb::connector {
+
+std::vector<std::shared_ptr<search::Store>> InvertedStorages(
+  duckdb::AttachedDatabase& db);
 
 // Register the storage extension with a DuckDB config (before DB creation).
 void RegisterSereneDBStorage(duckdb::DBConfig& config,

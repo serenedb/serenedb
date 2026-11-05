@@ -20,65 +20,56 @@
 
 #include "search/writer_generations.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::search {
 
-std::optional<unsigned> WriterGenerations::Register() {
-  absl::MutexLock lock{&_mutex};
-  if (_truncating) {
-    return std::nullopt;
-  }
-  const auto slot = _generation & 1U;
-  ++_writers[slot];
-  return slot;
+auto WriterGenerations::Register() noexcept -> Writer {
+  auto state = _state.load(std::memory_order_relaxed);
+  unsigned slot = 0;
+  do {
+    if (state & kTruncating) {
+      return {};
+    }
+    slot = static_cast<unsigned>(state & kGeneration);
+  } while (!_state.compare_exchange_weak(state, state + One(slot)));
+  return Writer{this, Leaver{slot}};
 }
 
-void WriterGenerations::Deregister(unsigned slot) noexcept {
-  absl::MutexLock lock{&_mutex};
-  SDB_ASSERT(slot < 2 && _writers[slot] > 0,
-             "unbalanced search-table writer deregistration");
-  if (--_writers[slot] == 0) {
-    _cv.SignalAll();
-  }
+auto WriterGenerations::ClaimTruncate() noexcept -> Truncate {
+  auto state = _state.load(std::memory_order_relaxed);
+  do {
+    const auto writers = Writers(state, 0) + Writers(state, 1);
+    SDB_ASSERT(writers > 0);
+    if (writers != 1) {
+      return {};
+    }
+    SDB_ASSERT(!(state & kTruncating));
+  } while (!_state.compare_exchange_weak(state, state | kTruncating));
+  return Truncate{this};
 }
 
-bool WriterGenerations::ClaimTruncate() {
-  absl::MutexLock lock{&_mutex};
-  SDB_ASSERT(_writers[0] + _writers[1] > 0,
-             "a truncating transaction registers as a writer first");
-  if (_truncating || _writers[0] + _writers[1] != 1) {
-    return false;
+void WriterGenerations::Drain(duckdb::ClientContext& context) {
+  absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+  const auto prior = static_cast<unsigned>(_state.load() & kGeneration);
+  context.Await([&] { return Writers(_state.load(), prior ^ 1U) == 0; });
+  _state.fetch_xor(kGeneration);
+  context.Await([&] { return Writers(_state.load(), prior) == 0; });
+}
+
+void WriterGenerations::Leave(unsigned slot) noexcept {
+  const auto previous = _state.fetch_sub(One(slot));
+  SDB_ASSERT(Writers(previous, slot) > 0);
+  if (slot != (previous & kGeneration) && Writers(previous, slot) == 1) {
+    duckdb::ClientContext::Notify();
   }
-  _truncating = true;
-  return true;
 }
 
 void WriterGenerations::ReleaseTruncate() noexcept {
-  absl::MutexLock lock{&_mutex};
-  _truncating = false;
-}
-
-bool WriterGenerations::Drain(absl::FunctionRef<bool()> cancelled,
-                              absl::Duration poll) {
-  absl::MutexLock lock{&_mutex};
-  const auto prior = _generation & 1U;
-  if (!WaitUntilEmpty(prior ^ 1U, cancelled, poll)) {
-    return false;
-  }
-  ++_generation;
-  return WaitUntilEmpty(prior, cancelled, poll);
-}
-
-bool WriterGenerations::WaitUntilEmpty(unsigned slot,
-                                       absl::FunctionRef<bool()> cancelled,
-                                       absl::Duration poll) {
-  while (_writers[slot] != 0) {
-    if (_cv.WaitWithTimeout(&_mutex, poll) && cancelled()) {
-      return false;
-    }
-  }
-  return true;
+  [[maybe_unused]] const auto previous = _state.fetch_and(~kTruncating);
+  SDB_ASSERT(previous & kTruncating);
 }
 
 }  // namespace sdb::search

@@ -126,6 +126,14 @@ An `OUT` parameter is a column of the result and an `INOUT` parameter is both an
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_039" />
 
+### Moving to Another Schema
+
+`ALTER FUNCTION`, `ALTER PROCEDURE` or `ALTER MACRO ... SET SCHEMA` moves a function, procedure or macro, scalar or table, to another schema, with all its overloads:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_048" />
+
+The move needs the `CREATE` privilege on the target schema, which must not already hold a function or macro of that name. Moving a function into the schema it is already in changes nothing. A function that another object depends on can't be moved.
+
 ## Overloading
 
 It is possible to overload a macro based on the types or the number of its parameters; this works for both scalar and table macros.
@@ -231,7 +239,7 @@ A scalar subquery made of a single expression, with no `FROM` or other clause, s
 
 ### Recursive Functions
 
-Defining recursive functions is not supported. A recursive macro expands until it exceeds the expression-depth limit (`max_expression_depth`, `1000` by default). For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails (the example lowers `max_expression_depth` so the failure is immediate):
+Defining recursive functions is not supported. A recursive macro expands until the expansion runs out of stack, and the statement fails with `stack depth limit exceeded`. For example, the following macro – supposed to compute the *n*th number of the Fibonacci sequence – fails:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_031" />
 

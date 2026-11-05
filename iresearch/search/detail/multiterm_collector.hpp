@@ -32,6 +32,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_state.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -53,9 +54,9 @@ class MultiTermCollector final : public FieldPrepareCollector {
                            const PostingMeta& meta) {
     SDB_ASSERT(thread < _threads.size());
     auto& own = _threads[thread];
-    auto it = own.terms.find(term);
-    if (it == own.terms.end()) {
-      it = own.terms.emplace(bstring{term}, Slot{.stats = Allocate(own)}).first;
+    auto [it, inserted] = own.terms.try_emplace(term);
+    if (inserted) {
+      it->second.stats = Allocate(own);
     }
     it->second.counter.Collect(meta);
     return it->second.stats;
@@ -125,12 +126,7 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
 
   void Collect(uint32_t thread, bytes_view term, const PostingMeta& meta) {
     SDB_ASSERT(thread < _threads.size());
-    auto& terms = _threads[thread];
-    auto it = terms.find(term);
-    if (it == terms.end()) {
-      it = terms.emplace(bstring{term}, TermCollector{}).first;
-    }
-    it->second.Collect(meta);
+    _threads[thread].try_emplace(term).first->second.Collect(meta);
   }
 
   void Finish(StatsArena&) final {
@@ -166,6 +162,7 @@ class MultiTermVisitor : util::Noncopyable {
   MultiTermVisitor(const PrepareContext& ctx, MultiTermState& state,
                    const TermReader& field)
     : _state{state}, _thread{ctx.thread} {
+    _state.Prepare(&field);
     if (ctx.collector == nullptr) {
       return;
     }
@@ -178,29 +175,26 @@ class MultiTermVisitor : util::Noncopyable {
     _collector->Field(_thread).Collect(field);
   }
 
-  void Prepare(const SubReader&, const TermReader& field,
-               TermIterator& terms) noexcept {
-    _state.Prepare(&field);
-    _terms = &terms;
-  }
-
-  bool Visit(score_t boost) {
-    SDB_ASSERT(_terms);
-    const auto& meta = _terms->cookie();
+  void Visit(bytes_view term, const PostingMeta& meta, score_t boost) {
     const byte_type* stats = _stats;
     if (_collector != nullptr) {
-      stats = _collector->Collect(_thread, _terms->value(), meta);
+      stats = _collector->Collect(_thread, term, meta);
     }
     _state.Push(meta, boost, stats);
-    return true;
   }
 
  private:
   MultiTermState& _state;
   MultiTermCollector* _collector = nullptr;
   const byte_type* _stats = nullptr;
-  TermIterator* _terms = nullptr;
   uint32_t _thread;
 };
+
+template<typename Terms>
+void VisitTerms(Terms& terms, MultiTermVisitor& visitor) {
+  do {
+    visitor.Visit(terms.value(), terms.cookie(), BoostOf(terms));
+  } while (terms.next());
+}
 
 }  // namespace irs

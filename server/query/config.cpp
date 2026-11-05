@@ -155,7 +155,7 @@ void Config::RefreshCatalogEpoch(
 }
 
 void Config::OnSet(std::string_view name, bool is_local,
-                   duckdb::Value old_value, const duckdb::Value* new_value) {
+                   duckdb::Value old_value) {
   // Prefer the canonical PG-cased name (e.g. "DateStyle") when known so the
   // rollback key matches what SHOW returns; otherwise use the name as given
   // (covers native DuckDB settings like default_transaction_isolation).
@@ -163,13 +163,6 @@ void Config::OnSet(std::string_view name, bool is_local,
   std::string_view key_view = canonical.data() ? canonical : name;
   auto [it, inserted] = _transaction.try_emplace(key_view);
   if (inserted) {
-    // First event for this key. Skip tracking iff SET with the same value
-    // (RESET events reaching here are guaranteed real -- DuckDB's gate
-    // already short-circuits no-op RESETs).
-    if (new_value && duckdb::Value::NotDistinctFrom(old_value, *new_value)) {
-      _transaction.erase(it);
-      return;
-    }
     it->second.rollback_restore = old_value;
     if (is_local) {
       it->second.commit_restore = std::move(old_value);
@@ -215,11 +208,6 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   const bool is_reset = value.IsNull();
 
   try {
-    duckdb::Value current;
-    _client_ctx.TryGetCurrentSetting(setting, current);
-    if (duckdb::Value::NotDistinctFrom(current, value)) {
-      return;
-    }
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     auto setting_index = db_config.TryGetSettingIndex(setting, option);
@@ -242,8 +230,6 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       }
       return;
     }
-    // Extension options: use the registered set_function so side effects
-    // (e.g. sdb_faults toggling global fault-point state) are re-applied.
     duckdb::ExtensionOption ext;
     if (!db_config.TryGetExtensionOption(setting, ext)) {
       if (duckdb::Settings::IsValidCustomName(key)) {

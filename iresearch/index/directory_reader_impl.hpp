@@ -56,8 +56,9 @@ class DirectoryReaderImpl final
     return it == _column_stats.end() ? nullptr : it->second.get();
   }
 
-  const FieldTermRange* GetTermRange(field_id field) const noexcept {
-    const auto it = _term_ranges.find(field);
+  const FieldTermRange* GetTermRange(field_id field,
+                                     DictRef dict) const noexcept {
+    const auto it = _term_ranges.find(std::pair{field, dict});
     return it == _term_ranges.end() ? nullptr : &it->second;
   }
 
@@ -75,7 +76,8 @@ class DirectoryReaderImpl final
   irs::containers::FlatHashMap<field_id,
                                duckdb::unique_ptr<duckdb::BaseStatistics>>
     _column_stats;
-  irs::containers::FlatHashMap<field_id, FieldTermRange> _term_ranges;
+  irs::containers::FlatHashMap<std::pair<field_id, DictRef>, FieldTermRange>
+    _term_ranges;
 };
 
 }  // namespace irs

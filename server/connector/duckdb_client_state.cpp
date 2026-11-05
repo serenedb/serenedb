@@ -101,7 +101,7 @@ SereneDBClientState& SereneDBClientState::Register(
 
   client_ctx.setting_change_handler =
     [](duckdb::ClientContext& ctx, const std::string& name,
-       duckdb::SetScope scope, const duckdb::Value* new_value, bool) {
+       duckdb::SetScope scope) {
       const duckdb::Identifier setting{name};
       if (const auto option = duckdb::DBConfig::GetOptionByName(setting)) {
         scope = duckdb::PhysicalSet::GetSettingScope(*option, scope);
@@ -122,10 +122,13 @@ SereneDBClientState& SereneDBClientState::Register(
       // ParameterStatus at the next ReadyForQuery (a cheap version bump; the
       // GUC poll itself is skipped entirely when nothing changed).
       sdb_ctx.MarkSettingsChanged();
+      if (IsNonTransactionalSetting(name)) {
+        return;
+      }
       duckdb::Value old_value;
       ctx.TryGetCurrentSetting(duckdb::Identifier{name}, old_value);
       sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL,
-                    std::move(old_value), new_value);
+                    std::move(old_value));
     };
 
   client_ctx.isolation_level_validator =
@@ -226,14 +229,20 @@ void SereneDBClientState::TransactionPreCommit(
         }
         for (auto entry :
              table.get().GetDataTableInfo()->GetIndexes().IndexEntries()) {
-          if (entry->GetBindState() == duckdb::IndexBindState::BOUND &&
-              entry->GetIndexType() == InvertedStoreIndex::kTypeName) {
-            auto index = entry->GetWriteHandle<InvertedStoreIndex>();
-            index->PrepareFeed(*_connection_ctx, context, rows);
+          if (entry->GetIndexType() != InvertedStoreIndex::kTypeName) {
+            continue;
           }
+          SDB_ASSERT(entry->GetBindState() == duckdb::IndexBindState::BOUND);
+          auto index = entry->GetWriteHandle<InvertedStoreIndex>();
+          index->PrepareFeed(*_connection_ctx, context, rows);
         }
+        SDB_PARK_ONCE_ON_FAILURE("commit_feed_prepared");
       }
     }
+  }
+  if (transaction.ModifiedDatabase() || !written.empty()) {
+    _connection_ctx->EnterCommitGate(context);
+    SDB_PARK_ONCE_ON_FAILURE("pause_commit_in_gate");
   }
   tls_committing_ctx = _connection_ctx.get();
 }
@@ -321,6 +330,7 @@ void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
   copy_stdin_done = false;
   progress_source->EndQuery();
   _connection_ctx->OnStatementEnd();
+  _connection_ctx->LeaveCommitGate();
 }
 
 void SereneDBClientState::OnBoundPlan(duckdb::ClientContext& context,

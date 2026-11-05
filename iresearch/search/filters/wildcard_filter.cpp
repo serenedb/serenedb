@@ -37,13 +37,15 @@ QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
     ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
+                          score_t boost, bool bytes) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByTerm>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = term;
       filter->SetBoost(boost);
       return filter;
@@ -51,6 +53,7 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<ByPrefix>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       filter->mutable_options()->term = term;
       filter->SetBoost(boost);
       return filter;
@@ -58,17 +61,21 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
+      *filter->mutable_dict() = dict;
       *filter->mutable_options() =
-        AutomatonOptions{term, PatternKind::Wildcard};
+        AutomatonOptions{term, WildcardPattern(bytes)};
       filter->SetBoost(boost);
       return filter;
     });
 }
 
-Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term, score_t boost) {
+Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
+                             score_t boost, bool bytes) {
   auto filter = std::make_unique<ByWildcard>();
   *filter->mutable_field_id() = id;
+  *filter->mutable_dict() = dict;
   filter->mutable_options()->term = term;
+  filter->mutable_options()->bytes = bytes;
   filter->SetBoost(boost);
   return filter;
 }
@@ -86,8 +93,9 @@ TermPredicate::ptr ByWildcard::CompileTermPredicate() const {
         return key.starts_with(prefix);
       });
     },
-    [](bytes_view pattern) -> TermPredicate::ptr {
-      const auto source = MakePatternSource(pattern, PatternKind::Wildcard);
+    [&](bytes_view pattern) -> TermPredicate::ptr {
+      const auto source =
+        MakePatternSource(pattern, WildcardPattern(options().bytes));
       return source->ok() ? source->Predicate() : nullptr;
     });
 }

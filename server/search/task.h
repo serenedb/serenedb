@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,42 +15,22 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <absl/status/status.h>
-#include <absl/status/statusor.h>
-
-#include <duckdb/common/typedefs.hpp>
-#include <functional>
 #include <memory>
 #include <yaclib/async/future.hpp>
 
-namespace sdb::search {
+#include "search/store.h"
 
-class InvertedIndexStorage;
-class SearchTable;
+namespace sdb::search {
 
 // One coroutine per maintenance target drives background refresh (+ cleanup);
 // another coordinates compaction. Each holds a weak_ptr so a dropped target
 // ends the loop, and the returned Future lets SearchEngine::stop() join it.
-//
-// Templated on the storage type so the same loops drive both an inverted index
-// and a search table (both expose the maintenance interface in maintenance.h).
-// Instantiated only for the two types below.
-template<typename Storage>
-yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak);
-template<typename Storage>
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak);
-
-extern template yaclib::Future<> RefreshLoop(
-  std::weak_ptr<InvertedIndexStorage>);
-extern template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage>);
-extern template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
-extern template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<SearchTable>);
+yaclib::Future<> RefreshLoop(std::weak_ptr<Store> weak);
+yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak);
 
 }  // namespace sdb::search

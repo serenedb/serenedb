@@ -4,6 +4,7 @@ target_sources(
         key_encoding.cpp
         primary_key.cpp
         offsets_collector.cpp
+        search_sink_rows.cpp
         search_sink_writer.cpp
         search_table_backfill.cpp
         duckdb_storage_extension.cpp

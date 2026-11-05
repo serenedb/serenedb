@@ -56,7 +56,7 @@
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "search/search_table.h"
+#include "search/store.h"
 #include "utils/file_utils.h"
 
 namespace sdb::docs {
@@ -269,7 +269,7 @@ class Loader {
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
-          "part -> lower(trim(part)))), term -> term <> '') FROM (",
+          "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
           Sql(kObjectsSql), ")")) ||
         !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
       return {};

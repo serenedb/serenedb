@@ -40,7 +40,7 @@ struct ProgressMetrics;
 }  // namespace sdb::pg
 namespace sdb::search {
 
-class SearchTable;
+class Store;
 
 }  // namespace sdb::search
 namespace sdb::connector {
@@ -48,7 +48,7 @@ namespace sdb::connector {
 // What a search-table CREATE INDEX needs in order to rewrite the rows that were
 // published before the index's config was.
 struct SearchBackfillTarget {
-  std::shared_ptr<search::SearchTable> shard;
+  std::shared_ptr<search::Store> shard;
   duckdb::Catalog* catalog = nullptr;
   duckdb::idx_t table_id = 0;
   // The table's stored columns in entry order: catalog id and chunk type.

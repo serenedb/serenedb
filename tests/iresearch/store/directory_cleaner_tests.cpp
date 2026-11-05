@@ -250,7 +250,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
                                 &::tests::GenericJsonFieldFactory);
   const ::tests::Document* doc1 = gen.next();
   const ::tests::Document* doc2 = gen.next();
-  auto query_doc1 = MakeByTerm(irs::field_id{1}, "A");
+  auto query_doc1 = MakeByTerm(::tests::FieldIdFor("name"), "A");
   irs::MemoryDirectory dir;
 
   // writer commit tracks files that are in active segments

@@ -490,6 +490,29 @@ def test_function_overload_error_sqlstates():
         c.close()
 
 
+@pytest.mark.parametrize("storage", ["", " WITH (storage = 'search')"])
+def test_commit_time_index_error_keeps_its_sqlstate(storage):
+    table = f"rfq_commit_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+            cur.execute(f'CREATE TABLE "{table}" (id INT, content JSON){storage}')
+            cur.execute(
+                f'CREATE INDEX "{table}_idx" ON "{table}" '
+                "USING inverted (id, (content->'val'))"
+            )
+            with pytest.raises(psycopg.Error) as ei:
+                cur.execute(
+                    f'INSERT INTO "{table}" VALUES (1, \'{{"val": {{"x": 1}}}}\')'
+                )
+            assert ei.value.sqlstate == "42804", ei.value.sqlstate
+    finally:
+        with c.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+        c.close()
+
+
 def test_job_error_sqlstates():
     job = f"rfq_job_{os.getpid()}"
     c = psycopg.connect(**conn_kwargs(), autocommit=True)

@@ -78,6 +78,8 @@ std::string_view GetOriginalName(std::string_view name);
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms);
 
+bool IsNonTransactionalSetting(std::string_view name);
+
 class Config {
  public:
   struct TxnVariable {
@@ -123,12 +125,7 @@ class Config {
   std::optional<std::string> Get(std::string_view key) const;
 
   //   old_value -- value currently in effect (pre-event snapshot).
-  //   new_value -- pointer to the about-to-be value for SET; nullptr for
-  //                RESET. Used only to skip initial insertion when a SET
-  //                wouldn't actually change the value; for already-tracked
-  //                keys, scope bookkeeping still runs regardless.
-  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value,
-             const duckdb::Value* new_value);
+  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value);
 
   void SetSetting(std::string_view key, std::string value, bool) {
     SetInternal(key, std::move(value));
@@ -173,6 +170,8 @@ class Config {
 };
 
 namespace connector {
+
+void RegisterEngineConfigVariables(duckdb::DBConfig& config);
 
 void RegisterConfigVariables(duckdb::DBConfig& config);
 

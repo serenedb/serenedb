@@ -103,7 +103,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kPgDependencies, &PG_DEPENDENCIES, true},
   {kRegconfig, &REGCONFIG, true},
   {kRegdictionary, &REGDICTIONARY, true},
-  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
+  {kJsonb, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, true},
   {kInt4Range, &INT4RANGE, true},
   {kNumrange, &NUMRANGE, true},
   {kTsrange, &TSRANGE, true},
@@ -246,9 +246,6 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
         if (IsTid(type)) {
           return make(kTid);
         }
-        if (IsXid8(type)) {
-          return make(kXid8);
-        }
         if (IsRegproc(type)) {
           return make(kRegproc);
         }
@@ -286,6 +283,9 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
       return make(kInt8);
     case UBIGINT:
       if (aliased()) {
+        if (IsXid8(type)) {
+          return make(kXid8);
+        }
         if (IsPgLsn(type)) {
           return make(kPgLsn);
         }

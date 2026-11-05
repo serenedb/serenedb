@@ -67,12 +67,14 @@ auto ExecuteWildcard(bstring& buf, bytes_view term, Term&& t, Prefix&& p,
 
 struct ByWildcardFilterOptions {
   bstring term;
+  bool bytes{false};
 
   ByWildcardFilterOptions() = default;
-  explicit ByWildcardFilterOptions(bytes_view pattern) : term{pattern} {}
+  explicit ByWildcardFilterOptions(bytes_view pattern, bool bytes = false)
+    : term{pattern}, bytes{bytes} {}
 
   bool operator==(const ByWildcardFilterOptions& rhs) const noexcept {
-    return term == rhs.term;
+    return term == rhs.term && bytes == rhs.bytes;
   }
 };
 
@@ -84,10 +86,11 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
   bool operator==(const ByWildcardOptions& rhs) const noexcept = default;
 };
 
-Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term,
-                             score_t boost = kNoBoost);
+Filter::ptr CreateByWildcard(irs::field_id id, DictRef dict, bytes_view term,
+                             score_t boost = kNoBoost, bool bytes = false);
 
-Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost);
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
+                          score_t boost, bool bytes);
 
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:

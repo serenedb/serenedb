@@ -1,14 +1,3 @@
-# Regression guard for the search-table BULK-insert path's explicit segment
-# flush composing with transaction REUSE.
-#
-# A bulk (parallel) INSERT fans out into one iresearch transaction per worker;
-# each is Flush()ed on its worker thread at Combine, then handed to the
-# SearchTableTransaction. A later serial INSERT/UPDATE/DELETE in the SAME
-# explicit SQL transaction reuses that (now-flushed) transaction tail via
-# EnsureSerialSearchTransaction. This asserts inserting/removing AFTER the
-# Combine flush stays correct (auto-flush-mid-insert is iresearch's own path;
-# THIS covers our explicit tail flush, a newer invariant).
-#
 # ".test_slow" because triggering the bulk path needs a genuinely parallel
 # source scan: >1 iresearch/DuckDB row group (122880 rows each), so the source
 # must be a base table with >122880 rows -- generate_series is single-threaded

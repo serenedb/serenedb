@@ -78,7 +78,7 @@
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "pg/connection_context.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 #include "server/utils/simdjson_sink.h"
 
 namespace sdb::connector {
@@ -604,8 +604,7 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
           first = false;
           const auto& storage =
             index.Cast<catalog::InvertedIndexEntry>().Storage();
-          if (auto snapshot =
-                storage ? storage->GetInvertedIndexSnapshot() : nullptr) {
+          if (auto snapshot = storage ? storage->Snapshot() : nullptr) {
             docs_count = snapshot->reader.live_docs_count();
           }
         });

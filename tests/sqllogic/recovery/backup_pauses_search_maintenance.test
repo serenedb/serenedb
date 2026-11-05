@@ -1,0 +1,244 @@
+control substitution on
+
+# A backup closes search maintenance before it records its cut: a running
+# compaction holds pg_backup_start, stops early once the backup waits for it,
+# and a manual compaction started during the backup waits for its end.
+#
+# search_compaction_before_selection holds a background compaction of a
+# search table after it claimed maintenance.
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bpm_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE bpm_empty (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE bpm_t (id INT, body TEXT);
+
+
+statement ok
+CREATE INDEX bpm_idx ON bpm_t USING inverted (body) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE bpm_u (id INT, body TEXT);
+
+
+statement ok
+CREATE INDEX bpm_u_idx ON bpm_u USING inverted (body) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bpm_s;
+
+
+statement ok
+INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bpm_s;
+
+
+statement ok
+INSERT INTO bpm_t SELECT i, 'alpha' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_INDEX) bpm_idx;
+
+
+statement ok
+INSERT INTO bpm_t SELECT i, 'alpha' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_INDEX) bpm_idx;
+
+
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+statement ok
+ALTER TABLE bpm_s SET (compaction_interval = 100);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+statement ok
+ALTER TABLE bpm_s SET (compaction_interval = 0);
+
+
+connection cancelled
+statement async error
+SELECT pg_backup_start('bpm_cancelled');
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_basebackup;
+----
+phase
+waiting for search maintenance to stop
+
+
+connection default
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_progress_basebackup;
+
+
+connection cancelled
+statement ok
+SELECT 1;
+
+
+connection starter
+statement async ok
+SELECT pg_backup_start('bpm');
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_basebackup;
+----
+phase
+waiting for search maintenance to stop
+
+
+connection second
+statement async error
+SELECT pg_backup_start('bpm_second');
+----
+db error: ERROR: a backup is already in progress
+DETAIL: It is held by the session with PID <slt:ignore>.
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT phase FROM pg_stat_progress_basebackup ORDER BY phase;
+----
+phase
+initializing
+waiting for search maintenance to stop
+
+
+connection default
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+connection starter
+statement ok
+SELECT 1;
+
+
+connection second
+statement ok
+SELECT 1;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO bpm_s SELECT i, 'alpha' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bpm_s;
+
+
+connection index_compactor
+statement async ok
+VACUUM (COMPACT_INDEX) bpm_idx;
+
+
+connection cancelled_index_compactor
+statement async error
+VACUUM (COMPACT_INDEX) bpm_u_idx;
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection cancelled_table_compactor
+statement async error
+VACUUM (COMPACT_TABLE) bpm_s;
+----
+db error: ERROR: canceling statement due to user request
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS compacting FROM pg_stat_activity
+WHERE query LIKE 'VACUUM (COMPACT_%' AND state = 'active';
+----
+compacting
+3
+
+
+connection default
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_activity
+WHERE (query LIKE 'VACUUM (COMPACT_INDEX) bpm_u_idx%' OR query LIKE 'VACUUM (COMPACT_TABLE)%')
+  AND state = 'active';
+
+
+connection cancelled_index_compactor
+statement ok
+SELECT 1;
+
+
+connection cancelled_table_compactor
+statement ok
+SELECT 1;
+
+
+connection default
+statement ok
+CREATE INDEX bpm_id_idx ON bpm_t USING inverted (id);
+
+
+connection starter
+query
+SELECT starts_with(labelfile, 'START WAL LOCATION: ') AS label FROM pg_backup_stop();
+----
+label
+t
+
+
+wait
+
+
+query
+SELECT count(*) AS n FROM bpm_idx WHERE body @@ 'alpha';
+----
+n
+200
+
+
+statement ok
+VACUUM (COMPACT_TABLE) bpm_s;
+
+
+query
+SELECT count(*) AS n, sum(id) AS ids FROM bpm_s;
+----
+n	ids
+300	45150

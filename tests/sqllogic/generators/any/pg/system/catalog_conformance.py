@@ -12,14 +12,15 @@ CAUSES = {
     "group_by": "GROUP BY a table alias that is also an output column name is rejected",
     "index_am": "SereneDB indexes use access methods of their own",
     "index_desc": "CREATE INDEX drops DESC",
-    "numeric": "A bare numeric is DECIMAL(18,3)",
+    "numeric": "A bare numeric is DECIMAL(38,10)",
     "owner": "The bootstrap superuser has oid 16384, not 10",
-    "pgonly": "Identity columns, referential actions, PL/pgSQL, DDL ORMs emit and jsonb are not supported",
+    "pgonly": "Identity columns, referential actions, PL/pgSQL and DDL ORMs emit are not supported, and a jsonb column "
+              "is json",
     "quoted_keywords": "quote_ident, regclass and regtype quote words only DuckDB reserves",
     "ri_triggers": "SereneDB checks foreign keys without internal triggers",
     "serial_sequence": "serial creates a bigint sequence where PostgreSQL creates an integer one",
     "server_credentials": "pg_foreign_server shows options that carry credentials, so only a superuser reads it",
-    "system_columns": "Tables lack PostgreSQL's system columns",
+    "system_columns": "pg_attribute lists no system columns",
     "text_search": "SereneDB's full-text search has no tsvector, tsquery or text search configurations",
     "toast": "SereneDB has no TOAST tables",
     "typmod": "Type modifiers are dropped or rejected",
@@ -1838,7 +1839,7 @@ check("SELECT count(*) > 700 AS populated FROM information_schema.sql_features",
 
 t.statement("CREATE SCHEMA pgonly")
 pgonly("CREATE DOMAIN pgonly.positive_int AS int4 CHECK (VALUE > 0)", 'syntax error at or near "DOMAIN"')
-pgonly("CREATE TABLE pgonly.json_tab (id int4 PRIMARY KEY, doc jsonb)", "Type with name jsonb does not exist!")
+t.statement("CREATE TABLE pgonly.json_tab (id int4 PRIMARY KEY, doc jsonb)")
 pgonly("CREATE TABLE pgonly.domain_tab (id int4 PRIMARY KEY, qty pgonly.positive_int)",
        "Type with name positive_int does not exist!")
 t.statement("CREATE TABLE pgonly.parent (id int4 PRIMARY KEY)")

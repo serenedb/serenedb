@@ -556,14 +556,16 @@ class SpecCompiler {
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {
+    duckdb::ExpressionBinder::VerifyLambdaSyntax(_context,
+                                                 lambda.GetLambdaSyntaxType());
     std::string error;
     const auto params = lambda.ExtractColumnRefExpressions(error);
     if (!error.empty() || params.size() != 1) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("a lambda stage takes exactly one parameter"),
-        ERR_HINT(
-          "write it in parentheses after |: ... | (lambda x: upper(x))"));
+        ERR_HINT("the parameter is the value being analyzed, as in ... | "
+                 "(lambda x: upper(x))"));
     }
     const auto& param =
       params.front().get().Cast<duckdb::ColumnRefExpression>().GetColumnName();

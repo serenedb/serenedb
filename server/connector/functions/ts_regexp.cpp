@@ -90,13 +90,14 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                     ERR_MSG("ts_regexp field is not VARCHAR"));
   }
+  const bool bytes =
+    column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB;
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardTokenizer>::id()) {
     auto& rf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);
     rf.SetBoost(ctx.boost);
     rf.SetScorer(&irs::ForceConstScore());
-    *rf.mutable_field_id() =
-      PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+    SetField(rf, column_info);
     auto* opts = rf.mutable_options();
     *opts = {
       irs::ViewCast<irs::byte_type>(std::string_view{pattern}),
@@ -105,6 +106,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
         *column_info.tokenizer.analyzer.get()),
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,
+      bytes,
     };
     SDB_ASSERT(
       irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
@@ -112,9 +114,9 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   auto regexp = irs::CreateByRegexp(
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax,
-    ctx.boost);
+    column_info.field_id, TextOf(column_info),
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}), syntax, ctx.boost,
+    bytes);
   if (!ctx.negated) {
     parent.Add(std::move(regexp));
     return;

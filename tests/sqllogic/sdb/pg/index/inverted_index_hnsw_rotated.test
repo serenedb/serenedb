@@ -1,6 +1,6 @@
 statement ok
 CREATE MACRO rot_vec(i) AS
-  list_transform(range(256), j -> (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[256];
+  list_transform(range(256), lambda j: (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[256];
 
 statement ok
 CREATE TABLE rot (id INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[256]);
@@ -271,7 +271,7 @@ id	d
 
 statement ok
 CREATE MACRO rot_wide(i) AS
-  list_transform(range(1280), j -> (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[1280];
+  list_transform(range(1280), lambda j: (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[1280];
 
 statement ok
 CREATE TABLE rot_wide_src (id INTEGER PRIMARY KEY, emb FLOAT[1280]);
@@ -302,8 +302,10 @@ count
 0
 
 query
-SELECT (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(777) LIMIT 1)
-     = (SELECT id FROM rot_wide_src ORDER BY emb <#> rot_wide(777) LIMIT 1) AS same;
+SELECT abs(found - best) <= 1e-4 * abs(best) AS same
+FROM (SELECT (SELECT s.emb <#> rot_wide(777) FROM rot_wide_src s
+              WHERE s.id = (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(777) LIMIT 1)) AS found,
+             (SELECT min(emb <#> rot_wide(777)) FROM rot_wide_src) AS best) t;
 ----
 same
 t

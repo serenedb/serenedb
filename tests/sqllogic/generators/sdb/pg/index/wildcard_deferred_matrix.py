@@ -70,12 +70,12 @@ def whole(truth):
 
 def any_word(truth):
     word = truth.replace("{v}", "w")
-    return f"len(list_filter(string_split(msg, ' '), w -> {word})) > 0"
+    return f"len(list_filter(string_split(msg, ' '), lambda w: {word})) > 0"
 
 
 def any_element(truth):
     element = truth.replace("{v}", "w")
-    return f"len(list_filter(tags, w -> {element})) > 0"
+    return f"len(list_filter(tags, lambda w: {element})) > 0"
 
 
 def tags(i):

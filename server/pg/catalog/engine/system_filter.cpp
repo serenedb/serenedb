@@ -350,10 +350,10 @@ SystemClaim Claim(const SystemTable& table, duckdb::column_t column,
     for (const auto& child :
          expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
       const auto part = Claim(table, column, *child, compiled);
-      if (!part.claimed &&
-          !duckdb::ExpressionFilter::IsRootOptionalExpression(*child)) {
-        return part;
-      }
+      claim.claimed =
+        claim.claimed &&
+        (part.claimed ||
+         duckdb::ExpressionFilter::IsRootOptionalExpression(*child));
       claim.visibility = claim.visibility || part.visibility;
     }
     return claim;
@@ -438,7 +438,6 @@ void SystemScan::Compile(duckdb::column_t column,
   }
   const bool optional =
     duckdb::ExpressionFilter::IsRootOptionalExpression(expr);
-  SDB_ASSERT(claim.claimed || optional);
   SDB_ASSERT(column < _table.Columns().LogicalColumnCount());
   const auto& meta = _table.Sql().columns[column];
   Finish(meta, compiled);

@@ -2,6 +2,7 @@
 // clang-format off
 extern const std::string_view kInfoForeignServerOptions;
 extern const std::string_view kInfoTriggers;
+extern const std::string_view kPgStatProgressBasebackup;
 extern const std::string_view kPgStatProgressCreateIndex;
 extern const SystemView kPgStatProgressCreateTableAs;
 // clang-format on

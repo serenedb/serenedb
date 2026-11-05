@@ -573,7 +573,8 @@ struct Built {
 Built Build(const std::string& expression) {
   Built out;
   try {
-    out.tokenizer = SqlTokenizer::Make({.expression = expression});
+    out.tokenizer =
+      SqlTokenizer::Make({.expression = expression}, tests::Cache());
   } catch (const irs::SqlException& e) {
     out.stage = Stage::ParseFailed;
     out.error = e.what();

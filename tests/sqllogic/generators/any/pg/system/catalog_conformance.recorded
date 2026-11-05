@@ -1429,9 +1429,9 @@
 	rel	col	coltype	not_null
 	pg_replication_origin_status	remote_lsn	text	f
 	pg_replication_origin_status	local_lsn	text	f
-	pg_stat_io	read_bytes	numeric(18,3)	f
-	pg_stat_io	write_bytes	numeric(18,3)	f
-	pg_stat_io	extend_bytes	numeric(18,3)	f
+	pg_stat_io	read_bytes	numeric(38,10)	f
+	pg_stat_io	write_bytes	numeric(38,10)	f
+	pg_stat_io	extend_bytes	numeric(38,10)	f
 	pg_stat_ssl	client_serial	bigint	f
 	pg_stat_subscription	received_lsn	text	f
 	pg_stat_subscription	latest_end_lsn	text	f
@@ -2602,7 +2602,7 @@ d89036df01be5d74
 	attrelid	attnum	atttypid	atttypmod
 	active_customers	2	text	-1
 	app.address	2	text	-1
-	app.all_types	5	numeric	1179655
+	app.all_types	5	numeric	2490382
 	app.all_types	6	text	-1
 	app.all_types	7	text	-1
 	app.all_types_varchar_idx	1	text	-1
@@ -3653,7 +3653,7 @@ d2f4e654a0a250bb
 	db	public	active_customers	name	3	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	3	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 cd9b8437a543cd87
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
-	db	app	all_types	c_numeric_plain	5	YES	18	10	3	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	5	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
+	db	app	all_types	c_numeric_plain	5	YES	38	10	10	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	5	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	app	order_totals	total	2	YES	38	10	2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	email	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
 	db	public	active_customers	id	1	YES	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	NO
@@ -4266,7 +4266,7 @@ f06139c726310dd4
 	c_char	NULL	character(3)	NULL	f
 cb8743e39ca46812
 	col	description	coltype	serial_sequence	reader_select
-	c_numeric_plain	NULL	numeric(18,3)	NULL	f
+	c_numeric_plain	NULL	numeric(38,10)	NULL	f
 	c_varchar	NULL	text	NULL	f
 	c_char	NULL	text	NULL	f
 02158af738e6d844
@@ -4557,7 +4557,7 @@ ac41ea5997a348ad
 294d93495d23b659
 	relname	attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval	def_value	description	objid
 	all_types	app.all_types	c_char	text	-1	7	-1	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	all_types	app.all_types	c_numeric_plain	numeric	-1	5	1179655	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	all_types	app.all_types	c_numeric_plain	numeric	-1	5	2490382	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	all_types	app.all_types	c_text	text	-1	8	-1	0	f	i	x	(empty)	t	t	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	'x'	NULL	NULL
 	all_types	app.all_types	c_varchar	text	-1	6	-1	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	100	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	order_totals	app.order_totals	total	numeric	-1	2	2490374	0	f	i	m	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
@@ -4660,7 +4660,7 @@ d7f5745573ceb9fa
 fa95ab70932b18f3
 	column_name	data_type	character_maximum_length	numeric_precision	numeric_scale
 	c_char	text	NULL	NULL	NULL
-	c_numeric_plain	numeric	NULL	18	3
+	c_numeric_plain	numeric	NULL	38	10
 	c_varchar	text	NULL	NULL	NULL
 26d242a5c2f8ff49
 	column_name	data_type	character_maximum_length	numeric_precision	numeric_scale
@@ -5126,7 +5126,7 @@ d8fb8bdf8be85938
 09fa03f9f7b650fc
 	nspname	relname	attname	atttypid	attnotnull	atttypmod	attlen	typtypmod	attnum	attidentity	attgenerated	adsrc	description	typbasetype	typtype
 	app	all_types	c_char	text	f	-1	-1	-1	7	NULL	NULL	NULL	NULL	0	b
-	app	all_types	c_numeric_plain	numeric	f	1179655	-1	-1	5	NULL	NULL	NULL	NULL	0	b
+	app	all_types	c_numeric_plain	numeric	f	2490382	-1	-1	5	NULL	NULL	NULL	NULL	0	b
 	app	all_types	c_text	text	t	-1	-1	-1	8	NULL	NULL	'x'	NULL	0	b
 	app	all_types	c_varchar	text	f	-1	-1	-1	6	NULL	NULL	NULL	NULL	0	b
 5392a03c4f5d9c32
@@ -5956,7 +5956,7 @@ f4ee309cf2e07cf9
 af36c4706bb8505a
 	name	data_type	is_array	column_comment
 	c_char	text	NO	NULL
-	c_numeric_plain	numeric(18,3)	NO	NULL
+	c_numeric_plain	numeric(38,10)	NO	NULL
 	c_varchar	text	NO	NULL
 bdad4212d83320c7
 	id	name
@@ -6130,7 +6130,7 @@ a98335174ff89eb2
 c7e9f8bd611dea30
 	attname	format_type	pg_get_expr	attnotnull	attcollation	attidentity	attgenerated
 	c_char	text	NULL	f	NULL	(empty)	(empty)
-	c_numeric_plain	numeric(18,3)	NULL	f	NULL	(empty)	(empty)
+	c_numeric_plain	numeric(38,10)	NULL	f	NULL	(empty)	(empty)
 	c_text	text	'x'	t	NULL	(empty)	(empty)
 	c_varchar	text	NULL	f	NULL	(empty)	(empty)
 f689f3e3165bb6d6
@@ -6575,6 +6575,8 @@ e06c2a80ce792b16
 	pgonly.parent_pkey	parent_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 519befdde85d1883
 	oid	relname	relnamespace	reltype	reloftype	relowner	relam	reltablespace	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relacl	reloptions	relpartbound
+	pgonly.json_tab	json_tab	pgonly	pgonly.json_tab	-	postgres	2	0	t	f	p	r	2	0	f	f	f	f	f	t	d	f	0	NULL	NULL	NULL
+	pgonly.json_tab_pkey	json_tab_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 	pgonly.parent	parent	pgonly	pgonly.parent	-	postgres	2	0	t	f	p	r	1	0	f	f	f	f	f	t	d	f	0	NULL	NULL	NULL
 	pgonly.parent_pkey	parent_pkey	pgonly	-	-	postgres	NULL	0	f	f	p	i	1	0	f	f	f	f	f	t	n	f	0	NULL	NULL	NULL
 53ca594c340968ac
@@ -6600,6 +6602,9 @@ e06c2a80ce792b16
 	pgonly.parent_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 b1dc158b24a552b1
 	attrelid	attname	attlen	attnum	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions
+	pgonly.json_tab	id	4	1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
+	pgonly.json_tab	doc	-1	2	0	f	i	x	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
+	pgonly.json_tab_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	pgonly.parent	id	4	1	0	t	i	p	(empty)	t	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 	pgonly.parent_pkey	id	4	1	0	t	i	p	(empty)	f	f	f	(empty)	(empty)	f	t	0	0	NULL	NULL	NULL	NULL
 60ec8b0e7e438889
@@ -6625,6 +6630,9 @@ b1dc158b24a552b1
 	pgonly.parent_pkey	1	integer	-1
 f49712438f5ec800
 	attrelid	attnum	atttypid	atttypmod
+	pgonly.json_tab	1	integer	-1
+	pgonly.json_tab	2	json	-1
+	pgonly.json_tab_pkey	1	integer	-1
 	pgonly.parent	1	integer	-1
 	pgonly.parent_pkey	1	integer	-1
 a77867acaaae5145
@@ -6643,6 +6651,8 @@ a77867acaaae5145
 	pgonly.positive_int[]	_positive_int	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.positive_int	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 a507aa10ba405f76
 	oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typsubscript	typelem	typarray	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation	typdefault	typacl
+	pgonly.json_tab	json_tab	pgonly	postgres	-1	f	c	C	f	t	,	pgonly.json_tab	-	-	pgonly.json_tab[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+	pgonly.json_tab[]	_json_tab	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.json_tab	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.parent	parent	pgonly	postgres	-1	f	c	C	f	t	,	pgonly.parent	-	-	pgonly.parent[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 	pgonly.parent[]	_parent	pgonly	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pgonly.parent	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 2499473f6ffbafd0
@@ -6663,6 +6673,8 @@ a507aa10ba405f76
 	positive_int_check	pgonly	c	f	f	t	t	-	pgonly.positive_int	-	t	-	_	_	_	t	0	f	f	NULL	NULL	NULL	NULL	NULL	NULL	NULL	(VALUE > 0)
 1dabfc67bc64e383
 	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
+	json_tab_id_not_null	pgonly	n	f	f	t	t	pgonly.json_tab	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	json_tab_pkey	pgonly	p	f	f	t	t	pgonly.json_tab	-	pgonly.json_tab_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_id_not_null	pgonly	n	f	f	t	t	pgonly.parent	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_pkey	pgonly	p	f	f	t	t	pgonly.parent	-	pgonly.parent_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 027154308ccc4d3a
@@ -6734,10 +6746,16 @@ e6f6b41914025ec6
 	pg_type	pgonly.positive_int[]	0	pg_type	pgonly.positive_int	0	i
 3889cad3153ae3ee
 	classid	objid	objsubid	refclassid	refobjid	refobjsubid	deptype
+	pg_class	pgonly.json_tab	0	pg_namespace	pgonly	0	n
+	pg_class	pgonly.json_tab_pkey	0	pg_constraint	json_tab_pkey on pgonly.json_tab	0	i
 	pg_class	pgonly.parent	0	pg_namespace	pgonly	0	n
 	pg_class	pgonly.parent_pkey	0	pg_constraint	parent_pkey on pgonly.parent	0	i
+	pg_constraint	json_tab_id_not_null on pgonly.json_tab	0	pg_class	pgonly.json_tab	1	a
+	pg_constraint	json_tab_pkey on pgonly.json_tab	0	pg_class	pgonly.json_tab	1	a
 	pg_constraint	parent_id_not_null on pgonly.parent	0	pg_class	pgonly.parent	1	a
 	pg_constraint	parent_pkey on pgonly.parent	0	pg_class	pgonly.parent	1	a
+	pg_type	pgonly.json_tab	0	pg_class	pgonly.json_tab	0	i
+	pg_type	pgonly.json_tab[]	0	pg_type	pgonly.json_tab	0	i
 	pg_type	pgonly.parent	0	pg_class	pgonly.parent	0	i
 	pg_type	pgonly.parent[]	0	pg_type	pgonly.parent	0	i
 1beb09b9d04236f8
@@ -6769,6 +6787,8 @@ aa01e099f1b9b28e
 	db	pgonly	parent	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 50ec0dc22bf8deb3
 	table_catalog	table_schema	table_name	column_name	ordinal_position	is_nullable	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	character_set_catalog	character_set_schema	character_set_name	collation_catalog	collation_schema	collation_name	domain_catalog	domain_schema	domain_name	udt_catalog	udt_schema	scope_catalog	scope_schema	scope_name	maximum_cardinality	dtd_identifier	is_self_referencing	is_identity	identity_generation	identity_start	identity_increment	identity_maximum	identity_minimum	identity_cycle	is_generated	generation_expression	is_updatable
+	db	pgonly	json_tab	doc	2	YES	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	2	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
+	db	pgonly	json_tab	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 	db	pgonly	parent	id	1	NO	32	2	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	db	pg_catalog	NULL	NULL	NULL	NULL	1	NO	NO	NULL	NULL	NULL	NULL	NULL	NO	NEVER	NULL	YES
 414d35329730a6b1
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
@@ -6784,6 +6804,8 @@ aa01e099f1b9b28e
 	pgonly	parent	id	NULL	integer	NULL	NULL	int4
 7d3136579b27d0d5
 	table_schema	table_name	column_name	column_default	data_type	character_maximum_length	character_octet_length	udt_name
+	pgonly	json_tab	doc	NULL	json	NULL	NULL	json
+	pgonly	json_tab	id	NULL	integer	NULL	NULL	int4
 	pgonly	parent	id	NULL	integer	NULL	NULL	int4
 c8f9ed28526e45e9
 	polname	polrelid	polcmd	polpermissive	polroles	polqual	polwithcheck
@@ -6851,7 +6873,9 @@ ec9a6bc39c705602
 6113c0ade5eb98c8
 	jsonb_column
 	jsonb
-26b7411692e3bd1b	error	db error: ERROR: relation "pgonly.json_tab" does not exist
+26b7411692e3bd1b
+	jsonb_column
+	json
 bd83596f0add5e47
 	cascade_fk
 	FOREIGN KEY (parent_id) REFERENCES pgonly.parent(id) ON DELETE CASCADE

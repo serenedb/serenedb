@@ -301,7 +301,7 @@ yaclib::Task<ToolResult> DescribeObject(RequestContext& ctx,
             ? absl::StrCat(
                 "SELECT function_type AS kind, function_name || '(' || "
                 "coalesce(array_to_string(list_transform(generate_series(1, "
-                "len(parameters)), i -> parameters[i] || coalesce(' ' || "
+                "len(parameters)), lambda i: parameters[i] || coalesce(' ' || "
                 "parameter_types[i], '')), ', '), '') || CASE WHEN varargs IS "
                 "NULL THEN '' ELSE ', ...' END || ')' || coalesce(' -> ' || "
                 "return_type, '') AS signature, coalesce(description, '') AS "

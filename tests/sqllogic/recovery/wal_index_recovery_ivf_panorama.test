@@ -18,7 +18,7 @@ CREATE TABLE wal_pano_t(pk INTEGER PRIMARY KEY, emb FLOAT[64]);
 
 statement ok
 INSERT INTO wal_pano_t
-SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1, 1201) t(i);
 
 statement ok
@@ -33,7 +33,7 @@ SET sdb_ivf_search_nprobe = 1000;
 
 query
 SELECT pk FROM wal_pano_idx
-  ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 700.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+  ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 700.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
   LIMIT 1;
 ----
 pk
@@ -46,7 +46,7 @@ SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 statement ok
 INSERT INTO wal_pano_t
-SELECT i, list_transform(range(64), x -> CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+SELECT i, list_transform(range(64), lambda x: CASE WHEN x = 0 THEN i::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
 FROM range(1201, 1204) t(i);
 
 statement ok
@@ -76,7 +76,7 @@ n
 # A pre-crash and a post-crash vector, both exact after the rebuild.
 connection pano_after
 query
-SELECT pk, round(emb <-> list_transform(range(64), x -> 0.0::FLOAT)::FLOAT[64], 3) AS d
+SELECT pk, round(emb <-> list_transform(range(64), lambda x: 0.0::FLOAT)::FLOAT[64], 3) AS d
 FROM wal_pano_idx ORDER BY d LIMIT 3;
 ----
 pk	d
@@ -87,7 +87,7 @@ pk	d
 connection pano_after
 query
 SELECT pk FROM wal_pano_idx
-  ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 1202.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+  ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 1202.0::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
   LIMIT 1;
 ----
 pk
@@ -99,19 +99,19 @@ connection pano_after
 query
 SELECT count(*) AS diff FROM (
   ((SELECT pk FROM wal_pano_idx
-      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
       LIMIT 30)
    EXCEPT
    (SELECT pk FROM wal_pano_t
-      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
       LIMIT 30))
   UNION ALL
   ((SELECT pk FROM wal_pano_t
-      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
       LIMIT 30)
    EXCEPT
    (SELECT pk FROM wal_pano_idx
-      ORDER BY emb <-> list_transform(range(64), x -> CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
+      ORDER BY emb <-> list_transform(range(64), lambda x: CASE WHEN x = 0 THEN 42.5::FLOAT ELSE 0.0::FLOAT END)::FLOAT[64]
       LIMIT 30))
 ) q;
 ----

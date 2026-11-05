@@ -51,6 +51,8 @@ add_bench(posting_block_codec)
 add_bench(text_stream)
 add_bench(split_by_non_alpha)
 add_bench(term_enumeration)
+add_bench(term_dict_root)
+add_bench(numeric_ranges)
 add_bench(top_term_selector)
 add_bench(random)
 set_property(

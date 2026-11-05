@@ -8,6 +8,7 @@ CHECKS = (
     ("scripts/generate_pg_catalog.py", "--check"),
     ("scripts/generate_log_ids.py", "--check"),
     ("scripts/otel/schema.py", "check"),
+    ("third_party/duckdb_versions/generate.py", "--check"),
 )
 
 

@@ -27,7 +27,7 @@ CREATE MACRO mps_dot(s) AS (SELECT max(s.lower() || y) FROM mps_t);
 
 
 statement ok
-CREATE MACRO mps_lambda(z) AS (SELECT list_transform([1, 2], e -> e + z + x) FROM mps_t WHERE x = 10);
+CREATE MACRO mps_lambda(z) AS (SELECT list_transform([1, 2], lambda e: e + z + x) FROM mps_t WHERE x = 10);
 
 
 query

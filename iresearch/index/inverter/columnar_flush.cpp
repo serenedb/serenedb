@@ -98,45 +98,19 @@ IRS_FORCE_INLINE void Put(uint32_t** blocks, uint64_t i,
 
 void ScatteredField::Reset(const FieldInverter& field) {
   _field = &field;
-  _all_inline = field.Log().Size() == 0;
-  SDB_ASSERT(field.InlineDocs().empty() || _all_inline);
   if (field.Log().Size() > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
     ThrowDesyncedLog(field.Meta().id, "occurrence count overflows u32");
   }
 
   _s->ranked.clear();
-  _s->term_starts.clear();
   _s->docs.clear();
   _s->pos.clear();
   _s->offs_start.clear();
   _s->offs_end.clear();
 
   const auto entries = field.Dictionary().Entries();
-  SDB_ASSERT(field.InlineDocs().size() <= entries.size());
-  _identity =
-    _all_inline && absl::c_is_sorted(entries.first(field.InlineDocs().size()),
-                                     std::less_equal<>{});
-  if (_identity) {
-    return;
-  }
-
-  if (!_all_inline) {
-    BuildHistogram(field.Log(), entries.size());
-  }
+  BuildHistogram(field.Log(), entries.size());
   RankLiveTerms(entries);
-  if (field.UniqueTerms()) {
-    FoldDuplicateTerms(entries);
-  }
-  if (_all_inline) {
-    const auto docs = field.InlineDocs();
-    const auto* ranked = _s->ranked.data();
-    auto& out = _s->inline_docs;
-    out.resize(docs.size());
-    for (size_t r = 0; r < docs.size(); ++r) {
-      out[r] = docs[ranked[r].id];
-    }
-    return;
-  }
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size());
   field.VisitLog([&](const auto& log) {
@@ -146,36 +120,6 @@ void ScatteredField::Reset(const FieldInverter& field) {
       Scatter<false>(log, nocc);
     }
   });
-}
-
-void ScatteredField::FoldDuplicateTerms(
-  std::span<const duckdb::string_t> entries) {
-  const auto& ranked = _s->ranked;
-  const auto same_term = [&](size_t r) {
-    return ranked[r].key == ranked[r - 1].key &&
-           entries[ranked[r].id] == entries[ranked[r - 1].id];
-  };
-  size_t first_dup = 0;
-  for (size_t r = 1; r < ranked.size(); ++r) {
-    if (same_term(r)) {
-      first_dup = r;
-      break;
-    }
-  }
-  if (!first_dup) {
-    return;
-  }
-  auto& starts = _s->term_starts;
-  starts.reserve(ranked.size() + 1);
-  for (size_t r = 0; r < first_dup; ++r) {
-    starts.push_back(static_cast<uint32_t>(r));
-  }
-  for (size_t r = first_dup + 1; r < ranked.size(); ++r) {
-    if (!same_term(r)) {
-      starts.push_back(static_cast<uint32_t>(r));
-    }
-  }
-  starts.push_back(static_cast<uint32_t>(ranked.size()));
 }
 
 void ScatteredField::BuildHistogram(const PostingLogBase& log, size_t vocab) {
@@ -204,24 +148,18 @@ void ScatteredField::RankLiveTerms(std::span<const duckdb::string_t> entries) {
   auto& cursors = _s->cursors;
   uint64_t min_key = std::numeric_limits<uint64_t>::max();
   uint64_t max_key = 0;
+  ResetSizes();
   const auto note_live = [&](uint32_t i) {
+    NoteSize(entries[i].GetSize());
     const auto key = PrefixKey(entries[i]);
     min_key = std::min(min_key, key);
     max_key = std::max(max_key, key);
     ranked.push_back({key, i});
   };
-  if (_all_inline) {
-    const auto n = static_cast<uint32_t>(_field->InlineDocs().size());
-    ranked.reserve(n);
-    for (uint32_t i = 0; i < n; ++i) {
+  ranked.reserve(entries.size());
+  for (uint32_t i = 0; i < entries.size(); ++i) {
+    if (cursors[i] != 0) {
       note_live(i);
-    }
-  } else {
-    ranked.reserve(entries.size());
-    for (uint32_t i = 0; i < entries.size(); ++i) {
-      if (cursors[i] != 0) {
-        note_live(i);
-      }
     }
   }
   if (ranked.size() < 2) {

@@ -139,7 +139,7 @@ duckdb::BoundCastInfo BindByteaToText(duckdb::BindCastInput& input,
 void RegisterBytea(duckdb::CastFunctionSet& casts) {
   casts.RegisterCastFunction(
     duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB,
-    duckdb::BoundCastInfo{TextToBytea, nullptr, InitInput}, 100);
+    duckdb::BoundCastInfo{TextToBytea, nullptr, InitInput});
   casts.RegisterCastFunction(duckdb::LogicalType::BLOB,
                              duckdb::LogicalType::VARCHAR, BindByteaToText,
                              100);

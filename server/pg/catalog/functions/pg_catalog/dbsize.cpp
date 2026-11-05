@@ -57,8 +57,7 @@
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
-#include "search/inverted_index_storage.h"
-#include "search/search_table.h"
+#include "search/store.h"
 
 namespace sdb::pg {
 namespace {

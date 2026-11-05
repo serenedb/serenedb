@@ -153,6 +153,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "AMBIGUOUS_FUNCTION") {
     return ERRCODE_AMBIGUOUS_FUNCTION;
   }
+  if (subtype == "STATEMENT_TOO_COMPLEX") {
+    return ERRCODE_STATEMENT_TOO_COMPLEX;
+  }
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
     if (subtype == "WRONG_OBJECT_TYPE") {
       return ERRCODE_WRONG_OBJECT_TYPE;

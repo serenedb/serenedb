@@ -25,6 +25,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "tests_shared.hpp"
+#include "typed_terms.hpp"
 
 namespace {
 
@@ -51,6 +52,7 @@ irs::ByRange MakeFilter(irs::field_id field, const irs::bytes_view& min,
                         irs::BoundType max_type) {
   irs::ByRange filter;
   *filter.mutable_field_id() = field;
+  *filter.mutable_dict() = irs::NumericLayout::kNumbers;
 
   auto& range = filter.mutable_options()->range;
   range.min = min;
@@ -79,19 +81,19 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(irs::ViewCast<irs::byte_type>(irs::kNullTerm));
+            field.value(irs::ViewCast<irs::byte_type>(tests::kNullTerm));
           } else if (data.is_bool() && data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+            field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
           } else if (data.is_bool() && !data.b) {
             doc.insert(std::make_shared<tests::BinaryField>());
             auto& field = (doc.indexed.end() - 1).as<tests::BinaryField>();
             field.Name(name);
             field.id = fid;
-            field.value(irs::ViewCast<irs::byte_type>(irs::kTrueTerm));
+            field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
           } else if (data.is_number()) {
             const double d_value = data.as_number<double_t>();
             // 'value' can be interpreted as a double
@@ -998,6 +1000,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      *filter.mutable_dict() = irs::NumericLayout::kNumbers;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1019,6 +1022,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      *filter.mutable_dict() = irs::NumericLayout::kNumbers;
 
       irs::Scorer::ptr sort{std::make_unique<tests::sort::FrequencySort>()};
       filter.SetScorer(sort.get());
@@ -1037,6 +1041,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange filter;
       *filter.mutable_field_id() = kValueFieldId;
+      *filter.mutable_dict() = irs::NumericLayout::kNumbers;
       filter.mutable_options()->range.min =
         irs::numeric_utils::numeric_traits<double_t>::ninf();
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1205,7 +1210,8 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
   // field stats are summed across every segment that has the field
   uint64_t expected_docs_with_field = 0;
   for (const auto& segment : rdr) {
-    if (const auto* field = segment.field(kValueFieldId)) {
+    if (const auto* field =
+          segment.field(kValueFieldId, irs::NumericLayout::kNumbers)) {
       expected_docs_with_field += field->docs_count();
     }
   }
@@ -1232,6 +1238,7 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
 
   irs::ByRange filter;
   *filter.mutable_field_id() = kValueFieldId;
+  *filter.mutable_dict() = irs::NumericLayout::kNumbers;
   filter.mutable_options()->range.min =
     irs::numeric_utils::numeric_traits<double_t>::ninf();
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1273,6 +1280,7 @@ TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
 
   irs::ByRange filter;
   *filter.mutable_field_id() = kValueFieldId;
+  *filter.mutable_dict() = irs::NumericLayout::kNumbers;
   filter.mutable_options()->range.min = min_term;
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
   filter.mutable_options()->range.max =

@@ -45,8 +45,7 @@ void FromPrefix(BoolTarget parent, const FilterContext& ctx,
   }
   auto& filter = AddMaybeNegated<irs::ByPrefix>(parent, ctx, column_info);
   filter.SetBoost(ctx.boost);
-  *filter.mutable_field_id() =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
+  SetField(filter, column_info);
   auto& pf_opts = *filter.mutable_options();
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{prefix}));
 }

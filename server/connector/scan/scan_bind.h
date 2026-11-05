@@ -42,7 +42,7 @@
 #include "connector/column_id.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
-#include "search/inverted_index_storage.h"
+#include "search/store.h"
 
 namespace sdb::catalog {
 
@@ -79,7 +79,7 @@ struct SearchSpec {
   std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   std::vector<RowFilter> row_filters;
-  std::function<search::InvertedIndexSnapshotPtr(duckdb::ClientContext&)>
+  std::function<search::StoreSnapshotPtr(duckdb::ClientContext&)>
     acquire_snapshot;
   std::weak_ptr<const irs::DirectoryReaderImpl> planned_reader;
 
@@ -135,7 +135,6 @@ ENABLE_BITMASK_ENUM(TsDictTermUses);
 struct TsDictRequest {
   irs::field_id field_id = irs::field_limits::invalid();
   irs::field_id display_id = irs::field_limits::invalid();
-  irs::field_id null_field_id = irs::field_limits::invalid();
   std::shared_ptr<irs::Filter> having_filter;
   duckdb::idx_t term_col_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t term_raw_col_idx = duckdb::DConstants::INVALID_INDEX;
@@ -143,6 +142,8 @@ struct TsDictRequest {
   duckdb::idx_t freq_col_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t score_col_idx = duckdb::DConstants::INVALID_INDEX;
   TsDictTermUses term_uses = TsDictTermUses::None;
+  irs::DictLayout layout = irs::DictLayout::String;
+  bool nulls = false;
 };
 
 struct TsDictSpec {
@@ -163,7 +164,6 @@ struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
   std::set<irs::field_id> analyzed_fields;
-  std::map<irs::field_id, irs::field_id> null_markers;
 };
 
 struct PlanCacheSpec {
@@ -242,8 +242,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool ReadsParametersAtExecution() const final;
   duckdb::shared_ptr<duckdb::PlanDataVersion> GetPlanDataVersion() const final;
 
-  search::InvertedIndexSnapshotPtr Snapshot(
-    duckdb::ClientContext& context) const {
+  search::StoreSnapshotPtr Snapshot(duckdb::ClientContext& context) const {
     return search.acquire_snapshot(context);
   }
 
@@ -327,9 +326,9 @@ struct DeferredBuild {
   std::vector<DeferredCheck> checks;
 };
 
-DeferredBuild BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan,
-  const search::InvertedIndexSnapshot& snapshot);
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan,
+                                  const search::StoreSnapshot& snapshot);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

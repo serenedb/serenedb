@@ -99,7 +99,7 @@ ts_lexize
 # --- lambdas at every position ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lambda_head AS (v -> string_split(lower(v), ',')) | stem_words('en_US.UTF-8');
+CREATE TEXT SEARCH DICTIONARY lambda_head AS (lambda v: string_split(lower(v), ',')) | stem_words('en_US.UTF-8');
 
 query
 SELECT ts_lexize('lambda_head', 'Cats,RUNNING');
@@ -108,7 +108,7 @@ ts_lexize
 {cat,run}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lambda_middle AS split_text_csv(',') | (x -> trim(x)) | upper();
+CREATE TEXT SEARCH DICTIONARY lambda_middle AS split_text_csv(',') | (lambda x: trim(x)) | upper();
 
 query
 SELECT ts_lexize('lambda_middle', ' a , b ');
@@ -117,7 +117,7 @@ ts_lexize
 {A,B}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lambda_tail AS split_text_csv(',') | (x -> x || '!');
+CREATE TEXT SEARCH DICTIONARY lambda_tail AS split_text_csv(',') | (lambda x: x || '!');
 
 query
 SELECT ts_lexize('lambda_tail', 'a,b');
@@ -126,7 +126,7 @@ ts_lexize
 {a!,b!}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lambda_identity_middle AS split_text_csv(',') | (x -> x) | upper();
+CREATE TEXT SEARCH DICTIONARY lambda_identity_middle AS split_text_csv(',') | (lambda x: x) | upper();
 
 query
 SELECT ts_lexize('lambda_identity_middle', 'a,b');
@@ -135,7 +135,7 @@ ts_lexize
 {A,B}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY lambda_shadow AS split_text_csv(',') | (input -> upper(input));
+CREATE TEXT SEARCH DICTIONARY lambda_shadow AS split_text_csv(',') | (lambda input: upper(input));
 
 query
 SELECT ts_lexize('lambda_shadow', 'a,b');
@@ -176,7 +176,7 @@ n	lowered
 # Tokens inside a shingle are joined by token_separator, a space by default.
 
 query
-SELECT list_transform(ts_lexize('shingle_chain', 'Quick Brown'), x -> hex(x::BLOB));
+SELECT list_transform(ts_lexize('shingle_chain', 'Quick Brown'), lambda x: hex(x::BLOB));
 ----
 list_transform
 {717569636B,717569636B2062726F776E,62726F776E}
@@ -191,7 +191,7 @@ same
 t
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY shingle_lambda AS generate_shingles((v -> string_split(lower(v), ' ')), min_gram := 2, max_gram := 2);
+CREATE TEXT SEARCH DICTIONARY shingle_lambda AS generate_shingles((lambda v: string_split(lower(v), ' ')), min_gram := 2, max_gram := 2);
 
 query
 SELECT ts_lexize('shingle_lambda', 'Quick Brown Fox') = ts_lexize('shingle_chain', 'Quick Brown Fox') AS same;
@@ -233,7 +233,7 @@ ts_lexize
 {A,"a,b",B}
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY union_dict_lambda AS [words, (x -> upper(x))];
+CREATE TEXT SEARCH DICTIONARY union_dict_lambda AS [words, (lambda x: upper(x))];
 
 query
 SELECT ts_lexize('union_dict_lambda', 'Hello World');
@@ -267,6 +267,32 @@ SELECT ts_lexize('union_then_filter', 'a,b c');
 ----
 ts_lexize
 {a,"a,b","b c",c}
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_wildcard AS [generate_wildcard_ngrams(split_text_csv(' '), 3), split_text_csv(' ')];
+----
+db error: ERROR: union: child 0 produces a per-document store blob, which a union cannot deliver
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_collate AS [collate_tokens('en_US.UTF-8'), split_text_csv(' ')];
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_collate_only AS [collate_tokens('en_US.UTF-8'), collate_tokens('de_DE.UTF-8')];
+
+query
+SELECT typeof(ts_lexize('union_sql', 'A,B')) AS text_union,
+       typeof(ts_lexize('union_collate', 'a b')) AS mixed_union,
+       typeof(ts_lexize('union_collate_only', 'a b')) AS binary_union;
+----
+text_union	mixed_union	binary_union
+VARCHAR[]	BLOB[]	BLOB[]
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_collate_then_lower AS [collate_tokens('en_US.UTF-8'), split_text_csv(' ')] | normalize_tokens(case := 'lower');
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
 
 # --- stored dictionaries at every position ---
 
@@ -332,7 +358,7 @@ same
 # --- features on chains ---
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY feat_chain AS split_text_csv(',') | (x -> lower(trim(x))) | stem_words('en_US.UTF-8') WITH (frequency, position);
+CREATE TEXT SEARCH DICTIONARY feat_chain AS split_text_csv(',') | (lambda x: lower(trim(x))) | stem_words('en_US.UTF-8') WITH (frequency, position);
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY feat_identity AS (lambda x: x) WITH (frequency);
@@ -424,10 +450,10 @@ statement error is not a constant
 CREATE TEXT SEARCH DICTIONARY err_param_option AS split_text(case := some_column);
 
 statement error a lambda stage takes exactly one parameter
-CREATE TEXT SEARCH DICTIONARY err_lambda_two AS split_text_csv(',') | ((x, y) -> upper(x));
+CREATE TEXT SEARCH DICTIONARY err_lambda_two AS split_text_csv(',') | (lambda x, y: upper(x));
 
 statement error cannot be nested inside an SQL expression
-CREATE TEXT SEARCH DICTIONARY err_lambda_template AS split_text_csv(',') | (x -> stem_words(x));
+CREATE TEXT SEARCH DICTIONARY err_lambda_template AS split_text_csv(',') | (lambda x: stem_words(x));
 
 statement error cannot be nested inside an SQL expression
 CREATE TEXT SEARCH DICTIONARY err_sql_template AS (lambda x: lower(stem_words(x)));

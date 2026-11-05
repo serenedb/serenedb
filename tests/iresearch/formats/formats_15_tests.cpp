@@ -122,6 +122,8 @@ class MockPostingsField final : public irs::TermReader {
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
+  void LookupBatch(size_t, TermAt, FoundTerm) const final {}
+  void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }
@@ -258,7 +260,7 @@ class Format15TestCase : public tests::FormatTestCase {
   struct ReadMeta {
     irs::PostingMeta meta;
     std::unique_ptr<irs::PostingsReader> reader;
-    std::unique_ptr<irs::byte_type[]> inline_bytes;
+    tests::Records records;
   };
 
   ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
@@ -362,10 +364,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     const uint64_t expected_has_score_bounds =
       irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
-    writer.Encode(*out, posting_meta);
-    if (posting_meta.inline_size != 0) {
-      out->WriteData(posting_meta.inline_data, posting_meta.inline_size);
-    }
+    tests::WriteRecord(writer, *out, posting_meta);
     writer.End();
   }
 
@@ -381,17 +380,11 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   auto reader = std::make_unique<irs::PostingsReader>();
   reader->prepare(state, features);
 
-  irs::bstring in_data(in->Length() - in->Position(), 0);
-  in->ReadData(&in_data[0], in_data.size());
-  const auto* begin = in_data.c_str();
+  auto records = tests::ReadRecords(*in);
+  const auto* begin = records.data.get();
 
   irs::PostingMeta read_meta;
-  begin += reader->decode(begin, features, read_meta);
-  auto inline_bytes = std::make_unique<irs::byte_type[]>(
-    irs::PostingMeta::kInlineBytes + irs::block_codec::kInSlack);
-  std::memcpy(inline_bytes.get(), begin, read_meta.inline_size);
-  read_meta.inline_data = inline_bytes.get();
-  begin += read_meta.inline_size;
+  begin += tests::ReadRecord(begin, features, read_meta);
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);
@@ -405,9 +398,9 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     EXPECT_EQ(posting_meta.doc_delta, read_meta.doc_delta);
   }
 
-  EXPECT_EQ(begin, in_data.data() + in_data.size());
+  EXPECT_EQ(begin, records.end);
 
-  return {read_meta, std::move(reader), std::move(inline_bytes)};
+  return {read_meta, std::move(reader), std::move(records)};
 }
 
 void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
@@ -601,7 +594,7 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader, inline_bytes] =
+  auto [meta, reader, records] =
     WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
@@ -649,8 +642,7 @@ void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader, inline_bytes] =
-    WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
+  auto [meta, reader, records] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   irs::FieldMeta field_meta;

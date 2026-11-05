@@ -199,7 +199,7 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
   auto writer = open_writer(irs::kOmCreate);
   Build(*writer);
   constexpr std::pair<int64_t, int64_t> kRanges[]{
-    {0, 0},    {5, 5},       {0, 63},         {100, 4100},
+    {0, 0},    {5, 5},       {0, 63},           {100, 4100},
     {0, 9000}, {4500, 9000}, {-5, kValues * 2}, {9500, 9600},
   };
   for (const auto [lo, hi] : kRanges) {
@@ -223,8 +223,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
       filter.Add(Term(kSingle, value), irs::Occur::Should);
     }
     filter.SetMinShouldMatch(1);
-    CheckCount(filter,
-               Rows([&](doc_id_t row) {
+    CheckCount(filter, Rows([&](doc_id_t row) {
                  return absl::c_linear_search(kIn, SingleOf(row));
                }),
                true);
@@ -377,6 +376,31 @@ TEST_P(CountSingleValuedTest, dense_ranges_estimate_their_exact_count) {
     EXPECT_EQ(expected, query->EstimateMin());
     EXPECT_EQ(expected, query->EstimateMax());
     EXPECT_EQ(expected, query->EstimateMatches());
+  }
+}
+
+TEST_P(CountSingleValuedTest,
+       ranges_run_as_their_complement_past_three_fifths) {
+  auto writer = open_writer(irs::kOmCreate);
+  Build(*writer);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  constexpr struct {
+    int64_t lo;
+    irs::QueryKind kind;
+  } kRanges[]{
+    {4500, irs::QueryKind::Terms},
+    {3800, irs::QueryKind::Terms},
+    {3000, irs::QueryKind::Boolean},
+  };
+  for (const auto& [lo, kind] : kRanges) {
+    SCOPED_TRACE(lo);
+    const auto range = Range(kSingle, lo, kValues - 1);
+    auto query = irs::PrepareMasked(*range, reader[0], {});
+    ASSERT_NE(nullptr, query);
+    EXPECT_EQ(kind, query->Kind());
+    CheckDocs(*range, SingleIn(lo, kValues - 1));
+    CheckCount(*range, SingleIn(lo, kValues - 1), true);
   }
 }
 

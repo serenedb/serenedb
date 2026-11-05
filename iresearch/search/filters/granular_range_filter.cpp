@@ -38,12 +38,12 @@ uint64_t VisitInto(MultiTermQuery& query, const PrepareContext& ctx,
   MultiTermVisitor mtv{ctx, query.State(), reader};
   uint64_t docs = 0;
   bool pieces = false;
-  reader.VisitRange(
-    from, to, [&](bytes_view term, const PostingMeta& meta, bool piece) {
-      pieces |= piece;
-      docs += meta.docs_count;
-      mtv.Visit(term, meta, kNoBoost);
-    });
+  reader.VisitRange(from, to,
+                    [&](bytes_view term, const PostingMeta& meta, bool piece) {
+                      pieces |= piece;
+                      docs += meta.docs_count;
+                      mtv.Visit(term, meta, kNoBoost);
+                    });
   if (pieces) {
     query.State().MarkPieces();
   }
@@ -63,8 +63,11 @@ QueryBuilder::ptr Complement(const SubReader& segment,
     meta.id, {.layout = meta.dict.layout, .member = DictMember::Nulls});
   const uint64_t null_docs = nulls != nullptr ? nulls->docs_count() : 0;
   const uint64_t values = reader.docs_count();
-  if (values + null_docs != segment.docs_count() ||
-      inside <= values - inside + null_docs) {
+  if (values + null_docs != segment.docs_count()) {
+    return nullptr;
+  }
+  const uint64_t outside = values - inside + null_docs;
+  if (2 * inside <= 3 * outside) {
     return nullptr;
   }
   if (inside == segment.docs_count()) {
@@ -119,8 +122,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   auto query = memory::make_tracked<MultiTermQuery>(
     ctx.memory, segment, ctx.memory, ctx.boost, ScoreMergeType::Sum);
   const auto inside = VisitInto(*query, ctx, *reader, from, to);
-  if (auto complement =
-        Complement(segment, ctx, *reader, from, to, inside)) {
+  if (auto complement = Complement(segment, ctx, *reader, from, to, inside)) {
     return complement;
   }
   return MultiTermQuery::Finish(std::move(query), ctx);

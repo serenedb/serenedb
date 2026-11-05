@@ -277,6 +277,8 @@ On text and `BLOB` columns, each non-`NULL` bound is analyzed with the column's 
 
 A row matches when an indexed token satisfies both bounds. For dictionaries that emit one token per value, this agrees with combining the corresponding one-sided functions using `&&`. With multiple indexed tokens, the two separate comparisons can match different tokens in the same row. Inside a [`##` phrase](#a--b-phrase), `ts_between` bounds remain verbatim token bytes at that phrase position.
 
+On an indexed [`curve()` call](../../indexes/inverted/curve-search.md), the bounds are `ROW`s with one value per coordinate.
+
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |
 | `id @@ ts_between(2, 3, true, true)` | `2`, `3` | Closed interval `[2, 3]`. |

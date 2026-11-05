@@ -39,8 +39,26 @@ SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ 'foo'::TSQUERY;
 db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
 
 
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x BETWEEN NULL::INTEGER AND 3 AND y BETWEEN 0 AND 1;
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM curve_forms_idx WHERE x >= 0 AND x <= NULL::INTEGER AND y BETWEEN 0 AND 1;
+----
+n
+0
+
 statement ok
 RESET disabled_optimizers;
+
+
+statement error
+SELECT id FROM curve_forms_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(1::HUGEINT, 0), ROW(3::HUGEINT, 1), true, true);
+----
+db error: ERROR: ts_between: bound HUGEINT does not match coordinate 1 of type INTEGER; cast the bound explicitly
 
 
 statement error
@@ -178,6 +196,12 @@ ids
 
 query
 SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x BETWEEN 1 AND 1 AND y::UBIGINT BETWEEN 1 AND 5000000000 AND y <= 1;
+----
+ids
+{1,16,31,46}
+
+query
+SELECT list(id ORDER BY id) AS ids FROM curve_forms_idx WHERE x::HUGEINT <= 5000000000000000000000 AND x BETWEEN 1 AND 1 AND y = 1;
 ----
 ids
 {1,16,31,46}

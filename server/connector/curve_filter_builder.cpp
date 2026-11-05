@@ -20,7 +20,6 @@
 
 #include "connector/curve_filter_builder.h"
 
-#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -36,76 +35,27 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
+#include "connector/inet_filter_builder.hpp"
 #include "pg/types/logical.h"
 
 namespace sdb::connector {
 namespace {
 
-inline constexpr std::string_view kInetSortKey = "inet_sort_key";
-
-const duckdb::Expression& PeelSortKey(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
-    return expr;
-  }
-  const auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (function.Function().GetName().GetIdentifierName() != kInetSortKey) {
-    return expr;
-  }
-  return *function.GetChildren()[0];
-}
-
-uint32_t IntegerWidth(duckdb::LogicalTypeId type) {
-  using enum duckdb::LogicalTypeId;
-  switch (type) {
-    case TINYINT:
-    case UTINYINT:
-      return 8;
-    case SMALLINT:
-    case USMALLINT:
-      return 16;
-    case INTEGER:
-    case UINTEGER:
-      return 32;
-    case BIGINT:
-    case UBIGINT:
-      return 64;
-    default:
-      return 0;
-  }
-}
-
-bool IsUnsigned(duckdb::LogicalTypeId type) {
-  using enum duckdb::LogicalTypeId;
-  return type == UTINYINT || type == USMALLINT || type == UINTEGER ||
-         type == UBIGINT;
-}
-
 bool IsWideningCast(const duckdb::Expression& expression) {
   if (!duckdb::BoundCastExpression::IsCast(expression)) {
     return false;
   }
-  const auto& child = duckdb::BoundCastExpression::Child(
-    expression.Cast<duckdb::BoundFunctionExpression>());
-  const auto source = child.GetReturnType().id();
-  const auto target = expression.GetReturnType().id();
-  return (source == duckdb::LogicalTypeId::FLOAT &&
-          target == duckdb::LogicalTypeId::DOUBLE) ||
-         (IntegerWidth(source) != 0 &&
-          IntegerWidth(source) < IntegerWidth(target) &&
-          IsUnsigned(source) == IsUnsigned(target));
-}
-
-std::optional<duckdb::Value> Fold(duckdb::ClientContext& context,
-                                  const duckdb::Expression& expression) {
-  if (!expression.IsFoldable()) {
-    return std::nullopt;
+  const auto& source = duckdb::BoundCastExpression::Child(
+                         expression.Cast<duckdb::BoundFunctionExpression>())
+                         .GetReturnType();
+  const auto& target = expression.GetReturnType();
+  if (source.id() == duckdb::LogicalTypeId::FLOAT) {
+    return target.id() == duckdb::LogicalTypeId::DOUBLE;
   }
-  auto copy = expression.Copy();
-  duckdb::Value value;
-  if (!duckdb::ExpressionExecutor::TryEvaluateScalar(context, *copy, value)) {
-    return std::nullopt;
-  }
-  return value;
+  return source.IsIntegral() && target.IsIntegral() &&
+         source.IsSigned() == target.IsSigned() &&
+         duckdb::GetTypeIdSize(source.InternalType()) <
+           duckdb::GetTypeIdSize(target.InternalType());
 }
 
 void AddBoxCandidates(irs::BooleanFilter& root, const SearchColumnInfo& info,
@@ -235,7 +185,7 @@ void CollectRanges(const duckdb::Expression& expression,
     [&](const duckdb::Expression& component, const duckdb::Expression* lower,
         const duckdb::Expression* upper, bool lower_inclusive = true,
         bool upper_inclusive = true) {
-      if (auto normalized = normalize(PeelSortKey(component))) {
+      if (auto normalized = normalize(PeelInetSortKey(component))) {
         ranges.emplace_back(std::move(normalized), lower, upper,
                             lower_inclusive, upper_inclusive);
       }
@@ -281,9 +231,9 @@ void CollectRanges(const duckdb::Expression& expression,
 }  // namespace
 
 bool ClaimCurveMatch(
-  irs::BooleanFilter& root,
+  duckdb::ClientContext& context, irs::BooleanFilter& root,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters, size_t index,
-  const ExpressionGetter& expressions, duckdb::ClientContext& context) {
+  const ExpressionGetter& expressions) {
   const auto& conjunct = *filters[index];
   if (conjunct.GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_FUNCTION ||
@@ -328,10 +278,10 @@ bool ClaimCurveMatch(
   if (between.Function().GetName().GetIdentifierName() != kTSQBetween) {
     ThrowUnsupportedQuery();
   }
-  const auto lower = Fold(context, *args[0]);
-  const auto upper = Fold(context, *args[1]);
-  const auto lower_inclusive = Fold(context, *args[2]);
-  const auto upper_inclusive = Fold(context, *args[3]);
+  const auto lower = TryEvaluateScalar(context, *args[0]);
+  const auto upper = TryEvaluateScalar(context, *args[1]);
+  const auto lower_inclusive = TryEvaluateScalar(context, *args[2]);
+  const auto upper_inclusive = TryEvaluateScalar(context, *args[3]);
   if (!lower || !upper || !lower_inclusive || !upper_inclusive ||
       lower_inclusive->IsNull() || upper_inclusive->IsNull()) {
     ThrowUnsupportedQuery();
@@ -414,11 +364,11 @@ std::vector<CurveRange> CollectCurveRanges(
   return ranges;
 }
 
-bool AddCurveRangeCandidates(irs::BooleanFilter& root,
+bool AddCurveRangeCandidates(duckdb::ClientContext& context,
+                             irs::BooleanFilter& root,
                              std::span<const CurveRange> ranges,
                              const duckdb::Expression& key,
-                             const SearchColumnInfo& info,
-                             duckdb::ClientContext& context) {
+                             const SearchColumnInfo& info) {
   const auto* spec = TryGetCurveSpec(key);
   SDB_ASSERT(spec);
   const auto coordinates = CurveCoordinates(key);
@@ -449,13 +399,13 @@ bool AddCurveRangeCandidates(irs::BooleanFilter& root,
       std::optional<CurveKey> lower;
       std::optional<CurveKey> upper;
       if (range.lower) {
-        const auto value = Fold(context, *range.lower);
+        const auto value = TryEvaluateScalar(context, *range.lower);
         if (!value || !(lower = CurveBoundKey(target, *value))) {
           continue;
         }
       }
       if (range.upper) {
-        const auto value = Fold(context, *range.upper);
+        const auto value = TryEvaluateScalar(context, *range.upper);
         if (!value || !(upper = CurveBoundKey(target, *value))) {
           continue;
         }

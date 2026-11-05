@@ -104,10 +104,6 @@ inline uint64_t EncodeDouble(double value) noexcept {
   return bits & kSignBit ? ~bits : bits ^ kSignBit;
 }
 
-inline double DecodeDouble(uint64_t value) noexcept {
-  return std::bit_cast<double>(value & kSignBit ? value ^ kSignBit : ~value);
-}
-
 inline uint64_t NormalizeKey(uint64_t key, uint64_t lo, uint64_t hi) noexcept {
   return (std::clamp(key, lo, hi) - lo) << std::countl_zero(hi - lo);
 }
@@ -162,34 +158,26 @@ inline Relation Classify(const Cell& cell, const Box& box,
   return inside ? Relation::Inside : Relation::Boundary;
 }
 
-template<typename Classifier, typename Priority>
-std::vector<Cell> Cover(const Options& options, Classifier&& classify,
-                        Priority&& priority) {
+inline std::vector<Cell> CoverBox(const Box& box, const Options& options) {
   Validate(options);
   struct Pending {
     Cell cell;
     Relation relation;
-    long double priority;
-    uint64_t order;
   };
-  const auto compare = [](const Pending& a, const Pending& b) {
-    return a.priority != b.priority ? a.priority < b.priority
-                                    : a.order > b.order;
+  const auto classify = [&](const Cell& cell) {
+    return Classify(cell, box, options.dimensions);
   };
-  std::priority_queue<Pending, std::vector<Pending>, decltype(compare)> pending{
-    compare};
-  uint64_t order = 0;
   std::vector<Cell> result;
   const Cell root;
   const auto root_relation = classify(root);
   if (root_relation == Relation::Outside) {
     return result;
   }
-  pending.emplace(root, root_relation, static_cast<long double>(priority(root)),
-                  order++);
+  std::queue<Pending> pending;
+  pending.emplace(root, root_relation);
   std::vector<Pending> children;
   while (!pending.empty()) {
-    const auto top = pending.top();
+    const auto top = pending.front();
     pending.pop();
     const auto& cell = top.cell;
     if (cell.level == options.max_level || top.relation == Relation::Inside) {
@@ -200,7 +188,7 @@ std::vector<Cell> Cover(const Options& options, Classifier&& classify,
     const auto bit = uint64_t{1} << (63 - cell.level);
     for (uint32_t child = 0; child < (uint32_t{1} << options.dimensions);
          ++child) {
-      Cell next{cell.min, cell.level + 1};
+      Cell next{.min = cell.min, .level = cell.level + 1};
       for (uint32_t axis = 0; axis < options.dimensions; ++axis) {
         if (child & (uint32_t{1} << axis)) {
           next.min[axis] |= bit;
@@ -208,32 +196,18 @@ std::vector<Cell> Cover(const Options& options, Classifier&& classify,
       }
       const auto next_relation = classify(next);
       if (next_relation != Relation::Outside) {
-        children.emplace_back(next, next_relation, 0, 0);
+        children.emplace_back(next, next_relation);
       }
     }
     if (children.size() + pending.size() + result.size() > options.max_cells) {
       result.emplace_back(cell);
       continue;
     }
-    for (auto& child : children) {
-      child.priority = static_cast<long double>(priority(child.cell));
-      child.order = order++;
+    for (const auto& child : children) {
       pending.emplace(child);
     }
   }
   return result;
-}
-
-template<typename Classifier>
-std::vector<Cell> Cover(const Options& options, Classifier&& classify) {
-  return Cover(options, std::forward<Classifier>(classify),
-               [](const Cell& cell) { return 64 - cell.level; });
-}
-
-inline std::vector<Cell> CoverBox(const Box& box, const Options& options) {
-  return Cover(options, [&](const Cell& cell) {
-    return Classify(cell, box, options.dimensions);
-  });
 }
 
 namespace detail {
@@ -241,8 +215,7 @@ namespace detail {
 #if !defined(__BMI2__)
 template<uint32_t Dimensions>
 inline constexpr auto kSpreadBytes = [] {
-  std::array<uint64_t, 256> table;
-  table.fill(0);
+  std::array<uint64_t, 256> table{};
   for (uint32_t value = 0; value < table.size(); ++value) {
     for (uint32_t bit = 0; bit < 8; ++bit) {
       table[value] |= uint64_t{(value >> bit) & 1} << (bit * Dimensions);
@@ -290,13 +263,11 @@ Code Encode(Point& point, bool hilbert) {
       point[axis] ^= correction;
     }
   }
-  Code code;
-  code.fill(0);
+  Code code{};
 #if defined(__BMI2__)
   static constexpr auto masks = [] {
-    std::array<std::array<uint64_t, Dimensions>, Dimensions> result;
+    std::array<std::array<uint64_t, Dimensions>, Dimensions> result{};
     for (uint32_t word = 0; word < Dimensions; ++word) {
-      result[word].fill(0);
       for (uint32_t bit = 0; bit < 64; ++bit) {
         result[word][(word * 64 + bit) % Dimensions] |= uint64_t{1}
                                                         << (63 - bit);
@@ -419,7 +390,7 @@ void EmitTerm(uint8_t* term, uint32_t dimensions, uint32_t level, char kind,
 }  // namespace detail
 
 inline uint32_t LeafCode(const Point& point, const Options& options,
-                         uint8_t* out) noexcept {
+                         uint8_t* out) {
   const auto code = Encode(point, options.dimensions, options.hilbert);
   const auto bits = options.dimensions * options.max_level;
   const auto size = CodeSize(options.dimensions, options.max_level);
@@ -433,7 +404,7 @@ inline uint32_t LeafCode(const Point& point, const Options& options,
 template<typename Emit>
 void CodeTerms(std::span<const uint8_t> code, const Options& options,
                Emit&& emit) {
-  std::array<uint8_t, kTermHeader + sizeof(Code)> term;
+  std::array<uint8_t, kTermHeader + sizeof(Code)> term{};
   term[1] = static_cast<uint8_t>(options.dimensions);
   std::memcpy(term.data() + kTermHeader, code.data(), code.size());
   for (uint32_t level = 0; level < options.max_level;
@@ -443,13 +414,6 @@ void CodeTerms(std::span<const uint8_t> code, const Options& options,
   }
   detail::EmitTerm(term.data(), options.dimensions, options.max_level,
                    kLeafTerm, emit);
-}
-
-template<typename Emit>
-void PointTerms(const Point& point, const Options& options, Emit&& emit) {
-  Code code;
-  const auto size = LeafCode(point, options, code.data());
-  CodeTerms(std::span<const uint8_t>{code.data(), size}, options, emit);
 }
 
 inline std::vector<std::string> PointQueryTerms(std::span<const Cell> cells,
@@ -474,7 +438,7 @@ inline std::vector<std::string> PointQueryTerms(std::span<const Cell> cells,
     const auto depth = level - cell.level;
     for (uint64_t index = 0;
          index < (uint64_t{1} << (depth * options.dimensions)); ++index) {
-      Cell child{cell.min, level};
+      Cell child{.min = cell.min, .level = level};
       for (uint32_t step = 0; step < depth; ++step) {
         const auto bit = uint64_t{1} << (63 - cell.level - step);
         for (uint32_t axis = 0; axis < options.dimensions; ++axis) {

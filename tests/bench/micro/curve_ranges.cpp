@@ -51,13 +51,16 @@ struct Sample {
       constrained{partial ? 1u : dimensions} {
     pcg64 random{1099};
     const auto uniform = [&] { return absl::Uniform<double>(random, 0, 1000); };
+    std::array<double, kMaxDimensions> center{};
     for (uint32_t id = 0; id < 8192; ++id) {
-      Point point;
-      point.fill(0);
+      Point point{};
       const auto shared = uniform();
       for (uint32_t axis = 0; axis < dimensions; ++axis) {
         const auto value = correlated ? shared + uniform() * 0.01 : uniform();
         point[axis] = EncodeDouble(value);
+        if (id == 0) {
+          center[axis] = value;
+        }
         if (method == 0) {
           for (uint32_t level = 0; level < 4; ++level) {
             const auto shift = level * 16;
@@ -68,20 +71,23 @@ struct Sample {
       }
       points.emplace_back(point);
       if (method != 0) {
-        PointTerms(point, options, [&](std::span<const uint8_t> term) {
-          const std::string_view key{
-            reinterpret_cast<const char*>(term.data()),
-            term.size(),
-          };
-          curve[key].emplace_back(id);
-        });
+        Code code{};
+        const auto size = LeafCode(point, options, code.data());
+        CodeTerms(std::span<const uint8_t>{code.data(), size}, options,
+                  [&](std::span<const uint8_t> term) {
+                    const std::string_view key{
+                      reinterpret_cast<const char*>(term.data()),
+                      term.size(),
+                    };
+                    curve[key].emplace_back(id);
+                  });
       }
     }
     for (uint32_t axis = 0; axis < dimensions; ++axis) {
-      const auto center = DecodeDouble(points[0][axis]);
-      query.min[axis] = axis < constrained ? EncodeDouble(center - 25) : 0;
+      query.min[axis] =
+        axis < constrained ? EncodeDouble(center[axis] - 25) : 0;
       query.max[axis] =
-        axis < constrained ? EncodeDouble(center + 25) : UINT64_MAX;
+        axis < constrained ? EncodeDouble(center[axis] + 25) : UINT64_MAX;
     }
   }
 
@@ -158,8 +164,7 @@ void CurveRanges(benchmark::State& state) {
     }
     return true;
   });
-  std::array<uint64_t, 4> result;
-  result.fill(0);
+  std::array<uint64_t, 4> result{};
   for (auto _ : state) {
     result = sample.Run(method);
     benchmark::DoNotOptimize(result);

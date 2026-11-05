@@ -49,9 +49,6 @@ inline constexpr std::string_view kStructPackFunction = "struct_pack";
 inline constexpr std::string_view kCoordinateTypes =
   "an integer, FLOAT, DOUBLE, DATE, TIMESTAMP, TIMESTAMPTZ or INET";
 
-inline constexpr uint8_t kInetV4 = 1;
-inline constexpr uint8_t kInetV6 = 2;
-
 std::optional<CurveFamily> CoordinateFamily(const duckdb::LogicalType& type) {
   using enum duckdb::LogicalTypeId;
   if (pg::IsInet(type)) {
@@ -84,24 +81,6 @@ std::optional<CurveFamily> CoordinateFamily(const duckdb::LogicalType& type) {
   }
 }
 
-uint32_t IntegerWidth(duckdb::LogicalTypeId type) {
-  using enum duckdb::LogicalTypeId;
-  switch (type) {
-    case TINYINT:
-    case UTINYINT:
-      return 8;
-    case SMALLINT:
-    case USMALLINT:
-      return 16;
-    case INTEGER:
-    case UINTEGER:
-    case DATE:
-      return 32;
-    default:
-      return 64;
-  }
-}
-
 uint64_t SignedKey(int64_t value, uint32_t width) noexcept {
   return (static_cast<uint64_t>(value) + (uint64_t{1} << (width - 1)))
          << (64 - width);
@@ -111,12 +90,13 @@ uint64_t UnsignedKey(uint64_t value, uint32_t width) noexcept {
   return value << (64 - width);
 }
 
-uint32_t KeyWidth(const CurveAxis& axis) noexcept {
+uint32_t KeyWidth(const CurveAxis& axis) {
   switch (axis.family) {
     case CurveFamily::Signed:
     case CurveFamily::Unsigned:
     case CurveFamily::Date:
-      return IntegerWidth(axis.type.id());
+      return static_cast<uint32_t>(
+        duckdb::GetTypeIdSize(axis.type.InternalType()) * 8);
     default:
       return 64;
   }
@@ -126,7 +106,7 @@ bool Normalized(const CurveAxis& axis) noexcept {
   return !std::holds_alternative<std::monostate>(axis.range);
 }
 
-uint32_t KeyShift(const CurveAxis& axis) noexcept {
+uint32_t KeyShift(const CurveAxis& axis) {
   if (axis.family == CurveFamily::Inet) {
     const auto* keys = std::get_if<CurveKeyRange>(&axis.range);
     return keys && keys->hi < irs::curve::kSignBit ? 31 : 0;
@@ -134,7 +114,7 @@ uint32_t KeyShift(const CurveAxis& axis) noexcept {
   return 64 - KeyWidth(axis);
 }
 
-uint32_t AxisBits(const CurveAxis& axis) noexcept {
+uint32_t AxisBits(const CurveAxis& axis) {
   if (axis.family == CurveFamily::Null) {
     return 0;
   }
@@ -154,37 +134,37 @@ uint32_t AxisBits(const CurveAxis& axis) noexcept {
 }
 
 struct InetValue {
-  uint8_t ip_type = 0;
-  absl::uint128 network;
+  inet_terms::Family family = inet_terms::Family::V4;
+  absl::uint128 network = 0;
 };
 
-InetValue InetNetwork(uint8_t ip_type, absl::uint128 address,
+InetValue InetNetwork(inet_terms::Family family, absl::uint128 address,
                       uint16_t mask) noexcept {
-  const uint32_t bits = ip_type == kInetV6 ? 128 : 32;
+  const auto bits = inet_terms::MaxBits(family);
   if (mask >= bits) {
-    return {.ip_type = ip_type, .network = address};
+    return {.family = family, .network = address};
   }
   const auto host = absl::Uint128Max() >> (128 - bits + mask);
-  return {.ip_type = ip_type, .network = address & ~host};
+  return {.family = family, .network = address & ~host};
 }
 
 InetValue StoredInet(uint8_t ip_type, duckdb::hugeint_t address,
                      uint16_t mask) noexcept {
-  if (ip_type == kInetV6) {
-    return InetNetwork(ip_type,
+  const auto family = static_cast<inet_terms::Family>(ip_type);
+  if (family == inet_terms::Family::V6) {
+    return InetNetwork(family,
                        absl::MakeUint128(static_cast<uint64_t>(address.upper) ^
                                            pg::kInetV6SortBit,
                                          address.lower),
                        mask);
   }
-  return InetNetwork(ip_type, address.lower, mask);
+  return InetNetwork(family, address.lower, mask);
 }
 
 uint64_t InetKey(const InetValue& value) noexcept {
-  if (value.ip_type == kInetV6) {
+  if (value.family == inet_terms::Family::V6) {
     return irs::curve::kSignBit | (absl::Uint128High64(value.network) >> 1);
   }
-  SDB_ASSERT(value.ip_type == kInetV4);
   return absl::Uint128Low64(value.network) << 31;
 }
 
@@ -196,12 +176,13 @@ std::optional<InetValue> DecodeInet(const duckdb::Value& value) {
   const auto* address = inet->address.data();
   if (inet->family == inet_terms::Family::V6) {
     return InetNetwork(
-      kInetV6,
+      inet->family,
       absl::MakeUint128(absl::big_endian::Load64(address),
                         absl::big_endian::Load64(address + sizeof(uint64_t))),
       inet->mask);
   }
-  return InetNetwork(kInetV4, absl::big_endian::Load32(address), inet->mask);
+  return InetNetwork(inet->family, absl::big_endian::Load32(address),
+                     inet->mask);
 }
 
 std::optional<InetValue> ToInet(const duckdb::Value& bound) {
@@ -212,7 +193,7 @@ std::optional<InetValue> ToInet(const duckdb::Value& bound) {
 }
 
 uint64_t Ipv6RangeKey(const CurveIpv6Range& range, InetValue value) noexcept {
-  if (value.ip_type != kInetV6) {
+  if (value.family != inet_terms::Family::V6) {
     return 0;
   }
   const auto offset = std::clamp(value.network, range.lo, range.hi) - range.lo;
@@ -231,24 +212,12 @@ struct RawBound {
   bool exact = false;
 };
 
-bool IsSignedInteger(duckdb::LogicalTypeId type) {
-  using enum duckdb::LogicalTypeId;
-  return type == TINYINT || type == SMALLINT || type == INTEGER ||
-         type == BIGINT;
-}
-
-bool IsUnsignedInteger(duckdb::LogicalTypeId type) {
-  using enum duckdb::LogicalTypeId;
-  return type == UTINYINT || type == USMALLINT || type == UINTEGER ||
-         type == UBIGINT;
-}
-
 std::optional<RawBound> ToRaw(const CurveAxis& axis,
                               const duckdb::Value& bound) {
   using enum duckdb::LogicalTypeId;
   const auto type = bound.type().id();
-  const bool is_signed = IsSignedInteger(type);
-  const bool is_unsigned = IsUnsignedInteger(type);
+  const bool is_signed = bound.type().IsSigned() && type != HUGEINT;
+  const bool is_unsigned = bound.type().IsUnsigned() && type != UHUGEINT;
   const auto width = KeyWidth(axis);
   switch (axis.family) {
     case CurveFamily::Signed: {
@@ -522,7 +491,8 @@ void Normalize(duckdb::ClientContext& context, CurveAxis& axis, uint32_t index,
   if (axis.family == CurveFamily::Inet) {
     const auto lo = ToInet(*lower);
     const auto hi = ToInet(*upper);
-    if (lo && hi && lo->ip_type == kInetV6 && hi->ip_type == kInetV6) {
+    if (lo && hi && lo->family == inet_terms::Family::V6 &&
+        hi->family == inet_terms::Family::V6) {
       if (lo->network >= hi->network) {
         ThrowBadBounds(context, index, kInetBoundsNeed, *lower, *upper);
       }
@@ -586,7 +556,7 @@ std::optional<CurveKey> CurveBoundKey(const CurveAxis& axis,
   };
 }
 
-CurveInterval CurveLimits(const CurveAxis& axis) noexcept {
+CurveInterval CurveLimits(const CurveAxis& axis) {
   constexpr auto kMax = std::numeric_limits<uint64_t>::max();
   if (Normalized(axis)) {
     return {.max = kMax};
@@ -760,9 +730,8 @@ void EncodeCurveCodes(const CurveSpec& spec, duckdb::DataChunk& args,
   }
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  irs::curve::Point keys;
-  keys.fill(0);
-  irs::curve::Code code;
+  irs::curve::Point keys{};
+  irs::curve::Code code{};
   for (duckdb::idx_t row = 0; row < count; ++row) {
     bool valid = validity.RowIsValid(row);
     for (uint32_t axis = 0; axis < dimensions && valid; ++axis) {

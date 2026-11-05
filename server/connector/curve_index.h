@@ -91,7 +91,7 @@ struct CurveAxis {
 
 std::optional<CurveKey> CurveBoundKey(const CurveAxis& axis,
                                       const duckdb::Value& bound);
-CurveInterval CurveLimits(const CurveAxis& axis) noexcept;
+CurveInterval CurveLimits(const CurveAxis& axis);
 
 struct CurveSpec final : public duckdb::FunctionData {
   irs::curve::Options options;

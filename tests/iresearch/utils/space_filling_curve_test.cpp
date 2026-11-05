@@ -148,10 +148,13 @@ bool Match(const std::vector<std::string>& indexed,
 
 std::vector<std::string> IndexedPoint(const Point& point,
                                       const Options& options) {
+  Code code{};
+  const auto size = LeafCode(point, options, code.data());
   std::vector<std::string> terms;
-  PointTerms(point, options, [&](std::span<const uint8_t> term) {
-    terms.emplace_back(term.begin(), term.end());
-  });
+  CodeTerms(std::span<const uint8_t>{code.data(), size}, options,
+            [&](std::span<const uint8_t> term) {
+              terms.emplace_back(term.begin(), term.end());
+            });
   return terms;
 }
 
@@ -222,13 +225,9 @@ TEST(SpaceFillingCurve, OrderedNumbers) {
   for (size_t i = 1; i < values.size(); ++i) {
     EXPECT_LT(EncodeDouble(values[i - 1]), EncodeDouble(values[i]));
   }
-  for (const auto value : values) {
-    EXPECT_EQ(DecodeDouble(EncodeDouble(value)), value);
-  }
   EXPECT_EQ(EncodeDouble(-0.0), EncodeDouble(0.0));
   EXPECT_LT(EncodeDouble(INFINITY), EncodeDouble(NAN));
   EXPECT_EQ(EncodeDouble(NAN), EncodeDouble(-NAN));
-  EXPECT_TRUE(std::isnan(DecodeDouble(EncodeDouble(NAN))));
 }
 
 TEST(SpaceFillingCurve, NormalizedKeys) {

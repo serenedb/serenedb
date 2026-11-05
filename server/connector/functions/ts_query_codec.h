@@ -119,6 +119,9 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts);
 
 std::string RenderTSQueryValueText(const TSQueryParts& parts);
 
+std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
+                                               const duckdb::Expression& expr);
+
 std::optional<duckdb::Value> TryFoldTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children);

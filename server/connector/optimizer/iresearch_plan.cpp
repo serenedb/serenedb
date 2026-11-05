@@ -1493,18 +1493,18 @@ std::map<const duckdb::Expression*, connector::WideRanges> DecideColumnRanges(
 }
 
 bool ClaimCurveRanges(
+  duckdb::ClientContext& context,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::ScanBindData& scan,
   irs::BooleanFilter& root,
-  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields,
-  duckdb::ClientContext& context) {
+  irs::containers::FlatHashSet<irs::field_id>& analyzed_fields) {
   const auto& config = *scan.relation.inverted_config;
-  const auto is_curve = [&](const auto& key) {
+  const auto curve_field = [&](const auto& key) {
     const auto* field = config.FindEntry(key.field_id);
     SDB_ASSERT(field);
-    return field->curve.has_value();
+    return field->curve ? field : nullptr;
   };
-  if (absl::c_none_of(config.keys, is_curve)) {
+  if (absl::c_none_of(config.keys, curve_field)) {
     return false;
   }
   const auto projected_ids = BuildProjectedColumnIds(get, scan);
@@ -1521,16 +1521,16 @@ bool ClaimCurveRanges(
     });
   bool any_claimed = false;
   for (const auto& key : config.keys) {
-    if (!is_curve(key)) {
+    const auto* field = curve_field(key);
+    if (!field) {
       continue;
     }
     const auto curve =
       connector::DeserializeBoundExpression(key.normalized_expression, context);
-    const auto info =
-      MakeSearchColumnInfo(key.field_id, config.FindEntry(key.field_id),
-                           key.type, dicts.Acquire(key.field_id));
-    if (connector::AddCurveRangeCandidates(root, ranges, *curve, info,
-                                           context)) {
+    const auto info = MakeSearchColumnInfo(key.field_id, field, key.type,
+                                           dicts.Acquire(key.field_id));
+    if (connector::AddCurveRangeCandidates(context, root, ranges, *curve,
+                                           info)) {
       any_claimed = true;
       analyzed_fields.emplace(info.field_id);
     }
@@ -1546,7 +1546,7 @@ bool ClaimSearchConjuncts(
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed =
-    ClaimCurveRanges(filters, get, scan, *root_and, analyzed_fields, context);
+    ClaimCurveRanges(context, filters, get, scan, *root_and, analyzed_fields);
   connector::FilterScorers filter_scorers;
   DeferredClaimBuilder deferred;
   deferred.column_id = &column_id;
@@ -1577,8 +1577,8 @@ bool ClaimSearchConjuncts(
   std::vector<connector::RowFilter> duals;
   std::vector<IndexOnly> index_only;
   for (size_t i = 0; i < filters.size();) {
-    if (connector::ClaimCurveMatch(*root_and, filters, i, expr_getter,
-                                   context)) {
+    if (connector::ClaimCurveMatch(context, *root_and, filters, i,
+                                   expr_getter)) {
       any_claimed = true;
       continue;
     }

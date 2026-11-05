@@ -52,8 +52,9 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
+#include <iresearch/index/merge/merge_workers.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
@@ -230,8 +231,9 @@ void BM_Merge(benchmark::State& state) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   const std::vector<irs::SortKey> spec{{{.column = kKey}}};
-  const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), threads};
+  const auto pool = duckdb::TaskScheduler::GetScheduler(
+                      irs::DuckDBEngine::Instance().instance())
+                      .CreateDedicatedPool(threads);
   for (auto _ : state) {
     state.PauseTiming();
     const auto base_kb = ResetPeakKb();
@@ -246,7 +248,7 @@ void BM_Merge(benchmark::State& state) {
     auto doc_map =
       irs::MakeMergeDocMap(inputs.reader, options.resource_manager);
     irs::MergeProfile profile;
-    if (!irs::MergeSegments(out, doc_map, meta, options, executor, {}, nullptr,
+    if (!irs::MergeSegments(out, doc_map, meta, options, pool, {}, nullptr,
                             &profile)) {
       state.SkipWithError("merge failed");
       return;
@@ -613,16 +615,16 @@ void BM_KeyOrder(benchmark::State& state) {
   const auto& inputs = InputsOf(static_cast<Layout>(state.range(0)));
   const std::vector<irs::SortKey> spec{{{.column = kKey}}};
   const irs::MergeProgress proceed = [] { return true; };
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  const irs::MergeWorkers workers{scheduler, scheduler.CreateDedicatedPool(1)};
   for (auto _ : state) {
     irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
     for (const auto& segment : inputs.reader) {
       doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
     }
     irs::KeyOrder order{doc_map, spec, nullptr};
-    if (!order.Prepare(1, proceed,
-                       duckdb::TaskScheduler::GetScheduler(
-                         irs::DuckDBEngine::Instance().instance()),
-                       1)) {
+    if (!order.Prepare(1, proceed, workers)) {
       state.SkipWithError("order failed");
       return;
     }

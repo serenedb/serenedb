@@ -28,6 +28,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/term_keys.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
@@ -503,7 +504,7 @@ TEST_P(TermMergeTest, LongRunsAndSharedTermsMatchTheOracle) {
   irs::MemoryDirectory out;
   irs::SegmentMeta meta;
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(out, doc_map, meta, options, MakeExecutor()));
+  ASSERT_TRUE(irs::MergeSegments(out, doc_map, meta, options, MergePool(1)));
   const auto merged =
     irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);

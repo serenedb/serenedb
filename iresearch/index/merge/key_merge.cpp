@@ -225,7 +225,7 @@ void KeyOrder::ConcatOrder() {
 }
 
 bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
-                       duckdb::TaskScheduler& scheduler, size_t threads) {
+                       const MergeWorkers& workers) {
   std::vector<KeyColumn> keys;
   duckdb::vector<duckdb::LogicalType> types;
   duckdb::vector<duckdb::OrderModifiers> modifiers;
@@ -262,15 +262,15 @@ bool KeyOrder::Prepare(size_t partitions, const MergeProgress& progress,
   }
   duckdb::PresortedMerge merge{std::move(types), std::move(modifiers),
                                std::move(inputs)};
-  merge.Partition(partitions, false, &scheduler, threads);
+  merge.Partition(partitions, false, &workers.scheduler, workers.threads,
+                  MergeAccount(workers));
   PlanParts(merge);
   std::atomic_bool stopped{false};
-  ForEachPartition(merge.PartitionCount(), scheduler, threads,
-                   [&](size_t partition) {
-                     if (!Expand(merge, partition, progress)) {
-                       stopped.store(true, std::memory_order_relaxed);
-                     }
-                   });
+  ForEachPartition(merge.PartitionCount(), workers, [&](size_t partition) {
+    if (!Expand(merge, partition, progress)) {
+      stopped.store(true, std::memory_order_relaxed);
+    }
+  });
   if (stopped.load(std::memory_order_relaxed)) {
     return false;
   }

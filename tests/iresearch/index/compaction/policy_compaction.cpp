@@ -29,7 +29,6 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <utility>
 #include <vector>
 
@@ -164,18 +163,9 @@ CompactionPolicy MakePolicy(const CompactionDocsLive& options) {
 irs::CompactionResult Compact(irs::IndexWriter& writer,
                               const CompactionPolicy& policy,
                               const irs::IndexFieldOptions* field_options,
-                              const irs::MergeProgress& progress) {
-  const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), 1};
-  return Compact(writer, policy, field_options, progress, nullptr, executor);
-}
-
-irs::CompactionResult Compact(irs::IndexWriter& writer,
-                              const CompactionPolicy& policy,
-                              const irs::IndexFieldOptions* field_options,
                               const irs::MergeProgress& progress,
                               const irs::AnnBuildEnv* env,
-                              const irs::PipelineMergeExecutor& executor) {
+                              duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
   bool busy = false;
   auto tickets = writer.ReserveMerges(
     [&policy](const irs::IndexReader& index,
@@ -195,7 +185,7 @@ irs::CompactionResult Compact(irs::IndexWriter& writer,
   SDB_ASSERT(tickets.size() == 1);
   irs::CompactionResult result;
   irs::GetReady(writer.RunMerge(std::move(tickets.front()), field_options,
-                                progress, env, executor, result));
+                                progress, env, std::move(pool), result));
   return result;
 }
 

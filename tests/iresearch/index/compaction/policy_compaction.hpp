@@ -30,8 +30,9 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_progress.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <limits>
+
+#include "index/merge/support/parallel_merge.hpp"
 
 namespace tests {
 
@@ -72,13 +73,8 @@ CompactionPolicy MakePolicy(const CompactionDocsFill& options);
 irs::CompactionResult Compact(
   irs::IndexWriter& writer, const CompactionPolicy& policy,
   const irs::IndexFieldOptions* field_options = nullptr,
-  const irs::MergeProgress& progress = {});
-
-irs::CompactionResult Compact(irs::IndexWriter& writer,
-                              const CompactionPolicy& policy,
-                              const irs::IndexFieldOptions* field_options,
-                              const irs::MergeProgress& progress,
-                              const irs::AnnBuildEnv* env,
-                              const irs::PipelineMergeExecutor& executor);
+  const irs::MergeProgress& progress = {},
+  const irs::AnnBuildEnv* env = nullptr,
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool = merge::MergePool(1));
 
 }  // namespace tests

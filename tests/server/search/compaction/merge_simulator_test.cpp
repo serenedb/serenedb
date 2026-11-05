@@ -32,7 +32,6 @@
 
 namespace {
 
-using sdb::search::MergeLane;
 using sdb::search::MergePicker;
 using sdb::search::MergeSimulation;
 using sdb::search::SimulatedEvent;
@@ -80,10 +79,10 @@ MergePicker MergeAtLeast(size_t count) {
             size_t) { return PickUntaken(index, taken, count); };
 }
 
-MergeSimulation Options(size_t threads, size_t at_least = 2) {
+MergeSimulation Options(size_t slots, size_t at_least = 2) {
   MergeSimulation options;
   options.pick = MergeAtLeast(at_least);
-  options.threads = threads;
+  options.slots = slots;
   options.bytes_per_second = double{kMiB};
   return options;
 }
@@ -145,7 +144,6 @@ TEST(MergeSimulator, FlushesReplayInTimeOrder) {
   EXPECT_EQ("_2", events[1].segment);
   EXPECT_EQ(2, events[1].segments);
   EXPECT_EQ(5 * kMiB, events[1].segment_bytes);
-  EXPECT_EQ(0, events[1].merges_queued);
   EXPECT_EQ(0, events[1].merges_running);
 }
 
@@ -163,11 +161,8 @@ TEST(MergeSimulator, AMergeTakesItsBytesOverTheThroughput) {
   EXPECT_EQ(200, merge.live_docs);
   EXPECT_EQ(4 * kMiB, merge.bytes);
   EXPECT_EQ(4 * kMiB, merge.input_bytes);
-  EXPECT_EQ(absl::Seconds(1), merge.queued);
   EXPECT_EQ(absl::Seconds(1), merge.started);
-  EXPECT_EQ(1, merge.threads);
-  EXPECT_DOUBLE_EQ(double{6 * kMiB}, merge.score);
-  EXPECT_EQ(MergeLane::Small, merge.lane);
+  EXPECT_TRUE(merge.small);
   EXPECT_EQ(1, merge.segments);
   EXPECT_EQ(4 * kMiB, merge.segment_bytes);
   EXPECT_EQ(0, merge.merges_running);
@@ -186,81 +181,51 @@ TEST(MergeSimulator, AMergePurgesDeletedDocs) {
   EXPECT_EQ(4 * kMiB, merge.input_bytes);
 }
 
-TEST(MergeSimulator, BigMergesTakeHelperThreads) {
-  auto options = Options(4);
-  options.bytes_per_second = double{32 * kMiB};
-  const auto events =
-    SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)}, options);
-  ASSERT_EQ(3, events.size());
-  EXPECT_EQ(MergeLane::Big, events[2].lane);
-  EXPECT_EQ(3, events[2].threads);
-  EXPECT_EQ(absl::Seconds(4.0 / 3), events[2].at);
-}
-
-TEST(MergeSimulator, HelpersComeOnlyFromFreeThreads) {
+TEST(MergeSimulator, BigMergesLeaveASlotForSmallOnes) {
   auto options = Options(2);
   options.bytes_per_second = double{32 * kMiB};
-  const auto events =
-    SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)}, options);
-  ASSERT_EQ(3, events.size());
-  EXPECT_EQ(MergeLane::Big, events[2].lane);
-  EXPECT_EQ(1, events[2].threads);
-  EXPECT_EQ(absl::Seconds(4), events[2].at);
-}
-
-TEST(MergeSimulator, ARoundStartsAllItsMergesBeforeAnyGetsHelpers) {
-  auto options = Options(4);
-  options.bytes_per_second = double{32 * kMiB};
-  options.pick = [](const irs::IndexReader& index,
-                    const irs::CompactingSegments& taken, size_t wanted) {
-    irs::MergeGroups groups;
-    if (index.size() < 4) {
-      return groups;
-    }
-    for (const auto& segment : index) {
-      if (taken.contains(segment.Meta().name)) {
-        continue;
-      }
-      if (groups.empty() || groups.back().size() == 2) {
-        if (groups.size() == wanted) {
-          break;
-        }
-        groups.emplace_back();
-      }
-      groups.back().emplace_back(&segment);
-    }
-    return groups;
-  };
-  const auto events = SimulateMerges({Flush(0, 64 * kMiB), Flush(0, 64 * kMiB),
-                                      Flush(0, 64 * kMiB), Flush(0, 64 * kMiB)},
-                                     options);
-  ASSERT_EQ(6, events.size());
-  EXPECT_EQ(2, events[3].merges_running);
-  EXPECT_EQ(Names({"_1", "_2"}), events[4].inputs);
-  EXPECT_EQ(2, events[4].threads);
-  EXPECT_EQ(absl::Seconds(2), events[4].at);
-  EXPECT_EQ(Names({"_3", "_4"}), events[5].inputs);
-  EXPECT_EQ(1, events[5].threads);
-  EXPECT_EQ(absl::Seconds(4), events[5].at);
-}
-
-TEST(MergeSimulator, RelationsShareTheMergeThreads) {
-  const auto events =
-    SimulateMerges({Flush(0, 2 * kMiB, 1), Flush(0, 2 * kMiB, 1),
-                    Flush(1, 2 * kMiB, 2), Flush(1, 2 * kMiB, 2)},
-                   Options(1));
-  ASSERT_EQ(6, events.size());
+  const auto events = SimulateMerges(
+    {Flush(0, 64 * kMiB, 1), Flush(0, 64 * kMiB, 1), Flush(0, 64 * kMiB, 2),
+     Flush(0, 64 * kMiB, 2), Flush(1, kMiB, 3), Flush(1, kMiB, 3)},
+    options);
+  ASSERT_EQ(9, events.size());
   EXPECT_EQ(2, events[3].relation_id);
-  EXPECT_EQ(1, events[3].merges_queued);
   EXPECT_EQ(1, events[3].merges_running);
-  EXPECT_EQ(1, events[4].relation_id);
-  EXPECT_EQ(absl::Seconds(4), events[4].at);
-  EXPECT_EQ(0, events[4].merges_queued);
-  EXPECT_EQ(1, events[4].merges_running);
-  const auto& waited = events[5];
+  EXPECT_EQ(2, events[5].merges_running);
+  const auto& small = events[6];
+  EXPECT_EQ(3, small.relation_id);
+  EXPECT_TRUE(small.small);
+  EXPECT_EQ(absl::Seconds(1), small.started);
+  EXPECT_EQ(absl::Seconds(1.0625), small.at);
+  const auto& big = events[7];
+  EXPECT_EQ(1, big.relation_id);
+  EXPECT_FALSE(big.small);
+  EXPECT_EQ(absl::ZeroDuration(), big.started);
+  EXPECT_EQ(absl::Seconds(4), big.at);
+  const auto& waited = events[8];
   EXPECT_EQ(2, waited.relation_id);
+  EXPECT_FALSE(waited.small);
+  EXPECT_EQ(absl::Seconds(4), waited.started);
+  EXPECT_EQ(absl::Seconds(8), waited.at);
+}
+
+TEST(MergeSimulator, RelationsShareTheMergeSlots) {
+  const auto events = SimulateMerges(
+    {Flush(0, 2 * kMiB, 1), Flush(0, 2 * kMiB, 1), Flush(1, 2 * kMiB, 2),
+     Flush(1, 2 * kMiB, 2), Flush(2, 2 * kMiB, 3), Flush(2, 2 * kMiB, 3)},
+    Options(2));
+  ASSERT_EQ(9, events.size());
+  EXPECT_EQ(2, events[3].merges_running);
+  EXPECT_EQ(3, events[5].relation_id);
+  EXPECT_EQ(2, events[5].merges_running);
+  EXPECT_EQ(1, events[6].relation_id);
+  EXPECT_EQ(absl::Seconds(4), events[6].at);
+  EXPECT_EQ(2, events[6].merges_running);
+  EXPECT_EQ(2, events[7].relation_id);
+  EXPECT_EQ(absl::Seconds(5), events[7].at);
+  const auto& waited = events[8];
+  EXPECT_EQ(3, waited.relation_id);
   EXPECT_EQ("_3", waited.segment);
-  EXPECT_EQ(absl::Seconds(1), waited.queued);
   EXPECT_EQ(absl::Seconds(4), waited.started);
   EXPECT_EQ(absl::Seconds(8), waited.at);
 }

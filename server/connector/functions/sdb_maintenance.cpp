@@ -42,7 +42,6 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/statistics/node_statistics.hpp>
 #include <iresearch/index/merge/merge_profile.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -81,10 +80,8 @@ struct CompactBindData final : duckdb::TableFunctionData {
 
 struct CompactState final : duckdb::GlobalTableFunctionState {
   CompactState(duckdb::ClientContext& context, const CompactBindData& data)
-    : executor{*context.db, duckdb::TaskScheduler::QueryThreads(context)},
-      compaction{data.target, data.request, context} {}
+    : compaction{data.target, data.request, context} {}
 
-  const irs::PipelineMergeExecutor executor;
   ManualCompaction compaction;
   size_t merges = 0;
   std::array<size_t, magic_enum::enum_count<search::MergeOutcome>()> outcomes{};
@@ -335,8 +332,7 @@ void CompactExecute(duckdb::ClientContext& context,
     return StatementRunning(context);
   };
   search::MergeResult merge;
-  if (!state.compaction.Next(progress, search::MergeOrigin::Sql, state.executor,
-                             merge)) {
+  if (!state.compaction.Next(progress, search::MergeOrigin::Sql, merge)) {
     return;
   }
   context.InterruptCheck();

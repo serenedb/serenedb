@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <span>
 
@@ -32,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/merge/merge_workers.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -54,7 +54,6 @@ bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
-                   size_t threads);
+                   uint64_t keyed_dicts, const MergeWorkers& workers);
 
 }  // namespace irs

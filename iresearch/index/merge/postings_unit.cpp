@@ -196,12 +196,12 @@ TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
 
 void WriteParts(term_dict::FieldWriter& writer,
                 const term_dict::PartsField& field,
-                duckdb::TaskScheduler& scheduler, size_t threads) {
+                const MergeWorkers& workers) {
   const auto count = field.parts.size();
   std::vector<std::unique_ptr<term_dict::PartBlocks>> built(count);
   absl::Mutex mutex;
   size_t appended = 0;
-  ForEachPartition(count, scheduler, threads, [&](size_t part) {
+  ForEachPartition(count, workers, [&](size_t part) {
     auto run = std::make_unique<term_dict::PartBlocks>(field, part);
     absl::MutexLock lock{&mutex};
     built[part] = std::move(run);
@@ -221,8 +221,7 @@ bool WriteFields(const FlushState& flush_state, PostingsOutputs outputs,
                  const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
                  std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                 uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
-                 size_t threads) {
+                 uint64_t keyed_dicts, const MergeWorkers& workers) {
   SDB_ASSERT(
     absl::c_all_of(ranges, [](const auto& range) { return range->Done(); }));
   CompoundFieldIterator<Postings> field_itr{inputs, progress, field_options};
@@ -281,7 +280,7 @@ bool WriteFields(const FlushState& flush_state, PostingsOutputs outputs,
       WriteParts(
         field_writer,
         field_writer.BeginParts(meta.dict, field_itr, parts, range->DocCount()),
-        scheduler, threads);
+        workers);
       range->ReleaseParts();
       continue;
     }
@@ -318,13 +317,11 @@ bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts, duckdb::TaskScheduler& scheduler,
-                   size_t threads) {
+                   uint64_t keyed_dicts, const MergeWorkers& workers) {
   const auto write =
     sorted ? WriteFields<SortedPostings> : WriteFields<CompoundPostings>;
   return write(flush_state, std::move(outputs), inputs, field_options, progress,
-               merged_norm_ids, idx, extra, ranges, keyed_dicts, scheduler,
-               threads);
+               merged_norm_ids, idx, extra, ranges, keyed_dicts, workers);
 }
 
 }  // namespace irs

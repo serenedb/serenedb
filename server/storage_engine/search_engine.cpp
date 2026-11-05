@@ -29,6 +29,7 @@
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -36,7 +37,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "search/store.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
@@ -80,15 +81,15 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 }  // namespace
 
 ManualCompactionSlot::ManualCompactionSlot() noexcept
-  : _held{GetSearchEngine().Merges().TryAcquireThread()} {}
+  : _held{GetSearchEngine().Merges().TryHoldBig()} {}
 
 ManualCompactionSlot::~ManualCompactionSlot() {
   if (_held) {
-    GetSearchEngine().Merges().ReleaseThread();
+    GetSearchEngine().Merges().ReleaseBig();
   }
 }
 
-const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
+const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() noexcept {
   static const irs::AnnBuildEnv env{.executor = AnnBuildEnv().executor,
                                     .acquire = AnnAcquireAllWorkers,
                                     .release = AnnReleaseWorkers};
@@ -96,9 +97,15 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
 }
 
 void SearchEngine::start() {
-  _merges = std::make_unique<MergeScheduler>(
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
+    irs::DuckDBEngine::Instance().instance());
+  _merge_pool = scheduler.CreateDedicatedPool(
+    static_cast<duckdb::idx_t>(MaxConcurrentCompactions()));
+  _manual_merge_pool =
+    scheduler.CreateDedicatedPool(scheduler.NumberOfThreads());
+  _merges = std::make_unique<MergeRunner>(
     BackgroundScheduler::instance().executor(),
-    static_cast<size_t>(MaxConcurrentCompactions()));
+    2 * static_cast<size_t>(MaxConcurrentCompactions()));
   StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }

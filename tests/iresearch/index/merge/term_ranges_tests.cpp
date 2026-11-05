@@ -30,6 +30,7 @@
 #include <iresearch/formats/posting/block_index.hpp>
 #include <iresearch/formats/posting/writer.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
@@ -533,14 +534,14 @@ TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
   irs::MemoryDirectory out;
   const irs::BM25 bm25;
   auto plan = MakePlan(out, inputs, sorted ? &spec : nullptr, {}, &bm25);
-  ASSERT_TRUE(plan.Prepare(threads));
+  ASSERT_TRUE(plan.Prepare(MergePool(threads)));
   const auto parts = TermRangeParts(plan);
   ASSERT_FALSE(parts.empty());
   for (const auto& [field, count] : parts) {
     EXPECT_LT(1, count) << field;
   }
-  const ShuffledClaims shuffle{shuffled};
-  ASSERT_TRUE(RunPlan(plan, threads));
+  const ShuffledUnits shuffle{shuffled};
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, expected));
   const auto merged = irs::SegmentReaderImpl::Open(
     out, _meta, irs::tests::DefaultReaderOptions());
@@ -562,9 +563,9 @@ TEST_F(TermRangeMergeTest, OneThreadMergesTermsWithoutParts) {
   const auto inputs = Snapshot();
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
-  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_TRUE(TermRangeParts(plan).empty());
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -574,9 +575,11 @@ TEST_F(TermRangeMergeTest, SerialRunsMergeEveryPart) {
   const auto inputs = Snapshot();
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
-  ASSERT_TRUE(plan.Prepare(4));
+  const auto pool = NewMergePool(4);
+  ASSERT_TRUE(plan.Prepare(pool));
   ASSERT_FALSE(TermRangeParts(plan).empty());
-  ASSERT_TRUE(RunPlan(plan));
+  pool->SetThreads(1);
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -590,10 +593,10 @@ TEST_F(TermRangeMergeTest, StoppedPartsFailTheMerge) {
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, inputs, nullptr,
                          [&] { return calls.fetch_add(1) < stop_after; });
-    if (!plan.Prepare(4)) {
+    if (!plan.Prepare(MergePool(4))) {
       continue;
     }
-    const bool ok = RunPlan(plan, 4);
+    const bool ok = irs::ExecuteMerge(plan);
     EXPECT_EQ(calls.load() <= stop_after, ok);
   }
 }
@@ -613,7 +616,7 @@ TEST_F(TermRangeMergeTest, PartsAppendInPartOrderWhicheverFinishesFirst) {
                       &_field_options,
                       {},
                       nullptr};
-  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_TRUE(plan.Prepare(MergePool(8)));
   const auto units = plan.Units();
   std::vector<size_t> firsts;
   std::vector<size_t> rest;
@@ -644,7 +647,7 @@ TEST_F(TermRangeMergeTest, AnAbortedMergeLeavesNoPostingsFiles) {
   irs::MemoryDirectory out;
   {
     auto plan = MakePlan(out, inputs, nullptr);
-    ASSERT_TRUE(plan.Prepare(4));
+    ASSERT_TRUE(plan.Prepare(MergePool(4)));
     EXPECT_FALSE(PostingsFiles(out).empty());
     const auto units = plan.Units();
     std::vector<size_t> later;
@@ -698,9 +701,9 @@ TEST_F(TermRangeMergeTest, EmptyThinAndLongTermPartsMatchTheOracle) {
   const auto inputs = Snapshot();
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
-  ASSERT_TRUE(plan.Prepare(8));
+  ASSERT_TRUE(plan.Prepare(MergePool(8)));
   EXPECT_LE(8, TermRangeParts(plan)[kIdField]);
-  ASSERT_TRUE(RunPlan(plan, 8));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -727,9 +730,9 @@ TEST_F(TermRangeMergeTest, ARangedFieldLeftWithOneTermMatchesTheOracle) {
   const auto inputs = Snapshot();
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, nullptr);
-  ASSERT_TRUE(plan.Prepare(4));
+  ASSERT_TRUE(plan.Prepare(MergePool(4)));
   EXPECT_LE(2, TermRangeParts(plan)[kIdField]);
-  ASSERT_TRUE(RunPlan(plan, 4));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, ExpectedMerge(inputs)));
 }
 
@@ -768,9 +771,9 @@ TEST_F(TermRangeMergeTest, RangedNumbersMatchASerialMerge) {
   const auto inputs = Snapshot();
   const auto merge = [&](irs::Directory& out, size_t threads) {
     auto plan = MakePlan(out, inputs, nullptr);
-    EXPECT_TRUE(plan.Prepare(threads));
+    EXPECT_TRUE(plan.Prepare(MergePool(threads)));
     const auto parts = TermRangeParts(plan)[kNumberField];
-    EXPECT_TRUE(RunPlan(plan, threads));
+    EXPECT_TRUE(irs::ExecuteMerge(plan));
     return std::pair{parts, _meta};
   };
   irs::MemoryDirectory serial_dir;
@@ -845,7 +848,7 @@ TEST_F(TermRangeMergeTest, PostingsFilesThatCannotBeCreatedFailThePlan) {
   NoPositionsDirectory failing{out};
   {
     auto plan = MakePlan(failing, inputs, nullptr);
-    EXPECT_THROW(plan.Prepare(4), irs::SqlException);
+    EXPECT_THROW(plan.Prepare(MergePool(4)), irs::SqlException);
   }
   EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
 }

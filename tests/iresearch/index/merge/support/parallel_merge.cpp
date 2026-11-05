@@ -20,28 +20,40 @@
 
 #include "index/merge/support/parallel_merge.hpp"
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/fault_points.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 namespace tests::merge {
 
-irs::PipelineMergeExecutor MakeExecutor(size_t threads) {
-  return irs::PipelineMergeExecutor{irs::DuckDBEngine::Instance().instance(),
-                                    threads};
+ShuffledUnits::ShuffledUnits(bool shuffled)
+  : _armed{shuffled && duckdb::FaultPoints::Arm("irs::ExecuteMerge::Shuffle")} {
 }
 
-bool RunPlan(irs::MergePlan& plan, size_t threads) {
-  return MakeExecutor(threads).Run(plan);
-}
-
-ShuffledClaims::ShuffledClaims(bool shuffled)
-  : _armed{shuffled &&
-           duckdb::FaultPoints::Arm("irs::MergeSchedule::Shuffle")} {}
-
-ShuffledClaims::~ShuffledClaims() {
+ShuffledUnits::~ShuffledUnits() {
   if (_armed) {
-    duckdb::FaultPoints::Disarm("irs::MergeSchedule::Shuffle");
+    duckdb::FaultPoints::Disarm("irs::ExecuteMerge::Shuffle");
   }
+}
+
+duckdb::shared_ptr<duckdb::DedicatedPool> NewMergePool(size_t threads) {
+  return duckdb::TaskScheduler::GetScheduler(
+           irs::DuckDBEngine::Instance().instance())
+    .CreateDedicatedPool(threads);
+}
+
+duckdb::shared_ptr<duckdb::DedicatedPool> MergePool(size_t threads) {
+  static absl::Mutex mutex;
+  static absl::flat_hash_map<size_t, duckdb::shared_ptr<duckdb::DedicatedPool>>
+    pools;
+  absl::MutexLock lock{&mutex};
+  auto& pool = pools[threads];
+  if (!pool) {
+    pool = NewMergePool(threads);
+  }
+  return pool;
 }
 
 }  // namespace tests::merge

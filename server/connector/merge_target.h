@@ -28,6 +28,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,7 +36,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_registry.h"
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "search/maintenance.h"
 #include "search/store.h"
 #include "storage_engine/search_engine.h"
@@ -83,10 +84,9 @@ class MergeTarget {
                const irs::MergeProgress& progress,
                const irs::IndexFieldOptions* field_options,
                const irs::AnnBuildEnv* env, search::MergeOrigin origin,
-               const irs::PipelineMergeExecutor& executor,
                utils::DrainGate::Pass maintenance,
                search::MergeResult& merged) const;
-  search::MergeScheduler::Lease TakeOver() const {
+  search::MergeRunner::Lease TakeOver() const {
     return search::GetSearchEngine().Merges().TakeOver(_store->MergeRelation());
   }
   void Publish() const;
@@ -108,7 +108,6 @@ class ManualCompaction {
                    duckdb::ClientContext& context);
 
   bool Next(const irs::MergeProgress& progress, search::MergeOrigin origin,
-            const irs::PipelineMergeExecutor& executor,
             search::MergeResult& merge);
 
  private:
@@ -120,8 +119,8 @@ class ManualCompaction {
   MergeRequest _request;
   search::MergeRoundPlan _plan;
   size_t _next = 0;
-  search::MergeScheduler::Lease _lease;
-  search::ManualCompactionSlot _slot;
+  search::MergeRunner::Lease _lease;
+  std::optional<search::ManualCompactionSlot> _slot;
 };
 
 }  // namespace sdb::connector

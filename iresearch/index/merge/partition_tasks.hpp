@@ -25,6 +25,8 @@
 #include <cstddef>
 #include <duckdb/parallel/task_executor.hpp>
 
+#include "iresearch/index/merge/merge_workers.hpp"
+
 namespace irs {
 
 template<typename Work>
@@ -49,9 +51,9 @@ class PartitionTask final : public duckdb::BaseExecutorTask {
 };
 
 template<typename Work>
-void ForEachPartition(size_t count, duckdb::TaskScheduler& scheduler,
-                      size_t threads, const Work& work) {
-  const auto tasks = std::min(threads, count);
+void ForEachPartition(size_t count, const MergeWorkers& workers,
+                      const Work& work) {
+  const auto tasks = std::min(workers.threads, count);
   if (tasks < 2) {
     for (size_t partition = 0; partition != count; ++partition) {
       work(partition);
@@ -59,8 +61,7 @@ void ForEachPartition(size_t count, duckdb::TaskScheduler& scheduler,
     return;
   }
   std::atomic_size_t next{0};
-  duckdb::TaskExecutor executor{
-    scheduler, scheduler.CreateAccount(duckdb::SchedulerClass::BACKGROUND)};
+  duckdb::TaskExecutor executor{workers.scheduler, MergeAccount(workers)};
   for (size_t task = 0; task != tasks; ++task) {
     executor.ScheduleTask(
       duckdb::make_uniq<PartitionTask<Work>>(executor, next, count, work));

@@ -25,7 +25,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -41,6 +40,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/merge/merge_workers.hpp"
 #include "iresearch/index/merge/term_keys.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
@@ -94,8 +94,7 @@ class TermRangeMerge {
 
   TermRangeMerge(DictKey key, FieldProperties props, std::vector<Input> inputs,
                  bool sorted, const MergeProgress& progress, size_t parts,
-                 const Target& target, duckdb::TaskScheduler& scheduler,
-                 size_t threads);
+                 const Target& target, const MergeWorkers& workers);
   ~TermRangeMerge();
 
   TermRangeMerge(const TermRangeMerge&) = delete;

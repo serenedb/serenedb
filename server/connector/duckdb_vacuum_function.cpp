@@ -33,9 +33,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -239,8 +237,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
 
 void CompactTarget(Action action, const MergeTarget& target,
                    std::string_view verb, duckdb::ClientContext& context,
-                   pg::ProgressMetrics* progress,
-                   const irs::PipelineMergeExecutor& executor) {
+                   pg::ProgressMetrics* progress) {
   const irs::MergeProgress tick = [&context, progress] {
     if (progress) {
       pg::ProgressMetrics::Add(progress->step, 1);
@@ -257,7 +254,7 @@ void CompactTarget(Action action, const MergeTarget& target,
     },
     context};
   search::MergeResult merge;
-  while (compaction.Next(tick, search::MergeOrigin::Vacuum, executor, merge)) {
+  while (compaction.Next(tick, search::MergeOrigin::Vacuum, merge)) {
     context.InterruptCheck();
     if (search::OutcomeOf(merge.outcome) == search::MergeOutcome::Failed) {
       THROW_SQL_ERROR(
@@ -454,8 +451,6 @@ void DispatchInverted(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
-  const irs::PipelineMergeExecutor executor{
-    *context.db, duckdb::TaskScheduler::QueryThreads(context)};
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.storage) {
@@ -489,7 +484,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else {
         CompactTarget(action,
                       MergeTarget::Of(step.storage, step.config, step.name),
-                      verb, context, progress, executor);
+                      verb, context, progress);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
@@ -503,7 +498,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         status = search->CleanupUnsafe().res;
       } else {
         CompactTarget(action, MergeTarget::Of(search, step.name), verb, context,
-                      progress, executor);
+                      progress);
       }
       if (!status.ok()) {
         context.InterruptCheck();

@@ -24,6 +24,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/input_norms.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/norms_unit.hpp>
@@ -147,18 +148,17 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
                         {},
                         nullptr,
                         sort};
-    ASSERT_TRUE(plan.Prepare());
-    ASSERT_TRUE(RunPlan(plan));
+    ASSERT_TRUE(plan.Prepare(MergePool(1)));
+    ASSERT_TRUE(irs::ExecuteMerge(plan));
     if (sort != nullptr) {
       for (const auto& input : _doc_map) {
         _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
       }
       _order = std::make_unique<irs::KeyOrder>(_order_map, *sort, nullptr);
-      ASSERT_TRUE(_order->Prepare(
-        1, [] { return true; },
-        duckdb::TaskScheduler::GetScheduler(
-          irs::DuckDBEngine::Instance().instance()),
-        1));
+      ASSERT_TRUE(_order->Prepare(1, [] { return true; },
+                                  {duckdb::TaskScheduler::GetScheduler(
+                                     irs::DuckDBEngine::Instance().instance()),
+                                   MergePool(1)}));
     }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,
                                            irs::tests::DefaultReaderOptions());
@@ -369,8 +369,8 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
                       &field_options,
                       {},
                       nullptr};
-  ASSERT_TRUE(plan.Prepare());
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   const auto merged =
     irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);

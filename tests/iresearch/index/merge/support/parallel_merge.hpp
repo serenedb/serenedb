@@ -21,25 +21,24 @@
 #pragma once
 
 #include <cstddef>
-#include <iresearch/index/merge/merge_plan.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 
 namespace tests::merge {
 
-irs::PipelineMergeExecutor MakeExecutor(size_t threads = 1);
-
-bool RunPlan(irs::MergePlan& plan, size_t threads = 1);
-
-class ShuffledClaims {
+class ShuffledUnits {
  public:
-  explicit ShuffledClaims(bool shuffled = true);
-  ~ShuffledClaims();
+  explicit ShuffledUnits(bool shuffled = true);
+  ~ShuffledUnits();
 
-  ShuffledClaims(const ShuffledClaims&) = delete;
-  ShuffledClaims& operator=(const ShuffledClaims&) = delete;
+  ShuffledUnits(const ShuffledUnits&) = delete;
+  ShuffledUnits& operator=(const ShuffledUnits&) = delete;
 
  private:
   bool _armed;
 };
+
+duckdb::shared_ptr<duckdb::DedicatedPool> MergePool(size_t threads);
+
+duckdb::shared_ptr<duckdb::DedicatedPool> NewMergePool(size_t threads);
 
 }  // namespace tests::merge

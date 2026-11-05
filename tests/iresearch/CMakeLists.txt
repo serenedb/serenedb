@@ -112,11 +112,10 @@ add_executable(
     index/merge/input_norms_tests.cpp
     index/merge/merge_ann_tests.cpp
     index/merge/merge_characterization_tests.cpp
+    index/merge/merge_executor_tests.cpp
     index/merge/merge_oracle_tests.cpp
     index/merge/merge_plan_tests.cpp
-    index/merge/merge_schedule_tests.cpp
     index/merge/sorted_merge_tests.cpp
-    index/merge/support/parallel_merge.cpp
     index/merge/support/segment_dump.cpp
     index/merge/support/segment_gen.cpp
     index/merge/term_keys_tests.cpp

@@ -33,7 +33,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -430,11 +429,10 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
     }
   };
   bool busy = false;
-  const irs::PipelineMergeExecutor executor{Db(), 1};
   for (auto& ticket : writer.ReserveMerges(everything, busy)) {
     irs::CompactionResult result;
-    irs::GetReady(writer.RunMerge(std::move(ticket), nullptr, {}, nullptr,
-                                  executor, result));
+    irs::GetReady(
+      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, result));
   }
   writer.RefreshCommit();
 

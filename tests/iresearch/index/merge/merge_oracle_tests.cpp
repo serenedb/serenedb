@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -68,8 +69,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
     .field_options = &field_options,
   };
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  flushed =
-    irs::MergeSegments(out, doc_map, meta, options, MakeExecutor(threads));
+  flushed = irs::MergeSegments(out, doc_map, meta, options, MergePool(threads));
   if (!flushed) {
     return nullptr;
   }
@@ -138,7 +138,7 @@ TEST_P(ParallelMergeOracleTest, RandomSegmentSets) {
   const auto expected = ExpectedMerge(inputs);
   for (const bool shuffled : {false, true}) {
     SCOPED_TRACE(shuffled ? "shuffled" : "scheduled");
-    const ShuffledClaims shuffle{shuffled};
+    const ShuffledUnits shuffle{shuffled};
     irs::MemoryDirectory out;
     bool flushed = false;
     const auto merged = MergeAll(out, inputs, flushed, threads);
@@ -248,7 +248,7 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
   irs::MemoryDirectory out;
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   EXPECT_TRUE(
-    irs::MergeSegments(out, doc_map, meta, options, MakeExecutor(threads)));
+    irs::MergeSegments(out, doc_map, meta, options, MergePool(threads)));
   std::vector<std::string> files(meta.files.begin(), meta.files.end());
   std::ranges::sort(files);
   std::string bytes;
@@ -281,7 +281,7 @@ TEST(MergeGoldenTest, ScoredMergeBytesDoNotDependOnTheExecutor) {
     ASSERT_FALSE(inputs.empty());
     const auto bytes = ScoredMergeBytes(inputs);
     for (const uint64_t shuffle : {1, 2, 3}) {
-      const ShuffledClaims shuffled;
+      const ShuffledUnits shuffled;
       EXPECT_EQ(bytes, ScoredMergeBytes(inputs, 4)) << shuffle;
     }
   }

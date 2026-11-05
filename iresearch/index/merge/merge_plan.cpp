@@ -462,7 +462,7 @@ uint64_t MergePlan::PlanTermRanges() {
         .doc_count = _segment.docs_count,
         .sink = _term_sink.get(),
       },
-      duckdb::TaskScheduler::GetScheduler(_db), _threads));
+      Workers()));
   }
   return volume;
 }
@@ -510,8 +510,7 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
            _term_sink ? std::move(_term_sink->Outputs()) : PostingsOutputs{},
            _doc_map, static_cast<bool>(_key_order), _field_options, _progress,
            _merged_norm_ids, *_idx, cluster_readers, _term_ranges,
-           KeyedDicts(_field_meta_map),
-           duckdb::TaskScheduler::GetScheduler(_db), _threads);
+           KeyedDicts(_field_meta_map), Workers());
 }
 
 bool MergePlan::WriteIndex(MergeStepClock& clock) {
@@ -541,8 +540,10 @@ bool MergePlan::WriteIndex(MergeStepClock& clock) {
   return true;
 }
 
-bool MergePlan::Prepare(size_t threads) {
-  _threads = threads;
+bool MergePlan::Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
+  SDB_ASSERT(pool);
+  _pool = std::move(pool);
+  _threads = _pool->Threads();
   MergeStepClock clock{_profile};
   uint64_t live_docs = 0;
   for (const auto& input : _doc_map) {
@@ -562,12 +563,10 @@ bool MergePlan::Prepare(size_t threads) {
       return false;
     }
     const auto partitions =
-      threads > 1
-        ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
+      _threads > 1
+        ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, _threads)
         : 1;
-    if (!_key_order->Prepare(partitions, _progress,
-                             duckdb::TaskScheduler::GetScheduler(_db),
-                             threads)) {
+    if (!_key_order->Prepare(partitions, _progress, Workers())) {
       return false;
     }
     _segment.docs_count = _key_order->Order().Rows();

@@ -56,7 +56,7 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
@@ -226,7 +226,7 @@ class Store final : public std::enable_shared_from_this<Store> {
     utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
     const irs::MergeProgress& progress,
     const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-    const irs::PipelineMergeExecutor& executor);
+    duckdb::shared_ptr<duckdb::DedicatedPool> pool);
 
   auto& GetTasksSettings() noexcept { return _tasks_settings; }
 
@@ -235,8 +235,7 @@ class Store final : public std::enable_shared_from_this<Store> {
                          : irs::kSortedMergeInputsMax;
   }
 
-  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation()
-    const noexcept {
+  const std::shared_ptr<MergeRunner::Relation>& MergeRelation() const noexcept {
     return _merge_relation;
   }
 
@@ -431,7 +430,7 @@ class Store final : public std::enable_shared_from_this<Store> {
   std::shared_ptr<irs::IndexWriter> _writer;
   std::atomic<bool> _dropped{false};
   const std::vector<irs::SortKey> _sort;
-  const std::shared_ptr<MergeScheduler::Relation> _merge_relation;
+  const std::shared_ptr<MergeRunner::Relation> _merge_relation;
   std::atomic<uint32_t> _stale_pressure{0};
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;

@@ -30,8 +30,6 @@
 #include <string>
 #include <vector>
 
-#include "search/compaction/merge_scheduler.h"
-
 namespace sdb::search {
 
 class SimulatedSegment final : public irs::SubReader {
@@ -69,7 +67,7 @@ using MergePicker = std::function<irs::MergeGroups(
 
 struct MergeSimulation {
   MergePicker pick;
-  size_t threads = 1;
+  size_t slots = 1;
   double bytes_per_second = double{uint64_t{16} << 20};
 };
 
@@ -88,14 +86,10 @@ struct SimulatedEvent {
   uint64_t live_docs = 0;
   uint64_t bytes = 0;
   uint64_t input_bytes = 0;
-  absl::Duration queued;
   absl::Duration started;
-  size_t threads = 0;
-  double score = 0;
-  MergeLane lane = MergeLane::Small;
+  bool small = true;
   size_t segments = 0;
   uint64_t segment_bytes = 0;
-  size_t merges_queued = 0;
   size_t merges_running = 0;
 };
 

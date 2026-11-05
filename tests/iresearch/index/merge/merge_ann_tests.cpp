@@ -50,7 +50,6 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/compaction/policy_compaction.hpp"
-#include "index/merge/support/parallel_merge.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -212,12 +211,9 @@ double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
   return static_cast<double>(matched) / static_cast<double>(total);
 }
 
-void CompactAll(irs::IndexWriter& writer, const irs::AnnBuildEnv* env,
-                size_t threads) {
-  const auto executor = tests::merge::MakeExecutor(threads);
-  const auto result =
-    tests::Compact(writer, tests::MakePolicy(tests::CompactionCount()), nullptr,
-                   {}, env, executor);
+void CompactAll(irs::IndexWriter& writer, const irs::AnnBuildEnv* env) {
+  const auto result = tests::Compact(
+    writer, tests::MakePolicy(tests::CompactionCount()), nullptr, {}, env);
   ASSERT_TRUE(result);
   writer.RefreshCommit();
 }
@@ -243,7 +239,7 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
     writer->RefreshCommit();
   }
   ASSERT_EQ(2U, writer->GetSnapshot().size());
-  CompactAll(*writer, nullptr, 1);
+  CompactAll(*writer, nullptr);
   const auto merged = writer->GetSnapshot();
   ASSERT_EQ(1U, merged.size());
 
@@ -318,7 +314,7 @@ TEST(MergeAnnTest, MergeUnitsBuildTheGraphOnAnnWorkers) {
   const auto release = [&](uint32_t workers) { held -= workers; };
   const irs::AnnBuildEnv env{
     .executor = pool.Get(), .acquire = acquire, .release = release};
-  CompactAll(*writer, &env, 4);
+  CompactAll(*writer, &env);
   pool->SoftStop();
   pool->Wait();
   EXPECT_EQ(0U, held.load());

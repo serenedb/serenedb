@@ -33,8 +33,6 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
-#include <iresearch/index/merge/pipeline_merge_executor.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>
@@ -49,7 +47,7 @@
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_planner.h"
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "search/store.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
@@ -134,12 +132,7 @@ class StorageMergeJob final : public MergeJob {
     return _ticket.Candidates();
   }
 
-  bool Stale() const noexcept final {
-    return _storage->Retired() || _ticket.Revoked();
-  }
-
-  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
-                                  size_t helpers) final {
+  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop) final {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
@@ -164,11 +157,9 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    const irs::PipelineMergeExecutor executor{
-      irs::DuckDBEngine::Instance().instance(), 1 + helpers};
     auto merged = co_await _storage->RunMergeAsync(
       ClaimMaintenance(), std::move(_ticket), progress, options.get(),
-      &AnnBuildEnv(), executor);
+      &AnnBuildEnv(), GetSearchEngine().MergePool());
     const auto took_ms = merged.outcome.stats.profile.TotalNanos() / 1'000'000;
     if (merged.backup) {
       SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
@@ -190,11 +181,15 @@ class StorageMergeJob final : public MergeJob {
   }
 
  private:
+  bool Stale() const noexcept {
+    return _storage->Retired() || _ticket.Revoked();
+  }
+
   std::shared_ptr<Store> _storage;
   irs::IndexWriter::MergeTicket _ticket;
 };
 
-bool PlanMerges(const std::shared_ptr<Store>& idx, MergeScheduler& merges) {
+bool PlanMerges(const std::shared_ptr<Store>& idx, MergeRunner& merges) {
   const auto maintenance = ClaimMaintenance();
   if (!maintenance) {
     return false;
@@ -220,8 +215,7 @@ bool PlanMerges(const std::shared_ptr<Store>& idx, MergeScheduler& merges) {
     jobs.emplace_back(
       std::make_unique<StorageMergeJob>(idx, std::move(ticket)));
   }
-  merges.Enqueue(relation, std::move(jobs));
-  return !tickets.empty() || !blocked.empty();
+  return merges.Start(relation, std::move(jobs)) != 0 || !blocked.empty();
 }
 
 // Wait up to `total` for the timer OR a NudgeCompaction. OneShotEvent is a poor
@@ -400,7 +394,7 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak) {
 
       if (interval == Clock::duration::zero()) {
         if (changed) {
-          merges.CancelQueued(*idx->MergeRelation());
+          merges.Forget(*idx->MergeRelation());
         }
         idx.reset();
         triggered = false;
@@ -440,7 +434,7 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Store> weak) {
   co_await yaclib::On(s.executor());
   if (const auto idx = weak.lock()) {
     const auto& relation = *idx->MergeRelation();
-    merges.CancelQueued(relation);
+    merges.Forget(relation);
     merges.StopRunning(relation);
   }
   co_return {};

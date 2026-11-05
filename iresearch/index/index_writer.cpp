@@ -53,8 +53,8 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_executor.hpp"
 #include "iresearch/index/merge/merge_plan.hpp"
-#include "iresearch/index/merge/pipeline_merge_executor.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -1523,7 +1523,7 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
                            const IndexFieldOptions* field_options,
                            const MergeProgress& progress,
                            const AnnBuildEnv* env,
-                           const PipelineMergeExecutor& executor,
+                           duckdb::shared_ptr<duckdb::DedicatedPool> pool,
                            CompactionResult& result) -> yaclib::Future<> {
   auto& state = ticket.Get(ConstructToken{}, *this);
   auto& candidates = state.candidates;
@@ -1580,8 +1580,8 @@ auto IndexWriter::RunMerge(MergeTicket ticket,
 
   // We do not persist segment meta since some removals may come later
   const bool flushed =
-    MergeSegments(dir, doc_map, compaction_segment.meta, options, executor,
-                  checked, env, &result.stats.profile);
+    MergeSegments(dir, doc_map, compaction_segment.meta, options,
+                  std::move(pool), checked, env, &result.stats.profile);
   if (!flushed) {
     if (stopped.load(std::memory_order_relaxed)) {
       result.error = CompactionError::Cancelled;

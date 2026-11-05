@@ -26,11 +26,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 #include "utils/drain_gate.h"
 
 namespace sdb {
@@ -60,7 +61,14 @@ class SearchEngine final {
   void start();
   void stop();
 
-  MergeScheduler& Merges() noexcept { return *_merges; }
+  MergeRunner& Merges() noexcept { return *_merges; }
+  const duckdb::shared_ptr<duckdb::DedicatedPool>& MergePool() const noexcept {
+    return _merge_pool;
+  }
+  const duckdb::shared_ptr<duckdb::DedicatedPool>& ManualMergePool()
+    const noexcept {
+    return _manual_merge_pool;
+  }
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them.
@@ -105,7 +113,9 @@ class SearchEngine final {
   utils::DrainGate _maintenance;
   std::atomic<bool> _stopping{false};
   std::atomic<uint32_t> _running_ann_workers{0};
-  std::unique_ptr<MergeScheduler> _merges;
+  std::unique_ptr<MergeRunner> _merges;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _manual_merge_pool;
   // Live loop futures plus one baseline token held for the engine's lifetime:
   // loops come and go with CREATE/DROP, and a transient zero would complete the
   // group for good. stop() Done()s the token, then Waits.
@@ -142,7 +152,7 @@ class [[nodiscard]] ManualCompactionSlot {
   ManualCompactionSlot(const ManualCompactionSlot&) = delete;
   ManualCompactionSlot& operator=(const ManualCompactionSlot&) = delete;
 
-  const irs::AnnBuildEnv* AnnEnv() const noexcept;
+  static const irs::AnnBuildEnv* AnnEnv() noexcept;
 
  private:
   bool _held;

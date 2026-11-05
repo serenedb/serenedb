@@ -123,7 +123,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
   : _directory{std::move(directory)},
     _attachment{attachment},
     _sort{std::move(sort)},
-    _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
+    _merge_relation{std::make_shared<MergeRunner::Relation>(id)},
     _id{id},
     _db_id{db_id},
     _in_memory{in_memory},
@@ -151,7 +151,7 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
   : _directory{std::move(directory)},
     _attachment{attachment},
     _sort{std::move(sort)},
-    _merge_relation{std::make_shared<MergeScheduler::Relation>(id)},
+    _merge_relation{std::make_shared<MergeRunner::Relation>(id)},
     _id{id},
     _db_id{db_id},
     _in_memory{in_memory},
@@ -443,7 +443,7 @@ yaclib::Future<MergeResult> Store::RunMergeAsync(
   utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
   const irs::MergeProgress& progress,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  const irs::PipelineMergeExecutor& executor) {
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
   MergeResult result;
   if (!maintenance) {
     result.outcome.error = irs::CompactionError::Cancelled;
@@ -461,7 +461,7 @@ yaclib::Future<MergeResult> Store::RunMergeAsync(
   bool failed = false;
   try {
     co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
-                               env, executor, result.outcome);
+                               env, std::move(pool), result.outcome);
   } catch (const std::exception& e) {
     failed = true;
     result.outcome.error = irs::CompactionError::Fail;

@@ -30,9 +30,11 @@
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -192,7 +194,7 @@ search::MergeRoundPlan MergeTarget::Plan(
     search::MergeRoundRequest{
       .mode = request.mode,
       .settings = _store->GetTasksSettings(),
-      .merges = search::GetSearchEngine().Merges().RoundSize(),
+      .merges = search::GetSearchEngine().Merges().MergesPerRound(),
       .target_segments =
         !_store->IsSearchTable() && request.mode == search::MergeMode::Compact
           ? 1
@@ -206,11 +208,13 @@ search::MergeRoundPlan MergeTarget::Plan(
     });
 }
 
-void MergeTarget::Compact(
-  const search::PlannedMerge& planned, const irs::MergeProgress& progress,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  search::MergeOrigin origin, const irs::PipelineMergeExecutor& executor,
-  utils::DrainGate::Pass maintenance, search::MergeResult& merged) const {
+void MergeTarget::Compact(const search::PlannedMerge& planned,
+                          const irs::MergeProgress& progress,
+                          const irs::IndexFieldOptions* field_options,
+                          const irs::AnnBuildEnv* env,
+                          search::MergeOrigin origin,
+                          utils::DrainGate::Pass maintenance,
+                          search::MergeResult& merged) const {
   merged = {};
   irs::MergeStats inputs;
   const auto planner = [&](const irs::IndexReader& index,
@@ -250,12 +254,16 @@ void MergeTarget::Compact(
   if (tickets.empty()) {
     return;
   }
+  const auto& pool = search::GetSearchEngine().ManualMergePool();
+  pool->SetThreads(duckdb::TaskScheduler::GetScheduler(
+                     irs::DuckDBEngine::Instance().instance())
+                     .NumberOfThreads());
   merged =
     irs::GetBlocking(BackgroundScheduler::instance()
                        .Run([&] {
                          return _store->RunMergeAsync(
                            std::move(maintenance), std::move(tickets.front()),
-                           progress, field_options, env, executor);
+                           progress, field_options, env, pool);
                        })
                        .On(nullptr));
 }
@@ -289,6 +297,7 @@ ManualCompaction::ManualCompaction(const MergeTarget& target,
   Plan();
   if (!_plan.merges.empty()) {
     _lease = _target.TakeOver();
+    _slot.emplace();
     Plan();
   }
 }
@@ -301,7 +310,6 @@ void ManualCompaction::Plan() {
 
 bool ManualCompaction::Next(const irs::MergeProgress& progress,
                             search::MergeOrigin origin,
-                            const irs::PipelineMergeExecutor& executor,
                             search::MergeResult& merge) {
   while (_next == _plan.merges.size()) {
     if (!_plan.partial || _target.Snapshot().size() >= _plan.segments) {
@@ -312,8 +320,8 @@ bool ManualCompaction::Next(const irs::MergeProgress& progress,
   const auto& planned = _plan.merges[_next++];
   do {
     _target.Compact(
-      planned, progress, _options.get(), _slot.AnnEnv(), origin, executor,
-      search::GetSearchEngine().Maintenance().Enter(_context), merge);
+      planned, progress, _options.get(), search::ManualCompactionSlot::AnnEnv(),
+      origin, search::GetSearchEngine().Maintenance().Enter(_context), merge);
   } while (merge.backup);
   auto& stats = merge.outcome.stats;
   if (search::Produced(search::OutcomeOf(merge.outcome))) {

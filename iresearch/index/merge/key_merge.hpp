@@ -23,7 +23,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/sorting/presorted_merge.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <optional>
@@ -33,6 +32,7 @@
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/merge/merge_workers.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 
 namespace irs {
@@ -49,7 +49,7 @@ class KeyOrder {
   KeyOrder& operator=(const KeyOrder&) = delete;
 
   [[nodiscard]] bool Prepare(size_t partitions, const MergeProgress& progress,
-                             duckdb::TaskScheduler& scheduler, size_t threads);
+                             const MergeWorkers& workers);
 
   uint64_t IsolatedBegin(size_t input) const noexcept {
     return _isolated[input];

@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <duckdb/main/database.hpp>
-
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
@@ -34,25 +31,12 @@
 
 namespace irs {
 
-class PipelineMergeExecutor {
- public:
-  explicit PipelineMergeExecutor(duckdb::DatabaseInstance& db,
-                                 size_t threads) noexcept
-    : _db{db}, _threads{threads} {}
-
-  size_t Threads() const noexcept { return _threads; }
-
-  bool Run(MergePlan& plan) const;
-
- private:
-  duckdb::DatabaseInstance& _db;
-  size_t _threads;
-};
+[[nodiscard]] bool ExecuteMerge(MergePlan& plan);
 
 [[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,
                                  SegmentMeta& segment,
                                  const SegmentWriterOptions& options,
-                                 const PipelineMergeExecutor& executor,
+                                 duckdb::shared_ptr<duckdb::DedicatedPool> pool,
                                  const MergeProgress& progress = {},
                                  const AnnBuildEnv* env = nullptr,
                                  MergeProfile* profile = nullptr);

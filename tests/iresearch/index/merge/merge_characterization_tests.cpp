@@ -21,6 +21,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <duckdb/common/types/value.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -28,6 +29,7 @@
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/detail/ann_index.hpp>
@@ -67,7 +69,7 @@ struct NthIncreaseFails final : irs::IResourceManager {
   void Decrease(size_t) noexcept final {}
 
   size_t fail_at;
-  size_t calls = 0;
+  std::atomic<size_t> calls{0};
 };
 
 irs::ColumnOptions PlainColumns(irs::field_id) { return {}; }
@@ -93,7 +95,7 @@ MergeResult RunMerge(
   };
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
   result.flushed = irs::MergeSegments(out, doc_map, result.meta, options,
-                                      MakeExecutor(threads), progress);
+                                      MergePool(threads), progress);
   if (result.flushed) {
     result.reader = irs::SegmentReaderImpl::Open(
       out, result.meta, irs::tests::DefaultReaderOptions());
@@ -152,7 +154,7 @@ class MergeCharacterizationTest : public ::testing::Test {
         field_options != nullptr ? field_options : &_field_options,
     };
     auto doc_map = irs::MakeMergeDocMap(_inputs, options.resource_manager);
-    return irs::MergeSegments(_out, doc_map, meta, options, MakeExecutor(),
+    return irs::MergeSegments(_out, doc_map, meta, options, MergePool(1),
                               progress);
   }
 
@@ -169,7 +171,7 @@ class MergeCharacterizationTest : public ::testing::Test {
 };
 
 TEST_F(MergeCharacterizationTest, CompleteMergeMatchesTheInputs) {
-  size_t calls = 0;
+  std::atomic<size_t> calls{0};
   irs::SegmentMeta meta;
   meta.name = "merged";
   ASSERT_TRUE(Merge(meta, [&] { return ++calls != 0; }));
@@ -181,7 +183,7 @@ TEST_F(MergeCharacterizationTest, CompleteMergeMatchesTheInputs) {
 }
 
 TEST_F(MergeCharacterizationTest, AbortsAtEveryProgressCall) {
-  size_t total = 0;
+  std::atomic<size_t> total{0};
   {
     irs::SegmentMeta meta;
     meta.name = "counted";
@@ -189,7 +191,7 @@ TEST_F(MergeCharacterizationTest, AbortsAtEveryProgressCall) {
   }
   for (size_t stop_at = 1; stop_at <= total; ++stop_at) {
     SCOPED_TRACE(stop_at);
-    size_t calls = 0;
+    std::atomic<size_t> calls{0};
     irs::SegmentMeta meta;
     meta.name = absl::StrCat("aborted", stop_at);
     EXPECT_FALSE(Merge(meta, [&] { return ++calls < stop_at; }));
@@ -705,7 +707,7 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
   }
   for (const uint64_t seed : {1, 2}) {
     SCOPED_TRACE(absl::StrCat("shuffled ", seed));
-    const ShuffledClaims shuffle;
+    const ShuffledUnits shuffle;
     ExpectIvfMerge(inputs, 4);
   }
 }

@@ -70,7 +70,8 @@ class DatabaseInstance;
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge/merge_plan.hpp"
-#include "iresearch/index/merge/pipeline_merge_executor.hpp"
+#include "iresearch/index/merge/merge_profile.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -489,8 +490,8 @@ class IndexWriter : private util::Noncopyable {
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
                 const MergeProgress& progress, const AnnBuildEnv* env,
-                const PipelineMergeExecutor& executor, CompactionResult& result)
-    -> yaclib::Future<>;
+                duckdb::shared_ptr<duckdb::DedicatedPool> pool,
+                CompactionResult& result) -> yaclib::Future<>;
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:

@@ -47,6 +47,7 @@
 #include "iresearch/index/merge/input_norms.hpp"
 #include "iresearch/index/merge/key_merge.hpp"
 #include "iresearch/index/merge/merge_profile.hpp"
+#include "iresearch/index/merge/merge_workers.hpp"
 #include "iresearch/index/merge/postings_unit.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
@@ -107,7 +108,7 @@ class MergePlan {
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;
 
-  bool Prepare(size_t threads = 1);
+  bool Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool);
 
   std::span<const MergeUnit> Units() const noexcept { return _units; }
 
@@ -116,6 +117,10 @@ class MergePlan {
   void Abort() noexcept { _aborted.store(true, std::memory_order_relaxed); }
 
   const MergeProfile& Profile() const noexcept { return _profile; }
+
+  MergeWorkers Workers() const {
+    return {duckdb::TaskScheduler::GetScheduler(_db), _pool, _threads};
+  }
 
  private:
   static constexpr size_t kEncode = std::numeric_limits<size_t>::max();
@@ -174,6 +179,7 @@ class MergePlan {
   const AnnBuildEnv* _env;
   HnswBases* _hnsw_bases;
   size_t _threads = 1;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _pool;
   MergeProfile _profile;
   IndexFeatures _index_features{IndexFeatures::None};
   MergedFieldMap _field_meta_map;

@@ -2268,10 +2268,9 @@ TEST_F(IndexAdoptTest, AFinishedCompactionRewrittenForADeleteIsSyncedOnce) {
   static const auto kFullMerge = tests::MakePolicy(
     tests::CompactionCount{std::numeric_limits<size_t>::max()});
 
-  bool removed = false;
+  std::atomic_bool removed{false};
   const irs::MergeProgress progress = [&] {
-    if (!removed) {
-      removed = true;
+    if (!removed.exchange(true)) {
       auto del = _writer->GetBatch();
       del.Remove(ByNames(evens));
       EXPECT_TRUE(del.Commit());
@@ -2332,11 +2331,10 @@ TEST_F(IndexAdoptTest, CompactionFloorRefusesWhileAMergeIsRunning) {
   // refuse: a floor set now would sit below that output while the segments it
   // consumed sit below it too, so their contents would hide behind an id that
   // says "written later".
-  bool attempted = false;
-  bool held = true;
+  std::atomic_bool attempted{false};
+  std::atomic_bool held{true};
   const irs::MergeProgress progress = [&] {
-    if (!attempted) {
-      attempted = true;
+    if (!attempted.exchange(true)) {
       held = _writer->ArmCompactionFloor().Held();
     }
     return true;

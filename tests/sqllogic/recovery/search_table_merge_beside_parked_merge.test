@@ -34,7 +34,7 @@ segments
 4
 
 statement ok
-SET sdb_faults = 'compaction_lane_big';
+SET sdb_faults = 'compaction_big_merge';
 
 statement ok
 SET sdb_faults = 'park_compaction_run';
@@ -46,7 +46,7 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-park_compaction_run:parked';
 
 statement ok
-SET sdb_faults = '-compaction_lane_big';
+SET sdb_faults = '-compaction_big_merge';
 
 statement ok
 INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(401, 500) s(i);

@@ -487,6 +487,16 @@ TEST_F(PresortedMergeTest, PartitionOnSeveralThreadsCutsLikeOnOne) {
         }
       }
       EXPECT_EQ(expected, Expand(MergeAll(*parallel)));
+      const auto pooled = MakeMerge(keys, inputs);
+      pooled->Partition(
+        16, keep_equal_keys, scheduler, 4,
+        scheduler.CreateAccount(scheduler.CreateDedicatedPool(2)));
+      ASSERT_EQ(serial->PartitionCount(), pooled->PartitionCount());
+      for (idx_t p = 0; p <= pooled->PartitionCount(); ++p) {
+        for (idx_t i = 0; i != inputs.size(); ++i) {
+          EXPECT_EQ(serial->PartitionBegin(p, i), pooled->PartitionBegin(p, i));
+        }
+      }
     }
   }
 }

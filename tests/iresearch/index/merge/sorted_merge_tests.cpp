@@ -34,6 +34,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
@@ -119,8 +120,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> SortedMerge(
     .sort = spec,
   };
   auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  flushed =
-    irs::MergeSegments(out, doc_map, meta, options, MakeExecutor(threads));
+  flushed = irs::MergeSegments(out, doc_map, meta, options, MergePool(threads));
   if (!flushed) {
     return nullptr;
   }
@@ -160,7 +160,7 @@ TEST_P(SortedMergeOracleTest, RandomSortedSegmentSets) {
       continue;
     }
     SCOPED_TRACE(shuffled ? "shuffled" : "scheduled");
-    const ShuffledClaims shuffle{shuffled};
+    const ShuffledUnits shuffle{shuffled};
     irs::MemoryDirectory out;
     bool flushed = false;
     const auto merged = SortedMerge(out, inputs, &spec, row_group_size,
@@ -326,10 +326,10 @@ TEST_F(SortedMergeTest, InputsWithDisjointKeysCopyTheirBlocks) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(2, CountUnits(plan.Units(), MergeUnitKind::ColumnCopy, kBigint));
   EXPECT_EQ(2, CountUnits(plan.Units(), MergeUnitKind::ColumnCopy, kDouble));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
@@ -341,10 +341,10 @@ TEST_F(SortedMergeTest, InterleavedInputsAreGathered) {
     {{.column = kBigint, .order = duckdb::OrderType::DESCENDING}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(4));
+  ASSERT_TRUE(plan.Prepare(MergePool(4)));
   EXPECT_EQ(0, CountUnits(plan.Units(), MergeUnitKind::ColumnCopy, kBigint));
   EXPECT_LT(1, CountUnits(plan.Units(), MergeUnitKind::Column, kText));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
@@ -377,7 +377,7 @@ TEST_F(SortedMergeTest, ContiguousInputsThatCannotBeCopiedCostTheirOwnBytes) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   const auto interleaved =
     inputs[0]->live_docs_count() + inputs[1]->live_docs_count();
   for (const auto id : {kBigint, kDouble}) {
@@ -406,7 +406,7 @@ TEST_F(SortedMergeTest, ContiguousInputsThatCannotBeCopiedCostTheirOwnBytes) {
       costs);
   }
   EXPECT_EQ(0, ColumnBytes(*inputs[3], kDouble));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
@@ -419,7 +419,7 @@ TEST_F(SortedMergeTest, UnsortedInputsFailTheMerge) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_SQL_ERROR(plan.Prepare(4), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(plan.Prepare(MergePool(4)), ERRCODE_INDEX_CORRUPTED);
 }
 
 TEST_F(SortedMergeTest, AnUnsortedInputThatLooksApartFailsTheMerge) {
@@ -431,7 +431,7 @@ TEST_F(SortedMergeTest, AnUnsortedInputThatLooksApartFailsTheMerge) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_SQL_ERROR(plan.Prepare(1), ERRCODE_INDEX_CORRUPTED);
+  ASSERT_SQL_ERROR(plan.Prepare(MergePool(1)), ERRCODE_INDEX_CORRUPTED);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -457,10 +457,12 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance());
   irs::KeyOrder serial{serial_map, spec, nullptr};
-  ASSERT_TRUE(serial.Prepare(1, [] { return true; }, scheduler, 1));
+  ASSERT_TRUE(
+    serial.Prepare(1, [] { return true; }, {scheduler, MergePool(1)}));
 
   irs::KeyOrder split{split_map, spec, nullptr};
-  ASSERT_TRUE(split.Prepare(4, [] { return true; }, scheduler, 4));
+  ASSERT_TRUE(
+    split.Prepare(4, [] { return true; }, {scheduler, MergePool(2), 4}));
   const auto ids = [](const irs::MergeOrder& order) {
     const auto inputs = order.Inputs();
     std::vector<size_t> out(inputs.size());
@@ -478,7 +480,8 @@ TEST_F(SortedMergeTest, PartitionsExpandedOnSeveralThreadsGiveOneOrder) {
   }
 
   irs::KeyOrder stopped{stopped_map, spec, nullptr};
-  EXPECT_FALSE(stopped.Prepare(4, [] { return false; }, scheduler, 4));
+  EXPECT_FALSE(
+    stopped.Prepare(4, [] { return false; }, {scheduler, MergePool(4), 4}));
 }
 
 TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
@@ -507,8 +510,8 @@ TEST_F(SortedMergeTest, KeysMissingOrNullAtTheEndSortAsNulls) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(1));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
@@ -525,7 +528,7 @@ TEST_F(SortedMergeTest, AnIncompleteOrderFailsTheMerge) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_SQL_ERROR(plan.Prepare(1), ERRCODE_INTERNAL_ERROR);
+  ASSERT_SQL_ERROR(plan.Prepare(MergePool(1)), ERRCODE_INTERNAL_ERROR);
   EXPECT_TRUE(plan.Units().empty());
 }
 
@@ -537,8 +540,8 @@ TEST_F(SortedMergeTest, EqualKeysKeepTheInputOrder) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(1));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
@@ -549,9 +552,9 @@ TEST_F(SortedMergeTest, KeysNoInputHasKeepTheInputOrder) {
   const std::vector<irs::SortKey> spec{{{.column = kFirstColumn + 50}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, inputs, spec);
-  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_FALSE(plan.Units().empty());
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   const auto merged = irs::SegmentReaderImpl::Open(
     out, _meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
@@ -580,17 +583,17 @@ TEST_F(SortedMergeTest, FullyDeletedInputsAddNoRows) {
     const std::vector<irs::SortKey> spec{{{.column = column}}};
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, with_deleted, spec);
-    ASSERT_TRUE(plan.Prepare(1));
-    ASSERT_TRUE(RunPlan(plan));
+    ASSERT_TRUE(plan.Prepare(MergePool(1)));
+    ASSERT_TRUE(irs::ExecuteMerge(plan));
     EXPECT_EQ("", MergedDifference(out, with_deleted, spec));
   }
   const std::vector<const irs::SubReader*> only_deleted{deleted.get()};
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, only_deleted, spec);
-  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(0, _meta.docs_count);
-  EXPECT_FALSE(RunPlan(plan));
+  EXPECT_FALSE(irs::ExecuteMerge(plan));
 }
 
 TEST_F(SortedMergeTest, LargeInputsSpanWindowsAndCheckpoints) {
@@ -617,8 +620,8 @@ TEST_F(SortedMergeTest, LargeInputsSpanWindowsAndCheckpoints) {
     SCOPED_TRACE(threads);
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, inputs, spec);
-    ASSERT_TRUE(plan.Prepare(threads));
-    ASSERT_TRUE(RunPlan(plan, threads));
+    ASSERT_TRUE(plan.Prepare(MergePool(threads)));
+    ASSERT_TRUE(irs::ExecuteMerge(plan));
     EXPECT_EQ("", MergedDifference(out, inputs, spec));
   }
 }
@@ -688,11 +691,11 @@ TEST_F(SortedMergeTest, EveryCancellationStopsTheMerge) {
     irs::MemoryDirectory out;
     std::atomic<size_t> calls{0};
     auto plan = MakePlan(out, inputs, spec, [&] { return ++calls < fail_at; });
-    if (!plan.Prepare(4)) {
+    if (!plan.Prepare(MergePool(4))) {
       ++refused;
       continue;
     }
-    if (RunPlan(plan)) {
+    if (irs::ExecuteMerge(plan)) {
       break;
     }
     ++stopped;
@@ -723,7 +726,7 @@ TEST_F(SortedMergeTest, DocMapsThatCannotBeChargedRefuseTheMerge) {
                       {},
                       nullptr,
                       &spec};
-  EXPECT_THROW(plan.Prepare(1), std::runtime_error);
+  EXPECT_THROW(plan.Prepare(MergePool(1)), std::runtime_error);
 }
 
 TEST_F(SortedMergeTest, AnOrderThatCannotBeChargedRefusesTheMerge) {
@@ -748,7 +751,7 @@ TEST_F(SortedMergeTest, AnOrderThatCannotBeChargedRefusesTheMerge) {
                       {},
                       nullptr,
                       &spec};
-  EXPECT_THROW(plan.Prepare(1), std::runtime_error);
+  EXPECT_THROW(plan.Prepare(MergePool(1)), std::runtime_error);
 }
 
 TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {
@@ -763,8 +766,8 @@ TEST_F(SortedMergeTest, InputsWithoutAColumnStoreSortAsNulls) {
         std::vector<const irs::SubReader*>{&storeless, inputs[0]}}) {
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, mixed, spec);
-    ASSERT_TRUE(plan.Prepare(1));
-    ASSERT_TRUE(RunPlan(plan));
+    ASSERT_TRUE(plan.Prepare(MergePool(1)));
+    ASSERT_TRUE(irs::ExecuteMerge(plan));
     EXPECT_EQ("", MergedDifference(out, mixed, spec));
   }
 }
@@ -781,8 +784,8 @@ TEST_F(SortedMergeTest, MoreInputsThanAByteNamesAreInterleaved) {
     SCOPED_TRACE(threads);
     irs::MemoryDirectory out;
     auto plan = MakePlan(out, inputs, spec);
-    ASSERT_TRUE(plan.Prepare(threads));
-    ASSERT_TRUE(RunPlan(plan, threads));
+    ASSERT_TRUE(plan.Prepare(MergePool(threads)));
+    ASSERT_TRUE(irs::ExecuteMerge(plan));
     EXPECT_EQ("", MergedDifference(out, inputs, spec));
   }
 }
@@ -843,7 +846,7 @@ TEST_F(SortedMergeTest, MoreInputsThanTheFanInAreRefused) {
   const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, many, spec);
-  EXPECT_FALSE(plan.Prepare(1));
+  EXPECT_FALSE(plan.Prepare(MergePool(1)));
 }
 
 constexpr irs::field_id kVector = 10;

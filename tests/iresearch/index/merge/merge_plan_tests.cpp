@@ -35,6 +35,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -163,7 +164,7 @@ class MergePlanTest : public ::testing::Test {
 TEST_F(MergePlanTest, UnitsComeInDependencyOrder) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out);
-  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   std::vector<MergeUnitKind> kinds;
   std::vector<irs::field_id> norms;
   for (const auto& unit : plan.Units()) {
@@ -180,7 +181,7 @@ TEST_F(MergePlanTest, UnitsComeInDependencyOrder) {
   EXPECT_EQ(0, std::ranges::count(kinds, MergeUnitKind::Ann));
   EXPECT_EQ(1, std::ranges::count(kinds, MergeUnitKind::Postings));
   EXPECT_EQ(1, std::ranges::count(kinds, MergeUnitKind::Index));
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out));
 }
 
@@ -204,9 +205,9 @@ TEST_F(MergePlanTest, OnlyDeletedDocsGiveNoSegment) {
   }
   irs::MemoryDirectory out;
   auto plan = MakePlan(out);
-  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(0, _meta.docs_count);
-  EXPECT_FALSE(RunPlan(plan));
+  EXPECT_FALSE(irs::ExecuteMerge(plan));
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Postings), 0);
   EXPECT_GT(plan.Profile().Nanos(irs::MergeStep::Commit), 0);
 }
@@ -246,7 +247,7 @@ TEST_F(MergePlanTest, MergeUpToTheDocIdLimitIsPlanned) {
   _doc_map.emplace_back(&one, irs::IResourceManager::gNoop);
   irs::MemoryDirectory out;
   auto plan = MakePlan(out);
-  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(irs::kMergeDocsMax, _meta.docs_count);
   EXPECT_FALSE(plan.Units().empty());
 }
@@ -259,7 +260,7 @@ TEST_F(MergePlanTest, MergePastTheDocIdLimitIsRefused) {
   _doc_map.emplace_back(&one, irs::IResourceManager::gNoop);
   irs::MemoryDirectory out;
   auto plan = MakePlan(out);
-  EXPECT_FALSE(plan.Prepare());
+  EXPECT_FALSE(plan.Prepare(MergePool(1)));
   EXPECT_TRUE(plan.Units().empty());
   EXPECT_EQ(0, _meta.docs_count);
   EXPECT_LT(irs::kMergeDocsMax + irs::doc_limits::min(),
@@ -272,7 +273,7 @@ TEST_F(MergePlanTest, NormAndColumnUnitsMergeInAnyOrder) {
     ResetMerge();
     irs::MemoryDirectory out;
     auto plan = MakePlan(out);
-    ASSERT_TRUE(plan.Prepare());
+    ASSERT_TRUE(plan.Prepare(MergePool(1)));
     const auto units = plan.Units();
     const auto footer = std::ranges::find(units, MergeUnitKind::ColumnsFooter,
                                           &irs::MergeUnit::kind);
@@ -291,7 +292,7 @@ TEST_F(MergePlanTest, NormAndColumnUnitsMergeInAnyOrder) {
 TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out);
-  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   const auto units = plan.Units();
   std::vector<irs::field_id> planned;
   for (const auto& unit : units) {
@@ -322,7 +323,7 @@ TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
 TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, &_small_row_groups);
-  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(plan.Prepare(MergePool(1)));
   const auto units = plan.Units();
   EXPECT_EQ(
     7, std::ranges::count(units, MergeUnitKind::Column, &irs::MergeUnit::kind));
@@ -333,7 +334,7 @@ TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
 TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, &_small_row_groups);
-  ASSERT_TRUE(plan.Prepare(64));
+  ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
   const auto trains = UnitsOf(units, MergeUnitKind::ColumnTrain, kTextColumn);
   ASSERT_EQ(1, trains.size());
@@ -366,7 +367,7 @@ TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
                                           &irs::MergeUnit::kind) -
                         units.begin());
   EXPECT_EQ(footer, units[footer].deps.size());
-  ASSERT_TRUE(RunPlan(plan));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out));
 }
 
@@ -377,9 +378,9 @@ TEST_F(MergePlanTest, SplitUnitsMergeInAnyOrder) {
       ResetMerge();
       irs::MemoryDirectory out;
       auto plan = MakePlan(out, &_small_row_groups);
-      ASSERT_TRUE(plan.Prepare(threads));
-      const ShuffledClaims shuffle;
-      ASSERT_TRUE(RunPlan(plan, 4));
+      ASSERT_TRUE(plan.Prepare(MergePool(threads)));
+      const ShuffledUnits shuffle;
+      ASSERT_TRUE(irs::ExecuteMerge(plan));
       EXPECT_EQ("", MergedDifference(out));
     }
   }
@@ -388,12 +389,12 @@ TEST_F(MergePlanTest, SplitUnitsMergeInAnyOrder) {
 TEST_F(MergePlanTest, SplitTextWithoutATrainedCodecMerges) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, &_uncompressed_text);
-  ASSERT_TRUE(plan.Prepare(64));
+  ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
   ASSERT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kTextColumn).size());
   ASSERT_LT(1, UnitsOf(units, MergeUnitKind::Column, kTextColumn).size());
-  const ShuffledClaims shuffle;
-  ASSERT_TRUE(RunPlan(plan, 4));
+  const ShuffledUnits shuffle;
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out));
 }
 
@@ -405,10 +406,10 @@ TEST_F(MergePlanTest, CancelledSplitUnitsStopTheMerge) {
     std::atomic<size_t> calls{0};
     auto plan =
       MakePlan(out, &_small_row_groups, [&] { return ++calls < fail_at; });
-    if (!plan.Prepare(64)) {
+    if (!plan.Prepare(MergePool(64))) {
       continue;
     }
-    ASSERT_FALSE(RunPlan(plan));
+    ASSERT_FALSE(irs::ExecuteMerge(plan));
     if (plan.Profile().Nanos(irs::MergeStep::ColumnsCommit) != 0) {
       break;
     }
@@ -519,7 +520,7 @@ class ColumnSplitTest : public ::testing::Test {
     _plan = std::make_unique<irs::MergePlan>(
       out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
       _with_options ? _options.get() : nullptr, _progress, nullptr);
-    EXPECT_TRUE(_plan->Prepare(threads));
+    EXPECT_TRUE(_plan->Prepare(MergePool(threads)));
     return _plan->Units();
   }
 
@@ -530,12 +531,8 @@ class ColumnSplitTest : public ::testing::Test {
     if (units != nullptr) {
       *units = planned;
     }
-    if (_serial) {
-      EXPECT_TRUE(RunPlan(*_plan));
-    } else {
-      const ShuffledClaims shuffle;
-      EXPECT_TRUE(RunPlan(*_plan, threads));
-    }
+    const ShuffledUnits shuffle{!_serial};
+    EXPECT_TRUE(irs::ExecuteMerge(*_plan));
     return irs::SegmentReaderImpl::Open(out, _meta,
                                         irs::tests::DefaultReaderOptions());
   }

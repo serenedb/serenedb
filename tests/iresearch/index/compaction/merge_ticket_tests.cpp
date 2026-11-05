@@ -151,9 +151,9 @@ class MergeTicketTest : public ::testing::Test {
 
   void Run(irs::IndexWriter::MergeTicket ticket, irs::CompactionResult& result,
            const irs::MergeProgress& progress = {}) {
-    const auto executor = MakeExecutor();
     irs::GetReady(_writer->RunMerge(std::move(ticket), nullptr, progress,
-                                    nullptr, executor, result));
+                                    nullptr, tests::merge::MergePool(1),
+                                    result));
   }
 
   static std::vector<std::string> NamesOf(
@@ -430,11 +430,10 @@ TEST_F(MergeTicketTest, ArmingAFloorStopsARunningMerge) {
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.size());
   irs::IndexWriter::CompactionFloorGuard floor;
-  bool armed = false;
+  std::atomic_bool armed{false};
   const irs::MergeProgress progress = [&] {
-    if (!armed) {
+    if (!armed.exchange(true)) {
       floor = _writer->ArmCompactionFloor();
-      armed = true;
     }
     return true;
   };
@@ -473,11 +472,11 @@ TEST_F(MergeTicketTest, AFailedMergeIsAFailureAndReleased) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.size());
-  if (!duckdb::FaultPoints::Arm("irs::PipelineMergeExecutor::Run")) {
+  if (!duckdb::FaultPoints::Arm("irs::ExecuteMerge")) {
     GTEST_SKIP() << "built without fault injection";
   }
   const auto result = Run(std::move(reservation[0]));
-  EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::PipelineMergeExecutor::Run"));
+  EXPECT_TRUE(duckdb::FaultPoints::Disarm("irs::ExecuteMerge"));
   EXPECT_EQ(CompactionError::Fail, result.error);
   EXPECT_EQ(2, result.size);
   EXPECT_TRUE(ReservedNames().empty());
@@ -596,10 +595,9 @@ TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
   AddSegments(2);
   auto reservation = Reserve({{0, 1}});
   ASSERT_EQ(1, reservation.size());
-  bool cleared = false;
+  std::atomic_bool cleared{false};
   const irs::MergeProgress progress = [&] {
-    if (!cleared) {
-      cleared = true;
+    if (!cleared.exchange(true)) {
       _writer->Clear();
     }
     return true;

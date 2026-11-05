@@ -26,6 +26,7 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
+#include <atomic>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <iresearch/formats/format_utils.hpp>
@@ -55,6 +56,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/compaction/policy_compaction.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -92,11 +94,9 @@ std::vector<irs::IndexWriter::MergeTicket> ReserveCountMerge(
 
 irs::CompactionResult RunReservedMerge(irs::IndexWriter& writer,
                                        irs::IndexWriter::MergeTicket ticket) {
-  const irs::PipelineMergeExecutor executor{
-    irs::DuckDBEngine::Instance().instance(), 1};
   irs::CompactionResult result;
-  irs::GetReady(
-    writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, executor, result));
+  irs::GetReady(writer.RunMerge(std::move(ticket), nullptr, {}, nullptr,
+                                tests::merge::MergePool(1), result));
   return result;
 }
 
@@ -8926,7 +8926,7 @@ TEST_P(IndexTestCase, compact_progress) {
     ASSERT_EQ(1, reader[1].docs_count());
   }
 
-  size_t progress_call_count = 0;
+  std::atomic<size_t> progress_call_count{0};
 
   const size_t max_docs = 32768;
 
@@ -8977,7 +8977,7 @@ TEST_P(IndexTestCase, compact_progress) {
   // test limited-true progress
   // +1 for pre-decrement in 'progress'
   for (size_t i = 1; i < progress_call_count; ++i) {
-    size_t call_count = i;
+    std::atomic<size_t> call_count{i};
     irs::MemoryDirectory dir;
     auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());

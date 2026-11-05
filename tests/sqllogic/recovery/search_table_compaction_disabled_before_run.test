@@ -1,14 +1,14 @@
 control substitution on
 
-# A background compaction queued while compaction was enabled does nothing once
+# A background compaction started while compaction was enabled does nothing once
 # compaction_interval is 0. The coordinator reads the interval, then waits for
-# its trigger, hops onto the executor and queues its runs; a run used to merge
+# its trigger, hops onto the executor and starts its runs; a run used to merge
 # with the "enabled" read before all of that, so under load a run that started
 # after the interval went to 0 merged segments, and VACUUM (COMPACT_TABLE)
 # found them held and left the table above its target
 # (search_table_compaction.test:184).
 #
-# pause_compaction_run holds a queued run just before it merges; the interval
+# pause_compaction_run holds a started run just before it merges; the interval
 # goes back to 0 while it waits.
 
 statement ok

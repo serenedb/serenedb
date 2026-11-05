@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <functional>
 #include <iresearch/index/composite_reader_impl.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <map>
 #include <memory>
 #include <queue>
@@ -35,7 +36,7 @@
 #include <yaclib/async/contract.hpp>
 #include <yaclib/exe/inline.hpp>
 
-#include "search/compaction/merge_scheduler.h"
+#include "search/compaction/merge_runner.h"
 
 namespace sdb::search {
 namespace {
@@ -85,7 +86,7 @@ class SimulatedIndex final
 
 struct Relation {
   uint64_t id = 0;
-  std::shared_ptr<MergeScheduler::Relation> handle;
+  std::shared_ptr<MergeRunner::Relation> handle;
   std::vector<Segment> segments;
   absl::btree_set<std::string> reserved;
   uint64_t next_segment = 1;
@@ -102,10 +103,7 @@ class SimulatedJob final : public MergeJob {
 
   irs::CompactionView Candidates() const noexcept final { return _view; }
 
-  bool Stale() const noexcept final { return false; }
-
-  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop,
-                                  size_t helpers) final;
+  yaclib::Future<MergeResult> Run(const std::atomic_bool& stop) final;
 
   void Finish();
   void Cancel();
@@ -117,10 +115,9 @@ class SimulatedJob final : public MergeJob {
   Relation& _relation;
   std::vector<SimulatedSegment> _segments;
   irs::Compaction _view;
-  MergeEstimate _estimate;
-  absl::Time _queued;
+  uint64_t _bytes = 0;
+  bool _small = true;
   absl::Time _started;
-  size_t _helpers = 0;
   yaclib::Promise<MergeResult> _promise;
 };
 
@@ -162,25 +159,25 @@ class Simulation {
   absl::Time _origin;
   absl::Time _now;
   std::map<uint64_t, Relation> _relations;
-  std::unique_ptr<MergeScheduler> _scheduler;
+  std::unique_ptr<MergeRunner> _runner;
   std::priority_queue<Pending, std::vector<Pending>, std::greater<>> _pending;
   uint64_t _sequence = 0;
-  size_t _queued = 0;
   size_t _running = 0;
   std::vector<SimulatedEvent> _events;
 };
 
 SimulatedJob::SimulatedJob(Simulation& simulation, Relation& relation,
                            irs::CompactionView candidates)
-  : _simulation{simulation}, _relation{relation}, _queued{simulation.Now()} {
+  : _simulation{simulation}, _relation{relation} {
   _segments.reserve(candidates.size());
   _view.reserve(candidates.size());
   for (const auto* candidate : candidates) {
     _relation.reserved.emplace(candidate->Meta().name);
     _view.emplace_back(&_segments.emplace_back(
       static_cast<const SimulatedSegment&>(*candidate)));
+    _bytes += irs::LiveBytes(candidate->Meta());
   }
-  _estimate = EstimateMerge(_view);
+  _small = MergeBytes(_view) <= MergeSizeCap(2, 1);
 }
 
 SimulatedJob::~SimulatedJob() {
@@ -195,13 +192,10 @@ bool SimulatedJob::Merges(std::string_view name) const noexcept {
   });
 }
 
-yaclib::Future<MergeResult> SimulatedJob::Run(const std::atomic_bool&,
-                                              size_t helpers) {
-  _helpers = helpers;
+yaclib::Future<MergeResult> SimulatedJob::Run(const std::atomic_bool&) {
   _started = _simulation.Now();
-  const auto threads = static_cast<double>(1 + _helpers);
-  const auto seconds = static_cast<double>(_estimate.rewrite_bytes) /
-                       (_simulation.Options().bytes_per_second * threads);
+  const auto seconds =
+    static_cast<double>(_bytes) / _simulation.Options().bytes_per_second;
   _simulation.Started(*this, _started + absl::Seconds(seconds));
   auto [future, promise] = yaclib::MakeContract<MergeResult>();
   _promise = std::move(promise);
@@ -212,11 +206,8 @@ void SimulatedJob::Finish() {
   SimulatedEvent event{
     .type = SimulatedEventType::Merge,
     .segment = absl::StrCat("_", _relation.next_segment++),
-    .queued = _simulation.Since(_queued),
     .started = _simulation.Since(_started),
-    .threads = 1 + _helpers,
-    .score = _estimate.score,
-    .lane = _estimate.lane,
+    .small = _small,
   };
   event.inputs.reserve(_segments.size());
   for (const auto& segment : _segments) {
@@ -236,7 +227,7 @@ void SimulatedJob::Finish() {
     return true;
   });
   event.live_docs = event.docs;
-  event.bytes = _estimate.rewrite_bytes;
+  event.bytes = _bytes;
   _relation.segments.insert(_relation.segments.begin() + place,
                             Segment{
                               .name = event.segment,
@@ -260,12 +251,11 @@ void SimulatedJob::Cancel() {
 }
 
 Simulation::Simulation(const MergeSimulation& options) : _options{options} {
-  _scheduler =
-    std::make_unique<MergeScheduler>(yaclib::MakeInline(), options.threads);
+  _runner = std::make_unique<MergeRunner>(yaclib::MakeInline(), options.slots);
 }
 
 Simulation::~Simulation() {
-  _scheduler->Interrupt();
+  _runner->Interrupt();
   while (!_pending.empty()) {
     auto* job = _pending.top().job;
     _pending.pop();
@@ -278,7 +268,7 @@ Relation& Simulation::RelationOf(uint64_t id) {
   auto& relation = it->second;
   if (inserted) {
     relation.id = id;
-    relation.handle = std::make_shared<MergeScheduler::Relation>(id);
+    relation.handle = std::make_shared<MergeRunner::Relation>(id);
   }
   return relation;
 }
@@ -286,7 +276,6 @@ Relation& Simulation::RelationOf(uint64_t id) {
 void Simulation::Started(SimulatedJob& job, absl::Time finish) {
   _pending.push(
     Pending{.finish = finish, .sequence = _sequence++, .job = &job});
-  --_queued;
   ++_running;
 }
 
@@ -327,8 +316,8 @@ void Simulation::FinishNext() {
 }
 
 void Simulation::Plan(Relation& relation) {
-  const auto wanted = _scheduler->Wanted(*relation.handle);
-  const auto blocked = _scheduler->StartRound(*relation.handle);
+  const auto wanted = _runner->Wanted(*relation.handle);
+  const auto blocked = _runner->StartRound(*relation.handle);
   if (wanted == 0) {
     return;
   }
@@ -342,8 +331,7 @@ void Simulation::Plan(Relation& relation) {
   for (const auto& group : groups) {
     jobs.emplace_back(std::make_unique<SimulatedJob>(*this, relation, group));
   }
-  _queued += jobs.size();
-  _scheduler->Enqueue(relation.handle, std::move(jobs));
+  _runner->Start(relation.handle, std::move(jobs));
 }
 
 std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
@@ -374,7 +362,6 @@ std::vector<SimulatedEvent> Simulation::Run(std::vector<SimulatedFlush> trace) {
       }
     }
     for (auto i = first; i != _events.size(); ++i) {
-      _events[i].merges_queued = _queued;
       _events[i].merges_running = _running;
     }
   }

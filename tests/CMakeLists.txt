@@ -3,6 +3,7 @@ add_library(
     STATIC
     EXCLUDE_FROM_ALL
     iresearch/index/compaction/policy_compaction.cpp
+    iresearch/index/merge/support/parallel_merge.cpp
 )
 target_include_directories(
     iresearch-policy-compaction

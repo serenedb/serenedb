@@ -259,7 +259,7 @@ TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
                                std::vector<Input> inputs, bool sorted,
                                const MergeProgress& progress, size_t parts,
                                const Target& target,
-                               duckdb::TaskScheduler& scheduler, size_t threads)
+                               const MergeWorkers& workers)
   : _key{key},
     _props{props},
     _inputs{std::move(inputs)},
@@ -271,7 +271,8 @@ TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
     _sorted{sorted},
     _ranged{Ranged(_props.index_features, _inputs)},
     _docs(bitset::bits_to_words(target.doc_count + doc_limits::min())) {
-  _merge.Partition(parts, true, &scheduler, threads);
+  _merge.Partition(parts, true, &workers.scheduler, workers.threads,
+                   MergeAccount(workers));
   for (size_t p = 1; p < _merge.PartitionCount(); ++p) {
     for (size_t i = 0; i != _keys.size(); ++i) {
       if (const auto row = _merge.PartitionBegin(p, i);

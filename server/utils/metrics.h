@@ -34,12 +34,12 @@ namespace sdb::metrics {
 // thread-pool size is a server parameter, not a metric, and is surfaced from
 // the flag registry instead.
 enum class Gauge : uint8_t {
-  PgConnections,      // live pg-wire connections
-  HttpConnections,    // live http connections
-  RefreshActive,      // refresh tasks running now
-  RefreshPending,     // refresh tasks queued
-  CompactionActive,   // compaction tasks running now
-  CompactionPending,  // compaction tasks queued
+  PgConnections,     // live pg-wire connections
+  HttpConnections,   // live http connections
+  RefreshActive,     // refresh tasks running now
+  RefreshPending,    // refresh tasks queued
+  CompactionActive,  // compaction tasks running now
+  CompactionPending,
   CompactionThreads,
   CompactionWrittenBytes,
   CleanupActive,   // cleanup tasks running now

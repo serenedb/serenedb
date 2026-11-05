@@ -154,6 +154,7 @@ add_executable(
     search/scorer_to_string_test.cpp
     search/shingle_phrase_test.cpp
     search/sort_tests.cpp
+    search/sorted_docs_test.cpp
     search/term_filter_tests.cpp
     search/term_predicate_test.cpp
     search/terms_filter_test.cpp

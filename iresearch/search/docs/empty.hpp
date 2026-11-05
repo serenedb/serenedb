@@ -27,6 +27,8 @@ namespace irs::docs {
 class Empty : public Root {
  public:
   uint32_t Run(doc_id_t, doc_id_t, doc_id_t*) final { return 0; }
+
+  doc_id_t NextDoc() const noexcept final { return doc_limits::eof(); }
 };
 
 }  // namespace irs::docs

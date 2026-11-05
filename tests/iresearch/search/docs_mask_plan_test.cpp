@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -32,6 +34,7 @@
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
@@ -40,6 +43,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -86,6 +90,7 @@ irs::TermClause Clause(irs::field_id field, std::string_view value) {
 struct Query {
   std::string name;
   irs::Filter::ptr filter;
+  std::vector<irs::Filter::ptr> parts = {};
 };
 
 std::vector<Query> Queries() {
@@ -163,6 +168,28 @@ std::vector<Query> Queries() {
     filter->Add(buckets(), irs::Occur::MustNot);
     filter->Add(std::move(both), irs::Occur::MustNot);
     queries.push_back({"not_buckets_not_third_and_half", std::move(filter)});
+  }
+  {
+    auto filter = std::make_unique<irs::BooleanFilter>();
+    std::vector<irs::Filter::ptr> parts;
+    for (int b = 0; b != 10; ++b) {
+      filter->Add(Clause(kBucket, std::to_string(b)), irs::Occur::Should);
+      parts.push_back(Term(kBucket, std::to_string(b)));
+    }
+    filter->SetMinShouldMatch(1);
+    queries.push_back({"few_buckets", std::move(filter), std::move(parts)});
+  }
+  {
+    auto filter = std::make_unique<irs::ByPrefix>();
+    *filter->mutable_field_id() = kBucket;
+    filter->mutable_options()->term =
+      irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"123"})};
+    std::vector<irs::Filter::ptr> parts;
+    parts.push_back(Term(kBucket, "123"));
+    for (int d = 0; d != 10; ++d) {
+      parts.push_back(Term(kBucket, "123" + std::to_string(d)));
+    }
+    queries.push_back({"bucket_prefix", std::move(filter), std::move(parts)});
   }
   return queries;
 }
@@ -324,7 +351,9 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       uint64_t total = 0;
       for (const auto& segment : reader) {
         ASSERT_LT(segment.live_docs_count(), segment.docs_count());
-        const auto expected = Expected(*query.filter, segment);
+        const auto expected = query.parts.empty()
+                                ? Expected(*query.filter, segment)
+                                : ExpectedUnion(query.parts, segment);
         total += expected.size();
         CheckSegment(*query.filter, segment, expected);
       }
@@ -431,6 +460,18 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     return docs;
   }
 
+  static std::vector<doc_id_t> ExpectedUnion(
+    std::span<const irs::Filter::ptr> parts, const irs::SubReader& segment) {
+    std::vector<doc_id_t> docs;
+    for (const auto& part : parts) {
+      const auto own = Expected(*part, segment);
+      docs.insert(docs.end(), own.begin(), own.end());
+    }
+    absl::c_sort(docs);
+    docs.erase(std::ranges::unique(docs).begin(), docs.end());
+    return docs;
+  }
+
   static void CheckSegment(const irs::Filter& filter,
                            const irs::SubReader& segment,
                            const std::vector<doc_id_t>& expected) {
@@ -489,17 +530,32 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
 
     for (const doc_id_t span : {doc_id_t{0}, irs::detail::kWindowDocs}) {
-      SCOPED_TRACE(testing::Message("span ") << span);
-      auto docs = irs::docs::MakeRoot(*query, {.span = span});
-      ASSERT_NE(nullptr, docs);
-      constexpr doc_id_t kWindow = 3000;
-      std::vector<doc_id_t> buf(kWindow + irs::doc_limits::kDocsSlack);
-      std::vector<doc_id_t> actual;
-      for (doc_id_t min = irs::doc_limits::min(); min < end; min += kWindow) {
-        const auto n = docs->Run(min, std::min(min + kWindow, end), buf.data());
-        actual.insert(actual.end(), buf.begin(), buf.begin() + n);
+      for (const bool skip : {false, true}) {
+        SCOPED_TRACE(testing::Message("span ") << span << " skip " << skip);
+        auto docs = irs::docs::MakeRoot(*query, {.span = span});
+        ASSERT_NE(nullptr, docs);
+        constexpr doc_id_t kWindow = 3000;
+        std::vector<doc_id_t> buf(kWindow + irs::doc_limits::kDocsSlack);
+        std::vector<doc_id_t> actual;
+        for (doc_id_t min = irs::doc_limits::min(); min < end;) {
+          const auto max = std::min(min + kWindow, end);
+          const auto n = docs->Run(min, max, buf.data());
+          actual.insert(actual.end(), buf.begin(), buf.begin() + n);
+          min = max;
+          const auto next = docs->NextDoc();
+          if (!irs::doc_limits::valid(next)) {
+            continue;
+          }
+          ASSERT_GE(next, max);
+          ASSERT_EQ(absl::c_lower_bound(expected, max),
+                    absl::c_lower_bound(expected, next))
+            << max << ' ' << next;
+          if (skip) {
+            min = std::min(next, end);
+          }
+        }
+        ASSERT_EQ(expected, actual);
       }
-      ASSERT_EQ(expected, actual);
     }
 
     {

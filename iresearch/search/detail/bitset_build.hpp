@@ -335,6 +335,9 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
     PrefetchDocExtents(r.In(), metas);
   }
   for (size_t i = 0; i != terms.size(); ++i) {
+    if constexpr (requires { sink.Term(); }) {
+      sink.Term();
+    }
     const auto& meta = CookieOf(terms[i]);
     SDB_ASSERT(meta.docs_count != 0);
     if (meta.docs_count == 1) {

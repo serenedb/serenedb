@@ -32,12 +32,20 @@ class SinglePosting : public Root {
   }
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* out) final {
-    if (!doc_limits::valid(_doc) || _doc < min || _doc >= max) {
+    if (_doc < min) {
+      _doc = doc_limits::invalid();
+      return 0;
+    }
+    if (_doc >= max) {
       return 0;
     }
     out[0] = _doc;
     _doc = doc_limits::invalid();
     return 1;
+  }
+
+  doc_id_t NextDoc() const noexcept final {
+    return doc_limits::valid(_doc) ? _doc : doc_limits::eof();
   }
 
  private:

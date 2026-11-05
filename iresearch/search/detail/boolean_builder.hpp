@@ -37,6 +37,7 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/posting_count.hpp"
 #include "iresearch/search/detail/posting_fill.hpp"
+#include "iresearch/search/detail/sorted_build.hpp"
 #include "iresearch/search/detail/window_set.hpp"
 #include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
@@ -44,6 +45,7 @@
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/sorted_docs.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -133,11 +135,32 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
 }
 
 template<typename Family, typename Term, typename Ctx>
+Result<Family> MakeSortedDocs(std::span<const Term> terms,
+                              const TermReader* field, const IndexInput& doc,
+                              doc_id_t docs_count, const Ctx& ctx) {
+  if (Family::BitsetSpan(ctx, docs_count) < docs_count ||
+      !SparseFold(SumDocs(terms), docs_count) ||
+      !TakeBitset<Result<Family>>(terms, doc, docs_count)) {
+    return {};
+  }
+  auto docs = SortedDocsOf(terms, field, doc);
+  if constexpr (requires { Family::MakeSorted(ctx, std::move(docs)); }) {
+    return Family::MakeSorted(ctx, std::move(docs));
+  } else {
+    return Family::template Docs<lead::SortedDocs>(ctx, std::move(docs));
+  }
+}
+
+template<typename Family, typename Term, typename Ctx>
 Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       const TermReader* field,
                                       const IndexInput& doc,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
+  if (auto sorted =
+        MakeSortedDocs<Family>(terms, field, doc, docs_count, ctx)) {
+    return sorted;
+  }
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
     if (auto folded = MakeBitsetOf<Result<Family>>(
           terms, field, doc, docs_count, Family::BitsetTable(ctx))) {
@@ -584,6 +607,13 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
     return {};
   }
   if constexpr (!kScores<Scoring>) {
+    if (filters.empty()) {
+      if (auto sorted = MakeSortedDocs<Family>(
+            terms, field, *doc, static_cast<doc_id_t>(segment.docs_count()),
+            ctx)) {
+        return sorted;
+      }
+    }
     if (auto folded = MakeBitset<Family>(
           {.should = terms, .should_filters = filters, .should_fills = &rest},
           segment, ctx)) {

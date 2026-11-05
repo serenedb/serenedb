@@ -77,6 +77,14 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
     return Refill(out, n, min, max);
   }
 
+  doc_id_t NextDoc() const noexcept final {
+    if (doc_limits::valid(_next)) {
+      return _next;
+    }
+    return this->Left() == 0 && _at == _len ? doc_limits::eof()
+                                            : doc_limits::invalid();
+  }
+
  private:
   IRS_NO_INLINE uint32_t Slow(doc_id_t* IRS_RESTRICT out, doc_id_t min,
                               doc_id_t max) {

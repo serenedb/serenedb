@@ -41,11 +41,15 @@ class Walk : public Root {
       out[n++] = doc;
       doc = _node.Next();
     }
+    _next = doc;
     return n;
   }
 
+  doc_id_t NextDoc() const noexcept final { return _next; }
+
  private:
   Node _node;
+  doc_id_t _next = doc_limits::invalid();
 };
 
 }  // namespace irs::docs

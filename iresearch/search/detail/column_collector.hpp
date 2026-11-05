@@ -89,20 +89,6 @@ class ColumnArgsFetcher {
     }
   }
 
-  void Prefetch(std::span<const doc_id_t> docs) const noexcept {
-    for (const auto& entry : _columns) {
-      entry.reader->Prefetch(docs);
-    }
-  }
-
-  uint32_t SlotBytes() const noexcept {
-    uint32_t bytes = 0;
-    for (const auto& entry : _columns) {
-      bytes = std::max(bytes, entry.reader->SlotBytes());
-    }
-    return bytes;
-  }
-
  private:
   void Free() noexcept {
     for (auto& entry : _columns) {

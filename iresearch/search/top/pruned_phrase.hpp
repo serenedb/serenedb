@@ -50,7 +50,6 @@ class PrunedPhrase : public Root {
   static constexpr uint32_t kWindow = 64;
   static constexpr uint32_t kMaxInterval = 64;
   static constexpr uint32_t kPassShare = 2;
-  static constexpr size_t kNormsAhead = 8;
 
  public:
   template<typename... Args>
@@ -63,8 +62,6 @@ class PrunedPhrase : public Root {
     _provider.freq.value = _freqs;
     _score = irs::detail::PrepareScore(args, segment, field.meta(), _provider);
     _slots.Gate();
-    _prefetch = _slots.LeadDocs() * ABSL_CACHELINE_SIZE <=
-                segment.docs_count() * _fetcher.SlotBytes();
   }
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
@@ -180,9 +177,6 @@ class PrunedPhrase : public Root {
     };
     for (; doc < end && _seen < kWindow; doc = next()) {
       ++_seen;
-      if (_prefetch) {
-        PrefetchNorms();
-      }
       const auto bound = _slots.FreqBound();
       if (bound == 0) {
         continue;
@@ -213,17 +207,6 @@ class PrunedPhrase : public Root {
     }
   }
 
-  void PrefetchNorms() noexcept {
-    const auto upcoming = _slots.LeadUpcoming();
-    const auto ahead =
-      upcoming.first(std::min<size_t>(upcoming.size(), kNormsAhead));
-    const auto from = absl::c_upper_bound(ahead, _prefetched);
-    if (from != ahead.end()) {
-      _fetcher.Prefetch({from, ahead.end()});
-      _prefetched = ahead.back();
-    }
-  }
-
   void FlushBatch(LoserScoreCollector& collector) {
     if (_batch != 0) {
       FetchAndScore(_fetcher, _score, _docs, _scores, _batch);
@@ -248,8 +231,6 @@ class PrunedPhrase : public Root {
   uint32_t _passed = 0;
   uint32_t _interval = 1;
   uint32_t _skip = 0;
-  doc_id_t _prefetched = doc_limits::invalid();
-  bool _prefetch = false;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

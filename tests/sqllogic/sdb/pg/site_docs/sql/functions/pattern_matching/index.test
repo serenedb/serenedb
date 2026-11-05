@@ -319,3 +319,15 @@ SELECT 'a\c' LIKE 'a\c' AS default_escape, 'a\c' LIKE 'a\c' ESCAPE '' AS no_esca
 ----
 default_escape	no_escape
 f	t
+
+# DOCS_TEST: example_016
+
+# DOCS_TEST_BODY
+
+query
+SELECT '\x6d72ff6265617374'::BYTEA LIKE 'mr_beast' AS one_byte,
+       '\xc3bf'::BYTEA LIKE '_' AS two_bytes,
+       '\x6d72ff6265617374'::BYTEA LIKE '%beast' AS suffix;
+----
+one_byte	two_bytes	suffix
+t	f	t

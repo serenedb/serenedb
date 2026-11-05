@@ -1,0 +1,52 @@
+query
+SELECT '18446744073709551615'::xid8 AS max, '67'::xid8 AS sixty_seven;
+----
+max	sixty_seven
+18446744073709551615	67
+
+
+statement error (out of range|Could not convert)
+SELECT '18446744073709551616'::xid8;
+
+
+query
+SELECT '18446744073709551615'::xid8 > '9223372036854775808'::xid8 AS gt, max(x)::text AS max, min(x)::text AS min
+FROM (VALUES ('18446744073709551615'::xid8), ('9223372036854775808'::xid8), ('67'::xid8)) t(x);
+----
+gt	max	min
+t	18446744073709551615	67
+
+
+query
+SELECT ARRAY['18446744073709551615'::xid8, '67'::xid8] AS a;
+----
+a
+{18446744073709551615,67}
+
+
+query
+SELECT pg_input_is_valid('67', 'xid8') AS a, pg_input_is_valid('mrbeast', 'xid8') AS b, pg_input_is_valid('18446744073709551616', 'xid8') AS c;
+----
+a	b	c
+t	f	f
+
+
+statement ok
+CREATE TABLE beast_xid8 (x xid8);
+
+
+statement ok
+INSERT INTO beast_xid8 VALUES ('18446744073709551615'), ('9223372036854775808'), ('67');
+
+
+query
+SELECT x FROM beast_xid8 ORDER BY x;
+----
+x
+67
+9223372036854775808
+18446744073709551615
+
+
+statement ok
+DROP TABLE beast_xid8;

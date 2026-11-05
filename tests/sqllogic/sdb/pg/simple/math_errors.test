@@ -114,3 +114,23 @@ statement error
 SELECT make_timestamp(2024, 1, 1, 0, 0, -1);
 ----
 db error: ERROR: date/time field value out of range
+
+
+statement ok
+SET error_on_division_by_zero = false;
+
+
+query
+SELECT count(g::float8 / (g % 1000)::float8) AS float8, count(g::float4 / (g % 1000)::float4) AS float4
+FROM generate_series(1, 6767) g;
+----
+float8	float4
+6761	6761
+
+
+statement ok
+RESET error_on_division_by_zero;
+
+
+statement error (22012)
+SELECT count(g::float8 / (g % 1000)::float8) FROM generate_series(1, 6767) g;

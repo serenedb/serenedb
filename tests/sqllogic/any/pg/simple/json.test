@@ -132,6 +132,14 @@ barbar
 
 
 query
+SELECT '"abc"'::json #>> '{}' AS str_text, '"abc"'::json #> '{}' AS str_json, ' {"a" :  1} '::json #> '{}' AS obj,
+       '[1, 2]'::json #>> '{}' AS arr, '5'::json #>> '{}' AS num, 'null'::json #> '{}' AS null_json, 'null'::json #>> '{}' AS null_text;
+----
+str_text	str_json	obj	arr	num	null_json	null_text
+abc	"abc"	{"a" :  1}	[1, 2]	5	null	NULL
+
+
+query
 SELECT json_extract_path_text('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b', '0');
 ----
 json_extract_path_text

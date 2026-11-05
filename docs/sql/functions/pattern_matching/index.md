@@ -45,6 +45,10 @@ An `ESCAPE` clause names a different escape character, and `ESCAPE ''` turns esc
 
 Additionally, the function `like_escape` has the same functionality as a `LIKE` expression with an `ESCAPE` clause, but using function syntax. See the [Text Functions page](../../../sql/functions/text.md) for details.
 
+On [`BYTEA`](../../data_types/blob.md) values, `LIKE` and `NOT LIKE` compare bytes, as in PostgreSQL: the pattern is read as a `BYTEA` literal, `_` matches exactly one byte and `%` any run of bytes, so a character that takes two bytes in UTF-8 needs two underscores:
+
+<SqlLogicTest id="sql/functions/pattern_matching/index/example_016" />
+
 Search for strings with 'a' then a literal percent sign then 'c', with `$` as the escape character:
 
 <SqlLogicTest id="sql/functions/pattern_matching/index/example_004" />

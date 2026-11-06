@@ -29,7 +29,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/transaction_log_writer.hpp>
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/index/key_removal.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -143,16 +143,100 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
   std::vector<const irs::DocRemoval*> _removals;
 };
 
+// Whether a row this transaction is removing is one somebody else removed
+// first. Masking its own removals is what lets a transaction write a row back
+// under the key it just deleted, and that is only its to do while the row is
+// still there: once another transaction has removed it, the key is released,
+// and writing it back resurrects a row that transaction deleted.
+//
+// It is a question about rowids and not about keys, which is why it is asked
+// separately: a key probe sees it only where the other transaction happened to
+// take the key for a row of its own, and misses the plain case where it only
+// removed the row.
+void RefuseResurrection(StoreWrites& w, const irs::DirectoryReader& reader,
+                        const irs::DocRemoval* removed) {
+  if (w.changes.removals.empty()) {
+    return;
+  }
+  // What this transaction means to remove, counted once per document: a row it
+  // removes twice is still one row.
+  irs::containers::FlatHashMap<uint64_t, irs::DocumentMaskBuilder> sources;
+  for (const auto& removal : w.changes.removals) {
+    for (const auto& group : removal->groups) {
+      sources[group.segment].Merge(group.docs);
+    }
+  }
+  size_t expected = 0;
+  for (const auto& [segment, docs] : sources) {
+    expected += docs.Count();
+  }
+
+  std::vector<irs::DocumentMaskBuilder> ours(reader.size());
+  std::vector<irs::DocumentMaskBuilder> gone(reader.size());
+  irs::RemovalTargets our_targets;
+  irs::RemovalTargets their_targets;
+  our_targets.reserve(reader.size());
+  their_targets.reserve(reader.size());
+  for (size_t i = 0; i != reader.size(); ++i) {
+    uint64_t id = 0;
+    if (!irs::ParseSegmentId(reader[i].Meta().name, id)) {
+      continue;
+    }
+    our_targets.emplace(
+      id, irs::RemovalTarget{.reader = nullptr, .removed = &ours[i]});
+    their_targets.emplace(
+      id, irs::RemovalTarget{.reader = nullptr, .removed = &gone[i]});
+  }
+  for (const auto& removal : w.changes.removals) {
+    irs::ResolveRemoval(*removal, our_targets);
+  }
+  if (removed != nullptr) {
+    irs::ResolveRemoval(*removed, their_targets);
+  }
+
+  // What of it is still there to remove. A document goes missing in three
+  // ways, all of them somebody else's removal: it is masked in a segment the
+  // reader still holds, the tail says it is gone, or the segment it was in has
+  // no live document left and the reader no longer holds it at all -- which is
+  // why this counts what arrives rather than looking for what does not.
+  size_t mine = 0;
+  for (size_t i = 0; i != reader.size(); ++i) {
+    if (ours[i].Empty()) {
+      continue;
+    }
+    const auto& segment = reader[i];
+    // Everything the reader has already masked is somebody's removal: this
+    // transaction's own reach it only when it publishes, which is after this.
+    if (const auto* mask = segment.docs_mask()) {
+      gone[i].Merge(*mask);
+    }
+    const auto taken = std::move(ours[i]).Take();
+    const auto lost = std::move(gone[i]).Take();
+    taken.ForEachRun(&lost, [&](irs::doc_id_t first, irs::doc_id_t last) {
+      mine += last - first;
+      return true;
+    });
+  }
+
+  if (mine != expected) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+      ERR_MSG("could not serialize access due to concurrent update of table "
+              "\"",
+              w.table->name.GetIdentifierName(), "\""));
+  }
+}
+
 // Everything that holds this table's keys but this transaction, put to the
 // keys this transaction writes. The published reader is the settled tier; the
 // WAL tail carries what committed since, as bare keys where the transaction
 // did not flush and as whole segments where it did. This transaction's own
 // rows are not in the tail: its record reaches the WAL after this runs.
 //
-// `published` is given on the pass that answers for the whole index and left
-// out on one that only catches up: what the first pass settled stays settled,
-// because publishing moves a row from the tail to the reader without adding
-// one, and a removal only ever takes a key away.
+// `whole` marks the pass that answers for the whole index; the one that only
+// catches up leaves the settled tiers out, because what the first pass settled
+// stays settled: publishing moves a row from the tail to the reader without
+// adding one, and a removal only ever takes a key away.
 void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
                     duckdb::ClientContext& context,
                     std::span<WalTailFile> files,
@@ -166,6 +250,8 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
   for (const auto& segment : changes.segments) {
     flushed.push_back(w.store->OpenSegment(segment));
   }
+  // A transaction that only removes rows takes no key back and resurrects
+  // nothing, so it has nothing to answer for.
   if (w.keys.empty() && flushed.empty()) {
     return;
   }
@@ -173,6 +259,13 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
   WalTailKeyCollector collector{w.table->oid, w.pk_slots};
   w.certified = ReadTailKeys(db, context, w.certified, files, collector);
   auto tail = collector.TakeKeys();
+
+  // A search table logs its removals as document positions; the rowid-key form
+  // belongs to an inverted index replaying a table's deletes, and never
+  // reaches this tail.
+  const auto tail_removed = std::move(tail.removals).Resolve(reader);
+
+  RefuseResurrection(w, reader, tail_removed.get());
 
   std::vector<irs::SegmentReader> unpublished;
   unpublished.reserve(tail.segments.size());
@@ -195,18 +288,14 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
     own_segments.push_back(&segment);
   }
 
-  auto removed_keys = tail.removals.TakeKeys();
-  irs::SortUnique(removed_keys);
   // This transaction's own removals mask the probe alongside the tail's: an
-  // UPDATE deletes the row it rewrites, and the key it writes back is its own
-  // to take. What that leaves unanswered -- whether the row is still this
-  // transaction's to replace -- is a question about rowids, not keys.
+  // UPDATE deletes the row it rewrites, and by the check above that row was
+  // still its own, so the key it writes back is its own to take.
   std::vector<const irs::DocRemoval*> removed_docs;
   removed_docs.reserve(changes.removals.size() + 1);
   for (const auto& removal : changes.removals) {
     removed_docs.push_back(removal.get());
   }
-  const auto tail_removed = std::move(tail.removals).Resolve(reader);
   if (tail_removed) {
     removed_docs.push_back(tail_removed.get());
   }
@@ -223,7 +312,7 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
                                unpublished_segments,
                                std::move(unpublished_keys),
                                fields,
-                               {.docs = removed_docs, .keys = removed_keys}};
+                               {.docs = removed_docs}};
   if (connector::FindDuplicateKey(own_segments, w.keys, w.pk_slots, probe)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNIQUE_VIOLATION),

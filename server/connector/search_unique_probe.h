@@ -43,16 +43,13 @@ void ForEachLiveDoc(const irs::TermReader& field, irs::bytes_view term,
                     absl::FunctionRef<bool(irs::doc_id_t)> visit);
 
 // What has been removed that no reader shows yet: the documents recorded
-// against the reader this probe holds, and the rows removed by key. A removal
-// reaches a reader only with the publish that applies it, so a probe blind to
-// these would answer for rows that are already deleted -- whether by a
-// committed transaction whose publish is still pending, or by the very
-// transaction being certified, which deletes a row and writes it back under
-// the same key every time it updates one.
+// against the reader this probe holds. A removal reaches a reader only with
+// the publish that applies it, so a probe blind to these would answer for rows
+// that are already deleted -- whether by a committed transaction whose publish
+// is still pending, or by the very transaction being certified, which deletes
+// a row and writes it back under the same key every time it updates one.
 struct PendingRemovals {
   std::span<const irs::DocRemoval* const> docs;
-  // Sorted, as `irs::RemoveKeys` requires.
-  std::span<const int64_t> keys;
 };
 
 // "Does this key already exist outside the current transaction?" over the two

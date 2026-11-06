@@ -203,7 +203,7 @@ TEST_F(SearchUniqueProbeTest, BooleanKeysAnswerFromTheirOwnMember) {
 }
 
 // A row a committed transaction has removed is gone for the probe before any
-// publish shows it gone, whichever form the removal was recorded in.
+// publish shows it gone.
 TEST_F(SearchUniqueProbeTest, RemovedRowsStopAnswering) {
   const std::vector<primary_key::KeySlot> slots{
     Slot(0, "name", duckdb::LogicalType::VARCHAR, irs::DictLayout::String),
@@ -222,24 +222,13 @@ TEST_F(SearchUniqueProbeTest, RemovedRowsStopAnswering) {
   const auto fields = KeyFields(slots);
   const auto reader = Reader();
 
-  // By key: the rowid the deleting transaction logged.
-  {
-    constexpr std::array<int64_t, 1> kRemoved{7};
-    UniqueProbe probe{&reader, {}, {}, fields, {.keys = kRemoved}};
-    EXPECT_FALSE(probe.Exists(keys[0]));
-    EXPECT_TRUE(probe.Exists(keys[1]));
-  }
-
-  // By position: the document it recorded against this very reader.
-  {
-    irs::DocRemovalBuilder builder;
-    builder.Add(0, DocOf(1));
-    const auto removal = std::move(builder).Finish(reader);
-    const std::array<const irs::DocRemoval*, 1> removed{removal.get()};
-    UniqueProbe probe{&reader, {}, {}, fields, {.docs = removed}};
-    EXPECT_TRUE(probe.Exists(keys[0]));
-    EXPECT_FALSE(probe.Exists(keys[1]));
-  }
+  irs::DocRemovalBuilder builder;
+  builder.Add(0, DocOf(1));
+  const auto removal = std::move(builder).Finish(reader);
+  const std::array<const irs::DocRemoval*, 1> removed{removal.get()};
+  UniqueProbe probe{&reader, {}, {}, fields, {.docs = removed}};
+  EXPECT_TRUE(probe.Exists(keys[0]));
+  EXPECT_FALSE(probe.Exists(keys[1]));
 }
 
 // The keys of a transaction that committed without flushing a segment are the

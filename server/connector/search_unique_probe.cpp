@@ -25,12 +25,9 @@
 
 #include <algorithm>
 #include <iresearch/index/file_names.hpp>
-#include <iresearch/index/key_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <limits>
 #include <utility>
-
-#include "connector/term_dict.h"
 
 namespace sdb::connector {
 namespace {
@@ -122,15 +119,6 @@ void UniqueProbe::ApplyRemovals(const PendingRemovals& removed) {
         irs::ResolveRemoval(*docs, targets);
       }
     }
-  }
-  if (removed.keys.empty()) {
-    return;
-  }
-  SDB_ASSERT(absl::c_is_sorted(removed.keys));
-  for (auto& segment : _segments) {
-    irs::RemoveKeys(
-      removed.keys, term_dict::kPKFieldId, *segment.sub,
-      [&](const int64_t&, irs::doc_id_t doc) { segment.deleted.Add(doc); });
   }
 }
 

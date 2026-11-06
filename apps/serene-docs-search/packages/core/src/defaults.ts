@@ -1,5 +1,7 @@
 import type { AiProvider, SereneSearchConfig, Source } from "./types";
 
+export const VERSION = "0.10.0";
+
 export const DEFAULT_BACKEND_PORT = 7700;
 export const DEFAULT_SERENEDB_PORT = 7890;
 export const DEFAULT_TABLE = "serene_docs_sections";
@@ -65,13 +67,21 @@ export function parseInterval(interval: string | undefined): number | null {
 
 /** Random token for widget<->backend admin auth: sk-local-<hex>. */
 export function generateToken(): string {
-    const bytes = new Uint8Array(12);
+    return "sk-local-" + randomHex(12);
+}
+
+export function generatePassword(): string {
+    return randomHex(16);
+}
+
+function randomHex(length: number): string {
+    const bytes = new Uint8Array(length);
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
         crypto.getRandomValues(bytes);
     } else {
         for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
     }
-    return "sk-local-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Short human summary of a source, e.g. "github.com/acme/docs @ main". */

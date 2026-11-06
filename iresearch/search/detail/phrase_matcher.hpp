@@ -664,6 +664,10 @@ class PhraseMatcher {
         absl::c_reverse(_pos);
         _reversed = !_reversed;
       }
+    } else if constexpr (N == 2) {
+      if (kByDocFreq(_pos.back(), _pos.front())) {
+        absl::c_reverse(_pos);
+      }
     } else {
       absl::c_sort(_pos, kByDocFreq);
     }

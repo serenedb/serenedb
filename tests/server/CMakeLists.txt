@@ -47,6 +47,7 @@ add_executable(
     scorer_bounds_test.cpp
     search_engine_test.cpp
     search_table_changes_test.cpp
+    search_wal_tail_keys_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp

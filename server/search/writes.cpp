@@ -256,9 +256,16 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
     return;
   }
 
-  WalTailKeyCollector collector{w.table->oid, w.pk_slots};
-  w.certified = ReadTailKeys(db, context, w.certified, files, collector);
-  auto tail = collector.TakeKeys();
+  // A TRUNCATE of this transaction's own kills every row that exists before
+  // it, in the published reader and in the tail alike, and the buffer it
+  // cleared holds only what was written after it. So those rows answer to each
+  // other and to nothing else, and the tail is not worth reading.
+  WalTailKeys tail;
+  if (!changes.truncate) {
+    WalTailKeyCollector collector{w.table->oid, w.pk_slots};
+    w.certified = ReadTailKeys(db, context, w.certified, files, collector);
+    tail = collector.TakeKeys();
+  }
 
   // A search table logs its removals as document positions; the rowid-key form
   // belongs to an inverted index replaying a table's deletes, and never
@@ -306,9 +313,11 @@ void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
     fields.push_back(slot.column);
   }
 
-  // A TRUNCATE in the tail kills every row the reader still shows, so the tier
-  // goes with it rather than being consulted and answering for dead rows.
-  connector::UniqueProbe probe{whole && !tail.truncated ? &reader : nullptr,
+  // A TRUNCATE, this transaction's own or one the tail carries, kills every
+  // row the reader still shows, so the tier goes with it rather than being
+  // consulted and answering for dead rows.
+  const bool cleared = changes.truncate || tail.truncated;
+  connector::UniqueProbe probe{whole && !cleared ? &reader : nullptr,
                                unpublished_segments,
                                std::move(unpublished_keys),
                                fields,
@@ -369,7 +378,7 @@ void Writes::Certify(
       CertifyAgainst(w, db, context, files, reader, /*whole=*/false);
       continue;
     }
-    auto [reader, position] = w.store->SnapshotWithPosition();
+    auto [reader, position] = w.store->SnapshotToCertify();
     w.certified = {.generation = position.generation,
                    .offset = position.offset};
     auto files = OpenTailFiles(db, w.certified);
@@ -385,9 +394,7 @@ void Writes::CertifyPrepared(StoreWrites& w, duckdb::ClientContext& context) {
     return;
   }
   auto& db = w.table->catalog.GetAttached();
-  // The reader and the position come from one call: a reader older than the
-  // position it is paired with would leave a span of the WAL in neither tier.
-  auto [reader, position] = w.store->SnapshotWithPosition();
+  auto [reader, position] = w.store->SnapshotToCertify();
   w.certified = {.generation = position.generation, .offset = position.offset};
   std::vector<WalTailFile> files;
   {

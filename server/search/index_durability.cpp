@@ -207,6 +207,11 @@ void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
   _staged = std::max(_staged, position);
 }
 
+irs::SourcePosition IndexDurability::PublishedPosition() const {
+  absl::MutexLock lock{&_positions_mutex};
+  return _published;
+}
+
 std::optional<uint64_t> IndexDurability::NeededWAL() const {
   absl::MutexLock lock{&_positions_mutex};
   if (_staged <= _durable) {

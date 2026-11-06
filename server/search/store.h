@@ -142,6 +142,19 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _durability.Snapshot(*_writer);
   }
 
+  // The same pair for a caller that must not wait: a commit, which a refresh
+  // holding its own lock would otherwise hold up for as long as it runs.
+  // The position is read first and the reader after, so the reader is never
+  // older than the position it is paired with -- the other way round would
+  // leave a span of the WAL in neither tier, and a key written there would go
+  // unseen. A reader ahead of its position only costs re-reading what it
+  // already holds.
+  std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotToCertify()
+    const {
+    const auto position = _durability.PublishedPosition();
+    return {_writer->GetSnapshot(), position};
+  }
+
   // Opens a segment this store's directory holds but its published reader does
   // not show yet, named by the meta file a committed transaction recorded. The
   // segment is read-only and lives as long as the handle: a certifier reads

@@ -73,6 +73,50 @@ db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary rel
 
 
 statement ok
+CREATE TEMP TABLE tesp_tt (id INT, a INT DEFAULT tesp_tmp(1) CHECK (tesp_tmp(a) > 100),
+  g INT GENERATED ALWAYS AS (tesp_tmp(a)) STORED);
+
+
+statement ok
+ALTER TABLE tesp_tt ADD CONSTRAINT tesp_tt_id CHECK (tesp_tmp(id) > 100);
+
+
+statement ok
+ALTER TABLE tesp_tt ADD COLUMN b INT DEFAULT tesp_tmp(2);
+
+
+statement ok
+CREATE INDEX tesp_tt_idx ON tesp_tt ((tesp_tmp(a)));
+
+
+statement ok
+INSERT INTO tesp_tt (id) VALUES (1);
+
+
+query
+SELECT id, a, g, b FROM tesp_tt;
+----
+id	a	g	b
+1	101	201	102
+
+
+statement error
+INSERT INTO tesp_tt (id, a) VALUES (2, -5);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_tt" with expression CHECK((tesp_tmp(a) > 100))
+
+
+statement error
+INSERT INTO tesp_tt (id) VALUES (-200);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_tt" with expression CHECK((tesp_tmp(id) > 100))
+
+
+statement ok
+DROP TABLE tesp_tt;
+
+
+statement ok
 ALTER TABLE public.tesp_t ADD COLUMN e BIGINT DEFAULT tesp_conv(3);
 
 

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/synchronization/notification.h>
@@ -43,7 +42,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/types.hpp>
-#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/bitset.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -91,6 +90,7 @@ struct ScanUnit {
   uint32_t seg = 0;
   uint32_t rg_begin = 0;
   uint32_t rg_end = 0;
+  uint32_t live = 0;
   bool whole = true;
 };
 
@@ -110,6 +110,11 @@ struct OrderedUnits {
   uint32_t next = 0;
 };
 
+struct LiveClaim {
+  uint32_t rg = 0;
+  uint32_t live = 0;
+};
+
 struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kUnclaimed = 0;
   static constexpr uint8_t kWhole = 1;
@@ -121,35 +126,23 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
 
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
-  std::atomic_uint32_t next_rg{0};
+  std::atomic_uint32_t next_claim{0};
   std::atomic_uint32_t done_rgs{0};
   std::atomic_uint8_t claim{kUnclaimed};
   std::atomic_uint8_t prepare{kUnprepared};
-  bool all_live = true;
-  std::vector<uint32_t> live_rgs;
+  std::vector<LiveClaim> claims;
   std::unique_ptr<OrderedUnits> ordered;
 
-  void SetLive(std::vector<uint32_t> rgs) {
-    all_live = rgs.size() == rg_count;
-    live_rgs = all_live ? std::vector<uint32_t>{} : std::move(rgs);
-  }
-
-  uint32_t LiveBefore(uint32_t rg) const noexcept {
-    return all_live ? rg
-                    : static_cast<uint32_t>(absl::c_lower_bound(live_rgs, rg) -
-                                            live_rgs.begin());
-  }
-
   uint32_t LiveCount() const noexcept {
-    return all_live ? rg_count : static_cast<uint32_t>(live_rgs.size());
+    return claims.empty() ? rg_count : claims.back().live;
   }
 
-  uint32_t LiveAt(uint32_t k) const noexcept {
-    if (all_live) {
-      return k;
+  uint32_t LiveLeft(uint32_t next) const noexcept {
+    if (claims.empty()) {
+      return next < rg_count ? rg_count - next : 0;
     }
-    SDB_ASSERT(k < live_rgs.size());
-    return live_rgs[k];
+    return next < claims.size() - 1 ? claims.back().live - claims[next].live
+                                    : 0;
   }
 };
 
@@ -467,6 +460,8 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
 bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
                      ScanLocalState& l);
 
+std::vector<LiveClaim> CutClaims(const irs::bitset& live, uint32_t live_count,
+                                 uint32_t threads);
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);

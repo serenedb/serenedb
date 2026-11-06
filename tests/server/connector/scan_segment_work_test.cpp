@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iresearch/utils/containers/bitset.hpp>
 #include <vector>
 
 #include "connector/scan/scan_state.h"
@@ -28,39 +29,59 @@
 namespace sdb::connector {
 namespace {
 
-void CheckLive(uint32_t rg_count, const std::vector<uint32_t>& live) {
-  SegmentWork work;
-  work.rg_count = rg_count;
-  work.SetLive(live);
-  EXPECT_EQ(work.all_live, live.size() == rg_count);
-  EXPECT_EQ(work.LiveCount(), live.size());
-  for (uint32_t rg = 0; rg <= rg_count; ++rg) {
-    const auto before = std::count_if(live.begin(), live.end(),
-                                      [&](uint32_t l) { return l < rg; });
-    EXPECT_EQ(work.LiveBefore(rg), before) << "row group " << rg;
+std::vector<LiveClaim> CheckClaims(uint32_t rg_count,
+                                   const std::vector<uint32_t>& live,
+                                   uint32_t threads) {
+  irs::bitset bits{rg_count};
+  for (const auto rg : live) {
+    bits.set(rg);
   }
-  for (uint32_t k = 0; k < live.size(); ++k) {
-    EXPECT_EQ(work.LiveAt(k), live[k]) << "live row group " << k;
+  const auto count = static_cast<uint32_t>(live.size());
+  auto claims = CutClaims(bits, count, threads);
+  EXPECT_GE(claims.size(), 2u);
+  EXPECT_EQ(claims.front().rg, 0u);
+  EXPECT_EQ(claims.front().live, 0u);
+  EXPECT_EQ(claims.back().rg, rg_count);
+  EXPECT_EQ(claims.back().live, count);
+  uint32_t claimed = 0;
+  for (size_t i = 1; i < claims.size(); ++i) {
+    claimed += std::max<uint32_t>(1, (count - claimed) / threads);
+    EXPECT_EQ(claims[i].live, std::min(claimed, count))
+      << "claim " << i << " threads " << threads;
+    EXPECT_LT(claims[i - 1].rg, claims[i].rg)
+      << "claim " << i << " threads " << threads;
+    if (i + 1 < claims.size() && claims[i].live < count) {
+      EXPECT_EQ(claims[i].rg, live[claims[i].live])
+        << "claim " << i << " threads " << threads;
+    }
   }
+  return claims;
 }
 
-TEST(ScanSegmentWork, AllLiveKeepsNothing) {
+TEST(ScanSegmentWork, AllLive) {
   std::vector<uint32_t> live(130);
   for (uint32_t rg = 0; rg < live.size(); ++rg) {
     live[rg] = rg;
   }
-  CheckLive(130, live);
-  SegmentWork work;
-  work.rg_count = 130;
-  work.SetLive(live);
-  EXPECT_TRUE(work.all_live);
-  EXPECT_TRUE(work.live_rgs.empty());
+  for (const uint32_t threads : {1, 4, 16}) {
+    const auto claims = CheckClaims(130, live, threads);
+    for (const auto& claim : claims) {
+      EXPECT_EQ(claim.rg, claim.live);
+    }
+  }
 }
 
-TEST(ScanSegmentWork, NoneLive) { CheckLive(130, {}); }
+TEST(ScanSegmentWork, NoneLive) {
+  for (const uint32_t threads : {1, 16}) {
+    const auto claims = CheckClaims(130, {}, threads);
+    EXPECT_EQ(claims.size(), 2u);
+  }
+}
 
 TEST(ScanSegmentWork, Sparse) {
-  CheckLive(150, {0, 1, 63, 64, 100, 127, 128, 149});
+  for (const uint32_t threads : {1, 2, 16}) {
+    CheckClaims(150, {0, 1, 63, 64, 100, 127, 128, 149}, threads);
+  }
 }
 
 TEST(ScanSegmentWork, LongRun) {
@@ -68,7 +89,9 @@ TEST(ScanSegmentWork, LongRun) {
   for (uint32_t rg = 50; rg < 250; ++rg) {
     live.push_back(rg);
   }
-  CheckLive(300, live);
+  for (const uint32_t threads : {1, 3, 16}) {
+    CheckClaims(300, live, threads);
+  }
 }
 
 }  // namespace

@@ -1,12 +1,12 @@
 control substitution on
 
 statement ok
-CREATE TABLE slr (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER)
+CREATE TABLE slr (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER, b BOOLEAN)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, row_group_size = 4096);
 
 
 statement ok
-CREATE TABLE slr_d (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER);
+CREATE TABLE slr_d (id BIGINT PRIMARY KEY, k INTEGER, v INTEGER, b BOOLEAN);
 
 
 statement ok
@@ -14,7 +14,7 @@ SET threads = 1
 
 
 statement ok
-INSERT INTO slr_d SELECT i, i // 4096, i % 7 FROM range(262144) t(i);
+INSERT INTO slr_d SELECT i, i // 4096, i % 7, CASE WHEN i // 4096 = 5 THEN true WHEN i % 2 = 0 THEN NULL ELSE false END FROM range(262144) t(i);
 
 
 statement ok
@@ -75,6 +75,28 @@ n
 
 
 statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_none.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE k > 10 AND k < 11;
+----
+n
+0
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_bool.json'
+
+
+query
+SELECT count(*) AS n FROM slr WHERE b;
+----
+n
+4096
+
+
+statement ok
 RESET enable_profiling
 
 
@@ -100,6 +122,22 @@ FROM read_text('${__TEST_DIR__}/slr_all.json');
 ----
 row_groups_scanned
 64
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_none.json');
+----
+row_groups_scanned
+0
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_bool.json');
+----
+row_groups_scanned
+1
 
 
 query
@@ -170,6 +208,53 @@ SELECT (SELECT count(*) || ':' || sum(v) FROM slr WHERE k IN (0, 31, 63)) = (SEL
 ----
 a	b	c
 t	t	t
+
+
+statement ok
+INSERT INTO slr SELECT i, 1000 + (i - 262144) // 4096, i % 7, NULL FROM range(262144, 524288) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) slr;
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') AS segments, max(value) FILTER (WHERE metric = 'num_docs') AS docs
+FROM sdb_metrics WHERE relation_id = 'slr'::regclass;
+----
+segments	docs
+2	524288
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/slr_dead.json'
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM slr WHERE k = 7;
+----
+n	s
+4096	12285
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/slr_dead.json');
+----
+row_groups_scanned
+1
 
 
 statement ok

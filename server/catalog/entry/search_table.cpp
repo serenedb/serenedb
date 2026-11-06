@@ -685,7 +685,7 @@ bool ConstraintUsesColumn(duckdb::ClientContext& context,
       return IsNotNullOn(constraint, column);
     case duckdb::ConstraintType::CHECK:
       return !columns.GetColumn(column).Generated() &&
-             duckdb::Binder::CreateBinder(context)
+             SchemaBinder(context, table)
                ->BindConstraint(constraint, table.name, columns)
                ->Cast<duckdb::BoundCheckConstraint>()
                .bound_columns.contains(columns.LogicalToPhysical(column));
@@ -888,8 +888,7 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    bound->Base().dependencies);
+  info.ResolveNewDependencies(bound->Base().dependencies);
   return Successor(context, *bound);
 }
 
@@ -917,8 +916,8 @@ SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
   if (!IsReplay(info)) {
     altered->BeginSchemaChange(context);
     altered->VerifyExistingRows(
-      context, *duckdb::Binder::CreateBinder(context)->BindConstraint(
-                 constraint, name, altered->_columns));
+      context, *SchemaBinder(context, *this)
+                  ->BindConstraint(constraint, name, altered->_columns));
   }
   return altered;
 }

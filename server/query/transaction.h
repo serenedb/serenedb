@@ -85,6 +85,12 @@ class Transaction : public Config {
   }
   void RefreshCreatedIndexes(duckdb::idx_t database);
 
+  // Refuses the commit when it would put a primary key a row already carries.
+  // Throws, which rolls the transaction back the way any pre-commit hook does.
+  void CertifySearchKeys(
+    duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock);
+
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
   // ISOLATION LEVEL changes.

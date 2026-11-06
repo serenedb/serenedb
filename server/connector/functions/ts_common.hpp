@@ -44,7 +44,6 @@
 #include <magic_enum/magic_enum.hpp>
 #include <utility>
 
-#include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/term_dict.h"
@@ -229,7 +228,7 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
       f(value.GetValue<int32_t>());
       break;
     case TIME_TZ:
-      f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
+      f(term_dict::TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       break;
     case BIGINT:
     case UINTEGER:

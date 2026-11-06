@@ -11,6 +11,7 @@ target_sources(
         scorer_options.cpp
         task.cpp
         wal_recovery.cpp
+        wal_tail_keys.cpp
         writer_generations.cpp
         writes.cpp
 )

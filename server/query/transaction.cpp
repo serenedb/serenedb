@@ -222,6 +222,14 @@ void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   }
 }
 
+void Transaction::CertifySearchKeys(
+  duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> commit_lock) {
+  if (_search_txn) {
+    _search_txn->Certify(db, context, commit_lock);
+  }
+}
+
 void Transaction::ClaimSearchLayout(std::shared_ptr<search::Store> table,
                                     duckdb::transaction_t owner,
                                     std::string_view name,

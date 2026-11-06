@@ -40,6 +40,21 @@ SELECT
 few	many	run	gaps	every
 t	t	t	t	t
 
+statement ok
+VACUUM (COMPACT_TABLE) curve_sets;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE x = 200000 AND y BETWEEN 200000 AND 200002) AS run,
+ (SELECT list(id ORDER BY id) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(210000, 210000), ROW(210000, 210002), true, true)) =
+ (SELECT list(id ORDER BY id) FROM curve_sets WHERE x = 210000 AND y BETWEEN 210000 AND 210002) AS gaps,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(200000, 200000), ROW(200000, 200002), true, true)) AS run_rows,
+ (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(210000, 210000), ROW(210000, 210002), true, true)) AS gaps_rows;
+----
+run	gaps	run_rows	gaps_rows
+t	t	151	151
+
 query
 SELECT
  (SELECT count(*) FROM curve_sets_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(1000, 1000), true, true)) =
@@ -279,3 +294,37 @@ ids
 
 statement ok
 DROP TABLE curve_knn;
+
+statement ok
+CREATE TABLE curve_knn_wide(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, tag INTEGER, emb FLOAT[2]);
+
+statement ok
+INSERT INTO curve_knn_wide SELECT i, i % 2000, (i * 7) % 2000, i % 5, [i, 0]::FLOAT[2] FROM range(30000) t(i);
+
+statement ok
+CREATE INDEX curve_knn_wide_idx ON curve_knn_wide USING inverted(
+ id, tag, (curve(ROW(x, y))), emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_knn_wide;
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_knn_wide;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(5, 35), ROW(5, 35), true, true)
+   ORDER BY emb <-> [20000, 0]::FLOAT[2] LIMIT 3) t) AS few,
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide_idx WHERE x = 5 AND y = 35
+   ORDER BY emb <-> [20000, 0]::FLOAT[2] LIMIT 3) t) AS few_ranges,
+ (SELECT list(id ORDER BY id) FROM (
+   SELECT id FROM curve_knn_wide WHERE x = 5 AND y = 35
+   ORDER BY array_distance(emb, [20000, 0]::FLOAT[2]) LIMIT 3) t) AS truth;
+----
+few	few_ranges	truth
+{18005,20005,22005}	{18005,20005,22005}	{18005,20005,22005}
+
+statement ok
+DROP TABLE curve_knn_wide;

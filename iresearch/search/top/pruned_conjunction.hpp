@@ -113,9 +113,8 @@ class PrunedConjunction : public Root {
           doc = Walk(doc, last, others_max, collector);
           continue;
         }
-        _span = 1;
-        doc =
-          ScoreOrWalk(doc, last, threshold, lead_max, others_max, collector);
+        doc = ScoreOrWalk(doc, last, max, threshold, lead_max, others_max,
+                          collector);
         continue;
       }
       ScoreFirst(last, others_max, collector);
@@ -164,20 +163,28 @@ class PrunedConjunction : public Root {
                                      bucket.sf_seen * bucket.doc_range;
   }
 
-  doc_id_t ScoreOrWalk(doc_id_t doc, doc_id_t last, score_t threshold,
-                       score_t lead_max, score_t others_max,
+  doc_id_t ScoreOrWalk(doc_id_t doc, doc_id_t last, doc_id_t max,
+                       score_t threshold, score_t lead_max, score_t others_max,
                        LoserScoreCollector& collector) {
     const auto ratio = (threshold - others_max) / lead_max;
     auto& bucket = _buckets[std::min<uint32_t>(
       kBuckets - 1, static_cast<uint32_t>(ratio * kBuckets))];
-    const uint64_t range = last - doc + 1;
     _others.TakeReads();
     if (!ScoreFirstPays(bucket) && ++bucket.ticks < bucket.interval) {
+      if constexpr (kJoined) {
+        last = std::max(last, std::min(_lead.SpanLast(_span), max - 1));
+        _span = std::min(_span * 2, kMaxSpan);
+      } else {
+        _span = 1;
+      }
+      const uint64_t range = last - doc + 1;
       doc = Walk(doc, last, std::numeric_limits<score_t>::max(), collector);
       bucket.doc_reads = bucket.doc_reads / 2 + _others.TakeReads();
       bucket.doc_range = bucket.doc_range / 2 + range;
       return doc;
     }
+    _span = 1;
+    const uint64_t range = last - doc + 1;
     FlushBatch(collector);
     const auto [seen, dropped] = ScoreFirst(last, others_max, collector);
     bucket.sf_seen = bucket.sf_seen / 2 + seen;

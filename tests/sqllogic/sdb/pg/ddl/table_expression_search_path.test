@@ -1,0 +1,152 @@
+statement ok
+CREATE SCHEMA tesp_s;
+
+
+statement ok
+CREATE FUNCTION tesp_s.tesp_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE FUNCTION tesp_s.tesp_conv(x INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+SET search_path = tesp_s, public;
+
+
+statement ok
+CREATE TABLE public.tesp_t (id INT, a INT CONSTRAINT tesp_t_a CHECK (tesp_pos(a)),
+  d BIGINT DEFAULT tesp_conv(1), g BIGINT GENERATED ALWAYS AS (tesp_conv(a)) STORED);
+
+
+statement ok
+CREATE TABLE public.tesp_st (id INT, a INT CONSTRAINT tesp_st_a CHECK (tesp_pos(a)),
+  d BIGINT DEFAULT tesp_conv(1), g BIGINT GENERATED ALWAYS AS (tesp_conv(a)) STORED)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+ALTER TABLE public.tesp_t ADD CONSTRAINT tesp_t_id CHECK (tesp_pos(id));
+
+
+statement ok
+ALTER TABLE public.tesp_st ADD CONSTRAINT tesp_st_id CHECK (tesp_pos(id));
+
+
+statement ok
+ALTER TABLE public.tesp_t ADD COLUMN e BIGINT DEFAULT tesp_conv(3);
+
+
+statement ok
+ALTER TABLE public.tesp_st ADD COLUMN e BIGINT DEFAULT tesp_conv(3);
+
+
+statement ok
+ALTER TABLE public.tesp_t ALTER COLUMN d SET DEFAULT tesp_conv(2);
+
+
+statement ok
+ALTER TABLE public.tesp_st ALTER COLUMN d SET DEFAULT tesp_conv(2);
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+INSERT INTO public.tesp_t (id, a) VALUES (1, 1);
+
+
+statement ok
+INSERT INTO public.tesp_st (id, a) VALUES (1, 1);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) public.tesp_st;
+
+
+statement ok
+UPDATE public.tesp_t SET id = 2;
+
+
+statement ok
+UPDATE public.tesp_st SET id = 2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) public.tesp_st;
+
+
+query
+SELECT id, a, d, g, e FROM public.tesp_t;
+----
+id	a	d	g	e
+2	1	20	10	30
+
+
+query
+SELECT id, a, d, g, e FROM public.tesp_st;
+----
+id	a	d	g	e
+2	1	20	10	30
+
+
+statement error
+INSERT INTO public.tesp_t (id, a) VALUES (3, -1);
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+statement error
+UPDATE public.tesp_t SET a = -1;
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+statement error
+INSERT INTO public.tesp_st (id, a) VALUES (3, -1);
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+statement error
+UPDATE public.tesp_st SET a = -1;
+----
+db error: ERROR: CHECK constraint failed on table <slt:ignore>
+
+
+query
+SELECT conrelid::regclass AS tbl, conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+WHERE conrelid IN ('public.tesp_t'::regclass, 'public.tesp_st'::regclass) AND contype = 'c' ORDER BY conname;
+----
+tbl	conname	def
+tesp_st	tesp_st_a	CHECK (tesp_s.tesp_pos(a))
+tesp_st	tesp_st_id	CHECK (tesp_s.tesp_pos(id))
+tesp_t	tesp_t_a	CHECK (tesp_s.tesp_pos(a))
+tesp_t	tesp_t_id	CHECK (tesp_s.tesp_pos(id))
+
+
+query
+SELECT table_name, column_name, column_default, generation_expression FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name IN ('tesp_t', 'tesp_st') AND column_name IN ('d', 'e', 'g')
+ORDER BY table_name, column_name;
+----
+table_name	column_name	column_default	generation_expression
+tesp_st	d	tesp_s.tesp_conv(2)	NULL
+tesp_st	e	tesp_s.tesp_conv(3)	NULL
+tesp_st	g	NULL	CAST(tesp_s.tesp_conv(a) AS BIGINT)
+tesp_t	d	tesp_s.tesp_conv(2)	NULL
+tesp_t	e	tesp_s.tesp_conv(3)	NULL
+tesp_t	g	NULL	CAST(tesp_s.tesp_conv(a) AS BIGINT)
+
+
+statement ok
+DROP TABLE public.tesp_t;
+
+
+statement ok
+DROP TABLE public.tesp_st;
+
+
+statement ok
+DROP SCHEMA tesp_s CASCADE;

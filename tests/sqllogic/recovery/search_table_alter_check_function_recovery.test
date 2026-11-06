@@ -1,0 +1,242 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE SCHEMA stcf_fs;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE FUNCTION stcf_fs.stcf_conv(x INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS 'SELECT x * 10';
+
+
+statement ok
+CREATE FUNCTION stcf_fs.stcf_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE public.stcf_defaults (id INT PRIMARY KEY, a INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.stcf_defaults VALUES (1, 1);
+
+
+statement ok
+SET search_path = stcf_fs, public;
+
+
+statement ok
+CREATE TABLE public.stcf_retyped (id INT PRIMARY KEY, a INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE public.stcf_checked (id INT PRIMARY KEY, a INT CHECK (stcf_pos(a)), b INT, c INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE public.stcf_shared (id INT PRIMARY KEY, a INT, b INT, CHECK (stcf_pos(a) AND b > 0))
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.stcf_retyped VALUES (1, 1), (2, 2);
+
+
+statement ok
+INSERT INTO public.stcf_checked VALUES (1, 1, 1, 1);
+
+
+statement ok
+INSERT INTO public.stcf_shared VALUES (1, 1, 1);
+
+
+statement ok
+ALTER TABLE public.stcf_checked DROP COLUMN b;
+
+
+statement ok
+ALTER TABLE public.stcf_checked ALTER COLUMN c TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE public.stcf_retyped ALTER COLUMN a TYPE BIGINT USING stcf_conv(a);
+
+
+statement ok
+ALTER TABLE public.stcf_shared DROP COLUMN b;
+
+
+statement ok
+ALTER TABLE public.stcf_defaults ADD COLUMN d BIGINT DEFAULT stcf_conv(7);
+
+
+statement ok
+CREATE TABLE public.stcf_generated (id INT PRIMARY KEY, a INT, s BIGINT GENERATED ALWAYS AS (stcf_conv(a)) STORED)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO public.stcf_generated (id, a) VALUES (1, 1);
+
+
+statement ok
+ALTER TABLE public.stcf_generated ADD COLUMN b INT;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+CREATE DATABASE stcf_app;
+
+
+connection app database=stcf_app
+statement ok
+CREATE FUNCTION stcf_app_pos(x INT) RETURNS BOOLEAN LANGUAGE sql IMMUTABLE AS 'SELECT x > 0';
+
+
+connection app database=stcf_app
+statement ok
+CREATE TABLE stcf_t (id INT PRIMARY KEY, a INT CHECK (stcf_app_pos(a)), b INT, c INT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+connection app database=stcf_app
+statement ok
+INSERT INTO stcf_t VALUES (1, 1, 1, 1);
+
+
+connection app database=stcf_app
+statement ok
+ALTER TABLE stcf_t DROP COLUMN b;
+
+
+connection app database=stcf_app
+statement ok
+ALTER TABLE stcf_t ALTER COLUMN c TYPE BIGINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) stcf_retyped;
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) stcf_checked;
+
+
+connection restarted
+query
+SELECT id, a, pg_typeof(a) AS t FROM stcf_retyped ORDER BY id;
+----
+id	a	t
+1	10	bigint
+2	20	bigint
+
+
+connection restarted
+query
+SELECT id, a, c, pg_typeof(c) AS t FROM stcf_checked ORDER BY id;
+----
+id	a	c	t
+1	1	1	bigint
+
+
+connection restarted
+statement error
+INSERT INTO stcf_checked VALUES (2, -1, 2);
+----
+db error: ERROR: CHECK constraint failed on table "stcf_checked" with expression CHECK(stcf_fs.stcf_pos(a))
+
+
+connection restarted
+statement ok
+INSERT INTO stcf_shared VALUES (2, -1);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) stcf_shared;
+
+
+connection restarted
+query
+SELECT id, a FROM stcf_shared ORDER BY id;
+----
+id	a
+1	1
+2	-1
+
+
+connection restarted
+statement ok
+INSERT INTO stcf_defaults (id, a) VALUES (2, 2);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) stcf_defaults;
+
+
+connection restarted
+query
+SELECT id, a, d FROM stcf_defaults ORDER BY id;
+----
+id	a	d
+1	1	70
+2	2	70
+
+
+connection restarted
+statement ok
+INSERT INTO stcf_generated (id, a) VALUES (2, 2);
+
+
+connection restarted
+statement ok
+VACUUM (REFRESH_TABLE) stcf_generated;
+
+
+connection restarted
+query
+SELECT id, s FROM stcf_generated ORDER BY id;
+----
+id	s
+1	10
+2	20
+
+
+connection restarted_app database=stcf_app
+statement ok
+VACUUM (REFRESH_TABLE) stcf_t;
+
+
+connection restarted_app database=stcf_app
+query
+SELECT id, a, c, pg_typeof(c) AS t FROM stcf_t ORDER BY id;
+----
+id	a	c	t
+1	1	1	bigint
+
+
+connection restarted_app database=stcf_app
+statement error
+INSERT INTO stcf_t VALUES (2, -1, 2);
+----
+db error: ERROR: CHECK constraint failed on table "stcf_t" with expression CHECK(stcf_app_pos(a))

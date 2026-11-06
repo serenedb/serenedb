@@ -455,9 +455,11 @@ void TablespaceSizeFunction(duckdb::DataChunk& args,
           session,
           catalog::RequireTablespace(*session.context, connector::AsView(key)));
       } else {
+        auto& cluster = catalog::ClusterOf(*session.context);
         return TablespaceBytes(
-          session, catalog::RequireTablespace(*session.context,
-                                              static_cast<duckdb::idx_t>(key)));
+          session,
+          cluster.Tablespace(cluster.GetCatalogTransaction(*session.context),
+                             static_cast<duckdb::idx_t>(key)));
       }
     });
 }
@@ -466,13 +468,15 @@ void TablespaceLocationFunction(duckdb::DataChunk& args,
                                 duckdb::ExpressionState& state,
                                 duckdb::Vector& result) {
   const auto& session = SessionOf(state);
+  auto& cluster = catalog::ClusterOf(*session.context);
+  const auto transaction = cluster.GetCatalogTransaction(*session.context);
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
-      const auto tablespace = catalog::ClusterEntryById(
-        *session.context, duckdb::CatalogType::TABLESPACE_ENTRY,
-        oid == 0 ? SessionTablespace(session)
-                 : static_cast<duckdb::idx_t>(oid));
+      const auto tablespace =
+        cluster.EntryById(transaction, duckdb::CatalogType::TABLESPACE_ENTRY,
+                          oid == 0 ? SessionTablespace(session)
+                                   : static_cast<duckdb::idx_t>(oid));
       if (!tablespace) {
         return duckdb::nullopt;
       }

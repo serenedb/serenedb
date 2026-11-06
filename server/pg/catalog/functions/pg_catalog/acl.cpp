@@ -741,8 +741,9 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
 
   static std::optional<ObjectTarget> Find(const Session& session,
                                           uint64_t oid) {
-    const auto tablespace =
-      catalog::ClusterEntryById(*session.context, kType, oid);
+    auto& cluster = catalog::ClusterOf(*session.context);
+    const auto tablespace = cluster.EntryById(
+      cluster.GetCatalogTransaction(*session.context), kType, oid);
     if (!tablespace) {
       return std::nullopt;
     }

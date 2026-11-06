@@ -888,6 +888,8 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
                              duckdb::DataChunk& input,
                              std::vector<int64_t>& rows) {
   const auto oids = input.data[0].Values<int64_t>();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
     const auto oid = oids[row];
     if (!oid.IsValid()) {
@@ -896,9 +898,8 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
     const auto tablespace =
       oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
         ? nullptr
-        : catalog::ClusterEntryById(context,
-                                    duckdb::CatalogType::TABLESPACE_ENTRY,
-                                    static_cast<duckdb::idx_t>(oid.GetValue()));
+        : cluster.EntryById(transaction, duckdb::CatalogType::TABLESPACE_ENTRY,
+                            static_cast<duckdb::idx_t>(oid.GetValue()));
     if (tablespace) {
       duckdb::TaskScheduler::BlockingScope blocking;
       irs::containers::FlatHashSet<duckdb::idx_t> stored;

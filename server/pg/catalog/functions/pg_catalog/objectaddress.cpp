@@ -385,8 +385,10 @@ ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyTablespace(const Session& session, uint64_t oid) {
-  const auto tablespace = catalog::ClusterEntryById(
-    *session.context, duckdb::CatalogType::TABLESPACE_ENTRY, oid);
+  auto& cluster = catalog::ClusterOf(*session.context);
+  const auto tablespace =
+    cluster.EntryById(cluster.GetCatalogTransaction(*session.context),
+                      duckdb::CatalogType::TABLESPACE_ENTRY, oid);
   return tablespace
            ? IdentifyNamed("tablespace", tablespace->name.GetIdentifierName())
            : Missing("tablespace");

@@ -147,10 +147,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
   std::string_view name);
 TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
                                           std::string_view name);
-TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
-                                          duckdb::idx_t oid);
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
-  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid);
 
 inline bool ReadDatabase(
   std::string_view name,

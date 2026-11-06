@@ -691,16 +691,4 @@ TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
   return tablespace->Cast<TablespaceCatalogEntry>();
 }
 
-TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
-                                          duckdb::idx_t oid) {
-  auto& cluster = ClusterOf(context);
-  return cluster.Tablespace(cluster.GetCatalogTransaction(context), oid);
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
-  duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid) {
-  auto& cluster = ClusterOf(context);
-  return cluster.EntryById(cluster.GetCatalogTransaction(context), type, oid);
-}
-
 }  // namespace sdb::catalog

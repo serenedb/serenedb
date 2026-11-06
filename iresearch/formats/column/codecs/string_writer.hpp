@@ -70,6 +70,7 @@ class DictionarySampler {
  public:
   void Add(std::span<const std::string_view> entries);
   bool Ready() const noexcept { return _samples.size() >= kTrainSampleBytes; }
+  size_t Size() const noexcept { return _samples.size(); }
   std::shared_ptr<const TrainedDictionary> Train();
 
  private:

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <core_functions/array_kernels.hpp>
@@ -29,6 +30,7 @@
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
 #include <iresearch/formats/ivf/quantizers/common.hpp>
+#include <iresearch/index/scalar_vector_limits.hpp>
 #include <iresearch/index/vector_distance.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
@@ -3510,6 +3512,34 @@ TEST(half_quantizer_test, scores_track_exact) {
       EXPECT_GE(recall / nq, min_recall)
         << static_cast<int>(quant) << " metric " << static_cast<int>(metric);
     }
+  }
+}
+
+TEST(scalar_vector_range_test, norm_boundary_is_dimension_aware) {
+  for (const uint32_t d : {2U, 64U, 4096U}) {
+    const auto limits = ScalarVectorLimits::For(VectorQuantization::SQ8, d);
+    ASSERT_TRUE(limits);
+    const float boundary = static_cast<float>(std::sqrt(limits->max_norm2));
+    std::vector<float> vector(d, 0.f);
+    for (const float sign : {-1.f, 1.f}) {
+      vector[0] = sign * std::nextafter(boundary, 0.f);
+      EXPECT_NO_THROW(limits->Check(vector));
+      vector[0] =
+        sign * std::nextafter(boundary, std::numeric_limits<float>::infinity());
+      EXPECT_THROW(limits->Check(vector), SqlException);
+    }
+  }
+}
+
+TEST(scalar_vector_range_test, half_float_boundary_is_inclusive) {
+  const auto limits = ScalarVectorLimits::For(VectorQuantization::FP16, 2);
+  ASSERT_TRUE(limits);
+  std::array<float, 2> vector{65504.f, -65504.f};
+  EXPECT_NO_THROW(limits->Check(vector));
+  for (const float sign : {-1.f, 1.f}) {
+    vector[0] =
+      sign * std::nextafter(65504.f, std::numeric_limits<float>::infinity());
+    EXPECT_THROW(limits->Check(vector), SqlException);
   }
 }
 

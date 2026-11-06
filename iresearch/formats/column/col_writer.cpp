@@ -201,6 +201,15 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   }
   SDB_ASSERT(_by_id.contains(column_id), "ColWriter::AttachAnn: column ",
              column_id, " must be opened first");
+  _by_id.at(column_id)->_has_ann = true;
+  if (const auto limits = ScalarVectorLimits::For(info.quant.kind, info.d)) {
+    auto& stored = _by_id.at(column_id)->_vector_limits;
+    if (stored) {
+      stored->Merge(*limits);
+    } else {
+      stored = limits;
+    }
+  }
   auto entry = std::make_unique<AnnEntry>();
   entry->column_id = column_id;
   switch (info.kind) {

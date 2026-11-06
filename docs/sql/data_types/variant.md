@@ -27,6 +27,8 @@ Use `variant_typeof` to inspect the underlying type of each row:
 
 Fields can be extracted from nested `VARIANT` values using dot notation or the `variant_extract` function:
 
+Object keys are case-sensitive at every nesting level: `data['A']` and `data['a']` address different keys. A missing key returns `NULL`. These rules also apply when reading a `VARIANT` stored in an inverted index with `INCLUDE`.
+
 <SqlLogicTest id="sql/data_types/variant/example_003" />
 
 <SqlLogicTest id="sql/data_types/variant/example_004" />

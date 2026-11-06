@@ -1374,7 +1374,7 @@ TEST_F(ColumnReaderTest, TrainedDictionariesArePrefetchedBeforeTheyLoad) {
   constexpr irs::field_id kS = 1;
   irs::MemoryDirectory mem;
   {
-    irs::ColWriter w{mem, "seg", Db()};
+    irs::ColWriter w{mem, "seg", Db(), irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(
       kS, duckdb::LogicalType::VARCHAR,
       {.row_group_size = 16384,
@@ -2609,7 +2609,7 @@ void WriteVariantViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
                         std::string_view segment, irs::field_id id,
                         const std::string& sql, uint32_t rg_size,
                         std::vector<duckdb::Value>& expected) {
-  irs::ColWriter w{dir, segment, db};
+  irs::ColWriter w{dir, segment, db, irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(id, duckdb::LogicalType::VARIANT(),
                           {.row_group_size = rg_size});
   duckdb::Connection con{db};
@@ -2672,7 +2672,7 @@ void WriteViaSql(duckdb::DatabaseInstance& db, irs::Directory& dir,
                  const duckdb::LogicalType& type, const std::string& sql,
                  uint32_t rg_size, std::vector<duckdb::Value>& expected,
                  irs::ColumnWriterOptions options = {}) {
-  irs::ColWriter w{dir, segment, db};
+  irs::ColWriter w{dir, segment, db, options.codec_params.tier};
   options.row_group_size = rg_size;
   auto& cw = w.OpenColumn(id, type, options);
   duckdb::Connection con{db};
@@ -3701,6 +3701,54 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->Type().id(), duckdb::LogicalTypeId::VARIANT);
   ASSERT_EQ(col->RowCount(), 200u);
+  ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
+}
+
+size_t TrainedDictionaries(const irs::ColumnMeta& meta) {
+  size_t trained = meta.dictionaries.size();
+  for (const auto& child : meta.children) {
+    trained += TrainedDictionaries(child);
+  }
+  return trained;
+}
+
+TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
+  SetShreddingSize(Db(), -1);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteVariantViaSql(
+    Db(), dir, "vtune", /*id=*/31,
+    "SELECT ('https://shop' || (i % 997) || '.example.org/catalog/' || "
+    "((i * 7919) % 100003) || '/item?id=' || i)::VARIANT FROM range(120000) "
+    "t(i)",
+    /*rg_size=*/16384, expected);
+  std::vector<irs::ColumnMeta> metas;
+  {
+    auto in = dir.open(irs::FileName("vtune"), irs::IOAdvice::SEQUENTIAL);
+    ASSERT_NE(in, nullptr);
+    irs::format_utils::ReadFooter(
+      *in, "vtune", [&](duckdb::BinaryDeserializer& footer, uint64_t) {
+        footer.Set<duckdb::DatabaseInstance&>(Db());
+        footer.ReadOptionalList(
+          irs::kColFieldColumns, "columns",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+              metas.emplace_back(irs::DeserializeColumnMeta(obj));
+            });
+          });
+      });
+  }
+  ASSERT_EQ(metas.size(), 1u);
+  const auto& rgs = metas.front().variant_rgs;
+  ASSERT_GT(rgs.size(), 2u);
+  size_t later = 0;
+  for (size_t i = 1; i < rgs.size(); ++i) {
+    later += TrainedDictionaries(*rgs[i].unshredded);
+  }
+  EXPECT_GT(later, 0u);
+  irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto* col = r.Column(31);
+  ASSERT_NE(col, nullptr);
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 

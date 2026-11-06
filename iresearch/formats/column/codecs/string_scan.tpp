@@ -382,7 +382,12 @@ void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
     return;
   }
+  auto* strings = duckdb::FlatVector::GetDataMutable<string_t>(result);
   for (size_t i = 0; i < order.size(); ++i) {
+    if (i != 0 && order[i].entry == order[i - 1].entry) {
+      strings[order[i].at] = strings[order[i - 1].at];
+      continue;
+    }
     frames.Emit(segment, base, order[i].entry, result, order[i].at, batched);
     if (fetch.Whole()) {
       frames.decoded = DecodeWhole<Scan>(segment);

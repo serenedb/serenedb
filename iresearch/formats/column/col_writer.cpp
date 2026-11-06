@@ -267,8 +267,9 @@ ColWriter::Column& ColWriter::AddColumn(field_id id, uint32_t parts,
 }
 
 ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
-                                    const ColumnWriterOptions& options) {
+                                    ColumnWriterOptions options) {
   SDB_ASSERT(options.row_group_size != 0);
+  options.codec_params.tier = _tier;
   if (const auto it = _by_id.find(id); it != _by_id.end()) {
     auto& column = *_columns[it->second];
     SDB_ASSERT(column.whole && column.parts.front().writer);
@@ -298,7 +299,6 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type) {
       .hyperloglog = opts.hyperloglog,
       .codec_params = _field_options->CodecParams(opts),
     };
-    options.codec_params.tier = _tier;
   }
   auto& cw = OpenColumn(id, std::move(type), options);
   if (_field_options) {

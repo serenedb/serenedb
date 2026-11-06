@@ -117,11 +117,17 @@ class ColCodecsTest : public TestBase {
   void Write(irs::Directory& dir, duckdb::CompressionType codec,
              irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
              const Value& value) {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{dir, kSeg, Db(), params.tier};
     auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                             {.row_group_size = rg_size,
                              .compression = codec,
                              .codec_params = params});
+    AppendValues(cw, rows, value);
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  static void AppendValues(irs::ColumnWriter& cw, uint64_t rows,
+                           const Value& value) {
     uint64_t pos = 0;
     while (pos < rows) {
       const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
@@ -140,7 +146,6 @@ class ColCodecsTest : public TestBase {
       cw.Append(vec, take);
       pos += take;
     }
-    ASSERT_TRUE(w.Commit(0));
   }
 
   static void ExpectRow(duckdb::Vector& out, duckdb::idx_t k, uint64_t g,
@@ -1917,7 +1922,7 @@ TEST_F(ColCodecsTest, MappedTrainedDictionariesStayInTheirFile) {
   {
     irs::MMapDirectory dir{path};
     {
-      irs::ColWriter w{dir, std::string{kSeg}, Db()};
+      irs::ColWriter w{dir, std::string{kSeg}, Db(), irs::WriteTier::Merge};
       auto& cw = w.OpenColumn(
         kField, duckdb::LogicalType::VARCHAR,
         {.row_group_size = 16384,
@@ -2799,6 +2804,34 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   EXPECT_LE(oversized, 2) << ::testing::PrintToString(sizes);
   RoundTrip(duckdb::CompressionType::COMPRESSION_FSST,
             {.segment_target = kTarget}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
+}
+
+TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
+           std::to_string((g * 7919) % 100003) +
+           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    irs::MemoryDirectory dir{};
+    {
+      irs::ColWriter w{dir, kSeg, Db(), tier};
+      auto& cw = w.OpenColumn(
+        kField, duckdb::LogicalType::VARCHAR,
+        {.row_group_size = 16384,
+         .compression = duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+         .codec_params = {.compression_level = 3,
+                          .tier = irs::WriteTier::Merge}});
+      AppendValues(cw, 120000, value);
+      ASSERT_TRUE(w.Commit(0));
+    }
+    const auto dictionaries = SegmentInfo(dir, "dictionary");
+    EXPECT_EQ(
+      tier == irs::WriteTier::Merge,
+      std::ranges::find(dictionaries, "trained:1") != dictionaries.end())
+      << ::testing::PrintToString(dictionaries);
+  }
 }
 
 TEST_F(ColCodecsTest, LargeColumnsTrainADictionary) {

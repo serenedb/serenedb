@@ -312,13 +312,12 @@ struct Built {
 
 Built ColBuild(irs::Directory& dir, const ColArm& arm) {
   const auto& data = Data();
-  irs::ColWriter w{dir, kSeg, CsDb()};
+  irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
   auto& cw = w.OpenColumn(
     kField, data.type,
     {.compression = arm.codec,
      .codec_params = irs::ColCodecParams{.compression_level = arm.level,
-                                         .segment_target = SegmentTarget(),
-                                         .tier = Tier()}});
+                                         .segment_target = SegmentTarget()}});
   uint64_t pos = 0;
   for (size_t i = 0; i < data.vectors.size(); ++i) {
     cw.Append(pos, *data.vectors[i], data.counts[i]);

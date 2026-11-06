@@ -39,7 +39,7 @@ CREATE TABLESPACE name [ OWNER { new_owner | CURRENT_ROLE | CURRENT_USER | SESSI
 - `OWNER`: the role that owns the tablespace; the role running the statement by default.
 - `LOCATION`: an absolute path of a local directory, or an object store URL such as `s3://bucket/prefix` or `az://container/prefix`.
 
-Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside a transaction block.
+Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside a transaction block. With `enable_external_access` off, the location must be inside `allowed_directories`; tablespaces created before keep working.
 
 ## Locations
 

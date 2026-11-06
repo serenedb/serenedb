@@ -425,7 +425,8 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       return;
     }
     const auto store = table->Storage()->Path();
-    auto& fs = duckdb::FileSystem::GetFileSystem(context);
+    auto& fs =
+      duckdb::DatabaseInstance::GetDatabase(context).GetInternalFileSystem();
     std::vector<std::string> names;
     fs.ListFiles(store, [&](const std::string& name, bool is_directory) {
       if (!is_directory) {
@@ -445,8 +446,11 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
 
 bool WriteImage(std::span<const IndexBlob> image,
                 const std::filesystem::path& out) {
+  auto& fs = irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
   try {
-    if (std::filesystem::exists(out) && !std::filesystem::is_empty(out)) {
+    bool holds = false;
+    fs.ListFiles(out.string(), [&](const std::string&, bool) { holds = true; });
+    if (holds) {
       SDB_ERROR(STARTUP, "cannot build the docs index: ", out.string(),
                 " already exists and is not empty; point --build_docs_index at "
                 "a new or empty directory");
@@ -455,8 +459,8 @@ bool WriteImage(std::span<const IndexBlob> image,
     size_t bytes = 0;
     for (const auto& blob : image) {
       const auto path = out / blob.name;
-      std::filesystem::create_directories(path.parent_path());
-      utils::file_utils::Spit(path.string(), blob.bytes);
+      fs.CreateDirectoriesRecursive(path.parent_path().string());
+      utils::file_utils::WriteFile(fs, path.string(), blob.bytes, false);
       bytes += blob.bytes.size();
     }
     SDB_INFO(STARTUP, "docs index written to ", out.string(), ": ",
@@ -464,7 +468,7 @@ bool WriteImage(std::span<const IndexBlob> image,
     return true;
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out.string(),
-              " failed: ", e.what());
+              " failed: ", duckdb::ErrorData{e}.RawMessage());
     return false;
   }
 }

@@ -27,7 +27,6 @@
 #include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 
-#include <cerrno>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>

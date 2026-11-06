@@ -93,8 +93,7 @@ constexpr Shape kShapes[] = {
 
 // One opened block of ~W rows plus everything keeping it alive.
 struct Blk {
-  std::unique_ptr<duckdb::MemoryFileSystem> fs =
-    std::make_unique<duckdb::MemoryFileSystem>();
+  duckdb::MemoryFileSystem fs;
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   std::unique_ptr<duckdb::ColumnSegment> block;
@@ -115,7 +114,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
   }
   const auto col_type = qr->GetTypes()[0];
   {
-    irs::ColWriter writer{CsDb(), *blk->fs, kRoot, irs::FileObservers{},
+    irs::ColWriter writer{CsDb(), blk->fs, kRoot, irs::FileObservers{},
                           kSegName};
     auto& cw = writer.OpenColumn(kField, col_type);
     uint64_t pos = 0;
@@ -131,7 +130,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
     writer.Commit(w);
   }
   blk->reader =
-    std::make_unique<irs::ColReader>(CsDb(), *blk->fs, kRoot, kSegName, true,
+    std::make_unique<irs::ColReader>(CsDb(), blk->fs, kRoot, kSegName, true,
                                      duckdb::MappedFileAccess::SEQUENTIAL);
   const auto* col = blk->reader->Column(kField);
   if (col == nullptr) {

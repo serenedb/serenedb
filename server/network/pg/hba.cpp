@@ -28,9 +28,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
+#include <duckdb/main/database.hpp>
 #include <exception>
 #include <filesystem>
+#include <iresearch/store/storage.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -942,25 +948,19 @@ std::optional<std::string> WriteConfigFile(std::string_view text) {
   if (path.empty()) {
     return std::nullopt;  // no data directory (e.g. a unit test): live-only
   }
-  namespace fs = std::filesystem;
-  const fs::path target{path};
-  std::error_code dir_ec;
-  if (const auto parent = target.parent_path();
-      !parent.empty() && !fs::exists(parent, dir_ec)) {
-    fs::create_directories(parent, dir_ec);
-    if (dir_ec) {
-      return absl::StrCat("could not create hba config directory '",
-                          parent.string(), "': ", dir_ec.message());
-    }
-  }
+  auto& fs = irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
   try {
+    if (const auto parent = std::filesystem::path{path}.parent_path();
+        !parent.empty()) {
+      fs.CreateDirectoriesRecursive(parent.string());
+    }
     SDB_IF_FAILURE("hba_config_write_fails") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
     }
-    utils::file_utils::ReplaceFile(target, text);
+    utils::file_utils::ReplaceFile(fs, path, text);
   } catch (const std::exception& e) {
-    return absl::StrCat("could not write hba config file '", target.string(),
-                        "': ", e.what());
+    return absl::StrCat("could not write hba config file '", path,
+                        "': ", duckdb::ErrorData{e}.RawMessage());
   }
   return std::nullopt;
 }
@@ -1072,25 +1072,21 @@ std::vector<RenderedRule> RenderHbaRules() {
 }
 
 std::string LoadPersistedHba() {
-  namespace fs = std::filesystem;
   const std::string& path = ConfigPath();
   if (path.empty()) {
     return {};  // no data directory configured -> keep the built-in default
   }
-  std::error_code ec;
-  if (!fs::exists(fs::path{path}, ec)) {
-    if (ec) {
-      SDB_ERROR(GENERAL, "hba config file '", path,
-                "' could not be read: ", ec.message(), " -- keeping default");
-    }
-    return {};  // no config file -> keep the built-in default
-  }
+  auto& fs = irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
   std::string text;
   try {
-    text = utils::file_utils::Slurp(path);
+    if (!fs.FileExists(path)) {
+      return {};  // no config file -> keep the built-in default
+    }
+    text = irs::ReadWhole<std::string>(duckdb::QueryContext{}, fs, path);
   } catch (const std::exception& e) {
     SDB_ERROR(GENERAL, "hba config file '", path,
-              "' could not be read: ", e.what(), " -- keeping default");
+              "' could not be read: ", duckdb::ErrorData{e}.RawMessage(),
+              " -- keeping default");
     return {};
   }
   if (auto err = SetHbaFromText(text)) {

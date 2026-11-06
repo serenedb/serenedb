@@ -95,7 +95,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   ParseSegmentId(meta.name, reader->_id);
   reader->_doc_maps = std::make_shared<DocMapsSlot>();
   reader->_data =
-    std::make_shared<const ColumnData>(db, fs, root, meta, options);
+    std::make_shared<const ColumnData>(db, fs, root, meta, options.hnsw_bases);
   return reader;
 }
 
@@ -106,6 +106,18 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   reader->_id = _id;
   reader->_doc_maps = _doc_maps;
   reader->_data = _data;
+  return reader;
+}
+
+std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Reopen(
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  const SegmentMeta& meta, const IndexReaderOptions& options) const {
+  auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
+  reader->_refs = _refs;
+  reader->_id = _id;
+  reader->_doc_maps = _doc_maps;
+  reader->_data =
+    std::make_shared<const ColumnData>(db, fs, root, meta, options.hnsw_bases);
   return reader;
 }
 
@@ -137,27 +149,20 @@ SegmentReaderImpl::ColumnData::ColumnData(duckdb::DatabaseInstance& db,
                                           duckdb::FileSystem& fs,
                                           std::string_view root,
                                           const SegmentMeta& meta,
-                                          const IndexReaderOptions& options)
+                                          HnswBases* hnsw_bases)
   : col_reader{db,
                fs,
                root,
                meta.name,
                HasFile(meta, kFormatExt),
                duckdb::MappedFileAccess::RANDOM},
-    idx_reader{fs,
-               root,
-               meta.name,
-               HasFile(meta, kIdxFormatExt),
-               options.hnsw_bases,
-               options.index} {
-  if (options.index) {
-    field_reader.prepare(ReaderState{
-      .fs = fs,
-      .root = root,
-      .meta = meta,
-      .idx = &idx_reader,
-    });
-  }
+    idx_reader{fs, root, meta.name, HasFile(meta, kIdxFormatExt), hnsw_bases} {
+  field_reader.prepare(ReaderState{
+    .fs = fs,
+    .root = root,
+    .meta = meta,
+    .idx = &idx_reader,
+  });
 }
 
 }  // namespace irs

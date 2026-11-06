@@ -53,8 +53,7 @@ class FileOutput final : public DataOutput {
 
  private:
   FileOutput(std::unique_ptr<duckdb::FileWriter> writer,
-             const FileObservers& observers, bool remote);
-  FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
+             std::unique_ptr<duckdb::FileHandle> handle,
              const FileObservers& observers, bool remote);
 
   void Flush();

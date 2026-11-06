@@ -43,7 +43,7 @@ namespace sdb::catalog {
 struct DataDirectory final : duckdb::StorageExtensionInfo {
   explicit DataDirectory(std::string directory);
 
-  std::string EngineDir() const;
+  std::filesystem::path EngineDir() const;
   std::string CatalogLogFile() const;
   std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
   std::filesystem::path StorageDir(duckdb::idx_t database,

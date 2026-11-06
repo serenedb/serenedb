@@ -48,11 +48,13 @@
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/errcode_for_file_access.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 #include "auth/role_closure.h"
@@ -65,7 +67,6 @@
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -147,7 +148,7 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
 void ClusterCatalog::Initialize(bool load_builtin) {
   duckdb::DuckCatalog::Initialize(load_builtin);
   _default_directory = std::make_shared<TablespaceDirectory>(
-    ClusterLayout(GetAttached()).EngineDir());
+    ClusterLayout(GetAttached()).EngineDir().string());
   GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
     .SetDefaultGenerator(
       duckdb::make_uniq<BuiltinTablespaces>(*this, _default_directory));
@@ -177,7 +178,7 @@ duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeTablespaceEntry(
   return duckdb::make_uniq<TablespaceCatalogEntry>(
     *this, info,
     std::make_shared<TablespaceDirectory>(absl::StrCat(
-      EngineDirOf(info.location), "/",
+      info.location, "/", kEngineDir, "/",
       backup::PositionSource::Instance().SystemIdentifier(), "-", info.oid)));
 }
 
@@ -242,8 +243,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
                     ERR_MSG("tablespace \"", name, "\" already exists"));
   }
   info.location = NormalizeLocation(info.location);
-  const auto created =
-    AddEntry(transaction, MakeTablespaceEntry(info), info.on_conflict);
+  const auto created = duckdb::DuckCatalog::CreateTablespace(transaction, info);
   if (created) {
     const auto& directory =
       created->Cast<TablespaceCatalogEntry>().Directory()->Path();
@@ -454,22 +454,23 @@ void ClusterCatalog::CompactCatalogLog() {
 
 duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
   const std::filesystem::path& link) {
-  std::error_code ec;
+  auto& fs = StorageFileSystem();
   duckdb::idx_t size = 0;
   {
     auto lock = GetAttached().GetStorageManager().GetCommitLock();
     const auto log = CatalogLog();
     SDB_ASSERT(log);
+    std::error_code ec;
     std::filesystem::create_hard_link(log->GetPath(), link, ec);
-    if (!ec) {
-      size = std::filesystem::file_size(link, ec);
+    if (ec) {
+      THROW_SQL_ERROR(ERR_CODE(irs::pg::ErrcodeForFileAccess(ec.value())),
+                      ERR_MSG("could not snapshot the catalog log as \"",
+                              link.string(), "\": ", ec.message()));
     }
+    size = fs.OpenFile(link.string(), duckdb::FileFlags::FILE_FLAGS_READ)
+             ->GetFileSize();
   }
-  if (ec) {
-    utils::file_utils::ThrowFileError("snapshot the catalog log as",
-                                      link.string(), ec);
-  }
-  utils::file_utils::SyncDirectory(link.parent_path());
+  fs.SyncDirectory(link.parent_path().string());
   return size;
 }
 
@@ -665,11 +666,6 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db) {
                     ERR_MSG("the cluster catalog is not attached"));
   }
   return attached->GetCatalog().Cast<ClusterCatalog>();
-}
-
-ClusterCatalog& ClusterOf(duckdb::CatalogTransaction transaction) {
-  return transaction.HasContext() ? ClusterOf(transaction.GetContext())
-                                  : ClusterOf(*transaction.db);
 }
 
 ClusterCatalog& ClusterOf() {

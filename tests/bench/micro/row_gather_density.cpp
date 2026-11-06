@@ -116,8 +116,7 @@ std::string Key(uint64_t i) {
 }
 
 struct Column {
-  std::unique_ptr<duckdb::MemoryFileSystem> fs =
-    std::make_unique<duckdb::MemoryFileSystem>();
+  duckdb::MemoryFileSystem fs;
   std::unique_ptr<irs::ColReader> reader;
   std::unique_ptr<irs::ReadContext> ctx;
   const irs::ColumnReader* col = nullptr;
@@ -135,8 +134,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   Words words;
   std::mt19937_64 rng{11};
   {
-    irs::ColWriter writer{CsDb(), *c->fs, kRoot, irs::FileObservers{},
-                          kSegName};
+    irs::ColWriter writer{CsDb(), c->fs, kRoot, irs::FileObservers{}, kSegName};
     auto& cw = writer.OpenColumn(kField, duckdb::LogicalType::VARCHAR);
     for (uint64_t pos = 0; pos < c->windows * kWindow; pos += kWindow) {
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, kWindow};
@@ -151,9 +149,8 @@ std::unique_ptr<Column> Build(const Shape& shape) {
     writer.Commit(c->windows * kWindow);
   }
   con.Query("SET force_compression = 'auto'");
-  c->reader =
-    std::make_unique<irs::ColReader>(CsDb(), *c->fs, kRoot, kSegName, true,
-                                     duckdb::MappedFileAccess::SEQUENTIAL);
+  c->reader = std::make_unique<irs::ColReader>(
+    CsDb(), c->fs, kRoot, kSegName, true, duckdb::MappedFileAccess::SEQUENTIAL);
   c->col = c->reader->Column(kField);
   if (!c->col) {
     std::fprintf(stderr, "Build(%s): column missing\n", shape.name);

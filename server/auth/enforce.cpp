@@ -33,8 +33,10 @@
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
@@ -522,6 +524,15 @@ class Enforcer {
                     info.GetQualifiedName().Name().GetIdentifierName(), "\""),
             ERR_HINT("Must be superuser to create a tablespace."));
         }
+        if (!duckdb::DBConfig::GetConfig(_context).CanAccessFile(
+              duckdb::FileSystem::GetFileSystem(_context).CanonicalizePath(
+                info.location),
+              duckdb::FileType::FILE_TYPE_DIR)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("cannot access directory \"", info.location,
+                                  "\": file system operations are disabled by "
+                                  "configuration"));
+        }
         info.permissions.owner = info.owner.empty()
                                    ? _caller
                                    : RoleSpecId(info.owner.GetIdentifierName());
@@ -612,15 +623,14 @@ class Enforcer {
         PointAtCluster(info, info.GetCatalogType());
         break;
       }
-      case LogicalOperatorType::LOGICAL_ATTACH: {
-        auto& info = *op.Cast<duckdb::LogicalAttach>().info;
+      case LogicalOperatorType::LOGICAL_ATTACH:
         if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied to create database"));
         }
-        RequireDatabaseNotBeingCreated(info.name);
+        RequireDatabaseNotBeingCreated(
+          op.Cast<duckdb::LogicalAttach>().info->name);
         break;
-      }
       case LogicalOperatorType::LOGICAL_DETACH: {
         const auto name =
           op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
@@ -1171,14 +1181,15 @@ class Enforcer {
     }
   }
 
-  duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
+  duckdb::CatalogEntry& AlterableTablespace(const duckdb::Identifier& name) {
     auto& tablespace = *catalog::ClusterOf(_context).GetEntry(
-      _context, CatalogType::TABLESPACE_ENTRY, duckdb::Identifier{name},
+      _context, CatalogType::TABLESPACE_ENTRY, name,
       duckdb::OnEntryNotFound::THROW_EXCEPTION);
     if (tablespace.internal) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("tablespace \"", name, "\" is a system tablespace"),
+        ERR_MSG("tablespace \"", name.GetIdentifierName(),
+                "\" is a system tablespace"),
         ERR_DETAIL("A system tablespace cannot be renamed, given to another "
                    "owner or granted on."));
     }
@@ -1188,8 +1199,7 @@ class Enforcer {
   void CheckRenameTablespace(const duckdb::AlterInfo& info) {
     catalog::RequireUnreservedTablespaceName(
       info.GetNewName()->GetIdentifierName());
-    auto& tablespace =
-      AlterableTablespace(info.GetQualifiedName().Name().GetIdentifierName());
+    auto& tablespace = AlterableTablespace(info.GetQualifiedName().Name());
     if (_enforce) {
       RequireOwner(tablespace);
     }
@@ -1313,7 +1323,7 @@ class Enforcer {
   duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
     const auto& name = info.GetQualifiedName();
     if (info.entry_catalog_type == CatalogType::TABLESPACE_ENTRY) {
-      return AlterableTablespace(name.Name().GetIdentifierName());
+      return AlterableTablespace(name.Name());
     }
     if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
       auto& schema =

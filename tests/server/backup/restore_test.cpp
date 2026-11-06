@@ -58,11 +58,8 @@ class RestoreTest : public ::testing::Test {
     std::filesystem::create_directory(_root);
     _layout = std::make_unique<catalog::DataDirectory>(_root.string());
     WritePgControl(_root, {.system_identifier = kSystemIdentifier});
-    std::filesystem::create_directories(
-      std::filesystem::path{_layout->EngineDir()} / kBackupDir);
-    WriteFile(
-      std::filesystem::path{_layout->EngineDir()} / kBackupDir / kCatalogLink,
-      300, 'L');
+    std::filesystem::create_directories(_layout->EngineDir() / kBackupDir);
+    WriteFile(_layout->EngineDir() / kBackupDir / kCatalogLink, 300, 'L');
     WriteFile(_layout->CatalogLogFile(), 500, 'X');
     std::filesystem::create_directories(StoreDir());
     WriteFile(Wal(), 200, 'W');
@@ -175,8 +172,7 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>{in}, {}),
               std::string(250, 'L'));
   }
-  EXPECT_FALSE(
-    Exists(std::filesystem::path{_layout->EngineDir()} / kBackupDir));
+  EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
 
   EXPECT_EQ(std::filesystem::file_size(Wal()), 120);
   EXPECT_FALSE(Exists(Wal(".checkpoint")));
@@ -192,8 +188,7 @@ TEST_F(RestoreTest, AppliesEveryFixupAndRetiresTheLabel) {
 
   EXPECT_FALSE(Exists(_root / "recovery.signal"));
   EXPECT_FALSE(Exists(_root / "standby.signal"));
-  EXPECT_TRUE(
-    Exists(std::filesystem::path{_layout->EngineDir()} / "subscriptions.hold"));
+  EXPECT_TRUE(Exists(_layout->EngineDir() / "subscriptions.hold"));
   const auto control = ReadPgControl(_root);
   ASSERT_TRUE(control);
   EXPECT_EQ(control->system_identifier, kSystemIdentifier);
@@ -223,9 +218,8 @@ TEST_F(RestoreTest, AFailedCheckpointKeepsTheMainWalAndCutsTheCheckpointWal) {
 }
 
 TEST_F(RestoreTest, ARestartedRestoreFinishes) {
-  std::filesystem::rename(
-    std::filesystem::path{_layout->EngineDir()} / kBackupDir / kCatalogLink,
-    _layout->CatalogLogFile());
+  std::filesystem::rename(_layout->EngineDir() / kBackupDir / kCatalogLink,
+                          _layout->CatalogLogFile());
   std::filesystem::resize_file(Wal(), 120);
   WriteLabel();
   Prepare();
@@ -269,8 +263,7 @@ TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
 TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
   std::filesystem::remove(_root / kPgControlFile);
   Prepare();
-  EXPECT_FALSE(
-    Exists(std::filesystem::path{_layout->EngineDir()} / kBackupDir));
+  EXPECT_FALSE(Exists(_layout->EngineDir() / kBackupDir));
   EXPECT_EQ(std::filesystem::file_size(_layout->CatalogLogFile()), 500);
   EXPECT_EQ(std::filesystem::file_size(Wal()), 200);
   EXPECT_TRUE(Exists(Wal(".checkpoint")));

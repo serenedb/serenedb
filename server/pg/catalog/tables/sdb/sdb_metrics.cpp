@@ -132,9 +132,9 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   add("block_cache_evictions", stats.evictions,
       "blocks evicted from memory since start");
   add("block_cache_spilled_blocks", stats.spilled,
-      "evicted blocks kept in the spill file since start");
+      "evicted blocks written to the temporary directory since start");
   add("block_cache_spill_reads", stats.spill_reads,
-      "blocks read back from the spill file since start");
+      "blocks read back from the temporary directory since start");
   const auto uploads = irs::CurrentUploads();
   add("index_uploads_pending", uploads.files,
       "index files being written to an object store whose upload has not "

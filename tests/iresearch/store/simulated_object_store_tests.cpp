@@ -21,7 +21,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
-#include <array>
 #include <atomic>
 #include <cerrno>
 #include <duckdb/common/error_data.hpp>
@@ -30,7 +29,6 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
 #include <functional>
-#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <string>

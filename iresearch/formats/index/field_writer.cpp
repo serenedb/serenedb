@@ -31,9 +31,7 @@
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_root.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -640,16 +638,16 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    BytesOutput out;
-    out.WriteV32(static_cast<uint32_t>(shared));
-    WriteStr(out, separator.substr(shared));
-    _separators.append(ViewCast<char>(out.Bytes()));
+    const auto suffix = separator.substr(shared);
+    auto out = std::back_inserter(_separators);
+    WriteVarint(static_cast<uint32_t>(shared), out);
+    WriteVarint(static_cast<uint32_t>(suffix.size()), out);
+    _separators.append(ViewCast<char>(suffix));
     _separator.assign(separator);
   }
   WriteBlock();
-  BytesOutput starts;
-  starts.WriteV64(_inline_start - _inline_last);
-  _inline_starts.append(ViewCast<char>(starts.Bytes()));
+  auto starts = std::back_inserter(_inline_starts);
+  WriteVarint(_inline_start - _inline_last, starts);
   _inline_last = _inline_start;
   _inline_start = _inline.size();
   _last.assign(KeyAt(_block, _block.ends.size() - 1));

@@ -33,7 +33,6 @@
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -469,8 +468,7 @@ TEST(centroids_builder_test, create_small_dataset_builds_no_centroids) {
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
-                        TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
   ColReader r{dir.Db(), dir.Fs(), dir.Root(),
@@ -493,8 +491,7 @@ TEST(centroids_builder_test,
   const auto data = MakeRowMajor(d, n);
 
   duckdb::DuckDB db;
-  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
-                        TestEnv::MemoryRoot()};
+  ::tests::IndexDir dir{*db.instance, TestEnv::MemoryRoot()};
   WriteVectorColumn(dir, *db.instance, kVec, d, data);
 
   ColReader r{dir.Db(), dir.Fs(), dir.Root(),

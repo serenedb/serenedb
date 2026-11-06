@@ -143,7 +143,6 @@ struct MaxMemoryCounter final : irs::IResourceManager {
 class TestBase : public TestEnv, public ::testing::Test {
  public:
   const std::filesystem::path& test_dir() const { return _test_dir; }
-  const std::filesystem::path& test_case_dir() const { return _test_case_dir; }
 
  protected:
   TestBase() = default;
@@ -151,8 +150,7 @@ class TestBase : public TestEnv, public ::testing::Test {
   void TearDown() override;
 
  private:
-  std::filesystem::path _test_dir;       // res_dir_/<test-name>
-  std::filesystem::path _test_case_dir;  // test_dir/<test-case-name>
+  std::filesystem::path _test_dir;  // res_dir_/<test-name>
 };
 
 template<typename T>

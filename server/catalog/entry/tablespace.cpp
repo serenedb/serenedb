@@ -61,9 +61,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info = GetInfo();
   auto& tablespace = info->Cast<duckdb::CreateTablespaceInfo>();
-  tablespace.oid = oid;
   tablespace.internal = internal;
-  tablespace.permissions = permissions;
   return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, tablespace,
                                                    _directory);
 }

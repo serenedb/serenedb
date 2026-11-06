@@ -18,10 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_cat.h>
 #include <roaring/roaring64.h>
 
-#include <atomic>
 #include <cstdint>
 #include <duckdb.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -53,11 +51,6 @@ namespace {
 using namespace sdb;
 using namespace sdb::connector;
 using test::EngineDb;
-
-uint64_t NextRoot() {
-  static std::atomic<uint64_t> gNext{0};
-  return gNext.fetch_add(1, std::memory_order_relaxed);
-}
 using test::IdOf;
 using test::IndexOf;
 
@@ -203,7 +196,7 @@ class ReindexRemovesTest : public ::testing::Test {
   }
 
   duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(EngineDb());
-  std::string _root = absl::StrCat("memory://reindex_removes/", NextRoot());
+  std::string _root = test::MemoryRoot("reindex_removes");
   irs::IndexWriter::ptr _writer;
 };
 

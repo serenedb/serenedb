@@ -34,10 +34,6 @@ void RequireUnreservedTablespaceName(std::string_view name);
 
 class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
  public:
-  static constexpr duckdb::CatalogType Type =
-    duckdb::CatalogType::TABLESPACE_ENTRY;
-  static constexpr const char* Name = "tablespace";
-
   TablespaceCatalogEntry(duckdb::Catalog& catalog,
                          duckdb::CreateTablespaceInfo& info,
                          std::shared_ptr<TablespaceDirectory> directory);

@@ -37,7 +37,6 @@ struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
   HnswBases* hnsw_bases = nullptr;
   std::shared_ptr<IndexFileRefs> refs;
-  bool index = true;  // Open inverted index
 };
 
 }  // namespace irs

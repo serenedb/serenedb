@@ -47,7 +47,6 @@
 #include <iresearch/utils/cpu_features.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/network_utils.hpp>
 #include <vector>
 
 #include "index/doc_generator.hpp"
@@ -233,13 +232,13 @@ void TestBase::SetUp() {
     throw std::runtime_error("not a test suite");
   }
 
-  _test_case_dir = test_results_dir();
+  _test_dir = test_results_dir();
   if (GTEST_FLAG_GET(repeat) < 0 || 1 < GTEST_FLAG_GET(repeat)) {
-    _test_case_dir /= absl::StrCat("iteration ", iteration());
+    _test_dir /= absl::StrCat("iteration ", iteration());
   }
 
-  _test_case_dir /= ti->test_case_name();
-  (_test_dir = _test_case_dir) /= ti->name();
+  _test_dir /= ti->test_case_name();
+  _test_dir /= ti->name();
   std::filesystem::create_directories(_test_dir);
 }
 

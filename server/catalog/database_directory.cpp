@@ -178,17 +178,12 @@ bool RemoveTree(const std::string& path) noexcept {
 }
 
 duckdb::FileSystem& StorageFileSystem() {
-  return duckdb::FileSystem::GetFileSystem(
-    irs::DuckDBEngine::Instance().instance());
-}
-
-std::string EngineDirOf(std::string_view location) {
-  return absl::StrCat(location, "/", kEngineDir);
+  return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
 }
 
 std::optional<duckdb::idx_t> OidFromName(std::string_view name) {
   duckdb::idx_t oid = 0;
-  if (name.empty() || !absl::c_all_of(name, absl::ascii_isdigit) ||
+  if (!absl::c_all_of(name, absl::ascii_isdigit) ||
       !absl::SimpleAtoi(name, &oid)) {
     return std::nullopt;
   }
@@ -270,6 +265,15 @@ std::vector<StorageEntry> ListStorages(const std::string& root) {
                        .is_directory = directory});
     });
   return found;
+}
+
+bool HoldsFiles(const StorageEntry& entry) {
+  bool holds = false;
+  if (entry.is_directory) {
+    StorageFileSystem().ListFiles(
+      entry.path, [&](const std::string&, bool) { holds = true; });
+  }
+  return holds;
 }
 
 StorageSize StorageBytes(const std::string& directory) {

@@ -65,14 +65,6 @@ std::unique_lock<absl::Mutex> LockRefresh(absl::Mutex& mutex) {
 #endif
 }
 
-duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& db,
-                                 std::string_view root) {
-  if (irs::StorageKindOf(root) == irs::StorageKind::Memory) {
-    return db.GetMemoryFileSystem();
-  }
-  return duckdb::FileSystem::GetFileSystem(db);
-}
-
 }  // namespace
 
 IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
@@ -97,7 +89,7 @@ IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
   : _database{database.shared_from_this()},
     _name{std::move(name)},
     _db{irs::DuckDBEngine::Instance().instance()},
-    _fs{FileSystemOf(_db, root)},
+    _fs{_db.GetInternalFileSystem()},
     _root{std::move(root)},
     _refs{std::make_shared<irs::IndexFileRefs>()} {}
 
@@ -147,12 +139,11 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
 }
 
 std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
-  const irs::IndexReaderOptions& options) const {
+  irs::IndexReaderOptions options) const {
   IndexStamp stamp;
-  auto opts = options;
-  opts.refs = _refs;
+  options.refs = _refs;
   irs::DirectoryReader reader{
-    _db, _fs, _root, opts,
+    _db, _fs, _root, options,
     [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
   return {std::move(reader), std::move(stamp)};
 }

@@ -91,6 +91,9 @@ void SyncFiles(duckdb::FileSystem& fs, std::string_view root,
 }
 
 void SyncDirectory(duckdb::FileSystem& fs, std::string_view root) {
+  if (StorageKindOf(root) != StorageKind::Local) {
+    return;
+  }
   duckdb::TaskScheduler::BlockingScope blocking;
   fs.SyncDirectory(std::string{root});
 }

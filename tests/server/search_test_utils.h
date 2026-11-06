@@ -39,6 +39,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -96,6 +97,12 @@ inline uint32_t IndexOf(const irs::DirectoryReader& snapshot, uint64_t id) {
   return 0;
 }
 
+inline std::string MemoryRoot(std::string_view name) {
+  static constinit std::atomic<uint64_t> gNext{0};
+  return absl::StrCat("memory://", name, "/",
+                      gNext.fetch_add(1, std::memory_order_relaxed));
+}
+
 inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   const irs::DocRemoval& removal) {
   std::vector<std::pair<uint64_t, irs::doc_id_t>> docs;
@@ -118,11 +125,7 @@ struct OneRowIndex {
   }
 
   duckdb::FileSystem& fs = duckdb::FileSystem::GetFileSystem(EngineDb());
-  std::string root = [] {
-    static constinit std::atomic<uint64_t> gCount{0};
-    return absl::StrCat("memory://one_row_segments/",
-                        gCount.fetch_add(1, std::memory_order_relaxed));
-  }();
+  std::string root = MemoryRoot("one_row_segments");
   irs::DirectoryReader reader = [this] {
     irs::IndexWriterOptions options;
     auto writer = irs::IndexWriter::Make(EngineDb(), fs, root, irs::kOmCreate,

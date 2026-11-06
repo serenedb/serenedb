@@ -344,9 +344,8 @@ Corpus BuildIndex() {
   auto& fs = duckdb::FileSystem::GetFileSystem(*db);
   const auto root = tmp_root.string();
 
-  irs::IndexWriterOptions writer_opts;
   auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
-                                       std::move(writer_opts));
+                                       irs::IndexWriterOptions{});
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }

@@ -270,7 +270,6 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
     .fs = fs,
     .root = root,
     .observers = observers,
-    .keep_cached = true,
     .name = "segment",
     .doc_count = rows,
   };

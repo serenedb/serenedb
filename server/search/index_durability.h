@@ -75,7 +75,7 @@ class IndexDurability {
     bool is_new, irs::IndexWriterOptions options,
     ManifestSource manifest = nullptr);
   std::pair<irs::DirectoryReader, IndexStamp> OpenReader(
-    const irs::IndexReaderOptions& options) const;
+    irs::IndexReaderOptions options) const;
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
   void MarkStaged(const irs::SourcePosition& position);

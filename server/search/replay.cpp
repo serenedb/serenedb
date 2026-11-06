@@ -47,7 +47,7 @@ size_t ReplaySlots(duckdb::AttachedDatabase& db,
       ? durable.offset
       : 0;
   auto& instance = db.GetDatabase();
-  auto& fs = duckdb::FileSystem::GetFileSystem(instance);
+  auto& fs = instance.GetInternalFileSystem();
   const auto handle = fs.OpenFile(
     storage.GetWALPath(), duckdb::FileFlags::FILE_FLAGS_READ |
                             duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS);

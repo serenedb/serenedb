@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -69,11 +68,6 @@ namespace {
 using namespace sdb;
 using namespace sdb::connector;
 using test::EngineDb;
-
-uint64_t NextRoot() {
-  static std::atomic<uint64_t> gNext{0};
-  return gNext.fetch_add(1, std::memory_order_relaxed);
-}
 using test::IdOf;
 using test::OneRowSegments;
 
@@ -348,7 +342,7 @@ class SearchRowRemovalTest : public ::testing::Test {
   }
 
   duckdb::FileSystem& _fs = duckdb::FileSystem::GetFileSystem(EngineDb());
-  std::string _root = absl::StrCat("memory://search_row_removal/", NextRoot());
+  std::string _root = test::MemoryRoot("search_row_removal");
   irs::IndexWriter::ptr _writer;
   std::set<int64_t> _model;
 };

@@ -1863,7 +1863,6 @@ TEST_F(IndexAdoptTest, AReaderReopenedWithoutChangesKeepsTheDocMaps) {
   _writer->RefreshCommit({.reopen_reader = true});
   auto reopened = _writer->GetSnapshot();
   ASSERT_NE(before.GetImpl(), reopened.GetImpl());
-  before = {};
   ASSERT_TRUE(_writer->Compact(FullMerge()));
   ASSERT_TRUE(_writer->RefreshCommit());
   const auto merged = CommittedNames(*_writer).front();
@@ -1874,10 +1873,13 @@ TEST_F(IndexAdoptTest, AReaderReopenedWithoutChangesKeepsTheDocMaps) {
     ASSERT_TRUE(_writer->RefreshCommit());
   };
   commit("c");
+  EXPECT_EQ(2, MappedInto(DocMapsOf(*_writer, before, sources), merged))
+    << "a snapshot taken before the reopen can still name the sources";
   EXPECT_EQ(2, MappedInto(DocMapsOf(*_writer, reopened, sources), merged))
     << "the reopened reader can still name the sources";
   const std::weak_ptr<irs::DocMapsSlot> maps =
     SlotOf(reopened, sources.front());
+  before = {};
   reopened = {};
   EXPECT_TRUE(maps.expired());
 }

@@ -74,8 +74,7 @@ inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 class IdxReader final {
  public:
   IdxReader(duckdb::FileSystem& fs, std::string_view root,
-            std::string_view segment_name, bool present, HnswBases* hnsw_bases,
-            bool keep_terms = true);
+            std::string_view segment_name, bool present, HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;

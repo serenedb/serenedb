@@ -96,7 +96,35 @@ irs::ObjectStoreRequests Open(const std::string& root, uint64_t live_docs) {
   return requests;
 }
 
+TEST(ObjectStoreIndexTest, a_single_block_field_prefetches_nothing) {
+  auto& store = tests::ObjectStore();
+  const auto root = Root();
+  WriteSegments(tests::IndexDir{Db(), root}, 3);
+  const tests::IndexDir restarted{Db(), root};
+  const auto reader =
+    tests::OpenReader(restarted, irs::tests::DefaultReaderOptions());
+  DropCachedBlocks(duckdb::BlockCache::Get(Db()));
+  store.ResetRequests();
+
+  const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
+  irs::ByTerm filter;
+  *filter.mutable_field_id() = tests::FieldIdFor("name");
+  filter.mutable_options()->term = term;
+  for (const auto& segment : reader) {
+    EXPECT_FALSE(filter.Prefetch(segment));
+  }
+  size_t found = 0;
+  for (const auto& segment : reader) {
+    const auto* terms = segment.field(tests::FieldIdFor("name"));
+    ASSERT_NE(nullptr, terms);
+    found += terms->Lookup(term).docs_count;
+  }
+  EXPECT_EQ(1, found);
+  EXPECT_EQ(0, store.Requests().get);
+}
+
 TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
+  constexpr size_t kNames = 4096;
   auto& store = tests::ObjectStore();
   const auto root = Root();
   {
@@ -104,11 +132,13 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
     auto writer = tests::MakeWriter(dir, irs::kOmCreate,
                                     irs::tests::DefaultWriterOptions());
     for (size_t segment = 0; segment != 3; ++segment) {
-      tests::JsonDocGenerator gen{TestBase::resource("simple_sequential.json"),
-                                  &tests::GenericJsonFieldFactory};
-      for (size_t doc = 0; doc != 8; ++doc) {
-        ASSERT_TRUE(tests::Insert(*writer, *gen.next()));
+      auto trx = writer->GetBatch();
+      for (size_t i = 0; i != kNames; ++i) {
+        tests::StringField field{"name", absl::StrCat("name-", i)};
+        field.id = tests::FieldIdFor("name");
+        ASSERT_TRUE(tests::InsertFields(trx.Insert(), &field, &field + 1));
       }
+      ASSERT_TRUE(trx.Commit());
       ASSERT_TRUE(writer->RefreshCommit());
     }
   }
@@ -118,7 +148,8 @@ TEST(ObjectStoreIndexTest, prefetched_term_blocks_serve_the_lookups) {
   DropCachedBlocks(duckdb::BlockCache::Get(Db()));
   store.ResetRequests();
 
-  const auto term = irs::ViewCast<irs::byte_type>(std::string_view{"A"});
+  const auto term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"name-2048"});
   irs::ByTerm filter;
   *filter.mutable_field_id() = tests::FieldIdFor("name");
   filter.mutable_options()->term = term;

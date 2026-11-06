@@ -907,13 +907,7 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
              tablespace->Cast<catalog::TablespaceCatalogEntry>()
                .Directory()
                ->Path())) {
-        bool holds_files = false;
-        if (storage.is_directory) {
-          catalog::StorageFileSystem().ListFiles(
-            storage.path,
-            [&](const std::string&, bool) { holds_files = true; });
-        }
-        if (holds_files) {
+        if (catalog::HoldsFiles(storage)) {
           stored.emplace(storage.oid);
         }
       }

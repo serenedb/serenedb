@@ -145,7 +145,7 @@ class TermReaderImpl final : public TermReader {
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
   void PrefetchLookup(uint32_t block) const;
-  bool HintBlock(uint32_t block) const;
+  bool HintBlock(uint32_t block, InlinePages::Span span) const;
   bool Gates(bytes_view head) const noexcept {
     return _prefixes && head.size() < kTermPrefix;
   }

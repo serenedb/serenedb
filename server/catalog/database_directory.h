@@ -46,7 +46,6 @@ bool RemoveTree(const std::string& path) noexcept;
 // While a backup runs, removals of dropped storages wait for ResumeRemovals.
 void DeferRemovals() noexcept;
 void ResumeRemovals();
-std::string EngineDirOf(std::string_view location);
 std::optional<duckdb::idx_t> OidFromName(std::string_view name);
 
 void CreateStorage(const std::string& path);
@@ -60,6 +59,7 @@ struct StorageEntry {
 };
 
 std::vector<StorageEntry> ListStorages(const std::string& root);
+bool HoldsFiles(const StorageEntry& entry);
 
 struct StorageSize {
   uint64_t files = 0;

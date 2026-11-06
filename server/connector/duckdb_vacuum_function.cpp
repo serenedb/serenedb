@@ -182,7 +182,10 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
           ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
                   "[<database>.]<schema>"));
       }
-      out.database = bind.schema;
+      out.database = bind.schema.empty()
+                       ? duckdb::DatabaseManager::GetDefaultDatabase(context)
+                           .GetIdentifierName()
+                       : bind.schema;
       out.schema = bind.name;
     } break;
     case Scope::Table:
@@ -208,12 +211,6 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     } break;
     case Scope::All:
       break;
-  }
-
-  if (out.database.empty() &&
-      (scope == Scope::Database || scope == Scope::Schema)) {
-    out.database =
-      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
   }
   return out;
 }

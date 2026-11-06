@@ -16,7 +16,6 @@ target_sources(
         levenshtein_utils.cpp
         log.cpp
         log_flags.cpp
-        network_utils.cpp
         numeric_utils.cpp
         regexp_acceptor.cpp
         regexp_ngram.cpp

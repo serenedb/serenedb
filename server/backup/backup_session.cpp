@@ -50,7 +50,6 @@
 #include "connector/duckdb_storage_extension.h"
 #include "search/store.h"
 #include "storage_engine/search_engine.h"
-#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
@@ -62,17 +61,9 @@ bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
 }
 
 uint64_t RetainedRunStart(duckdb::StorageManager& storage, uint64_t end) {
+  auto& fs = catalog::StorageFileSystem();
   auto start = end;
-  while (start > 0) {
-    const auto path = storage.GetRetainedWALPath(start - 1);
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    if (ec) {
-      utils::file_utils::ThrowFileError("check", path, ec);
-    }
-    if (!exists) {
-      break;
-    }
+  while (start > 0 && fs.FileExists(storage.GetRetainedWALPath(start - 1))) {
     --start;
   }
   return start;
@@ -213,12 +204,11 @@ std::optional<StartedBackup> BackupSession::Begin(
   }
   const auto& layout =
     catalog::ClusterLayout(catalog::ClusterOf().GetAttached());
-  auto backup_dir = std::filesystem::path{layout.EngineDir()} / kBackupDir;
-  std::error_code ec;
-  std::filesystem::remove_all(backup_dir, ec);
-  if (ec) {
-    utils::file_utils::ThrowFileError("remove directory", backup_dir.string(),
-                                      ec);
+  auto backup_dir = layout.EngineDir() / kBackupDir;
+  if (!catalog::RemoveTree(backup_dir.string())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("could not remove directory \"", backup_dir.string(), "\""));
   }
   catalog::CreateDirectory(backup_dir);
   absl::Cleanup remove_backup_dir = [&]() noexcept {

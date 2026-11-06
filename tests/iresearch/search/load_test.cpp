@@ -19,7 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -27,6 +29,7 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <fcntl.h>
+#include <openssl/evp.h>
 #include <simdjson.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -34,6 +37,8 @@
 #include <bit>
 #include <chrono>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -47,6 +52,7 @@
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <memory>
@@ -61,7 +67,6 @@
 #include "insert_field.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search/search_fields.hpp"
-#include "server/utils/files.h"
 #include "server/utils/simdjson_sink.h"
 #include "tests_shared.hpp"
 
@@ -526,13 +531,32 @@ struct ParsedQuery {
 
 constexpr std::string_view kSkipTopK = "skip:topk";
 
-std::string HashIds(const std::vector<std::string>& ids) {
-  sdb::Sha256Functor sha;
-  for (const auto& id : ids) {
-    sha(id.data(), id.size());
-    sha("\n", 1);
+bool SlurpGzipFile(const char* path, std::string& result) {
+  const gzFile file = gzopen(path, "rb");
+  if (!file) {
+    return false;
   }
-  return sha.Finalize();
+  absl::Cleanup guard = [file] { gzclose(file); };
+  char buffer[8192];
+  int n = 0;
+  while ((n = gzread(file, buffer, sizeof(buffer))) > 0) {
+    result.append(buffer, static_cast<size_t>(n));
+  }
+  return n == 0;
+}
+
+std::string HashIds(const std::vector<std::string>& ids) {
+  const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context{
+    EVP_MD_CTX_new(), &EVP_MD_CTX_free};
+  EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr);
+  for (const auto& id : ids) {
+    EVP_DigestUpdate(context.get(), id.data(), id.size());
+    EVP_DigestUpdate(context.get(), "\n", 1);
+  }
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int size = 0;
+  EVP_DigestFinal_ex(context.get(), hash, &size);
+  return absl::BytesToHexString({reinterpret_cast<const char*>(hash), size});
 }
 
 void HashIdsInPlace(std::vector<std::string>& ids) {
@@ -1319,12 +1343,13 @@ class LoadTest : public TestBase {
     std::string ref_str;
     auto gz_path = res_dir / "reference.json.gz";
     if (std::filesystem::exists(gz_path)) {
-      ASSERT_TRUE(sdb::SlurpGzipFile(gz_path.c_str(), ref_str))
+      ASSERT_TRUE(SlurpGzipFile(gz_path.c_str(), ref_str))
         << "Cannot read: " << gz_path;
     } else {
       auto raw_path = res_dir / "reference.json";
-      ASSERT_TRUE(sdb::SlurpFile(raw_path.c_str(), ref_str))
-        << "Reference file not found: " << raw_path;
+      ref_str = irs::ReadWhole<std::string>(duckdb::QueryContext{},
+                                            *duckdb::FileSystem::CreateLocal(),
+                                            raw_path.string());
     }
     auto expected = DeserializeResults(ref_str);
 

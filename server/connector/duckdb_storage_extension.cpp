@@ -175,6 +175,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     entry->Cast<catalog::DatabaseCatalogEntry>().Directory();
   if (info.path.empty()) {
     info.path = directory->DataFile();
+    duckdb::DBConfig::GetConfig(context).AddAllowedDatabasePath(info.path);
   }
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
     std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});

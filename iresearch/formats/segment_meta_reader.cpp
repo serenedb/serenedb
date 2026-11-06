@@ -52,8 +52,13 @@ void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
 
   std::string name{segment_name};
 
-  const auto bytes =
-    ReadWhole<bstring>(duckdb::QueryContext{}, fs, PathOf(root, filename));
+  const auto handle = OpenWhole(fs, PathOf(root, filename));
+  const auto length = duckdb::NumericCast<size_t>(handle->GetFileSize());
+  auto frozen = DocumentMask::AllocateFrozen(length);
+  if (length != 0) {
+    handle->Read(duckdb::QueryContext{}, frozen.get(), length, 0);
+  }
+  const bytes_view bytes{frozen.get(), length};
 
   std::vector<std::string> files;
   bool has_files = false;
@@ -70,13 +75,12 @@ void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
         meta_in.ReadProperty<uint32_t>(kFieldDocsCount, "docs_count");
       size = meta_in.ReadProperty<uint64_t>(kFieldByteSize, "byte_size");
     });
-
   const auto docs_mask_size = footer.data_len;
 
   std::shared_ptr<const DocumentMask> docs_mask;
   if (docs_mask_size != 0) {
-    docs_mask = std::make_shared<const DocumentMask>(
-      DocumentMask::ReadFrozen(bytes_view{bytes}.substr(0, docs_mask_size)));
+    docs_mask =
+      std::make_shared<const DocumentMask>(std::move(frozen), docs_mask_size);
   }
 
   if (!has_files) [[unlikely]] {

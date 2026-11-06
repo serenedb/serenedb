@@ -138,7 +138,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
-ClusterCatalog& ClusterOf(duckdb::CatalogTransaction transaction);
 ClusterCatalog& ClusterOf();
 
 template<typename Entry>

@@ -27,7 +27,6 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <string>
-#include <vector>
 
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
@@ -62,15 +61,11 @@ void LoadStopwords(StringSet<std::string>& buf, std::string_view path) {
       ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
       ERR_MSG("stop-word file or directory \"", root, "\" does not exist"));
   }
-  std::vector<std::string> files;
   fs->ListFiles(root, [&](const std::string& name, bool is_directory) {
     if (!is_directory) {
-      files.push_back(fs->JoinPath(root, name));
+      LoadStopwordsFile(*fs, fs->JoinPath(root, name), buf);
     }
   });
-  for (const auto& file : files) {
-    LoadStopwordsFile(*fs, file, buf);
-  }
 }
 
 }  // namespace irs::analysis::dict

@@ -1,23 +1,42 @@
 """What the fake object stores share: a threaded HTTP server in the test process
-that counts requests by kind, and the listing and ranged-read rules S3 and Azure
-Blob Storage have in common.
+that counts requests by kind, and the path, date, listing and ranged-read rules
+S3 and Azure Blob Storage have in common.
 """
 
 from __future__ import annotations
 
 import collections
+import email.utils
 import http.server
 import threading
+import urllib.parse
 from typing import Self
+
+
+def http_date(seconds: float) -> str:
+    return email.utils.formatdate(seconds, usegmt=True)
+
+
+def split_path(path: str, account: str = "") -> tuple[str, str]:
+    path = urllib.parse.unquote(path).lstrip("/")
+    head, _, rest = path.partition("/")
+    container, _, name = (rest if account and head == account else path).partition("/")
+    return container, name
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     disable_nagle_algorithm = True
+    account = ""
     fake: FakeStore
 
     def log_message(self, *args) -> None:
         pass
+
+    def _target(self) -> tuple[str, str, dict[str, list[str]]]:
+        url = urllib.parse.urlsplit(self.path)
+        container, name = split_path(url.path, self.account)
+        return container, name, urllib.parse.parse_qs(url.query, keep_blank_values=True)
 
     def _body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))

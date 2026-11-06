@@ -42,7 +42,7 @@ namespace irs {
 
 IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
                      std::string_view segment_name, bool present,
-                     HnswBases* hnsw_bases, bool keep_terms) {
+                     HnswBases* hnsw_bases) {
   if (!present) {
     return;
   }
@@ -107,10 +107,7 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
 #endif
       footer.ReadOptionalObject(
         kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
-          auto meta = term_dict::ReadTerms(terms, data_size);
-          if (keep_terms) {
-            _terms = std::move(meta);
-          }
+          _terms = term_dict::ReadTerms(terms, data_size);
         });
     });
 }

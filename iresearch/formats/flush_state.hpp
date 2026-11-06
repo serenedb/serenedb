@@ -38,7 +38,6 @@ struct FlushState {
   duckdb::FileSystem& fs;
   const std::string_view root;
   const FileObservers& observers;
-  const bool keep_cached = false;
   // In-flight norm reader source (SegmentWriter during initial flush,
   // null during merge). Posting writers consult it to read per-doc norms
   // for score bounds while the segment is still being written.

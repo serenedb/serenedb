@@ -95,8 +95,7 @@ duckdb::DatabaseInstance& CsDb() {
 }
 
 struct Seg {
-  std::unique_ptr<duckdb::MemoryFileSystem> fs =
-    std::make_unique<duckdb::MemoryFileSystem>();
+  duckdb::MemoryFileSystem fs;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
@@ -136,7 +135,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
   seg->rows = Rows();
   const auto type = TypeOf(shape);
   {
-    irs::ColWriter w{CsDb(), *seg->fs, kRoot, irs::FileObservers{}, kSeg};
+    irs::ColWriter w{CsDb(), seg->fs, kRoot, irs::FileObservers{}, kSeg};
     auto& cw = w.OpenColumn(kField, type);
     uint64_t pos = 0;
     while (pos < seg->rows) {
@@ -151,7 +150,7 @@ std::unique_ptr<Seg> BuildSeg(Shape shape, bool nullable) {
     w.Commit(seg->rows);
   }
   seg->reader = std::make_unique<irs::ColReader>(
-    CsDb(), *seg->fs, kRoot, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
+    CsDb(), seg->fs, kRoot, kSeg, true, duckdb::MappedFileAccess::SEQUENTIAL);
   seg->col = seg->reader->Column(kField);
   if (seg->col == nullptr) {
     std::fprintf(stderr, "BuildSeg: column missing\n");

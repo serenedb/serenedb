@@ -41,8 +41,6 @@ class HookFileSystem : public duckdb::FileSystem {
   virtual void OnSync(std::string_view name) {}
   virtual void OnSyncDirectory() {}
 
-  static std::string_view Name(std::string_view path) noexcept;
-
   duckdb::unique_ptr<duckdb::FileHandle> OpenFile(
     const std::string& path, duckdb::FileOpenFlags flags,
     duckdb::optional_ptr<duckdb::FileOpener> opener = nullptr) override;

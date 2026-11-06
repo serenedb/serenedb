@@ -57,38 +57,33 @@ std::unique_ptr<FileOutput> FileOutput::Open(duckdb::FileSystem& fs,
     }
   };
   const auto path = PathOf(root, name);
-  const bool remote = StorageKindOf(root) == StorageKind::Remote;
-  std::unique_ptr<FileOutput> output;
-  if (auto writer = fs.OpenFileWriter(path, keep_cached)) {
-    output.reset(new FileOutput{std::move(writer), observers, remote});
-  } else {
-    output.reset(new FileOutput{
-      fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
-                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW),
-      observers, remote});
+  auto writer = fs.OpenFileWriter(path, keep_cached);
+  std::unique_ptr<duckdb::FileHandle> handle;
+  if (!writer) {
+    handle = fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                                 duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
   }
+  std::unique_ptr<FileOutput> output{
+    new FileOutput{std::move(writer), std::move(handle), observers,
+                   StorageKindOf(root) == StorageKind::Remote}};
   std::move(abandon).Cancel();
   return output;
 }
 
 FileOutput::FileOutput(std::unique_ptr<duckdb::FileWriter> writer,
+                       std::unique_ptr<duckdb::FileHandle> handle,
                        const FileObservers& observers, bool remote)
-  : _writer{std::move(writer)}, _observers{observers}, _remote{remote} {
-  NextWindow();
-  if (_remote) {
-    gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
-  }
-}
-
-FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       const FileObservers& observers, bool remote)
-  : _handle{std::move(handle)},
-    _buf{std::make_unique_for_overwrite<byte_type[]>(kBufferSize)},
+  : _writer{std::move(writer)},
+    _handle{std::move(handle)},
     _observers{observers},
     _remote{remote} {
-  SDB_ASSERT(_handle);
-  _begin = _pos = _buf.get();
-  _end = _begin + kBufferSize;
+  if (_writer) {
+    NextWindow();
+  } else {
+    _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
+    _begin = _pos = _buf.get();
+    _end = _begin + kBufferSize;
+  }
   if (_remote) {
     gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
   }
@@ -98,9 +93,7 @@ FileOutput::~FileOutput() {
   if (!_writer && !_handle) {
     return;
   }
-  if (_writer) {
-    _writer->Abort();
-  } else {
+  if (_handle) {
     try {
       _handle->AbortWrite();
     } catch (const std::exception& e) {
@@ -159,13 +152,13 @@ void FileOutput::Close() {
     return;
   }
   const auto size = Position();
-  absl::Cleanup release = [&] noexcept { Release(); };
   Flush();
   if (_writer) {
     _writer->Close();
   } else {
     _handle->Close();
   }
+  Release();
   for (auto* observer : _observers) {
     observer->Written(size);
   }

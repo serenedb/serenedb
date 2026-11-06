@@ -769,6 +769,9 @@ class IndexWriter : private util::Noncopyable {
   SegmentWriterOptions GetSegmentWriterOptions(
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
+  Queued::Adopted OpenAdopted(std::string_view meta_file,
+                              const IndexReaderOptions& options) const;
+
   uint64_t NextSegmentId() noexcept;
   void InitMeta(IndexMeta& meta) const;
 

@@ -32,7 +32,6 @@
 #include <span>
 #include <string>
 #include <utility>
-#include <variant>
 
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -63,18 +62,21 @@ struct CursorBlock {
 class InputFile {
  public:
   explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
-  explicit InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> file) noexcept;
+  explicit InputFile(
+    duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept;
   InputFile(const InputFile&) = delete;
   InputFile& operator=(const InputFile&) = delete;
 
   uint64_t Length() const noexcept { return _length; }
-  const std::string& Path() const noexcept;
-  bool Contiguous() const noexcept {
-    return std::holds_alternative<MappedSpan>(_kind);
+  const std::string& Path() const noexcept {
+    return _blocks ? _blocks->GetPath() : _mapping->GetPath();
   }
+  bool Contiguous() const noexcept { return !_blocks; }
   bytes_view Span() const noexcept { return _span; }
-  duckdb::MemoryMappedFile* Mapping() const noexcept;
-  bool Paged() const noexcept;
+  duckdb::MemoryMappedFile* Mapping() const noexcept {
+    return _span.empty() ? nullptr : _mapping.get();
+  }
+  bool Paged() const noexcept { return _paged; }
   bytes_view Refill(uint64_t position, CursorBlock& block, bool ahead) const;
   PinnedBytes Pin(uint64_t offset, uint64_t size) const;
 
@@ -89,25 +91,12 @@ class InputFile {
   bool Evicted(uint64_t offset, uint64_t size, uint32_t& epoch) const noexcept;
 
  private:
-  struct MappedSpan {
-    std::unique_ptr<duckdb::MemoryMappedFile> mapping;
-    file_utils::ResidencyMap residency;
-    bool paged = false;
-  };
-
-  struct CacheBlocks {
-    duckdb::shared_ptr<duckdb::BlockCacheFile> file;
-  };
-
-  uint64_t Warm(const MappedSpan& span, uint64_t offset,
-                uint64_t size) const noexcept;
-  void MarkWarm(const MappedSpan& span, uint64_t offset,
-                uint64_t size) const noexcept;
-  bytes_view SpanWindow(uint64_t offset, uint64_t size) const noexcept;
-
   uint64_t _length;
   bytes_view _span;
-  std::variant<MappedSpan, CacheBlocks> _kind;
+  std::unique_ptr<duckdb::MemoryMappedFile> _mapping;
+  duckdb::shared_ptr<duckdb::BlockCacheFile> _blocks;
+  file_utils::ResidencyMap _residency;
+  bool _paged = false;
 };
 
 [[noreturn]] void ThrowPastEnd(const InputFile* file, uint64_t position,

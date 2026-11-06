@@ -26,6 +26,11 @@
 namespace tests {
 namespace {
 
+std::string_view Name(std::string_view path) noexcept {
+  const auto slash = path.rfind('/');
+  return slash == std::string_view::npos ? path : path.substr(slash + 1);
+}
+
 class HookFileHandle final : public duckdb::FileHandle {
  public:
   HookFileHandle(HookFileSystem& fs,
@@ -34,7 +39,7 @@ class HookFileHandle final : public duckdb::FileHandle {
     : duckdb::FileHandle{fs, path, flags}, inner{std::move(inner)} {}
 
   void Close() final {
-    file_system.Cast<HookFileSystem>().OnClose(HookFileSystem::Name(path));
+    file_system.Cast<HookFileSystem>().OnClose(Name(path));
     inner->Close();
   }
 
@@ -53,7 +58,7 @@ class HookFileWriter final : public duckdb::FileWriter {
   void Commit(duckdb::idx_t nr_bytes) final { _inner->Commit(nr_bytes); }
 
   void Close() final {
-    _fs.OnClose(HookFileSystem::Name(_path));
+    _fs.OnClose(Name(_path));
     _inner->Close();
   }
 
@@ -70,11 +75,6 @@ duckdb::FileHandle& Inner(duckdb::FileHandle& handle) {
 }
 
 }  // namespace
-
-std::string_view HookFileSystem::Name(std::string_view path) noexcept {
-  const auto slash = path.rfind('/');
-  return slash == std::string_view::npos ? path : path.substr(slash + 1);
-}
 
 duckdb::unique_ptr<duckdb::FileHandle> HookFileSystem::OpenFile(
   const std::string& path, duckdb::FileOpenFlags flags,

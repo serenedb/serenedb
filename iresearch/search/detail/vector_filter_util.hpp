@@ -57,8 +57,7 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   idx_in.Seek(ivf.QuantStatsOffset());
   const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
   const auto stats = idx_in.Pin(stats_size);
-  auto quant_stats = MakeQuantizerStats(
-    quant, d, std::span<const byte_type>{stats.bytes}, metric);
+  auto quant_stats = MakeQuantizerStats(quant, d, stats.bytes, metric);
   if (!quant_stats) {
     return nullptr;
   }

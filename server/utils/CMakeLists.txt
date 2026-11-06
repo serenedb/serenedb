@@ -6,7 +6,6 @@ add_library(
     app_server.cpp
     drain_gate.cpp
     file_utils.cpp
-    files.cpp
     init.cpp
     lifecycle.cpp
     lockfile.cpp

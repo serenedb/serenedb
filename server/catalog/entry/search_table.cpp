@@ -224,7 +224,7 @@ SearchTableEntry::SearchTableEntry(
   _options = ResolveOptions(base.options);
   if (_tablespace != 0) {
     dependencies.AddDependency(
-      ClusterOf(transaction).Tablespace(transaction, _tablespace));
+      ClusterOf(*transaction.db).Tablespace(transaction, _tablespace));
   }
   if (!_storage) {
     _storage = std::make_shared<search::Store>(

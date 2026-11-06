@@ -67,7 +67,6 @@ class Format10TestCase : public tests::FormatTestCase {
         .fs = dir->Fs(),
         .root = dir->Root(),
         .observers = dir->Observers(),
-        .keep_cached = true,
         .name = "segment_name",
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
@@ -267,7 +266,6 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
@@ -427,7 +425,6 @@ TEST_P(Format10TestCase, postings_read_write) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 150,
       .index_features = field.index_features,
@@ -576,7 +573,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "0",
       .doc_count = 10000,
       // all possible features in segment
@@ -609,7 +605,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "1",
       .doc_count = 10000,
       // all possible features in segment
@@ -641,7 +636,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "2",
       .doc_count = 10000,
       // all possible features in segment
@@ -673,7 +667,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "3",
       .doc_count = 10000,
       // all possible features in segment
@@ -704,7 +697,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "4",
       .doc_count = 10000,
       // all possible features in segment
@@ -735,7 +727,6 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "5",
       .doc_count = 10000,
     };
@@ -778,7 +769,6 @@ TEST_P(Format10TestCase, ires336) {
     .fs = dir->Fs(),
     .root = dir->Root(),
     .observers = dir->Observers(),
-    .keep_cached = true,
     .name = segment_name,
     .doc_count = 10000,
   };
@@ -978,7 +968,6 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
           .fs = dir->Fs(),
           .root = dir->Root(),
           .observers = dir->Observers(),
-          .keep_cached = true,
           .name = "segment_name",
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,

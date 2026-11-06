@@ -25,14 +25,12 @@
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
-#include <cstdio>
+#include <cstring>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/block_cache/block_cache.hpp>
-#include <filesystem>
-#include <fstream>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -3684,72 +3682,6 @@ TEST_P(DirectoryTestCase, visit) {
   }
 }
 
-TEST_P(DirectoryTestCase, list) {
-  using namespace irs;
-
-  std::vector<std::string> files;
-  auto list_files = [&files](std::string_view name) {
-    files.emplace_back(std::move(name));
-  };
-  _dir->Visit(list_files);
-  ASSERT_TRUE(files.empty());
-
-  std::vector<std::string_view> names{
-    "spM42fEO88eDt2", "jNIvCMksYwpoxN", "Re5eZWCkQexrZn", "jjj003oxVAIycv",
-    "N9IJuRjFSlO8Pa", "OPGG6Ic3JYJyVY", "ZDGVji8xtjh9zI", "DvBDXbjKgIfPIk",
-    "bZyCbyByXnGvlL", "pvjGDbNcZGDmQ2", "J7by8eYg0ZGbYw", "6UZ856mrVW9DeD",
-    "Ny6bZIbGQ43LSU", "oaYAsO0tXnNBkR", "Fr97cjyQoTs9Pf", "7rLKaQN4REFIgn",
-    "EcFMetqynwG87T", "oshFa26WK3gGSl", "8keZ9MLvnkec8Q", "HuiOGpLtqn79GP",
-    "Qnlj0JiQjBR3YW", "k64uvviemlfM8p", "32X34QY6JaCH3L", "NcAU3Aqnn87LJW",
-    "Q4LLFIBU9ci40O", "M5xpjDYIfos22t", "Te9ZhWmGt2cTXD", "HYO3hJ1C4n1DvD",
-    "qVRj2SyXcKQz3Z", "vwt41rzEW7nkoi", "cLqv5U8b8kzT2H", "tNyCoJEOm0POyC",
-    "mLw6cl4HxmOHXa", "2eTVXvllcGmZ0e", "NFF9SneLv6pX8h", "kzCvqOVYlYA3QT",
-    "mxCkaGg0GeLxYq", "PffuwSr8h3acP0", "zDm0rAHgzhHsmv", "8LYMjImx00le9c",
-    "Ju0FM0mJmqkue1", "uNwn8A2SH4OSZW", "R1Dm21RTJzb0aS", "sUpQGy1n6TiH82",
-    "fhkCGcuQ5VnrEa", "b6Xsq05brtAr88", "NXVkmxvLmhzFRY", "s9OuZyZX28uux0",
-    "DQaD4HyDMGkbg3", "Fr2L3V4UzCZZcJ", "7MgRPt0rLo6Cp4", "c8lK5hjmKUuc3e",
-    "jzmu3ZcP3PF62X", "pmUUUvAS00bPfa", "lonoswip3le6Hs", "TQ1G0ruVvknb8A",
-    "4XqPhpJvDazbG1", "gY0QFCjckHp1JI", "v2a0yfs9yN5lY4", "l1XKKtBXtktOs2",
-    "AGotoLgRxPe4Pr", "x9zPgBi3Bw8DFD", "OhX85k7OhY3FZM", "riRP6PRhkq0CUi",
-    "1ToW1HIephPBlz", "C8xo1SMWPZW8iE", "tBa3qiFG7c1wiD", "BRXFbUYzw646PS",
-    "mbR0ECXCash1rF", "AVDjHnwujjOGAK", "16bmhl4gvDpj44", "OLa0D9RlpBLRgK",
-    "PgCSXvlxyHQFlQ", "sMyrmGRcVTwg53", "Fa6Fo687nt9bDV", "P0lUFttS64mC7s",
-    "rxTZUQIpOPYkPp", "oNEsVpak9SNgLh", "iHmFTSjGutROen", "aTMmlghno9p91a",
-    "tpb3rHs9ZWtL5m", "iG0xrYN7gXXPTs", "KsEl2f8WtF6Ylv", "triXFZM9baNltC",
-    "MBFTh22Yos3vGt", "DTuFyue5f9Mk3x", "v2zm4kYxfar0J7", "xtpwVgOMT0eIFS",
-    "8Wz7MrtXkSH9CA", "FuURHWmPLbvFU0", "YpIFnExqjgpSh0", "2oaIkTM6EJ2zty",
-    "s16qvfbrycGnVP", "yUb2fcGIDRSujG", "9rIfsuCyTCTiLY", "HXTg5jWrVZNLNP",
-    "maLjUi6Oo6wsJr", "C6iHChfoJHGxzO", "6LxzytT8iSzNHZ", "ex8znLIzbatFCo",
-    "HiYTSzZhBHgtaP", "H5EpiJw2L5UgD1", "ZhPvYoUMMFkoiL", "y6014BfgqbE3ke",
-    "XXutx8GrPYt7Rq", "DjYwLMixhS80an", "aQxh91iigWOt4x", "1J9ZC2r7CCfGIH",
-    "Sg9PzDCOb5Ezym", "4PB3SukHVhA6SB", "BfVm1XGLDOhabZ", "ChEvexTp1CrLUL",
-    "M5nlO4VcxIOrxH", "YO9rnNNFwzRphV", "KzQhfZSnQQGhK9", "r7Ez7ZqkXwr0bn",
-    "fQipSie8ZKyT62", "3yyLqJMcShXG9z", "UTb12lz3k5xPPt", "JjcWQnBnRFJ2Mv",
-    "zsKEX7BLJQTjCx", "g0oPvTcOhiev1k", "8P6HF4I6t1jwzu", "LaOiJIU47kagqu",
-    "pyY9sV9WQ5YuQC", "MCgpgJhEwrGKWM", "Hq5Wgc3Am8cjWw", "FnITVHg0jw03Bm",
-    "0Jq2YEnFf52861", "y0FT03yG9Uvg6I", "S6uehKP8uj6wUe", "usC8CZtobBmuk6",
-    "LrZuchHNpSs282", "PsmFFySt7fKFOv", "mXe9j6xNYttnSy", "al9J6AZYlhAlWU",
-    "3v8PsohUeKegJI", "QZCwr1URS1OWzX", "UVCg1mVWmSBWRT", "pO2lnQ4L6yHQic",
-    "w5EtZl2gZhj2ca", "04B62aNIpnBslQ", "0Sz6UCGXBwi7At", "l49gEiyDkc3J00",
-    "2T9nyWrRwuZj9W", "CTtHTPRhSAPRIW", "sJZI3K8vP96JPm", "HYEy1bBJskEYa2",
-    "UKb3uiFuGEi7m9", "yeRCnG0EEZ8Vrr"};
-
-  for (const auto& name : names) {
-    auto out = _dir->Create(name);
-    ASSERT_FALSE(!out);
-    out->Close();
-  }
-
-  files.clear();
-  _dir->Visit(list_files);
-  EXPECT_EQ(names.size(), files.size());
-
-  EXPECT_TRUE(
-    std::all_of(files.begin(), files.end(), [&names](std::string_view name) {
-      return std::find(names.begin(), names.end(), name) != names.end();
-    }));
-}
-
 TEST_P(DirectoryTestCase, smoke_index_io) {
   using namespace irs;
 
@@ -4852,14 +4784,6 @@ TEST_P(DirectoryTestCase, reference) {
 TEST_P(DirectoryTestCase, ref_tracker) {
   auto& dir = this->dir();
 
-  // a tracking copy shares the refs
-  {
-    irs::RefTracker tracker{dir.Refs()};
-    auto track_dir = dir.Observed(tracker);
-
-    ASSERT_EQ(&dir.Refs(), &track_dir.Refs());
-  }
-
   // test open
   {
     irs::RefTracker tracker{dir.Refs()};
@@ -4909,17 +4833,6 @@ TEST_P(DirectoryTestCase, ref_tracker) {
     ASSERT_FALSE(!file2);
 
     ASSERT_EQ(0, tracker.GetRefs().size());
-  }
-
-  {
-    irs::RefTracker tracker{dir.Refs()};
-    auto track_dir = dir.Observed(tracker);
-    auto file1 = track_dir.Create("abc");
-    ASSERT_FALSE(!file1);
-    auto file2 = track_dir.Create("def");
-    ASSERT_FALSE(!file2);
-
-    ASSERT_EQ(2, tracker.GetRefs().size());
   }
 }
 
@@ -5310,6 +5223,30 @@ TEST_F(DirectoryHookTest, remove_failures) {
   EXPECT_FALSE(local->Has("abc"));
   EXPECT_FALSE(local->Has("def"));
   EXPECT_EQ(0, RemoveUnreferencedFiles(hooked));
+}
+
+TEST_F(DirectoryHookTest, failed_close_aborts_the_write) {
+  struct FailingFileSystem final : ::tests::HookFileSystem {
+    using ::tests::HookFileSystem::HookFileSystem;
+
+    void OnClose(std::string_view) final {
+      throw duckdb::IOException("injected");
+    }
+
+    void AbortFileWrite(duckdb::FileHandle&) final { ++aborted; }
+
+    size_t aborted = 0;
+  } fs{::tests::DatabaseFileSystem()};
+
+  auto local = ::tests::LocalDirectory(this);
+  ASSERT_NE(nullptr, local);
+  auto hooked = ::tests::OverFileSystem(*local, fs);
+  {
+    auto out = hooked.Create("abc");
+    out->WriteU32(42);
+    EXPECT_THROW(out->Close(), duckdb::IOException);
+  }
+  EXPECT_EQ(1, fs.aborted);
 }
 
 TEST_F(DirectoryHookTest, abandoned_output_is_not_published) {

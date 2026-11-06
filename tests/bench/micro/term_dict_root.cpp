@@ -197,7 +197,6 @@ void Write(Data& data) {
     .fs = fs,
     .root = data.root,
     .observers = observers,
-    .keep_cached = true,
     .name = "segment",
     .doc_count = data.keys.size(),
   };

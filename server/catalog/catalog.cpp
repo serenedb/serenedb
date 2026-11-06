@@ -283,10 +283,10 @@ StorageLocation SereneDBCatalog::Storage(duckdb::CatalogTransaction transaction,
   if (!_directory) {
     return {};
   }
-  auto directory =
-    tablespace == 0 || GetAttached().IsReadOnly()
-      ? _directory->Tablespace()
-      : ClusterOf(transaction).TablespaceDirectoryOf(transaction, tablespace);
+  auto directory = tablespace == 0 || GetAttached().IsReadOnly()
+                     ? _directory->Tablespace()
+                     : ClusterOf(*transaction.db)
+                         .TablespaceDirectoryOf(transaction, tablespace);
   return {.path = _directory->StoragePath(directory.get(), oid),
           .database = _directory,
           .tablespace = std::move(directory)};

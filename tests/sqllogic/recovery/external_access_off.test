@@ -1,0 +1,146 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLESPACE sandboxed LOCATION '${__TEST_DIR__}/sandboxed';
+
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(body en);
+
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT) WITH (storage = 'search') TABLESPACE sandboxed;
+
+
+statement ok
+SET enable_external_access = false;
+
+
+statement count 2
+INSERT INTO docs VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+
+query
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+
+
+statement count 1
+INSERT INTO notes VALUES (1, 'pudge hooks the courier');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+
+query
+SELECT id FROM notes ORDER BY id;
+----
+id
+1
+
+
+statement ok
+CREATE TABLE later (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX later_idx ON later USING inverted(body en);
+
+
+statement count 1
+INSERT INTO later VALUES (1, 'pudge');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) later;
+
+
+query
+SELECT id FROM later_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+
+
+statement error
+CREATE TABLESPACE outside LOCATION '${__TEST_DIR__}/outside';
+----
+db error: ERROR: cannot access directory "<slt:ignore>/outside": file system operations are disabled by configuration
+
+
+statement ok
+CREATE DATABASE sandboxed_db;
+
+
+system ok
+pid=$(for p in $(pgrep -x serened); do if tr '\0' ' ' < /proc/$p/cmdline | grep -q -- "$SDB_DATADIR"; then echo $p; fi; done | head -1); port=$(tr '\0' '\n' < /proc/$pid/cmdline | grep -o 'postgres://[^,?/]*' | head -1 | sed 's/.*://'); PGPASSWORD=postgres psql -h 127.0.0.1 -p "$port" -U postgres -d sandboxed_db -XAtq -c 'CREATE TABLE t (a INT)' -c 'INSERT INTO t VALUES (1)' -c 'SELECT count(*) FROM t'
+----
+1
+
+
+statement ok
+DROP TABLE notes;
+
+
+statement ok
+DROP TABLESPACE sandboxed;
+
+
+system ok
+for i in $(seq 240); do [ -z "$(ls $__TEST_DIR__/sandboxed/engine_v1)" ] && break; sleep 0.25; done; ls $__TEST_DIR__/sandboxed/engine_v1 | wc -l
+----
+0
+
+
+statement ok
+CREATE TEMPORARY TABLE temp_docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement count 2
+INSERT INTO temp_docs VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga');
+
+
+statement ok
+CREATE INDEX temp_idx ON temp_docs USING inverted(body en);
+
+
+statement count 1
+INSERT INTO temp_docs VALUES (3, 'pudge hooks the courier');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) temp_docs;
+
+
+statement ok
+VACUUM (OPTIMIZE_IN_MEMORY_TABLE) temp_docs;
+
+
+query
+SELECT id FROM temp_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+DROP TABLE temp_docs;

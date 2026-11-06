@@ -334,16 +334,16 @@ void TermReaderImpl::PrefetchLookup(uint32_t block) const {
     return;
   }
   if (const auto span = InlineSpan(block); span.from != span.to) {
-    HintBlock(block);
+    HintBlock(block, span);
   }
 }
 
-bool TermReaderImpl::HintBlock(uint32_t block) const {
+bool TermReaderImpl::HintBlock(uint32_t block, InlinePages::Span span) const {
   const auto& in = _owner->Input();
   const uint64_t offset = BlockOffset(block);
   bool hinted =
     in.Hint(offset, std::min(BlockOffset(block + 1), in.Length()) - offset);
-  if (const auto span = InlineSpan(block); span.from != span.to) {
+  if (span.from != span.to) {
     hinted |= in.Hint(span.from, span.to - span.from);
   }
   return hinted;
@@ -481,11 +481,13 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
 }
 
 bool TermReaderImpl::Prefetch(bytes_view term) const {
-  if (Excludes(term)) {
+  if (Small() || Excludes(term)) {
     return false;
   }
   PaddedKey padded;
-  return HintBlock(BlockOf(padded.Assign(KeyPrefix(), term)));
+  const auto block = BlockOf(padded.Assign(KeyPrefix(), term));
+  return HintBlock(block,
+                   _owner->Base() ? InlineSpan(block) : InlinePages::Span{});
 }
 
 PostingsHandles TermReaderImpl::Handles() const noexcept {

@@ -717,7 +717,6 @@ TEST_P(FormatTestCase, fields_read_write) {
       .fs = dir().Fs(),
       .root = dir().Root(),
       .observers = dir().Observers(),
-      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,

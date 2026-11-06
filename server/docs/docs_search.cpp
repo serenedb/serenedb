@@ -205,11 +205,10 @@ irs::DirectoryReader LoadIndex(duckdb::DatabaseInstance& db,
     out->WriteData(file.bytes.data(), file.bytes.size());
     out->Close();
   }
-  irs::IndexReaderOptions options;
-  return irs::DirectoryReader{db, fs, root, options,
-                              [](duckdb::BinaryDeserializer& payload) {
-                                search::IndexStamp::Read(payload);
-                              }};
+  return irs::DirectoryReader{
+    db, fs, root, {}, [](duckdb::BinaryDeserializer& payload) {
+      search::IndexStamp::Read(payload);
+    }};
 }
 
 class EmbeddedIndex {

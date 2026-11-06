@@ -85,7 +85,9 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
     l.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
                  .segment_idx = static_cast<uint32_t>(address >> 32)};
   }
-  PrefetchColumns(g, l, l.hits, FetchUnitsOf(l.hits, g.rg_size));
+  if (g.remote) {
+    PrefetchColumns(g, l, l.hits, FetchUnitsOf(l.hits, g.rg_size));
+  }
   l.fetched.Reset();
   duckdb::idx_t appended = 0;
   std::span<const irs::ScoreDoc> hits = l.hits;

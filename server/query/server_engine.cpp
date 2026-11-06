@@ -22,6 +22,7 @@
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/default/default_functions.hpp>
@@ -66,7 +67,6 @@
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
-#include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
@@ -106,15 +106,12 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
     duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
     duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
-  config.SetOptionByName(
-    "temp_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});
-  config.SetOptionByName(
-    "secret_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "secrets")});
-  config.SetOptionByName(
-    "extension_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "extensions")});
+  config.SetOptionByName("temp_directory",
+                         duckdb::Value{absl::StrCat(datadir, "/tmp")});
+  config.SetOptionByName("secret_directory",
+                         duckdb::Value{absl::StrCat(datadir, "/secrets")});
+  config.SetOptionByName("extension_directory",
+                         duckdb::Value{absl::StrCat(datadir, "/extensions")});
   // Dependency edges are built from what the binder resolved
   // (CreateInfo::dependencies), so the collection must be on for every bind.
   config.SetOptionByName("enable_view_dependencies",

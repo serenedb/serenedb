@@ -43,7 +43,6 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/string.hpp"
 

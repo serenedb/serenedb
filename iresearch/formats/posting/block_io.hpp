@@ -90,9 +90,7 @@ IRS_FORCE_INLINE Encoded<InputType> Begin(InputType& in, uint32_t* buf,
                                           Prefix&& prefix, Size&& size) {
   if constexpr (InputType::kContiguous) {
     return {in.Current(), &in};
-  } else if (const auto window =
-               in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack);
-             !window.empty()) {
+  } else if (const auto window = in.Peek(kEncBytes); !window.empty()) {
     return {window.data(), &in};
   } else {
     return {FetchStraddling(in, buf, std::forward<Prefix>(prefix),
@@ -126,9 +124,7 @@ template<typename InputType, typename Prefix, typename Size>
 IRS_FORCE_INLINE void Pass(InputType& in, Prefix&& prefix, Size&& size) {
   if constexpr (InputType::kContiguous) {
     in.Consume(size(in.Current()));
-  } else if (const auto window =
-               in.Peek(block_codec::kMaxBlockBytes + block_codec::kInSlack);
-             !window.empty()) {
+  } else if (const auto window = in.Peek(kEncBytes); !window.empty()) {
     in.Consume(size(window.data()));
   } else {
     uint32_t buf[kEncWords];

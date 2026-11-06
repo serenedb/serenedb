@@ -34,18 +34,16 @@ from __future__ import annotations
 import argparse
 import base64
 import collections
-import email.utils
 import hashlib
 import json
 import threading
 import time
-import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from xml.sax.saxutils import escape
 
-from fake_store import FakeStore, Handler, byte_range, list_page
+from fake_store import FakeStore, Handler, byte_range, http_date, list_page, split_path
 
 NS = "http://s3.amazonaws.com/doc/2006-03-01/"
 CRC32C_POLY = 0x82F63B78
@@ -188,13 +186,6 @@ class _Handler(Handler):
     def setup(self) -> None:
         super().setup()
         self.fake.count("CONNECTION")
-
-    def _target(self) -> tuple[str, str, dict[str, list[str]]]:
-        url = urllib.parse.urlsplit(self.path)
-        path = urllib.parse.unquote(url.path).lstrip("/")
-        bucket, _, key = path.partition("/")
-        query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
-        return bucket, key, query
 
     def _reply(self, status: int, body: bytes = b"",
                headers: dict[str, str] | None = None,
@@ -346,7 +337,7 @@ class _Handler(Handler):
 
     def _object_headers(self, obj: _Object) -> dict[str, str]:
         return {"ETag": obj.etag, "Accept-Ranges": "bytes",
-                "Last-Modified": email.utils.formatdate(obj.modified, usegmt=True)}
+                "Last-Modified": http_date(obj.modified)}
 
     def do_GET(self) -> None:
         bucket, key, query = self._target()
@@ -438,7 +429,7 @@ class _Handler(Handler):
                 self._xml(200, f"<Error><Code>{escape(error)}</Code>"
                                "<Message>The copy failed.</Message></Error>")
                 return
-            src_bucket, _, src_key = urllib.parse.unquote(source).lstrip("/").partition("/")
+            src_bucket, src_key = split_path(source)
             obj = self._find(src_bucket, src_key)
             if obj is None:
                 self._missing(src_key)

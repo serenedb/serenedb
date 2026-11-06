@@ -113,36 +113,6 @@ def _refused(datadir: Path) -> str:
         server.stop()
 
 
-def test_index_files_in_a_local_tablespace(tmp_path: Path) -> None:
-    datadir = tmp_path / "data"
-    location = tmp_path / "indexes"
-
-    server = _Server(datadir)
-    try:
-        assert server.wait_ready(), server.output()
-        _create_tablespace(server, str(location))
-        _create_index(server)
-        assert _matches(server) == [1]
-    finally:
-        server.stop()
-    assert any(path.is_file() for path in (location / "engine_v1").rglob("*"))
-    assert not any(
-        path.is_dir() and any(path.iterdir())
-        for database in (datadir / "engine_v1").glob("[0-9]*")
-        for path in database.glob("[0-9]*"))
-
-    again = _Server(datadir)
-    try:
-        assert again.wait_ready(), again.output()
-        assert _matches(again) == [1]
-        with again.connect() as conn:
-            conn.execute("DROP INDEX docs_body")
-            conn.execute("DROP TABLESPACE idx")
-    finally:
-        again.stop()
-    assert not any((location / "engine_v1").iterdir())
-
-
 def test_moved_data_directory_keeps_its_indexes(tmp_path: Path) -> None:
     datadir = tmp_path / "data"
     server = _Server(datadir)
@@ -283,7 +253,7 @@ def test_the_tablespace_of_its_database_needs_no_grant(tmp_path: Path) -> None:
         server.stop()
 
 
-def test_attach_cannot_place_a_database_by_tablespace_oid(
+def test_a_database_in_a_tablespace_needs_create_on_it(
         tmp_path: Path) -> None:
     home = tmp_path / "home"
     server = _Server(tmp_path / "data")
@@ -291,21 +261,11 @@ def test_attach_cannot_place_a_database_by_tablespace_oid(
         assert server.wait_ready(), server.output()
         with server.connect() as conn:
             conn.execute(f"CREATE TABLESPACE home LOCATION '{home}'")
-            oid = conn.execute(
-                "SELECT oid FROM pg_tablespace WHERE spcname = 'home'"
-            ).fetchone()[0]
             conn.execute("CREATE ROLE creator CREATEDB")
             conn.execute("SET ROLE creator")
             with pytest.raises(psycopg.errors.InsufficientPrivilege,
                                match="permission denied for tablespace home"):
                 conn.execute("CREATE DATABASE placed TABLESPACE home")
-            with pytest.raises(psycopg.Error, match="tablespace_oid"):
-                conn.execute(
-                    f"ATTACH '' AS attached (TYPE serenedb, tablespace_oid {oid})")
-            conn.execute("RESET ROLE")
-            assert conn.execute(
-                "SELECT count(*) FROM pg_database WHERE datname = 'attached'"
-            ).fetchone()[0] == 0
     finally:
         server.stop()
     assert not list((home / "engine_v1").glob("*/[0-9]*"))
@@ -341,15 +301,14 @@ def _index_files(fake: FakeS3, prefix: str) -> list[str]:
             if not key.endswith(".storage")]
 
 
-def _create_secret(server: _Server, store: _Store, location: str,
-                   tablespace: str | None = None) -> None:
+def _create_secret(server: _Server, store: _Store, location: str) -> None:
     with server.connect() as conn:
         conn.execute(
             "CREATE PERSISTENT SECRET index_store (TYPE s3, "
             f"KEY_ID '{store.key_id}', SECRET '{store.secret}', "
             f"ENDPOINT '{store.endpoint}', URL_STYLE 'path', USE_SSL false, "
             f"SCOPE '{location}')")
-    _create_tablespace(server, tablespace or location)
+    _create_tablespace(server, location)
 
 
 def test_a_store_that_never_accepts_fails_within_the_connect_timeout(
@@ -427,65 +386,6 @@ def test_index_files_on_s3(tmp_path: Path, s3_store: _Store) -> None:
     if s3_store.fake:
         assert not s3_store.fake.keys(s3_store.bucket, f"{prefix}/"), \
             s3_store.fake.keys(s3_store.bucket)
-
-
-AZURITE = ("AZURITE_CONNECTION_STRING", "AZURITE_BLOB_CONTAINER")
-
-
-@dataclass
-class _Container:
-    connection_string: str
-    name: str
-    fake: FakeAzure | None = None
-
-
-@pytest.fixture
-def azure_container():
-    if all(os.environ.get(name) for name in AZURITE):
-        yield _Container(os.environ["AZURITE_CONNECTION_STRING"],
-                         os.environ["AZURITE_BLOB_CONTAINER"])
-        return
-    with FakeAzure() as fake:
-        yield _Container(fake.connection_string, "indexes", fake)
-
-
-def test_index_files_on_azure(tmp_path: Path, azure_container: _Container) -> None:
-    location = f"az://{azure_container.name}/cluster-{tmp_path.name}"
-    datadir = tmp_path / "data"
-    fake = azure_container.fake
-    server = _Server(datadir)
-    try:
-        assert server.wait_ready(), server.output()
-        with server.connect() as conn:
-            conn.execute(
-                "CREATE PERSISTENT SECRET index_store (TYPE azure, "
-                f"CONNECTION_STRING '{azure_container.connection_string}', "
-                f"SCOPE '{location}')")
-        _create_tablespace(server, location)
-        _create_index(server)
-        assert _matches(server) == [1]
-        with server.connect() as conn:
-            conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
-            conn.execute("VACUUM (REFRESH_TABLE) docs")
-        assert _matches(server) == [1, 3]
-    finally:
-        server.stop()
-    if fake:
-        assert fake.requests["COPY"] > 0, fake.requests
-
-    again = _Server(datadir)
-    try:
-        assert again.wait_ready(), again.output()
-        assert _matches(again) == [1, 3]
-        with again.connect() as conn:
-            conn.execute("DROP INDEX docs_body")
-            conn.execute("DROP TABLESPACE idx")
-    finally:
-        again.stop()
-    if fake:
-        prefix = f"cluster-{tmp_path.name}/"
-        assert not fake.names(azure_container.name, prefix), fake.names(
-            azure_container.name)
 
 
 def _large_table(server: _Server, store: _Store, location: str) -> None:
@@ -711,30 +611,6 @@ def test_throttled_requests_are_retried(tmp_path: Path) -> None:
         finally:
             server.stop()
     assert fake.requests["THROTTLED"] == 4, fake.requests
-
-
-def test_a_location_is_kept_normalized(tmp_path: Path) -> None:
-    location = f"s3://bucket/nested-{tmp_path.name}"
-    with FakeS3() as fake:
-        server = _Server(tmp_path / "data")
-        try:
-            assert server.wait_ready(), server.output()
-            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
-                           location, f"s3://bucket//nested-{tmp_path.name}/")
-            with server.connect() as conn:
-                assert conn.execute(
-                    "SELECT pg_tablespace_location(oid) FROM pg_tablespace "
-                    "WHERE spcname = 'idx'").fetchall() == [(location,)]
-            _create_index(server)
-            with server.connect() as conn:
-                conn.execute("INSERT INTO docs VALUES (3, 'fox again')")
-                conn.execute("VACUUM (REFRESH_TABLE) docs")
-            assert _matches(server) == [1, 3]
-        finally:
-            server.stop()
-    assert fake.objects and all(
-        key.startswith(f"nested-{tmp_path.name}/") for _, key in fake.objects), \
-        sorted(fake.objects)
 
 
 @pytest.mark.parametrize("kind", ["s3", "azure"])

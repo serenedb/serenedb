@@ -63,6 +63,10 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const SegmentReaderImpl> UpdateMeta(
     IndexFileRefs& refs, const SegmentMeta& meta) const;
 
+  std::shared_ptr<const SegmentReaderImpl> Reopen(
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentMeta& meta, const IndexReaderOptions& options) const;
+
   const SegmentInfo& Meta() const final { return _info; }
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
@@ -101,7 +105,7 @@ class SegmentReaderImpl final : public SubReader {
   struct ColumnData {
     ColumnData(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                std::string_view root, const SegmentMeta& meta,
-               const IndexReaderOptions& options);
+               HnswBases* hnsw_bases);
 
     ColReader col_reader;
     IdxReader idx_reader;

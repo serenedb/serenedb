@@ -347,7 +347,6 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
       .fs = dir.Fs(),
       .root = dir.Root(),
       .observers = dir.Observers(),
-      .keep_cached = true,
       .norms = &irs::SubReader::empty(),
       .name = "segment_name",
       .scorer = scorer,

@@ -76,6 +76,8 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
+  static std::shared_ptr<byte_type> AllocateFrozen(uint64_t size);
+
   static DocumentMask ReadFrozen(bytes_view bytes);
 
   size_t FrozenSize() const noexcept { return _set.getFrozenSizeInBytes(); }

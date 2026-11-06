@@ -47,8 +47,6 @@ inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(irs::ZigZagEncode64(v));
 }
 
-int64_t ReadZV64(auto& in) { return irs::ZigZagDecode64(in.ReadV64()); }
-
 template<typename StringType>
 StringType ReadString(auto& in) {
   StringType str(in.ReadV32(), 0);

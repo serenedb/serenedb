@@ -24,20 +24,18 @@
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
-#include <system_error>
 
+#include "catalog/database_directory.h"
 #include "pg/version.h"
 #include "utils/file_utils.h"
 
@@ -112,20 +110,14 @@ uint64_t ClockPosition() {
 std::optional<ControlState> ReadPgControl(
   const std::filesystem::path& data_dir) {
   const auto path = data_dir / kPgControlFile;
-  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    if (errno == ENOENT) {
-      return std::nullopt;
-    }
-    utils::file_utils::ThrowFileError("open", path.string(), errno);
+  const auto handle = catalog::StorageFileSystem().OpenFile(
+    path.string(), duckdb::FileFlags::FILE_FLAGS_READ |
+                     duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS);
+  if (!handle) {
+    return std::nullopt;
   }
   ControlFileData data{};
-  const auto size = ::read(fd, &data, sizeof(data));
-  const int error = errno;
-  ::close(fd);
-  if (size < 0) {
-    utils::file_utils::ThrowFileError("read", path.string(), error);
-  }
+  const auto size = handle->Read(&data, sizeof(data));
   if (static_cast<size_t>(size) < sizeof(data) ||
       data.pg_control_version != kPgControlVersion ||
       data.crc != ControlCrc(data)) {
@@ -140,32 +132,23 @@ std::optional<ControlState> ReadPgControl(
 void WritePgControl(const std::filesystem::path& data_dir,
                     const ControlState& state) {
   const auto path = data_dir / kPgControlFile;
-  const auto dir = path.parent_path();
-  std::error_code ec;
-  if (std::filesystem::create_directories(dir, ec)) {
-    utils::file_utils::SyncDirectory(dir.parent_path());
-  }
-  if (ec) {
-    utils::file_utils::ThrowFileError("create directory", dir.string(), ec);
-  }
+  catalog::CreateDirectories(path.parent_path());
   std::string buffer(kPgControlFileSize, '\0');
   const auto data = MakeControl(state);
   std::memcpy(buffer.data(), &data, sizeof(data));
-  utils::file_utils::ReplaceFile(path, buffer);
+  utils::file_utils::ReplaceFile(catalog::StorageFileSystem(), path.string(),
+                                 buffer);
 }
 
 void EnsurePgVersion(const std::filesystem::path& data_dir) {
-  const auto path = data_dir / kPgVersionFile;
-  std::error_code ec;
-  if (std::filesystem::exists(path, ec)) {
+  auto& fs = catalog::StorageFileSystem();
+  const auto path = (data_dir / kPgVersionFile).string();
+  if (fs.FileExists(path)) {
     return;
   }
-  if (ec) {
-    utils::file_utils::ThrowFileError("check", path.string(), ec);
-  }
-  utils::file_utils::Spit(path.string(),
-                          absl::StrCat(pg::kPgMajorVersion, "\n"), true);
-  utils::file_utils::SyncDirectory(data_dir);
+  utils::file_utils::WriteFile(fs, path,
+                               absl::StrCat(pg::kPgMajorVersion, "\n"), true);
+  fs.SyncDirectory(data_dir.string());
 }
 
 PositionSource& PositionSource::Instance() {

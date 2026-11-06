@@ -34,8 +34,6 @@
 #include "store/simulated_object_store.hpp"
 #include "tests_shared.hpp"
 
-class TestBase;
-
 namespace tests {
 
 std::shared_ptr<IndexDir> MemoryDirectory(const TestBase* test);

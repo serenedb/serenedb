@@ -75,7 +75,7 @@ void SyncWal(duckdb::AttachedDatabase& db) {
   if (storage.InMemory()) {
     return;
   }
-  auto& fs = duckdb::FileSystem::GetFileSystem(db.GetDatabase());
+  auto& fs = db.GetDatabase().GetInternalFileSystem();
   if (auto wal =
         fs.OpenFile(storage.GetWALPath(),
                     duckdb::FileFlags::FILE_FLAGS_READ |
@@ -95,7 +95,7 @@ std::optional<MissingStorage> OpenSearchStorages(
   std::optional<MissingStorage> missing;
   const auto open = [&](const duckdb::CatalogEntry& entry,
                         std::shared_ptr<Store> storage) {
-    if (!storage || storage->Opened()) {
+    if (storage->Opened()) {
       return;
     }
     executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(

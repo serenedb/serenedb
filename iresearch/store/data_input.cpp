@@ -64,53 +64,33 @@ void ReadOnce(IndexInput& in, byte_type* b, uint64_t count) {
 
 InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   : _length{mapping->Size()},
-    _kind{std::in_place_type<MappedSpan>, std::move(mapping)} {
-  auto& span = *std::get_if<MappedSpan>(&_kind);
-  span.paged = span.mapping->OnDiskFile();
+    _mapping{std::move(mapping)},
+    _paged{_mapping->OnDiskFile()} {
   if (_length != 0) {
-    _span = {span.mapping->GetData(0, _length), _length};
-    if (span.paged) {
-      span.residency.Reset(math::DivCeil64(_length, file_utils::kPage));
+    _span = {_mapping->GetData(0, _length), _length};
+    if (_paged) {
+      _residency.Reset(math::DivCeil64(_length, file_utils::kPage));
     }
   }
 }
 
-InputFile::InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> file) noexcept
-  : _length{file->GetSize()},
-    _kind{std::in_place_type<CacheBlocks>, std::move(file)} {}
-
-const std::string& InputFile::Path() const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    return span->mapping->GetPath();
-  }
-  return std::get_if<CacheBlocks>(&_kind)->file->GetPath();
-}
-
-duckdb::MemoryMappedFile* InputFile::Mapping() const noexcept {
-  const auto* span = std::get_if<MappedSpan>(&_kind);
-  return span && !_span.empty() ? span->mapping.get() : nullptr;
-}
-
-bool InputFile::Paged() const noexcept {
-  const auto* span = std::get_if<MappedSpan>(&_kind);
-  return span && span->paged;
-}
+InputFile::InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
+  : _length{blocks->GetSize()}, _blocks{std::move(blocks)} {}
 
 bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
                              bool ahead) const {
   SDB_ASSERT(position < _length);
-  if (Contiguous()) {
+  if (!_blocks) {
     block.start = 0;
     return _span;
   }
-  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   if (!block.pinned) {
     block.pinned = std::make_unique<CursorPin>();
   }
   auto& pinned = *block.pinned;
   const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
-  pinned.pin = blocks->file->GetCache().PinInOrder(blocks->file, number,
-                                                   pinned.ahead, ahead);
+  pinned.pin =
+    _blocks->GetCache().PinInOrder(_blocks, number, pinned.ahead, ahead);
   block.start = number * duckdb::BlockCache::BLOCK_SIZE;
   return {pinned.pin.Ptr(),
           std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
@@ -120,73 +100,75 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
   if (offset > _length || size > _length - offset) [[unlikely]] {
     ThrowPastEnd(this, offset, _length);
   }
-  if (Contiguous()) {
+  if (!_blocks) {
     return {.bytes = {_span.data() + offset, size}};
   }
   if (size == 0) {
     return {};
   }
-  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  auto pin = blocks->file->GetCache().PinBytes(*blocks->file, offset, size);
+  auto pin = _blocks->GetCache().PinBytes(*_blocks, offset, size);
   return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
 }
 
-bytes_view InputFile::SpanWindow(uint64_t offset,
-                                 uint64_t size) const noexcept {
-  const auto bytes = Span();
-  if (offset >= bytes.size()) {
-    return {};
-  }
-  return {bytes.data() + offset,
-          std::min<uint64_t>(size, bytes.size() - offset)};
-}
-
 void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
-    if (span->paged) {
-      span->mapping->Prefetch(offset, size);
-    }
-    return;
+  if (_blocks) {
+    TryPrefetch(_blocks, offset, size, duckdb::BlockCachePrefetch::HINT);
+  } else if (_paged) {
+    _mapping->Prefetch(offset, size);
   }
-  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  TryPrefetch(blocks->file, offset, size, duckdb::BlockCachePrefetch::HINT);
 }
 
 void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    blocks->file->GetCache().MarkUnused(*blocks->file, offset, size);
-    return;
-  }
-  if (const auto* span = std::get_if<MappedSpan>(&_kind); span->paged) {
-    span->mapping->Evict(offset, size);
+  if (_blocks) {
+    _blocks->GetCache().MarkUnused(*_blocks, offset, size);
+  } else if (_paged) {
+    _mapping->Evict(offset, size);
   }
 }
 
 void InputFile::PrefetchExtents(
   std::span<duckdb::BlockCacheRange> extents) const noexcept {
-  const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  if (!blocks) {
-    for (const auto& extent : extents) {
-      Prefetch(extent.offset, extent.size);
-    }
+  if (_blocks) {
+    TryPrefetch(_blocks, extents, duckdb::BlockCachePrefetch::NEED);
     return;
   }
-  TryPrefetch(blocks->file, extents, duckdb::BlockCachePrefetch::NEED);
+  for (const auto& extent : extents) {
+    Prefetch(extent.offset, extent.size);
+  }
 }
 
 void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* span = std::get_if<MappedSpan>(&_kind); span && span->paged) {
-    MarkWarm(*span, offset, size);
+  if (!_paged || size == 0 || offset >= _length) {
+    return;
+  }
+  const auto last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  const auto epoch = file_utils::ResidencyEpoch();
+  if (_residency.Valid(epoch) || _residency.Adopt(epoch)) {
+    _residency.Set(offset / file_utils::kPage, last);
   }
 }
 
 uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    return blocks->file->GetCache().IsCached(*blocks->file, offset, size) ? size
-                                                                          : 0;
+  if (_blocks) {
+    return _blocks->GetCache().IsCached(*_blocks, offset, size) ? size : 0;
   }
-  const auto& span = *std::get_if<MappedSpan>(&_kind);
-  return span.paged ? Warm(span, offset, size) : size;
+  if (!_paged) {
+    return size;
+  }
+  if (size == 0 || offset >= _length ||
+      !_residency.Valid(file_utils::ResidencyEpoch())) {
+    return 0;
+  }
+  const uint64_t first = offset / file_utils::kPage;
+  const uint64_t last =
+    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
+  const uint64_t pages = _residency.Test(first, last);
+  if (pages > last - first) {
+    return size;
+  }
+  const uint64_t warm = (first + pages) * file_utils::kPage;
+  return warm - std::min(warm, offset);
 }
 
 bool InputFile::Evicted(uint64_t offset, uint64_t size,
@@ -202,58 +184,30 @@ bool InputFile::Evicted(uint64_t offset, uint64_t size,
   return true;
 }
 
-uint64_t InputFile::Warm(const MappedSpan& span, uint64_t offset,
-                         uint64_t size) const noexcept {
-  if (size == 0 || offset >= _length ||
-      !span.residency.Valid(file_utils::ResidencyEpoch())) {
-    return 0;
-  }
-  const uint64_t first = offset / file_utils::kPage;
-  const uint64_t last =
-    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
-  const uint64_t pages = span.residency.Test(first, last);
-  if (pages > last - first) {
-    return size;
-  }
-  const uint64_t warm = (first + pages) * file_utils::kPage;
-  return warm - std::min(warm, offset);
-}
-
-void InputFile::MarkWarm(const MappedSpan& span, uint64_t offset,
-                         uint64_t size) const noexcept {
-  if (size == 0 || offset >= _length) {
-    return;
-  }
-  const auto last =
-    (std::min<uint64_t>(offset + size, _length) - 1) / file_utils::kPage;
-  const auto epoch = file_utils::ResidencyEpoch();
-  if (span.residency.Valid(epoch) || span.residency.Adopt(epoch)) {
-    span.residency.Set(offset / file_utils::kPage, last);
-  }
-}
-
 bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    return blocks->file->GetCache().IsCached(*blocks->file, offset, size);
+  if (_blocks) {
+    return _blocks->GetCache().IsCached(*_blocks, offset, size);
   }
-  const auto window = SpanWindow(offset, size);
-  return !window.empty() &&
-         (!Paged() || file_utils::IsResident(window.data(), window.size()));
+  if (offset >= _span.size()) {
+    return false;
+  }
+  size = std::min<uint64_t>(size, _span.size() - offset);
+  return size != 0 &&
+         (!_paged || file_utils::IsResident(_span.data() + offset, size));
 }
 
 bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
-  if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    if (blocks->file->GetCache().IsCached(*blocks->file, offset, size)) {
+  if (_blocks) {
+    if (_blocks->GetCache().IsCached(*_blocks, offset, size)) {
       return false;
     }
-    Prefetch(offset, size);
+    TryPrefetch(_blocks, offset, size, duckdb::BlockCachePrefetch::HINT);
     return true;
   }
-  const auto& span = *std::get_if<MappedSpan>(&_kind);
-  if (!span.paged) {
+  if (!_paged) {
     return false;
   }
-  uint64_t warm = Warm(span, offset, size);
+  uint64_t warm = Warm(offset, size);
   SDB_ASSERT(warm <= size);
   if (warm != 0 && file_utils::PollResidency(warm)) {
     warm = 0;
@@ -263,13 +217,12 @@ bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
   }
   offset += warm;
   size -= warm;
-  const auto window = SpanWindow(offset, size);
-  const bool fetch = size <= file_utils::kPrefetchChunk || window.empty() ||
-                     !file_utils::IsResident(window.data(), window.size());
+  const bool fetch =
+    size <= file_utils::kPrefetchChunk || !Resident(offset, size);
   if (fetch) {
-    span.mapping->Prefetch(offset, size);
+    _mapping->Prefetch(offset, size);
   }
-  MarkWarm(span, offset, size);
+  MarkWarm(offset, size);
   return fetch;
 }
 

@@ -786,32 +786,17 @@ void IndexWriter::Transaction::Remove(KeyRemoval removal) {
 }
 
 void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
-  auto& fs = _writer->_fs;
-  const auto& root = _writer->_root;
-  IndexSegment segment;
-  segment.filename = meta_file;
-  segment_meta::Read(fs, root, segment.meta, meta_file);
-  if (segment.meta.live_docs_count == 0) {
+  auto adopted =
+    _writer->OpenAdopted(meta_file, _writer->GetSnapshotImpl()->Options());
+  if (!adopted.reader) {
     return;
   }
-  auto meta_ref = Reference(fs, root, *_writer->_refs, segment.filename);
-  if (!meta_ref) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("cannot adopt segment meta '", segment.filename,
-                            "': it does not exist"));
-  }
-  auto reader = SegmentReaderImpl::Open(_writer->_db, fs, root, segment.meta,
-                                        _writer->GetSnapshotImpl()->Options());
   [[maybe_unused]] uint64_t id = 0;
-  SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
+  SDB_ASSERT(ParseSegmentId(adopted.segment.meta.name, id) &&
                id <= _writer->_seg_counter.load(std::memory_order_relaxed),
              "Adopted segment id is above the segment counter; the writer was "
              "not opened with cleanup_on_open = false");
-  FileRefs refs;
-  refs.emplace_back(std::move(meta_ref));
-  Queue(Queued::Adopted{.segment = std::move(segment),
-                        .refs = std::move(refs),
-                        .reader = std::move(reader)});
+  Queue(std::move(adopted));
 }
 
 bool IndexWriter::Transaction::CommitImpl(
@@ -1654,6 +1639,27 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
   return {*this, floor};
 }
 
+IndexWriter::Queued::Adopted IndexWriter::OpenAdopted(
+  std::string_view meta_file, const IndexReaderOptions& options) const {
+  Queued::Adopted adopted;
+  auto& segment = adopted.segment;
+  segment.filename = meta_file;
+  segment_meta::Read(_fs, _root, segment.meta, meta_file);
+  if (segment.meta.live_docs_count == 0) {
+    return adopted;
+  }
+  auto meta_ref = Reference(_fs, _root, *_refs, meta_file);
+  if (!meta_ref) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("cannot adopt segment meta '", meta_file,
+                            "': it does not exist"));
+  }
+  adopted.reader =
+    SegmentReaderImpl::Open(_db, _fs, _root, segment.meta, options);
+  adopted.refs.emplace_back(std::move(meta_ref));
+  return adopted;
+}
+
 void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
                                   std::vector<Replacement> replacements) {
   if (replaced.empty() && replacements.empty()) {
@@ -1662,35 +1668,15 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
 
   // Open every replacement before touching the flush context, so a failure
   // leaves nothing behind.
-  struct Adopted {
-    IndexSegment segment;
-    FileRefs refs;
-    std::shared_ptr<const SegmentReaderImpl> reader;
-  };
   const auto snapshot = GetSnapshotImpl();
-  std::vector<Adopted> adopted(replacements.size());
+  std::vector<Queued::Adopted> adopted(replacements.size());
   ForEach(_db, _root, replacements.size(), [&](size_t i) {
-    auto& entry = adopted[i];
-    entry.segment.filename = replacements[i].meta_file;
-    segment_meta::Read(_fs, _root, entry.segment.meta,
-                       replacements[i].meta_file);
-    if (entry.segment.meta.live_docs_count == 0) {
-      return;  // nothing to adopt; the sources are still replaced
-    }
-    auto meta_ref = Reference(_fs, _root, *_refs, entry.segment.filename);
-    if (!meta_ref) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("cannot replace with segment meta '",
-                              entry.segment.filename, "': it does not exist"));
-    }
-    entry.reader = SegmentReaderImpl::Open(_db, _fs, _root, entry.segment.meta,
-                                           snapshot->Options());
-    entry.refs.emplace_back(std::move(meta_ref));
+    adopted[i] = OpenAdopted(replacements[i].meta_file, snapshot->Options());
   });
   std::vector<DocMap> maps;
   for (size_t i = 0; i != replacements.size(); ++i) {
     if (!adopted[i].reader) {
-      continue;
+      continue;  // nothing to adopt; the sources are still replaced
     }
     for (auto& map : replacements[i].absorbed) {
       map.target = adopted[i].reader->Id();
@@ -1698,7 +1684,8 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
       maps.push_back(std::move(map));
     }
   }
-  std::erase_if(adopted, [](const Adopted& entry) { return !entry.reader; });
+  std::erase_if(adopted,
+                [](const Queued::Adopted& entry) { return !entry.reader; });
 
   std::shared_lock commit_lock{_commit_lock};
   if (_pending_state.Valid()) {
@@ -1923,7 +1910,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   if (info.reopen_reader) {
     for (auto& entry : segments) {
-      entry.reader = SegmentReader{SegmentReaderImpl::Open(
+      entry.reader = SegmentReader{entry.reader.GetImpl()->Reopen(
         _db, _fs, _root, entry.segment.meta, committed_reader.Options())};
     }
   }

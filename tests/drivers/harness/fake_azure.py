@@ -12,7 +12,6 @@ Point a secret at it with `connection_string`, or with `sas_connection_string(si
 from __future__ import annotations
 
 import base64
-import email.utils
 import hashlib
 import time
 import urllib.parse
@@ -20,7 +19,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
-from fake_store import FakeStore, Handler, byte_range, list_page
+from fake_store import FakeStore, Handler, byte_range, http_date, list_page, split_path
 
 ACCOUNT = "devstoreaccount1"
 KEY = base64.b64encode(b"fake-azure-account-key-for-tests").decode()
@@ -64,22 +63,9 @@ class FakeAzure(FakeStore):
             self.blobs[(container, name)] = _Blob(data)
 
 
-def _http_date(seconds: float) -> str:
-    return email.utils.formatdate(seconds, usegmt=True)
-
-
 class _Handler(Handler):
+    account = ACCOUNT
     fake: FakeAzure
-
-    def _target(self) -> tuple[str, str, dict[str, list[str]]]:
-        url = urllib.parse.urlsplit(self.path)
-        path = urllib.parse.unquote(url.path).lstrip("/")
-        account, _, rest = path.partition("/")
-        if account != ACCOUNT:
-            rest = path
-        container, _, name = rest.partition("/")
-        query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
-        return container, name, query
 
     def _forbidden(self) -> bool:
         signatures = self.fake.sas_signatures
@@ -98,7 +84,7 @@ class _Handler(Handler):
         self.send_response(status)
         self.send_header("x-ms-request-id", str(uuid.uuid4()))
         self.send_header("x-ms-version", self.headers.get("x-ms-version", "2026-06-06"))
-        self.send_header("Date", _http_date(time.time()))
+        self.send_header("Date", http_date(time.time()))
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.send_header("Content-Length", str(len(body) if content_length is None else content_length))
@@ -119,8 +105,8 @@ class _Handler(Handler):
             return self.fake.blobs.get((container, name))
 
     def _properties(self, blob: _Blob) -> dict[str, str]:
-        return {"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
-                "x-ms-creation-time": _http_date(blob.modified), "x-ms-blob-type": "BlockBlob",
+        return {"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
+                "x-ms-creation-time": http_date(blob.modified), "x-ms-blob-type": "BlockBlob",
                 "x-ms-server-encrypted": "true", "Accept-Ranges": "bytes",
                 "Content-Type": "application/octet-stream"}
 
@@ -190,7 +176,7 @@ class _Handler(Handler):
             blob = self._find(container, name)
             if blob is None:
                 continue
-            modified = _http_date(blob.modified)
+            modified = http_date(blob.modified)
             body.append(f"<Blob><Name>{escape(name)}</Name><Properties>"
                         f"<Creation-Time>{modified}</Creation-Time><Last-Modified>{modified}</Last-Modified>"
                         f"<Etag>{escape(blob.etag)}</Etag><Content-Length>{len(blob.data)}</Content-Length>"
@@ -232,17 +218,13 @@ class _Handler(Handler):
             if blob is None:
                 self._error(400, "InvalidBlockList")
                 return
-            self._reply(201, headers={"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
+            self._reply(201, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
                                       "x-ms-request-server-encrypted": "true"})
             return
         source = self.headers.get("x-ms-copy-source")
         if source:
             self.fake.count("COPY")
-            path = urllib.parse.unquote(urllib.parse.urlsplit(source).path).lstrip("/")
-            account, _, rest = path.partition("/")
-            if account != ACCOUNT:
-                rest = path
-            src_container, _, src_name = rest.partition("/")
+            src_container, src_name = split_path(urllib.parse.urlsplit(source).path, ACCOUNT)
             original = self._find(src_container, src_name)
             if original is None:
                 self._error(404, "CannotVerifyCopySource")
@@ -250,7 +232,7 @@ class _Handler(Handler):
             blob = _Blob(original.data, original.blocks)
             with self.fake.lock:
                 self.fake.blobs[(container, name)] = blob
-            self._reply(202, headers={"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
+            self._reply(202, headers={"ETag": blob.etag, "Last-Modified": http_date(blob.modified),
                                       "x-ms-copy-id": str(uuid.uuid4()), "x-ms-copy-status": "success"})
             return
         self._error(400, "InvalidQueryParameterValue")
@@ -289,13 +271,10 @@ class _Handler(Handler):
                     content_id = line.split(":", 1)[1].strip()
                 elif line.startswith("DELETE "):
                     request_line = line
-            target = urllib.parse.unquote(request_line.split(" ")[1]).lstrip("/") if request_line else ""
-            account, _, rest = target.partition("/")
-            if account != ACCOUNT:
-                rest = target
-            blob_container, _, blob_name = rest.partition("/")
+            target = urllib.parse.urlsplit(request_line.split(" ")[1]).path if request_line else ""
+            blob_container, blob_name = split_path(target, ACCOUNT)
             with self.fake.lock:
-                removed = self.fake.blobs.pop((blob_container, blob_name.partition("?")[0]), None)
+                removed = self.fake.blobs.pop((blob_container, blob_name), None)
             status = "202 Accepted" if removed is not None else "404 The specified blob does not exist."
             responses.append((content_id, status))
         response_boundary = "batchresponse_" + uuid.uuid4().hex

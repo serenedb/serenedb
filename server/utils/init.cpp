@@ -20,10 +20,13 @@
 
 #include "init.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
+#include <fcntl.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -39,7 +42,6 @@
 #include <string_view>
 #include <yaclib/log.hpp>
 
-#include "server/utils/files.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 
@@ -70,8 +72,18 @@ void RaiseFdLimit() {
 
 void CheckMaxMapCount() {
   constexpr uint64_t kExpected = 262144;
+  const int fd = ::open("/proc/sys/vm/max_map_count", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return;
+  }
+  absl::Cleanup guard = [fd] { ::close(fd); };
   std::string s;
-  if (!SlurpFile("/proc/sys/vm/max_map_count", s)) {
+  char buffer[64];
+  ssize_t n = 0;
+  while ((n = ::read(fd, buffer, sizeof(buffer))) > 0) {
+    s.append(buffer, static_cast<size_t>(n));
+  }
+  if (n < 0) {
     return;
   }
   const auto trimmed = absl::StripAsciiWhitespace(s);

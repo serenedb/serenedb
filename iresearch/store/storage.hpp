@@ -33,7 +33,6 @@
 #include <string_view>
 
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 

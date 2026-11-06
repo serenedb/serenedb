@@ -1618,9 +1618,20 @@ bool ClaimSearchConjuncts(
       ++i;
     }
   }
-  const bool deferring =
+  bool deferring =
     !deferred.claim.conjuncts.empty() || !deferred.claim.ranges.empty();
-  if (deferred.declined_parameter || (deferring && deferred.used_expr_getter)) {
+  if (deferring && deferred.used_expr_getter) {
+    for (const auto* claimed :
+         {&deferred.claim.conjuncts, &deferred.claim.ranges}) {
+      for (const auto& conjunct : *claimed) {
+        filters.push_back(conjunct->Copy());
+      }
+    }
+    any_claimed = !root_and->Empty();
+    deferring = false;
+    deferred.declined_parameter = true;
+  }
+  if (deferred.declined_parameter) {
     scan.plan_cache.declined_parameter = true;
   }
   if (!any_claimed) {

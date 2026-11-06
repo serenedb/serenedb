@@ -556,5 +556,157 @@ SELECT
 strict	closed	inet	norm	clamped
 NULL	{1,2}	{2}	{2}	{1}
 
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300000 AND s <= 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_cast                      │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(f, s))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 300000;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(s AS INTEGER) <= 300000 │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: crpe_cast                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Curve Box ───────────────────────╮    │
+│ │ Field: curve("row"(f, s))(string) │    │
+│ ╰───────────────────────────────────╯    │
+│ Projections: s, id                       │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_cast                      │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(f, s))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s BETWEEN -300000 AND 300000;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(s AS INTEGER) <= 300000 │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: crpe_cast                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Curve Box ───────────────────────╮    │
+│ │ Field: curve("row"(f, s))(string) │    │
+│ ╰───────────────────────────────────╯    │
+│ Projections: s, id                       │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300000 AND s <= 1) AS wide_lower,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 2 AND s <= 300000) AS wide_upper,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 5) AS sides,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s BETWEEN -300000 AND 300000) AS wide;
+----
+wide_lower	wide_upper	sides	wide
+{1}	{2}	{1,2}	{1,2}
+
+query
+SELECT
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 300000) AS above,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 300000 AND s <= 300001) AS above_both,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300001 AND s <= -300000) AS below_both,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s <= 300000) AS one_side;
+----
+above	above_both	below_both	one_side
+0	0	0	2
+
+statement ok
+PREPARE crpe_tagged AS SELECT id FROM crpe_exact WHERE id >= $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+
+skipif pg-wire-extended
+query
+EXPLAIN EXECUTE crpe_tagged(2);
+----
+QUERY PLAN
+╭─ EXECUTE ─────────────────────────────────────────────────────╮
+╰───────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────┴───────────────────────────────╮
+│ Index: crpe_exact                                             │
+│ Lookup: table                                                 │
+│ Index Filter:                                                 │
+│ ╭─ And ─────────────────────────────╮                         │
+│ ╰─────────────────┬─────────────────╯                         │
+│                   ├───────────────────────────────╮           │
+│ ╭─ Curve Box ─────┴─────────────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: curve("row"(x, y))(string) │  │ Field: id(numeric) │ │
+│ ╰───────────────────────────────────╯  │ Range: >=2         │ │
+│                                        ╰────────────────────╯ │
+│ Projections: id                                               │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+onlyif pg-wire-extended
+query
+EXPLAIN EXECUTE crpe_tagged(2);
+----
+QUERY PLAN
+╭─ EXECUTE ─────────────────────────────╮
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression: id >= $1                  │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: crpe_exact                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(x, y))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXECUTE crpe_tagged(2);
+----
+id
+2
+
+statement ok
+DEALLOCATE crpe_tagged;
+
 statement ok
 DROP TABLE crpe;

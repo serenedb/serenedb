@@ -475,7 +475,77 @@ n
 25
 
 statement ok
+CREATE TABLE ppe (pk INTEGER PRIMARY KEY, v INTEGER, s VARCHAR);
+
+statement ok
+INSERT INTO ppe SELECT i, i % 5, CASE WHEN i % 3 = 0 THEN 'Alpha' ELSE 'Beta' END
+  FROM range(300) t(i);
+
+statement ok
+CREATE INDEX ppe_idx ON ppe USING inverted(pk, v, (lower(s)));
+
+statement ok
+VACUUM (REFRESH_TABLE) ppe;
+
+statement ok
+PREPARE ppe_first AS SELECT count(*) AS n, sum(pk) AS total FROM ppe_idx
+  WHERE v = $1 AND lower(s) = 'alpha';
+
+statement ok
+PREPARE ppe_last AS SELECT count(*) AS n, sum(pk) AS total FROM ppe_idx
+  WHERE lower(s) = 'alpha' AND v = $1;
+
+statement ok
+PREPARE ppe_both AS SELECT count(*) AS n, sum(pk) AS total FROM ppe_idx
+  WHERE v = $1 AND lower(s) = $2;
+
+query
+SELECT count(*) AS n, sum(pk) AS total FROM ppe WHERE v = 3 AND s = 'Alpha';
+----
+n	total
+20	2910
+
+query
+EXECUTE ppe_first(3);
+----
+n	total
+20	2910
+
+query
+EXECUTE ppe_first(3);
+----
+n	total
+20	2910
+
+query
+EXECUTE ppe_last(3);
+----
+n	total
+20	2910
+
+query
+EXECUTE ppe_both(3, 'alpha');
+----
+n	total
+20	2910
+
+query
+EXECUTE ppe_both(3, 'beta');
+----
+n	total
+40	6120
+
+query
+EXECUTE ppe_first(9);
+----
+n	total
+0	NULL
+
+statement ok
 DEALLOCATE ALL;
+
+statement ok
+DROP TABLE ppe;
 
 statement ok
 DROP TABLE ppr;

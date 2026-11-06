@@ -15,6 +15,7 @@ target_sources(
         inverter/columnar_flush.cpp
         inverter/fields_inverter.cpp
         iterators.cpp
+        key_removal.cpp
         merge_writer.cpp
         norm.cpp
         segment_reader.cpp

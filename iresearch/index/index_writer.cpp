@@ -41,9 +41,6 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
@@ -51,6 +48,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/key_removal.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
@@ -209,69 +207,6 @@ struct PublishedSegment {
   SegmentReader reader;
   Sync sync;
 };
-
-void SortUnique(std::vector<int64_t>& keys) {
-  if (!absl::c_is_sorted(keys)) {
-    absl::c_sort(keys);
-  }
-  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
-}
-
-std::span<const int64_t> KeysWithin(const duckdb::BaseStatistics& stats,
-                                    std::span<const int64_t> keys) {
-  if (!duckdb::NumericStats::HasMinMax(stats)) {
-    return keys;
-  }
-  const auto first =
-    absl::c_lower_bound(keys, duckdb::NumericStats::GetMin<int64_t>(stats));
-  return {first,
-          std::upper_bound(first, keys.end(),
-                           duckdb::NumericStats::GetMax<int64_t>(stats))};
-}
-
-void RemoveKeys(std::span<const int64_t> keys, field_id key_column,
-                const SubReader& segment, const auto& remove) {
-  const auto* columns = segment.GetColReader();
-  const auto* column = columns ? columns->Column(key_column) : nullptr;
-  if (!column) {
-    return;
-  }
-  SDB_ASSERT(column->Type().InternalType() == duckdb::PhysicalType::INT64);
-  const auto candidates = KeysWithin(column->MergedStatistics(), keys);
-  if (candidates.empty()) {
-    return;
-  }
-  ReadContext ctx{*columns};
-  auto state = column->InitScan(ctx);
-  ColumnReader::VectorScratch scratch{column->Type()};
-  uint64_t cursor = 0;
-  const auto blocks = column->DataBlocks();
-  for (size_t block = 0; block != blocks.size(); ++block) {
-    const auto matching = KeysWithin(blocks[block].statistics, candidates);
-    if (matching.empty()) {
-      continue;
-    }
-    if (const auto first = column->DataBlockFirstRow(block); first != cursor) {
-      column->Skip(state, first - cursor);
-      cursor = first;
-    }
-    for (auto left = blocks[block].tuple_count; left != 0;) {
-      const auto take = std::min<uint64_t>(left, STANDARD_VECTOR_SIZE);
-      auto& scanned = scratch.Reset();
-      column->Scan(state, scanned, take);
-      const auto values = scanned.Values<int64_t>();
-      for (duckdb::idx_t i = 0; i != take; ++i) {
-        const auto value = values[i].GetValue();
-        const auto key = absl::c_lower_bound(matching, value);
-        if (key != matching.end() && *key == value) {
-          remove(*key, static_cast<doc_id_t>(doc_limits::min() + cursor + i));
-        }
-      }
-      cursor += take;
-      left -= take;
-    }
-  }
-}
 
 struct PublishResult {
   std::vector<PublishedSegment> segments;

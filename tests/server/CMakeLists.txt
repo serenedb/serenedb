@@ -66,6 +66,7 @@ add_executable(
     connector/scram_client_test.cpp
     connector/search_key_unique_test.cpp
     connector/search_row_removal_test.cpp
+    connector/search_unique_probe_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp

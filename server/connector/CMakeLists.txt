@@ -4,6 +4,7 @@ target_sources(
         key_encoding.cpp
         primary_key.cpp
         search_key_unique.cpp
+        search_unique_probe.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
         search_sink_writer.cpp

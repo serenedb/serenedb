@@ -6,7 +6,7 @@ Requests are not authenticated. It counts requests by kind, accepted
 connections and the most part uploads in flight at once; `latency` delays every request, `trickle`
 sends the bodies of reads at that many bytes a second, and the part numbers in `failing_parts` are
 refused with a 500. The next `throttle` requests are refused with 503 SlowDown, and the next
-`drop[kind]` requests of a kind (COMPLETE_UPLOAD, COPY) take effect but get no response: the
+`drop[kind]` requests of a kind (PUT, COMPLETE_UPLOAD, COPY) take effect but get no response: the
 connection closes, and their keys are listed in `dropped`. `stall(kind, key)` holds the next
 request of a kind (PUT_PART, COPY, DELETE) whose key contains `key` before it takes effect, sets
 `stalled`, and after `release` is set closes the connection without applying it: a test kills the
@@ -460,6 +460,8 @@ class _Handler(Handler):
         obj = _Object(body)
         if not self._store(bucket, key, obj):
             self._xml(412, "<Error><Code>PreconditionFailed</Code></Error>")
+            return
+        if self._dropped("PUT", key):
             return
         self._traced("PUT", key, began)
         self._reply(200, headers={"ETag": obj.etag})

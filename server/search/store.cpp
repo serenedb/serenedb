@@ -98,14 +98,17 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
 }
 
 std::string StorageRoot(duckdb::AttachedDatabase& database,
-                        const std::optional<catalog::StorageDirectory>& parent,
-                        duckdb::idx_t id, bool is_new) {
+                        const std::string& path, duckdb::idx_t id,
+                        bool is_new) {
   if (database.GetStorageManager().InMemory()) {
     return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, database.oid, "/",
                         id);
   }
-  SDB_ASSERT(parent);
-  return is_new ? parent->CreateStorage(id) : parent->StoragePath(id);
+  SDB_ASSERT(!path.empty());
+  if (is_new) {
+    catalog::CreateStorage(path);
+  }
+  return path;
 }
 
 }  // namespace
@@ -118,19 +121,19 @@ struct Store::ReplaySession {
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
 };
 
-Store::Store(std::optional<catalog::StorageDirectory> parent,
+Store::Store(catalog::StorageLocation location,
              duckdb::AttachedDatabase& database, duckdb::idx_t id,
              const catalog::InvertedIndexSettings& options,
              const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _id{id},
     _db_id{database.oid},
-    _parent{std::move(parent)},
+    _location{std::move(location)},
     _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
     _topk_options{top_k_scorer},
     _durability{database, absl::StrCat("inverted index ", id),
-                StorageRoot(database, _parent, id, is_new)} {
+                StorageRoot(database, _location.path, id, is_new)} {
   SDB_ASSERT(id != 0);
   SetTasksSettings(options);
   if (_topk_options) {
@@ -142,17 +145,17 @@ Store::Store(std::optional<catalog::StorageDirectory> parent,
   }
 }
 
-Store::Store(std::optional<catalog::StorageDirectory> parent,
+Store::Store(catalog::StorageLocation location,
              duckdb::AttachedDatabase& database, duckdb::idx_t id, bool is_new,
              const catalog::SearchTableOptions& options,
              const duckdb::ColumnList& columns)
   : _id{id},
     _db_id{database.oid},
-    _parent{std::move(parent)},
+    _location{std::move(location)},
     _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
     _durability{database, absl::StrCat("search table ", id),
-                StorageRoot(database, _parent, id, is_new)},
+                StorageRoot(database, _location.path, id, is_new)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)} {
@@ -171,8 +174,8 @@ Store::Store(std::optional<catalog::StorageDirectory> parent,
 Store::~Store() {
   _replay.reset();
   _writer.reset();
-  if (_parent && _dropped.load(std::memory_order_acquire)) {
-    _parent->RemoveStorage(_id);
+  if (_location.database && _dropped.load(std::memory_order_acquire)) {
+    catalog::RemoveStorage(std::move(_location));
   }
 }
 
@@ -183,7 +186,7 @@ irs::IndexReaderOptions Store::ReaderOptions() const {
 }
 
 bool Store::Open() {
-  if (!_parent->OpenStorage(_id)) {
+  if (!catalog::StorageExists(_durability.Root())) {
     return false;
   }
   if (_read_only) {

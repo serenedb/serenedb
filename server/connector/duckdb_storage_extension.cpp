@@ -89,7 +89,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                             "name is not a database oid"));
   }
   auto directory =
-    std::make_shared<catalog::DatabaseDirectory>(*oid, nullptr, path);
+    std::make_shared<catalog::DatabaseDirectory>(*oid, path, nullptr);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
@@ -101,16 +101,17 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
 duckdb::idx_t PlaceDatabase(duckdb::ClientContext& context,
                             std::string_view name,
                             duckdb::LogicalDependencyList& dependencies) {
-  auto& tablespace = catalog::RequireTablespace(context, name);
+  auto& tablespace = *catalog::ClusterOf(context).GetEntry(
+    context, duckdb::CatalogType::TABLESPACE_ENTRY, duckdb::Identifier{name},
+    duckdb::OnEntryNotFound::THROW_EXCEPTION);
   if (tablespace.oid == pg::kPgGlobalTablespace) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("pg_global cannot be used as default tablespace"));
   }
-  if (tablespace.oid == pg::kPgDefaultTablespace) {
-    return 0;
+  if (tablespace.oid != pg::kPgDefaultTablespace) {
+    auth::RequireTablespaceCreate(context, tablespace);
+    dependencies.AddDependency(tablespace);
   }
-  auth::RequireTablespaceCreate(context, tablespace);
-  dependencies.AddDependency(tablespace);
   return tablespace.oid;
 }
 
@@ -148,6 +149,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   if (!entry) {
     duckdb::CreateDatabaseInfo database;
     database.SetName(info.name);
+    database.tablespace_oid = pg::kPgDefaultTablespace;
     if (const auto option = options.options.find("tablespace");
         option != options.options.end()) {
       database.tablespace_oid = PlaceDatabase(

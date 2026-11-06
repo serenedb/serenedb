@@ -1,0 +1,219 @@
+control substitution on
+
+# Each tablespace keeps its files in a directory of its own at its location, so
+# replaying the drop of a tablespace never touches the tablespaces created at
+# the same location later. The catalog log keeps a drop until its directory is
+# removed: a removal that waits for an older transaction, or that failed, holds
+# the log's compaction, and the restart removes the directory.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLESPACE gone LOCATION '${__TEST_DIR__}/reuse';
+
+statement ok
+CREATE TABLE dropped (id INT, body TEXT) WITH (storage = 'search') TABLESPACE gone;
+
+statement ok
+INSERT INTO dropped VALUES (1, 'dropped row');
+
+statement ok
+VACUUM (REFRESH_TABLE) dropped;
+
+statement ok
+DROP TABLE dropped;
+
+statement ok
+DROP TABLESPACE gone;
+
+statement ok
+CREATE TABLESPACE kept LOCATION '${__TEST_DIR__}/reuse';
+
+statement ok
+CREATE TABLESPACE beside LOCATION '${__TEST_DIR__}/reuse';
+
+statement ok
+CREATE TABLE docs (id INT, body TEXT) WITH (storage = 'search') TABLESPACE kept;
+
+statement ok
+CREATE TABLE notes (id INT, body TEXT) WITH (storage = 'search') TABLESPACE beside;
+
+statement ok
+INSERT INTO docs VALUES (1, 'quick fox'), (2, 'lazy dog');
+
+statement ok
+INSERT INTO notes VALUES (3, 'red fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) docs;
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+statement ok
+CREATE TABLESPACE failing LOCATION '${__TEST_DIR__}/failing';
+
+system ok
+cd $__TEST_DIR__/failing/engine_v1/* && touch planted
+
+statement ok
+SET sdb_faults = 'tablespace_removal_fails';
+
+statement ok
+SET sdb_faults = 'pause_tablespace_removal';
+
+statement ok
+DROP TABLESPACE failing;
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_tablespace_removal:parked';
+
+statement ok
+SET sdb_faults = 'pause_tablespace_removal:release';
+
+statement ok
+CREATE TABLESPACE pending LOCATION '${__TEST_DIR__}/pending';
+
+statement ok
+CREATE TABLE pending_rows (id INT, body TEXT) WITH (storage = 'search') TABLESPACE pending;
+
+statement ok
+INSERT INTO pending_rows VALUES (1, 'read by an older transaction');
+
+statement ok
+VACUUM (REFRESH_TABLE) pending_rows;
+
+system ok
+cd $__TEST_DIR__/pending/engine_v1/* && touch planted
+
+connection reader
+statement ok
+BEGIN;
+
+connection reader
+query
+SELECT body FROM pending_rows;
+----
+body
+read by an older transaction
+
+connection default
+statement ok
+DROP TABLE pending_rows;
+
+connection default
+statement ok
+DROP TABLESPACE pending;
+
+connection reader
+query
+SELECT body FROM pending_rows;
+----
+body
+read by an older transaction
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection default
+statement ok
+CREATE TABLE compacting (x INT);
+
+connection default
+query
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/pending/engine_v1/*/planted')) AS pending_left,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/failing/engine_v1/*/planted')) AS failing_left;
+----
+pending_left	failing_left
+1	1
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick fox
+2	lazy dog
+
+connection after_restart
+query
+SELECT id, body FROM notes;
+----
+id	body
+3	red fox
+
+connection after_restart
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/pending/engine_v1/*/planted')) AS pending_left,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/failing/engine_v1/*/planted')) AS failing_left;
+----
+pending_left	failing_left
+0	0
+
+connection after_restart
+query
+SELECT spcname FROM pg_tablespace WHERE spcname IN ('gone', 'kept', 'beside', 'failing', 'pending') ORDER BY spcname;
+----
+spcname
+beside
+kept
+
+system ok
+for i in $(seq 240); do [ "$(ls $__TEST_DIR__/reuse/engine_v1 | wc -l)" = 2 ] && break; sleep 0.25; done; ls $__TEST_DIR__/reuse/engine_v1 | wc -l
+----
+2
+
+
+connection after_restart
+statement ok
+DROP TABLE notes;
+
+connection after_restart
+statement ok
+DROP TABLESPACE beside;
+
+connection after_restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_restart
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM docs ORDER BY id;
+----
+id	body
+1	quick fox
+2	lazy dog
+
+system ok
+for i in $(seq 240); do [ "$(ls $__TEST_DIR__/reuse/engine_v1 | wc -l)" = 1 ] && break; sleep 0.25; done; ls $__TEST_DIR__/reuse/engine_v1 | wc -l
+----
+1
+
+
+connection after_shutdown
+statement ok
+DROP TABLE docs;
+
+connection after_shutdown
+statement ok
+DROP TABLE compacting;
+
+connection after_shutdown
+statement ok
+DROP TABLESPACE kept;

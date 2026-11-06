@@ -129,9 +129,9 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
     std::string stored;
-    catalog::ReadRole(username, [&](const catalog::RoleCatalogEntry& role) {
-      stored = role.Password();
-    });
+    catalog::ReadEntry<catalog::RoleCatalogEntry>(
+      username,
+      [&](const catalog::RoleCatalogEntry& role) { stored = role.Password(); });
     if (stored.empty()) {
       return std::nullopt;
     }
@@ -412,8 +412,8 @@ void Server::StartListeners() {
                   "': OpenTelemetry schema: ", status.message());
       }
     }
-    if (!catalog::ReadDatabase(database,
-                               [](const catalog::DatabaseCatalogEntry&) {})) {
+    if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+          database, [](const catalog::DatabaseCatalogEntry&) {})) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
     }

@@ -1,0 +1,118 @@
+control substitution on
+
+# A tablespace dropped while an older transaction still reads its objects keeps
+# its files until that transaction ends. Its location can be used again at once,
+# by tablespaces whose objects other sessions place there concurrently, and the
+# removal of the old files leaves theirs.
+
+statement ok
+CREATE TABLESPACE sess_old_${__DATABASE__} LOCATION '${__TEST_DIR__}/sess';
+
+statement ok
+CREATE TABLE sess_read (id INT, body TEXT) WITH (storage = 'search') TABLESPACE sess_old_${__DATABASE__};
+
+statement ok
+INSERT INTO sess_read VALUES (1, 'old row');
+
+statement ok
+VACUUM (REFRESH_TABLE) sess_read;
+
+connection reader
+statement ok
+BEGIN;
+
+connection reader
+query
+SELECT body FROM sess_read;
+----
+body
+old row
+
+statement ok
+DROP TABLE sess_read;
+
+statement ok
+DROP TABLESPACE sess_old_${__DATABASE__};
+
+statement ok
+CREATE TABLESPACE sess_new_${__DATABASE__} LOCATION '${__TEST_DIR__}/sess';
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+CREATE TABLE sess_a (id INT) WITH (storage = 'search') TABLESPACE sess_new_${__DATABASE__};
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE sess_b (id INT) WITH (storage = 'search') TABLESPACE sess_new_${__DATABASE__};
+
+connection writer
+statement ok
+INSERT INTO sess_a VALUES (1);
+
+statement ok
+INSERT INTO sess_b VALUES (2);
+
+connection writer
+statement ok
+COMMIT;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) sess_a;
+
+statement ok
+VACUUM (REFRESH_TABLE) sess_b;
+
+connection reader
+query
+SELECT body FROM sess_read;
+----
+body
+old row
+
+query
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
+FROM glob('${__TEST_DIR__}/sess/engine_v1/*/*/*/*');
+----
+directories
+2
+
+connection reader
+statement ok
+COMMIT;
+
+query ok retry 240 backoff 250ms
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories
+FROM glob('${__TEST_DIR__}/sess/engine_v1/*/*/*/*');
+----
+directories
+1
+
+query
+SELECT (SELECT id FROM sess_a) AS a, (SELECT id FROM sess_b) AS b;
+----
+a	b
+1	2
+
+statement ok
+DROP TABLE sess_a;
+
+statement ok
+DROP TABLE sess_b;
+
+statement ok
+DROP TABLESPACE sess_new_${__DATABASE__};
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/sess/engine_v1/**');
+----
+files_left
+0

@@ -905,7 +905,7 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
       irs::containers::FlatHashSet<duckdb::idx_t> stored;
       for (const auto& storage : catalog::ListStorages(
              tablespace->Cast<catalog::TablespaceCatalogEntry>()
-               .Root()
+               .Directory()
                ->Path())) {
         bool holds_files = false;
         if (storage.is_directory) {

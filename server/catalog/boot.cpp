@@ -105,8 +105,9 @@ void RemoveUnownedDatabases(ClusterCatalog& cluster) {
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
-  for (const auto& root : cluster.TablespaceRoots(cluster.LoginTransaction())) {
-    RemoveUnowned(ListStoragesOrDie(root->Path()), databases);
+  for (const auto& directory :
+       cluster.TablespaceDirs(cluster.LoginTransaction())) {
+    RemoveUnowned(ListStoragesOrDie(directory), databases);
   }
 }
 
@@ -171,6 +172,7 @@ void ApplyMissingDatabasePolicy(const DatabaseCatalogEntry& database) {
     SDB_WARN(STARTUP, "database '", name.GetIdentifierName(),
              "' is not attached: '", file, "' does not exist");
     gMissingDatabases.skipped.push_back(name);
+    ClusterOf().LeaveUnattached(oid);
   } else {
     SDB_WARN(STARTUP, "dropping database '", name.GetIdentifierName(),
              "' from the catalog: '", file, "' does not exist");
@@ -233,8 +235,9 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
     }
     manager.DetachDatabase(context, name, duckdb::OnEntryNotFound::RETURN_NULL);
   }
-  const auto entry = ClusterEntry(context, duckdb::CatalogType::DATABASE_ENTRY,
-                                  name.GetIdentifierName());
+  const auto entry =
+    ClusterOf(context).GetEntry(context, duckdb::CatalogType::DATABASE_ENTRY,
+                                name, duckdb::OnEntryNotFound::RETURN_NULL);
   SDB_ASSERT(entry);
   const auto& database = entry->Cast<DatabaseCatalogEntry>();
   const auto file = database.Directory()->DataFile();
@@ -326,8 +329,8 @@ void InitCatalog(std::string_view directory) {
                          gMissingDatabases.policy != "skip");
   auto& manager = duckdb::DatabaseManager::Get(instance);
   for (const auto& db : SereneDBDatabases(manager)) {
-    if (!ReadDatabase(db->GetName().GetIdentifierName(),
-                      [](const DatabaseCatalogEntry&) {})) {
+    if (!ReadEntry<DatabaseCatalogEntry>(db->GetName().GetIdentifierName(),
+                                         [](const DatabaseCatalogEntry&) {})) {
       manager.DetachDatabase(context, db->GetName(),
                              duckdb::OnEntryNotFound::RETURN_NULL);
     }
@@ -343,7 +346,8 @@ void InitCatalog(std::string_view directory) {
     context.RunFunctionInTransaction(
       [&] { AttachDatabaseCatalog(context, name, oid); });
     if (gMissingDatabases.missing.contains(oid)) {
-      ReadDatabase(name.GetIdentifierName(), ApplyMissingDatabasePolicy);
+      ReadEntry<DatabaseCatalogEntry>(name.GetIdentifierName(),
+                                      ApplyMissingDatabasePolicy);
     }
   }
   for (const auto& name : gMissingDatabases.skipped) {
@@ -359,16 +363,17 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  const auto roots = cluster.TablespaceRoots(cluster.LoginTransaction());
-  auto storages = StorageDirectories(manager, roots.size());
+  const auto tablespaces = cluster.TablespaceDirs(cluster.LoginTransaction());
+  auto storages = StorageDirectories(manager, tablespaces.size());
   duckdb::TaskExecutor listings{duckdb::TaskScheduler::GetScheduler(instance),
                                 duckdb::TaskSchedulerType::ASYNC};
   for (auto& database : storages) {
     const auto oid = database.catalog.get().GetAttached().oid;
-    for (size_t i = 0; i < roots.size(); ++i) {
+    for (size_t i = 0; i < tablespaces.size(); ++i) {
       listings.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
         listings,
-        [&listed = database.listed[i], path = roots[i]->DatabaseDir(oid)] {
+        [&listed = database.listed[i],
+         path = absl::StrCat(tablespaces[i], "/", oid)] {
           listed = ListStoragesOrDie(path);
         },
         "SweepStorages"));

@@ -2,8 +2,9 @@ control substitution on
 
 # A tablespace and the objects placed in it are settled the way any catalog
 # object and its dependents are: of a placement and a DROP TABLESPACE, the one
-# that commits second fails. A dropped tablespace keeps its location until the
-# transactions that began before the drop end and its files are removed.
+# that commits second fails. A dropped tablespace keeps its files until the
+# transactions that began before the drop end, and its location can be used
+# again at once.
 
 statement ok
 RESET sdb_faults;
@@ -281,21 +282,13 @@ DROP TABLESPACE held;
 
 
 connection default
-statement error
+statement ok
 CREATE TABLESPACE held_again LOCATION '${__TEST_DIR__}/held';
-----
-db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
-HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
 
 
 connection holder
 statement ok
 COMMIT;
-
-
-connection default
-statement ok retry 240 backoff 250ms
-CREATE TABLESPACE held_again LOCATION '${__TEST_DIR__}/held';
 
 
 connection default
@@ -314,11 +307,23 @@ SET sdb_faults = '-pause_tablespace_removal:parked';
 
 
 connection default
-statement error
+statement ok
 CREATE TABLESPACE held_once_more LOCATION '${__TEST_DIR__}/held';
-----
-db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
-HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
+
+
+connection default
+statement ok
+CREATE TABLE held_rows (id INT, body TEXT) WITH (storage = 'search') TABLESPACE held_once_more;
+
+
+connection default
+statement ok
+INSERT INTO held_rows VALUES (1, 'placed while a removal was parked');
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) held_rows;
 
 
 connection default
@@ -327,17 +332,18 @@ SET sdb_faults = 'pause_tablespace_removal:release';
 
 
 connection default
-statement ok retry 240 backoff 250ms
-CREATE TABLESPACE held_once_more LOCATION '${__TEST_DIR__}/held';
+query ok retry 240 backoff 250ms
+SELECT count(DISTINCT regexp_extract(file, 'engine_v1/([^/]+)/', 1)) AS directories,
+       (SELECT body FROM held_rows) AS body
+FROM glob('${__TEST_DIR__}/held/engine_v1/*/*/*/*');
+----
+directories	body
+1	placed while a removal was parked
 
 
 connection default
-query
-SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/held' AS reused
-FROM pg_tablespace WHERE spcname = 'held_once_more';
-----
-reused
-t
+statement ok
+DROP TABLE held_rows;
 
 
 connection default

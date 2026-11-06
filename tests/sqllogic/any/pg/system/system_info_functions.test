@@ -460,11 +460,8 @@ by_name	by_oid	global	null_input
 t	t	t	NULL
 
 
-statement error
+statement error (tablespace "sif_nosuch" does not exist|Tablespace with name sif_nosuch does not exist)
 SELECT pg_tablespace_size('sif_nosuch');
-----
-db error: ERROR: tablespace "sif_nosuch" does not exist
-
 
 statement error
 SELECT pg_tablespace_size(0::oid);

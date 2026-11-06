@@ -21,7 +21,6 @@
 #pragma once
 
 #include <atomic>
-#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -42,12 +41,17 @@ inline constexpr std::string_view kDataFile = "data.db";
 
 duckdb::FileSystem& StorageFileSystem();
 void CreateDirectory(const std::filesystem::path& path);
-void RemoveTree(const std::string& path) noexcept;
+void CreateDirectories(const std::filesystem::path& path);
+bool RemoveTree(const std::string& path) noexcept;
 // While a backup runs, removals of dropped storages wait for ResumeRemovals.
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 std::string EngineDirOf(std::string_view location);
 std::optional<duckdb::idx_t> OidFromName(std::string_view name);
+
+void CreateStorage(const std::string& path);
+bool StorageExists(const std::string& path);
+bool TablespaceRemovalsPending() noexcept;
 
 struct StorageEntry {
   duckdb::idx_t oid = 0;
@@ -67,66 +71,37 @@ StorageSize StorageBytes(const std::string& directory);
 void RemoveUnowned(std::span<const StorageEntry> entries,
                    const irs::containers::FlatHashSet<duckdb::idx_t>& owned);
 
-class TablespaceRoot final {
+class TablespaceDirectory final {
  public:
-  explicit TablespaceRoot(std::string path);
-  ~TablespaceRoot();
+  explicit TablespaceDirectory(std::string path) : _path{std::move(path)} {}
+  ~TablespaceDirectory();
 
   const std::string& Path() const noexcept { return _path; }
-  bool Remote() const noexcept { return _remote; }
-  std::string DatabaseDir(duckdb::idx_t oid) const;
-
-  void Claim();
-  void MarkDropped() noexcept {
-    _dropped.store(true, std::memory_order_release);
-  }
+  void MarkDropped() noexcept;
 
  private:
   std::string _path;
-  bool _remote;
   std::atomic_bool _dropped{false};
 };
 
-class DatabaseDirectory;
-
-class StorageDirectory final {
+class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
  public:
-  StorageDirectory(std::shared_ptr<DatabaseDirectory> database,
-                   std::shared_ptr<TablespaceRoot> root, std::string path);
-
-  std::string StoragePath(duckdb::idx_t oid) const;
-
-  std::string CreateStorage(duckdb::idx_t oid) const;
-  bool OpenStorage(duckdb::idx_t oid) const;
-  void RemoveStorage(duckdb::idx_t oid) const;
-
- private:
-  std::string MarkerPath(duckdb::idx_t oid) const;
-  bool Remote() const noexcept { return _root && _root->Remote(); }
-
-  std::shared_ptr<DatabaseDirectory> _database;
-  std::shared_ptr<TablespaceRoot> _root;
-  std::string _path;
-};
-
-class DatabaseDirectory final
-  : public duckdb::StorageExtensionInfo,
-    public std::enable_shared_from_this<DatabaseDirectory> {
- public:
-  DatabaseDirectory(duckdb::idx_t oid, std::shared_ptr<TablespaceRoot> root,
-                    std::filesystem::path path);
+  DatabaseDirectory(duckdb::idx_t oid, std::filesystem::path path,
+                    std::shared_ptr<TablespaceDirectory> tablespace);
   ~DatabaseDirectory() final;
 
   duckdb::idx_t Oid() const noexcept { return _oid; }
   const std::filesystem::path& Path() const noexcept { return _path; }
+  const std::shared_ptr<TablespaceDirectory>& Tablespace() const noexcept {
+    return _tablespace;
+  }
   std::string DataFile() const;
+  std::string StoragePath(const TablespaceDirectory* tablespace,
+                          duckdb::idx_t oid) const;
 
   void Create() const;
-  StorageDirectory InTablespace(duckdb::CatalogTransaction transaction,
-                                duckdb::idx_t tablespace);
-
-  void SetTablespaceRoots(std::vector<std::shared_ptr<TablespaceRoot>> roots) {
-    _tablespace_roots = std::move(roots);
+  void SetTablespaces(std::vector<std::string> tablespaces) {
+    _tablespaces = std::move(tablespaces);
   }
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
@@ -134,10 +109,18 @@ class DatabaseDirectory final
 
  private:
   duckdb::idx_t _oid;
-  std::shared_ptr<TablespaceRoot> _root;
   std::filesystem::path _path;
-  std::vector<std::shared_ptr<TablespaceRoot>> _tablespace_roots;
+  std::shared_ptr<TablespaceDirectory> _tablespace;
+  std::vector<std::string> _tablespaces;
   std::atomic_bool _dropped{false};
 };
+
+struct StorageLocation {
+  std::string path;
+  std::shared_ptr<DatabaseDirectory> database;
+  std::shared_ptr<TablespaceDirectory> tablespace;
+};
+
+void RemoveStorage(StorageLocation location);
 
 }  // namespace sdb::catalog

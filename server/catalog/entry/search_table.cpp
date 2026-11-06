@@ -228,7 +228,7 @@ SearchTableEntry::SearchTableEntry(
   }
   if (!_storage) {
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(transaction, _tablespace),
+      catalog.Cast<SereneDBCatalog>().Storage(transaction, _tablespace, oid),
       catalog.GetAttached(), oid, base.oid == 0, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }

@@ -21,13 +21,11 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
 
 #include "catalog/database_directory.h"
-#include "pg/catalog/oids.h"
 
 namespace sdb::catalog {
 
@@ -40,9 +38,6 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info,
                        std::shared_ptr<DatabaseDirectory> directory);
-  DatabaseCatalogEntry(duckdb::CatalogTransaction transaction,
-                       duckdb::Catalog& catalog,
-                       duckdb::CreateDatabaseInfo& info);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -57,9 +52,7 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   const std::shared_ptr<DatabaseDirectory>& Directory() const {
     return _directory;
   }
-  duckdb::idx_t Tablespace() const noexcept {
-    return _tablespace == 0 ? pg::kPgDefaultTablespace : _tablespace;
-  }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
 
  private:
   duckdb::case_insensitive_map_t<duckdb::Value> _options;

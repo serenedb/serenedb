@@ -43,14 +43,11 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files under `engine_v1` at its location. A local directory is created when it does not exist. A location that another tablespace uses, or that lies inside another tablespace's `engine_v1` or the data directory's `engine_v1`, is refused, and so is any location with an `engine_v1` directory in its path, and a location whose `engine_v1` exists already:
+A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files in a directory of its own under `engine_v1` at its location, named by the server's system identifier and the tablespace's OID, so several tablespaces, of one server or of several, can share a location. A local directory is created when it does not exist; an object store location is listed, so `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow listing it. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
 
 ```text
-ERROR:  directory "/mnt/nvme/serenedb/engine_v1" already in use as a tablespace
-HINT:  Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
+ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v1/inside" is inside the files of a tablespace
 ```
-
-If the server stops while `CREATE TABLESPACE` runs, `engine_v1` can be left at the location without a tablespace that uses it; remove it before creating the tablespace again.
 
 A `memory://` location is refused, since files there are lost when the server stops:
 
@@ -71,7 +68,11 @@ The server reaches an object store location with the credentials of a persistent
 
 See [Index Storage](../../../configuration/index_storage.md) for the credentials, the caching and the requests that index files on an object store cost.
 
+On S3, the parts of an upload that the server stops in the middle of stay in the bucket, unlisted and billed, until the upload is aborted: give the bucket a lifecycle rule that aborts incomplete multipart uploads.
+
 A local location has to exist on the server's machine at the same path for as long as the tablespace holds files.
+
+A [backup](../../../operations/backup.md) copies only the data directory, so `pg_backup_start` fails while a tablespace other than `pg_default` and `pg_global` exists.
 
 The built-in tablespaces are always there:
 
@@ -84,7 +85,7 @@ The built-in tablespaces are always there:
 
 <SqlLogicTest id="sql/statements/create_tablespace/index/example_006" />
 
-`pg_tablespace_size(name)` or `pg_tablespace_size(oid)` returns the bytes of a tablespace's files, which psql's `\db+` shows: for `pg_default` the databases' files in the data directory, for `pg_global` the catalog the cluster shares. On an object store each call costs a listing of the location.
+`pg_tablespace_size(name)` or `pg_tablespace_size(oid)` returns the bytes of a tablespace's files, which psql's `\db+` shows: for `pg_default` the databases' files in the data directory, for `pg_global` the catalog the cluster shares. On an object store each call costs a listing of the tablespace's directory.
 
 ## Placing objects
 
@@ -144,7 +145,14 @@ Renaming a tablespace or changing its owner needs ownership of it. The objects i
 DROP TABLESPACE [ IF EXISTS ] name
 ```
 
-Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it, including those of a database the server left unattached at startup with `--missing_database=skip`. Dropping it removes `engine_v1` at its location; the location itself stays. A new tablespace can use the location once the transactions that began before the drop have ended and `engine_v1` is removed; until then `CREATE TABLESPACE` refuses it. `DROP TABLESPACE` cannot run inside a transaction block.
+Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no search table or inverted index is placed in it. While a database that the server left unattached at startup with `--missing_database=skip` exists, no tablespace can be dropped:
+
+```text
+ERROR:  tablespace "fast" cannot be dropped while database "lost" is not attached
+HINT:  Restore the files of the database and restart the server, or drop the database.
+```
+
+Dropping a tablespace removes its directory once the transactions that began before the drop have ended; the location and its `engine_v1` stay, and a new tablespace can use the location at once. If the server stops before the directory is removed, it removes the directory when it starts again. `DROP TABLESPACE` cannot run inside a transaction block.
 
 When one transaction places an object in a tablespace while another drops the tablespace, the one that commits second fails, as with any object that another depends on. A drop fails with `tablespace "name" is not empty` when the placement committed before the drop looked, and with `Could not commit DROP of "name" because a dependency was created after the transaction started` when it commits later; a placement that commits after the drop fails with `Could not commit creation of dependency, subject "name" has been deleted`; the files of an object that fails this way are removed with the tablespace.
 

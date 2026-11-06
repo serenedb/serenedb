@@ -67,10 +67,13 @@ FROM pg_tablespace WHERE spcname = 'loc_norm_${__DATABASE__}';
 normalized
 t
 
-statement error
+statement ok
 CREATE TABLESPACE loc_same_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/./base/';
+
+system ok
+ls $__TEST_DIR__/loc/base/engine_v1 | wc -l
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+2
 
 
 statement error
@@ -102,11 +105,12 @@ db error: ERROR: tablespace location "<slt:ignore>/backslash/sub/engine_v1/deepe
 
 
 system ok
-cd $__TEST_DIR__/backslash && find . | sort
+cd $__TEST_DIR__/backslash && find . -maxdepth 2 | sort && find . -mindepth 3 | wc -l
 ----
 .
 ./sub
 ./sub/engine_v1
+1
 
 
 statement ok
@@ -169,8 +173,8 @@ id	body
 2	child row
 
 query
-SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/engine_v1/*/*/*')) AS parent_files,
-       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/engine_v1/*/*/*')) AS child_files,
+SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/engine_v1/*/*/*/*')) AS parent_files,
+       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/engine_v1/*/*/*/*')) AS child_files,
        (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/engine_v1/**')) AS base_files;
 ----
 parent_files	child_files	base_files
@@ -192,17 +196,7 @@ db error: ERROR: Failed to create directory "<slt:ignore>": File exists
 
 
 system ok
-mkdir -p $__TEST_DIR__/stray/engine_v1
-
-statement error
-CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
-----
-db error: ERROR: directory "<slt:ignore>/stray/engine_v1" already in use as a tablespace
-HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
-
-
-system ok
-rmdir $__TEST_DIR__/stray/engine_v1
+mkdir -p $__TEST_DIR__/stray/engine_v1/other && touch $__TEST_DIR__/stray/engine_v1/other/kept
 
 statement ok
 CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
@@ -211,16 +205,40 @@ statement ok
 CREATE TABLESPACE loc_lost_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
 
 system ok
-rmdir $__TEST_DIR__/lost/engine_v1
+rm -r $__TEST_DIR__/lost/engine_v1
 
-statement error
+statement ok
 CREATE TABLESPACE loc_lost_again_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
-----
-db error: ERROR: tablespace location "<slt:ignore>/lost" overlaps tablespace "loc_lost_<slt:ignore>"
 
+statement ok
+CREATE TABLE in_lost (id INT, body TEXT) WITH (storage = 'search') TABLESPACE loc_lost_${__DATABASE__};
+
+statement ok
+INSERT INTO in_lost VALUES (1, 'lost row');
+
+statement ok
+VACUUM (REFRESH_TABLE) in_lost;
+
+query
+SELECT id, body FROM in_lost;
+----
+id	body
+1	lost row
+
+statement ok
+DROP TABLE in_lost;
 
 statement ok
 DROP TABLESPACE loc_lost_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_lost_again_${__DATABASE__};
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/lost/engine_v1/**')) AS lost_files;
+----
+lost_files
+0
 
 statement error
 CREATE TABLESPACE pg_ LOCATION '${__TEST_DIR__}/names/pg';
@@ -267,7 +285,7 @@ body
 stored under a unicode path
 
 query
-SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/engine_v1/*/*/*');
+SELECT count(*) > 0 AS stored FROM glob('${__TEST_DIR__}/names/with space/ünïcode/engine_v1/*/*/*/*');
 ----
 stored
 t
@@ -315,6 +333,13 @@ DROP TABLESPACE "quote""inside_${__DATABASE__}";
 statement ok
 DROP TABLESPACE loc_stray_${__DATABASE__};
 
+system ok
+cd $__TEST_DIR__/stray/engine_v1 && find other
+----
+other
+other/kept
+
+
 statement ok
 DROP TABLESPACE loc_backslash_${__DATABASE__};
 
@@ -335,3 +360,6 @@ DROP TABLESPACE loc_child_${__DATABASE__};
 
 statement ok
 DROP TABLESPACE loc_norm_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_same_${__DATABASE__};

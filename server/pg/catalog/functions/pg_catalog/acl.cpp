@@ -733,7 +733,9 @@ struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     if (const auto tablespace =
-          catalog::ClusterEntry(*session.context, kType, name)) {
+          catalog::ClusterOf(*session.context)
+            .GetEntry(*session.context, kType, duckdb::Identifier{name},
+                      duckdb::OnEntryNotFound::RETURN_NULL)) {
       return tablespace->oid;
     }
     ThrowUndefinedObject("tablespace", name);

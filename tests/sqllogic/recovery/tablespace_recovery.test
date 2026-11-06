@@ -169,17 +169,6 @@ tablespaces
 0
 
 connection after_half_create
-statement error
-CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
-----
-db error: ERROR: directory "<slt:ignore>/half/engine_v1" already in use as a tablespace
-HINT: Remove it if no tablespace uses it; a dropped tablespace removes it once the transactions that began before the drop have ended.
-
-
-system ok
-rm -r $__TEST_DIR__/half/engine_v1
-
-connection after_half_create
 statement ok
 CREATE TABLESPACE half_created LOCATION '${__TEST_DIR__}/half';
 
@@ -201,7 +190,7 @@ tables
 
 connection after_orphan
 query
-SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/half/engine_v1/*/*/*');
+SELECT count(*) AS files_left FROM glob('${__TEST_DIR__}/half/engine_v1/*/*/*/*');
 ----
 files_left
 0

@@ -82,7 +82,7 @@ db error: ERROR: cannot attach "<slt:ignore>" read-only: inverted index "docs_id
 
 
 system ok
-rm -rf $__TEST_DIR__/sft_placed_copy $__TEST_DIR__/sft_placed_snap && mkdir $__TEST_DIR__/sft_placed_copy && cp -r $__TEST_DIR__/sft_space/engine_v1/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sft_placed_copy/ && ln -s $__TEST_DIR__/sft_placed_copy/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_snap
+rm -rf $__TEST_DIR__/sft_placed_copy $__TEST_DIR__/sft_placed_snap && mkdir $__TEST_DIR__/sft_placed_copy && cp -r $__TEST_DIR__/sft_space/engine_v1/*/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sft_placed_copy/ && ln -s $__TEST_DIR__/sft_placed_copy/$(cat $__TEST_DIR__/sft_placed.oid) $__TEST_DIR__/sft_placed_snap
 
 statement ok
 CREATE SERVER sft_placed_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sft_placed_snap');

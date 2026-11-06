@@ -170,16 +170,20 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
   }
   info.tablespace_oid = 0;
   auto& context = transaction.GetContext();
+  auto& cluster = ClusterOf(context);
   const bool named = !requested.empty();
   duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
   if (named) {
-    tablespace = RequireTablespace(context, requested.GetIdentifierName());
+    tablespace =
+      cluster.GetEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY,
+                       requested, duckdb::OnEntryNotFound::THROW_EXCEPTION);
   } else if (const auto* connection =
                connector::GetSereneDBContextPtr(context)) {
     const auto name = connection->Get(kDefaultTablespaceSetting).value_or("");
     if (!name.empty()) {
-      tablespace =
-        ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
+      tablespace = cluster.GetEntry(
+        context, duckdb::CatalogType::TABLESPACE_ENTRY,
+        duckdb::Identifier{name}, duckdb::OnEntryNotFound::RETURN_NULL);
     }
   }
   if (!tablespace) {
@@ -191,7 +195,6 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
       ERR_MSG("only shared relations can be placed in pg_global tablespace"));
   }
   duckdb::idx_t own = pg::kPgDefaultTablespace;
-  auto& cluster = ClusterOf(context);
   if (GetAttached().IsTemporary()) {
     refusal = "temporary objects cannot be placed in a tablespace";
   } else if (const auto database = cluster.EntryById(
@@ -267,10 +270,26 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(std::make_shared<search::Store>(
-      Directory(transaction, entry->Tablespace()), GetAttached(), entry->oid,
-      ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
+      Storage(transaction, entry->Tablespace(), entry->oid), GetAttached(),
+      entry->oid, ResolveSettings(entry->options),
+      entry->Config()->top_k_scorer, false));
   }
   return std::move(entry);
+}
+
+StorageLocation SereneDBCatalog::Storage(duckdb::CatalogTransaction transaction,
+                                         duckdb::idx_t tablespace,
+                                         duckdb::idx_t oid) {
+  if (!_directory) {
+    return {};
+  }
+  auto directory =
+    tablespace == 0 || GetAttached().IsReadOnly()
+      ? _directory->Tablespace()
+      : ClusterOf(transaction).TablespaceDirectoryOf(transaction, tablespace);
+  return {.path = _directory->StoragePath(directory.get(), oid),
+          .database = _directory,
+          .tablespace = std::move(directory)};
 }
 
 namespace {

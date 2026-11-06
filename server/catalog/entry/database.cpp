@@ -23,7 +23,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <utility>
 
-#include "catalog/cluster.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::catalog {
@@ -40,14 +39,6 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   tags = info.tags;
   dependencies = info.dependencies;
   permissions = info.permissions;
-}
-
-DatabaseCatalogEntry::DatabaseCatalogEntry(
-  duckdb::CatalogTransaction transaction, duckdb::Catalog& catalog,
-  duckdb::CreateDatabaseInfo& info)
-  : DatabaseCatalogEntry{catalog, info, nullptr} {
-  _directory = catalog.Cast<ClusterCatalog>().MakeDatabaseDirectory(
-    transaction, oid, Tablespace());
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {

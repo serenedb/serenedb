@@ -624,7 +624,9 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_DETACH: {
         const auto name =
           op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
-        if (ClusterEntry(CatalogType::DATABASE_ENTRY, name)) {
+        if (catalog::ClusterOf(_context).GetEntry(
+              _context, CatalogType::DATABASE_ENTRY, duckdb::Identifier{name},
+              duckdb::OnEntryNotFound::RETURN_NULL)) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                           ERR_MSG("cannot detach database \"", name,
                                   "\", use DROP DATABASE"));
@@ -1136,8 +1138,9 @@ class Enforcer {
                        "Only roles with the CREATEROLE attribute and the ADMIN "
                        "option on the target roles may drop roles.");
       }
-      if (auto role = ClusterEntry(CatalogType::ROLE_ENTRY,
-                                   name.Name().GetIdentifierName())) {
+      if (auto role = catalog::ClusterOf(_context).GetEntry(
+            _context, CatalogType::ROLE_ENTRY, name.Name(),
+            duckdb::OnEntryNotFound::RETURN_NULL)) {
         RequireRoleAdmin(*role, "drop");
       }
       return;
@@ -1149,8 +1152,9 @@ class Enforcer {
       return;
     }
     if (info.type == CatalogType::TABLESPACE_ENTRY) {
-      if (auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY,
-                                         name.Name().GetIdentifierName())) {
+      if (auto tablespace = catalog::ClusterOf(_context).GetEntry(
+            _context, CatalogType::TABLESPACE_ENTRY, name.Name(),
+            duckdb::OnEntryNotFound::RETURN_NULL)) {
         RequireOwner(*tablespace);
       }
       return;
@@ -1168,7 +1172,9 @@ class Enforcer {
   }
 
   duckdb::CatalogEntry& AlterableTablespace(std::string_view name) {
-    auto& tablespace = catalog::RequireTablespace(_context, name);
+    auto& tablespace = *catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::TABLESPACE_ENTRY, duckdb::Identifier{name},
+      duckdb::OnEntryNotFound::THROW_EXCEPTION);
     if (tablespace.internal) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1358,7 +1364,9 @@ class Enforcer {
     }
     if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
       const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
-      const auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
+      const auto database = catalog::ClusterOf(_context).GetEntry(
+        _context, CatalogType::DATABASE_ENTRY, duckdb::Identifier{name},
+        duckdb::OnEntryNotFound::RETURN_NULL);
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database \"", name, "\" does not exist"));
@@ -1458,7 +1466,9 @@ class Enforcer {
       info.default_scope = schema.oid;
       database = schema.ParentCatalog().GetName().GetIdentifierName();
     }
-    if (!ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
+    if (!catalog::ClusterOf(_context).GetEntry(
+          _context, CatalogType::DATABASE_ENTRY, duckdb::Identifier{database},
+          duckdb::OnEntryNotFound::RETURN_NULL)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                       ERR_MSG("database \"", database, "\" does not exist"));
     }
@@ -1496,16 +1506,11 @@ class Enforcer {
     }
   }
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
-    CatalogType type, std::string_view name) {
-    return catalog::ClusterEntry(_context, type, name);
-  }
-
   void RequireDatabasePrivilege(AclMode need) {
-    auto database =
-      ClusterEntry(CatalogType::DATABASE_ENTRY,
-                   duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                     .GetIdentifierName());
+    auto database = catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::DATABASE_ENTRY,
+      duckdb::DatabaseManager::GetDefaultDatabase(_context),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
                                          database->permissions, need)) {
       Denied(*database);
@@ -1513,7 +1518,9 @@ class Enforcer {
   }
 
   void RequireDatabaseOwner(std::string_view name) {
-    auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
+    auto database = catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::DATABASE_ENTRY, duckdb::Identifier{name},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (database && !_caller_closure.Owns(database->permissions.owner)) {
       MustOwn(*database);
     }
@@ -1525,7 +1532,9 @@ class Enforcer {
                        catalog::SereneDBCatalog::kStorageType) {
       return;
     }
-    if (!ClusterEntry(CatalogType::DATABASE_ENTRY, name.GetIdentifierName())) {
+    if (!catalog::ClusterOf(_context).GetEntry(
+          _context, CatalogType::DATABASE_ENTRY, name,
+          duckdb::OnEntryNotFound::RETURN_NULL)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
                       ERR_MSG("database \"", name.GetIdentifierName(),
                               "\" is being created by another transaction"));
@@ -1610,7 +1619,9 @@ class Enforcer {
   }
 
   void RequireGrantableRole(std::string_view name) {
-    auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
+    auto role = catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::ROLE_ENTRY, duckdb::Identifier{name},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (role && !_caller_closure.IsAdminOf(role->oid)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1633,9 +1644,9 @@ class Enforcer {
   }
 
   void CheckAlterRole(const duckdb::AlterRoleInfo& info) {
-    auto role =
-      ClusterEntry(CatalogType::ROLE_ENTRY,
-                   info.GetQualifiedName().Name().GetIdentifierName());
+    auto role = catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!role) {
       return;
     }
@@ -1738,11 +1749,11 @@ class Enforcer {
         }
       }
     };
-    const auto database = ClusterEntry(
-      CatalogType::DATABASE_ENTRY,
-      schema ? schema->ParentCatalog().GetName().GetIdentifierName()
-             : duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                 .GetIdentifierName());
+    const auto database = catalog::ClusterOf(_context).GetEntry(
+      _context, CatalogType::DATABASE_ENTRY,
+      schema ? schema->ParentCatalog().GetName()
+             : duckdb::DatabaseManager::GetDefaultDatabase(_context),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (database) {
       if (schema) {
         apply(database->permissions, schema->oid);

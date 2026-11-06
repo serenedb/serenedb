@@ -94,12 +94,11 @@ class Store final : public std::enable_shared_from_this<Store>,
   // `database` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
-  Store(std::optional<catalog::StorageDirectory> parent,
-        duckdb::AttachedDatabase& database, duckdb::idx_t id,
-        const catalog::InvertedIndexSettings& options,
+  Store(catalog::StorageLocation location, duckdb::AttachedDatabase& database,
+        duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
-  Store(std::optional<catalog::StorageDirectory> parent,
-        duckdb::AttachedDatabase& database, duckdb::idx_t id, bool is_new,
+  Store(catalog::StorageLocation location, duckdb::AttachedDatabase& database,
+        duckdb::idx_t id, bool is_new,
         const catalog::SearchTableOptions& options,
         const duckdb::ColumnList& columns);
   ~Store();
@@ -110,7 +109,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   duckdb::idx_t GetId() const noexcept { return _id; }
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  std::string Path() const { return _parent->StoragePath(_id); }
+  const std::string& Path() const noexcept { return _durability.Root(); }
   bool ReadOnly() const noexcept { return !_writer; }
   bool Opened() const { return _writer || Snapshot(); }
   [[nodiscard]] bool Open();
@@ -374,7 +373,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
-  std::optional<catalog::StorageDirectory> _parent;
+  catalog::StorageLocation _location;
   bool _read_only;
   std::atomic<bool> _dropped{false};
   uint64_t _segment_memory_max;

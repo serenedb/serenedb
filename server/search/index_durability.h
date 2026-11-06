@@ -69,6 +69,7 @@ class IndexDurability {
   const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
     return _database;
   }
+  const std::string& Root() const noexcept { return _root; }
 
   std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
     bool is_new, irs::IndexWriterOptions options,

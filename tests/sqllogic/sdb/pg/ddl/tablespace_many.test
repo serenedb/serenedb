@@ -118,10 +118,10 @@ id	body
 2	great pictures
 
 query
-SELECT count(*) > 0 AS a_files, (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/many/b/engine_v1/*/*/*')) AS b_files,
-       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/many/c/engine_v1/*/*/*')) AS c_files,
+SELECT count(*) > 0 AS a_files, (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/many/b/engine_v1/*/*/*/*')) AS b_files,
+       (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/many/c/engine_v1/*/*/*/*')) AS c_files,
        (SELECT count(*) FROM glob('${__TEST_DIR__}/many/unused/engine_v1/**')) AS unused_files
-FROM glob('${__TEST_DIR__}/many/a/engine_v1/*/*/*');
+FROM glob('${__TEST_DIR__}/many/a/engine_v1/*/*/*/*');
 ----
 a_files	b_files	c_files	unused_files
 t	t	t	0

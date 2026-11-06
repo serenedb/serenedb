@@ -98,6 +98,11 @@ def _matches(server: _Server) -> list[int]:
     return [row[0] for row in rows]
 
 
+def _directory(location: Path) -> Path:
+    [directory] = (location / "engine_v1").iterdir()
+    return directory
+
+
 def _refused(datadir: Path) -> str:
     server = _Server(datadir)
     try:
@@ -135,7 +140,7 @@ def test_index_files_in_a_local_tablespace(tmp_path: Path) -> None:
             conn.execute("DROP TABLESPACE idx")
     finally:
         again.stop()
-    assert not (location / "engine_v1").exists()
+    assert not any((location / "engine_v1").iterdir())
 
 
 def test_moved_data_directory_keeps_its_indexes(tmp_path: Path) -> None:
@@ -212,11 +217,11 @@ def test_a_database_in_a_tablespace_keeps_its_objects_there(
     finally:
         server.stop()
 
-    in_home = home / "engine_v1" / str(database)
+    in_home = _directory(home) / str(database)
     assert (in_home / "data.db").is_file()
     assert (in_home / str(oids["docs"])).is_dir()
     assert (in_home / str(oids["notes_home"])).is_dir()
-    assert (other / "engine_v1" / str(database)
+    assert (_directory(other) / str(database)
             / str(oids["notes_other"])).is_dir()
     assert (datadir / "engine_v1" / str(database)
             / str(oids["in_default"])).is_dir()
@@ -241,8 +246,8 @@ def test_a_database_in_a_tablespace_keeps_its_objects_there(
             conn.execute("DROP TABLESPACE other")
     finally:
         again.stop()
-    assert not (home / "engine_v1").exists()
-    assert not (other / "engine_v1").exists()
+    assert not any((home / "engine_v1").iterdir())
+    assert not any((other / "engine_v1").iterdir())
     assert not (datadir / "engine_v1" / str(database)).exists()
 
 
@@ -303,7 +308,7 @@ def test_attach_cannot_place_a_database_by_tablespace_oid(
             ).fetchone()[0] == 0
     finally:
         server.stop()
-    assert not list((home / "engine_v1").glob("[0-9]*"))
+    assert not list((home / "engine_v1").glob("*/[0-9]*"))
 
 
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
@@ -333,7 +338,7 @@ def s3_store():
 
 def _index_files(fake: FakeS3, prefix: str) -> list[str]:
     return [key for key in fake.keys("bucket", prefix)
-            if not key.endswith((".storage", "/engine_v1/tablespace"))]
+            if not key.endswith(".storage")]
 
 
 def _create_secret(server: _Server, store: _Store, location: str,
@@ -732,69 +737,92 @@ def test_a_location_is_kept_normalized(tmp_path: Path) -> None:
         sorted(fake.objects)
 
 
-def _wait_parked(conn: psycopg.Connection, point: str) -> None:
-    deadline = time.monotonic() + 30
-    while True:
-        try:
-            conn.execute(f"SET sdb_faults = '-{point}:parked'")
-            return
-        except psycopg.Error:
-            assert time.monotonic() < deadline, f"nothing parked at {point}"
-            time.sleep(0.05)
-
-
-@pytest.mark.faults
 @pytest.mark.parametrize("kind", ["s3", "azure"])
-def test_two_tablespaces_racing_for_one_location_leave_one(tmp_path: Path,
-                                                           kind: str) -> None:
+def test_tablespaces_sharing_a_location_keep_apart(tmp_path: Path,
+                                                   kind: str) -> None:
     with FakeS3() if kind == "s3" else FakeAzure() as fake:
         if kind == "s3":
-            location = f"s3://bucket/claimed-{tmp_path.name}"
+            bucket, location = "bucket", f"s3://bucket/shared-{tmp_path.name}"
             secret = (f"TYPE s3, KEY_ID 'key', SECRET 'secret', "
                       f"ENDPOINT '{fake.endpoint}', URL_STYLE 'path', USE_SSL false")
+            keys = fake.keys
         else:
-            location = f"az://indexes/claimed-{tmp_path.name}"
+            bucket, location = "indexes", f"az://indexes/shared-{tmp_path.name}"
             secret = f"TYPE azure, CONNECTION_STRING '{fake.connection_string}'"
-        failures: list[str] = []
+            keys = fake.names
+        prefix = f"shared-{tmp_path.name}/"
 
-        def claim() -> None:
-            try:
-                with server.connect() as conn:
-                    conn.execute(f"CREATE TABLESPACE first LOCATION '{location}'")
-            except psycopg.Error as error:
-                failures.append(str(error))
+        def directories() -> set[str]:
+            return {key.split("/")[2] for key in keys(bucket, prefix)}
 
-        server = _Server(tmp_path / "data")
+        def rows(server: _Server, table: str) -> list[tuple[int]]:
+            with server.connect() as conn:
+                return conn.execute(
+                    f"SELECT id FROM {table} ORDER BY id").fetchall()
+
+        first = _Server(tmp_path / "first")
+        other = _Server(tmp_path / "other")
         try:
-            assert server.wait_ready(), server.output()
-            with server.connect() as admin:
-                admin.execute(f"CREATE PERSISTENT SECRET store ({secret}, "
-                              f"SCOPE '{location}')")
-                admin.execute("SET sdb_faults = 'pause_marker_creation'")
-                first = threading.Thread(target=claim)
-                first.start()
-                _wait_parked(admin, "pause_marker_creation")
-                if kind == "s3":
-                    admin.execute(f"CREATE TABLESPACE second LOCATION '{location}'")
-                else:
-                    with pytest.raises(psycopg.Error,
-                                       match="already in use as a tablespace"):
-                        admin.execute(
-                            f"CREATE TABLESPACE second LOCATION '{location}'")
-                admin.execute("SET sdb_faults = 'pause_marker_creation:release'")
-                first.join(timeout=60)
-                assert not first.is_alive()
-                placed = admin.execute(
-                    "SELECT spcname FROM pg_tablespace "
-                    "WHERE spcname IN ('first', 'second')").fetchall()
+            assert first.wait_ready(), first.output()
+            assert other.wait_ready(), other.output()
+            for server in (first, other):
+                with server.connect() as conn:
+                    conn.execute(f"CREATE PERSISTENT SECRET store ({secret}, "
+                                 f"SCOPE '{location}')")
+            with first.connect() as conn:
+                conn.execute(f"CREATE TABLESPACE gone LOCATION '{location}'")
+                conn.execute("CREATE TABLE dropped (id INT) "
+                             "WITH (storage = 'search') TABLESPACE gone")
+                conn.execute("INSERT INTO dropped VALUES (1)")
+                conn.execute("VACUUM (REFRESH_TABLE) dropped")
+                conn.execute("DROP TABLE dropped")
+                conn.execute("DROP TABLESPACE gone")
+                for name in ("kept", "shared"):
+                    conn.execute(
+                        f"CREATE TABLESPACE {name} LOCATION '{location}'")
+                    conn.execute(f"CREATE TABLE {name}_rows (id INT) "
+                                 f"WITH (storage = 'search') TABLESPACE {name}")
+                    conn.execute(f"INSERT INTO {name}_rows VALUES (1), (2)")
+                    conn.execute(f"VACUUM (REFRESH_TABLE) {name}_rows")
+            with other.connect() as conn:
+                conn.execute(f"CREATE TABLESPACE theirs LOCATION '{location}'")
+                conn.execute("CREATE TABLE theirs_rows (id INT) "
+                             "WITH (storage = 'search') TABLESPACE theirs")
+                conn.execute("INSERT INTO theirs_rows VALUES (3)")
+                conn.execute("VACUUM (REFRESH_TABLE) theirs_rows")
+            assert rows(other, "theirs_rows") == [(3,)]
+            assert len(directories()) == 3, keys(bucket)
+            with other.connect() as conn:
+                conn.execute("DROP TABLE theirs_rows")
+                conn.execute("DROP TABLESPACE theirs")
         finally:
-            server.stop()
-    if kind == "s3":
-        assert len(failures) == 1 and "File exists" in failures[0], failures
-        assert placed == [("second",)]
-    else:
-        assert not failures, failures
-        assert placed == [("first",)]
+            first.stop()
+            other.stop()
+        assert len(directories()) == 2, keys(bucket)
+
+        for datadir in ("other", "first"):
+            again = _Server(tmp_path / datadir)
+            try:
+                assert again.wait_ready(), again.output()
+            finally:
+                again.stop()
+        again = _Server(tmp_path / "first")
+        try:
+            assert again.wait_ready(), again.output()
+            assert rows(again, "kept_rows") == [(1,), (2,)]
+            assert rows(again, "shared_rows") == [(1,), (2,)]
+            with again.connect() as conn:
+                conn.execute("DROP TABLE shared_rows")
+                conn.execute("DROP TABLESPACE shared")
+        finally:
+            again.stop()
+        assert len(directories()) == 1, keys(bucket)
+        last = _Server(tmp_path / "first")
+        try:
+            assert last.wait_ready(), last.output()
+            assert rows(last, "kept_rows") == [(1,), (2,)]
+        finally:
+            last.stop()
 
 
 def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
@@ -825,6 +853,28 @@ def test_a_lost_upload_completion_fails_its_statement_and_leaves_no_object(
         finally:
             again.stop()
         assert not set(fake.dropped) & set(fake.keys("bucket")), fake.dropped
+
+
+def test_a_lost_marker_response_is_retried(tmp_path: Path) -> None:
+    location = f"s3://bucket/marker-{tmp_path.name}"
+    with FakeS3() as fake:
+        server = _Server(tmp_path / "data")
+        try:
+            assert server.wait_ready(), server.output()
+            _create_secret(server, _Store(fake.endpoint, "key", "secret", "bucket"),
+                           location)
+            fake.drop["PUT"] = 1
+            with server.connect() as conn:
+                conn.execute("CREATE TABLE notes(id INTEGER, body TEXT) "
+                             "WITH (storage = 'search') TABLESPACE idx")
+                conn.execute("INSERT INTO notes VALUES (1, 'kept on s3')")
+                conn.execute("VACUUM (REFRESH_TABLE) notes")
+                assert conn.execute("SELECT body FROM notes").fetchall() == [
+                    ("kept on s3",)]
+        finally:
+            server.stop()
+    assert len(fake.dropped) == 1 and fake.dropped[0].endswith(".storage"), \
+        fake.dropped
 
 
 def test_a_lost_copy_response_is_retried(tmp_path: Path) -> None:
@@ -881,8 +931,7 @@ def test_a_missing_storage_refuses_the_start(tmp_path: Path, kind: str) -> None:
         finally:
             server.stop()
         with fake.lock:
-            for key in [key for _, key in fake.objects if key.startswith(prefix)
-                        and not key.endswith("/engine_v1/tablespace")]:
+            for key in [key for _, key in fake.objects if key.startswith(prefix)]:
                 del fake.objects[("bucket", key)]
         output = _refused(datadir)
     owner = "docs_body" if kind == "index" else "notes"
@@ -1210,8 +1259,8 @@ def test_a_restart_opens_its_indexes_and_search_tables_at_once(
         if entry["method"] == "LIST":
             listings.setdefault(entry["key"], entry)
     swept = [entry for prefix, entry in listings.items()
-             if len(parts := prefix.split("/")) == 4
-             and parts[1] == "engine_v1" and parts[2].isdigit()]
+             if len(parts := prefix.split("/")) == 5
+             and parts[1] == "engine_v1" and parts[3].isdigit()]
     assert len(swept) == 1, trace
     assert swept[0]["began"] < min(entry["began"] for entry in opens.values()), \
         (swept, opens)

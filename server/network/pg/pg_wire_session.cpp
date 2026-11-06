@@ -458,7 +458,7 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   duckdb::idx_t database_id = 0;
   duckdb::Permissions permissions;
-  if (!catalog::ReadDatabase(
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
         DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
           database_id = database.oid;
           permissions = database.permissions;
@@ -955,13 +955,15 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
                                          std::string_view group) {
     duckdb::idx_t user_oid = 0;
     duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadRole(user,
-                           [&](const catalog::RoleCatalogEntry& role) {
-                             user_oid = role.oid;
-                           }) ||
-        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
-          group_oid = role.oid;
-        })) {
+    if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+          user,
+          [&](const catalog::RoleCatalogEntry& role) {
+            user_oid = role.oid;
+          }) ||
+        !catalog::ReadEntry<catalog::RoleCatalogEntry>(
+          group, [&](const catalog::RoleCatalogEntry& role) {
+            group_oid = role.oid;
+          })) {
       return false;  // missing_ok: unknown login role or target group
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
@@ -1078,11 +1080,12 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
 
   int64_t valid_until = 0;
-  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
-    if (role.HasValidUntil()) {
-      valid_until = role.ValidUntil();
-    }
-  });
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    UserName(), [&](const catalog::RoleCatalogEntry& role) {
+      if (role.HasValidUntil()) {
+        valid_until = role.ValidUntil();
+      }
+    });
   if (valid_until != 0 &&
       duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
     WriteFatalResponse(

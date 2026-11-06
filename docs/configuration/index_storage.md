@@ -72,7 +72,7 @@ What costs requests to the object store:
 | A checkpoint | a refresh and a commit of each index of the database that has rows not yet refreshed; the indexes are saved in parallel, so a checkpoint waits for the slowest of them rather than for all of them in turn |
 | Opening an index at startup | one check that the index exists, three listings of its files, one of which removes the files an interrupted write left behind, one read of its commit file and one of each segment's metadata, then for each index file a check of its size and a read of its footer; the segments open in parallel. Indexes and search tables open in parallel too, so startup waits for the slowest of them rather than for all of them in turn |
 | Cleanup | one request for up to 1000 files (256 on Azure) that no index reader uses anymore; the first cleanup after an index opens also lists the index's files |
-| Startup | a listing of each tablespace location and of each database directory in it, to remove files that belong to no index; a listing returns only the entries one level down, so the files of the indexes cost no listing requests here. The database directories are listed while the indexes open |
+| Startup | a listing of each tablespace's directory and of each database directory in it, to remove files that belong to no index; a listing returns only the entries one level down, so the files of the indexes cost no listing requests here. The database directories are listed while the indexes open |
 
 The parts of a large file upload at the same time, up to `s3_uploader_parts_in_flight` of them on S3 and `azure_write_blocks_in_flight` on Azure, 20 by default; setting it to `1` uploads one part at a time.
 

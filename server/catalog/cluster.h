@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
@@ -30,8 +28,10 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -111,13 +111,11 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     duckdb::idx_t oid);
   TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
                                      duckdb::idx_t oid);
-  std::shared_ptr<TablespaceRoot> TablespaceRootOf(
+  std::shared_ptr<TablespaceDirectory> TablespaceDirectoryOf(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
-  std::shared_ptr<DatabaseDirectory> MakeDatabaseDirectory(
-    duckdb::CatalogTransaction transaction, duckdb::idx_t oid,
-    duckdb::idx_t tablespace);
-  std::vector<std::shared_ptr<TablespaceRoot>> TablespaceRoots(
+  std::vector<std::string> TablespaceDirs(
     duckdb::CatalogTransaction transaction);
+  void LeaveUnattached(duckdb::idx_t database) { _unattached.insert(database); }
 
   auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
@@ -125,10 +123,11 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
-  bool HoldsTablespaceObjects(duckdb::CatalogTransaction transaction,
-                              TablespaceCatalogEntry& tablespace);
+  std::optional<duckdb::Identifier> UnattachedDatabase(
+    duckdb::CatalogTransaction transaction);
 
-  std::shared_ptr<TablespaceRoot> _default_root;
+  std::shared_ptr<TablespaceDirectory> _default_directory;
+  irs::containers::FlatHashSet<duckdb::idx_t> _unattached;
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;
@@ -142,31 +141,12 @@ ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf(duckdb::CatalogTransaction transaction);
 ClusterCatalog& ClusterOf();
 
-duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
-  duckdb::ClientContext& context, duckdb::CatalogType type,
-  std::string_view name);
-TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
-                                          std::string_view name);
-
-inline bool ReadDatabase(
-  std::string_view name,
-  absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {
+template<typename Entry>
+bool ReadEntry(std::string_view name, const auto& read) {
   auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+  return cluster.GetCatalogSet(Entry::Type)
     .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<DatabaseCatalogEntry>());
-               });
-}
-
-inline bool ReadRole(std::string_view name,
-                     absl::FunctionRef<void(const RoleCatalogEntry&)> read) {
-  auto& cluster = ClusterOf();
-  return cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
-               [&](duckdb::CatalogEntry& entry) {
-                 read(entry.Cast<RoleCatalogEntry>());
-               });
+               [&](duckdb::CatalogEntry& entry) { read(entry.Cast<Entry>()); });
 }
 
 }  // namespace sdb::catalog

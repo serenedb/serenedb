@@ -130,8 +130,8 @@ whales
 
 
 query
-SELECT (SELECT count(*) > 0 FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_a/engine_v1/*/*/*')) AS a_files,
-       (SELECT count(*) > 0 FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_b/engine_v1/*/*/*')) AS b_files;
+SELECT (SELECT count(*) > 0 FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_a/engine_v1/*/*/*/*')) AS a_files,
+       (SELECT count(*) > 0 FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_mixaz_b/engine_v1/*/*/*/*')) AS b_files;
 ----
 a_files	b_files
 t	t

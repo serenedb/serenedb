@@ -357,7 +357,7 @@ class Loader {
 std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
   std::string name;
   duckdb::idx_t oid = 0;
-  if (!catalog::ReadDatabase(
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
         irs::StaticStrings::kDefaultDatabase,
         [&](const catalog::DatabaseCatalogEntry& database) {
           name = database.name.GetIdentifierName();

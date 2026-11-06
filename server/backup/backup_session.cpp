@@ -34,6 +34,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -133,6 +134,18 @@ void Resume() noexcept {
   CheckpointGate().Open();
 }
 
+std::optional<duckdb::Identifier> UserTablespace() {
+  auto& cluster = catalog::ClusterOf();
+  std::optional<duckdb::Identifier> found;
+  cluster.GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .Scan(cluster.LoginTransaction(), [&](duckdb::CatalogEntry& entry) {
+      if (!found && !entry.internal) {
+        found = entry.name;
+      }
+    });
+  return found;
+}
+
 }  // namespace
 
 BackupSession& BackupSession::Instance() {
@@ -223,6 +236,13 @@ std::optional<StartedBackup> BackupSession::Begin(
   auto cut = RecordCut(backup_dir, pins, progress, cancelled);
   if (!cut) {
     return std::nullopt;
+  }
+  if (const auto tablespace = UserTablespace()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot start a backup: tablespace \"",
+                            tablespace->GetIdentifierName(),
+                            "\" keeps its files outside the data directory"),
+                    ERR_DETAIL("A backup copies only the data directory."));
   }
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();

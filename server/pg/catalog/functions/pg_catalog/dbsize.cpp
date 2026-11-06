@@ -427,12 +427,12 @@ int64_t TablespaceBytes(const Session& session,
   }
   duckdb::TaskScheduler::BlockingScope blocking;
   auto& cluster = catalog::ClusterOf(context);
-  const auto root =
-    tablespace.oid == kPgGlobalTablespace
-      ? cluster.TablespaceRootOf(cluster.GetCatalogTransaction(context),
-                                 kPgDefaultTablespace)
-      : tablespace.Root();
-  const auto size = catalog::StorageBytes(root->Path());
+  const auto size = catalog::StorageBytes(
+    (tablespace.oid == kPgGlobalTablespace
+       ? cluster.TablespaceDirectoryOf(cluster.GetCatalogTransaction(context),
+                                       kPgDefaultTablespace)
+       : tablespace.Directory())
+      ->Path());
   switch (tablespace.oid) {
     case kPgGlobalTablespace:
       return static_cast<int64_t>(size.files);
@@ -453,7 +453,11 @@ void TablespaceSizeFunction(duckdb::DataChunk& args,
       if constexpr (std::is_same_v<Key, duckdb::string_t>) {
         return TablespaceBytes(
           session,
-          catalog::RequireTablespace(*session.context, connector::AsView(key)));
+          catalog::ClusterOf(*session.context)
+            .GetEntry(*session.context, duckdb::CatalogType::TABLESPACE_ENTRY,
+                      duckdb::Identifier{connector::AsView(key)},
+                      duckdb::OnEntryNotFound::THROW_EXCEPTION)
+            ->template Cast<catalog::TablespaceCatalogEntry>());
       } else {
         auto& cluster = catalog::ClusterOf(*session.context);
         return TablespaceBytes(

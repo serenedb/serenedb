@@ -39,7 +39,7 @@ db error: ERROR: tablespace with OID 0 does not exist
 statement error
 SELECT pg_tablespace_size('missing_${__DATABASE__}');
 ----
-db error: ERROR: tablespace "<slt:ignore>" does not exist
+db error: ERROR: Tablespace with name <slt:ignore> does not exist!
 
 
 statement ok
@@ -112,4 +112,4 @@ DROP TABLESPACE cat_ts_${__DATABASE__};
 statement error
 SELECT pg_tablespace_size('cat_ts_${__DATABASE__}');
 ----
-db error: ERROR: tablespace "<slt:ignore>" does not exist
+db error: ERROR: Tablespace with name <slt:ignore> does not exist!

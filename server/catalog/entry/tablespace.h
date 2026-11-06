@@ -40,7 +40,7 @@ class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
 
   TablespaceCatalogEntry(duckdb::Catalog& catalog,
                          duckdb::CreateTablespaceInfo& info,
-                         std::shared_ptr<TablespaceRoot> root);
+                         std::shared_ptr<TablespaceDirectory> directory);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -50,11 +50,13 @@ class TablespaceCatalogEntry final : public duckdb::InCatalogEntry {
   void OnDrop() final;
 
   const std::string& Location() const noexcept { return _location; }
-  const std::shared_ptr<TablespaceRoot>& Root() const noexcept { return _root; }
+  const std::shared_ptr<TablespaceDirectory>& Directory() const noexcept {
+    return _directory;
+  }
 
  private:
   std::string _location;
-  std::shared_ptr<TablespaceRoot> _root;
+  std::shared_ptr<TablespaceDirectory> _directory;
 };
 
 }  // namespace sdb::catalog

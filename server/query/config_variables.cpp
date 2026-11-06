@@ -359,8 +359,9 @@ void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
   if (name.empty()) {
     return;
   }
-  if (!catalog::ClusterEntry(ctx, duckdb::CatalogType::TABLESPACE_ENTRY,
-                             name)) {
+  if (!catalog::ClusterOf(ctx).GetEntry(
+        ctx, duckdb::CatalogType::TABLESPACE_ENTRY, duckdb::Identifier{name},
+        duckdb::OnEntryNotFound::RETURN_NULL)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("invalid value for parameter "
                             "\"default_tablespace\": \"",

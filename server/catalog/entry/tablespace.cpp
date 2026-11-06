@@ -37,11 +37,11 @@ void RequireUnreservedTablespaceName(std::string_view name) {
 
 TablespaceCatalogEntry::TablespaceCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateTablespaceInfo& info,
-  std::shared_ptr<TablespaceRoot> root)
+  std::shared_ptr<TablespaceDirectory> directory)
   : duckdb::InCatalogEntry{duckdb::CatalogType::TABLESPACE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _location{info.location},
-    _root{std::move(root)} {
+    _directory{std::move(directory)} {
   internal = info.internal;
   comment = info.comment;
   tags = info.tags;
@@ -64,19 +64,20 @@ duckdb::unique_ptr<duckdb::CatalogEntry> TablespaceCatalogEntry::Copy(
   tablespace.oid = oid;
   tablespace.internal = internal;
   tablespace.permissions = permissions;
-  return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, tablespace, _root);
+  return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, tablespace,
+                                                   _directory);
 }
 
 void TablespaceCatalogEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
-    SDB_ASSERT(_root);
-    _root->MarkDropped();
+    SDB_ASSERT(_directory);
+    _directory->MarkDropped();
   }
 }
 
 void TablespaceCatalogEntry::OnDrop() {
-  SDB_ASSERT(_root);
-  _root->MarkDropped();
+  SDB_ASSERT(_directory);
+  _directory->MarkDropped();
 }
 
 }  // namespace sdb::catalog

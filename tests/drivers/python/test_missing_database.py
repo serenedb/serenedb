@@ -268,7 +268,7 @@ def test_skipped_database_keeps_its_tablespace(tmp_path: Path) -> None:
     for path in sorted(database.rglob("*"), reverse=True):
         path.rmdir() if path.is_dir() else path.unlink()
     database.rmdir()
-    stored = location / "engine_v1" / str(oid)
+    [stored] = (location / "engine_v1").glob(f"*/{oid}")
     files = sorted(stored.rglob("*"))
     assert any(path.is_file() for path in files), files
 
@@ -277,9 +277,19 @@ def test_skipped_database_keeps_its_tablespace(tmp_path: Path) -> None:
         assert skipped.wait_ready(), skipped.output()
         assert _databases(skipped) == ["lost", "postgres"]
         with skipped.connect() as conn:
-            with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState,
-                               match='tablespace "lost_space" is not empty'):
-                conn.execute("DROP TABLESPACE lost_space")
+            conn.execute(
+                f"CREATE TABLESPACE unused_space LOCATION '{location}'")
+            for tablespace in ("lost_space", "unused_space"):
+                with pytest.raises(
+                        psycopg.errors.ObjectNotInPrerequisiteState,
+                        match=f'tablespace "{tablespace}" cannot be dropped '
+                              'while database "lost" is not attached'):
+                    conn.execute(f"DROP TABLESPACE {tablespace}")
+        assert sorted(stored.rglob("*")) == files
+        with skipped.connect() as conn:
+            conn.execute("DROP DATABASE lost")
+            conn.execute("DROP TABLESPACE lost_space")
+            conn.execute("DROP TABLESPACE unused_space")
     finally:
         skipped.stop()
-    assert sorted(stored.rglob("*")) == files
+    assert not any((location / "engine_v1").iterdir())

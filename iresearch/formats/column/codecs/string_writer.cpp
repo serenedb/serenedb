@@ -20,9 +20,7 @@
 
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 
-#define ZDICT_STATIC_LINKING_ONLY
 #include <absl/algorithm/container.h>
-#include <zdict.h>
 
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
@@ -48,16 +46,6 @@
 namespace irs::codecs {
 namespace {
 
-constexpr ZDICT_fastCover_params_t kTrainParams{
-  .k = 256,
-  .d = 8,
-  .f = 20,
-  .nbThreads = 1,
-  .splitPoint = 1.0,
-  .accel = 4,
-  .zParams = {.compressionLevel = 3},
-};
-
 using duckdb::idx_t;
 using duckdb::string_t;
 using text::BlobEncoder;
@@ -77,7 +65,6 @@ constexpr double kLevelTolerance = 0.02;
 constexpr uint64_t kTuneMinEntries = 2;
 constexpr size_t kMaxRungs = 8;
 constexpr double kWideFramesGain = 0.03;
-constexpr double kUntrainedGain = 0.02;
 constexpr double kFsstPreference = 0.05;
 
 constexpr uint8_t kLz4Fast = 1;
@@ -194,10 +181,8 @@ class SegmentWriter {
     _end = cut->begin + cut->rows;
     _live.clear();
     _live.push_back(cut);
-    const auto tuned = _tuning.layout[Index(ByteCodec::Lz4)];
-    const auto layout = retune || tuned == FrameLayout::Dictionary
-                          ? FrameLayout::FirstFrame
-                          : tuned;
+    const auto layout =
+      retune ? FrameLayout::Dictionary : _tuning.layout[Index(ByteCodec::Lz4)];
     auto* dedup = Trial({
       .choice = {Shape::Dedup, ByteCodec::Lz4},
       .level = kLz4Fast,
@@ -312,9 +297,6 @@ class SegmentWriter {
         }
       };
       prefer(FrameLayout::Wide, kWideFramesGain);
-      if (Trainable(leaf) && _tuning.dictionary) {
-        prefer(FrameLayout::FirstFrame, kUntrainedGain);
-      }
       tuned_layout = layout;
     }
     tuned = ladder[rung];
@@ -382,16 +364,7 @@ class SegmentWriter {
       std::max<uint32_t>(_profile.max_len, static_cast<uint32_t>(sv.size()));
   }
 
-  FrameLayout Normalize(ByteCodec leaf, FrameLayout layout) const noexcept {
-    if (layout == FrameLayout::FirstFrame &&
-        (!_tuning.dictionary || !Trainable(leaf))) {
-      return FrameLayout::Dictionary;
-    }
-    return layout;
-  }
-
   uint64_t PriceOf(Config config) {
-    config.layout = Normalize(config.choice.leaf, config.layout);
     if (const auto* seg = Cached(config)) {
       return seg->Size();
     }
@@ -429,7 +402,6 @@ class SegmentWriter {
   }
 
   Segment* Trial(Config config) {
-    config.layout = Normalize(config.choice.leaf, config.layout);
     if (auto* seg = Cached(config)) {
       return seg;
     }
@@ -587,91 +559,6 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     }
     entries.emplace_back(sv);
   }
-}
-
-void DictionarySampler::Add(std::span<const std::string_view> entries) {
-  uint64_t total = 0;
-  for (const auto e : entries) {
-    total += e.size();
-  }
-  if (total < kSamplePieceBytes) {
-    return;
-  }
-  const uint64_t every = std::max<uint64_t>(1, total / kRowGroupSampleBytes);
-  uint64_t piece = 0;
-  size_t fill = 0;
-  for (auto e : entries) {
-    while (!e.empty()) {
-      const auto take = std::min(e.size(), kSamplePieceBytes - fill);
-      if (piece % every == 0) {
-        _samples.append(e.substr(0, take));
-      }
-      fill += take;
-      e.remove_prefix(take);
-      if (fill == kSamplePieceBytes) {
-        fill = 0;
-        ++piece;
-      }
-    }
-  }
-  if (fill != 0 && piece % every == 0) {
-    _samples.resize(_samples.size() - fill);
-  }
-}
-
-std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
-  if (!Ready()) {
-    return nullptr;
-  }
-  const std::vector<size_t> sizes(_samples.size() / kSamplePieceBytes,
-                                  kSamplePieceBytes);
-  size_t n = 0;
-  std::string dictionary;
-  dictionary.resize_and_overwrite(
-    kTrainedDictionaryBytes, [&](char* buf, size_t size) {
-      n = ZDICT_trainFromBuffer_fastCover(
-        buf, size, _samples.data(), sizes.data(),
-        static_cast<unsigned>(sizes.size()), kTrainParams);
-      return ZDICT_isError(n) ? 0 : n;
-    });
-  std::string{}.swap(_samples);
-  if (ZDICT_isError(n)) {
-    return nullptr;
-  }
-  return std::make_shared<const TrainedDictionary>(std::move(dictionary));
-}
-
-bool TrainsDictionary(const StringChoice* named,
-                      const ColCodecParams& params) noexcept {
-  if (params.tier == WriteTier::Flush) {
-    return false;
-  }
-  return !named || Trainable(named->leaf);
-}
-
-std::shared_ptr<const TrainedDictionary> TrainDictionary(
-  const StringAccumulator& acc, const StringChoice* named,
-  const ColCodecParams& params, StringTuning& tuning) {
-  if (tuning.sampling_done || !TrainsDictionary(named, params)) {
-    return nullptr;
-  }
-  if (!tuning.sampler.Ready()) {
-    tuning.sampler.Add(acc.entries);
-  }
-  if (!tuning.sampler.Ready()) {
-    return nullptr;
-  }
-  tuning.sampling_done = true;
-  return tuning.sampler.Train();
-}
-
-void Adopt(StringTuning& tuning,
-           std::shared_ptr<const TrainedDictionary> dictionary, uint16_t id) {
-  tuning.sampling_done = true;
-  tuning.dictionary_id = dictionary ? id : uint16_t{0};
-  tuning.dictionary = std::move(dictionary);
-  tuning.levels_tuned = false;
-  tuning.clock.Restart();
 }
 
 SealOutcome SealSegments(const StringAccumulator& acc,

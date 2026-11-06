@@ -35,7 +35,7 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -84,7 +84,7 @@ encoded bytes:
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |

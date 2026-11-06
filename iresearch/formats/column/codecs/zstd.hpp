@@ -28,9 +28,15 @@
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 
 namespace irs::codecs {
+
+struct ZstdFree {
+  void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
+  void operator()(ZSTD_DCtx* ctx) const noexcept { ZSTD_freeDCtx(ctx); }
+  void operator()(ZSTD_CDict* dict) const noexcept { ZSTD_freeCDict(dict); }
+  void operator()(ZSTD_DDict* dict) const noexcept { ZSTD_freeDDict(dict); }
+};
 
 struct Zstd {
   static constexpr ByteCodec kCodec = ByteCodec::Zstd;
@@ -45,7 +51,6 @@ struct Zstd {
   class Dictionary {
    public:
     Dictionary(uint8_t level, std::string_view bytes);
-    Dictionary(uint8_t level, const TrainedDictionary& dictionary);
 
     const ZSTD_CDict* Get() const noexcept { return _dictionary.get(); }
 
@@ -71,10 +76,6 @@ struct Zstd {
 
     bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
                     std::string_view dictionary = {});
-    bool Decompress(const char* src, size_t size, char* dst, size_t raw_size,
-                    const TrainedDictionary& dictionary) noexcept {
-      return Run(src, size, dst, raw_size, dictionary.ZstdDictionary());
-    }
 
     size_t DecompressPrefix(const char* src, size_t size, char* dst, size_t,
                             size_t raw_size, const auto& dictionary) {

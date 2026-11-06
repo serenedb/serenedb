@@ -43,7 +43,6 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 
 namespace irs::codecs::text {
@@ -101,9 +100,6 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                      ByteCodec codec);
 
 NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h);
-
-const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
-                                   const Header& header);
 
 struct EntryRange {
   uint32_t lo;

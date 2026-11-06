@@ -72,17 +72,6 @@ NumericHeader CodesHeader(duckdb::const_data_ptr_t base, const Header& h) {
   return codes;
 }
 
-const TrainedDictionary* TrainedOf(duckdb::ColumnSegment& segment,
-                                   const Header& header) {
-  if (header.flags != FrameDictionary::Trained) {
-    return nullptr;
-  }
-  const auto* dictionaries = CacheSlotOf(segment).dictionaries;
-  SDB_ENSURE(dictionaries && header.dictionary <= dictionaries->size(),
-             "col codec: missing trained dictionary ", header.dictionary);
-  return (*dictionaries)[header.dictionary - 1].get();
-}
-
 EntryRanges Normalize(EntryRanges ranges) {
   absl::c_sort(ranges);
   size_t kept = 0;
@@ -193,8 +182,6 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["frames"] = absl::StrCat(h.frame_count);
   if (h.flags == FrameDictionary::FirstFrame) {
     info["dictionary"] = "first_frame";
-  } else if (h.flags == FrameDictionary::Trained) {
-    info["dictionary"] = absl::StrCat("trained:", h.dictionary);
   }
   info["raw_bytes"] = absl::StrCat(h.raw_bytes);
   info["data_bytes"] = absl::StrCat(h.data_size);

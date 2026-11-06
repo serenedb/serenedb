@@ -35,7 +35,6 @@ namespace irs::codecs {
 enum class FrameDictionary : uint8_t {
   None = 0,
   FirstFrame = 1,
-  Trained = 2,
 };
 
 inline constexpr uint8_t kSegmentVersion = 1;
@@ -59,7 +58,7 @@ kDefaultColSegmentTarget encoded bytes:
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -80,8 +79,6 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   frame 0 is the dictionary of the later             |
 |   frames; or frames without a dictionary;            |
-|   or frames compressed with the column's             |
-|   trained dictionary, stored once per column;        |
 |   the leaf's file gives the frame sizes              |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
@@ -97,7 +94,7 @@ kDefaultColSegmentTarget encoded bytes:
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
 |   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags, trained dictionary id      |
+|   section offsets, flags                             |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -151,7 +148,7 @@ struct Header {
   uint32_t data_size = 0;
   uint8_t lcp_width = 0;
   FrameDictionary flags = FrameDictionary::None;
-  uint16_t dictionary = 0;
+  uint16_t reserved4 = 0;
   uint64_t raw_bytes = 0;
 
   static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size) {
@@ -167,9 +164,7 @@ struct Header {
         h.length_width <= 32 && h.lcp_width <= 32 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
-          h.codec != ByteCodec::Fsst) ||
-         (h.flags == FrameDictionary::Trained && Trainable(h.codec))) &&
-        (h.flags == FrameDictionary::Trained) == (h.dictionary != 0) &&
+          h.codec != ByteCodec::Fsst)) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&
         h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
@@ -210,7 +205,7 @@ static_assert(offsetof(Header, off_data) == 52);
 static_assert(offsetof(Header, data_size) == 56);
 static_assert(offsetof(Header, lcp_width) == 60);
 static_assert(offsetof(Header, flags) == 61);
-static_assert(offsetof(Header, dictionary) == 62);
+static_assert(offsetof(Header, reserved4) == 62);
 static_assert(offsetof(Header, raw_bytes) == 64);
 
 }  // namespace irs::codecs

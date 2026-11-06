@@ -53,7 +53,6 @@
 #include <iresearch/formats/column/codecs/string_layout.hpp>
 #include <iresearch/formats/column/codecs/string_scan.hpp>
 #include <iresearch/formats/column/codecs/string_writer.hpp>
-#include <iresearch/formats/column/codecs/trained_dictionary.hpp>
 #include <iresearch/formats/column/codecs/zstd.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
@@ -1868,58 +1867,6 @@ TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
   }
 }
 
-TEST_F(ColCodecsTest, MappedTrainedDictionariesStayInTheirFile) {
-  constexpr uint64_t kRows = 120000;
-  const auto path = test_dir() / "col_codecs_mmap_trained";
-  std::filesystem::create_directories(path);
-  std::shared_ptr<const irs::codecs::TrainedDictionary> kept;
-  std::string expected;
-  {
-    irs::MMapDirectory dir{path};
-    {
-      irs::ColWriter w{dir, std::string{kSeg}, Db(), irs::WriteTier::Merge};
-      auto& cw = w.OpenColumn(
-        kField, duckdb::LogicalType::VARCHAR,
-        {.row_group_size = 16384,
-         .compression = duckdb::CompressionType::COMPRESSION_DICT_LZ4,
-         .codec_params = {.compression_level = 3}});
-      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
-        const auto take =
-          std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
-        duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
-        auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
-        for (duckdb::idx_t k = 0; k < take; ++k) {
-          const auto g = pos + k;
-          ds[k] = duckdb::StringVector::AddString(
-            vs,
-            absl::StrCat("https://shop", g % 997, ".example.org/catalog/",
-                         (g * 7919) % 100003, "/item?id=", g, "&ref=", g % 13));
-        }
-        duckdb::FlatVector::SetSize(vs, take);
-        cw.Append(vs, take);
-      }
-      ASSERT_TRUE(w.Commit(0));
-    }
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    ASSERT_FALSE(col->DictionaryMetas().empty());
-    irs::ReadContext ctx{r};
-    const auto* dictionaries = col->Dictionaries(ctx);
-    ASSERT_NE(dictionaries, nullptr);
-    ASSERT_EQ(col->DictionaryMetas().size(), dictionaries->size());
-    for (size_t i = 0; i != dictionaries->size(); ++i) {
-      const auto& meta = col->DictionaryMetas()[i];
-      EXPECT_EQ(reinterpret_cast<const char*>(
-                  ctx.TryReadStable(meta.file_offset, meta.byte_size)),
-                (*dictionaries)[i]->Bytes().data());
-    }
-    kept = dictionaries->front();
-    expected = std::string{kept->Bytes()};
-  }
-  EXPECT_EQ(expected, kept->Bytes());
-}
-
 TEST_F(ColCodecsTest, MappedFileNumericCodecs) {
   const auto path = test_dir() / "col_codecs_mmap_numeric";
   std::filesystem::create_directories(path);
@@ -2634,10 +2581,6 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
     for (const auto& c : in) {
       acc.Add(*c);
     }
-    if (auto dictionary = irs::codecs::TrainDictionary(
-          acc, nullptr, irs::ColCodecParams{}, tuning)) {
-      irs::codecs::Adopt(tuning, std::move(dictionary), 1);
-    }
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -2659,12 +2602,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   expected.resize(3, 2);
   expected.resize(7, 4);
   expected.resize(15, 8);
-  expected.resize(24, 16);
-  expected.resize(26, 2);
-  expected.resize(30, 4);
-  expected.resize(32, 8);
+  expected.resize(32, 16);
   EXPECT_EQ(gaps, expected);
-  EXPECT_TRUE(tuning.dictionary);
   ASSERT_TRUE(tuning.choice.has_value());
   EXPECT_EQ(tuning.choice->shape, Shape::Plain);
 
@@ -2772,49 +2711,20 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
     irs::MemoryDirectory dir{};
     {
       irs::ColWriter w{dir, kSeg, Db(), tier};
-      auto& cw = w.OpenColumn(
-        kField, duckdb::LogicalType::VARCHAR,
-        {.row_group_size = 16384,
-         .compression = duckdb::CompressionType::COMPRESSION_DICT_LZ4,
-         .codec_params = {.compression_level = 3,
-                          .tier = irs::WriteTier::Merge}});
+      auto& cw =
+        w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
+                     {.row_group_size = 16384,
+                      .compression = duckdb::CompressionType::COMPRESSION_AUTO,
+                      .codec_params = {.tier = irs::WriteTier::Merge}});
       AppendValues(cw, 120000, value);
+      ASSERT_TRUE(cw.Meta().write_string_tuning);
+      const auto& zxc =
+        cw.Meta().write_string_tuning->history[static_cast<size_t>(
+          irs::codecs::ByteCodec::Zxc)];
+      EXPECT_EQ(tier == irs::WriteTier::Merge, zxc[0].raw + zxc[1].raw != 0);
       ASSERT_TRUE(w.Commit(0));
     }
-    const auto dictionaries = SegmentInfo(dir, "dictionary");
-    EXPECT_EQ(
-      tier == irs::WriteTier::Merge,
-      std::ranges::find(dictionaries, "trained:1") != dictionaries.end())
-      << ::testing::PrintToString(dictionaries);
-  }
-}
-
-TEST_F(ColCodecsTest, LargeColumnsTrainADictionary) {
-  using duckdb::CompressionType;
-  constexpr uint64_t kRows = 120000;
-  constexpr uint32_t kRowGroup = 16384;
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
-    if (g % 211 == 0) {
-      return std::nullopt;
-    }
-    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-           std::to_string((g * 7919) % 100003) +
-           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
-  };
-  for (const auto codec :
-       {CompressionType::COMPRESSION_DICT_LZ4, CompressionType::COMPRESSION_LZ4,
-        CompressionType::COMPRESSION_DICT_ZSTD,
-        CompressionType::COMPRESSION_COL_ZSTD}) {
-    SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
-    irs::MemoryDirectory dir{};
-    Write(dir, codec, {.compression_level = 3}, kRows, kRowGroup, value);
-    const auto dictionaries = SegmentInfo(dir, "dictionary");
-    EXPECT_NE(std::ranges::find(dictionaries, "trained:1"), dictionaries.end())
-      << ::testing::PrintToString(dictionaries);
-    EXPECT_NE(std::ranges::find(dictionaries, "trained:1"),
-              dictionaries.begin())
-      << ::testing::PrintToString(dictionaries);
-    Verify(dir, codec, kRows, value);
+    Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, 120000, value);
   }
 }
 
@@ -2831,9 +2741,6 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
   irs::MemoryDirectory dir{};
   Write(dir, duckdb::CompressionType::COMPRESSION_AUTO,
         {.tier = irs::WriteTier::Flush}, kRows, 8192, value);
-  for (const auto& d : SegmentInfo(dir, "dictionary")) {
-    EXPECT_FALSE(d.starts_with("trained")) << d;
-  }
   const auto codecs = SegmentInfo(dir, "codec");
   const auto levels = SegmentInfo(dir, "level");
   ASSERT_EQ(codecs.size(), levels.size());
@@ -2843,31 +2750,6 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
       EXPECT_EQ(levels[i], "1");
     }
   }
-  Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
-}
-
-TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
-  constexpr uint64_t kRows = 60000;
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
-    static constexpr std::string_view kVerbs[] = {
-      "handled request", "rejected payment", "retried connection",
-      "flushed cache",   "opened session",   "closed stream",
-      "queued job",      "scheduled task"};
-    static constexpr std::string_view kServices[] = {
-      "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
-    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
-    return "2026-10-05T12:" + std::to_string(rng() % 60) + " INFO " +
-           std::string{kServices[rng() % std::size(kServices)]} + " " +
-           std::string{kVerbs[rng() % std::size(kVerbs)]} +
-           " id=" + Pseudo(rng(), 16) +
-           " user=" + std::to_string(rng() % 100000) + " took " +
-           std::to_string(rng() % 997) + "ms";
-  };
-  irs::MemoryDirectory dir{};
-  Write(dir, duckdb::CompressionType::COMPRESSION_AUTO, {}, kRows, 8192, value);
-  const auto dictionaries = SegmentInfo(dir, "dictionary");
-  EXPECT_NE(std::ranges::find(dictionaries, "trained:1"), dictionaries.end())
-    << ::testing::PrintToString(dictionaries);
   Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
 }
 

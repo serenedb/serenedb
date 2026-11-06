@@ -347,21 +347,16 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
       parts[5] += at(52) - at(44);
       parts[6] += at(56);
     }
-    uint64_t dictionaries = 0;
-    for (const auto& d : cw.Meta().dictionaries) {
-      dictionaries += d.byte_size;
-    }
     std::fprintf(stderr,
                  "breakdown %s header %llu frames %llu lengths %llu lcps %llu "
-                 "codes %llu symtab %llu data %llu trained %llu\n",
+                 "codes %llu symtab %llu data %llu\n",
                  arm.name, static_cast<unsigned long long>(parts[0]),
                  static_cast<unsigned long long>(parts[1]),
                  static_cast<unsigned long long>(parts[2]),
                  static_cast<unsigned long long>(parts[3]),
                  static_cast<unsigned long long>(parts[4]),
                  static_cast<unsigned long long>(parts[5]),
-                 static_cast<unsigned long long>(parts[6]),
-                 static_cast<unsigned long long>(dictionaries));
+                 static_cast<unsigned long long>(parts[6]));
   }
   if (std::getenv("SDB_BENCH_HASH")) {
     auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
@@ -377,7 +372,6 @@ Built ColBuild(irs::Directory& dir, const ColArm& arm) {
     };
     mix(cw.Meta().data);
     mix(cw.Meta().validity);
-    mix(cw.Meta().dictionaries);
     std::fprintf(stderr, "hash %s %016llx\n", arm.name,
                  static_cast<unsigned long long>(hash));
   }

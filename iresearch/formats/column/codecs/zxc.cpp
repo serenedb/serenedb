@@ -34,7 +34,7 @@
 /*
 zxc frames in Data (string_layout.hpp draws the segments): frame 0 holds up
 to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or
-64 KiB frames without a dictionary. zxc takes no trained dictionary.
+64 KiB frames without a dictionary.
 */
 
 namespace irs::codecs {

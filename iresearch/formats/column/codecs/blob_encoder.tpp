@@ -34,7 +34,6 @@
 #include "iresearch/formats/column/codecs/segment_builder.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 
 namespace irs::codecs::text {
 
@@ -88,7 +87,6 @@ class BlobEncoder {
       .frames = _frames,
       .max_length = rows.MaxLen(),
       .flags = Flags(),
-      .dictionary = Trained() ? _tuning.dictionary_id : uint16_t{0},
     };
   }
 
@@ -183,20 +181,8 @@ class BlobEncoder {
     _active = nullptr;
     _first.reset();
     if (!_codec || _level != level) {
-      _trained.reset();
       _codec.emplace(level);
       _level = level;
-    }
-    if constexpr (Trainable(kCodec)) {
-      if (layout == FrameLayout::Dictionary && _tuning.dictionary) {
-        const auto& trained = *_tuning.dictionary;
-        if (!_trained || _trained_id != trained.Id()) {
-          _trained.emplace(level, trained);
-          _trained_id = trained.Id();
-        }
-        _active = &*_trained;
-        return {kTrainedFrameBytes, 0};
-      }
     }
     if (layout == FrameLayout::Wide) {
       return {kFrameRawBytes, 0};
@@ -204,12 +190,7 @@ class BlobEncoder {
     return DictionaryShape();
   }
 
-  bool Trained() const noexcept { return _trained && _active == &*_trained; }
-
   FrameDictionary Flags() const noexcept {
-    if (Trained()) {
-      return FrameDictionary::Trained;
-    }
     return !_dictionary.empty() && _frames.size() > 1
              ? FrameDictionary::FirstFrame
              : FrameDictionary::None;
@@ -283,11 +264,9 @@ class BlobEncoder {
   const StringTuning& _tuning;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
-  std::optional<typename Codec::Dictionary> _trained;
   std::optional<typename Codec::Dictionary> _first;
   const typename Codec::Dictionary* _active = nullptr;
   uint8_t _level = 0;
-  uint64_t _trained_id = 0;
   Shape _shape = Shape::Dedup;
   FrameShape _layout{kFrameRawBytes, 0};
   std::string _frame;

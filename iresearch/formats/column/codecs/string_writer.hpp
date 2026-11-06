@@ -22,7 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -30,13 +29,11 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -58,22 +55,6 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
 enum class FrameLayout : uint8_t {
   Dictionary = 0,
   Wide = 1,
-  FirstFrame = 2,
-};
-
-inline constexpr size_t kTrainedDictionaryBytes = 64 * 1024;
-inline constexpr size_t kSamplePieceBytes = 4 * 1024;
-inline constexpr size_t kRowGroupSampleBytes = 1024 * 1024;
-inline constexpr size_t kTrainSampleBytes = 4 * 1024 * 1024;
-
-class DictionarySampler {
- public:
-  void Add(std::span<const std::string_view> entries);
-  bool Ready() const noexcept { return _samples.size() >= kTrainSampleBytes; }
-  std::shared_ptr<const TrainedDictionary> Train();
-
- private:
-  std::string _samples;
 };
 
 struct StringTuning {
@@ -85,10 +66,6 @@ struct StringTuning {
   uint8_t level[kByteCodecCount]{};
   FrameLayout layout[kByteCodecCount]{};
   RatioHistory history[kByteCodecCount][2]{};
-  DictionarySampler sampler;
-  bool sampling_done = false;
-  std::shared_ptr<const TrainedDictionary> dictionary;
-  uint16_t dictionary_id = 0;
   NumericTuning codes;
 };
 
@@ -118,16 +95,6 @@ class StringAccumulator {
 using SegmentSink = absl::FunctionRef<void(
   StringChoice choice, duckdb::BaseStatistics stats, uint64_t rows,
   std::span<const std::string_view> parts)>;
-
-bool TrainsDictionary(const StringChoice* named,
-                      const ColCodecParams& params) noexcept;
-
-std::shared_ptr<const TrainedDictionary> TrainDictionary(
-  const StringAccumulator& acc, const StringChoice* named,
-  const ColCodecParams& params, StringTuning& tuning);
-
-void Adopt(StringTuning& tuning,
-           std::shared_ptr<const TrainedDictionary> dictionary, uint16_t id);
 
 SealOutcome SealSegments(const StringAccumulator& acc,
                          const StringChoice* named,

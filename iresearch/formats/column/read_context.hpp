@@ -31,7 +31,6 @@
 #include <string>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -75,7 +74,6 @@ class ReadContext final : public BlockManager,
     uint64_t file_offset = 0;
     std::atomic<bool>* touched = nullptr;
     duckdb::ObjectCache* cache = nullptr;
-    const codecs::TrainedDictionaries* dictionaries = nullptr;
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,

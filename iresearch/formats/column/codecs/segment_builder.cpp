@@ -122,7 +122,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     .lcp_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
     .flags = frames.flags,
-    .dictionary = frames.dictionary,
     .raw_bytes = _raw,
   };
   const auto codes =

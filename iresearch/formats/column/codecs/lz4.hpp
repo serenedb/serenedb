@@ -29,7 +29,6 @@
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
-#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 
 namespace irs::codecs {
 
@@ -50,8 +49,6 @@ struct Lz4 {
   class Dictionary {
    public:
     Dictionary(uint8_t level, std::string_view bytes);
-    Dictionary(uint8_t level, const TrainedDictionary& dictionary)
-      : Dictionary{level, dictionary.Bytes()} {}
 
     const LZ4_stream_t* Stream() const noexcept { return _stream.get(); }
 
@@ -90,8 +87,6 @@ struct Lz4Hc {
   class Dictionary {
    public:
     Dictionary(uint8_t level, std::string_view bytes);
-    Dictionary(uint8_t level, const TrainedDictionary& dictionary)
-      : Dictionary{level, dictionary.Bytes()} {}
 
     const LZ4_streamHC_t* Stream() const noexcept { return _stream.get(); }
 

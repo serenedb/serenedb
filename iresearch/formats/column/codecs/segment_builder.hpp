@@ -129,7 +129,6 @@ struct EncodedFrames {
   uint32_t max_lcp = 0;
   std::string_view symtab;
   FrameDictionary flags = FrameDictionary::None;
-  uint16_t dictionary = 0;
 };
 
 class SegmentBuilder {

@@ -39,8 +39,7 @@
 /*
 lz4 frames in Data (string_layout.hpp draws the segments): frame 0 holds up
 to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or
-64 KiB frames without a dictionary; or 16 KiB frames compressed with the
-column's trained dictionary, stored once per column.
+64 KiB frames without a dictionary.
 */
 
 namespace irs::codecs {

@@ -162,32 +162,29 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                                                std::move(fields));
 }
 
-void CollectLeafPhysicalTypes(const duckdb::LogicalType& type,
-                              duckdb::vector<duckdb::PhysicalType>& leaves) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::ARRAY:
-      return CollectLeafPhysicalTypes(duckdb::ArrayType::GetChildType(type),
-                                      leaves);
-    case duckdb::LogicalTypeId::LIST:
-    case duckdb::LogicalTypeId::MAP:
-      return CollectLeafPhysicalTypes(duckdb::ListType::GetChildType(type),
-                                      leaves);
-    case duckdb::LogicalTypeId::STRUCT:
-      for (const auto& field : duckdb::StructType::GetChildTypes(type)) {
-        CollectLeafPhysicalTypes(field.second, leaves);
-      }
-      return;
-    default:
-      if (!absl::c_linear_search(leaves, type.InternalType())) {
-        leaves.emplace_back(type.InternalType());
-      }
-  }
-}
-
 duckdb::vector<duckdb::PhysicalType> LeafPhysicalTypes(
   const duckdb::LogicalType& type) {
   duckdb::vector<duckdb::PhysicalType> leaves;
-  CollectLeafPhysicalTypes(type, leaves);
+  const auto collect = [&](this const auto& self,
+                           const duckdb::LogicalType& t) -> void {
+    switch (t.id()) {
+      case duckdb::LogicalTypeId::ARRAY:
+        return self(duckdb::ArrayType::GetChildType(t));
+      case duckdb::LogicalTypeId::LIST:
+      case duckdb::LogicalTypeId::MAP:
+        return self(duckdb::ListType::GetChildType(t));
+      case duckdb::LogicalTypeId::STRUCT:
+        for (const auto& field : duckdb::StructType::GetChildTypes(t)) {
+          self(field.second);
+        }
+        return;
+      default:
+        if (!absl::c_linear_search(leaves, t.InternalType())) {
+          leaves.emplace_back(t.InternalType());
+        }
+    }
+  };
+  collect(type);
   return leaves;
 }
 

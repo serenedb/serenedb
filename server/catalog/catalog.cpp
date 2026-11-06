@@ -207,8 +207,9 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
-  info.tablespace_oid =
-    auth::UseTablespace(context, *tablespace, info.dependencies);
+  auth::RequireTablespaceCreate(context, *tablespace);
+  info.dependencies.AddDependency(*tablespace);
+  info.tablespace_oid = tablespace->oid;
 }
 
 duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(

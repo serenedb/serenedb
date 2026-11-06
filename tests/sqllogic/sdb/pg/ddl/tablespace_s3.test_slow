@@ -47,7 +47,7 @@ t
 statement error
 CREATE TABLESPACE again_${__DATABASE__} LOCATION 's3://${MINIO_BUCKET}/${__DATABASE__}_ts/engine_v1/inside';
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+db error: ERROR: tablespace location "s3://<slt:ignore>_ts/engine_v1/inside" is inside the files of a tablespace
 
 
 statement ok

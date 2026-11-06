@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/dependency_list.hpp>
 #include <string_view>
 
 namespace duckdb {
@@ -46,8 +45,7 @@ void RequireSuperuser(duckdb::ClientContext& context,
 
 bool Unowned(const duckdb::CatalogEntry& entry);
 
-duckdb::idx_t UseTablespace(duckdb::ClientContext& context,
-                            duckdb::CatalogEntry& tablespace,
-                            duckdb::LogicalDependencyList& dependencies);
+void RequireTablespaceCreate(duckdb::ClientContext& context,
+                             const duckdb::CatalogEntry& tablespace);
 
 }  // namespace sdb::auth

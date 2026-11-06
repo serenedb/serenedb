@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -73,35 +72,35 @@ namespace {
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
 
-std::string NormalizeLocation(const std::string& location) {
+std::string NormalizeLocation(std::string_view location) {
   const auto parsed = duckdb::Path::FromString(location);
-  std::string result;
   if (parsed.IsRemote()) {
-    result = parsed.ToString();
-    if (result.starts_with(duckdb::MemoryFileSystem::PREFIX)) {
+    if (parsed.GetScheme() == duckdb::MemoryFileSystem::PREFIX) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
         ERR_MSG("tablespace location cannot be in memory"),
         ERR_DETAIL("Files under ", duckdb::MemoryFileSystem::PREFIX,
                    " are lost when the server stops."));
     }
-  } else {
-    const std::filesystem::path path{location};
-    if (!path.is_absolute()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                      ERR_MSG("tablespace location must be an absolute path"));
+    if (!parsed.HasAuthority()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+        ERR_MSG("tablespace location must name a bucket or container"));
     }
-    result = path.lexically_normal().string();
+  } else if (!location.starts_with('/')) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    ERR_MSG("tablespace location must be an absolute path"));
   }
-  while (result.size() > 1 && result.back() == '/') {
+  auto result = parsed.ToString();
+  if (result.size() > 1 && result.back() == '/') {
     result.pop_back();
   }
+  if (absl::c_linear_search(parsed.GetPathSegments(), kEngineDir)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
+                    ERR_MSG("tablespace location \"", result,
+                            "\" is inside the files of a tablespace"));
+  }
   return result;
-}
-
-bool Nested(std::string_view outer, std::string_view inner) {
-  return inner.starts_with(outer) &&
-         (inner.size() == outer.size() || inner[outer.size()] == '/');
 }
 
 class BuiltinTablespaces final : public duckdb::DefaultGenerator {
@@ -238,7 +237,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
   std::optional<duckdb::Identifier> overlapping;
   tablespaces.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
     const auto& other = entry.Cast<TablespaceCatalogEntry>().Root();
-    if (other && (Nested(other->Path(), root) || Nested(root, other->Path()))) {
+    if (other && other->Path() == root) {
       overlapping = entry.name;
     }
   });
@@ -247,11 +246,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
                     ERR_MSG("tablespace location \"", info.location,
                             "\" overlaps tablespace \"",
                             overlapping->GetIdentifierName(), "\""));
-  }
-  if (absl::c_linear_search(absl::StrSplit(info.location, '/'), kEngineDir)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_OBJECT_DEFINITION),
-                    ERR_MSG("tablespace location \"", info.location,
-                            "\" is inside the files of a tablespace"));
   }
   auto entry = MakeTablespaceEntry(info);
   const auto claimed = entry->Cast<TablespaceCatalogEntry>().Root();

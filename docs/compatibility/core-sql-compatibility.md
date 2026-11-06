@@ -823,9 +823,9 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_sequence_parameters             | Yes           | Also `pg_get_sequence_data`. `data_type` is always `bigint` |
 | pg_options_to_table                | Yes           |  |
 | pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
-| pg_tablespace_location             | Yes           | Always an empty string |
-| pg_tablespace_size                 | Yes           | `pg_default` holds every database and `pg_global` the catalog that all databases share |
-| pg_tablespace_databases            | Yes           | `pg_default` lists every database |
+| pg_tablespace_location             | Yes           | The location in normal form; an empty string for `pg_default` and `pg_global`, and `NULL` for an OID that is not a tablespace |
+| pg_tablespace_size                 | Yes           | `pg_default` counts the databases' files in the data directory and `pg_global` the catalog that all databases share |
+| pg_tablespace_databases            | Yes           | Lists the databases with files in the tablespace |
 | pg_size_bytes                      | Yes           |  |
 | pg_column_size                     | Partial       | Counts a value as it is held in memory: a value read from a table counts as a computed one, so a short string takes 4 bytes more than its length. A whole row, as in `pg_column_size(t)`, counts as in PostgreSQL |
 | pg_column_compression              | Yes           | Always `NULL`, as is `pg_column_toast_chunk_id`: values are not compressed or stored out of line one by one |
@@ -833,7 +833,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | acldefault                         | Yes           | Also `aclexplode` |
 | makeaclitem                        | Yes           |  |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
-| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` |
 | has_parameter_privilege            | Yes           | `true` for superusers and `false` for other roles: privileges on settings cannot be granted |
 | has_largeobject_privilege          | Yes           | Always `NULL`: there are no large objects |
 | pg_settings_get_flags              | Partial       | An empty array for every setting, `NULL` for an unknown name |

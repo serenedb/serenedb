@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -108,7 +109,9 @@ duckdb::idx_t PlaceDatabase(duckdb::ClientContext& context,
   if (tablespace.oid == pg::kPgDefaultTablespace) {
     return 0;
   }
-  return auth::UseTablespace(context, tablespace, dependencies);
+  auth::RequireTablespaceCreate(context, tablespace);
+  dependencies.AddDependency(tablespace);
+  return tablespace.oid;
 }
 
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(

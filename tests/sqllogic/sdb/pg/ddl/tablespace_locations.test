@@ -27,6 +27,36 @@ db error: ERROR: tablespace location cannot be in memory
 DETAIL: Files under memory:// are lost when the server stops.
 
 
+statement error
+CREATE TABLESPACE loc_no_bucket_${__DATABASE__} LOCATION 's3://';
+----
+db error: ERROR: tablespace location must name a bucket or container
+
+
+statement error
+CREATE TABLESPACE loc_no_container_${__DATABASE__} LOCATION 'az:///prefix';
+----
+db error: ERROR: tablespace location must name a bucket or container
+
+
+statement error
+CREATE TABLESPACE loc_file_url_${__DATABASE__} LOCATION 'file://${__TEST_DIR__}/file_url';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE loc_file_scheme_${__DATABASE__} LOCATION 'file:${__TEST_DIR__}/file_scheme';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
+statement error
+CREATE TABLESPACE loc_backslash_root_${__DATABASE__} LOCATION '\backslash\root';
+----
+db error: ERROR: tablespace location must be an absolute path
+
+
 statement ok
 CREATE TABLESPACE loc_norm_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc//base/./skip/..///';
 
@@ -46,13 +76,37 @@ db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ig
 statement error
 CREATE TABLESPACE loc_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc/base/x/../engine_v1/deeper';
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+db error: ERROR: tablespace location "<slt:ignore>/loc/base/engine_v1/deeper" is inside the files of a tablespace
 
 
 statement error
 CREATE TABLESPACE loc_files_${__DATABASE__} LOCATION '${__TEST_DIR__}/loc_files/engine_v1/deeper';
 ----
 db error: ERROR: tablespace location "<slt:ignore>" is inside the files of a tablespace
+
+
+statement ok
+CREATE TABLESPACE loc_backslash_${__DATABASE__} LOCATION '${__TEST_DIR__}/backslash\sub';
+
+query
+SELECT pg_tablespace_location(oid) = '${__TEST_DIR__}/backslash/sub' AS normalized
+FROM pg_tablespace WHERE spcname = 'loc_backslash_${__DATABASE__}';
+----
+normalized
+t
+
+statement error
+CREATE TABLESPACE loc_backslash_inside_${__DATABASE__} LOCATION '${__TEST_DIR__}/backslash/sub/engine_v1\deeper';
+----
+db error: ERROR: tablespace location "<slt:ignore>/backslash/sub/engine_v1/deeper" is inside the files of a tablespace
+
+
+system ok
+cd $__TEST_DIR__/backslash && find . | sort
+----
+.
+./sub
+./sub/engine_v1
 
 
 statement ok
@@ -153,6 +207,21 @@ rmdir $__TEST_DIR__/stray/engine_v1
 statement ok
 CREATE TABLESPACE loc_stray_${__DATABASE__} LOCATION '${__TEST_DIR__}/stray';
 
+statement ok
+CREATE TABLESPACE loc_lost_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
+
+system ok
+rmdir $__TEST_DIR__/lost/engine_v1
+
+statement error
+CREATE TABLESPACE loc_lost_again_${__DATABASE__} LOCATION '${__TEST_DIR__}/lost';
+----
+db error: ERROR: tablespace location "<slt:ignore>/lost" overlaps tablespace "loc_lost_<slt:ignore>"
+
+
+statement ok
+DROP TABLESPACE loc_lost_${__DATABASE__};
+
 statement error
 CREATE TABLESPACE pg_ LOCATION '${__TEST_DIR__}/names/pg';
 ----
@@ -245,6 +314,9 @@ DROP TABLESPACE "quote""inside_${__DATABASE__}";
 
 statement ok
 DROP TABLESPACE loc_stray_${__DATABASE__};
+
+statement ok
+DROP TABLESPACE loc_backslash_${__DATABASE__};
 
 statement ok
 DROP TABLESPACE loc_ab_${__DATABASE__};

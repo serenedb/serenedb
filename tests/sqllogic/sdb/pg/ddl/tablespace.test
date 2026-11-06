@@ -59,7 +59,7 @@ db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ig
 statement error
 CREATE TABLESPACE other_${__DATABASE__} LOCATION '${__TEST_DIR__}/ts/engine_v1/inside';
 ----
-db error: ERROR: tablespace location "<slt:ignore>" overlaps tablespace "<slt:ignore>"
+db error: ERROR: tablespace location "<slt:ignore>/ts/engine_v1/inside" is inside the files of a tablespace
 
 
 statement ok

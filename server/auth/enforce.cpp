@@ -1805,16 +1805,13 @@ bool Unowned(const duckdb::CatalogEntry& entry) {
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
-duckdb::idx_t UseTablespace(duckdb::ClientContext& context,
-                            duckdb::CatalogEntry& tablespace,
-                            duckdb::LogicalDependencyList& dependencies) {
+void RequireTablespaceCreate(duckdb::ClientContext& context,
+                             const duckdb::CatalogEntry& tablespace) {
   if (const auto closure = SessionClosure(context);
       closure &&
       !closure->Can(tablespace.type, tablespace.permissions, AclMode::Create)) {
     Denied(tablespace);
   }
-  dependencies.AddDependency(tablespace);
-  return tablespace.oid;
 }
 
 }  // namespace sdb::auth

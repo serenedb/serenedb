@@ -43,7 +43,7 @@ Only a superuser can create a tablespace. `CREATE TABLESPACE` cannot run inside 
 
 ## Locations
 
-A location is kept in normal form, with repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix`. A tablespace keeps its files under `engine_v1` at its location. A local directory is created when it does not exist. A location that another tablespace uses, or that lies inside another tablespace's `engine_v1` or the data directory's `engine_v1`, is refused, and so is any location with an `engine_v1` directory in its path, and a location whose `engine_v1` exists already:
+A location is kept in normal form, with backslashes read as slashes, repeated and trailing slashes dropped and `.` and `..` resolved: `LOCATION 's3://bucket//prefix/'` is `s3://bucket/prefix` and `LOCATION '/mnt/nvme\serenedb/'` is `/mnt/nvme/serenedb`. A tablespace keeps its files under `engine_v1` at its location. A local directory is created when it does not exist. A location that another tablespace uses, or that lies inside another tablespace's `engine_v1` or the data directory's `engine_v1`, is refused, and so is any location with an `engine_v1` directory in its path, and a location whose `engine_v1` exists already:
 
 ```text
 ERROR:  directory "/mnt/nvme/serenedb/engine_v1" already in use as a tablespace
@@ -57,6 +57,12 @@ A `memory://` location is refused, since files there are lost when the server st
 ```text
 ERROR:  tablespace location cannot be in memory
 DETAIL:  Files under memory:// are lost when the server stops.
+```
+
+An object store URL has to name a bucket or a container:
+
+```text
+ERROR:  tablespace location must name a bucket or container
 ```
 
 The server reaches an object store location with the credentials of a persistent secret whose scope covers its normal form:

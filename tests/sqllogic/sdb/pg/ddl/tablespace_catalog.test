@@ -82,6 +82,14 @@ SELECT tablename, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM
 tablename	tablespace
 cat_docs	cat_ts
 
+query
+SELECT d.datname = current_database() AS listed
+FROM pg_tablespace_databases((SELECT oid FROM pg_tablespace WHERE spcname = 'cat_ts_${__DATABASE__}')) AS t(o)
+JOIN pg_database AS d ON d.oid = t.o;
+----
+listed
+t
+
 statement ok
 DROP TABLE cat_docs;
 
@@ -89,6 +97,13 @@ query ok retry 240 backoff 250ms
 SELECT pg_tablespace_size('cat_ts_${__DATABASE__}') AS after_drop;
 ----
 after_drop
+0
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS databases
+FROM pg_tablespace_databases((SELECT oid FROM pg_tablespace WHERE spcname = 'cat_ts_${__DATABASE__}'));
+----
+databases
 0
 
 statement ok

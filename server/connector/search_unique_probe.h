@@ -20,23 +20,37 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <span>
 #include <vector>
 
-#include "connector/search_key_unique.h"
+#include "connector/key_terms.h"
 
 namespace sdb::connector {
 
-// What a transaction has removed that no reader shows yet: the documents it
-// recorded against the reader it holds, and the rows it removed by key. A
-// removal reaches a reader only with the publish that applies it, so a probe
-// blind to these would answer for rows its own caller has already deleted.
+// Feeds `visit` every document of `field` holding `term` that is still live:
+// neither the segment's own mask nor `deleted` -- the removals no reader shows
+// yet -- has taken it. Stops where `visit` returns false.
+void ForEachLiveDoc(const irs::TermReader& field, irs::bytes_view term,
+                    const irs::DocumentMask::Iterator& mask,
+                    const irs::DocumentMaskBuilder* deleted,
+                    absl::FunctionRef<bool(irs::doc_id_t)> visit);
+
+// What has been removed that no reader shows yet: the documents recorded
+// against the reader this probe holds, and the rows removed by key. A removal
+// reaches a reader only with the publish that applies it, so a probe blind to
+// these would answer for rows that are already deleted -- whether by a
+// committed transaction whose publish is still pending, or by the very
+// transaction being certified, which deletes a row and writes it back under
+// the same key every time it updates one.
 struct PendingRemovals {
-  const irs::DocRemoval* docs = nullptr;
+  std::span<const irs::DocRemoval* const> docs;
   // Sorted, as `irs::RemoveKeys` requires.
   std::span<const int64_t> keys;
 };

@@ -48,6 +48,19 @@ duckdb::DatabaseInstance& TestDb() {
   return irs::DuckDBEngine::Instance().instance();
 }
 
+// What a search table's own columns look like to the sink: stored under the
+// column id and indexed as a term dictionary under the same id, which is what
+// `WriteChunkToSearchSink` produces for every column of such a table.
+const catalog::InvertedIndexField* StoredTermDict(irs::field_id) {
+  static const catalog::InvertedIndexField kEntry = [] {
+    catalog::InvertedIndexField entry;
+    entry.store_values = true;
+    entry.indexed_term_dict = true;
+    return entry;
+  }();
+  return &kEntry;
+}
+
 catalog::ColumnTokenizer KeywordAnalyzer(irs::field_id) {
   static auto gKeyword = std::make_shared<catalog::Tokenizer>(
     search::Features{},
@@ -117,7 +130,8 @@ class SearchUniqueProbeTest : public ::testing::Test {
     }
     auto trx = _writer->GetBatch();
     {
-      DuckDBSearchSinkInsertWriter sink{trx, KeywordAnalyzer, indexed};
+      DuckDBSearchSinkInsertWriter sink{trx, KeywordAnalyzer, indexed,
+                                        StoredTermDict};
       auto pk = RowIds(rowids);
       sink.Init(chunk.size(), &pk);
       for (const auto& slot : slots) {
@@ -221,7 +235,8 @@ TEST_F(SearchUniqueProbeTest, RemovedRowsStopAnswering) {
     irs::DocRemovalBuilder builder;
     builder.Add(0, DocOf(1));
     const auto removal = std::move(builder).Finish(reader);
-    UniqueProbe probe{&reader, {}, {}, fields, {.docs = removal.get()}};
+    const std::array<const irs::DocRemoval*, 1> removed{removal.get()};
+    UniqueProbe probe{&reader, {}, {}, fields, {.docs = removed}};
     EXPECT_TRUE(probe.Exists(keys[0]));
     EXPECT_FALSE(probe.Exists(keys[1]));
   }
@@ -277,6 +292,203 @@ TEST_F(SearchUniqueProbeTest, MayHoldRulesOutATermTheSegmentLacks) {
 
   EXPECT_TRUE(probe.MayHold(0, keys[0][0]));
   EXPECT_FALSE(probe.MayHold(0, absent_keys[0][0]));
+}
+
+class SearchKeyWalkTest : public SearchUniqueProbeTest {};
+
+// Two rows of one segment carrying the same key: the transaction contradicts
+// itself, with nothing published to consult.
+TEST_F(SearchKeyWalkTest, TwoRowsOfOneSegmentShareAKey) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "name", duckdb::LogicalType::VARCHAR, irs::DictLayout::String),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::VARCHAR},
+            {{duckdb::Value("a repeated name past the inline limit")},
+             {duckdb::Value("a repeated name past the inline limit")}});
+  constexpr std::array<int64_t, 2> kRowIds{1, 2};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  std::vector<KeyTerms> keys;
+  EncodeChunkKeys(chunk, slots, keys);
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+
+  const auto duplicate = FindDuplicateKey(segments, {}, slots, probe);
+  ASSERT_TRUE(duplicate);
+  EXPECT_EQ(keys[0], *duplicate);
+}
+
+// A key this transaction has buffered against a key it has already flushed.
+TEST_F(SearchKeyWalkTest, AnUnflushedKeyCollidesWithASegment) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "id", duckdb::LogicalType::INTEGER, irs::DictLayout::Numeric),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::INTEGER},
+            {{duckdb::Value::INTEGER(4)}});
+  constexpr std::array<int64_t, 1> kRowIds{1};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  std::vector<KeyTerms> keys;
+  EncodeChunkKeys(chunk, slots, keys);
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+
+  const auto duplicate = FindDuplicateKey(segments, keys, slots, probe);
+  ASSERT_TRUE(duplicate);
+  EXPECT_EQ(keys[0], *duplicate);
+
+  // The same walk without the buffered key has nothing to collide with.
+  UniqueProbe alone{nullptr, {}, {}, fields, {}};
+  EXPECT_FALSE(FindDuplicateKey(segments, {}, slots, alone));
+}
+
+// Where the leading column collides, the rest are read back from the segment's
+// stored columns -- with the same encoder that keyed the rows in the first
+// place, or the two halves of a composite key would not compare.
+TEST_F(SearchKeyWalkTest, CollidingSeedTermsAreSettledByTheOtherColumns) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "name", duckdb::LogicalType::VARCHAR, irs::DictLayout::String),
+    Slot(1, "part", duckdb::LogicalType::INTEGER, irs::DictLayout::Numeric),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER},
+            // The name column leads the walk: it holds the most distinct
+            // terms, so "x" is the seed that collides and `part` settles it.
+            {{duckdb::Value("x"), duckdb::Value::INTEGER(1)},
+             {duckdb::Value("x"), duckdb::Value::INTEGER(2)},
+             {duckdb::Value("y"), duckdb::Value::INTEGER(1)},
+             {duckdb::Value("z"), duckdb::Value::INTEGER(2)}});
+  constexpr std::array<int64_t, 4> kRowIds{1, 2, 3, 4};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+  EXPECT_FALSE(FindDuplicateKey(segments, {}, slots, probe));
+}
+
+// The same shape with the second column equal as well: the pass above was not
+// simply failing to look.
+TEST_F(SearchKeyWalkTest, ASettledSeedCollisionIsStillADuplicate) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "name", duckdb::LogicalType::VARCHAR, irs::DictLayout::String),
+    Slot(1, "part", duckdb::LogicalType::INTEGER, irs::DictLayout::Numeric),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER},
+            {{duckdb::Value("x"), duckdb::Value::INTEGER(1)},
+             {duckdb::Value("x"), duckdb::Value::INTEGER(1)},
+             {duckdb::Value("y"), duckdb::Value::INTEGER(2)},
+             {duckdb::Value("z"), duckdb::Value::INTEGER(3)}});
+  constexpr std::array<int64_t, 4> kRowIds{1, 2, 3, 4};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  std::vector<KeyTerms> keys;
+  EncodeChunkKeys(chunk, slots, keys);
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+
+  const auto duplicate = FindDuplicateKey(segments, {}, slots, probe);
+  ASSERT_TRUE(duplicate);
+  EXPECT_EQ(keys[0], *duplicate);
+}
+
+// The column read back may be a boolean, whose value is a member and not a
+// term: two rows sharing the leading column differ by it, and two rows sharing
+// it as well do not.
+TEST_F(SearchKeyWalkTest, ABooleanColumnSettlesACollidingSeed) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "tenant_id", duckdb::LogicalType::INTEGER,
+         irs::DictLayout::Numeric),
+    Slot(1, "is_active", duckdb::LogicalType::BOOLEAN, irs::DictLayout::Bool),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
+            {{duckdb::Value::INTEGER(1), duckdb::Value::BOOLEAN(true)},
+             {duckdb::Value::INTEGER(1), duckdb::Value::BOOLEAN(false)},
+             {duckdb::Value::INTEGER(2), duckdb::Value::BOOLEAN(true)}});
+  constexpr std::array<int64_t, 3> kRowIds{1, 2, 3};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+  EXPECT_FALSE(FindDuplicateKey(segments, {}, slots, probe));
+}
+
+// And two rows sharing the boolean as well are a duplicate: the member is read
+// back, not assumed.
+TEST_F(SearchKeyWalkTest, EqualBooleanComponentsLeaveADuplicate) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "tenant_id", duckdb::LogicalType::INTEGER,
+         irs::DictLayout::Numeric),
+    Slot(1, "is_active", duckdb::LogicalType::BOOLEAN, irs::DictLayout::Bool),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
+            {{duckdb::Value::INTEGER(1), duckdb::Value::BOOLEAN(true)},
+             {duckdb::Value::INTEGER(1), duckdb::Value::BOOLEAN(true)},
+             {duckdb::Value::INTEGER(2), duckdb::Value::BOOLEAN(true)}});
+  constexpr std::array<int64_t, 3> kRowIds{1, 2, 3};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  std::vector<KeyTerms> keys;
+  EncodeChunkKeys(chunk, slots, keys);
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+  UniqueProbe probe{nullptr, {}, {}, fields, {}};
+  const std::array<const irs::SubReader*, 1> segments{&reader[0]};
+
+  const auto duplicate = FindDuplicateKey(segments, {}, slots, probe);
+  ASSERT_TRUE(duplicate);
+  EXPECT_EQ(keys[0], *duplicate);
+}
+
+// A key nothing of this transaction repeats, but the published tier holds: the
+// seed column alone sends it to the probe, which settles it.
+TEST_F(SearchKeyWalkTest, APublishedKeyIsFoundThroughTheProbe) {
+  const std::vector<primary_key::KeySlot> slots{
+    Slot(0, "id", duckdb::LogicalType::BIGINT, irs::DictLayout::Numeric),
+  };
+  duckdb::DataChunk chunk;
+  MakeChunk(chunk, {duckdb::LogicalType::BIGINT},
+            {{duckdb::Value::BIGINT(21)}});
+  constexpr std::array<int64_t, 1> kRowIds{1};
+  ASSERT_NO_FATAL_FAILURE(Write(chunk, slots, kRowIds));
+
+  std::vector<KeyTerms> keys;
+  EncodeChunkKeys(chunk, slots, keys);
+
+  duckdb::DataChunk fresh;
+  MakeChunk(fresh, {duckdb::LogicalType::BIGINT},
+            {{duckdb::Value::BIGINT(22)}});
+  std::vector<KeyTerms> fresh_keys;
+  EncodeChunkKeys(fresh, slots, fresh_keys);
+
+  const auto fields = KeyFields(slots);
+  const auto reader = Reader();
+
+  UniqueProbe probe{&reader, {}, {}, fields, {}};
+  const auto duplicate = FindDuplicateKey({}, keys, slots, probe);
+  ASSERT_TRUE(duplicate);
+  EXPECT_EQ(keys[0], *duplicate);
+
+  UniqueProbe clean{&reader, {}, {}, fields, {}};
+  EXPECT_FALSE(FindDuplicateKey({}, fresh_keys, slots, clean));
 }
 
 }  // namespace

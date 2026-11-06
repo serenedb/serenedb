@@ -34,6 +34,7 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/segment_reader.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
@@ -140,6 +141,12 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::pair<irs::DirectoryReader, irs::SourcePosition> SnapshotWithPosition() {
     return _durability.Snapshot(*_writer);
   }
+
+  // Opens a segment this store's directory holds but its published reader does
+  // not show yet, named by the meta file a committed transaction recorded. The
+  // segment is read-only and lives as long as the handle: a certifier reads
+  // such a segment to answer for rows that are committed but unpublished.
+  irs::SegmentReader OpenSegment(std::string_view meta_file) const;
 
   std::shared_ptr<const FileManifest> GetFileManifest() const {
     return std::atomic_load(&_file_manifest);

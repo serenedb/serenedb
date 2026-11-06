@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <span>
 #include <string>
@@ -32,6 +35,17 @@
 #include "search/row_position_wal.h"
 
 namespace sdb::search {
+
+// Where a tail read stopped, so the next one answers only for what was
+// committed since. The generation names the WAL the offset belongs to: a
+// checkpoint retires the live WAL under a generation of its own, so an offset
+// alone stops meaning anything the moment one lands.
+struct WalTailCursor {
+  uint64_t generation = 0;
+  uint64_t offset = 0;
+
+  friend auto operator<=>(const WalTailCursor&, const WalTailCursor&) = default;
+};
 
 // What one search table's committed-but-unpublished WAL tail says about its
 // keys. A committed transaction left its rows in one of two forms: as bare
@@ -93,5 +107,33 @@ class WalTailKeyCollector final : public duckdb::TableLogStorage,
   WalTailKeys _staged;
   WalTailKeys _committed;
 };
+
+// One WAL file of a tail span, open and bounded.
+struct WalTailFile {
+  uint64_t generation = 0;
+  duckdb::unique_ptr<duckdb::FileHandle> handle;
+  uint64_t start = 0;
+  uint64_t end = 0;
+};
+
+// The files holding everything committed between `from` and the end of `db`'s
+// WAL. A checkpoint that lands between two reads retires the live WAL to a file
+// of its own, so a span is one file per generation: the one `from` names, every
+// generation after it, and the WAL in use now.
+//
+// Resolving and opening belong together and must happen under the commit lock,
+// which the caller holds: only that lock fixes which file a WAL path names, and
+// an open handle then keeps the file it was opened on through any later rename
+// or unlink. Reading them does not, which is what lets a pass that is not
+// committing give the lock back before it reads.
+std::vector<WalTailFile> OpenTailFiles(duckdb::AttachedDatabase& db,
+                                       const WalTailCursor& from);
+
+// Reads `files` into `collector` and answers where the next read resumes.
+WalTailCursor ReadTailKeys(duckdb::AttachedDatabase& db,
+                           duckdb::ClientContext& context,
+                           const WalTailCursor& from,
+                           std::span<WalTailFile> files,
+                           WalTailKeyCollector& collector);
 
 }  // namespace sdb::search

@@ -29,6 +29,7 @@
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/transaction_log_writer.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/key_removal.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -38,8 +39,11 @@
 #include <utility>
 #include <vector>
 
+#include "connector/search_key_unique.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/search_unique_probe.h"
 #include "search/row_position_wal.h"
+#include "search/wal_tail_keys.h"
 
 namespace sdb::search {
 namespace {
@@ -139,6 +143,95 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
   std::vector<const irs::DocRemoval*> _removals;
 };
 
+// Everything that holds this table's keys but this transaction, put to the
+// keys this transaction writes. The published reader is the settled tier; the
+// WAL tail carries what committed since, as bare keys where the transaction
+// did not flush and as whole segments where it did. This transaction's own
+// rows are not in the tail: its record reaches the WAL after this runs.
+//
+// `published` is given on the pass that answers for the whole index and left
+// out on one that only catches up: what the first pass settled stays settled,
+// because publishing moves a row from the tail to the reader without adding
+// one, and a removal only ever takes a key away.
+void CertifyAgainst(StoreWrites& w, duckdb::AttachedDatabase& db,
+                    duckdb::ClientContext& context,
+                    std::span<WalTailFile> files,
+                    const irs::DirectoryReader& reader, bool whole) {
+  auto& changes = w.changes;
+  if (w.keys.empty() && changes.collection) {
+    connector::AppendRowKeys(*changes.collection, w.pk_slots, 0, w.keys);
+  }
+  std::vector<irs::SegmentReader> flushed;
+  flushed.reserve(changes.segments.size());
+  for (const auto& segment : changes.segments) {
+    flushed.push_back(w.store->OpenSegment(segment));
+  }
+  if (w.keys.empty() && flushed.empty()) {
+    return;
+  }
+
+  WalTailKeyCollector collector{w.table->oid, w.pk_slots};
+  w.certified = ReadTailKeys(db, context, w.certified, files, collector);
+  auto tail = collector.TakeKeys();
+
+  std::vector<irs::SegmentReader> unpublished;
+  unpublished.reserve(tail.segments.size());
+  for (const auto& segment : tail.segments) {
+    unpublished.push_back(w.store->OpenSegment(segment));
+  }
+  std::vector<const irs::SubReader*> unpublished_segments;
+  unpublished_segments.reserve(unpublished.size());
+  for (const auto& segment : unpublished) {
+    unpublished_segments.push_back(&segment);
+  }
+  std::vector<const connector::KeyTerms*> unpublished_keys;
+  unpublished_keys.reserve(tail.keys.size());
+  for (const auto& key : tail.keys) {
+    unpublished_keys.push_back(&key);
+  }
+  std::vector<const irs::SubReader*> own_segments;
+  own_segments.reserve(flushed.size());
+  for (const auto& segment : flushed) {
+    own_segments.push_back(&segment);
+  }
+
+  auto removed_keys = tail.removals.TakeKeys();
+  irs::SortUnique(removed_keys);
+  // This transaction's own removals mask the probe alongside the tail's: an
+  // UPDATE deletes the row it rewrites, and the key it writes back is its own
+  // to take. What that leaves unanswered -- whether the row is still this
+  // transaction's to replace -- is a question about rowids, not keys.
+  std::vector<const irs::DocRemoval*> removed_docs;
+  removed_docs.reserve(changes.removals.size() + 1);
+  for (const auto& removal : changes.removals) {
+    removed_docs.push_back(removal.get());
+  }
+  const auto tail_removed = std::move(tail.removals).Resolve(reader);
+  if (tail_removed) {
+    removed_docs.push_back(tail_removed.get());
+  }
+
+  std::vector<irs::field_id> fields;
+  fields.reserve(w.pk_slots.size());
+  for (const auto& slot : w.pk_slots) {
+    fields.push_back(slot.column);
+  }
+
+  // A TRUNCATE in the tail kills every row the reader still shows, so the tier
+  // goes with it rather than being consulted and answering for dead rows.
+  connector::UniqueProbe probe{whole && !tail.truncated ? &reader : nullptr,
+                               unpublished_segments,
+                               std::move(unpublished_keys),
+                               fields,
+                               {.docs = removed_docs, .keys = removed_keys}};
+  if (connector::FindDuplicateKey(own_segments, w.keys, w.pk_slots, probe)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+      ERR_MSG("duplicate key value violates the primary key of table \"",
+              w.table->name.GetIdentifierName(), "\""));
+  }
+}
+
 }  // namespace
 
 StoreWrites& Writes::EnsureStoreWrites(const std::shared_ptr<Store>& store) {
@@ -161,7 +254,67 @@ void Writes::RegisterWriter(const std::shared_ptr<Store>& store,
         ERR_MSG("Attempting to write to table ", table.name.GetIdentifierName(),
                 " but another transaction is truncating it"));
     }
+    w.pk_slots = connector::primary_key::KeySlots(table, *store->Config());
   }
+}
+
+void Writes::Certify(
+  duckdb::AttachedDatabase& db, duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::unique_lock<duckdb::mutex>> held) {
+  std::optional<duckdb::unique_lock<duckdb::mutex>> taken;
+  for (auto& [store_id, w] : _writes) {
+    if (!w.table || w.pk_slots.empty() || w.store->GetDatabaseId() != db.oid) {
+      continue;
+    }
+    if (!held && !taken) {
+      // The prepared path leaves the lock to the database that owns the
+      // catalog, so a pass firing there takes its own; it is not recursive, so
+      // only where it was handed none.
+      taken = db.GetStorageManager().GetCommitLock();
+    }
+    if (w.pre_certified) {
+      // Only what committed since the pass before the lock: the reader is
+      // here to carry removals onto the segments, not as a tier of its own.
+      auto files = OpenTailFiles(db, w.certified);
+      const auto reader = w.store->GetDirectoryReader();
+      CertifyAgainst(w, db, context, files, reader, /*whole=*/false);
+      continue;
+    }
+    auto [reader, position] = w.store->SnapshotWithPosition();
+    w.certified = {.generation = position.generation,
+                   .offset = position.offset};
+    auto files = OpenTailFiles(db, w.certified);
+    CertifyAgainst(w, db, context, files, reader, /*whole=*/true);
+  }
+}
+
+// The pass before the commit lock, where the whole index is answered for and
+// the reading is done without holding anything up. Only resolving and opening
+// the WAL files needs the lock, and only for as long as that takes.
+void Writes::CertifyPrepared(StoreWrites& w, duckdb::ClientContext& context) {
+  if (!w.table || w.pk_slots.empty()) {
+    return;
+  }
+  auto& db = w.table->catalog.GetAttached();
+  // The reader and the position come from one call: a reader older than the
+  // position it is paired with would leave a span of the WAL in neither tier.
+  auto [reader, position] = w.store->SnapshotWithPosition();
+  w.certified = {.generation = position.generation, .offset = position.offset};
+  std::vector<WalTailFile> files;
+  {
+    // A shared checkpoint key, not the commit lock: what renames or removes a
+    // WAL file is a checkpoint, and a checkpoint holds the checkpoint lock
+    // exclusively for its whole run, so this excludes the only mutator without
+    // standing in the way of other commits. What it does not fix is the end of
+    // the live WAL, since commits keep appending -- which costs nothing, as a
+    // read that lands in a batch still being decided stops there and says so,
+    // and the pass under the commit lock resumes from exactly that point.
+    const auto key =
+      duckdb::DuckTransactionManager::Get(db).SharedCheckpointLock();
+    files = OpenTailFiles(db, w.certified);
+  }
+  CertifyAgainst(w, db, context, files, reader, /*whole=*/true);
+  w.pre_certified = true;
 }
 
 void Writes::AddParallelSearchTransaction(
@@ -313,6 +466,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
         changes.segments.push_back(segment.filename);
       }
     }
+    CertifyPrepared(w, context);
     duckdb::DuckTransaction::Get(context, w.table->catalog)
       .log_writers.push_back(duckdb::make_shared_ptr<SearchTableLogWriter>(
         w, std::move(tail), context));

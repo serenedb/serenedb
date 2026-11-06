@@ -20,9 +20,91 @@
 
 #include "search/wal_tail_keys.h"
 
+#include <algorithm>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/write_ahead_log.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 namespace sdb::search {
+namespace {
+
+// Opens a WAL file for reading, or nothing where it is already gone: a
+// generation the span covers but no store needs any more was released while
+// this read was being set up, and what it held is published by now.
+duckdb::unique_ptr<duckdb::FileHandle> OpenWal(duckdb::FileSystem& fs,
+                                               const std::string& path) {
+  return fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ |
+                             duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS);
+}
+
+}  // namespace
+
+std::vector<WalTailFile> OpenTailFiles(duckdb::AttachedDatabase& db,
+                                       const WalTailCursor& from) {
+  auto& storage = db.GetStorageManager();
+  auto wal = storage.GetWAL();
+  if (!wal) {
+    return {};
+  }
+  auto& fs = duckdb::FileSystem::GetFileSystem(db.GetDatabase());
+  const auto live = static_cast<uint64_t>(wal->GetCheckpointIteration());
+  std::vector<WalTailFile> files;
+
+  // Every generation the span covers but the live one, oldest first. Their
+  // files are whole: a retired WAL is never appended to again.
+  for (auto generation =
+         std::max(from.generation,
+                  static_cast<uint64_t>(storage.GetOldestWALGeneration()));
+       generation < live; ++generation) {
+    auto handle = OpenWal(fs, storage.GetRetainedWALPath(generation));
+    if (!handle) {
+      continue;
+    }
+    const auto size = static_cast<uint64_t>(handle->GetFileSize());
+    files.push_back({.generation = generation,
+                     .handle = std::move(handle),
+                     .start = generation == from.generation ? from.offset : 0,
+                     .end = size});
+  }
+
+  if (auto handle = OpenWal(fs, wal->GetPath())) {
+    files.push_back({.generation = live,
+                     .handle = std::move(handle),
+                     .start = from.generation == live ? from.offset : 0,
+                     // A read that ran past the size this lock fixes would
+                     // reach a commit that has not decided yet.
+                     .end = static_cast<uint64_t>(storage.GetWALSize())});
+  }
+  return files;
+}
+
+WalTailCursor ReadTailKeys(duckdb::AttachedDatabase& db,
+                           duckdb::ClientContext& context,
+                           const WalTailCursor& from,
+                           std::span<WalTailFile> files,
+                           WalTailKeyCollector& collector) {
+  auto cursor = from;
+  for (auto& file : files) {
+    if (!file.handle) {
+      continue;
+    }
+    auto read = duckdb::ReadWALTail(db, context, std::move(file.handle),
+                                    file.start, file.end, collector);
+    if (!read.error.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                      ERR_MSG("cannot read the WAL of generation ",
+                              file.generation, ": ", read.error));
+    }
+    // A retired WAL decides every batch it holds, so a span moving on to the
+    // next generation resumes at its head; only the live WAL can end on a
+    // batch that is still being decided.
+    cursor = {.generation = file.generation, .offset = read.boundary};
+  }
+  return cursor;
+}
 
 void WalTailKeyCollector::EndBatch(bool committed) {
   if (!committed) {

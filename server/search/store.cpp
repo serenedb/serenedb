@@ -36,8 +36,10 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -687,6 +689,14 @@ void Store::RebuildConfig(Configs&& configs,
   _layout.scan_config = std::move(scan_config);
   _layout.compaction_config = std::move(compaction_config);
   _layout.compaction_stale = false;
+}
+
+irs::SegmentReader Store::OpenSegment(std::string_view meta_file) const {
+  SDB_ASSERT(_dir);
+  irs::SegmentMeta meta;
+  irs::segment_meta::Read(*_dir, meta, meta_file);
+  return irs::SegmentReader{
+    irs::SegmentReaderImpl::Open(*_dir, meta, ReaderOptions())};
 }
 
 void Store::MergeIndexConfig(

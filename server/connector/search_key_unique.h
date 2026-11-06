@@ -22,31 +22,16 @@
 
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/utils/bytes_utils.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <optional>
 #include <span>
 #include <vector>
 
+#include "connector/key_terms.h"
 #include "connector/primary_key.h"
+#include "connector/search_unique_probe.h"
 
 namespace sdb::connector {
-
-// One component of a row key, as the index holds it: which of the key column's
-// member dictionaries the value lives in, and its term there. A field's
-// postings are partitioned by `DictRef` and only then by term, so a lookup
-// answers to both; a boolean's value is the member alone, its term being
-// empty, and a numeric lives under a member no string ever reaches.
-struct KeyTerm {
-  irs::DictRef dict;
-  irs::bstring term;
-
-  auto operator<=>(const KeyTerm&) const = default;
-};
-
-// A whole primary key: one component per key column, in key-column order. Each
-// is what a query for that value would look up, so a key built here compares
-// against what the index holds.
-using KeyTerms = std::vector<KeyTerm>;
 
 // Every row's key, encoded with the index's own encoder.
 // Appends, and resumes at `first_row`, so a caller that keeps its keys between
@@ -62,5 +47,20 @@ void AppendRowKeys(duckdb::ColumnDataCollection& rows,
 void EncodeChunkKeys(duckdb::DataChunk& chunk,
                      std::span<const primary_key::KeySlot> slots,
                      std::vector<KeyTerms>& keys, duckdb::idx_t first_row = 0);
+
+// The key that two live positions of this transaction share, if any: either two
+// positions among `segments` and `keys` -- the transaction contradicting itself
+// -- or one of those and one `probe` finds in the tiers it holds. `keys` is the
+// unflushed tail, already encoded because a commit's row buffer is emptied
+// before it certifies.
+//
+// One key column leads the walk and the rest are read only where that one
+// already collides, so the column chosen to lead decides the cost; it is picked
+// here rather than by the caller, because the sources must all agree on it and
+// nothing outside needs to know which it was.
+std::optional<KeyTerms> FindDuplicateKey(
+  std::span<const irs::SubReader* const> segments,
+  std::span<const KeyTerms> keys, std::span<const primary_key::KeySlot> slots,
+  UniqueProbe& probe);
 
 }  // namespace sdb::connector

@@ -49,19 +49,19 @@ const irs::TermReader* DictReader(
   return nullptr;
 }
 
+}  // namespace
+
 void ForEachLiveDoc(const irs::TermReader& field, irs::bytes_view term,
                     const irs::DocumentMask::Iterator& mask,
-                    const irs::DocumentMaskBuilder& deleted,
+                    const irs::DocumentMaskBuilder* deleted,
                     absl::FunctionRef<bool(irs::doc_id_t)> visit) {
   field.ReadDocs(term, [&](irs::doc_id_t doc) {
-    if (mask.Contains(doc) || deleted.Contains(doc)) {
+    if (mask.Contains(doc) || (deleted != nullptr && deleted->Contains(doc))) {
       return true;
     }
     return visit(doc);
   });
 }
-
-}  // namespace
 
 UniqueProbe::UniqueProbe(
   const irs::DirectoryReader* reader,
@@ -105,7 +105,7 @@ void UniqueProbe::AddSegment(const irs::SubReader& sub,
 }
 
 void UniqueProbe::ApplyRemovals(const PendingRemovals& removed) {
-  if (removed.docs != nullptr) {
+  if (!removed.docs.empty()) {
     irs::RemovalTargets targets;
     targets.reserve(_segments.size());
     for (auto& segment : _segments) {
@@ -117,7 +117,11 @@ void UniqueProbe::ApplyRemovals(const PendingRemovals& removed) {
                                                .removed = &segment.deleted});
       }
     }
-    irs::ResolveRemoval(*removed.docs, targets);
+    for (const auto* docs : removed.docs) {
+      if (docs != nullptr) {
+        irs::ResolveRemoval(*docs, targets);
+      }
+    }
   }
   if (removed.keys.empty()) {
     return;
@@ -144,7 +148,8 @@ std::span<const UniqueProbe::ColumnTerm> UniqueProbe::ColumnTerms(
     }
     absl::c_sort(terms);
     // TODO(Dronplane): can be assert for single column unique constraint.
-    // But that is small tail so might be good as is. Recheck if perf shows this.
+    // But that is small tail so might be good as is. Recheck if perf shows
+    // this.
     terms.erase(std::ranges::unique(terms).begin(), terms.end());
   }
   return terms;
@@ -191,7 +196,7 @@ bool UniqueProbe::Exists(std::span<const KeyTerm> key) {
 
     _hits.clear();
     ForEachLiveDoc(*_readers[seed], key[seed].term, segment.mask,
-                   segment.deleted, [&](irs::doc_id_t doc) {
+                   &segment.deleted, [&](irs::doc_id_t doc) {
                      _hits.push_back(doc);
                      return true;
                    });
@@ -210,7 +215,7 @@ bool UniqueProbe::Exists(std::span<const KeyTerm> key) {
       // when a doc-level seek reaches the TermReader surface, or alongside the
       // sequential dictionary scan of the parallel-path merge.
       _next.clear();
-      ForEachLiveDoc(*_readers[i], key[i].term, segment.mask, segment.deleted,
+      ForEachLiveDoc(*_readers[i], key[i].term, segment.mask, &segment.deleted,
                      [&](irs::doc_id_t doc) {
                        const auto it = absl::c_lower_bound(_hits, doc);
                        if (it == _hits.end()) {

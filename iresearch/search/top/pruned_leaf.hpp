@@ -522,8 +522,10 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
 
   IRS_FORCE_INLINE void DecodeLazyFreqs(bool needed = true) noexcept {
     if constexpr (InputType::kVolatileAlways) {
-      if (needed && _lazy != nullptr) [[unlikely]] {
-        DecodeFreqs();
+      if (_lazy != nullptr) [[unlikely]] {
+        if (needed) {
+          DecodeFreqs();
+        }
       }
     }
   }

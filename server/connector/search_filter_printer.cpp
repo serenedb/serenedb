@@ -29,6 +29,7 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/curve_box_filter.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
@@ -481,6 +482,12 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
         RangeValue(f.options().range, FieldType(f.field_id(), f.dict()));
+      return node;
+    }
+    if (type == Type<ByCurveBox>::id()) {
+      const auto& f = downCast<const ByCurveBox>(filter);
+      ExplainNode node{"Curve Box"};
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       return node;
     }
     if (type == Type<ByNGramSimilarity>::id()) {

@@ -63,10 +63,6 @@ void RegisterCurveFunctions(duckdb::ExtensionLoader& loader) {
                     duckdb::Value{"morton"})
     .AddKeywordOnly("max_level", duckdb::LogicalType::INTEGER,
                     duckdb::Value{duckdb::LogicalType::INTEGER})
-    .AddKeywordOnly("level_step", duckdb::LogicalType::INTEGER,
-                    duckdb::Value{duckdb::LogicalType::INTEGER})
-    .AddKeywordOnly("max_cells", duckdb::LogicalType::INTEGER,
-                    duckdb::Value{duckdb::LogicalType::INTEGER})
     .AddKeywordOnly("lower", duckdb::LogicalTypeId::STRUCT, duckdb::Value{})
     .AddKeywordOnly("upper", duckdb::LogicalTypeId::STRUCT, duckdb::Value{});
   function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);

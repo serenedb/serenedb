@@ -363,6 +363,7 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
         Tokenizer::TokenizerWrapper{
           std::make_unique<connector::CurveTokenizer>(*field.curve).release(),
           Tokenizer::Deleter{}},
+      .features = irs::IndexFeatures::Ranges,
     };
   }
   if (!field.tokenizer) {

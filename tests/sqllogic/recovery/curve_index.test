@@ -4,7 +4,7 @@ statement ok
 CREATE TABLE curve_recovery(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
 
 statement ok
-CREATE INDEX recovered_points ON curve_recovery USING inverted(id, (curve(ROW(x, y), kind := 'hilbert', max_cells := 1))) INCLUDE (x,y);
+CREATE INDEX recovered_points ON curve_recovery USING inverted(id, (curve(ROW(x, y), kind := 'hilbert'))) INCLUDE (x,y);
 
 statement ok
 INSERT INTO curve_recovery VALUES (1, 2, 3);
@@ -30,7 +30,7 @@ VACUUM (REFRESH_TABLE) curve_recovery;
 
 connection recovered_curve
 query
-SELECT id FROM recovered_points WHERE curve(ROW(x, y), kind := 'hilbert', max_cells := 1) @@ ts_between(ROW(0,0), ROW(5,5), true, true) ORDER BY id;
+SELECT id FROM recovered_points WHERE curve(ROW(x, y), kind := 'hilbert') @@ ts_between(ROW(0,0), ROW(5,5), true, true) ORDER BY id;
 ----
 id
 1

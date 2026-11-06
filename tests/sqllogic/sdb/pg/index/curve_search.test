@@ -59,17 +59,17 @@ INSERT INTO curve_points VALUES
 
 statement ok
 CREATE INDEX curve_morton ON curve_points USING inverted(
- id, (curve(ROW(x, y, t), max_cells := 16))) INCLUDE (x, y, t);
+ id, (curve(ROW(x, y, t)))) INCLUDE (x, y, t);
 
 statement ok
 CREATE INDEX curve_hilbert ON curve_points USING inverted(
- id, (curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1))) INCLUDE (x, y, t);
+ id, (curve(ROW(x, y, t), kind := 'hilbert'))) INCLUDE (x, y, t);
 
 statement ok
 VACUUM (REFRESH_TABLE) curve_points;
 
 query
-SELECT id FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT id FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true) ORDER BY id;
 ----
 id
@@ -77,7 +77,7 @@ id
 3
 
 query
-SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1) @@ ts_between(
+SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert') @@ ts_between(
  ROW(0, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true) ORDER BY id;
 ----
 id
@@ -85,14 +85,14 @@ id
 3
 
 query
-SELECT id FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT id FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(9007199254740993::BIGINT, NULL, NULL), ROW(9007199254740993::BIGINT, NULL, NULL), true, true);
 ----
 id
 7
 
 query
-SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1) @@ ts_between(
+SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert') @@ ts_between(
  ROW(NULL, 5, NULL), ROW(NULL, 5, NULL), true, true) ORDER BY id;
 ----
 id
@@ -100,14 +100,14 @@ id
 7
 
 query
-SELECT count(*) AS n FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) AS n FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(5, NULL, NULL), ROW(0, NULL, NULL), true, true);
 ----
 n
 0
 
 query
-SELECT count(*) AS n FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) AS n FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  NULL, NULL, true, true);
 ----
 n
@@ -115,7 +115,7 @@ n
 
 query
 SELECT count(*) AS n FROM (
- SELECT id FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+ SELECT id FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
    ROW(-5, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true)
  EXCEPT
  SELECT id FROM curve_points WHERE x BETWEEN -5 AND 5 AND y BETWEEN 0 AND 5
@@ -125,26 +125,24 @@ n
 0
 
 query
-EXPLAIN SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1) @@ ts_between(
+EXPLAIN SELECT id FROM curve_hilbert WHERE curve(ROW(x, y, t), kind := 'hilbert') @@ ts_between(
  ROW(0, NULL, NULL), ROW(5, NULL, NULL), true, false);
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────╮
-│ Index: curve_hilbert                                                 │
-│ Lookup: table                                                        │
-│ Index Filter:                                                        │
-│ ╭─ Term ───────────────────────────────────────────────────────────╮ │
-│ │ Field:                                                           │ │
-│ │ curve("row"(x, y, t), kind := 'hilbert', max_cells := 1)(string) │ │
-│ │ Value: A\\x3\\x0                                                   │ │
-│ ╰──────────────────────────────────────────────────────────────────╯ │
-│ Column Filter: (x >= 0) AND (x < 5), y IS NOT NULL                   │
-│ Projections: id                                                      │
-│ ~1 row                                                               │
-╰──────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
+│ Index: curve_hilbert                                 │
+│ Lookup: table                                        │
+│ Index Filter:                                        │
+│ ╭─ Curve Box ──────────────────────────────────────╮ │
+│ │ Field:                                           │ │
+│ │ curve("row"(x, y, t), kind := 'hilbert')(string) │ │
+│ ╰──────────────────────────────────────────────────╯ │
+│ Projections: id                                      │
+│ ~1 row                                               │
+╰──────────────────────────────────────────────────────╯
 
 statement ok
-PREPARE curve_query AS SELECT id FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+PREPARE curve_query AS SELECT id FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW($1::BIGINT, NULL, NULL), ROW($2::BIGINT, NULL, NULL), true, true) ORDER BY id;
 
 query
@@ -171,7 +169,7 @@ id
 4
 
 query
-SELECT id FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT id FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, NULL, NULL), ROW(5, NULL, NULL), false, false);
 ----
 id
@@ -181,7 +179,7 @@ statement ok
 DEALLOCATE curve_query;
 
 statement error
-SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, 0, NULL), ROW(5, 5, NULL), true, true) OR id = 1;
 ----
 db error: ERROR: curve() @@ is supported only as a top-level AND condition
@@ -189,7 +187,7 @@ HINT: Move it out of OR / NOT, or compare the coordinates directly.
 
 
 statement error
-SELECT count(*) FROM curve_morton WHERE NOT curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) FROM curve_morton WHERE NOT curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, 0, NULL), ROW(5, 5, NULL), true, true);
 ----
 db error: ERROR: curve() @@ is supported only as a top-level AND condition
@@ -197,27 +195,27 @@ HINT: Move it out of OR / NOT, or compare the coordinates directly.
 
 
 statement error
-SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ 'foo';
+SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t)) @@ 'foo';
 ----
 db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
 
 
 statement error
-SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, 0, 0), ROW(5, 5, 5), true, true);
 ----
 db error: ERROR: ts_between: bound INTEGER does not match coordinate 3 of type TIMESTAMP; cast the bound explicitly
 
 
 statement error
-SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t), max_cells := 16) @@ ts_between(
+SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
  ROW(0, 0), ROW(5, 5), true, true);
 ----
 db error: ERROR: ts_between bounds of a curve() must be ROWs of 3 values, got TUPLE(INTEGER, INTEGER)
 
 
 statement error
-SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t)) @@ ts_between(
+SELECT count(*) FROM curve_morton WHERE curve(ROW(x, y, t), max_level := 63) @@ ts_between(
  ROW(0, 0, NULL), ROW(5, 5, NULL), true, true);
 ----
 db error: ERROR: curve() @@ needs an index on the same curve() call
@@ -235,7 +233,7 @@ SELECT curve(1);
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(INTEGER_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -243,7 +241,7 @@ SELECT curve('1, 2');
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -251,7 +249,7 @@ SELECT curve([1, 2]);
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(INTEGER[])'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -289,7 +287,7 @@ SELECT curve(1, 2);
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(INTEGER_LITERAL, INTEGER_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 query
@@ -365,7 +363,7 @@ SELECT curve(ROW(1, 2), kinds := 'hilbert');
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "kinds" := STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -384,31 +382,25 @@ t
 statement error
 SELECT curve(ROW(1, 2), max_level := 65);
 ----
-db error: ERROR: curve(): option "max_level" must be between 0 and 64, got 65
+db error: ERROR: curve(): option "max_level" must be between 1 and 64, got 65
 
 
 statement error
-SELECT curve(ROW(1, 2), max_cells := 0);
+SELECT curve(ROW(1, 2), max_level := 0);
 ----
-db error: ERROR: curve(): option "max_cells" must be between 1 and 4096, got 0
+db error: ERROR: curve(): option "max_level" must be between 1 and 64, got 0
 
 
 statement error
-SELECT curve(ROW(1, 2, 3), level_step := 0);
+SELECT curve(ROW(1, 2, 3, 4, 5, 6, 7, 8), max_level := 33);
 ----
-db error: ERROR: curve(): option "level_step" must be between 1 and 5, got 0
+db error: ERROR: curve(): option "max_level" must be between 1 and 32, got 33
 
 
 statement error
-SELECT curve(ROW(1, 2, 3), level_step := 6);
+SELECT curve(ROW(x, y), max_level := id) FROM curve_points;
 ----
-db error: ERROR: curve(): option "level_step" must be between 1 and 5, got 6
-
-
-statement error
-SELECT curve(ROW(x, y), max_cells := id) FROM curve_points;
-----
-db error: ERROR: curve(): option "max_cells" must be a constant
+db error: ERROR: curve(): option "max_level" must be a constant
 
 
 statement error
@@ -416,7 +408,7 @@ SELECT curve(ROW(1, 2), level := 3);
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "level" := INTEGER_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -527,30 +519,3 @@ id
 
 statement ok
 DROP TABLE curve_nan;
-
-statement ok
-CREATE TABLE curve_steps(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, z INTEGER);
-
-statement ok
-INSERT INTO curve_steps SELECT i, (i * 7919) % 1000, ((i * 104729) % 1000)::DOUBLE / 10, (i * 31) % 100 FROM range(2000) t(i);
-
-statement ok
-CREATE INDEX curve_steps_1 ON curve_steps USING inverted(id, (curve(ROW(x, y, z), level_step := 1))) INCLUDE (x, y, z);
-
-statement ok
-CREATE INDEX curve_steps_5 ON curve_steps USING inverted(id, (curve(ROW(x, y, z), level_step := 5, max_cells := 8))) INCLUDE (x, y, z);
-
-statement ok
-VACUUM (REFRESH_TABLE) curve_steps;
-
-query
-SELECT
- (SELECT count(*) FROM curve_steps_1 WHERE curve(ROW(x, y, z), level_step := 1) @@ ts_between(ROW(100, 10, 20), ROW(400, 60, 70), true, true)) AS step1,
- (SELECT count(*) FROM curve_steps_5 WHERE curve(ROW(x, y, z), level_step := 5, max_cells := 8) @@ ts_between(ROW(100, 10, 20), ROW(400, 60, 70), true, true)) AS step5,
- (SELECT count(*) FROM curve_steps WHERE x BETWEEN 100 AND 400 AND y BETWEEN 10 AND 60 AND z BETWEEN 20 AND 70) AS exact;
-----
-step1	step5	exact
-138	138	138
-
-statement ok
-DROP TABLE curve_steps;

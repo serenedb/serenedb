@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -29,10 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <queue>
 #include <span>
-#include <string>
-#include <vector>
 
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -44,50 +39,32 @@ namespace irs::curve {
 
 inline constexpr uint32_t kMaxDimensions = 8;
 inline constexpr uint32_t kMaxLevel = 64;
-inline constexpr uint32_t kMaxCells = 4096;
-inline constexpr uint32_t kMaxExpansionBits = 12;
-inline constexpr uint32_t kTermHeader = 3;
-inline constexpr char kAncestorTerm = 'A';
-inline constexpr char kLeafTerm = 'L';
+inline constexpr uint32_t kMaxCodeBits = 256;
+inline constexpr uint32_t kMaxCodeWords = kMaxCodeBits / 64;
 using Point = std::array<uint64_t, kMaxDimensions>;
 using Code = std::array<uint8_t, kMaxDimensions * sizeof(uint64_t)>;
 
 struct Options {
   uint32_t dimensions = 2;
   uint32_t max_level = kMaxLevel;
-  uint32_t max_cells = 64;
   bool hilbert = false;
-  uint32_t level_step = 1;
 
   bool operator==(const Options&) const = default;
 };
 
-inline uint32_t DefaultLevelStep(uint32_t dimensions) noexcept {
-  return 1 + 4 / dimensions;
-}
-
-inline uint32_t DefaultMaxCells(uint32_t dimensions) noexcept {
-  return std::min(uint32_t{64}, uint32_t{4} << dimensions);
-}
-
-inline uint32_t MaxLevelStep(uint32_t dimensions) noexcept {
-  return 1 + kMaxExpansionBits / dimensions;
+inline uint32_t MaxLevel(uint32_t dimensions) noexcept {
+  return std::min(kMaxLevel, kMaxCodeBits / dimensions);
 }
 
 inline void Validate(const Options& options) {
   if (options.dimensions < 2 || options.dimensions > kMaxDimensions ||
-      options.max_level > kMaxLevel || options.max_cells == 0 ||
-      options.max_cells > kMaxCells || options.level_step == 0 ||
-      options.level_step > MaxLevelStep(options.dimensions)) {
+      options.max_level == 0 ||
+      options.max_level > MaxLevel(options.dimensions)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("curve: dimensions must be 2..8, max_level 0..64, max_cells "
-              "1..4096, level_step 1..1+12/dimensions"));
+      ERR_MSG("curve: dimensions must be 2..8, max_level 1..64 and at most ",
+              kMaxCodeBits, " bits in all"));
   }
-}
-
-inline bool IsIndexedLevel(uint32_t level, const Options& options) noexcept {
-  return level == options.max_level || level % options.level_step == 0;
 }
 
 inline constexpr uint64_t kSignBit = uint64_t{1} << 63;
@@ -123,19 +100,8 @@ inline uint64_t NormalizeDouble(double value, double lo, double hi) noexcept {
 struct Box {
   Point min{};
   Point max{};
-};
 
-struct Cell {
-  Point min{};
-  uint32_t level = 0;
-
-  uint64_t Max(uint32_t axis) const noexcept {
-    const auto mask = level == 0 ? std::numeric_limits<uint64_t>::max()
-                      : level == 64
-                        ? 0
-                        : std::numeric_limits<uint64_t>::max() >> level;
-    return min[axis] | mask;
-  }
+  bool operator==(const Box&) const = default;
 };
 
 enum class Relation : uint8_t {
@@ -143,72 +109,6 @@ enum class Relation : uint8_t {
   Boundary,
   Inside,
 };
-
-inline Relation Classify(const Cell& cell, const Box& box,
-                         uint32_t dimensions) noexcept {
-  bool inside = true;
-  for (uint32_t axis = 0; axis < dimensions; ++axis) {
-    if (box.min[axis] > box.max[axis] || cell.min[axis] > box.max[axis] ||
-        cell.Max(axis) < box.min[axis]) {
-      return Relation::Outside;
-    }
-    inside &=
-      cell.min[axis] >= box.min[axis] && cell.Max(axis) <= box.max[axis];
-  }
-  return inside ? Relation::Inside : Relation::Boundary;
-}
-
-inline std::vector<Cell> CoverBox(const Box& box, const Options& options) {
-  Validate(options);
-  struct Pending {
-    Cell cell;
-    Relation relation;
-  };
-  const auto classify = [&](const Cell& cell) {
-    return Classify(cell, box, options.dimensions);
-  };
-  std::vector<Cell> result;
-  const Cell root;
-  const auto root_relation = classify(root);
-  if (root_relation == Relation::Outside) {
-    return result;
-  }
-  std::queue<Pending> pending;
-  pending.emplace(root, root_relation);
-  std::vector<Pending> children;
-  while (!pending.empty()) {
-    const auto top = pending.front();
-    pending.pop();
-    const auto& cell = top.cell;
-    if (cell.level == options.max_level || top.relation == Relation::Inside) {
-      result.emplace_back(cell);
-      continue;
-    }
-    children.clear();
-    const auto bit = uint64_t{1} << (63 - cell.level);
-    for (uint32_t child = 0; child < (uint32_t{1} << options.dimensions);
-         ++child) {
-      Cell next{.min = cell.min, .level = cell.level + 1};
-      for (uint32_t axis = 0; axis < options.dimensions; ++axis) {
-        if (child & (uint32_t{1} << axis)) {
-          next.min[axis] |= bit;
-        }
-      }
-      const auto next_relation = classify(next);
-      if (next_relation != Relation::Outside) {
-        children.emplace_back(next, next_relation);
-      }
-    }
-    if (children.size() + pending.size() + result.size() > options.max_cells) {
-      result.emplace_back(cell);
-      continue;
-    }
-    for (const auto& child : children) {
-      pending.emplace(child);
-    }
-  }
-  return result;
-}
 
 namespace detail {
 
@@ -233,6 +133,62 @@ inline uint64_t SpreadPairs(uint64_t value) noexcept {
   return (value | (value << 1)) & 0x5555555555555555;
 }
 #endif
+
+template<uint32_t Dimensions>
+inline constexpr auto kMortonMasks = [] {
+  std::array<std::array<uint64_t, Dimensions>, Dimensions> result{};
+  for (uint32_t word = 0; word < Dimensions; ++word) {
+    for (uint32_t bit = 0; bit < 64; ++bit) {
+      result[word][(word * 64 + bit) % Dimensions] |= uint64_t{1} << (63 - bit);
+    }
+  }
+  return result;
+}();
+
+inline constexpr uint32_t MortonShift(uint32_t dimensions, uint32_t word,
+                                      uint32_t axis) noexcept {
+  return 64 - (64 * (word + 1) + dimensions - 1 - axis) / dimensions;
+}
+
+inline uint64_t ExtractBits(uint64_t value, uint64_t mask) noexcept {
+#if defined(__BMI2__)
+  return _pext_u64(value, mask);
+#else
+  uint64_t result = 0;
+  for (uint64_t out = 1; mask != 0; out <<= 1) {
+    if (value & mask & (uint64_t{0} - mask)) {
+      result |= out;
+    }
+    mask &= mask - 1;
+  }
+  return result;
+#endif
+}
+
+inline uint64_t BigEndian(uint64_t value) noexcept {
+  if constexpr (std::endian::native == std::endian::little) {
+    return std::byteswap(value);
+  } else {
+    return value;
+  }
+}
+
+inline void CopyBytes(uint8_t* out, const uint8_t* in, uint32_t size) noexcept {
+  if (size >= 16) {
+    std::memcpy(out, in, 16);
+    std::memcpy(out + size - 16, in + size - 16, 16);
+  } else if (size >= 8) {
+    std::memcpy(out, in, 8);
+    std::memcpy(out + size - 8, in + size - 8, 8);
+  } else if (size >= 4) {
+    std::memcpy(out, in, 4);
+    std::memcpy(out + size - 4, in + size - 4, 4);
+  } else {
+    for (uint32_t i = 0; i < size; ++i) {
+      out[i] = in[i];
+    }
+  }
+}
 
 template<uint32_t Dimensions>
 Code Encode(Point& point, bool hilbert) {
@@ -265,37 +221,21 @@ Code Encode(Point& point, bool hilbert) {
   }
   Code code{};
 #if defined(__BMI2__)
-  static constexpr auto masks = [] {
-    std::array<std::array<uint64_t, Dimensions>, Dimensions> result{};
-    for (uint32_t word = 0; word < Dimensions; ++word) {
-      for (uint32_t bit = 0; bit < 64; ++bit) {
-        result[word][(word * 64 + bit) % Dimensions] |= uint64_t{1}
-                                                        << (63 - bit);
-      }
-    }
-    return result;
-  }();
   for (uint32_t word = 0; word < Dimensions; ++word) {
     uint64_t value = 0;
     for (uint32_t axis = 0; axis < Dimensions; ++axis) {
-      const auto shift =
-        64 - (64 * (word + 1) + Dimensions - 1 - axis) / Dimensions;
-      value |= _pdep_u64(point[axis] >> shift, masks[word][axis]);
+      value |= _pdep_u64(point[axis] >> MortonShift(Dimensions, word, axis),
+                         kMortonMasks<Dimensions>[word][axis]);
     }
-    if constexpr (std::endian::native == std::endian::little) {
-      value = std::byteswap(value);
-    }
+    value = BigEndian(value);
     std::memcpy(code.data() + word * 8, &value, sizeof(value));
   }
 #else
   if constexpr (Dimensions == 2) {
     for (uint32_t word = 0; word < 2; ++word) {
       const auto shift = (1 - word) * 32;
-      auto value =
-        (SpreadPairs(point[0] >> shift) << 1) | SpreadPairs(point[1] >> shift);
-      if constexpr (std::endian::native == std::endian::little) {
-        value = std::byteswap(value);
-      }
+      const auto value = BigEndian((SpreadPairs(point[0] >> shift) << 1) |
+                                   SpreadPairs(point[1] >> shift));
       std::memcpy(code.data() + word * 8, &value, sizeof(value));
     }
   } else {
@@ -306,9 +246,7 @@ Code Encode(Point& point, bool hilbert) {
                                                                (56 - byte * 8))]
                  << (Dimensions - 1 - axis);
       }
-      if constexpr (std::endian::native == std::endian::little) {
-        value = std::byteswap(value);
-      }
+      value = BigEndian(value);
       std::memcpy(code.data() + byte * Dimensions,
                   reinterpret_cast<const uint8_t*>(&value) + 8 - Dimensions,
                   Dimensions);
@@ -318,7 +256,62 @@ Code Encode(Point& point, bool hilbert) {
   return code;
 }
 
+template<uint32_t Dimensions>
+Point Decode(const uint8_t* code, uint32_t size, bool hilbert) noexcept {
+  Point point{};
+  for (uint32_t word = 0; word < Dimensions && word * 8 < size; ++word) {
+    uint64_t value = 0;
+    std::memcpy(&value, code + word * 8,
+                std::min(uint32_t{8}, size - word * 8));
+    value = BigEndian(value);
+    for (uint32_t axis = 0; axis < Dimensions; ++axis) {
+      point[axis] |= ExtractBits(value, kMortonMasks<Dimensions>[word][axis])
+                     << MortonShift(Dimensions, word, axis);
+    }
+  }
+  if (hilbert) {
+    const auto gray = point[Dimensions - 1] >> 1;
+    for (uint32_t axis = Dimensions - 1; axis > 0; --axis) {
+      point[axis] ^= point[axis - 1];
+    }
+    point[0] ^= gray;
+    for (uint64_t q = 2; q != 0; q <<= 1) {
+      const auto mask = q - 1;
+      for (uint32_t axis = Dimensions; axis-- > 0;) {
+        if (point[axis] & q) {
+          point[0] ^= mask;
+        } else {
+          const auto exchange = (point[0] ^ point[axis]) & mask;
+          point[0] ^= exchange;
+          point[axis] ^= exchange;
+        }
+      }
+    }
+  }
+  return point;
+}
+
 }  // namespace detail
+
+inline Point Decode(const uint8_t* code, uint32_t size, uint32_t dimensions,
+                    bool hilbert) noexcept {
+  switch (dimensions) {
+    case 2:
+      return detail::Decode<2>(code, size, hilbert);
+    case 3:
+      return detail::Decode<3>(code, size, hilbert);
+    case 4:
+      return detail::Decode<4>(code, size, hilbert);
+    case 5:
+      return detail::Decode<5>(code, size, hilbert);
+    case 6:
+      return detail::Decode<6>(code, size, hilbert);
+    case 7:
+      return detail::Decode<7>(code, size, hilbert);
+    default:
+      return detail::Decode<8>(code, size, hilbert);
+  }
+}
 
 inline Code Encode(Point point, uint32_t dimensions, bool hilbert) {
   switch (dimensions) {
@@ -346,49 +339,6 @@ inline uint32_t CodeSize(uint32_t dimensions, uint32_t level) noexcept {
   return (dimensions * level + 7) / 8;
 }
 
-inline uint32_t TermSize(uint32_t dimensions, uint32_t level) noexcept {
-  return kTermHeader + CodeSize(dimensions, level);
-}
-
-inline uint32_t WriteTerm(uint8_t* out, const Code& code, uint32_t dimensions,
-                          uint32_t level, char kind) noexcept {
-  const auto bits = dimensions * level;
-  const auto size = TermSize(dimensions, level);
-  out[0] = static_cast<uint8_t>(kind);
-  out[1] = static_cast<uint8_t>(dimensions);
-  out[2] = static_cast<uint8_t>(level);
-  std::memcpy(out + kTermHeader, code.data(), size - kTermHeader);
-  if (bits % 8) {
-    out[size - 1] &= static_cast<uint8_t>(0xff << (8 - bits % 8));
-  }
-  return size;
-}
-
-inline std::string Term(const Code& code, uint32_t dimensions, uint32_t level,
-                        char kind) {
-  std::string term(TermSize(dimensions, level), '\0');
-  WriteTerm(reinterpret_cast<uint8_t*>(term.data()), code, dimensions, level,
-            kind);
-  return term;
-}
-
-namespace detail {
-
-template<typename Emit>
-void EmitTerm(uint8_t* term, uint32_t dimensions, uint32_t level, char kind,
-              Emit& emit) {
-  const auto bits = dimensions * level;
-  const auto size = TermSize(dimensions, level);
-  term[0] = static_cast<uint8_t>(kind);
-  term[2] = static_cast<uint8_t>(level);
-  const auto last = term[size - 1];
-  term[size - 1] &= static_cast<uint8_t>(0xff << ((8 - bits % 8) % 8));
-  emit(std::span<const uint8_t>{term, size});
-  term[size - 1] = last;
-}
-
-}  // namespace detail
-
 inline uint32_t LeafCode(const Point& point, const Options& options,
                          uint8_t* out) {
   const auto code = Encode(point, options.dimensions, options.hilbert);
@@ -401,60 +351,189 @@ inline uint32_t LeafCode(const Point& point, const Options& options,
   return size;
 }
 
-template<typename Emit>
-void CodeTerms(std::span<const uint8_t> code, const Options& options,
-               Emit&& emit) {
-  std::array<uint8_t, kTermHeader + sizeof(Code)> term{};
-  term[1] = static_cast<uint8_t>(options.dimensions);
-  std::memcpy(term.data() + kTermHeader, code.data(), code.size());
-  for (uint32_t level = 0; level < options.max_level;
-       level += options.level_step) {
-    detail::EmitTerm(term.data(), options.dimensions, level, kAncestorTerm,
-                     emit);
-  }
-  detail::EmitTerm(term.data(), options.dimensions, options.max_level,
-                   kLeafTerm, emit);
-}
-
-inline std::vector<std::string> PointQueryTerms(std::span<const Cell> cells,
-                                                const Box& box,
-                                                const Options& options) {
-  std::vector<std::string> terms;
-  terms.reserve(cells.size());
-  const auto add = [&](const Cell& cell) {
-    const auto code = Encode(cell.min, options.dimensions, options.hilbert);
-    terms.emplace_back(
-      Term(code, options.dimensions, cell.level,
-           cell.level == options.max_level ? kLeafTerm : kAncestorTerm));
-  };
-  for (const auto& cell : cells) {
-    if (IsIndexedLevel(cell.level, options)) {
-      add(cell);
-      continue;
-    }
-    const auto level =
-      std::min(options.max_level,
-               (cell.level / options.level_step + 1) * options.level_step);
-    const auto depth = level - cell.level;
-    for (uint64_t index = 0;
-         index < (uint64_t{1} << (depth * options.dimensions)); ++index) {
-      Cell child{.min = cell.min, .level = level};
-      for (uint32_t step = 0; step < depth; ++step) {
-        const auto bit = uint64_t{1} << (63 - cell.level - step);
-        for (uint32_t axis = 0; axis < options.dimensions; ++axis) {
-          if ((index >> (step * options.dimensions + axis)) & 1) {
-            child.min[axis] |= bit;
+class BoxTest {
+ public:
+  explicit BoxTest(const Box& box, const Options& options) noexcept
+    : _box{box},
+      _dimensions{options.dimensions},
+      _max_level{options.max_level},
+      _hilbert{options.hilbert},
+      _size{CodeSize(options.dimensions, options.max_level)},
+      _words{(_size + 7) / 8},
+      _low{LowBits(options.max_level)} {
+    for (uint32_t axis = 0; axis < _dimensions; ++axis) {
+      _empty |= box.min[axis] > box.max[axis];
+      if (box.min[axis] == 0 &&
+          box.max[axis] == std::numeric_limits<uint64_t>::max()) {
+        continue;
+      }
+      auto& bounded = _axes[_bounded++];
+      bounded.min = box.min[axis];
+      bounded.max = box.max[axis];
+      for (uint32_t word = 0; word < _words; ++word) {
+        for (uint32_t bit = 0; bit < 64; ++bit) {
+          if ((word * 64 + bit) % _dimensions == axis) {
+            bounded.masks[word] |= uint64_t{1} << (63 - bit);
           }
         }
-      }
-      if (Classify(child, box, options.dimensions) != Relation::Outside) {
-        add(child);
+        bounded.shifts[word] = detail::MortonShift(_dimensions, word, axis);
       }
     }
   }
-  absl::c_sort(terms);
-  terms.erase(std::ranges::unique(terms).begin(), terms.end());
-  return terms;
-}
+
+  Relation ClassifyRange(const uint8_t* first,
+                         const uint8_t* last) const noexcept {
+    if (_empty) {
+      return Relation::Outside;
+    }
+    const auto bits = CommonBits(first, last);
+    if (_hilbert) {
+      return ClassifyCell(first, bits / _dimensions);
+    }
+    if (bits == _size * 8) {
+      return ClassifyPrefix(first, bits);
+    }
+    const auto left = ClassifyPrefix(first, RunEnd(first, bits + 1, true));
+    const auto right = ClassifyPrefix(last, RunEnd(last, bits + 1, false));
+    return left == right ? left : Relation::Boundary;
+  }
+
+  uint64_t Select(std::span<const uint8_t> prefix, const uint8_t* keys,
+                  uint32_t pitch, uint32_t width,
+                  uint32_t count) const noexcept {
+    if (_empty) {
+      return 0;
+    }
+    Words raw{};
+    auto* const bytes = reinterpret_cast<uint8_t*>(raw.data());
+    std::memcpy(bytes, prefix.data(), prefix.size());
+    uint64_t selected = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+      detail::CopyBytes(bytes + prefix.size(), keys + uint64_t{i} * pitch,
+                        width);
+      selected |=
+        uint64_t{_hilbert ? ContainsHilbert(bytes) : ContainsMorton(raw)} << i;
+    }
+    return selected;
+  }
+
+ private:
+  using Words = std::array<uint64_t, kMaxCodeWords>;
+
+  struct Axis {
+    uint64_t min = 0;
+    uint64_t max = 0;
+    Words masks{};
+    std::array<uint32_t, kMaxCodeWords> shifts{};
+  };
+
+  static uint64_t LowBits(uint32_t level) noexcept {
+    return level >= 64 ? 0 : std::numeric_limits<uint64_t>::max() >> level;
+  }
+
+  static uint64_t HighBits(uint32_t bits) noexcept {
+    return bits == 0 ? 0 : std::numeric_limits<uint64_t>::max() << (64 - bits);
+  }
+
+  uint32_t CommonBits(const uint8_t* lhs, const uint8_t* rhs) const noexcept {
+    for (uint32_t byte = 0; byte < _size; ++byte) {
+      if (lhs[byte] != rhs[byte]) {
+        return byte * 8 +
+               std::countl_zero(static_cast<uint8_t>(lhs[byte] ^ rhs[byte]));
+      }
+    }
+    return _size * 8;
+  }
+
+  uint32_t RunEnd(const uint8_t* code, uint32_t from,
+                  bool value) const noexcept {
+    const auto end = _size * 8;
+    while (from < end &&
+           ((code[from / 8] >> (7 - from % 8)) & 1) == uint32_t{value}) {
+      ++from;
+    }
+    return from;
+  }
+
+  bool ContainsMorton(const Words& raw) const noexcept {
+    Words words{};
+    for (uint32_t word = 0; word < _words; ++word) {
+      words[word] = detail::BigEndian(raw[word]);
+    }
+    for (uint32_t i = 0; i < _bounded; ++i) {
+      const auto& axis = _axes[i];
+      uint64_t key = 0;
+      for (uint32_t word = 0; word < _words; ++word) {
+        key |= detail::ExtractBits(words[word], axis.masks[word])
+               << axis.shifts[word];
+      }
+      if ((key | _low) < axis.min || key > axis.max) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool ContainsHilbert(const uint8_t* code) const noexcept {
+    return ClassifyCell(code, _max_level) != Relation::Outside;
+  }
+
+  Relation ClassifyPrefix(const uint8_t* code, uint32_t bits) const noexcept {
+    Words raw{};
+    detail::CopyBytes(reinterpret_cast<uint8_t*>(raw.data()), code, _size);
+    Words low{};
+    Words high{};
+    for (uint32_t word = 0; word < _words; ++word) {
+      const auto value = detail::BigEndian(raw[word]);
+      const auto used = word * 64;
+      const auto mask = HighBits(bits <= used ? 0 : std::min(bits - used, 64U));
+      low[word] = value & mask;
+      high[word] = value | ~mask;
+    }
+    bool inside = true;
+    for (uint32_t i = 0; i < _bounded; ++i) {
+      const auto& axis = _axes[i];
+      uint64_t min = 0;
+      uint64_t max = _low;
+      for (uint32_t word = 0; word < _words; ++word) {
+        min |= detail::ExtractBits(low[word], axis.masks[word])
+               << axis.shifts[word];
+        max |= detail::ExtractBits(high[word], axis.masks[word])
+               << axis.shifts[word];
+      }
+      if (min > axis.max || max < axis.min) {
+        return Relation::Outside;
+      }
+      inside &= min >= axis.min && max <= axis.max;
+    }
+    return inside ? Relation::Inside : Relation::Boundary;
+  }
+
+  Relation ClassifyCell(const uint8_t* code, uint32_t level) const noexcept {
+    const auto point = Decode(code, _size, _dimensions, true);
+    const auto mask = LowBits(std::min(level, _max_level));
+    bool inside = true;
+    for (uint32_t axis = 0; axis < _dimensions; ++axis) {
+      const auto min = point[axis] & ~mask;
+      const auto max = point[axis] | mask;
+      if (min > _box.max[axis] || max < _box.min[axis]) {
+        return Relation::Outside;
+      }
+      inside &= min >= _box.min[axis] && max <= _box.max[axis];
+    }
+    return inside ? Relation::Inside : Relation::Boundary;
+  }
+
+  Box _box;
+  uint32_t _dimensions;
+  uint32_t _max_level;
+  bool _hilbert;
+  uint32_t _size;
+  uint32_t _words;
+  uint64_t _low;
+  uint32_t _bounded = 0;
+  bool _empty = false;
+  std::array<Axis, kMaxDimensions> _axes;
+};
 
 }  // namespace irs::curve

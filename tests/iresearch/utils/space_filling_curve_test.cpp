@@ -19,11 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/random/random.h>
 #include <gtest/gtest.h>
 
 #include <iresearch/utils/space_filling_curve.hpp>
 #include <pcg_random.hpp>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace irs::curve {
 namespace {
@@ -71,32 +74,14 @@ Code ReferenceEncode(Point point, uint32_t dimensions, bool hilbert) {
   return code;
 }
 
-std::string ReferenceTerm(const Code& code, uint32_t dimensions, uint32_t level,
-                          char kind) {
+std::string CodePrefix(const Code& code, uint32_t dimensions, uint32_t level) {
   const auto bits = dimensions * level;
-  std::string term(3 + (bits + 7) / 8, '\0');
-  term[0] = kind;
-  term[1] = static_cast<char>(dimensions);
-  term[2] = static_cast<char>(level);
+  std::string prefix((bits + 7) / 8, '\0');
   for (uint32_t bit = 0; bit < bits; ++bit) {
     const auto value = (code[bit / 8] >> (7 - bit % 8)) & 1;
-    term[3 + bit / 8] |= static_cast<char>(value << (7 - bit % 8));
+    prefix[bit / 8] |= static_cast<char>(value << (7 - bit % 8));
   }
-  return term;
-}
-
-std::vector<std::string> ReferencePointTerms(const Point& point,
-                                             const Options& options) {
-  const auto code = ReferenceEncode(point, options.dimensions, options.hilbert);
-  std::vector<std::string> terms;
-  for (uint32_t level = 0; level <= options.max_level; ++level) {
-    if (level == options.max_level || level % options.level_step == 0) {
-      terms.emplace_back(
-        ReferenceTerm(code, options.dimensions, level,
-                      level == options.max_level ? kLeafTerm : kAncestorTerm));
-    }
-  }
-  return terms;
+  return prefix;
 }
 
 std::vector<Point> EdgePoints(uint32_t dimensions) {
@@ -136,26 +121,33 @@ std::vector<Point> EdgePoints(uint32_t dimensions) {
   return points;
 }
 
-bool Match(const std::vector<std::string>& indexed,
-           const std::vector<std::string>& query) {
-  for (const auto& term : indexed) {
-    if (absl::c_binary_search(query, term)) {
-      return true;
+Box RandomBox(pcg64& random, uint32_t dimensions) {
+  Box box;
+  box.max.fill(UINT64_MAX);
+  for (uint32_t axis = 0; axis < dimensions; ++axis) {
+    if (absl::Uniform(random, 0U, 4U) == 0) {
+      continue;
     }
+    const auto half = random() >> (1 + absl::Uniform(random, 0U, 12U));
+    const auto center = random();
+    box.min[axis] = center > half ? center - half : 0;
+    box.max[axis] = center < UINT64_MAX - half ? center + half : UINT64_MAX;
   }
-  return false;
+  return box;
 }
 
-std::vector<std::string> IndexedPoint(const Point& point,
-                                      const Options& options) {
-  Code code{};
-  const auto size = LeafCode(point, options, code.data());
-  std::vector<std::string> terms;
-  CodeTerms(std::span<const uint8_t>{code.data(), size}, options,
-            [&](std::span<const uint8_t> term) {
-              terms.emplace_back(term.begin(), term.end());
-            });
-  return terms;
+bool InBox(const Point& point, const Box& box, uint32_t dimensions) {
+  for (uint32_t axis = 0; axis < dimensions; ++axis) {
+    if (point[axis] < box.min[axis] || point[axis] > box.max[axis]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool Contains(const BoxTest& test, const Code& code, const Options& options) {
+  const auto size = CodeSize(options.dimensions, options.max_level);
+  return test.Select(std::span{code.data(), size}, nullptr, 0, 0, 1) != 0;
 }
 
 TEST(SpaceFillingCurve, EncodeMatchesBitwiseReference) {
@@ -181,38 +173,164 @@ TEST(SpaceFillingCurve, EncodeMatchesBitwiseReference) {
   }
 }
 
-TEST(SpaceFillingCurve, PointTermsMatchBitwiseReference) {
-  pcg64 random{641917};
+TEST(SpaceFillingCurve, DecodeInvertsEncode) {
+  pcg64 random{2718281};
+  for (uint32_t dimensions = 2; dimensions <= kMaxDimensions; ++dimensions) {
+    SCOPED_TRACE(dimensions);
+    const auto edges = EdgePoints(dimensions);
+    for (bool hilbert : {false, true}) {
+      SCOPED_TRACE(hilbert);
+      const auto check = [&](Point point) {
+        std::fill(point.begin() + dimensions, point.end(), 0);
+        const auto code = Encode(point, dimensions, hilbert);
+        ASSERT_EQ(Decode(code.data(), static_cast<uint32_t>(code.size()),
+                         dimensions, hilbert),
+                  point);
+      };
+      for (const auto& point : edges) {
+        check(point);
+      }
+      for (uint32_t sample = 0; sample < 100000; ++sample) {
+        Point point;
+        for (auto& coordinate : point) {
+          coordinate = random();
+        }
+        check(point);
+      }
+    }
+  }
+}
+
+TEST(SpaceFillingCurve, BoxTestAgreesWithThePoints) {
+  pcg64 random{314159};
+  struct Entry {
+    Code code{};
+    Point point{};
+  };
   for (uint32_t dimensions = 2; dimensions <= kMaxDimensions; ++dimensions) {
     SCOPED_TRACE(dimensions);
     for (bool hilbert : {false, true}) {
       SCOPED_TRACE(hilbert);
-      for (uint32_t max_level = 0; max_level <= kMaxLevel; ++max_level) {
+      for (uint32_t max_level :
+           {uint32_t{1}, uint32_t{12}, MaxLevel(dimensions)}) {
         SCOPED_TRACE(max_level);
-        for (uint32_t step = 1; step <= MaxLevelStep(dimensions); ++step) {
-          SCOPED_TRACE(step);
-          const Options options{
-            .dimensions = dimensions,
-            .max_level = max_level,
-            .hilbert = hilbert,
-            .level_step = step,
-          };
-          for (uint32_t sample = 0; sample < 4; ++sample) {
-            Point point;
-            for (uint32_t axis = 0; axis < kMaxDimensions; ++axis) {
-              point[axis] = sample == 0   ? 0
-                            : sample == 1 ? UINT64_MAX
-                            : sample == 2 ? (axis % 2 ? 0xaaaaaaaaaaaaaaaa
-                                                      : 0x5555555555555555)
-                                          : random();
-            }
-            ASSERT_EQ(IndexedPoint(point, options),
-                      ReferencePointTerms(point, options));
+        const Options options{
+          .dimensions = dimensions,
+          .max_level = max_level,
+          .hilbert = hilbert,
+        };
+        std::vector<Entry> entries(4096);
+        for (auto& entry : entries) {
+          for (uint32_t axis = 0; axis < dimensions; ++axis) {
+            entry.point[axis] = random();
+          }
+          LeafCode(entry.point, options, entry.code.data());
+        }
+        absl::c_sort(entries, [](const Entry& lhs, const Entry& rhs) {
+          return lhs.code < rhs.code;
+        });
+        for (uint32_t sample = 0; sample < 5000; ++sample) {
+          const auto box = RandomBox(random, dimensions);
+          const BoxTest test{box, options};
+          const auto first = absl::Uniform(random, size_t{0}, entries.size());
+          const auto last =
+            std::min(entries.size() - 1,
+                     first + absl::Uniform(random, size_t{0}, size_t{64}));
+          const auto relation = test.ClassifyRange(entries[first].code.data(),
+                                                   entries[last].code.data());
+          for (auto i = first; i <= last; ++i) {
+            const auto hit = InBox(entries[i].point, box, dimensions);
+            ASSERT_FALSE(relation == Relation::Outside && hit);
+            ASSERT_FALSE(relation == Relation::Inside && !hit);
+            ASSERT_TRUE(!hit || Contains(test, entries[i].code, options));
           }
         }
       }
     }
   }
+}
+
+TEST(SpaceFillingCurve, FullDepthContainsIsExact) {
+  pcg64 random{577215};
+  for (uint32_t dimensions = 2; dimensions <= 4; ++dimensions) {
+    SCOPED_TRACE(dimensions);
+    for (bool hilbert : {false, true}) {
+      SCOPED_TRACE(hilbert);
+      const Options options{.dimensions = dimensions, .hilbert = hilbert};
+      for (uint32_t sample = 0; sample < 100000; ++sample) {
+        const auto box = RandomBox(random, dimensions);
+        Point point{};
+        for (uint32_t axis = 0; axis < dimensions; ++axis) {
+          point[axis] = box.min[axis] + (box.max[axis] - box.min[axis]) /
+                                          absl::Uniform(random, 1U, 5U);
+        }
+        if (sample % 2) {
+          point[0] = random();
+        }
+        Code code{};
+        LeafCode(point, options, code.data());
+        ASSERT_EQ(Contains(BoxTest(box, options), code, options),
+                  InBox(point, box, dimensions));
+      }
+    }
+  }
+}
+
+TEST(SpaceFillingCurve, SelectReadsKeysAfterThePrefix) {
+  pcg64 random{161803};
+  const Options options{.dimensions = 3};
+  const auto size = CodeSize(options.dimensions, options.max_level);
+  constexpr uint32_t kCount = 64;
+  for (uint32_t prefix : {uint32_t{0}, uint32_t{5}, uint32_t{8}, size - 1}) {
+    SCOPED_TRACE(prefix);
+    const auto box = RandomBox(random, options.dimensions);
+    const BoxTest test{box, options};
+    const auto width = size - prefix;
+    const auto pitch = width + 3;
+    std::vector<uint8_t> keys(uint64_t{pitch} * kCount);
+    Code first{};
+    uint64_t expected = 0;
+    for (uint32_t i = 0; i < kCount; ++i) {
+      Point point{};
+      for (uint32_t axis = 0; axis < options.dimensions; ++axis) {
+        point[axis] = random();
+      }
+      Code code{};
+      LeafCode(point, options, code.data());
+      if (i == 0) {
+        first = code;
+      }
+      std::memcpy(code.data(), first.data(), prefix);
+      std::memcpy(keys.data() + uint64_t{i} * pitch, code.data() + prefix,
+                  width);
+      if (Contains(test, code, options)) {
+        expected |= uint64_t{1} << i;
+      }
+    }
+    ASSERT_EQ(test.Select(std::span{first.data(), prefix}, keys.data(), pitch,
+                          width, kCount),
+              expected);
+  }
+}
+
+TEST(SpaceFillingCurve, EmptyAndOpenBoxes) {
+  const Options options;
+  Code low{};
+  Code high;
+  high.fill(0xff);
+  const Box empty{{5, 0}, {4, UINT64_MAX}};
+  EXPECT_EQ(BoxTest(empty, options).ClassifyRange(low.data(), high.data()),
+            Relation::Outside);
+  EXPECT_FALSE(Contains(BoxTest(empty, options), low, options));
+  const Box open{{0, 0}, {UINT64_MAX, UINT64_MAX}};
+  EXPECT_EQ(BoxTest(open, options).ClassifyRange(low.data(), high.data()),
+            Relation::Inside);
+  EXPECT_TRUE(Contains(BoxTest(open, options), high, options));
+  const Box corner{{UINT64_MAX, UINT64_MAX}, {UINT64_MAX, UINT64_MAX}};
+  EXPECT_TRUE(Contains(BoxTest(corner, options), high, options));
+  EXPECT_FALSE(Contains(BoxTest(corner, options), low, options));
+  EXPECT_EQ(BoxTest(corner, options).ClassifyRange(high.data(), high.data()),
+            Relation::Inside);
 }
 
 TEST(SpaceFillingCurve, OrderedNumbers) {
@@ -267,7 +385,7 @@ TEST(SpaceFillingCurve, LeafCodeIsTruncatedEncoding) {
   for (uint32_t dimensions = 2; dimensions <= kMaxDimensions; ++dimensions) {
     SCOPED_TRACE(dimensions);
     for (bool hilbert : {false, true}) {
-      for (uint32_t max_level : {0u, 1u, 7u, 33u, 64u}) {
+      for (uint32_t max_level : {1u, 7u, 33u, 64u}) {
         SCOPED_TRACE(max_level);
         const Options options{
           .dimensions = dimensions,
@@ -361,117 +479,8 @@ TEST(SpaceFillingCurve, HilbertLocalityAndPrefixes) {
       for (uint32_t axis = 0; axis < dimensions; ++axis) {
         interior[axis] |= (uint64_t{1} << 62) - 1;
       }
-      EXPECT_EQ(Term(encoded, dimensions, 2, 'L'),
-                Term(Encode(interior, dimensions, true), dimensions, 2, 'L'));
-    }
-  }
-}
-
-TEST(SpaceFillingCurve, BudgetAndNoFalseNegatives) {
-  pcg64 random{1099};
-  for (uint32_t dimensions : {2, 3, 4, 8}) {
-    for (bool hilbert : {false, true}) {
-      for (uint32_t budget : {1, 4, 64}) {
-        for (uint32_t step : {
-               uint32_t{1},
-               DefaultLevelStep(dimensions),
-               MaxLevelStep(dimensions),
-             }) {
-          const Options options{
-            .dimensions = dimensions,
-            .max_cells = budget,
-            .hilbert = hilbert,
-            .level_step = step,
-          };
-          for (uint32_t trial = 0; trial < 8; ++trial) {
-            Box box;
-            Point inside;
-            inside.fill(0);
-            for (uint32_t axis = 0; axis < dimensions; ++axis) {
-              const auto a = random();
-              const auto b = random();
-              box.min[axis] = std::min(a, b);
-              box.max[axis] = std::max(a, b);
-              inside[axis] =
-                box.min[axis] + (box.max[axis] - box.min[axis]) / 2;
-            }
-            if (trial % 2) {
-              box.min[0] = 0;
-              box.max[0] = UINT64_MAX;
-            }
-            const auto cover = CoverBox(box, options);
-            ASSERT_LE(cover.size(), budget);
-            const auto query = PointQueryTerms(cover, box, options);
-            EXPECT_LE(query.size(), budget << (dimensions * (step - 1)));
-            for (const auto& point : {box.min, box.max, inside}) {
-              EXPECT_TRUE(Match(IndexedPoint(point, options), query));
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-TEST(SpaceFillingCurve, LevelStepNarrowsPointCandidates) {
-  pcg64 random{2026};
-  for (uint32_t dimensions : {2, 3, 4}) {
-    for (uint32_t step = 2; step <= MaxLevelStep(dimensions); ++step) {
-      const Options coarse{.dimensions = dimensions, .max_cells = 16};
-      const Options stepped{
-        .dimensions = dimensions,
-        .max_cells = 16,
-        .level_step = step,
-      };
-      for (uint32_t trial = 0; trial < 64; ++trial) {
-        Box box;
-        for (uint32_t axis = 0; axis < dimensions; ++axis) {
-          const auto center = random() >> 1;
-          const auto half = random() >> (8 + random() % 48);
-          box.min[axis] = center;
-          box.max[axis] = center + half;
-        }
-        const auto all = PointQueryTerms(CoverBox(box, coarse), box, coarse);
-        const auto narrow =
-          PointQueryTerms(CoverBox(box, stepped), box, stepped);
-        for (uint32_t sample = 0; sample < 64; ++sample) {
-          Point point;
-          point.fill(0);
-          bool inside = true;
-          for (uint32_t axis = 0; axis < dimensions; ++axis) {
-            const auto span = box.max[axis] - box.min[axis];
-            point[axis] = box.min[axis] - span / 2 + random() % (2 * span + 1);
-            inside &=
-              point[axis] >= box.min[axis] && point[axis] <= box.max[axis];
-          }
-          const bool narrow_match = Match(IndexedPoint(point, stepped), narrow);
-          EXPECT_TRUE(!inside || narrow_match);
-          EXPECT_TRUE(!narrow_match || Match(IndexedPoint(point, coarse), all));
-        }
-      }
-      Point origin;
-      origin.fill(0);
-      EXPECT_EQ(IndexedPoint(origin, stepped).size(), (64 - 1) / step + 2);
-    }
-  }
-}
-
-TEST(SpaceFillingCurve, PointQueriesAtConfiguredDepth) {
-  for (uint32_t level : {0, 1, 32, 63, 64}) {
-    for (bool hilbert : {false, true}) {
-      for (uint32_t step : {1, 4, 7}) {
-        const Options options{
-          .max_level = level,
-          .hilbert = hilbert,
-          .level_step = step,
-        };
-        const Point point{EncodeSigned(5), EncodeSigned(-5)};
-        const Box box{point, point};
-        const auto query =
-          PointQueryTerms(CoverBox(box, options), box, options);
-        ASSERT_EQ(query.size(), 1);
-        EXPECT_TRUE(Match(IndexedPoint(point, options), query));
-      }
+      EXPECT_EQ(CodePrefix(encoded, dimensions, 2),
+                CodePrefix(Encode(interior, dimensions, true), dimensions, 2));
     }
   }
 }
@@ -483,22 +492,14 @@ TEST(SpaceFillingCurve, InvalidAndExtremeInputs) {
       EXPECT_THROW(Encode({}, dimensions, hilbert), irs::SqlException);
     }
   }
-  EXPECT_THROW(CoverBox({}, Options{.dimensions = 1}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.dimensions = 9}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.max_level = 65}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.max_cells = 0}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.max_cells = 4097}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.level_step = 0}), irs::SqlException);
-  EXPECT_THROW(CoverBox({}, Options{.level_step = 8}), irs::SqlException);
-  EXPECT_TRUE(CoverBox(Box{{1, 0}, {0, 1}}, Options{}).empty());
-  const auto full = CoverBox(Box{{0, 0}, {UINT64_MAX, UINT64_MAX}}, Options{});
-  ASSERT_EQ(full.size(), 1);
-  EXPECT_EQ(full.front().level, 0);
-  const auto last = CoverBox(
-    Box{{UINT64_MAX, UINT64_MAX}, {UINT64_MAX, UINT64_MAX}}, Options{});
-  ASSERT_EQ(last.size(), 1);
-  EXPECT_EQ(last.front().level, 64);
-  EXPECT_EQ(last.front().Max(0), UINT64_MAX);
+  EXPECT_THROW(Validate(Options{.dimensions = 1}), irs::SqlException);
+  EXPECT_THROW(Validate(Options{.dimensions = 9}), irs::SqlException);
+  EXPECT_THROW(Validate(Options{.max_level = 0}), irs::SqlException);
+  EXPECT_THROW(Validate(Options{.max_level = 65}), irs::SqlException);
+  EXPECT_THROW(Validate(Options{.dimensions = 5, .max_level = 52}),
+               irs::SqlException);
+  EXPECT_NO_THROW(Validate(Options{.dimensions = 4, .max_level = 64}));
+  EXPECT_NO_THROW(Validate(Options{.dimensions = 8, .max_level = 32}));
 }
 
 TEST(SpaceFillingCurve, EncodedCellPrefixContainsAllCorners) {
@@ -508,26 +509,25 @@ TEST(SpaceFillingCurve, EncodedCellPrefixContainsAllCorners) {
     for (bool hilbert : {false, true}) {
       for (uint32_t level : {0u, 1u, 7u, 24u, 32u, 63u, 64u}) {
         for (uint32_t trial = 0; trial < 32; ++trial) {
-          Cell cell;
-          cell.level = level;
+          Point min{};
+          const uint64_t low = level == 0    ? UINT64_MAX
+                               : level == 64 ? 0
+                                             : UINT64_MAX >> level;
           for (uint32_t axis = 0; axis < dimensions; ++axis) {
-            cell.min[axis] = level == 0 ? 0
-                             : level == 64
-                               ? random()
-                               : (random() >> (64 - level)) << (64 - level);
+            min[axis] = random() & ~low;
           }
-          const auto expected = Term(Encode(cell.min, dimensions, hilbert),
-                                     dimensions, level, kLeafTerm);
+          const auto expected =
+            CodePrefix(Encode(min, dimensions, hilbert), dimensions, level);
           for (uint32_t corner = 0; corner < (1u << dimensions); ++corner) {
-            auto point = cell.min;
+            auto point = min;
             for (uint32_t axis = 0; axis < dimensions; ++axis) {
               if (corner & (1u << axis)) {
-                point[axis] = cell.Max(axis);
+                point[axis] |= low;
               }
             }
-            ASSERT_EQ(Term(Encode(point, dimensions, hilbert), dimensions,
-                           level, kLeafTerm),
-                      expected);
+            ASSERT_EQ(
+              CodePrefix(Encode(point, dimensions, hilbert), dimensions, level),
+              expected);
             ++corners;
           }
         }

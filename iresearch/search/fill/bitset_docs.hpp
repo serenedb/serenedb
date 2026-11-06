@@ -53,7 +53,9 @@ class BitsetDocs {
     return _doc = detail::NextBit(_set, max);
   }
 
-  detail::BitsetStorage* Folded() noexcept { return &_set; }
+  detail::BitsetStorage* Folded() noexcept {
+    return _set.Shared() ? nullptr : &_set;
+  }
 
  private:
   detail::BitsetStorage _set;

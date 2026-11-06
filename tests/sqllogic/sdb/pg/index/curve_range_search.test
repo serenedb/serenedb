@@ -16,11 +16,11 @@ INSERT INTO curve_ranges VALUES
 
 statement ok
 CREATE INDEX curve_ranges_idx ON curve_ranges USING inverted(
- id, (curve(ROW(x, y, t), max_cells := 16))) INCLUDE (x, y, t);
+ id, (curve(ROW(x, y, t)))) INCLUDE (x, y, t);
 
 statement ok
 CREATE INDEX curve_ranges_hilbert ON curve_ranges USING inverted(
- id, (curve(ROW(x, y, t), kind := 'hilbert', max_cells := 1))) INCLUDE (x, y, t);
+ id, (curve(ROW(x, y, t), kind := 'hilbert'))) INCLUDE (x, y, t);
 
 statement ok
 VACUUM (REFRESH_TABLE) curve_ranges;
@@ -241,7 +241,7 @@ query
 SELECT
  (SELECT list(id ORDER BY id) FROM curve_ranges_idx WHERE x BETWEEN 0 AND 10 AND y BETWEEN 0 AND 10
   AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04'
-  AND curve(ROW(x, y, t), max_cells := 16) @@ ts_between(ROW(5, 5, TIMESTAMP '2026-01-03'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true)) IS NOT DISTINCT FROM
+  AND curve(ROW(x, y, t)) @@ ts_between(ROW(5, 5, TIMESTAMP '2026-01-03'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true)) IS NOT DISTINCT FROM
  (SELECT list(id ORDER BY id) FROM curve_ranges WHERE x BETWEEN 0 AND 10 AND y BETWEEN 0 AND 10
   AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-04'
   AND x = 5 AND y = 5 AND t = TIMESTAMP '2026-01-03') AS equal;

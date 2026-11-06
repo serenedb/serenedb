@@ -24,11 +24,16 @@
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
+#include <span>
+#include <vector>
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::term_dict {
@@ -156,6 +161,190 @@ class RangeWalk {
   uint32_t _stride;
   byte_type _lower[kMaxStride];
   byte_type _upper[kMaxStride];
+};
+
+class PrunedWalk {
+ public:
+  explicit PrunedWalk(const TermReaderImpl& field, const RangePruner& pruner,
+                      TermReader::RangeVisitor visit) noexcept
+    : _field{field},
+      _levels{field.RangeLevels()},
+      _cursor{field},
+      _pruner{pruner},
+      _visit{visit},
+      _prefix{field.RangePrefix()},
+      _stride{field.key_width - field.RangePrefix()} {
+    if (!_levels.empty()) {
+      std::memcpy(_first, field.min().data(), _prefix);
+      std::memcpy(_next, field.min().data(), _prefix);
+    }
+  }
+
+  void Run() {
+    if (_levels.empty()) {
+      Terms(0, _field.min(), {});
+      return;
+    }
+    const size_t top = _levels.size() - 1;
+    Pieces(top, 0, _levels[top].count);
+    PartialPieces();
+  }
+
+ private:
+  struct Partial {
+    uint32_t piece = 0;
+    uint32_t block = 0;
+  };
+
+  void PartialPieces() {
+    const auto prefix = _field.KeyPrefix();
+    const auto count = _levels[0].count;
+    uint32_t block = 0;
+    for (size_t done = 0; done != _partial.size();) {
+      containers::SmallVector<FileRange, kPlannedRanges> ranges;
+      uint64_t planned = 0;
+      auto end = done;
+      for (; end != _partial.size() && planned < kMaxPrefetch; ++end) {
+        auto& partial = _partial[end];
+        block = _field.BlockFrom(
+          block, _probe.Assign(prefix, Start(0, partial.piece, _first)));
+        partial.block = block;
+        const auto last =
+          partial.piece + 1 == count
+            ? _field.Blocks() - 1
+            : _field.BlockFrom(
+                block,
+                _probe.Assign(prefix, Start(0, partial.piece + 1, _next)));
+        const auto from = _field.BlockOffset(block);
+        const auto to = _field.BlockOffset(last + 1);
+        AppendRange(ranges, from, to);
+        planned += to - from;
+      }
+      if (!_field.Small()) {
+        HintRanges(_field.Owner().Input(), std::span<const FileRange>{ranges});
+      }
+      for (; done != end; ++done) {
+        const auto [piece, first_block] = _partial[done];
+        Terms(first_block, Start(0, piece, _first),
+              piece + 1 == count ? bytes_view{} : Start(0, piece + 1, _next));
+      }
+    }
+  }
+
+  bytes_view Start(size_t level, uint32_t i, byte_type* buffer) const noexcept {
+    std::memcpy(buffer + _prefix, _levels[level].starts + uint64_t{i} * _stride,
+                _stride);
+    return {buffer, _prefix + _stride};
+  }
+
+  bytes_view Before(bytes_view next) noexcept {
+    std::memcpy(_last, next.data(), next.size());
+    for (size_t i = next.size(); i-- != 0;) {
+      if (_last[i]-- != 0) {
+        break;
+      }
+    }
+    return {_last, next.size()};
+  }
+
+  void Pieces(size_t level, uint32_t begin, uint32_t end) {
+    const auto& range = _levels[level];
+    for (uint32_t i = begin; i != end; ++i) {
+      const bool tail = i + 1 == range.count;
+      const auto first = Start(level, i, _first);
+      const auto next = tail ? bytes_view{} : Start(level, i + 1, _next);
+      switch (_pruner.Fit(first, tail ? _field.max() : Before(next))) {
+        case RangeFit::Outside:
+          continue;
+        case RangeFit::Inside: {
+          const auto* record = range.records + Load32(range.offsets, i);
+          PostingMeta meta;
+          meta.inline_data =
+            record +
+            PostingsReader::decode(record, _field.meta().index_features, meta);
+          _visit(first, meta);
+          continue;
+        }
+        case RangeFit::Partial:
+          break;
+      }
+      if (level == 0) {
+        _partial.emplace_back(i);
+      } else {
+        Pieces(level - 1, Load32(range.firsts, i),
+               tail ? _levels[level - 1].count : Load32(range.firsts, i + 1));
+      }
+    }
+  }
+
+  void Terms(uint32_t block, bytes_view lower, bytes_view upper) {
+    _cursor.SeekIn(block, lower);
+    do {
+      if (_cursor.View().fixed) {
+        if (!FixedTerms(upper)) {
+          return;
+        }
+        continue;
+      }
+      const bytes_view key = _cursor.Term();
+      if (!upper.empty() && key >= upper) {
+        return;
+      }
+      if (_pruner.Select(key, nullptr, 0, 0, 1) != 0) {
+        _visit(key, _cursor.Meta());
+      }
+    } while (_cursor.Advance());
+  }
+
+  bool FixedTerms(bytes_view upper) {
+    const auto& view = _cursor.View();
+    const auto prefix = Prefix(view);
+    std::memcpy(_key, prefix.data(), prefix.size());
+    const size_t ordinal = _field.KeyPrefix().size();
+    const size_t kept = std::min(prefix.size(), ordinal);
+    const auto head = prefix.substr(kept);
+    const uint32_t dropped = static_cast<uint32_t>(ordinal - kept);
+    const uint32_t width = view.stride - dropped;
+    const bytes_view key{_key + ordinal, _field.key_width};
+    uint32_t entry = _cursor.Entry();
+    const uint32_t stop = _cursor.StopBefore(upper);
+    while (entry < stop) {
+      const uint32_t count = std::min(stop - entry, RangePruner::kMaxSelect);
+      const auto* const keys = view.keys + uint64_t{entry} * view.stride;
+      auto selected =
+        _pruner.Select(head, keys + dropped, view.stride, width, count);
+      for (; selected != 0; selected &= selected - 1) {
+        const uint32_t hit = entry + std::countr_zero(selected);
+        std::memcpy(_key + prefix.size(),
+                    view.keys + uint64_t{hit} * view.stride, view.stride);
+        _cursor.MoveTo(hit);
+        _visit(key, _cursor.Meta());
+      }
+      entry += count;
+    }
+    if (stop != _cursor.BlockStop()) {
+      return false;
+    }
+    _cursor.MoveTo(stop - 1);
+    return true;
+  }
+
+  static constexpr size_t kMaxOrdinalBytes = 4;
+  static constexpr size_t kPlannedRanges = 64;
+
+  const TermReaderImpl& _field;
+  std::span<const RangeLevel> _levels;
+  Cursor _cursor;
+  PaddedKey _probe;
+  std::vector<Partial> _partial;
+  const RangePruner& _pruner;
+  TermReader::RangeVisitor _visit;
+  uint32_t _prefix;
+  uint32_t _stride;
+  byte_type _first[kMaxStride];
+  byte_type _next[kMaxStride];
+  byte_type _last[kMaxStride];
+  byte_type _key[kMaxStride + kMaxOrdinalBytes];
 };
 
 }  // namespace
@@ -362,6 +551,11 @@ void TermReaderImpl::VisitRange(bytes_view from, bytes_view to,
     to = {};
   }
   RangeWalk{*this, from, to, visit}.Run();
+}
+
+void TermReaderImpl::VisitPruned(const RangePruner& pruner,
+                                 RangeVisitor visit) const {
+  PrunedWalk{*this, pruner, visit}.Run();
 }
 
 }  // namespace irs::term_dict

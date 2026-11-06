@@ -556,18 +556,13 @@ std::optional<CurveKey> CurveBoundKey(const CurveAxis& axis,
   };
 }
 
-CurveInterval CurveLimits(const CurveAxis& axis) {
-  constexpr auto kMax = std::numeric_limits<uint64_t>::max();
-  if (Normalized(axis)) {
-    return {.max = kMax};
-  }
-  if (axis.family == CurveFamily::Float) {
-    return {
-      .min = irs::curve::EncodeDouble(-std::numeric_limits<double>::infinity()),
-      .max = irs::curve::EncodeDouble(std::numeric_limits<double>::quiet_NaN()),
-    };
-  }
-  return {.max = kMax << KeyShift(axis)};
+uint64_t CurveKeyPadding(const CurveAxis& axis) {
+  return Normalized(axis) ? 0 : (uint64_t{1} << KeyShift(axis)) - 1;
+}
+
+bool CurveAxisIsExact(const CurveAxis& axis, uint32_t max_level) {
+  return axis.family != CurveFamily::Null && axis.family != CurveFamily::Inet &&
+         !Normalized(axis) && max_level >= KeyWidth(axis);
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> CurveSpec::Copy() const {
@@ -634,18 +629,9 @@ duckdb::unique_ptr<CurveSpec> BindCurveSpec(
   options.hilbert = curve == kHilbertCurve;
   const auto max_level = option("max_level");
   if (!max_level.IsNull()) {
-    options.max_level =
-      LimitOption(max_level, "max_level", 0, irs::curve::kMaxLevel);
+    options.max_level = LimitOption(max_level, "max_level", 1,
+                                    irs::curve::MaxLevel(options.dimensions));
   }
-  const auto step = option("level_step");
-  options.level_step =
-    step.IsNull() ? irs::curve::DefaultLevelStep(options.dimensions)
-                  : LimitOption(step, "level_step", 1,
-                                irs::curve::MaxLevelStep(options.dimensions));
-  const auto cells = option("max_cells");
-  options.max_cells =
-    cells.IsNull() ? irs::curve::DefaultMaxCells(options.dimensions)
-                   : LimitOption(cells, "max_cells", 1, irs::curve::kMaxCells);
 
   const auto lower = option("lower");
   const auto upper = option("upper");
@@ -662,17 +648,13 @@ duckdb::unique_ptr<CurveSpec> BindCurveSpec(
       options.max_level =
         std::max(options.max_level, AxisBits(spec->axes[axis]));
     }
+    options.max_level = std::clamp(options.max_level, uint32_t{1},
+                                   irs::curve::MaxLevel(options.dimensions));
   }
   ReplaceOption(argument("kind"), duckdb::Value{curve});
   ReplaceOption(
     argument("max_level"),
     duckdb::Value::INTEGER(static_cast<int32_t>(options.max_level)));
-  ReplaceOption(
-    argument("level_step"),
-    duckdb::Value::INTEGER(static_cast<int32_t>(options.level_step)));
-  ReplaceOption(
-    argument("max_cells"),
-    duckdb::Value::INTEGER(static_cast<int32_t>(options.max_cells)));
   if (!normalized) {
     ReplaceOption(argument("lower"), duckdb::Value{});
     ReplaceOption(argument("upper"), duckdb::Value{});

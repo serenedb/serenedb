@@ -54,11 +54,6 @@ struct CurveKey {
   bool exact = false;
 };
 
-struct CurveInterval {
-  uint64_t min = 0;
-  uint64_t max = 0;
-};
-
 struct CurveKeyRange {
   uint64_t lo = 0;
   uint64_t hi = 0;
@@ -91,7 +86,8 @@ struct CurveAxis {
 
 std::optional<CurveKey> CurveBoundKey(const CurveAxis& axis,
                                       const duckdb::Value& bound);
-CurveInterval CurveLimits(const CurveAxis& axis);
+uint64_t CurveKeyPadding(const CurveAxis& axis);
+bool CurveAxisIsExact(const CurveAxis& axis, uint32_t max_level);
 
 struct CurveSpec final : public duckdb::FunctionData {
   irs::curve::Options options;
@@ -130,14 +126,9 @@ class CurveTokenizer final
 
   template<irs::TokenLayout Layout>
   bool DoFill(duckdb::string_t value, irs::TokenSink& sink) {
-    const std::span code{reinterpret_cast<const uint8_t*>(value.GetData()),
-                         value.GetSize()};
-    SDB_ASSERT(code.size() ==
+    SDB_ASSERT(value.GetSize() ==
                irs::curve::CodeSize(_options.dimensions, _options.max_level));
-    const auto emit = [&](std::span<const uint8_t> term) {
-      sink.Emit<Layout>(term.data(), static_cast<uint32_t>(term.size()));
-    };
-    irs::curve::CodeTerms(code, _options, emit);
+    sink.Emit<Layout>(value.GetData(), static_cast<uint32_t>(value.GetSize()));
     return true;
   }
 

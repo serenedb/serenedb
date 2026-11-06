@@ -34,6 +34,7 @@ fi
 
 declare -A CALLS=(
 	[curve]="curve(ROW(x, y, z))"
+	[hilbert]="curve(ROW(x, y, z), kind := 'hilbert')"
 	[curve32]="curve(ROW(x, y, z), max_level := 32)"
 	[norm32]="curve(ROW(x, y, z), max_level := 32, lower := ROW(-1, -1, -1), upper := ROW(1001, 1001, 1001))"
 )
@@ -225,7 +226,7 @@ for t in ${TABLES}; do
 		if [[ "${kind}" == granular ]]; then
 			keys="id, x, y, z)"
 		else
-			keys="id, (${CALLS[${kind}]})) INCLUDE (x, y, z)"
+			keys="id, (${CALLS[${kind}]}))"
 		fi
 		line+=" ${kind} $(seconds "CREATE INDEX ${t}_${kind} ON ${t} USING inverted(${keys}${INDEX_OPTIONS}; VACUUM (REFRESH_TABLE) ${t}") s"
 	done

@@ -27,6 +27,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression_binder.hpp>
+#include <iresearch/search/filters/curve_box_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -60,23 +61,14 @@ bool IsWideningCast(const duckdb::Expression& expression) {
 
 void AddBoxCandidates(irs::BooleanFilter& root, const SearchColumnInfo& info,
                       const irs::curve::Box& box) {
-  const auto& options =
+  auto filter = std::make_unique<irs::ByCurveBox>();
+  *filter->mutable_field_id() = info.field_id;
+  filter->SetScorer(&irs::ForceConstScore());
+  auto& options = *filter->mutable_options();
+  options.box = box;
+  options.curve =
     irs::utils::downCast<CurveTokenizer>(*info.tokenizer.analyzer).Options();
-  const auto cells = irs::curve::CoverBox(box, options);
-  if (cells.empty()) {
-    root.Add(std::make_unique<irs::Empty>(), irs::Occur::Must);
-    return;
-  }
-  auto terms = irs::curve::PointQueryTerms(cells, box, options);
-  auto candidates = std::make_unique<irs::BooleanFilter>();
-  candidates->SetScorer(&irs::ForceConstScore());
-  for (const auto& term : terms) {
-    AddTerm({candidates.get(), irs::Occur::Should}, info.field_id, TextOf(info),
-            irs::ViewCast<irs::byte_type>(std::string_view{term}),
-            irs::kNoBoost, &irs::ForceConstScore());
-  }
-  SetMinMatch(*candidates, 1);
-  root.Add(std::move(candidates), irs::Occur::Must);
+  root.Add(std::move(filter), irs::Occur::Must);
 }
 
 void RaiseMin(uint64_t& min, CurveKey bound, bool inclusive, bool& empty) {
@@ -128,10 +120,10 @@ const duckdb::Value* Component(const duckdb::Value& bounds, uint32_t axis,
 CurveKey QueryKey(duckdb::ClientContext& context, const CurveAxis& axis,
                   const duckdb::Value& bound, uint32_t index) {
   auto key = CurveBoundKey(axis, bound);
-  if (key && axis.type.id() == duckdb::LogicalTypeId::FLOAT) {
+  if (key && axis.family == CurveFamily::Float) {
     const auto common = duckdb::BoundComparisonExpression::BindComparison(
       context, axis.type, bound.type(), duckdb::ExpressionType::COMPARE_EQUAL);
-    if (common.id() == duckdb::LogicalTypeId::FLOAT) {
+    if (common == axis.type) {
       key = CurveBoundKey(axis, bound.DefaultCastAs(common));
     }
   }
@@ -174,7 +166,7 @@ void CollectRanges(const duckdb::Expression& expression,
                    absl::FunctionRef<duckdb::unique_ptr<duckdb::Expression>(
                      const duckdb::Expression&)>
                      normalize,
-                   std::vector<CurveRange>& ranges) {
+                   size_t conjunct, std::vector<CurveRange>& ranges) {
   using enum duckdb::ExpressionType;
   if (expression.GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_FUNCTION ||
@@ -187,7 +179,7 @@ void CollectRanges(const duckdb::Expression& expression,
         bool upper_inclusive = true) {
       if (auto normalized = normalize(PeelInetSortKey(component))) {
         ranges.emplace_back(std::move(normalized), lower, upper,
-                            lower_inclusive, upper_inclusive);
+                            lower_inclusive, upper_inclusive, conjunct);
       }
     };
   const auto& function = expression.Cast<duckdb::BoundFunctionExpression>();
@@ -233,7 +225,7 @@ void CollectRanges(const duckdb::Expression& expression,
 bool ClaimCurveMatch(
   duckdb::ClientContext& context, irs::BooleanFilter& root,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters, size_t index,
-  const ExpressionGetter& expressions) {
+  const ExpressionGetter& expressions, CurveChecks checks) {
   const auto& conjunct = *filters[index];
   if (conjunct.GetExpressionClass() !=
         duckdb::ExpressionClass::BOUND_FUNCTION ||
@@ -302,48 +294,62 @@ bool ClaimCurveMatch(
   for (uint32_t axis = 0; axis < dimensions; ++axis) {
     const auto& target = spec->axes[axis];
     const auto& coordinate = *coordinates[axis];
-    const auto limits = CurveLimits(target);
-    box.min[axis] = limits.min;
-    box.max[axis] = limits.max;
+    box.max[axis] = std::numeric_limits<uint64_t>::max();
     const auto* lo = Component(*lower, axis, dimensions);
     const auto* hi = Component(*upper, axis, dimensions);
+    const bool lossless = checks == CurveChecks::Lossy &&
+                          CurveAxisIsExact(target, spec->options.max_level);
     if (target.family == CurveFamily::Null) {
       empty = true;
     }
     if (lo) {
+      bool exact = false;
       if (target.family != CurveFamily::Null) {
         const auto bound = QueryKey(context, target, *lo, axis);
+        exact = lossless && bound.exact;
         if (!empty) {
           RaiseMin(box.min[axis], bound, include_lower, empty);
         }
       }
-      rechecks.emplace_back(Compare(
-        context,
-        include_lower ? duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO
-                      : duckdb::ExpressionType::COMPARE_GREATERTHAN,
-        coordinate, *lo));
+      if (!exact) {
+        rechecks.emplace_back(Compare(
+          context,
+          include_lower ? duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO
+                        : duckdb::ExpressionType::COMPARE_GREATERTHAN,
+          coordinate, *lo));
+      }
     }
     if (hi) {
+      bool exact = false;
       if (target.family != CurveFamily::Null) {
         const auto bound = QueryKey(context, target, *hi, axis);
+        exact = lossless && bound.exact;
         if (!empty) {
           LowerMax(box.max[axis], bound, include_upper, empty);
         }
       }
-      rechecks.emplace_back(Compare(
-        context,
-        include_upper ? duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO
-                      : duckdb::ExpressionType::COMPARE_LESSTHAN,
-        coordinate, *hi));
+      if (!exact) {
+        rechecks.emplace_back(Compare(
+          context,
+          include_upper ? duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO
+                        : duckdb::ExpressionType::COMPARE_LESSTHAN,
+          coordinate, *hi));
+      }
     }
-    if (!lo && !hi) {
+    if (checks == CurveChecks::All && !lo && !hi) {
       rechecks.emplace_back(IsNotNull(coordinate));
     }
+    box.max[axis] |= CurveKeyPadding(target);
   }
   if (empty) {
     root.Add(std::make_unique<irs::Empty>(), irs::Occur::Must);
   } else {
     AddBoxCandidates(root, *info, box);
+  }
+  if (rechecks.empty()) {
+    std::swap(filters[index], filters.back());
+    filters.pop_back();
+    return true;
   }
   filters[index] = std::move(rechecks.front());
   for (size_t i = 1; i < rechecks.size(); ++i) {
@@ -358,8 +364,8 @@ std::vector<CurveRange> CollectCurveRanges(
     duckdb::unique_ptr<duckdb::Expression>(const duckdb::Expression&)>
     normalize) {
   std::vector<CurveRange> ranges;
-  for (const auto& conjunct : conjuncts) {
-    CollectRanges(*conjunct, normalize, ranges);
+  for (size_t i = 0; i < conjuncts.size(); ++i) {
+    CollectRanges(*conjuncts[i], normalize, i, ranges);
   }
   return ranges;
 }
@@ -368,7 +374,8 @@ bool AddCurveRangeCandidates(duckdb::ClientContext& context,
                              irs::BooleanFilter& root,
                              std::span<const CurveRange> ranges,
                              const duckdb::Expression& key,
-                             const SearchColumnInfo& info) {
+                             const SearchColumnInfo& info,
+                             std::vector<size_t>& answered) {
   const auto* spec = TryGetCurveSpec(key);
   SDB_ASSERT(spec);
   const auto coordinates = CurveCoordinates(key);
@@ -377,13 +384,13 @@ bool AddCurveRangeCandidates(duckdb::ClientContext& context,
   }
   irs::curve::Box box;
   bool empty = false;
+  std::vector<size_t> exact;
   for (uint32_t axis = 0; axis < spec->options.dimensions; ++axis) {
     const auto& target = spec->axes[axis];
     bool has_lower = false;
     bool has_upper = false;
-    const auto limits = CurveLimits(target);
-    box.min[axis] = limits.min;
-    box.max[axis] = limits.max;
+    box.max[axis] = std::numeric_limits<uint64_t>::max();
+    const bool lossless = CurveAxisIsExact(target, spec->options.max_level);
     const auto& indexed = *coordinates[axis];
     for (const auto& range : ranges) {
       const auto* component = range.component.get();
@@ -418,16 +425,21 @@ bool AddCurveRangeCandidates(duckdb::ClientContext& context,
         LowerMax(box.max[axis], *upper, range.upper_inclusive, empty);
         has_upper = true;
       }
+      if (lossless && (!lower || lower->exact) && (!upper || upper->exact)) {
+        exact.push_back(range.conjunct);
+      }
     }
     if (!has_lower || !has_upper) {
       return false;
     }
+    box.max[axis] |= CurveKeyPadding(target);
   }
   if (empty) {
     root.Add(std::make_unique<irs::Empty>(), irs::Occur::Must);
     return true;
   }
   AddBoxCandidates(root, info, box);
+  answered.insert(answered.end(), exact.begin(), exact.end());
   return true;
 }
 

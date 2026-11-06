@@ -160,7 +160,7 @@ SELECT curve(ROW(1, 2), lower := 5, upper := ROW(10, 10));
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "lower" := INTEGER_LITERAL, "upper" := TUPLE(INTEGER, INTEGER))'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error
@@ -168,7 +168,7 @@ SELECT curve(ROW(1, 2), lower := [0, 0], upper := ROW(10, 10));
 ----
 db error: ERROR: No function matches the given name and argument types 'curve(TUPLE(INTEGER, INTEGER), "lower" := INTEGER[], "upper" := TUPLE(INTEGER, INTEGER))'. You might need to add explicit type casts.
 	Candidate functions:
-	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
+	curve(point STRUCT, /, *, kind VARCHAR := morton, max_level INTEGER := NULL, lower STRUCT := NULL, upper STRUCT := NULL) -> BLOB
 
 
 statement error

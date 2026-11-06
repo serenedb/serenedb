@@ -23,7 +23,7 @@ id
 1
 
 query
-SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),level_step := 3) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y)) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
 ----
 id
 1
@@ -34,20 +34,8 @@ SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_level := 64) @
 id
 1
 
-query
-SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := 16) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
-----
-id
-1
-
-query
-SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := NULL) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
-----
-id
-1
-
 statement error
-SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_cells := 64) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
+SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),max_level := 63) @@ ts_between(ROW(0,0),ROW(2,2),true,true);
 ----
 db error: ERROR: curve() @@ needs an index on the same curve() call
 HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
@@ -60,7 +48,7 @@ id
 1
 
 statement ok
-PREPARE curve_option_identity_query AS SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),kind := upper('morton'),level_step := 1+2,max_cells := 8+8) @@ ts_between(ROW($1::BIGINT,0),ROW($2::BIGINT,2),true,true);
+PREPARE curve_option_identity_query AS SELECT id FROM curve_option_identity_idx WHERE curve(ROW(x,y),kind := upper('morton'),max_level := 60+4) @@ ts_between(ROW($1::BIGINT,0),ROW($2::BIGINT,2),true,true);
 
 query
 EXECUTE curve_option_identity_query(0,2);

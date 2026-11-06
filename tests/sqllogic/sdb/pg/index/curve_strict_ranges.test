@@ -411,10 +411,11 @@ query
 SELECT
  (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x > 2147483647::BIGINT AND y >= 0) AS above,
  (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x < 1 AND x > -5000000000::BIGINT AND y < 1) AS below,
- (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x >= 3 AND x <= 3000000000::BIGINT AND y > 2 AND y < 70000) AS clamped;
+ (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x >= 3 AND x <= 3000000000::BIGINT AND y > 2 AND y < 70000) AS clamped,
+ (SELECT list(id ORDER BY id) FROM curve_strict_narrow_idx WHERE x > -5000000000::BIGINT AND x < 1 AND y > -70000 AND y < 1) AS clamped_below;
 ----
-above	below	clamped
-NULL	{0}	{15}
+above	below	clamped	clamped_below
+NULL	{0}	{15}	{0}
 
 statement ok
 DROP TABLE curve_strict_narrow;

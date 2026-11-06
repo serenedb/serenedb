@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -29,6 +30,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -57,6 +59,21 @@ enum class FrameLayout : uint8_t {
   Dictionary = 0,
   Wide = 1,
   FirstFrame = 2,
+};
+
+inline constexpr size_t kTrainedDictionaryBytes = 64 * 1024;
+inline constexpr size_t kSamplePieceBytes = 4 * 1024;
+inline constexpr size_t kRowGroupSampleBytes = 1024 * 1024;
+inline constexpr size_t kTrainSampleBytes = 4 * 1024 * 1024;
+
+class DictionarySampler {
+ public:
+  void Add(std::span<const std::string_view> entries);
+  bool Ready() const noexcept { return _samples.size() >= kTrainSampleBytes; }
+  std::shared_ptr<const TrainedDictionary> Train();
+
+ private:
+  std::string _samples;
 };
 
 struct StringTuning {

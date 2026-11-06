@@ -20,26 +20,21 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <zstd.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs::codecs {
 
-inline constexpr size_t kTrainedDictionaryBytes = 64 * 1024;
 inline constexpr size_t kTrainedFrameBytes = 16 * 1024;
-inline constexpr size_t kSamplePieceBytes = 4 * 1024;
-inline constexpr size_t kRowGroupSampleBytes = 1024 * 1024;
-inline constexpr size_t kTrainSampleBytes = 4 * 1024 * 1024;
 
 struct ZstdFree {
   void operator()(ZSTD_CCtx* ctx) const noexcept { ZSTD_freeCCtx(ctx); }
@@ -64,23 +59,12 @@ class TrainedDictionary {
   std::string _owned;
   IndexInput::ptr _mapping;
   std::string_view _bytes;
-  mutable OnceFlag _ddict_once;
+  mutable absl::once_flag _ddict_once;
   mutable std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
   uint64_t _id;
 };
 
 using TrainedDictionaries =
   std::vector<std::shared_ptr<const TrainedDictionary>>;
-
-class DictionarySampler {
- public:
-  void Add(std::span<const std::string_view> entries);
-  bool Ready() const noexcept { return _samples.size() >= kTrainSampleBytes; }
-  size_t Size() const noexcept { return _samples.size(); }
-  std::shared_ptr<const TrainedDictionary> Train();
-
- private:
-  std::string _samples;
-};
 
 }  // namespace irs::codecs

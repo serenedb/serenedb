@@ -20,7 +20,9 @@
 
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 
+#define ZDICT_STATIC_LINKING_ONLY
 #include <absl/algorithm/container.h>
+#include <zdict.h>
 
 #include <algorithm>
 #include <duckdb/common/types/string_type.hpp>
@@ -45,6 +47,16 @@
 
 namespace irs::codecs {
 namespace {
+
+constexpr ZDICT_fastCover_params_t kTrainParams{
+  .k = 256,
+  .d = 8,
+  .f = 20,
+  .nbThreads = 1,
+  .splitPoint = 1.0,
+  .accel = 4,
+  .zParams = {.compressionLevel = 3},
+};
 
 using duckdb::idx_t;
 using duckdb::string_t;
@@ -575,6 +587,58 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
     }
     entries.emplace_back(sv);
   }
+}
+
+void DictionarySampler::Add(std::span<const std::string_view> entries) {
+  uint64_t total = 0;
+  for (const auto e : entries) {
+    total += e.size();
+  }
+  if (total < kSamplePieceBytes) {
+    return;
+  }
+  const uint64_t every = std::max<uint64_t>(1, total / kRowGroupSampleBytes);
+  uint64_t piece = 0;
+  size_t fill = 0;
+  for (auto e : entries) {
+    while (!e.empty()) {
+      const auto take = std::min(e.size(), kSamplePieceBytes - fill);
+      if (piece % every == 0) {
+        _samples.append(e.substr(0, take));
+      }
+      fill += take;
+      e.remove_prefix(take);
+      if (fill == kSamplePieceBytes) {
+        fill = 0;
+        ++piece;
+      }
+    }
+  }
+  if (fill != 0 && piece % every == 0) {
+    _samples.resize(_samples.size() - fill);
+  }
+}
+
+std::shared_ptr<const TrainedDictionary> DictionarySampler::Train() {
+  if (!Ready()) {
+    return nullptr;
+  }
+  const std::vector<size_t> sizes(_samples.size() / kSamplePieceBytes,
+                                  kSamplePieceBytes);
+  size_t n = 0;
+  std::string dictionary;
+  dictionary.resize_and_overwrite(
+    kTrainedDictionaryBytes, [&](char* buf, size_t size) {
+      n = ZDICT_trainFromBuffer_fastCover(
+        buf, size, _samples.data(), sizes.data(),
+        static_cast<unsigned>(sizes.size()), kTrainParams);
+      return ZDICT_isError(n) ? 0 : n;
+    });
+  std::string{}.swap(_samples);
+  if (ZDICT_isError(n)) {
+    return nullptr;
+  }
+  return std::make_shared<const TrainedDictionary>(std::move(dictionary));
 }
 
 bool TrainsDictionary(const StringChoice* named,

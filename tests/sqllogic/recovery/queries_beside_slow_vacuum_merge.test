@@ -1,0 +1,44 @@
+statement ok
+SET GLOBAL threads = 1;
+
+statement ok
+CREATE TABLE qsv (id INTEGER, body VARCHAR);
+
+statement ok
+INSERT INTO qsv SELECT i, 'w' || (i % 13) FROM range(20480) t(i);
+
+statement ok
+CREATE INDEX qsv_idx ON qsv USING inverted (body)
+  WITH (segment_docs_max = 1, refresh_interval = 0, compaction_interval = 0);
+
+query
+SELECT count(*) AS segments FROM sdb_segments('qsv_idx');
+----
+segments
+10
+
+statement ok
+SET sdb_faults = 'slow_merge_unit';
+
+connection vacuum
+statement async ok
+VACUUM (COMPACT_INDEX) qsv_idx;
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT origin, state FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'qsv_idx');
+----
+origin	state
+vacuum	running
+
+statement ok
+SET sdb_faults = '-slow_merge_unit';
+
+wait
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('qsv_idx');
+----
+segments	docs
+1	20480

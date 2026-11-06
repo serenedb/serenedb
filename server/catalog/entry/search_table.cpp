@@ -41,6 +41,7 @@
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
@@ -50,6 +51,7 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -59,8 +61,8 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/sort_keys.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/connection_context.h"
@@ -349,11 +351,13 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
   if (!_storage) {
+    const auto& database = catalog.Cast<SereneDBCatalog>();
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
+      database.Directory(), database.Attachment(), catalog.InMemory(),
       catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, GetColumns());
+      _options, GetColumns(), SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -538,6 +542,10 @@ void SearchTableEntry::OnAlter(const duckdb::AlterInfo& info) {
     case duckdb::AlterTableType::SET_COLUMN_COMPRESSION:
       _storage->SetDeclaredCompression(GetColumns());
       break;
+    case duckdb::AlterTableType::SET_TABLE_OPTIONS:
+    case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
+      _storage->ApplyOptions(_options);
+      break;
     default:
       break;
   }
@@ -616,7 +624,8 @@ void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
 
 duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
-  auto& options = info->Cast<duckdb::CreateTableInfo>().options;
+  auto& create = info->Cast<duckdb::CreateTableInfo>();
+  auto& options = create.options;
   options.insert_or_assign(kStorageOption,
                            OptionConstant(duckdb::Value{kEngineSearch}));
   for (const auto name :
@@ -629,6 +638,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       options.insert_or_assign(name, OptionConstant(value));
     }
   }
+  create.sort_orders = SortOrdersOf(_sort_keys, GetColumns());
   return info;
 }
 
@@ -736,6 +746,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
+      table.sort_orders = SortOrdersOf(_sort_keys, table.columns);
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;
@@ -856,17 +867,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   }
   auto binder = duckdb::Binder::CreateBinder(context);
   auto bound = binder->BindCreateTableInfo(std::move(create));
-  auto result = duckdb::make_uniq<SearchTableEntry>(
+  return duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage, triggers);
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit([storage = _storage, options = result->_options] {
-      storage->ApplyOptions(options);
-    });
-  } else {
-    _storage->ApplyOptions(result->_options);
-  }
-  return result;
 }
 
 }  // namespace sdb::catalog

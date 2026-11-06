@@ -20,8 +20,6 @@
 
 #include "replication/settings.h"
 
-#include <duckdb/main/config.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <string_view>
 
 #include "query/config.h"
@@ -30,14 +28,8 @@
 namespace sdb::replication {
 namespace {
 
-duckdb::Value Global(std::string_view name) {
-  return GetGlobalSetting(
-    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()),
-    name);
-}
-
 int64_t Millis(std::string_view name) {
-  return ParseDurationMillis(name, Global(name).ToString(), 1);
+  return ParseDurationMillis(name, GetGlobalSetting(name).ToString(), 1);
 }
 
 }  // namespace
@@ -55,7 +47,8 @@ int64_t WalRetrieveRetryIntervalMillis() {
 }
 
 uint32_t MaxSyncWorkersPerSubscription() {
-  return Global(kMaxSyncWorkersPerSubscriptionSetting).GetValue<uint32_t>();
+  return GetGlobalSetting(kMaxSyncWorkersPerSubscriptionSetting)
+    .GetValue<uint32_t>();
 }
 
 }  // namespace sdb::replication

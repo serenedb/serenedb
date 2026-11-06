@@ -86,8 +86,6 @@ int main(int argc, const char* argv[]) {
       .batch_size = 100000,
       .indexer_threads = threads,
       .refresh_interval_ms = 0,
-      .compaction_interval_ms = 5000,
-      .compaction_threads = 0,
       .compact_all = true,
       .row_group_size = 10'000'000,
     };

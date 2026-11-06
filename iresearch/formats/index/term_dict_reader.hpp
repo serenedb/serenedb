@@ -103,6 +103,7 @@ class TermReaderImpl final : public TermReader {
   const FieldMeta& meta() const noexcept final { return _meta; }
   size_t size() const noexcept final { return _terms; }
   uint64_t docs_count() const noexcept final { return _docs; }
+  uint64_t total_term_freq() const noexcept final { return _total_term_freq; }
   bytes_view min() const noexcept final {
     return bytes_view{_min_key}.substr(_prefix_size);
   }
@@ -113,7 +114,6 @@ class TermReaderImpl final : public TermReader {
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
   const FieldReader& Owner() const noexcept { return *_owner; }
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
@@ -186,8 +186,8 @@ class TermReaderImpl final : public TermReader {
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
   uint32_t _last_entry = 0;
+  uint64_t _total_term_freq;
   bool _has_score_bounds;
-  FreqAttr _freq;
   Root _root;
   std::vector<RangeLevel> _levels;
   std::unique_ptr<PrefixIndex> _prefixes;

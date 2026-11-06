@@ -92,6 +92,25 @@ void CaptureBlock(duckdb::DatabaseInstance& db,
   sink.push_back(std::move(m));
 }
 
+void CertifyStaged(duckdb::Vector& vector) {
+  switch (vector.GetType().InternalType()) {
+    case duckdb::PhysicalType::VARCHAR:
+      duckdb::StringVector::AddAuxiliaryData(
+        vector, std::make_unique<ImmutablePayloads>());
+      return;
+    case duckdb::PhysicalType::STRUCT:
+      for (auto& child : duckdb::StructVector::GetEntries(vector)) {
+        CertifyStaged(child);
+      }
+      return;
+    case duckdb::PhysicalType::LIST:
+      CertifyStaged(duckdb::ListVector::GetChildMutable(vector));
+      return;
+    default:
+      return;
+  }
+}
+
 void SetInvalidRows(duckdb::Vector& vec, duckdb::idx_t begin,
                     duckdb::idx_t count) {
   auto& validity = duckdb::FlatVector::ValidityMutable(vec);
@@ -258,6 +277,9 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
                               ColumnMeta& meta) {
   auto& db = WriteCtx().Database();
   const auto forced_method = ForcedMethod(db, forced);
+  SDB_IF_FAILURE("irs::ColumnWriter::DuckDBStrings") {
+    return CompressData(type, chunks, forced_method, meta.data);
+  }
   if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
     return CompressData(type, chunks, forced_method, meta.data);
   }
@@ -637,13 +659,15 @@ void ColumnWriter::SealColumn(
 
 ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
                            duckdb::LogicalType type,
-                           const ColumnWriterOptions& options)
+                           const ColumnWriterOptions& options, bool stage_all)
   : _ctx{&ctx},
     _id{id},
     _type{std::move(type)},
     _skip_validity{options.skip_validity},
     _ingest_lists{!options.hyperloglog},
     _row_group_size{options.row_group_size},
+    _seal_at{stage_all ? std::numeric_limits<uint64_t>::max()
+                       : options.row_group_size},
     _forced{options.compression},
     _codec_params{options.codec_params} {
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
@@ -658,6 +682,12 @@ ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
     _meta.hyperloglog = duckdb::make_shared_ptr<duckdb::HyperLogLog>();
     _hll_auto = true;
   }
+  if (!stage_all) {
+    InitIngest();
+  }
+}
+
+void ColumnWriter::InitIngest() {
   if (!_ingest_lists) {
     return;
   }
@@ -679,10 +709,63 @@ ColumnWriter::ColumnWriter(WriteContext& ctx, field_id id,
   }
 }
 
+void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
+  SDB_ASSERT(_seal_at == std::numeric_limits<uint64_t>::max());
+  SDB_ASSERT(_row_start == 0);
+  SDB_ASSERT(new2old.empty() || _staged_rows == new2old.size());
+  const auto rows = static_cast<duckdb::idx_t>(_staged_rows);
+  auto staged = std::exchange(_staged, {});
+  auto caches = std::exchange(_staged_caches, {});
+  const auto chunks = std::exchange(_staged_chunks, 0);
+  _staged_rows = 0;
+  _staged_bytes = 0;
+  _open_bytes = 0;
+  _seal_at = _row_group_size;
+  InitIngest();
+  for (duckdb::idx_t c = 0; c != chunks; ++c) {
+    CertifyStaged(staged[c].data);
+  }
+  if (new2old.empty()) {
+    for (duckdb::idx_t c = 0; c != chunks; ++c) {
+      Append(staged[c].data, staged[c].count);
+    }
+    return;
+  }
+  duckdb::Vector all{_type, rows};
+  duckdb::idx_t at = 0;
+  for (duckdb::idx_t c = 0; c != chunks; ++c) {
+    duckdb::ImmutableStrings::Copy(staged[c].data, all, staged[c].count, 0, at);
+    at += staged[c].count;
+  }
+  duckdb::FlatVector::SetSize(all, rows);
+  staged.clear();
+  caches.clear();
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  for (duckdb::idx_t first = 0; first < rows; first += STANDARD_VECTOR_SIZE) {
+    const auto n = std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - first);
+    for (duckdb::idx_t i = 0; i != n; ++i) {
+      sel.set_index(i, new2old[first + i]);
+    }
+    if (_ingest.empty()) {
+      Append(duckdb::Vector{all, sel, n}, n);
+      continue;
+    }
+    duckdb::Vector out{_type, n};
+    duckdb::ImmutableStrings::Copy(all, out, sel, n, 0, 0);
+    duckdb::FlatVector::SetSize(out, n);
+    Append(out, n);
+  }
+}
+
 WriteChunk& ColumnWriter::OpenChunk() {
   if (_staged_chunks != 0 &&
       _staged[_staged_chunks - 1].count < duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
     return _staged[_staged_chunks - 1];
+  }
+  if (_staged_chunks != 0 && _seal_at == std::numeric_limits<uint64_t>::max()) {
+    const auto& full = _staged[_staged_chunks - 1];
+    _staged_bytes += full.data.GetDataSize(full.count);
+    _open_bytes = 0;
   }
   if (_staged_chunks == _staged.size()) {
     auto& alloc = duckdb::Allocator::Get(WriteCtx().Database());
@@ -707,7 +790,7 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
     auto& back = OpenChunk();
     const auto take = static_cast<duckdb::idx_t>(
       std::min({count - off, STANDARD_VECTOR_SIZE - uint64_t{back.count},
-                _row_group_size - _staged_rows}));
+                _seal_at - _staged_rows}));
     fill(back, static_cast<duckdb::idx_t>(off), take);
     back.count += take;
     if (back.count == duckdb::idx_t{STANDARD_VECTOR_SIZE}) {
@@ -718,9 +801,12 @@ void ColumnWriter::Stage(uint64_t count, Fill&& fill) {
       }
     }
     duckdb::FlatVector::SetSize(back.data, back.count);
+    if (_seal_at == std::numeric_limits<uint64_t>::max()) {
+      _open_bytes = back.data.GetDataSize(back.count);
+    }
     _staged_rows += take;
     off += take;
-    if (_staged_rows == _row_group_size) {
+    if (_staged_rows == _seal_at) {
       SealRowGroup();
     }
   }
@@ -849,6 +935,46 @@ void ColumnWriter::SealRowGroup() {
 void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
   _meta.hyperloglog = std::move(hll);
   _hll_auto = false;
+}
+
+bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
+                            const duckdb::LogicalType& type,
+                            duckdb::CompressionType forced,
+                            const ColCodecParams& params) {
+  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  const auto forced_method = ForcedMethod(db, forced);
+  if (forced_method == duckdb::CompressionType::COMPRESSION_UNCOMPRESSED) {
+    return false;
+  }
+  return codecs::TrainsDictionary(codecs::ChoiceOf(forced_method), params);
+}
+
+bool ColumnWriter::TrainsDictionary() const noexcept {
+  return TrainsColumnDictionary(WriteCtx().Database(), _type, _forced,
+                                _codec_params);
+}
+
+void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
+  if (!_meta.write_string_tuning) {
+    _meta.write_string_tuning = std::make_unique<codecs::StringTuning>();
+  }
+  _meta.write_string_tuning->sampler.Add(entries);
+}
+
+void ColumnWriter::ShareLeafDictionary(
+  std::span<const uint32_t> path,
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary, uint16_t index) {
+  auto* meta = &_meta;
+  for (const auto child : path) {
+    if (meta->children.size() <= child) {
+      meta->children.resize(child + 1);
+    }
+    meta = &meta->children[child];
+  }
+  meta->write_string_tuning = std::make_unique<codecs::StringTuning>();
+  codecs::Adopt(*meta->write_string_tuning, std::move(dictionary), index);
 }
 
 }  // namespace irs

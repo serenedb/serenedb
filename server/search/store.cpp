@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
@@ -36,6 +37,7 @@
 #include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <exception>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/store/directory_attributes.hpp>
@@ -113,12 +115,17 @@ struct Store::ReplaySession {
 };
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, const catalog::InvertedIndexSettings& options,
-             const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
-  : _id{id},
+             uint64_t attachment, bool in_memory, bool read_only,
+             duckdb::idx_t db_id, duckdb::idx_t id,
+             const catalog::InvertedIndexSettings& options,
+             const std::optional<irs::ScorerOptions>& top_k_scorer,
+             std::vector<irs::SortKey> sort, bool is_new)
+  : _directory{std::move(directory)},
+    _attachment{attachment},
+    _sort{std::move(sort)},
+    _merge_relation{std::make_shared<MergeRunner::Relation>(id)},
+    _id{id},
     _db_id{db_id},
-    _directory{std::move(directory)},
     _in_memory{in_memory},
     _read_only{read_only},
     _is_new{is_new},
@@ -137,13 +144,16 @@ Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
 }
 
 Store::Store(std::shared_ptr<catalog::DatabaseDirectory> directory,
-             bool in_memory, bool read_only, duckdb::idx_t db_id,
-             duckdb::idx_t id, bool is_new,
+             uint64_t attachment, bool in_memory, bool read_only,
+             duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
              const catalog::SearchTableOptions& options,
-             const duckdb::ColumnList& columns)
-  : _id{id},
+             const duckdb::ColumnList& columns, std::vector<irs::SortKey> sort)
+  : _directory{std::move(directory)},
+    _attachment{attachment},
+    _sort{std::move(sort)},
+    _merge_relation{std::make_shared<MergeRunner::Relation>(id)},
+    _id{id},
     _db_id{db_id},
-    _directory{std::move(directory)},
     _in_memory{in_memory},
     _read_only{read_only},
     _is_new{is_new},
@@ -210,6 +220,7 @@ void Store::Open() {
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.segment_docs_max = _segment_docs_max;
+  writer_options.sort = _sort;
   writer_options.reader_options = ReaderOptions();
   writer_options.db = writer_options.reader_options.db;
   IndexDurability::ManifestSource manifest;
@@ -290,6 +301,11 @@ void Store::ApplyOptions(const catalog::InvertedIndexSettings& options) {
   _writer->Options(segment_options);
 }
 
+void Store::ApplyOptions(const catalog::SearchTableOptions& options) {
+  SetTasksSettings(options);
+  NudgeCompaction();
+}
+
 void Store::SetDeclaredCompression(const duckdb::ColumnList& columns) {
   auto compression = DeclaredCompression(columns);
   absl::MutexLock lock{&_layout_mutex};
@@ -352,7 +368,11 @@ ResultWithTime Store::RefreshUnsafe(bool wait,
 
 absl::Status Store::Refresh(const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
-  return RefreshUnsafe(/*wait=*/true, progress, code).res;
+  auto res = RefreshUnsafe(/*wait=*/true, progress, code).res;
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
+  }
+  return res;
 }
 
 void Store::Publish() {
@@ -375,66 +395,6 @@ ResultWithTime Store::CleanupUnsafe() {
   const auto time_ms = MillisSince(begin);
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
-}
-
-auto Store::CompactUnsafeAsync(utils::DrainGate::Pass maintenance,
-                               const irs::CompactionPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options,
-                               const irs::AnnBuildEnv* env)
-  -> yaclib::Future<ResultWithTime> {
-  empty_compaction = false;
-  if (!maintenance) {
-    co_return ResultWithTime{BackupInProgressError(), 0};
-  }
-  const irs::MergeWriter::FlushProgress interruptible = [&progress] {
-    return !IsBackupActive() && progress();
-  };
-  const auto begin = std::chrono::steady_clock::now();
-  auto result = co_await CompactUnsafeImpl(
-    policy, interruptible, empty_compaction, field_options, env);
-  const auto time_ms = MillisSince(begin);
-  if (result.ok() && empty_compaction && IsBackupActive()) {
-    co_return ResultWithTime{BackupInProgressError(), time_ms};
-  }
-  _maintenance.RecordCompaction(result, empty_compaction, time_ms);
-  co_return ResultWithTime{std::move(result), time_ms};
-}
-
-auto Store::CompactUnsafeImpl(const irs::CompactionPolicy& policy,
-                              const irs::MergeWriter::FlushProgress& progress,
-                              bool& empty_compaction,
-                              const irs::IndexFieldOptions* field_options,
-                              const irs::AnnBuildEnv* env)
-  -> yaclib::Future<absl::Status> {
-  empty_compaction = false;
-  SDB_PARK_ONCE_ON_FAILURE("search_compaction_before_selection");
-  const irs::CompactionPolicy current_config_policy =
-    [&](irs::Compaction& candidates, const irs::IndexReader& index,
-        const irs::CompactingSegments& compacting_segments) {
-      if (!IsSearchTable() || IsCurrentConfig(field_options)) {
-        policy(candidates, index, compacting_segments);
-      }
-    };
-  try {
-    // iresearch serializes Compact against refresh/DML internally, so a long
-    // merge never blocks the refresh chain.
-    const auto res = co_await _writer->CompactAsync(
-      current_config_policy, field_options, progress, env);
-    if (res.error == irs::CompactionError::Fail) {
-      SDB_DEBUG(SEARCH, "compaction of search store ", _id,
-                " merged nothing: cancelled, or every document was removed");
-      empty_compaction = true;
-    } else if (res.error != irs::CompactionError::Busy) {
-      empty_compaction = res.size == 0;
-    }
-  } catch (const std::exception& e) {
-    co_return absl::InternalError(
-      absl::StrCat("compaction of search store ", _id,
-                   " failed: ", duckdb::ErrorData{e}.RawMessage()));
-  }
-  co_return absl::OkStatus();
 }
 
 std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
@@ -466,71 +426,8 @@ absl::Status Store::VacuumRefresh() {
   if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
     return res;
   }
-  return CleanupUnsafe().res;
-}
-
-absl::Status Store::VacuumCompact(duckdb::ClientContext& context,
-                                  uint32_t target_segments) {
-  const irs::MergeWriter::FlushProgress progress = [&context] {
-    return !context.IsInterrupted();
-  };
-  const auto target = std::max<uint32_t>(1, target_segments);
-  RefreshResult code = RefreshResult::Undefined;
-  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-    return res;
-  }
-  const ManualCompactionSlot slot;
-  const irs::AnnBuildEnv* env = slot.AnnEnv();
-  for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets;
-    {
-      const auto snapshot = _writer->GetSnapshot();
-      if (snapshot.size() <= target) {
-        break;
-      }
-      buckets.resize(target);
-      for (size_t i = 0; i < snapshot.size(); ++i) {
-        buckets[i % target].emplace_back(snapshot[i].Meta().name);
-      }
-    }
-    absl::Status status;
-    bool merged = false;
-    for (const auto& names : buckets) {
-      const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
-          for (size_t i = 0; i < reader.size(); ++i) {
-            const auto& segment = reader[i];
-            const auto& name = segment.Meta().name;
-            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
-              candidates.emplace_back(&segment);
-            }
-          }
-        };
-      bool empty = false;
-      absl::Status res;
-      do {
-        const auto field_options = CompactionOptions();
-        res =
-          irs::GetBlocking(CompactUnsafeAsync(
-                             GetSearchEngine().Maintenance().Enter(context),
-                             bucket, progress, empty, field_options.get(), env))
-            .res;
-      } while (absl::IsUnavailable(res));
-      context.InterruptCheck();
-      status.Update(res);
-      merged = merged || !empty;
-    }
-    if (!status.ok()) {
-      return status;
-    }
-    SDB_PARK_ONCE_ON_FAILURE("pause_search_compact_before_publish");
-    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
-      return res;
-    }
-    if (!merged) {
-      break;
-    }
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
   }
   return CleanupUnsafe().res;
 }
@@ -540,6 +437,49 @@ StoreStats Store::GetStats() const {
   stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
+}
+
+yaclib::Future<MergeResult> Store::RunMergeAsync(
+  utils::DrainGate::Pass maintenance, irs::IndexWriter::MergeTicket ticket,
+  const irs::MergeProgress& progress,
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
+  MergeResult result;
+  if (!maintenance) {
+    result.outcome.error = irs::CompactionError::Cancelled;
+    result.backup = true;
+    co_return result;
+  }
+  std::atomic_bool backup{false};
+  const irs::MergeProgress interruptible = [&progress, &backup] {
+    if (IsBackupActive()) {
+      backup.store(true, std::memory_order_relaxed);
+      return false;
+    }
+    return progress();
+  };
+  bool failed = false;
+  try {
+    co_await _writer->RunMerge(std::move(ticket), field_options, interruptible,
+                               env, std::move(pool), result.outcome);
+  } catch (const std::exception& e) {
+    failed = true;
+    result.outcome.error = irs::CompactionError::Fail;
+    result.error = duckdb::ErrorData{e}.RawMessage();
+  }
+  if (!failed && !result.outcome) {
+    SDB_DEBUG(SEARCH, "merge of relation ", _merge_relation->id,
+              " produced nothing: cancelled, or every document was removed");
+    if (backup.load(std::memory_order_relaxed)) {
+      result.outcome.error = irs::CompactionError::Cancelled;
+      result.backup = true;
+      co_return result;
+    }
+  }
+  _maintenance.RecordCompaction(
+    failed, !result.outcome || result.outcome.size == 0,
+    result.outcome.stats.profile.TotalNanos() / 1'000'000);
+  co_return result;
 }
 
 void Store::Clear(const irs::SourcePosition& position) {

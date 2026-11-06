@@ -1,0 +1,176 @@
+control substitution on
+
+statement ok
+CREATE TABLE mq_plain (id INT);
+
+statement ok
+CREATE INDEX mq_plain_idx ON mq_plain (id);
+
+statement ok
+CREATE TABLE mq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+SET sdb_faults = 'hold_merge_start';
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+1
+
+query
+SELECT count(*) AS merges FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+merges
+0
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+statement ok
+SET sdb_faults = '-hold_merge_start';
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 101);
+
+query ok retry 40 backoff 250ms
+SELECT state, origin, started IS NOT NULL AS started, elapsed_ms >= 0 AS timed,
+       cardinality(inputs) AS inputs, input_docs, estimated_bytes > 0 AS estimated
+FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+state	origin	started	timed	inputs	input_docs	estimated
+running	background	t	t	4	400	t
+
+query
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+0
+
+query
+SELECT value >= 1 AS held FROM sdb_metrics WHERE metric = 'compaction_threads';
+----
+held
+t
+
+statement ok
+CREATE TABLE mq_ids AS
+SELECT merge_id FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+query ok retry 40 backoff 250ms
+SELECT origin, outcome, id = (SELECT merge_id FROM mq_ids) AS same_id
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+origin	outcome	same_id
+background	merged	t
+
+query ok retry 40 backoff 250ms
+SELECT metric, value FROM sdb_metrics
+WHERE metric IN ('compaction_pending', 'compaction_threads')
+ORDER BY metric;
+----
+metric	value
+compaction_pending	0
+compaction_threads	0
+
+query
+SELECT value > 0 AS written FROM sdb_metrics WHERE metric = 'compaction_written_bytes';
+----
+written
+t
+
+statement ok
+SET sdb_faults = 'hold_merge_start';
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(401, 500) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(501, 600) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(601, 700) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+query ok retry 40 backoff 250ms
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+1
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 0);
+
+query ok retry 40 backoff 250ms
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+0
+
+query
+SELECT count(*) AS merges FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+merges
+0
+
+query
+SELECT count(*) AS finished FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+finished
+1
+
+statement ok
+SET sdb_faults = '-hold_merge_start';
+
+statement ok
+DROP TABLE mq_ids;
+
+statement ok
+DROP TABLE mq;
+
+statement ok
+DROP TABLE mq_plain;

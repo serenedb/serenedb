@@ -76,6 +76,17 @@ struct BlobScan {
   }
 
   template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, std::string_view dictionary,
+              uint32_t* ends) {
+    Inflate(s, f, out, dictionary);
+    if (ends) {
+      Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
+        *ends++ = static_cast<uint32_t>(off + len);
+      });
+    }
+  }
+
+  template<typename Frames>
   void Inflate(const Frames& s, uint32_t f, char* out,
                std::string_view dictionary) {
     if constexpr (Trainable(Codec::kCodec)) {

@@ -51,6 +51,38 @@ column_path	segment_type	rows	first_row	end_row
 [3, 1, 4]	BLOB	5000	0	5000
 
 
+query
+SELECT s."column", s.bytes > 0 AS sized, s.bytes = i.bytes AS listed
+FROM (
+  SELECT "column", sum(bytes) AS bytes
+  FROM sdb_segments('nested_si', columns := true)
+  GROUP BY ALL
+) s
+LEFT JOIN (
+  SELECT column_name, sum(split_part(segment_info, '=', 2)::BIGINT) AS bytes
+  FROM pragma_storage_info('nested_si', include_segment_info = true)
+  GROUP BY ALL
+) i ON s."column" = i.column_name
+WHERE s."column" IN ('tags', 'u', 'v')
+ORDER BY s."column"
+----
+column	sized	listed
+tags	t	t
+u	t	t
+v	t	t
+
+
+query
+SELECT DISTINCT "column", codecs
+FROM sdb_segments('nested_si', columns := true)
+WHERE "column" IN ('u', 'v')
+ORDER BY "column"
+----
+column	codecs
+u	NULL
+v	NULL
+
+
 statement ok
 DROP TABLE nested_si
 

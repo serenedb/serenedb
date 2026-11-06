@@ -1,0 +1,128 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE shrunk (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO shrunk SELECT i, 'fox' FROM generate_series(1, 100) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) shrunk;
+
+
+statement ok
+INSERT INTO shrunk SELECT i, 'fox' FROM generate_series(101, 200) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) shrunk;
+
+
+statement ok
+INSERT INTO shrunk SELECT i, 'fox' FROM generate_series(201, 300) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) shrunk;
+
+
+statement ok
+INSERT INTO shrunk SELECT i, 'fox' FROM generate_series(301, 400) s(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) shrunk;
+
+
+query
+SELECT count(*) AS segments, sum(live_docs) AS live FROM sdb_segments('shrunk');
+----
+segments	live
+4	400
+
+
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+
+connection compactor
+query async
+SELECT merge, outcome, len(inputs) AS inputs, input_docs, output_docs,
+       output IS NOT NULL AS has_output, prepare_ms > 0 AS prepared,
+       error
+FROM sdb_compact('shrunk', mode := 'compact', target_segments := 2)
+ORDER BY merge;
+----
+merge	outcome	inputs	input_docs	output_docs	has_output	prepared	error
+1	merged	2	200	200	t	t	NULL
+2	nothing	2	0	0	f	f	NULL
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
+
+
+connection deleter
+statement ok
+DELETE FROM shrunk WHERE id > 300;
+
+
+connection deleter
+statement ok
+VACUUM (REFRESH_TABLE) shrunk;
+
+
+connection default
+query
+SELECT count(*) AS segments, sum(live_docs) AS live FROM sdb_segments('shrunk');
+----
+segments	live
+2	300
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish:release';
+
+
+wait
+
+
+connection default
+query
+SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
+       prepare_ms > 0 AS prepared
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'shrunk')
+ORDER BY id;
+----
+origin	outcome	inputs	input_docs	output_docs	prepared
+sql	merged	2	200	200	t
+
+
+connection default
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(live_docs) AS live
+FROM sdb_segments('shrunk');
+----
+segments	docs	live
+2	300	300
+
+
+connection default
+query
+SELECT count(*) AS n, sum(id) AS s, min(id) AS lo, max(id) AS hi FROM shrunk;
+----
+n	s	lo	hi
+300	45150	1	300
+
+
+connection default
+statement ok
+DROP TABLE shrunk;

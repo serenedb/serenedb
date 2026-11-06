@@ -31,10 +31,25 @@ bool HasTerms(const FieldInverter* field) noexcept {
   return field && field->Log().Size() != 0;
 }
 
+std::span<const doc_id_t> SlotDocs(const ManagedVector<doc_id_t>& docs,
+                                   const DocOrder& order,
+                                   ManagedVector<doc_id_t>& remapped) {
+  if (order.Empty()) {
+    return docs;
+  }
+  remapped.resize(docs.size());
+  absl::c_transform(docs, remapped.begin(), [&](doc_id_t doc) {
+    return order.NewDoc(doc - doc_limits::min());
+  });
+  absl::c_sort(remapped);
+  return remapped;
+}
+
 }  // namespace
 
 void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra) {
+                           std::span<const BasicTermReader* const> extra,
+                           const DocOrder& order) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
@@ -80,6 +95,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
   ScatterScratch scratch{_mem.rm};
   ScatteredField scattered{_mem, scratch};
   ColumnarTermReader terms;
+  ManagedVector<doc_id_t> slot_docs{ManagedTypedAllocator<doc_id_t>{_mem.rm}};
 
   fw.prepare(state, keyed_dicts);
   size_t ei = 0;
@@ -97,7 +113,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
       if (!IsTermMember(member)) {
         if (const auto& docs = _docs[entry.docs + DocIndex(member)];
             !docs.empty()) {
-          fw.WriteSlot(id, dict, {docs.data(), docs.size()});
+          fw.WriteSlot(id, dict, SlotDocs(docs, order, slot_docs));
         }
         continue;
       }
@@ -106,7 +122,7 @@ void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
         SDB_ASSERT(!HasTerms(field));
         fw.write(dict, *sorted_extra[ei++]);
       } else if (HasTerms(field)) {
-        scattered.Reset(*field);
+        scattered.Reset(*field, order);
         SDB_ASSERT(scattered.TermCount() != 0);
         terms.Reset(scattered);
         fw.write(dict, terms);

@@ -40,6 +40,7 @@
 #include <duckdb/storage/object_cache.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
@@ -62,6 +63,7 @@
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
+#include "search/compaction/merge_registry.h"
 
 namespace sdb {
 namespace {
@@ -111,8 +113,9 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
   return static_cast<int64_t>(ms);
 }
 
-duckdb::Value GetGlobalSetting(const duckdb::DBConfig& config,
-                               std::string_view name) {
+duckdb::Value GetGlobalSetting(std::string_view name) {
+  const auto& config =
+    duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance());
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const auto index =
     config.TryGetSettingIndex(duckdb::Identifier{name}, option);
@@ -1042,6 +1045,22 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_compact_history_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Number of recent merges, across all search tables and indexes, that "
+        "sdb_compact_history keeps; the oldest merge is dropped first. 0 keeps "
+        "none. Default 256. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(
+            search::MergeRegistry::kDefaultHistorySize);
+        },
+        nullptr,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
       "sdb_job_max_depth",
       {
         LogicalTypeId::UINTEGER,
@@ -1149,11 +1168,14 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_compact_target_segments",
       {
         LogicalTypeId::UINTEGER,
-        "How many segments VACUUM (COMPACT_*) leaves in a search table. 0 or "
-        "1 (default) merges every segment into one; a larger N splits the "
-        "segments into N disjoint groups, merges each group into one segment "
-        "and stops there, so no single merge holds the whole table. A table "
-        "with N segments or fewer is left as it is. Default 1.",
+        "How many segments VACUUM (COMPACT_*) and sdb_compact(mode := "
+        "'compact') leave in a search table. 0 or 1 (default) merges every "
+        "segment into one; a larger N splits the segments, in the order their "
+        "rows were written, into N runs of about as many live rows each and "
+        "merges each run into one segment, so no single merge holds the whole "
+        "table. A segment left alone in its run is kept as it is unless it has "
+        "deleted rows. A table with N segments or fewer is left as it is. "
+        "Default 1.",
         [] { return duckdb::Value::UINTEGER(1); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },
@@ -1321,9 +1343,8 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UBIGINT,
         "Byte budget of one background compaction of an inverted index or "
-        "search table (the tier target size). WITH "
-        "(compaction_max_segments_bytes = ...) overrides it per index or "
-        "table. Default 5368709120 (5GB).",
+        "search table. WITH (compaction_max_segments_bytes = ...) overrides "
+        "it per index or table. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);

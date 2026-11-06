@@ -29,7 +29,9 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -190,6 +192,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
+  std::vector<irs::SortKey> sort;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -262,9 +265,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo(
     duckdb::CatalogTransaction transaction) const final;
-  std::string ToSQL() const final {
-    return duckdb::IndexCatalogEntry::GetInfo()->ToString();
-  }
+  std::string ToSQL() const final { return GetInfo()->ToString(); }
+
+  duckdb::vector<duckdb::OrderByNode> SortOrders() const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
@@ -281,6 +284,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void BeforeDrop(duckdb::CatalogTransaction transaction) final;
   void OnDrop() final;
+  void OnAlter(const duckdb::AlterInfo& info) final;
 
   void CreateReindexJob(duckdb::CatalogTransaction transaction,
                         uint32_t interval_ms);

@@ -98,12 +98,7 @@ duckdb::Value CurrentThreads(duckdb::Connection& con) {
     .GetValue(0, 0);
 }
 
-TEST(DuckDBThreads, SessionValueCapsItsQueries) {
-  duckdb::DBConfig config;
-  config.options.maximum_threads = 8;
-  duckdb::DuckDB db{nullptr, &config};
-  duckdb::Connection con{db};
-  duckdb::Connection other{db};
+void CreateRecordedTable(duckdb::Connection& con) {
   duckdb::ScalarFunction record{"record_thread",
                                 {duckdb::LogicalType::BIGINT},
                                 duckdb::LogicalType::BOOLEAN,
@@ -114,6 +109,15 @@ TEST(DuckDBThreads, SessionValueCapsItsQueries) {
   Exec(con, "CREATE SCHEMA s");
   Exec(con, "CREATE TABLE s.t AS SELECT range AS i FROM range(" +
               std::to_string(kRows) + ")");
+}
+
+TEST(DuckDBThreads, SessionValueCapsItsQueries) {
+  duckdb::DBConfig config;
+  config.options.maximum_threads = 8;
+  duckdb::DuckDB db{nullptr, &config};
+  duckdb::Connection con{db};
+  duckdb::Connection other{db};
+  CreateRecordedTable(con);
 
   Exec(con, "SET threads = 1");
   EXPECT_EQ(CurrentThreads(con), duckdb::Value::BIGINT(1));

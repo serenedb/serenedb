@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -36,8 +35,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/async.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -47,9 +44,10 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
+#include "connector/merge_target.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "query/config.h"
+#include "search/compaction/merge_planner.h"
 #include "search/store.h"
 #include "storage_engine/search_engine.h"
 
@@ -68,7 +66,9 @@ enum class Scope : uint8_t {
 enum class Action : uint8_t {
   Refresh,
   Compact,
+  Optimize,
   RecomputeStats,
+  Cleanup,
 };
 
 struct Verb {
@@ -88,6 +88,16 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"compact_table", {Action::Compact, Scope::Table}},
     {"compact_index", {Action::Compact, Scope::Index}},
     {"compact_all", {Action::Compact, Scope::All}},
+    {"optimize_database", {Action::Optimize, Scope::Database}},
+    {"optimize_schema", {Action::Optimize, Scope::Schema}},
+    {"optimize_table", {Action::Optimize, Scope::Table}},
+    {"optimize_index", {Action::Optimize, Scope::Index}},
+    {"optimize_all", {Action::Optimize, Scope::All}},
+    {"cleanup_database", {Action::Cleanup, Scope::Database}},
+    {"cleanup_schema", {Action::Cleanup, Scope::Schema}},
+    {"cleanup_table", {Action::Cleanup, Scope::Table}},
+    {"cleanup_index", {Action::Cleanup, Scope::Index}},
+    {"cleanup_all", {Action::Cleanup, Scope::All}},
     {"recompute_stats_table", {Action::RecomputeStats, Scope::Table}},
     {"recompute_stats_schema", {Action::RecomputeStats, Scope::Schema}},
     {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
@@ -167,9 +177,9 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
   switch (scope) {
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) "
-                                "expects a single database name"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("VACUUM (", bind.option, ") expects a single database name"));
       }
       out.database = bind.name;
     } break;
@@ -177,8 +187,7 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       if (!bind.catalog.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
-                  "[<database>.]<schema>"));
+          ERR_MSG("VACUUM (", bind.option, ") expects [<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;
@@ -226,47 +235,49 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
   return *found;
 }
 
-void CompactInvertedStorage(search::Store& inverted,
-                            const irs::IndexFieldOptions& field_options,
-                            std::string_view index_name,
-                            duckdb::ClientContext& context,
-                            pg::ProgressMetrics* progress) {
-  static const auto kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
-  // Fired by the merge every ~16k docs: feeds the sub-index progress counter
-  // and aborts the merge on user cancellation.
-  const irs::MergeWriter::FlushProgress tick = [&context, progress] {
+void CompactTarget(Action action, const MergeTarget& target,
+                   std::string_view verb, duckdb::ClientContext& context,
+                   ConnectionContext& conn_ctx,
+                   const duckdb::shared_ptr<duckdb::DedicatedPool>& pool,
+                   pg::ProgressMetrics* progress) {
+  const irs::MergeProgress tick = [&context, progress] {
     if (progress) {
       pg::ProgressMetrics::Add(progress->step, 1);
     }
-    return !context.IsInterrupted();
+    return StatementRunning(context);
   };
-  const search::ManualCompactionSlot slot;
-  const irs::AnnBuildEnv* env_ptr = slot.AnnEnv();
-
-  search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
-  for (size_t pass = 0; pass < 8; ++pass) {
-    bool empty_compaction = false;
-    // The merge encodes against the index definition the step captured, which
-    // the step holds for the whole call.
-    absl::Status res;
-    do {
-      res = irs::GetBlocking(
-              inverted.CompactUnsafeAsync(
-                search::GetSearchEngine().Maintenance().Enter(context), kPolicy,
-                tick, empty_compaction, &field_options, env_ptr))
-              .res;
-    } while (absl::IsUnavailable(res));
+  const auto mode = action == Action::Optimize ? search::MergeMode::Optimize
+                                               : search::MergeMode::Compact;
+  ManualCompaction compaction{
+    target,
+    MergeRequest{
+      .mode = mode,
+      .target_segments = search::DefaultTarget(mode, context),
+    },
+    context, pool};
+  search::MergeResult merge;
+  size_t skipped = 0;
+  while (compaction.Next(tick, search::MergeOrigin::Vacuum, merge)) {
     context.InterruptCheck();
-    if (!res.ok()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("compact_index: compaction failed: ", res.message()));
+    switch (search::OutcomeOf(merge.outcome)) {
+      case search::MergeOutcome::Failed:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INTERNAL_ERROR),
+          ERR_MSG("failed to ", verb, " '", target.Name(), "': ", merge.error));
+      case search::MergeOutcome::Busy:
+      case search::MergeOutcome::Cancelled:
+        ++skipped;
+        break;
+      default:
+        break;
     }
-    search::ThrowIfRefreshFailed(inverted.Refresh(), index_name);
-    if (empty_compaction) {
-      break;
-    }
+  }
+  if (skipped != 0) {
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG("skipping ", skipped, skipped == 1 ? " merge" : " merges",
+              " of \"", target.Name(),
+              "\": another task is changing their segments")));
   }
 }
 
@@ -278,7 +289,7 @@ struct InvertedStep {
   // Owned for the whole pass, not aliased into the index: a concurrent DROP
   // INDEX destroys the bound index, and a merge that started against this
   // encoding has to finish against it.
-  std::shared_ptr<const irs::IndexFieldOptions> field_options;
+  std::shared_ptr<const catalog::InvertedIndexConfig> config;
   std::shared_ptr<search::Store> search_data;
   std::string name;
 };
@@ -350,8 +361,10 @@ void DispatchInverted(duckdb::ClientContext& context,
                       pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
-  const std::string_view verb =
-    action == Action::Refresh ? "refresh" : "compact";
+  const std::string_view verb = action == Action::Refresh   ? "refresh"
+                                : action == Action::Compact ? "compact"
+                                : action == Action::Cleanup ? "clean up"
+                                                            : "optimize";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
          CollectMaintainTargets(context, database, schema)) {
@@ -376,18 +389,11 @@ void DispatchInverted(duckdb::ClientContext& context,
                                 duckdb::Identifier{target.schema},
                                 duckdb::Identifier{target.object}}},
         duckdb::OnEntryNotFound::RETURN_NULL);
-      duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
-      const catalog::InvertedIndexEntry* inverted = nullptr;
-      std::shared_ptr<search::Store> storage;
-      if (entry) {
-        index = &entry->Cast<duckdb::IndexCatalogEntry>();
-        inverted =
-          dynamic_cast<const catalog::InvertedIndexEntry*>(index.get());
-        if (inverted) {
-          storage = inverted->Storage();
-        }
-      }
-      if (!storage) {
+      const auto* inverted =
+        dynamic_cast<const catalog::InvertedIndexEntry*>(entry.get());
+      auto storage = inverted ? inverted->Storage() : nullptr;
+      auto search = inverted ? inverted->SearchStore() : nullptr;
+      if (!storage && !search) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
@@ -395,13 +401,20 @@ void DispatchInverted(duckdb::ClientContext& context,
       // An index has no owner of its own; maintenance rides on its
       // relation (a table, or a view for view-backed indexes).
       auto relation =
-        index->GetRelation(index->catalog.GetCatalogTransaction(context));
-      if (relation && !MayMaintain(conn_ctx, relation->permissions,
-                                   relation->name.GetIdentifierName(), verb)) {
+        inverted->GetRelation(inverted->catalog.GetCatalogTransaction(context));
+      SDB_ENSURE(relation, "inverted index \"", target.object,
+                 "\" has no relation");
+      if (!MayMaintain(conn_ctx, relation->permissions,
+                       relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
-                         index->name.GetIdentifierName());
+      if (storage) {
+        steps.emplace_back(std::move(storage), inverted->Config(), nullptr,
+                           inverted->name.GetIdentifierName());
+      } else {
+        steps.emplace_back(nullptr, nullptr, std::move(search),
+                           relation->name.GetIdentifierName());
+      }
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(
@@ -456,6 +469,10 @@ void DispatchInverted(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool;
+  if (action == Action::Compact || action == Action::Optimize) {
+    pool = ManualMergePool(context);
+  }
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.storage) {
@@ -480,27 +497,36 @@ void DispatchInverted(duckdb::ClientContext& context,
           pg::ProgressMetrics::Set(progress->stage, 0);
         }
         search::ThrowIfRefreshFailed(step.storage->Refresh(report), step.name);
+      } else if (action == Action::Cleanup) {
+        if (const auto res = step.storage->CleanupUnsafe().res; !res.ok()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                          ERR_MSG("failed to clean up index '", step.name,
+                                  "': ", res.message()));
+        }
       } else {
-        CompactInvertedStorage(*step.storage, *step.field_options, step.name,
-                               context, progress);
+        CompactTarget(action,
+                      MergeTarget::Of(step.storage, step.config, step.name),
+                      verb, context, conn_ctx, pool, progress);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
         SDB_WAIT_ON_FAILURE("pause_vacuum_mid_walk");
       }
     } else if (const auto& search = step.search_data) {
-      const auto status =
-        action == Action::Refresh
-          ? search->VacuumRefresh()
-          : search->VacuumCompact(
-              context, GetIntSetting(context, "sdb_compact_target_segments"));
+      absl::Status status;
+      if (action == Action::Refresh) {
+        status = search->VacuumRefresh();
+      } else if (action == Action::Cleanup) {
+        status = search->CleanupUnsafe().res;
+      } else {
+        CompactTarget(action, MergeTarget::Of(search, step.name), verb, context,
+                      conn_ctx, pool, progress);
+      }
       if (!status.ok()) {
         context.InterruptCheck();
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INTERNAL_ERROR),
-          ERR_MSG("failed to ",
-                  action == Action::Refresh ? "refresh" : "compact",
-                  " search table '", step.name, "': ", status.message()));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                        ERR_MSG("failed to ", verb, " search table '",
+                                step.name, "': ", status.message()));
       }
     }
   }
@@ -619,7 +645,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   if (!verb) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      ERR_MSG("unknown serenedb VACUUM option \"", bind_data.option, "\""));
+      ERR_MSG("unrecognized VACUUM option \"", bind_data.option, "\""));
   }
 
   const bool needs_name = verb->scope != Scope::All;
@@ -672,6 +698,8 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
+    case Action::Optimize:
+    case Action::Cleanup:
       DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
                        progress);
       break;

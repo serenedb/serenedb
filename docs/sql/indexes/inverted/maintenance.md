@@ -43,7 +43,7 @@ An inverted index on a search table has no storage or background tasks of its ow
 
 ## Background compaction
 
-Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
+Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
 
 | Option | Default | Controls |
 |---|---|---|
@@ -53,9 +53,22 @@ Compaction is on by default, for inverted indexes and search tables alike: every
 
 The session settings of the same names hold the defaults a new index or search table takes.
 
+Background compaction merges runs of neighbouring segments in the order their rows were written, so every segment holds a contiguous range of rows and a filter on insertion order skips whole segments:
+
+- A run merges only when it is balanced: together its segments are at least six times the size of the largest one (or `compaction_max_segments` times, when that is smaller), where a segment smaller than `compaction_floor_segment_bytes` counts as that size. Small segments therefore merge in groups of six or more, and each row is rewritten a few times however large the table grows.
+- Among the balanced runs of at most `compaction_max_segments` segments and `compaction_max_segments_bytes` bytes, the one that rewrites the fewest bytes for each segment it removes goes first; on a tie, the newest.
+- When merges fall behind and more than ten neighbouring segments wait, the balance rule relaxes step by step, down to twice the largest segment at fifty.
+- A segment with more than a quarter of its rows deleted is rewritten on its own when nothing else is to merge.
+
+A segment holds at most 2,147,418,110 rows. A merge whose segments hold more live rows than that together is refused and logged, and its segments stay as they are; this applies to background compaction, `VACUUM` and [`sdb_compact`](#sdb-compact) alike.
+
+A merge of a search table or an index with a sort key (`SORTED BY`) takes at most 1024 segments, so its background compaction merges at most 1024 at a time, whatever `compaction_max_segments` says. `VACUUM` merges a larger group [in steps](../../statements/vacuum/index.md#compact).
+
 - **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX ... SET` for an index and [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
+
+`CREATE INDEX` on a search table stops the merges of the table that are in progress, because the index build rewrites their segments anyway. Segments that existed when the build started are not merged until it finishes; segments written during the build merge as usual.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_006" />
 
@@ -67,6 +80,8 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 |---|---|---|
 | Refresh | `REFRESH_INDEX` · `REFRESH_TABLE` · `REFRESH_SCHEMA` · `REFRESH_DATABASE` · `REFRESH_ALL` | Publish pending writes to readers |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
+| Optimize | `OPTIMIZE_INDEX` · `OPTIMIZE_TABLE` · `OPTIMIZE_SCHEMA` · `OPTIMIZE_DATABASE` · `OPTIMIZE_ALL` | Merge segments into the shape that serves queries best: about one segment per query thread, contiguous, balanced and without deleted rows (see [VACUUM](../../statements/vacuum/index.md)) |
+| Clean up | `CLEANUP_INDEX` · `CLEANUP_TABLE` · `CLEANUP_SCHEMA` · `CLEANUP_DATABASE` · `CLEANUP_ALL` | Delete index files that no snapshot uses anymore, such as the segments a merge replaced |
 | Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_002" />
@@ -74,6 +89,78 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_003" />
 
 Recompute statistics after large changes in data distribution so that [relevance scores](./ranking.md) and planning stay accurate.
+
+A refresh and a compaction of a search table delete the files they make unused when they finish, and so does every merge of `COMPACT_*`, `OPTIMIZE_*` and [`sdb_compact`](#sdb-compact). Otherwise the files of an inverted index with storage of its own are deleted by the background task after every `cleanup_interval_step` automatic refreshes, or by `CLEANUP_*`. Files that a running query still reads stay until a later cleanup.
+
+## Merging on demand and explaining merges {#sdb-compact}
+
+`CALL sdb_compact(relation [, mode := ...])` merges segments of a search table or an inverted index right away and returns one row per merge. Like `VACUUM (COMPACT_*)`, it first publishes the pending writes. `EXPLAIN CALL sdb_compact(...)` shows which merges it would run without running them, and `EXPLAIN ANALYZE CALL sdb_compact(...)` runs them and adds how long each merge step took.
+
+| `mode` | Merges |
+|---|---|
+| `background` (default) | What one round of background compaction would merge, following the table's `compaction_*` options, even when background compaction is disabled |
+| `compact` | What `VACUUM (COMPACT_TABLE)` or `VACUUM (COMPACT_INDEX)` would merge: `target_segments` groups (default: the `sdb_compact_target_segments` setting for a search table, one segment for an index) |
+| `segments` | Exactly the segments named in `segments := ['...', ...]`, as `sdb_segments` lists them |
+| `optimize` | The shape that serves queries best: about as many segments as the server has query threads, each a contiguous range of rows, balanced by live documents and without deleted documents. A small relation gets fewer, so that every segment holds at least four row groups (`row_group_size`) of rows. `target_segments` sets the count instead, whatever the relation's size; a relation with fewer segments keeps their number. A segment with deletes is rewritten even when the relation already has no more segments than the target, and so is a segment whose columns are not encoded the way the current codec settings would encode them (see `verdict` in `sdb_segments` below); a second run finds nothing to do. Merges only combine segments: a segment is never split, even when it holds more than its share |
+
+Each result row describes one merge:
+
+| Column | Meaning |
+|---|---|
+| `merge` | Number of the merge within the call |
+| `outcome` | `merged`; `deferred` (merged, visible after the next commit); `nothing`; `busy` (a segment was being merged by another task); `failed`; `cancelled` (stopped before it finished, for example by a `TRUNCATE` or a `CREATE INDEX` on the table; its segments stay as they were) |
+| `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
+| `output`, `output_docs`, `output_bytes` | The new segment |
+| `total_ms` | Wall-clock time of the whole merge; a `failed` or `cancelled` merge reports how long it ran until it stopped |
+| `prepare_ms`, `norms_ms`, `columns_ms`, `columns_commit_ms`, `ann_ms`, `postings_ms`, `commit_ms` | Time of each merge step in milliseconds: `prepare_ms` plans the merge and puts the rows of a relation with a sort key in key order, `norms_ms` merges the norms, `columns_ms` the stored columns, `columns_commit_ms` finishes the stored columns, `ann_ms` builds the vector indexes, `postings_ms` merges the postings and `commit_ms` writes the new segment. `0` when the merge did not run, as for `nothing` |
+| `error` | Why a merge failed |
+
+`EXPLAIN` prints the plan in an `SDB_COMPACT` box, with one group of lines per merge and the number of merges planned as the estimated rows (`~N rows`):
+
+| Line | Meaning |
+|---|---|
+| `Table`, `Mode` | The relation and the mode of the call: `background`, `compact`, `optimize` or `segments` |
+| `Segments`, `Merges` | Segments of the relation and merges planned |
+| `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |
+| `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
+| `Merge N Docs` | Documents and live documents of the inputs |
+| `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
+
+On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 1024 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it merges them in the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes, one result row each: the first step merges just enough neighbouring segments, those with the fewest live rows, to leave at most 1024, and the next step merges what is left. In `segments` mode, the segment a step writes takes the place of its inputs in the list. `EXPLAIN` shows the first step.
+
+`EXPLAIN ANALYZE` runs the merges and shows the same lines in a `TABLE_SCAN` box, as for any table function, followed by `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step, summed over the merges, and `Actual Total`, the sum of the merges' `total_ms`.
+
+`CALL sdb_compact` and `VACUUM (COMPACT_*)` merge on as many threads as the session may use (the `threads` setting): the columns of a merge, large columns in ranges of row groups, and the terms of large indexed fields are merged side by side, so a merge of a wide table finishes sooner on more threads. Queries of other sessions keep running while a merge runs and share the CPU with it. A step time adds up the threads that ran the step, so with several threads the step times (`prepare_ms` to `commit_ms`) and the `Actual <step>` lines of `EXPLAIN ANALYZE` add up to more than the merges took.
+
+A merge copies a column's encoded blocks unchanged when re-encoding them would not save much (the `verdict` of `sdb_segments` below), and re-encodes them otherwise, so one merged column can mix copied and re-encoded rows. Copying costs little more than reading the blocks, so merges of segments that earlier merges already encoded well take a fraction of the time.
+
+Background merges of all search tables and indexes share a fixed set of merge threads: a quarter of the server's logical cores minus one, at least one. The merge threads run beside the threads that execute queries. Up to twice as many background merges as there are merge threads run at a time, each in a merge slot: a merge splits its work into pieces, and the pieces of the running merges take turns on the merge threads, so a large merge does not hold back a small one. Once half of the slots are taken, only smaller merges start: the last free slot takes merges of at most 64 MiB of live data, the slots before it gradually larger ones, below 4 GiB. A background merge that finds no slot it may take does not wait in a queue: its table plans its merges again as soon as any merge finishes. `VACUUM (COMPACT_*)` and `sdb_compact` never wait for a slot and run their merge on as many threads as the session may use (the `threads` setting); while they merge, they hold a slot if one is free for a large merge. A merge that fails leaves its segments out of the next rounds of background compaction: one round after the first failure, twice as many after each further failure in a row, at most 300. Dropping a table, an index or a database stops its running merges within a moment.
+
+`sdb_compact`'s merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain. Like `VACUUM (COMPACT_*)`, a call that merges anything pauses the relation's background merges until it ends: those in progress stop and show as `cancelled`. `EXPLAIN` runs nothing and pauses nothing.
+
+`sdb_segments(relation)` lists the segments of a search table or an inverted index in the order their rows were written: `segment`, `docs`, `live_docs`, `deleted_docs` and `bytes`.
+
+`sdb_segments(relation, columns := true)` lists the stored columns of every segment instead, internal ones included (`rowid` is the row id an inverted index on a DuckDB table stores), one row each:
+
+| Column | Meaning |
+|---|---|
+| `segment`, `column`, `type`, `rows`, `bytes` | The segment, the column, its type, its rows and the bytes its data takes, nested parts included |
+| `codecs` | The codecs of the column's own blocks, in the order they first appear. For a list these blocks say which stored list each row has; its elements and where each list ends are nested parts. A struct or a variant has no blocks of its own (`NULL`): its values are all in nested parts. Nested parts are not listed here, [`pragma_storage_info`](./columnstore.md#inspecting-storage) lists them |
+| `reencoded_bytes` | The estimated size of the column if it were encoded again with the current codec settings, as a merge would. A few row groups spread over the column are encoded on the side and compared with the bytes they take now; the estimate is kept as long as the segment is in use. `NULL` for nested columns, which are not checked |
+| `verdict` | `re-encode` when re-encoding would save more than 10% of the column's bytes, or when the codec declared with `ALTER COLUMN ... SET COMPRESSION` is one the column's blocks do not use; `copy` otherwise; `NULL` when not checked |
+
+The estimates cost a little encoding work the first time a segment is looked at. `sdb_compact(mode := 'optimize')` and `VACUUM (OPTIMIZE_*)` use the same verdicts to decide whether a segment that would otherwise stay as it is gets rewritten:
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_012" />
+
+`sdb_compact` and `sdb_segments` need the same privilege as `VACUUM` on the table (`MAINTAIN`); for an inverted index, on the table or view it indexes.
+
+Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
+
+- `sdb_merges` lists the running merges: `merge_id`, `relation_id`, `origin`, `state` (`running`), `queued` (when a background merge was planned, which is when it started; `NULL` for the merges of `VACUUM` and `sdb_compact`), `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write: the bytes of each input scaled by its share of live documents, summed. A merge's `merge_id` becomes the `id` of its `sdb_compact_history` row; a merge stopped before it wrote anything, for example by a `VACUUM` on its table, leaves no history.
+- `sdb_compact_history` keeps the last [`sdb_compact_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling) finished merges of all search tables and indexes together, 256 by default, one row each, with `id`, `relation_id`, `origin`, `started`, `finished` and the columns of a `sdb_compact` row other than `merge`.
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_010" />
 
 ## Refreshing view-backed indexes
 
@@ -114,6 +201,8 @@ Memory held while writing to a search table depends on `segment_memory_max`, set
 
 Lower `segment_memory_max` to cap the segment part of that peak, raise it for larger segments and less compaction work. `checkpoint_threshold` is set for the whole server, and also decides how often the database checkpoints.
 
+A table with a sort key (`SORTED BY`) holds the rows of a segment unsorted and uncompressed until it sorts and writes them, so under the same `segment_memory_max` it writes smaller segments than a table without one. A larger value gives it fewer segments and less compaction work, but a parallel load then holds about `segment_memory_max` x threads in memory and does not finish sooner, because the larger staging memory costs the load about as much time as the compaction saves.
+
 ```sql
 CREATE TABLE docs (id BIGINT, body TEXT)
   WITH (storage = 'search', segment_memory_max = 134217728);  -- 128 MB
@@ -150,7 +239,7 @@ Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** 
 | `sdb_scan_split` | `auto` | How an index scan shares a segment between worker threads. Each worker scans the row groups of a segment in order. `tail` gives every worker a segment of its own; only when no segment is left unclaimed does an idle worker join the segment with the most row groups left, so a segment is split across workers only at the end of the scan, when there are fewer segments than workers, or when one segment holds most of the data. `always` puts every worker on the same segment until all of its row groups are claimed; `never` scans each segment whole on one worker. `auto` is `always` when the query has an `ORDER BY <column> LIMIT` scan order and `tail` otherwise. Meant for benchmarking and tests. |
 | `sdb_scan_order` | `auto` | The order an index scan claims its segments in. `largest_first` and `smallest_first` order them by live document count; `order` is best-first by the `ORDER BY` column's row-group statistics when the query has a scan order, so the `TOP_N` bound tightens early. `auto` is `order` under a scan order and `largest_first` otherwise. |
 | `sdb_scan_no_split_row_groups` | `1` | A segment with at most this many row groups is always one unit of an index scan and is never split across workers. |
-| `sdb_compact_target_segments` | `1` | How many segments `VACUUM (COMPACT_*)` leaves in a search table. `0` or `1` merges every segment into one; a larger `N` splits the segments into `N` disjoint groups and merges each into one segment, so no single merge holds the whole table. A table with `N` segments or fewer is left as it is. |
+| `sdb_compact_target_segments` | `1` | How many segments `VACUUM (COMPACT_*)` and `sdb_compact(mode := 'compact')` leave in a search table. `0` or `1` merges every segment into one; a larger `N` splits the segments, in the order their rows were written, into `N` runs of about as many live rows each and merges each run into one segment, so no single merge holds the whole table. A segment left alone in its run is kept as it is unless it has deleted rows. A table with `N` segments or fewer is left as it is. |
 
 ```sql
 SET sdb_ivf_search_nprobe = 32;  -- scan more IVF clusters for this session
@@ -205,7 +294,9 @@ The metrics of each search table and inverted index:
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
 
-The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the search tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by table, join `pg_index` as well: an index's rows reach its table through `indrelid`, while a search table's rows carry the table's own oid. Here `my_logs` is a regular table with the inverted index `logs_idx`, and `my_events` a search table:
+The `avg_*` values are a rolling average over a small window of the most recent successful operations.
+
+Among the process-wide rows, `compaction_pending` counts the search tables and indexes whose planned background merges wait for a free merge slot, `compaction_threads` the merge slots that merges hold, and `compaction_written_bytes` the bytes merges have written since the server started. Rows cover the search tables and inverted indexes in the **current database**. Join `pg_class` to resolve the name. To group the rows by table, join `pg_index` as well: an index's rows reach its table through `indrelid`, while a search table's rows carry the table's own oid. Here `my_logs` is a regular table with the inverted index `logs_idx`, and `my_events` a search table:
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/sdb_metrics" />
 

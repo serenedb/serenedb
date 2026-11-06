@@ -38,7 +38,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/client_data.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
@@ -145,10 +144,7 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
 }
 
 size_t HistorySize() {
-  return GetGlobalSetting(duckdb::DBConfig::GetConfig(
-                            irs::DuckDBEngine::Instance().instance()),
-                          "sdb_job_history_size")
-    .GetValue<uint64_t>();
+  return GetGlobalSetting("sdb_job_history_size").GetValue<uint64_t>();
 }
 
 void ForAllJobs(

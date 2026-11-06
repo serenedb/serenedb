@@ -289,6 +289,35 @@ TEST(immutable_strings_test, dictionary_source_shares_through_selection) {
   }
 }
 
+TEST(immutable_strings_test, flattened_dictionary_keeps_certificate) {
+  constexpr duckdb::idx_t kDict = 8;
+  duckdb::SelectionVector sel(kRows);
+  for (duckdb::idx_t i = 0; i < kRows; ++i) {
+    sel.set_index(i, (i * 3) % kDict);
+  }
+
+  duckdb::Vector certified(duckdb::LogicalType::VARCHAR, kDict);
+  Fill(certified, kDict);
+  Mark(certified);
+  duckdb::Vector source(certified, sel, kRows);
+  const auto expected = Snapshot(source, kRows);
+  source.Flatten(kRows);
+  ASSERT_EQ(source.GetVectorType(), duckdb::VectorType::FLAT_VECTOR);
+  duckdb::Vector target(duckdb::LogicalType::VARCHAR, kRows);
+  duckdb::ImmutableStrings::Copy(source, target, kRows, 0, 0);
+  EXPECT_EQ(Snapshot(target, kRows), expected);
+  EXPECT_GT(CountAliases(source, target, kRows), 0);
+
+  duckdb::Vector plain(duckdb::LogicalType::VARCHAR, kDict);
+  Fill(plain, kDict);
+  duckdb::Vector unmarked(plain, sel, kRows);
+  unmarked.Flatten(kRows);
+  duckdb::Vector deep(duckdb::LogicalType::VARCHAR, kRows);
+  duckdb::ImmutableStrings::Copy(unmarked, deep, kRows, 0, 0);
+  EXPECT_EQ(Snapshot(deep, kRows), Snapshot(unmarked, kRows));
+  EXPECT_EQ(CountAliases(unmarked, deep, kRows), 0);
+}
+
 TEST(immutable_strings_test, constant_source_falls_back_with_content) {
   const std::string text = "constant-payload-longer-than-inline";
   duckdb::Vector source{duckdb::Value(text), duckdb::count_t(kRows)};

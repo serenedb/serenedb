@@ -531,3 +531,19 @@ CREATE TABLE fk_child (
 );
 ----
 db error: ERROR: FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT
+
+
+# DOCS_TEST: example_031
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS logs;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE logs (service VARCHAR, ts TIMESTAMP, body VARCHAR)
+    SORTED BY (service, ts DESC)
+    WITH (storage = 'search');

@@ -20,55 +20,46 @@
 
 #pragma once
 
-#include <fsst.h>
-
 #include <array>
 #include <cstdint>
-#include <limits>
-#include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/index/block_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_ranges.hpp"
+#include "iresearch/formats/index/term_parts.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 
 namespace irs::term_dict {
 
-struct FsstEncoderDelete {
-  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept;
-};
-
-using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
-
-struct VarColumns {
-  std::vector<uint32_t> lcps;
-  std::vector<uint32_t> lens;
-  bstring suffixes;
-  std::vector<uint16_t> restarts;
-  uint32_t max = 0;
-};
-
-struct BlockBuilder {
-  bstring keys;
-  std::vector<uint32_t> ends;
-  bstring records;
-  std::vector<uint16_t> record_starts;
-  VarColumns raw;
-  VarColumns coded;
-  uint64_t size = 0;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
+struct PartsField {
+  field_id id = field_limits::invalid();
+  FieldProperties props;
+  std::span<const TermPart> parts;
+  std::vector<uint64_t> inline_bases;
+  bstring key_prefix;
+  duckdb_fsst_encoder_t* fsst = nullptr;
+  uint64_t total_freq = 0;
+  uint64_t first_inline = 0;
+  uint64_t docs = 0;
   uint32_t width = 0;
-  uint32_t prefix = 0;
-  uint32_t head_skip = 0;
-  BlockKind kind = BlockKind::Var;
-  bool all_coded = true;
+  bool encode = true;
+};
+
+struct PartBlocks {
+  PartBlocks(const PartsField& field, size_t part);
+
+  BlockWriter blocks;
+  std::vector<uint32_t> prefixes;
+  bstring min;
+  uint64_t terms = 0;
 };
 
 class FieldWriter final {
@@ -79,48 +70,40 @@ class FieldWriter final {
   FieldWriter& operator=(const FieldWriter&) = delete;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void prepare(const FlushState& state, uint64_t keyed_dicts);
+  void prepare(const FlushState& state, uint64_t keyed_dicts,
+               PostingsOutputs postings = {});
   void write(DictRef dict, const BasicTermReader& reader);
+  PartsField BeginParts(DictRef dict, const BasicTermReader& reader,
+                        std::span<const TermPart> parts, uint64_t docs);
+  void AppendPart(PartBlocks& built);
+  void EndParts(const PartsField& field);
   void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
   void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
   void end();
 
  private:
   void Begin(field_id id, DictRef dict) noexcept;
+  void BeginTerms(const BasicTermReader& reader, const FieldProperties& props);
   void BeginSlot(field_id id, DictRef dict);
   void EndSlot(field_id id, const PostingMeta& meta);
   void SampleFsst(const BasicTermReader& reader);
   void TrainFsst();
-  bytes_view EncodeSuffix(bytes_view suffix);
   void Add(bytes_view term, const PostingMeta& meta);
+  void AssignOrdinal();
   void Commit(bytes_view term, const PostingMeta& meta);
-  bool Append(bytes_view term, const PostingMeta& meta);
-  bool AppendFixedKey(bytes_view key, uint64_t records);
-  bool AppendVarKey(bytes_view key, uint64_t records);
-  void AppendVarColumns(uint32_t index, bytes_view key);
-  void Seal();
-  void Cut();
-  void WriteBlock();
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
-                uint64_t first_inline);
+                uint64_t first_inline, const PostingsWriter::FieldStats& stats);
   void ResetField() noexcept;
   void Reset() noexcept;
 
   PostingsWriter _pw;
-  RecordOutput _record;
-  BlockBuilder _block;
+  BlockWriter _blocks;
   RangeWriter _ranges;
-  bstring _inline;
+  RecordOutput _record;
   FsstEncoder _fsst;
   std::string _fsst_table;
   bstring _samples;
   std::vector<size_t> _sample_lengths;
-  bstring _coded;
-  std::vector<SpanningBlock> _spans;
-  std::string _separators;
-  bstring _separator;
-  bstring _last;
-  std::string _inline_starts;
   bstring _range_regions;
   std::vector<FieldHead> _heads;
   std::vector<uint32_t> _prefixes;
@@ -129,13 +112,8 @@ class FieldWriter final {
   PostingMeta _single;
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
-  IndexOutput* _out = nullptr;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
-  uint64_t _first_page = 0;
-  uint64_t _inline_start = 0;
-  uint64_t _inline_last = 0;
-  uint32_t _blocks = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
   uint32_t _ordinal_bytes = 1;
@@ -145,7 +123,6 @@ class FieldWriter final {
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
   bool _encode = true;
-  bool _group_inline = false;
   const bool _compaction;
 };
 

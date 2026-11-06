@@ -63,6 +63,8 @@ target_sources(
         catalog/tables/pg_catalog/pg_trigger.cpp
         catalog/tables/pg_catalog/pg_ts_dict.cpp
         catalog/tables/pg_catalog/pg_type.cpp
+        catalog/tables/sdb/sdb_compact_history.cpp
+        catalog/tables/sdb/sdb_merges.cpp
         catalog/tables/sdb/sdb_metrics.cpp
         catalog/tables/sdb/sdb_progress.cpp
         catalog/tables/sdb/sdb_settings.cpp

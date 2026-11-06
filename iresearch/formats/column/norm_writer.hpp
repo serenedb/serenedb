@@ -56,6 +56,7 @@ struct NormStats {
   uint32_t max = 0;
 
   void Add(std::span<const uint32_t> values) noexcept;
+  void AddRepeated(uint64_t count, uint32_t value) noexcept;
   void Merge(const NormStats& other) noexcept;
 };
 
@@ -113,9 +114,17 @@ class NormColumnWriter final {
 
   void PadTo(uint64_t target);
 
+  void Reorder(std::span<const uint32_t> new2old, uint32_t row_group_size);
+
+  uint64_t StagedBytes() const noexcept {
+    return _values.size() * sizeof(uint32_t);
+  }
+
   void OpenRegion(const NormStats& planned);
 
   void Write(std::span<const uint32_t> values);
+
+  void WriteRepeated(uint64_t rows, uint32_t value);
 
   void CloseRegion();
 

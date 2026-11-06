@@ -38,6 +38,8 @@ extern SystemTable gPgTablespace;
 extern SystemTable gPgTrigger;
 extern SystemTable gPgTsDict;
 extern SystemTable gPgType;
+extern SystemTable gSdbCompactHistory;
+extern SystemTable gSdbMerges;
 extern SystemTable gSdbMetrics;
 extern SystemTable gSdbProgress;
 extern SystemTable gSdbSettings;

@@ -23,6 +23,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iostream>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
@@ -42,11 +43,12 @@
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
+#include <utility>
 
 #include "examples.h"
 
@@ -418,13 +420,22 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   auto before = writer.GetSnapshot();
   std::cout << "Before compaction: " << before.size() << " segment(s)\n";
 
-  // Tier-based compaction merges segments of similar size.
-  irs::index_utils::CompactionTier tier_opts;
-  tier_opts.min_segments = 1;
-  tier_opts.max_segments = 10;
-  auto policy = irs::index_utils::MakePolicy(tier_opts);
-
-  writer.Compact(policy);
+  // Merge every segment into one.
+  const auto everything = [](const irs::IndexReader& index,
+                             const irs::CompactingSegments&,
+                             irs::MergeGroups& groups) {
+    auto& group = groups.emplace_back();
+    for (const auto& segment : index) {
+      group.emplace_back(&segment);
+    }
+  };
+  bool busy = false;
+  auto pool = duckdb::TaskScheduler::GetScheduler(Db()).CreateDedicatedPool(1);
+  for (auto& ticket : writer.ReserveMerges(everything, busy)) {
+    irs::CompactionResult result;
+    irs::GetReady(
+      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, pool, result));
+  }
   writer.RefreshCommit();
 
   // Remove files no longer referenced by any reader.

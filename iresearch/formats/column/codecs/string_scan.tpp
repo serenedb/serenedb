@@ -72,11 +72,16 @@ struct EntryFrames {
       base{handle.GetDataMutable() + segment.GetBlockOffset()},
       header{SegmentHeader(base, segment, S, Leaf::kCodec)},
       type{segment.GetType()},
-      length_reader{base + header.off_lengths, header.length_width} {
+      length_reader{base + header.off_lengths, header.length_width},
+      streams{CacheSlotOf(segment).streams} {
     if (!load) {
       return;
     }
     LoadFrames();
+    if (!kDedup && streams) {
+      leaf.emplace(segment, *this);
+      return;
+    }
     if constexpr (kDedup) {
       dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
         type, header.entry_count);
@@ -87,9 +92,11 @@ struct EntryFrames {
     }
     auto& dict_data = dictionary->data;
     values = duckdb::FlatVector::GetDataMutable<string_t>(dict_data);
-    heap = duckdb::char_ptr_cast(
-      duckdb::StringVector::GetStringAllocator(dict_data).Allocate(
-        header.raw_bytes));
+    if (!streams) {
+      heap = duckdb::char_ptr_cast(
+        duckdb::StringVector::GetStringAllocator(dict_data).Allocate(
+          header.raw_bytes));
+    }
     duckdb::StringVector::AddAuxiliaryData(
       dict_data, duckdb::make_uniq<ImmutablePayloads>());
     leaf.emplace(segment, *this);
@@ -148,10 +155,23 @@ struct EntryFrames {
     ++decoded_count;
   }
 
-  char* FrameOut(uint32_t f) noexcept { return heap + frame_off[f]; }
+  char* FrameOut(uint32_t f) {
+    if (heap) {
+      return heap + frame_off[f];
+    }
+    SDB_ASSERT(streams);
+    auto frame = duckdb::make_shared_ptr<FrameBytes>(frames[f].raw_len);
+    char* out = frame->data.get();
+    duckdb::StringVector::AddAuxiliaryData(
+      dictionary->data, duckdb::make_uniq<FrameReference>(std::move(frame)));
+    if (f == 0) {
+      first = out;
+    }
+    return out;
+  }
 
   std::string_view FirstFrame() const noexcept {
-    return {heap, frames[0].raw_len};
+    return {heap ? heap : first, frames[0].raw_len};
   }
 
   IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
@@ -208,9 +228,11 @@ struct EntryFrames {
   Header header;
   duckdb::LogicalType type;
   PackedReader length_reader;
+  bool streams;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
+  char* first = nullptr;
   std::vector<FrameMeta> frames;
   std::vector<uint64_t> frame_off;
   std::vector<uint8_t> decoded;
@@ -313,6 +335,7 @@ template<typename Scan>
 void FetchRows(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  SDB_ASSERT(!CacheSlotOf(segment).streams);
   using Fetch = typename Scan::Fetch;
   auto& handle = state.GetOrInsertHandle(segment);
   auto* base = handle.GetDataMutable() + segment.GetBlockOffset();

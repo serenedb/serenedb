@@ -38,9 +38,9 @@
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/utils/index_utils.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/compaction/policy_compaction.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "token_sink_utils.hpp"
@@ -313,8 +313,8 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 8));
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   {
@@ -413,8 +413,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 16));
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -463,8 +463,8 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
     AssertNorms(reader[1], kBody, {{1, kB[0]}, {2, kB[1]}, {3, kB[2]}});
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -482,7 +482,7 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
 }
 
 // -------------------------------------------------------------------------
-// Deletes before compaction: MergeNormColumnFromSources's mask filter
+// Deletes before compaction: the mask filter
 // must skip the per-row bytes of removed docs and produce a compacted
 // merged column. If the mask path mis-counts bytes, post-merge norms
 // shift by the wrong offset.
@@ -519,8 +519,8 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
     ASSERT_EQ(3, reader[1].docs_count());
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -574,8 +574,8 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
     AssertNorms(reader[1], kBody2, {{1, kBody2B[0]}, {2, kBody2B[1]}});
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -647,8 +647,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   }
 
   // Single-shot CompactionCount with default max merges everything.
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   // Post-merge: ONE segment, per-doc norms equal to expected_counts in
@@ -714,8 +714,8 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, kSegments * kDocsPerSeg));
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));
@@ -793,8 +793,8 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
     pre_scores = Scores(RunBM25(reader, *bm25, kBody, 50));
   }
 
-  const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  const tests::CompactionCount all;
+  ASSERT_TRUE(tests::Compact(*writer, tests::MakePolicy(all)));
   ASSERT_TRUE(writer->RefreshCommit());
 
   auto reader = open_reader(MakeReaderOpts(bm25.get()));

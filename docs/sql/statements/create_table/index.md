@@ -193,7 +193,7 @@ Two expressions that PostgreSQL rejects are accepted by SereneDB:
 
 ## Functions in Column Expressions
 
-A user-defined function called in a `DEFAULT` value, a `CHECK` constraint or a generated column is looked up through the `search_path` of the statement that defines it, `CREATE TABLE` or `ALTER TABLE`. A function from a schema other than the table's own is kept with its schema: `CHECK (is_positive(v))` on a table in `public`, written while the function's schema `app` is on the `search_path`, is kept and shown as `CHECK (app.is_positive(v))`. Writes, later `ALTER TABLE` statements of the table and a restart call that function whatever the session's `search_path` is. The `USING` expression of `ALTER COLUMN TYPE` is looked up the same way.
+A user-defined function called in a `DEFAULT` value, a `CHECK` constraint or a generated column is looked up through the `search_path` of the statement that defines it, `CREATE TABLE` or `ALTER TABLE`. A function from a schema other than the table's own is kept with its schema: `CHECK (is_positive(v))` on a table in `public`, written while the function's schema `app` is on the `search_path`, is kept and shown as `CHECK (app.is_positive(v))`. Writes, later `ALTER TABLE` statements of the table and a restart call that function whatever the session's `search_path` is. The `USING` expression of `ALTER COLUMN TYPE` is looked up the same way. A temporary function, such as one created with `CREATE TEMPORARY MACRO`, cannot be used in these expressions or in an index of a non-temporary table: the statement fails with `Cannot use temporary function "<name>" in a non-temporary relation`.
 
 ## Syntax
 

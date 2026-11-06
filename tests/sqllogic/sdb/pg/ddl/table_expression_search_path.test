@@ -1,3 +1,5 @@
+control substitution on
+
 statement ok
 CREATE SCHEMA tesp_s;
 
@@ -11,7 +13,32 @@ CREATE FUNCTION tesp_s.tesp_conv(x INT) RETURNS BIGINT LANGUAGE sql IMMUTABLE AS
 
 
 statement ok
+CREATE TEMPORARY MACRO tesp_tmp(x) AS x + 100;
+
+
+statement ok
+CREATE DATABASE tesp_db_${__DATABASE__};
+
+
+statement ok
 SET search_path = tesp_s, public;
+
+
+statement error
+CREATE TABLE public.tesp_missing (a INT CHECK (tesp_missing_fn(a)));
+----
+db error: ERROR: Scalar Function with name tesp_missing_fn does not exist!
+Did you mean "tesp_pos or tesp_tmp"?
+
+
+statement error
+CREATE TABLE public.tesp_tmp_t (a INT, b INT DEFAULT tesp_tmp(1));
+----
+db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary relation
+
+
+statement ok
+CREATE TABLE tesp_db_${__DATABASE__}.public.tesp_x (a INT CHECK (tesp_pos(a)));
 
 
 statement ok
@@ -31,6 +58,18 @@ ALTER TABLE public.tesp_t ADD CONSTRAINT tesp_t_id CHECK (tesp_pos(id));
 
 statement ok
 ALTER TABLE public.tesp_st ADD CONSTRAINT tesp_st_id CHECK (tesp_pos(id));
+
+
+statement error
+ALTER TABLE public.tesp_t ADD CONSTRAINT tesp_t_tmp CHECK (tesp_tmp(id) > 0);
+----
+db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary relation
+
+
+statement error
+CREATE INDEX tesp_t_tmp_idx ON public.tesp_t ((tesp_tmp(a)));
+----
+db error: ERROR: Cannot use temporary function "tesp_tmp" in a non-temporary relation
 
 
 statement ok
@@ -138,6 +177,30 @@ tesp_st	g	NULL	CAST(tesp_s.tesp_conv(a) AS BIGINT)
 tesp_t	d	tesp_s.tesp_conv(2)	NULL
 tesp_t	e	tesp_s.tesp_conv(3)	NULL
 tesp_t	g	NULL	CAST(tesp_s.tesp_conv(a) AS BIGINT)
+
+
+statement ok
+ALTER TABLE public.tesp_st DROP COLUMN g;
+
+
+statement error
+INSERT INTO public.tesp_st (id, a) VALUES (3, -1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_st" with expression CHECK(tesp_s.tesp_pos(a))
+
+
+statement ok
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_x VALUES (1);
+
+
+statement error
+INSERT INTO tesp_db_${__DATABASE__}.public.tesp_x VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "tesp_x" with expression CHECK(<slt:ignore>.tesp_s.tesp_pos(a))
+
+
+statement ok
+DROP DATABASE tesp_db_${__DATABASE__};
 
 
 statement ok

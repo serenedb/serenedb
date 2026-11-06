@@ -888,8 +888,7 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
-  info.new_dependencies = duckdb::make_uniq<duckdb::LogicalDependencyList>(
-    bound->Base().dependencies);
+  info.ResolveNewDependencies(bound->Base().dependencies);
   return Successor(context, *bound);
 }
 

@@ -1,0 +1,712 @@
+statement ok
+CREATE TABLE crp(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO crp VALUES (1,-10,-10),(2,0,0),(3,1,1),(4,2,2),(5,NULL,1),(6,1,NULL),(7,10,10);
+
+statement ok
+CREATE INDEX crp_idx ON crp USING inverted(id,(curve(ROW(x,y),max_level := 1))) INCLUDE(x,y);
+
+statement ok
+CREATE INDEX crp_expr ON crp USING inverted(id,(curve(ROW(abs(x),abs(y)),max_level := 1))) INCLUDE(x,y);
+
+statement ok
+CREATE INDEX crp_multi ON crp USING inverted(id,(curve(ROW(x,y),max_level := 1)),(curve(ROW(abs(x),abs(y)),max_level := 1))) INCLUDE(x,y);
+
+statement ok
+CREATE INDEX crp_dup ON crp USING inverted(id,(curve(ROW(x,x),max_level := 1))) INCLUDE(x,y);
+
+statement ok
+CREATE INDEX crp_term ON crp USING inverted(id,x,(curve(ROW(x,y),max_level := 1))) INCLUDE(x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) crp;
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1),          │
+│                (y >= 0) AND (y <= 1)           │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_term WHERE x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
+│ Index: crp_term                                                       │
+│ Lookup: table                                                         │
+│ Index Filter:                                                         │
+│ ╭─ And ──────────────────────────────────────╮                        │
+│ ╰──────────────────────┬─────────────────────╯                        │
+│                        ├──────────────────────────────────╮           │
+│ ╭─ Curve Box ──────────┴─────────────────────╮  ╭─ Granular Range ──╮ │
+│ │ Field:                                     │  │ Field: x(numeric) │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │  │ Range: >=0, <=1   │ │
+│ ╰────────────────────────────────────────────╯  ╰───────────────────╯ │
+│ Column Filter: (y >= 0) AND (y <= 1)                                  │
+│ Projections: id                                                       │
+│ ~1 row                                                                │
+╰───────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE curve(ROW(x,y),max_level := 1) @@ ts_between(ROW(0,0),ROW(1,1),true,true);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1),          │
+│                (y >= 0) AND (y <= 1)           │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x = 1 AND y = 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: x = 1, y = 1                    │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x > 0 AND x < 2 AND y > 0 AND y < 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x > 0) AND (x < 2),            │
+│                (y > 0) AND (y < 2)             │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN -5 AND 5 AND x >= 0 AND x <= 1 AND y BETWEEN -5 AND 5 AND y >= 0 AND y <= 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1),          │
+│                (y >= 0) AND (y <= 1)           │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_expr WHERE abs(x) BETWEEN 1 AND 2 AND abs(y) BETWEEN 1 AND 2;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────╮
+│ Projections: #2                                          │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ FILTER ────────────────────┴────────────────────────────╮
+│ Expression:                                              │
+│ (abs(x) BETWEEN 1 AND 2) AND (abs(y) BETWEEN 1 AND 2)    │
+│ ~1 row                                                   │
+╰─────────────────────────────┬────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────┴────────────────────────────╮
+│ Index: crp_expr                                          │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ Curve Box ──────────────────────────────────────────╮ │
+│ │ Field:                                               │ │
+│ │ curve("row"(abs(x), abs(y)), max_level := 1)(string) │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: x (i), y (i), id (l)                        │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_multi WHERE x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1 AND abs(x) BETWEEN 0 AND 2 AND abs(y) BETWEEN 0 AND 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: crp_multi                                                                                         │
+│ Lookup: table                                                                                            │
+│ Index Filter:                                                                                            │
+│ ╭─ And ──────────────────────────────────────╮                                                           │
+│ ╰──────────────────────┬─────────────────────╯                                                           │
+│                        ├────────────────────────────────────────────────────╮                            │
+│ ╭─ Curve Box ──────────┴─────────────────────╮  ╭─ Curve Box ───────────────┴──────────────────────────╮ │
+│ │ Field:                                     │  │ Field:                                               │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │  │ curve("row"(abs(x), abs(y)), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯  ╰──────────────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1), (y >= 0) AND (y <= 1)                                              │
+│ Projections: id                                                                                          │
+│ ~1 row                                                                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_dup WHERE x BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crp_dup                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, x), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1)           │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────╮
+│ Index: crp_idx                       │
+│ Lookup: table                        │
+│ Projections: id                      │
+│ Column Filter: (x >= 0) AND (x <= 1) │
+│ ~1 row                               │
+╰──────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x >= 0 AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crp_idx                        │
+│ Lookup: table                         │
+│ Projections: id                       │
+│ Column Filter: x >= 0,                │
+│                (y >= 0) AND (y <= 1)  │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE (x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1) OR id=3;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────╮
+│ Projections: #2                                                   │
+│ ~1 row                                                            │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ FILTER ────────────────────────┴─────────────────────────────────╮
+│ Expression:                                                       │
+│ (id = 3) OR (((x >= 0) AND (x <= 1)) AND ((y >= 0) AND (y <= 1))) │
+│ ~1 row                                                            │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────┴─────────────────────────────────╮
+│ Index: crp_idx                                                    │
+│ Lookup: table                                                     │
+│ Projections: x (i), y (i), id (l)                                 │
+│ ~7 rows                                                           │
+╰───────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE NOT (x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1);
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────╮
+│ Projections: #2                              │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ FILTER ──────────────┴──────────────────────╮
+│ Expression:                                  │
+│ ((x < 0) OR (x > 1)) OR ((y < 0) OR (y > 1)) │
+│ ~1 row                                       │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: crp_idx                               │
+│ Lookup: table                                │
+│ Projections: x (i), y (i), id (l)            │
+│ ~7 rows                                      │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN 0 AND id AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────╮
+│ Projections: #1                       │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression: x <= CAST(id AS BIGINT)   │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: crp_idx                        │
+│ Lookup: table                         │
+│ Projections: x (i), id (l)            │
+│ Column Filter: x >= 0,                │
+│                (y >= 0) AND (y <= 1)  │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_expr WHERE abs(x)::VARCHAR::DOUBLE BETWEEN 0::DOUBLE AND 1::DOUBLE AND abs(y) BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────────────────────────╮
+│ Projections: #2                                                                        │
+│ ~1 row                                                                                 │
+╰────────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ FILTER ───────────────────────────────────┴───────────────────────────────────────────╮
+│ Expression:                                                                            │
+│ (CAST(CAST(abs(x) AS VARCHAR) AS DOUBLE) BETWEEN 0 AND 1) AND (abs(y) BETWEEN 0 AND 1) │
+│ ~1 row                                                                                 │
+╰────────────────────────────────────────────┬───────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────┴───────────────────────────────────────────╮
+│ Index: crp_expr                                                                        │
+│ Lookup: table                                                                          │
+│ Projections: x (i), y (i), id (l)                                                      │
+│ ~7 rows                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN NULL::BIGINT AND 1 AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_idx WHERE x BETWEEN 1 AND 0 AND y BETWEEN 0 AND 1;
+----
+QUERY PLAN
+╭─ EMPTY_RESULT ─╮
+╰────────────────╯
+
+query
+EXPLAIN SELECT id FROM crp_expr WHERE abs(x+1) BETWEEN 1 AND 2 AND abs(y) BETWEEN 1 AND 2;
+----
+QUERY PLAN
+╭─ PROJECTION ────────────────────────────────────────────────╮
+│ Projections: #2                                             │
+│ ~1 row                                                      │
+╰──────────────────────────────┬──────────────────────────────╯
+╭─ FILTER ─────────────────────┴──────────────────────────────╮
+│ Expression:                                                 │
+│ (abs((x + 1)) BETWEEN 1 AND 2) AND (abs(y) BETWEEN 1 AND 2) │
+│ ~1 row                                                      │
+╰──────────────────────────────┬──────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────┴──────────────────────────────╮
+│ Index: crp_expr                                             │
+│ Lookup: table                                               │
+│ Projections: x (i), y (i), id (l)                           │
+│ ~7 rows                                                     │
+╰─────────────────────────────────────────────────────────────╯
+
+statement ok
+PREPARE crp_query AS SELECT id FROM crp_idx WHERE x BETWEEN $1::BIGINT AND $2::BIGINT AND y BETWEEN 0 AND 1;
+
+query
+EXPLAIN EXECUTE crp_query(0,1);
+----
+QUERY PLAN
+╭─ EXECUTE ──────────────────────────────────────╮
+╰────────────────────────┬───────────────────────╯
+╭─ IRESEARCH_SCAN ───────┴───────────────────────╮
+│ Index: crp_idx                                 │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(x, y), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 1),          │
+│                (y >= 0) AND (y <= 1)           │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+statement ok
+DEALLOCATE crp_query;
+
+statement ok
+DROP TABLE crp;
+
+statement ok
+CREATE TABLE crpt(id INTEGER PRIMARY KEY, s SMALLINT, f FLOAT);
+
+statement ok
+INSERT INTO crpt VALUES (1,-10,-10),(2,0,0),(3,1,1),(4,2,2),(5,NULL,1),(6,1,NULL),(7,10,10);
+
+statement ok
+CREATE INDEX crpt_idx ON crpt USING inverted(id,(curve(ROW(s,f),max_level := 1))) INCLUDE(s,f);
+
+statement ok
+VACUUM (REFRESH_TABLE) crpt;
+
+query
+EXPLAIN SELECT id FROM crpt_idx WHERE s BETWEEN 0::BIGINT AND 1::BIGINT AND f BETWEEN 0::DOUBLE AND 1::DOUBLE;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: crpt_idx                                │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Curve Box ────────────────────────────────╮ │
+│ │ Field:                                     │ │
+│ │ curve("row"(s, f), max_level := 1)(string) │ │
+│ ╰────────────────────────────────────────────╯ │
+│ Column Filter:                                 │
+│ (s >= 0) AND (s < 2),                          │
+│ CAST(f AS DOUBLE) BETWEEN 0 AND 1              │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+statement ok
+DROP TABLE crpt;
+
+statement ok
+CREATE TABLE crpe(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, i INET, f FLOAT, s SMALLINT);
+
+statement ok
+INSERT INTO crpe VALUES (1, 1, 1.5, '10.0.0.1', 1, 1), (2, 5, 2.5, '10.0.0.2', 2, 2);
+
+statement ok
+CREATE INDEX crpe_exact ON crpe USING inverted(id, (curve(ROW(x, y))));
+
+statement ok
+CREATE INDEX crpe_inet ON crpe USING inverted(id, (curve(ROW(x, i))));
+
+statement ok
+CREATE INDEX crpe_norm ON crpe USING inverted(id, (curve(ROW(x, y), lower := ROW(0, NULL), upper := ROW(10, NULL))));
+
+statement ok
+CREATE INDEX crpe_cast ON crpe USING inverted(id, (curve(ROW(f, s))));
+
+statement ok
+VACUUM (REFRESH_TABLE) crpe;
+
+query
+EXPLAIN SELECT id FROM crpe_exact WHERE x BETWEEN 0 AND 3 AND y BETWEEN 0 AND 2;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_exact                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(x, y))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_exact WHERE curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(3, 2), false, false);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_exact                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(x, y))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_exact WHERE x = 1 AND y > 0.5 AND y < 2.5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_exact                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(x, y))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_exact WHERE x BETWEEN 0 AND 3 AND y BETWEEN 0 AND 2 AND id > 0;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
+│ Index: crpe_exact                                             │
+│ Lookup: table                                                 │
+│ Index Filter:                                                 │
+│ ╭─ And ─────────────────────────────╮                         │
+│ ╰─────────────────┬─────────────────╯                         │
+│                   ├───────────────────────────────╮           │
+│ ╭─ Curve Box ─────┴─────────────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: curve("row"(x, y))(string) │  │ Field: id(numeric) │ │
+│ ╰───────────────────────────────────╯  │ Range: >0          │ │
+│                                        ╰────────────────────╯ │
+│ Projections: id                                               │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_inet WHERE curve(ROW(x, i)) @@ ts_between(ROW(0, '10.0.0.0'::INET), ROW(3, '10.0.0.9'::INET), true, true);
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Projections: #1                                                                                                                  │
+│ ~1 row                                                                                                                           │
+╰─────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────╯
+╭─ FILTER ────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────╮
+│ Expression:                                                                                                                      │
+│ inet_sort_key(i) BETWEEN '\\x01\\x0A\\x00\\x00\\x00\\x00 \\x0A\\x00\\x00\\x00'::BLOB AND '\\x01\\x0A\\x00\\x00\\x09\\x00 \\x0A\\x00\\x00\\x09'::BLOB │
+│ ~1 row                                                                                                                           │
+╰─────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────╮
+│ Index: crpe_inet                                                                                                                 │
+│ Lookup: table                                                                                                                    │
+│ Index Filter:                                                                                                                    │
+│ ╭─ Curve Box ───────────────────────╮                                                                                            │
+│ │ Field: curve("row"(x, i))(string) │                                                                                            │
+│ ╰───────────────────────────────────╯                                                                                            │
+│ Projections: i, id                                                                                                               │
+│ ~1 row                                                                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_norm WHERE curve(ROW(x, y), lower := ROW(0, NULL), upper := ROW(10, NULL)) @@ ts_between(ROW(0, 0), ROW(3, 2), true, true);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────╮
+│ Index: crpe_norm                                                                  │
+│ Lookup: table                                                                     │
+│ Index Filter:                                                                     │
+│ ╭─ Curve Box ───────────────────────────────────────────────────────────────────╮ │
+│ │ Field:                                                                        │ │
+│ │ curve("row"(x, y), lower := "row"(0, NULL), upper := "row"(10, NULL))(string) │ │
+│ ╰───────────────────────────────────────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x <= 3)                                              │
+│ Projections: id                                                                   │
+│ ~1 row                                                                            │
+╰───────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE curve(ROW(f, s)) @@ ts_between(ROW(0.5, 0), ROW(1.5, 300000), true, true);
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(s AS INTEGER) <= 300000 │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: crpe_cast                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Curve Box ───────────────────────╮    │
+│ │ Field: curve("row"(f, s))(string) │    │
+│ ╰───────────────────────────────────╯    │
+│ Projections: s, id                       │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM crpe_exact WHERE curve(ROW(x, y)) @@ ts_between(ROW(1, 1.5), ROW(5, 2.5), false, false)) AS strict,
+ (SELECT list(id ORDER BY id) FROM crpe_exact WHERE x BETWEEN 1 AND 5 AND y BETWEEN 1.5 AND 2.5) AS closed,
+ (SELECT list(id ORDER BY id) FROM crpe_inet WHERE curve(ROW(x, i)) @@ ts_between(ROW(0, '10.0.0.2'::INET), ROW(9, '10.0.0.9'::INET), true, true)) AS inet,
+ (SELECT list(id ORDER BY id) FROM crpe_norm WHERE curve(ROW(x, y), lower := ROW(0, NULL), upper := ROW(10, NULL)) @@ ts_between(ROW(2, 0), ROW(9, 9), true, true)) AS norm,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE curve(ROW(f, s)) @@ ts_between(ROW(0.5, 0), ROW(1.5, 300000), true, true)) AS clamped;
+----
+strict	closed	inet	norm	clamped
+NULL	{1,2}	{2}	{2}	{1}
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300000 AND s <= 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_cast                      │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(f, s))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 300000;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(s AS INTEGER) <= 300000 │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: crpe_cast                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Curve Box ───────────────────────╮    │
+│ │ Field: curve("row"(f, s))(string) │    │
+│ ╰───────────────────────────────────╯    │
+│ Projections: s, id                       │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 5;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: crpe_cast                      │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(f, s))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s BETWEEN -300000 AND 300000;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections: #1                          │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ FILTER ────────────┴────────────────────╮
+│ Expression: CAST(s AS INTEGER) <= 300000 │
+│ ~1 row                                   │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: crpe_cast                         │
+│ Lookup: table                            │
+│ Index Filter:                            │
+│ ╭─ Curve Box ───────────────────────╮    │
+│ │ Field: curve("row"(f, s))(string) │    │
+│ ╰───────────────────────────────────╯    │
+│ Projections: s, id                       │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300000 AND s <= 1) AS wide_lower,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 2 AND s <= 300000) AS wide_upper,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 1 AND s <= 5) AS sides,
+ (SELECT list(id ORDER BY id) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s BETWEEN -300000 AND 300000) AS wide;
+----
+wide_lower	wide_upper	sides	wide
+{1}	{2}	{1,2}	{1,2}
+
+query
+SELECT
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 300000) AS above,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= 300000 AND s <= 300001) AS above_both,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s >= -300001 AND s <= -300000) AS below_both,
+ (SELECT count(*) FROM crpe_cast WHERE f BETWEEN 0 AND 3 AND s <= 300000) AS one_side;
+----
+above	above_both	below_both	one_side
+0	0	0	2
+
+statement ok
+PREPARE crpe_tagged AS SELECT id FROM crpe_exact WHERE id >= $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+
+skipif pg-wire-extended
+query
+EXPLAIN EXECUTE crpe_tagged(2);
+----
+QUERY PLAN
+╭─ EXECUTE ─────────────────────────────────────────────────────╮
+╰───────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────┴───────────────────────────────╮
+│ Index: crpe_exact                                             │
+│ Lookup: table                                                 │
+│ Index Filter:                                                 │
+│ ╭─ And ─────────────────────────────╮                         │
+│ ╰─────────────────┬─────────────────╯                         │
+│                   ├───────────────────────────────╮           │
+│ ╭─ Curve Box ─────┴─────────────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: curve("row"(x, y))(string) │  │ Field: id(numeric) │ │
+│ ╰───────────────────────────────────╯  │ Range: >=2         │ │
+│                                        ╰────────────────────╯ │
+│ Projections: id                                               │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+onlyif pg-wire-extended
+query
+EXPLAIN EXECUTE crpe_tagged(2);
+----
+QUERY PLAN
+╭─ EXECUTE ─────────────────────────────╮
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression: id >= $1                  │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: crpe_exact                     │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Curve Box ───────────────────────╮ │
+│ │ Field: curve("row"(x, y))(string) │ │
+│ ╰───────────────────────────────────╯ │
+│ Projections: id                       │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+EXECUTE crpe_tagged(2);
+----
+id
+2
+
+statement ok
+DEALLOCATE crpe_tagged;
+
+statement ok
+DROP TABLE crpe;

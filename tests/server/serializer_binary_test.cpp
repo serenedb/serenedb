@@ -28,6 +28,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/utils/serializer.hpp>
+#include <iresearch/utils/space_filling_curve.hpp>
 #include <limits>
 #include <list>
 #include <map>
@@ -100,6 +101,21 @@ enum class Color : uint8_t {
   Green,
   Blue,
 };
+
+TEST(SerializerBinary, CurveOptions) {
+  RoundTrip(irs::curve::Options{});
+  RoundTrip(irs::curve::Options{
+    .dimensions = 3,
+    .max_level = 48,
+    .hilbert = true,
+  });
+  RoundTrip(std::optional<irs::curve::Options>{});
+  RoundTrip(std::optional{irs::curve::Options{
+    .max_level = 32,
+    .hilbert = true,
+  }});
+}
+
 enum class Signed : int16_t {
   Neg = -3,
   Zero = 0,

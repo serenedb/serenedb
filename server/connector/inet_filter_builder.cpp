@@ -61,15 +61,7 @@ const duckdb::Expression& PeelCidrCast(const duckdb::Expression& expr) {
 }
 
 const duckdb::Expression& PeelSortKey(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
-    return expr;
-  }
-  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.Function().GetName().GetIdentifierName() != kSortKeyFunction ||
-      func.GetChildren().size() != 1) {
-    return PeelCidrCast(expr);
-  }
-  return PeelCidrCast(*func.GetChildren()[0]);
+  return PeelCidrCast(PeelInetSortKey(expr));
 }
 
 const duckdb::Value* FindInetConstant(const duckdb::Expression& expr) {
@@ -347,6 +339,17 @@ void AddContains(BoolTarget target, const SearchColumnInfo& column,
 }
 
 }  // namespace
+
+const duckdb::Expression& PeelInetSortKey(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return expr;
+  }
+  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (func.Function().GetName().GetIdentifierName() != kSortKeyFunction) {
+    return expr;
+  }
+  return *func.GetChildren()[0];
+}
 
 const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
                                        const duckdb::Expression& expr) {

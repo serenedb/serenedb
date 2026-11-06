@@ -511,6 +511,39 @@ class EntriesReader final : public irs::BasicTermReader {
   mutable tests::BatchingTermIterator _it;
 };
 
+class BandPruner final : public irs::RangePruner {
+ public:
+  BandPruner(irs::bytes_view from, irs::bytes_view to) noexcept
+    : _from{from}, _to{to} {}
+
+  irs::RangeFit Fit(irs::bytes_view first, irs::bytes_view last) const final {
+    if (last < _from || (!_to.empty() && first >= _to)) {
+      return irs::RangeFit::Outside;
+    }
+    return first >= _from && (_to.empty() || last < _to)
+             ? irs::RangeFit::Inside
+             : irs::RangeFit::Partial;
+  }
+
+  uint64_t Select(irs::bytes_view prefix, const irs::byte_type* keys,
+                  uint32_t pitch, uint32_t width, uint32_t count) const final {
+    uint64_t selected = 0;
+    for (uint32_t i = 0; i != count; ++i) {
+      irs::bstring key{prefix};
+      key.append(keys + uint64_t{i} * pitch, width);
+      if (irs::bytes_view{key} >= _from &&
+          (_to.empty() || irs::bytes_view{key} < _to)) {
+        selected |= uint64_t{1} << i;
+      }
+    }
+    return selected;
+  }
+
+ private:
+  irs::bytes_view _from;
+  irs::bytes_view _to;
+};
+
 class TermDictTest : public tests::DirectoryTestCaseBase<> {
  protected:
   void Write(std::span<const Field> fields, bool compaction = false,
@@ -931,6 +964,17 @@ class TermDictTest : public tests::DirectoryTestCaseBase<> {
       absl::c_sort(actual);
       actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
       ASSERT_EQ(DocsIn(entries, from, to), actual);
+
+      const BandPruner pruner{from, to};
+      std::vector<irs::doc_id_t> pruned;
+      reader.VisitPruned(
+        pruner, [&](irs::bytes_view, const irs::PostingMeta& meta) {
+          const auto docs = DocsOf(reader, meta);
+          pruned.insert(pruned.end(), docs.begin(), docs.end());
+        });
+      absl::c_sort(pruned);
+      pruned.erase(std::ranges::unique(pruned).begin(), pruned.end());
+      ASSERT_EQ(actual, pruned);
     }
   }
 
@@ -2656,6 +2700,56 @@ TEST_P(TermDictTest, walks_match_short_and_edge_byte_terms) {
     AssertWalk(*reader, entries,
                irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
   }
+}
+
+TEST_P(TermDictTest, pruned_walk_hints_before_reading) {
+  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
+  for (irs::doc_id_t doc = 1; doc <= 400000; ++doc) {
+    values.emplace_back(int64_t{doc} * 3, doc);
+  }
+  const Field fields[]{{.id = 2,
+                        .entries = NumericEntries(values),
+                        .dict = irs::NumericLayout::kNumbers}};
+  Write(fields);
+  CountingDirectory counting{dir()};
+  Open(counting);
+  const auto* reader = Get(fields[0]);
+  ASSERT_NE(nullptr, reader);
+  const auto& entries = fields[0].entries;
+  struct EveryThirdPiece final : irs::RangePruner {
+    irs::RangeFit Fit(irs::bytes_view first, irs::bytes_view) const final {
+      return first.back() % 3 == 0 ? irs::RangeFit::Partial
+                                   : irs::RangeFit::Outside;
+    }
+    uint64_t Select(irs::bytes_view, const irs::byte_type*, uint32_t, uint32_t,
+                    uint32_t count) const final {
+      return count == 64 ? UINT64_MAX : (uint64_t{1} << count) - 1;
+    }
+  } pruner;
+  auto& prefetched = counting.Prefetched();
+  auto& offsets = counting.Offsets();
+  auto& hinted = counting.Hinted();
+  prefetched.clear();
+  offsets.clear();
+  hinted.clear();
+
+  uint64_t docs = 0;
+  reader->VisitPruned(pruner,
+                      [&](irs::bytes_view, const irs::PostingMeta& meta) {
+                        docs += meta.docs_count;
+                      });
+  ASSERT_GT(docs, 0);
+  ASSERT_LE(docs, entries.size());
+  ASSERT_FALSE(offsets.empty());
+  size_t covered = 0;
+  for (size_t i = 0; i != offsets.size(); ++i) {
+    const auto offset = offsets[i];
+    covered += absl::c_any_of(
+      std::span{prefetched}.first(hinted[i]), [&](const auto& range) {
+        return range.first <= offset && offset < range.second;
+      });
+  }
+  ASSERT_GT(covered * 2, offsets.size());
 }
 
 TEST_P(TermDictTest, batch_lookup_hints_before_reading) {

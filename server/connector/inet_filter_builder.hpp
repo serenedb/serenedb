@@ -55,6 +55,8 @@ struct InetNetworkPredicate {
   InetNetworkOp op = InetNetworkOp::ContainedBy;
 };
 
+const duckdb::Expression& PeelInetSortKey(const duckdb::Expression& expr);
+
 const SearchColumnInfo* FindInetColumn(const FilterContext& ctx,
                                        const duckdb::Expression& expr);
 

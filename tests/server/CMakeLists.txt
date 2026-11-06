@@ -55,6 +55,7 @@ add_executable(
     connector/ai_functions_test.cpp
     connector/col_filter_share_test.cpp
     connector/copy_in_batches_test.cpp
+    connector/curve_index_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
     connector/index_lifecycle_test.cpp

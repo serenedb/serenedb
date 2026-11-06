@@ -1,0 +1,78 @@
+statement ok
+CREATE TABLE curve_st(id INTEGER PRIMARY KEY, x INTEGER, y INTEGER) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO curve_st SELECT i, i % 100, i // 100 FROM range(10000) t(i);
+
+statement ok
+CREATE INDEX curve_st_idx ON curve_st USING inverted(id, (curve(ROW(x, y)))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_st;
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(10, 10), ROW(20, 30), true, true);
+----
+n
+231
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE x BETWEEN 10 AND 20 AND y BETWEEN 10 AND 30;
+----
+n
+231
+
+statement ok
+DELETE FROM curve_st WHERE id % 2 = 0;
+
+statement ok
+UPDATE curve_st SET x = 15 WHERE id = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_st;
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(10, 10), ROW(20, 30), true, true);
+----
+n
+105
+
+query
+SELECT id FROM curve_st_idx WHERE curve(ROW(x, y)) @@ ts_between(ROW(15, 0), ROW(15, 0), true, true) ORDER BY id;
+----
+id
+1
+15
+
+statement ok
+ALTER TABLE curve_st RENAME COLUMN x TO x2;
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE curve(ROW(x2, y)) @@ ts_between(ROW(10, 10), ROW(20, 30), true, true);
+----
+n
+105
+
+query
+SELECT count(*) AS n FROM curve_st_idx WHERE x2 BETWEEN 10 AND 20 AND y BETWEEN 10 AND 30;
+----
+n
+105
+
+statement error
+ALTER TABLE curve_st ALTER COLUMN y TYPE BIGINT;
+----
+db error: ERROR: Cannot change the type of column "y": index "curve_st_idx" depends on it
+
+
+statement ok
+ALTER TABLE curve_st DROP COLUMN y;
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'curve_st_idx';
+----
+n
+0
+
+statement ok
+DROP TABLE curve_st;

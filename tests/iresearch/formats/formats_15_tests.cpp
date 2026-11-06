@@ -124,6 +124,7 @@ class MockPostingsField final : public irs::TermReader {
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
   void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
+  void VisitPruned(const irs::RangePruner&, RangeVisitor) const final {}
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }

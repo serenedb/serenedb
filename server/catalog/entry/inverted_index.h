@@ -235,6 +235,7 @@ class IndexTokenizers {
     TokenizerRef tokenizer;
     irs::IndexFeatures features = irs::IndexFeatures::None;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
+    std::optional<irs::curve::Options> curve;
   };
 
   irs::containers::FlatHashMap<irs::field_id, Field> _fields;

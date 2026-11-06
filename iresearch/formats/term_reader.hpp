@@ -49,6 +49,24 @@ struct PostingsHandles {
   const IndexInput* pay = nullptr;
 };
 
+enum class RangeFit : uint8_t {
+  Outside,
+  Partial,
+  Inside,
+};
+
+struct RangePruner {
+  static constexpr uint32_t kMaxSelect = 64;
+
+  virtual RangeFit Fit(bytes_view first, bytes_view last) const = 0;
+  virtual uint64_t Select(bytes_view prefix, const byte_type* keys,
+                          uint32_t pitch, uint32_t width,
+                          uint32_t count) const = 0;
+
+ protected:
+  ~RangePruner() = default;
+};
+
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
@@ -83,6 +101,9 @@ struct TermReader : public AttributeProvider {
 
   virtual void VisitRange(bytes_view from, bytes_view to,
                           RangeVisitor visit) const = 0;
+
+  virtual void VisitPruned(const RangePruner& pruner,
+                           RangeVisitor visit) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const RegexpAcceptor& acceptor) const = 0;

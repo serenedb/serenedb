@@ -1,0 +1,257 @@
+statement ok
+CREATE TABLE cpl(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, tag INTEGER);
+
+statement ok
+INSERT INTO cpl SELECT i, i % 20, (i * 7) % 20, i % 4 FROM range(2000) t(i);
+
+statement ok
+CREATE INDEX cpl_idx ON cpl USING inverted(id, tag, (curve(ROW(x, y))));
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+statement ok
+PREPARE cpl_box AS SELECT count(*) AS n, sum(id) AS total FROM cpl_idx
+ WHERE tag = $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+
+statement ok
+PREPARE cpl_ranges AS SELECT count(*) AS n, sum(id) AS total FROM cpl_idx
+ WHERE tag = $1 AND x BETWEEN 0 AND 9 AND y BETWEEN 0 AND 9;
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM cpl WHERE tag = 1 AND x BETWEEN 0 AND 9 AND y BETWEEN 0 AND 9;
+----
+n	total
+200	199000
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+200	199000
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+200	199000
+
+statement ok
+ALTER TABLE cpl ADD COLUMN extra INTEGER;
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+200	199000
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+200	199000
+
+statement ok
+DROP INDEX cpl_idx;
+
+statement error
+EXECUTE cpl_box(1);
+----
+db error: ERROR: Table with name cpl_idx does not exist!
+Did you mean "cpl"?
+
+
+statement error
+EXECUTE cpl_ranges(1);
+----
+db error: ERROR: Table with name cpl_idx does not exist!
+Did you mean "cpl"?
+
+
+statement ok
+CREATE INDEX cpl_idx ON cpl USING inverted(id, tag, (curve(ROW(x, y), kind := 'hilbert')));
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+statement error
+EXECUTE cpl_box(1);
+----
+db error: ERROR: curve() @@ needs an index on the same curve() call
+HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
+
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+200	199000
+
+statement ok
+DROP INDEX cpl_idx;
+
+statement ok
+CREATE INDEX cpl_idx ON cpl USING inverted(id, tag, (curve(ROW(x, y))));
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+200	199000
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+200	199000
+
+statement ok
+TRUNCATE cpl;
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+0	NULL
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+0	NULL
+
+statement ok
+INSERT INTO cpl SELECT i, i % 20, (i * 3) % 20, i % 4, 0 FROM range(800) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM cpl WHERE tag = 1 AND x BETWEEN 0 AND 9 AND y BETWEEN 0 AND 9;
+----
+n	total
+80	31600
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+80	31600
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+80	31600
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM cpl WHERE id % 2 = 1;
+
+query
+SELECT count(*) AS n, sum(id) AS total FROM cpl_idx WHERE tag = 1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+----
+n	total
+0	NULL
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+0	NULL
+
+query
+EXECUTE cpl_ranges(1);
+----
+n	total
+0	NULL
+
+statement ok
+ROLLBACK;
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+80	31600
+
+connection cpl_reader
+statement ok
+PREPARE cpl_snapshot AS SELECT count(*) AS n, sum(id) AS total FROM cpl_idx
+ WHERE tag = $1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+
+connection cpl_reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection cpl_reader
+query
+SELECT count(*) AS n FROM cpl;
+----
+n
+800
+
+connection cpl_reader
+query
+EXECUTE cpl_snapshot(1);
+----
+n	total
+80	31600
+
+statement ok
+INSERT INTO cpl SELECT 1000 + i, i % 5, i % 5, 1, 0 FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) cpl;
+
+query
+EXECUTE cpl_box(1);
+----
+n	total
+180	136550
+
+connection cpl_reader
+query
+EXECUTE cpl_snapshot(1);
+----
+n	total
+80	31600
+
+connection cpl_reader
+query
+SELECT count(*) AS n, sum(id) AS total FROM cpl_idx WHERE tag = 1 AND curve(ROW(x, y)) @@ ts_between(ROW(0, 0), ROW(9, 9), true, true);
+----
+n	total
+80	31600
+
+connection cpl_reader
+statement ok
+COMMIT;
+
+connection cpl_reader
+query
+EXECUTE cpl_snapshot(1);
+----
+n	total
+180	136550
+
+statement ok
+DEALLOCATE cpl_box;
+
+statement ok
+DEALLOCATE cpl_ranges;
+
+connection cpl_reader
+statement ok
+DEALLOCATE cpl_snapshot;
+
+statement ok
+DROP TABLE cpl;

@@ -375,16 +375,6 @@ bool IsStringishTypeId(duckdb::LogicalTypeId id) {
          id == duckdb::LogicalTypeId::STRING_LITERAL;
 }
 
-std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
-                                               const duckdb::Expression& expr) {
-  duckdb::Value result;
-  if (!expr.IsFoldable() ||
-      !duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
-    return std::nullopt;
-  }
-  return result;
-}
-
 std::optional<std::string> RenderCast(
   duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& cast) {
   const auto& target = cast.GetReturnType();
@@ -615,6 +605,16 @@ std::optional<std::string> RenderTSQueryCall(
 }
 
 }  // namespace
+
+std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
+                                               const duckdb::Expression& expr) {
+  duckdb::Value result;
+  if (!expr.IsFoldable() ||
+      !duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
+    return std::nullopt;
+  }
+  return result;
+}
 
 bool IsTSQueryStructType(const duckdb::LogicalType& type) {
   if (type.id() != duckdb::LogicalTypeId::STRUCT) {

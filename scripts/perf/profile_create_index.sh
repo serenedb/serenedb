@@ -87,7 +87,6 @@ fi
 
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 
-text$ | text
 PERF_DICT_TEMPLATE="${PERF_DICT_TEMPLATE:-split_text_csv}"
 case "${PERF_DICT_TEMPLATE}" in
 split_text_csv)

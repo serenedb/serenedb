@@ -65,28 +65,12 @@ std::unique_lock<absl::Mutex> LockRefresh(absl::Mutex& mutex) {
 #endif
 }
 
-std::string MemoryRoot(const duckdb::AttachedDatabase& database,
-                       duckdb::idx_t oid) {
-  return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, database.oid, "/", oid);
-}
-
-duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& engine,
-                                 const std::optional<std::string>& path) {
-  if (path) {
-    return duckdb::FileSystem::GetFileSystem(engine);
+duckdb::FileSystem& FileSystemOf(duckdb::DatabaseInstance& db,
+                                 std::string_view root) {
+  if (irs::StorageKindOf(root) == irs::StorageKind::Memory) {
+    return db.GetMemoryFileSystem();
   }
-  return engine.GetMemoryFileSystem();
-}
-
-std::optional<std::string> StoragePath(
-  duckdb::AttachedDatabase& database,
-  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new) {
-  if (database.GetStorageManager().InMemory()) {
-    return std::nullopt;
-  }
-  SDB_ASSERT(parent);
-  return is_new ? parent->CreateStorage(oid) : parent->StoragePath(oid);
+  return duckdb::FileSystem::GetFileSystem(db);
 }
 
 }  // namespace
@@ -108,21 +92,13 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
   return stamp;
 }
 
-IndexDurability::IndexDurability(
-  duckdb::AttachedDatabase& database, std::string name,
-  const std::optional<catalog::StorageDirectory>& parent, duckdb::idx_t oid,
-  bool is_new)
-  : IndexDurability{database, std::move(name),
-                    StoragePath(database, parent, oid, is_new), oid} {}
-
 IndexDurability::IndexDurability(duckdb::AttachedDatabase& database,
-                                 std::string name,
-                                 std::optional<std::string> path,
-                                 duckdb::idx_t oid)
+                                 std::string name, std::string root)
   : _database{database.shared_from_this()},
     _name{std::move(name)},
-    _fs{FileSystemOf(irs::DuckDBEngine::Instance().instance(), path)},
-    _root{path ? *path : MemoryRoot(database, oid)},
+    _db{irs::DuckDBEngine::Instance().instance()},
+    _fs{FileSystemOf(_db, root)},
+    _root{std::move(root)},
     _refs{std::make_shared<irs::IndexFileRefs>()} {}
 
 IndexDurability::~IndexDurability() {
@@ -152,14 +128,14 @@ IndexDurability::OpenWriter(bool is_new, irs::IndexWriterOptions options,
   };
   options.reader_options.refs = _refs;
   if (is_new || irs::StorageKindOf(_root) == irs::StorageKind::Memory) {
-    auto writer = irs::IndexWriter::Make(_fs, _root, irs::OpenMode::kOmCreate,
-                                         std::move(options));
+    auto writer = irs::IndexWriter::Make(
+      _db, _fs, _root, irs::OpenMode::kOmCreate, std::move(options));
     writer->RefreshCommit();
     return {std::move(writer), std::move(stamp)};
   }
   ResolvePendingSave();
   auto writer = irs::IndexWriter::Make(
-    _fs, _root, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
+    _db, _fs, _root, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
   _written_manifest = stamp.manifest;
   _position = stamp.position;
@@ -176,7 +152,7 @@ std::pair<irs::DirectoryReader, IndexStamp> IndexDurability::OpenReader(
   auto opts = options;
   opts.refs = _refs;
   irs::DirectoryReader reader{
-    _fs, _root, opts,
+    _db, _fs, _root, opts,
     [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
   return {std::move(reader), std::move(stamp)};
 }

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_set.h>
 #include <absl/flags/flag.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -61,11 +62,8 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
-#include "catalog/entry/tablespace.h"
 #include "pg/catalog/oids.h"
-#include "search/store.h"
 #include "search/wal_recovery.h"
-#include "utils/file_utils.h"
 
 ABSL_FLAG(std::string, missing_database, "refuse",
           "What boot does with a database whose data file is missing: "
@@ -102,24 +100,12 @@ absl::flat_hash_set<duckdb::idx_t> StorageOids(SereneDBCatalog& catalog) {
   return oids;
 }
 
-std::vector<std::shared_ptr<TablespaceRoot>> TablespaceRoots(
-  ClusterCatalog& cluster) {
-  std::vector<std::shared_ptr<TablespaceRoot>> roots;
-  cluster.GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
-    .Scan(cluster.LoginTransaction(), [&](duckdb::CatalogEntry& entry) {
-      if (const auto& root = entry.Cast<TablespaceCatalogEntry>().Root()) {
-        roots.push_back(root);
-      }
-    });
-  return roots;
-}
-
 void RemoveUnownedDatabases(ClusterCatalog& cluster) {
   absl::flat_hash_set<duckdb::idx_t> databases;
   cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(cluster.LoginTransaction(),
           [&](duckdb::CatalogEntry& entry) { databases.insert(entry.oid); });
-  for (const auto& root : TablespaceRoots(cluster)) {
+  for (const auto& root : cluster.TablespaceRoots(cluster.LoginTransaction())) {
     RemoveUnowned(ListStoragesOrDie(root->Path()), databases);
   }
 }
@@ -212,29 +198,6 @@ std::string DataDirectory::EngineDir() const { return EngineDirOf(directory); }
 
 std::string DataDirectory::CatalogLogFile() const {
   return absl::StrCat(EngineDir(), "/", kCatalogLog);
-}
-
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory) {
-  std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> found;
-  std::error_code ec;
-  std::filesystem::directory_iterator entries{directory, ec};
-  if (ec && ec != std::errc::no_such_file_or_directory) {
-    SDB_FATAL(STARTUP, "cannot list directory '", directory.string(),
-              "': ", ec.message());
-  }
-  for (const auto& entry : entries) {
-    const bool is_directory = entry.is_directory(ec);
-    if (ec) {
-      SDB_FATAL(STARTUP, "cannot stat '", entry.path().string(),
-                "': ", ec.message());
-    }
-    const auto name = entry.path().filename().string();
-    if (const auto oid = OidFromName(name); is_directory && oid) {
-      found.emplace_back(*oid, entry.path());
-    }
-  }
-  return found;
 }
 
 std::filesystem::path DataDirectory::DatabaseDir(duckdb::idx_t oid) const {
@@ -396,10 +359,10 @@ void InitCatalog(std::string_view directory) {
       cluster.DropDatabase(cluster.GetCatalogTransaction(context), drop);
     });
   }
-  const auto roots = TablespaceRoots(cluster);
+  const auto roots = cluster.TablespaceRoots(cluster.LoginTransaction());
   auto storages = StorageDirectories(manager, roots.size());
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(instance);
-  duckdb::TaskExecutor listings{scheduler, scheduler.AsyncPool()};
+  duckdb::TaskExecutor listings{duckdb::TaskScheduler::GetScheduler(instance),
+                                duckdb::TaskSchedulerType::ASYNC};
   for (auto& database : storages) {
     const auto oid = database.catalog.get().GetAttached().oid;
     for (size_t i = 0; i < roots.size(); ++i) {

@@ -37,8 +37,6 @@ struct MissingStorage {
   std::string path;
 };
 
-// Opens the durable search storages of [catalogs] at once; the first missing
-// storage by oid, if any.
 std::optional<MissingStorage> OpenSearchStorages(
   std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs);
 

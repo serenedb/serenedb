@@ -27,9 +27,9 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <optional>
 #include <string>
 
 #include "search/index_durability.h"
@@ -56,9 +56,8 @@ TEST(IndexDurabilityTest, InMemoryIndexFilesGoWithTheIndex) {
   const auto root =
     absl::StrCat(duckdb::MemoryFileSystem::PREFIX, attached->oid, "/", kOid);
   {
-    IndexDurability durability{*attached, "index", std::nullopt, kOid, true};
+    IndexDurability durability{*attached, "index", root};
     irs::IndexWriterOptions options;
-    options.db = &engine;
     auto [writer, stamp] = durability.OpenWriter(true, std::move(options));
     ASSERT_TRUE(writer);
     EXPECT_LT(0, CountFiles(fs, root));

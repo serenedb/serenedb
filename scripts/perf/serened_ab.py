@@ -15,6 +15,8 @@ import urllib.request
 
 import psycopg
 
+from ab_common import cpu_busy, load_queries, node_cpus, pct
+
 COMMANDS = ("count", "top_10", "top_100")
 TABLE = "wiki"
 INDEX = "wiki_idx"
@@ -23,27 +25,6 @@ SQL = {
     "top_10": f"SELECT id FROM {INDEX} WHERE text @@ to_tsquery(%s) ORDER BY BM25({INDEX}.tableoid) DESC LIMIT 10",
     "top_100": f"SELECT id FROM {INDEX} WHERE text @@ to_tsquery(%s) ORDER BY BM25({INDEX}.tableoid) DESC LIMIT 100",
 }
-
-
-def node_cpus(node):
-    with open(f"/sys/devices/system/node/node{node}/cpulist") as f:
-        spec = f.read().strip()
-    cpus = []
-    for part in spec.split(","):
-        lo, _, hi = part.partition("-")
-        cpus.extend(range(int(lo), int(hi or lo) + 1))
-    return cpus
-
-
-def cpu_busy(cpus):
-    busy = 0
-    with open("/proc/stat") as f:
-        for line in f:
-            name, *fields = line.split()
-            if name.startswith("cpu") and name[3:].isdigit() and int(name[3:]) in cpus:
-                values = list(map(int, fields))
-                busy += sum(values) - values[3] - values[4]
-    return busy
 
 
 def tree_ticks(pid):
@@ -96,16 +77,6 @@ class Server:
                 self.proc.kill()
                 self.proc.wait()
         self.log.close()
-
-
-def load_queries(path, limit):
-    out = []
-    with open(path) as f:
-        for line in f:
-            out.append(json.loads(line)["query"])
-            if limit and len(out) == limit:
-                break
-    return out
 
 
 def cmd_prepare(args):
@@ -367,11 +338,6 @@ def cmd_remote_compare(args):
             "geomean_ratio": round(math.exp(statistics.fmean(math.log(r) for r in ratios)), 4),
             "p95_ratio": round(pct(ratios, 0.95), 4),
         }))
-
-
-def pct(values, q):
-    values = sorted(values)
-    return values[min(len(values) - 1, int(q * (len(values) - 1) + 0.5))]
 
 
 def cmd_compare(args):

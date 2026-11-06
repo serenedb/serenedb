@@ -24,8 +24,9 @@
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/common/numeric_utils.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -46,12 +47,24 @@ StorageKind StorageKindOf(std::string_view location);
 
 std::string PathOf(std::string_view root, std::string_view name);
 
-std::unique_ptr<InputFile> OpenInput(duckdb::BlockCache& cache,
-                                     duckdb::FileSystem& fs,
+std::unique_ptr<InputFile> OpenInput(duckdb::FileSystem& fs,
                                      const std::string& path,
                                      duckdb::MappedFileAccess access);
 
-bstring ReadWhole(duckdb::FileSystem& fs, const std::string& path);
+duckdb::unique_ptr<duckdb::FileHandle> OpenWhole(duckdb::FileSystem& fs,
+                                                 const std::string& path);
+
+template<typename Bytes>
+Bytes ReadWhole(duckdb::QueryContext context, duckdb::FileSystem& fs,
+                const std::string& path) {
+  const auto handle = OpenWhole(fs, path);
+  Bytes bytes(duckdb::NumericCast<size_t>(handle->GetFileSize()),
+              typename Bytes::value_type{});
+  if (!bytes.empty()) {
+    handle->Read(context, bytes.data(), bytes.size(), 0);
+  }
+  return bytes;
+}
 
 void SyncFiles(duckdb::FileSystem& fs, std::string_view root,
                std::span<const std::string_view> names);

@@ -66,10 +66,13 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
                                    : quant_stats->MakeCodebook(query);
 }
 
-inline bool PrepareVectorState(
-  const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
-  const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
-  QueryBuilder::ptr& inner_query, CodebookUse use, uint32_t beam = 0) {
+inline bool PrepareVectorState(const CentroidsTree& ivf, const InputFile& idx,
+                               const SubReader& segment,
+                               const PrepareContext& ctx,
+                               const VectorFilterOptions& opts, uint32_t nprobe,
+                               VectorState& state,
+                               QueryBuilder::ptr& inner_query, CodebookUse use,
+                               uint32_t beam = 0) {
   if (opts.query.empty() || nprobe == 0 || !field_limits::valid(opts.ann_id)) {
     return false;
   }
@@ -79,11 +82,7 @@ inline bool PrepareVectorState(
     return false;
   }
 
-  const auto* ann = segment.AnnFile();
-  if (!ann) {
-    return false;
-  }
-  IndexInput idx_in{*ann};
+  IndexInput idx_in{idx};
 
   const auto d = static_cast<uint32_t>(ivf.Dim());
 

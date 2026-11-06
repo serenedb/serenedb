@@ -459,10 +459,8 @@ TEST(segment_reader_test, open_invalid_segment) {
     irs::SegmentMeta meta;
     meta.name = "invalid_segment_name";
 
-    auto rdr = irs::SegmentReaderImpl::Open(
-      dir.Fs(), dir.Root(), meta,
-      dir.ReaderOptions(irs::IndexReaderOptions{
-        .db = &::irs::DuckDBEngine::Instance().instance()}));
+    auto rdr = irs::SegmentReaderImpl::Open(dir.Db(), dir.Fs(), dir.Root(),
+                                            meta, dir.ReaderOptions());
     ASSERT_NE(nullptr, rdr);
     ASSERT_EQ(0, rdr->docs_count());
   }
@@ -550,7 +548,7 @@ TEST(segment_reader_test, open) {
     meta.files = writer_snapshot.Meta().index_meta.segments.front().meta.files;
 
     auto rdr = irs::SegmentReaderImpl::Open(
-      dir.Fs(), dir.Root(), meta,
+      dir.Db(), dir.Fs(), dir.Root(), meta,
       dir.ReaderOptions(irs::tests::DefaultReaderOptions()));
     ASSERT_FALSE(!rdr);
     ASSERT_EQ(1, rdr->size());

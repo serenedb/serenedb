@@ -48,8 +48,7 @@ std::string index_meta::FileName(uint64_t gen) {
   return irs::FileName(kPrefix, gen);
 }
 
-bool IndexMetaWriter::prepare(duckdb::FileSystem& fs, std::string_view root,
-                              const FileObservers& observers, IndexMeta& meta,
+bool IndexMetaWriter::prepare(const FileObservers& observers, IndexMeta& meta,
                               std::string& pending_filename,
                               std::string& filename,
                               const SourcePosition& position) {
@@ -61,11 +60,9 @@ bool IndexMetaWriter::prepare(duckdb::FileSystem& fs, std::string_view root,
   ++meta.gen;  // Increment generation before generating filename
   pending_filename = PendingFileName(meta.gen);
   filename = index_meta::FileName(meta.gen);
-  _fs = &fs;
-  _root = root;
   _observers = observers;
 
-  auto out = FileOutput::Open(fs, root, pending_filename, observers, nullptr);
+  auto out = FileOutput::Open(_fs, _root, pending_filename, observers, false);
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -105,7 +102,7 @@ bool IndexMetaWriter::commit() {
   const auto src = PendingFileName(_pending_gen);
   const auto dst = index_meta::FileName(_pending_gen);
 
-  _fs->MoveFile(PathOf(_root, src), PathOf(_root, dst));
+  _fs.MoveFile(PathOf(_root, src), PathOf(_root, dst));
   for (auto* observer : _observers) {
     observer->Renamed(src, dst);
   }
@@ -140,7 +137,7 @@ void IndexMetaWriter::rollback() noexcept {
   }
 
   try {
-    if (_fs->TryRemoveFile(PathOf(_root, seg_file))) {
+    if (_fs.TryRemoveFile(PathOf(_root, seg_file))) {
       for (auto* observer : _observers) {
         observer->Removed(seg_file);
       }

@@ -62,7 +62,6 @@ class FileTracker final : public FileObserver {
   void Removed(std::string_view name) final;
   void Renamed(std::string_view src, std::string_view dst) final;
 
-  bool Contains(std::string_view name) const { return _files.contains(name); }
   TrackedFiles Flush();
   void Clear() noexcept;
 

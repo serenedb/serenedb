@@ -66,13 +66,13 @@ using MetaPayloadWriter = absl::AnyInvocable<void(
 
 class IndexMetaWriter final {
  public:
-  explicit IndexMetaWriter(MetaPayloadWriter payload = {}) noexcept
-    : _payload{std::move(payload)} {}
+  IndexMetaWriter(duckdb::FileSystem& fs, std::string_view root,
+                  MetaPayloadWriter payload)
+    : _payload{std::move(payload)}, _fs{fs}, _root{root} {}
 
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
-  bool prepare(duckdb::FileSystem& fs, std::string_view root,
-               const FileObservers& observers, IndexMeta& meta,
+  bool prepare(const FileObservers& observers, IndexMeta& meta,
                std::string& pending_filename, std::string& filename,
                const SourcePosition& position);
   bool commit();
@@ -80,7 +80,7 @@ class IndexMetaWriter final {
 
  private:
   MetaPayloadWriter _payload;
-  duckdb::FileSystem* _fs = nullptr;
+  duckdb::FileSystem& _fs;
   std::string _root;
   FileObservers _observers;
   uint64_t _pending_gen{index_gen_limits::invalid()};  // Generation to commit

@@ -97,12 +97,10 @@ class ReindexRemovesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
     options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
-    _writer =
-      irs::IndexWriter::Make(_fs, _root, irs::kOmCreate, std::move(options));
+    _writer = irs::IndexWriter::Make(EngineDb(), _fs, _root, irs::kOmCreate,
+                                     std::move(options));
   }
 
   void TearDown() override {

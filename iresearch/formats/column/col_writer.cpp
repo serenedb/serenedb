@@ -102,8 +102,7 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = FileOutput::Open(_fs, _root, _filename, _observers,
-                          &duckdb::BlockCache::Get(*_db));
+  _out = FileOutput::Open(_fs, _root, _filename, _observers, true);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
@@ -317,19 +316,25 @@ yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
   if (!_committed || _ann_writers.empty()) {
     co_return true;
   }
-  ColReader reader{*_db,          _fs,  _root,
-                   _segment_name, true, duckdb::MappedFileAccess::SEQUENTIAL};
+  const auto reader = OpenReader();
   for (auto& entry : _ann_writers) {
     if (!progress()) {
       co_return false;
     }
-    const auto* col = reader.Column(entry->column_id);
+    const auto* col = reader->Column(entry->column_id);
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    co_await entry->writer->Compute(*col, reader->Ctx(), env);
   }
   co_return true;
+}
+
+std::unique_ptr<ColReader> ColWriter::OpenReader() const {
+  SDB_ASSERT(_committed);
+  return std::make_unique<ColReader>(*_db, _fs, _root, _segment_name,
+                                     static_cast<bool>(_write_ctx),
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
 }
 
 }  // namespace irs

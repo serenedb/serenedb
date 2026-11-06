@@ -62,18 +62,6 @@ void ReadWriteCoreNan(const std::function<T(IndexInput&)>& reader,
   ASSERT_TRUE(std::isnan(reader(in)));
 }
 
-template<typename Cont>
-void ReadWriteCoreContainer(
-  const Cont& src, const std::function<Cont(IndexInput&)>& reader,
-  const std::function<DataOutput&(DataOutput&, const Cont&)>& writer) {
-  irs::BytesOutput out;
-  writer(out, src);
-
-  IndexInput in{out.Bytes()};
-  const Cont read = reader(in);
-  ASSERT_EQ(src, read);
-}
-
 template<typename T>
 void VencodeFromArray(T expected_value, size_t expected_length) {
   ASSERT_EQ(expected_length, irs::bytes_io<T>::vsize(expected_value));

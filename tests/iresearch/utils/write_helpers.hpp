@@ -37,6 +37,12 @@ StringType ToString(const byte_type* begin) {
     reinterpret_cast<const typename TraitsType::char_type*>(begin), size);
 }
 
+inline void WriteZV32(DataOutput& out, int32_t v) {
+  out.WriteV32(irs::ZigZagEncode32(v));
+}
+
+int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(in.ReadV32()); }
+
 inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(irs::ZigZagEncode64(v));
 }

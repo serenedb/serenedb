@@ -199,7 +199,6 @@ add_executable(
     utils/ref_counter_tests.cpp
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
-    utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
     utils/utf8_utils_test.cpp

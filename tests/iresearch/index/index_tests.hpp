@@ -48,13 +48,10 @@ namespace tests {
 irs::IndexWriterOptions CsDefaultWriterOptions();
 irs::IndexReaderOptions CsDefaultReaderOptions();
 
-// `db` is mandatory at IndexWriter::Make. Fixtures that build their own
-// IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
-// fill it from the shared CsDb() so they keep working. Also fills
-// `norm_column_id` from the shared monotonic allocator when the caller
+// Fills `norm_column_id` from the shared monotonic allocator when the caller
 // didn't set one -- with a cs writer present, a Norm-featured field requires
 // a norm_column_id callback (FieldsData::emplace asserts it).
-irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
+irs::IndexWriterOptions EnsureNormColumnId(irs::IndexWriterOptions opts);
 
 duckdb::FileSystem& DatabaseFileSystem();
 
@@ -133,13 +130,13 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   irs::IndexWriter::ptr open_writer(
     const IndexDir& dir, irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return MakeWriter(dir, mode, EnsureWriterDb(std::move(options)));
+    return MakeWriter(dir, mode, EnsureNormColumnId(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return MakeWriter(*_dir, mode, EnsureWriterDb(std::move(options)));
+    return MakeWriter(*_dir, mode, EnsureNormColumnId(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(

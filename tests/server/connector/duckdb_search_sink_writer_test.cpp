@@ -190,10 +190,8 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
 
   void SetUp() final {
     irs::IndexWriterOptions options;
-    options.db = &TestDb();
-    options.reader_options.db = &TestDb();
-    _data_writer =
-      irs::IndexWriter::Make(_fs, kRoot, irs::kOmCreate, std::move(options));
+    _data_writer = irs::IndexWriter::Make(TestDb(), _fs, kRoot, irs::kOmCreate,
+                                          std::move(options));
   }
 
   void TearDown() final {
@@ -409,7 +407,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_FALSE(!irs::doc_limits::eof(big_postings->Next()));
   };
   {
-    auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
@@ -437,7 +435,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   _data_writer->RefreshCommit();
 
   {
-    auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(2, reader.live_docs_count());
@@ -496,7 +494,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(4, reader.live_docs_count());
@@ -664,7 +662,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertListNullRowsApartFromNullElements) {
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
   ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];
   const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
@@ -740,7 +738,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertJsonListLeavesInTheirMembers) {
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
   ASSERT_EQ(1, reader.size());
   auto& segment = reader[0];
   const auto* pk_column = segment.GetColReader()->Column(kPKFieldId);
@@ -812,7 +810,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
-  auto reader = irs::DirectoryReader(_fs, kRoot, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(TestDb(), _fs, kRoot, {});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(1, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());

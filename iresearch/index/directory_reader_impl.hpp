@@ -41,15 +41,16 @@ class DirectoryReaderImpl final
   // open a new directory reader
   // if cached != nullptr then try to reuse its segments
   static std::shared_ptr<const DirectoryReaderImpl> Open(
-    duckdb::FileSystem& fs, std::string_view root,
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
     const IndexReaderOptions& opts,
     const std::shared_ptr<const DirectoryReaderImpl>& cached,
     MetaPayloadReader payload = {});
 
-  DirectoryReaderImpl(duckdb::FileSystem& fs, std::string_view root,
-                      const IndexReaderOptions& opts, DirectoryMeta&& meta,
-                      ReadersType&& readers);
+  DirectoryReaderImpl(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                      std::string_view root, const IndexReaderOptions& opts,
+                      DirectoryMeta&& meta, ReadersType&& readers);
 
+  duckdb::DatabaseInstance& Db() const noexcept { return _db; }
   duckdb::FileSystem& Fs() const noexcept { return _fs; }
   const std::string& Root() const noexcept { return _root; }
 
@@ -71,10 +72,12 @@ class DirectoryReaderImpl final
  private:
   struct Init;
 
-  DirectoryReaderImpl(Init&& init, duckdb::FileSystem& fs,
-                      std::string_view root, const IndexReaderOptions& opts,
-                      DirectoryMeta&& meta, ReadersType&& readers);
+  DirectoryReaderImpl(Init&& init, duckdb::DatabaseInstance& db,
+                      duckdb::FileSystem& fs, std::string_view root,
+                      const IndexReaderOptions& opts, DirectoryMeta&& meta,
+                      ReadersType&& readers);
 
+  duckdb::DatabaseInstance& _db;
   duckdb::FileSystem& _fs;
   std::string _root;
   FileRefs _file_refs;

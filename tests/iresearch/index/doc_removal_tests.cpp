@@ -54,9 +54,9 @@ struct IndexOfSegments {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::DirectoryReader reader = [this] {
-    auto writer =
-      tests::MakeWriter(dir, irs::kOmCreate,
-                        tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+    auto writer = tests::MakeWriter(
+      dir, irs::kOmCreate,
+      tests::EnsureNormColumnId(tests::CsDefaultWriterOptions()));
     for (uint32_t segment = 0; segment != kSegments; ++segment) {
       tests::StringField field{"name", "doc"};
       field.id = tests::FieldIdFor("name");

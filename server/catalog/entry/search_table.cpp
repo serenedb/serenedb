@@ -55,7 +55,6 @@
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/entries_of.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tablespace.h"
 #include "connector/column_id.h"

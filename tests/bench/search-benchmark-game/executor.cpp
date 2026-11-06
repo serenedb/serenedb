@@ -132,12 +132,10 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _reader{irs::DirectoryReader(
-      duckdb::FileSystem::GetFileSystem(
-        ::irs::DuckDBEngine::Instance().instance()),
-      path,
-      {.scorer = _scorer_ptr,
-       .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+    _reader{irs::DirectoryReader(::irs::DuckDBEngine::Instance().instance(),
+                                 duckdb::FileSystem::GetFileSystem(
+                                   ::irs::DuckDBEngine::Instance().instance()),
+                                 path, {.scorer = _scorer_ptr})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

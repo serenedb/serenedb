@@ -193,8 +193,6 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
   const auto root = _dir_path.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
@@ -203,8 +201,8 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
       irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
   };
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
 
   KeywordField kw_field{.id = kKwFieldId};
   TextField body_field{.id = kBodyFieldId};
@@ -226,7 +224,7 @@ void FilterPrepareFixture::BuildIndex(size_t num_segments) {
     writer->RefreshCommit();
   }
 
-  _reader = irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
+  _reader = irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
 }
 
 void ApplyArgs(benchmark::internal::Benchmark* b) {

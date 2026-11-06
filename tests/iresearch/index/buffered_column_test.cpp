@@ -498,7 +498,7 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
 TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   constexpr uint32_t kRows = 4096;
   constexpr uint32_t kWideEvery = 512;
-  irs::MemoryFile written{irs::IResourceManager::gNoop};
+  irs::MemoryFile written;
   irs::NormColumnMeta meta;
   {
     irs::MemoryFileOutput out{written};
@@ -521,7 +521,7 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
     absl::little_endian::Store32(bytes.data() + region.table_offset + b * 4,
                                  region.exceptions);
   }
-  irs::MemoryFile corrupt{irs::IResourceManager::gNoop};
+  irs::MemoryFile corrupt;
   {
     irs::MemoryFileOutput out{corrupt};
     out.WriteData(bytes.data(), bytes.size());

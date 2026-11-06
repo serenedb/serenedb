@@ -42,10 +42,6 @@ namespace irs::term_dict {
 
 class FieldReader;
 
-struct BlockBuffer {
-  PinnedBytes pinned;
-};
-
 struct RangeLevel {
   const byte_type* starts;
   const byte_type* firsts;
@@ -79,7 +75,7 @@ void ReadPostingDocs(const Field& field, const PostingMeta& meta,
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 const InputFile& in, const Separators& separators);
+                 const Separators& separators);
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -144,7 +140,7 @@ class TermReaderImpl final : public TermReader {
       block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
     return lower.substr(0, CommonPrefixLength(lower, upper));
   }
-  const byte_type* Block(size_t block, BlockBuffer& buffer) const;
+  const byte_type* Block(size_t block, PinnedBytes& pinned) const;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(_blocks); }
   InlinePages::Span InlineSpan(uint32_t block) const noexcept;
@@ -168,8 +164,7 @@ class TermReaderImpl final : public TermReader {
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  uint64_t ReadRanges(FieldReader& owner, const InputFile& in,
-                      const RangesHead& ranges);
+  void ReadRanges(FieldReader& owner, const RangesHead& ranges);
 
   const FieldReader* _owner;
   FieldMeta _meta;

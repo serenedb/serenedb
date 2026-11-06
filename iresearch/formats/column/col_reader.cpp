@@ -43,19 +43,6 @@
 namespace irs {
 namespace {
 
-std::unique_ptr<InputFile> OpenColFile(duckdb::DatabaseInstance& db,
-                                       duckdb::FileSystem& fs,
-                                       std::string_view root,
-                                       std::string_view segment_name,
-                                       bool present,
-                                       duckdb::MappedFileAccess access) {
-  if (!present) {
-    return nullptr;
-  }
-  return OpenInput(duckdb::BlockCache::Get(db), fs,
-                   PathOf(root, FileName(segment_name)), access);
-}
-
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
   SDB_ENSURE(m.file_offset + m.byte_size <= footer_offset,
@@ -154,13 +141,10 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
 ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                      std::string_view root, std::string_view segment_name,
                      bool present, duckdb::MappedFileAccess access)
-  : ColReader{db, segment_name,
-              OpenColFile(db, fs, root, segment_name, present, access)} {}
-
-ColReader::ColReader(duckdb::DatabaseInstance& db,
-                     std::string_view segment_name,
-                     std::unique_ptr<InputFile> file)
-  : _db{&db}, _file{std::move(file)}, _ctx{db, _file.get()} {
+  : _db{&db},
+    _file{present ? OpenInput(fs, PathOf(root, FileName(segment_name)), access)
+                  : nullptr},
+    _ctx{db, _file.get()} {
   if (!_file) {
     return;
   }

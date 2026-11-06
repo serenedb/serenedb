@@ -34,6 +34,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/database_directory.h"
@@ -115,6 +116,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::shared_ptr<DatabaseDirectory> MakeDatabaseDirectory(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid,
     duckdb::idx_t tablespace);
+  std::vector<std::shared_ptr<TablespaceRoot>> TablespaceRoots(
+    duckdb::CatalogTransaction transaction);
 
   auth::RoleCache& Roles() noexcept { return _roles; }
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
@@ -142,8 +145,10 @@ ClusterCatalog& ClusterOf();
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
   duckdb::ClientContext& context, duckdb::CatalogType type,
   std::string_view name);
-duckdb::CatalogEntry& RequireTablespace(duckdb::ClientContext& context,
-                                        std::string_view name);
+TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                          std::string_view name);
+TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                          duckdb::idx_t oid);
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(
   duckdb::ClientContext& context, duckdb::CatalogType type, duckdb::idx_t oid);
 

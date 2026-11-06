@@ -24,9 +24,7 @@
 
 #include <atomic>
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/query_context.hpp>
-#include <new>
 
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -49,7 +47,7 @@ std::unique_ptr<FileOutput> FileOutput::Open(duckdb::FileSystem& fs,
                                              std::string_view root,
                                              std::string_view name,
                                              const FileObservers& observers,
-                                             duckdb::BlockCache* cache) {
+                                             bool keep_cached) {
   for (auto* observer : observers) {
     observer->Created(name);
   }
@@ -58,53 +56,63 @@ std::unique_ptr<FileOutput> FileOutput::Open(duckdb::FileSystem& fs,
       observer->Removed(name);
     }
   };
-  auto handle = fs.OpenFile(PathOf(root, name),
-                            duckdb::FileFlags::FILE_FLAGS_WRITE |
-                              duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-  std::unique_ptr<FileOutput> output{
-    new FileOutput{std::move(handle), observers,
-                   StorageKindOf(root) == StorageKind::Remote, cache}};
+  const auto path = PathOf(root, name);
+  const bool remote = StorageKindOf(root) == StorageKind::Remote;
+  std::unique_ptr<FileOutput> output;
+  if (auto writer = fs.OpenFileWriter(path, keep_cached)) {
+    output.reset(new FileOutput{std::move(writer), observers, remote});
+  } else {
+    output.reset(new FileOutput{
+      fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                          duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW),
+      observers, remote});
+  }
   std::move(abandon).Cancel();
   return output;
 }
 
-FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-                       const FileObservers& observers, bool remote,
-                       duckdb::BlockCache* cache)
-  : _handle{std::move(handle)}, _observers{observers}, _remote{remote} {
-  SDB_ASSERT(_handle);
+FileOutput::FileOutput(std::unique_ptr<duckdb::FileWriter> writer,
+                       const FileObservers& observers, bool remote)
+  : _writer{std::move(writer)}, _observers{observers}, _remote{remote} {
+  NextWindow();
   if (_remote) {
     gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
-    if (cache && cache->IsEnabled()) {
-      _cached.emplace(*cache, cache->CreateWrittenFile(_handle->GetPath()));
-    }
   }
-  if (_cached) {
-    NextWindow();
-    return;
-  }
-  SetWindow(_handle->GetWriteWindow());
-  _in_place = _begin != nullptr;
-  if (!_in_place) {
-    UseBuffer();
+}
+
+FileOutput::FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
+                       const FileObservers& observers, bool remote)
+  : _handle{std::move(handle)},
+    _buf{std::make_unique_for_overwrite<byte_type[]>(kBufferSize)},
+    _observers{observers},
+    _remote{remote} {
+  SDB_ASSERT(_handle);
+  _begin = _pos = _buf.get();
+  _end = _begin + kBufferSize;
+  if (_remote) {
+    gUploadingFiles.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
 FileOutput::~FileOutput() {
-  if (!_handle) {
+  if (!_writer && !_handle) {
     return;
   }
-  try {
-    _handle->AbortWrite();
-  } catch (const std::exception& e) {
-    SDB_WARN(IRESEARCH, "Failed to abandon the write of '", _handle->GetPath(),
-             "': ", duckdb::ErrorData{e}.RawMessage());
+  if (_writer) {
+    _writer->Abort();
+  } else {
+    try {
+      _handle->AbortWrite();
+    } catch (const std::exception& e) {
+      SDB_WARN(IRESEARCH, "Failed to abandon the write of '",
+               _handle->GetPath(), "': ", duckdb::ErrorData{e}.RawMessage());
+    }
   }
   Release();
 }
 
 void FileOutput::Flush() {
-  if (!_buf) {
+  if (_writer) {
     CommitWindow();
     _begin = _pos = _end = nullptr;
     return;
@@ -115,30 +123,10 @@ void FileOutput::Flush() {
   _pos = _begin;
 }
 
-void FileOutput::SetWindow(duckdb::FileWriteWindow window) noexcept {
-  _begin = _pos = window.data;
-  _end = window.data + window.size;
-}
-
 void FileOutput::NextWindow() {
-  if (_in_place) {
-    SetWindow(_handle->GetWriteWindow());
-    return;
-  }
-  try {
-    SDB_IF_FAILURE("FileOutput::CacheWindow") { throw std::bad_alloc{}; }
-    SetWindow(_cached->Window());
-    return;
-  } catch (...) {
-    FinishCache(false);
-  }
-  UseBuffer();
-}
-
-void FileOutput::UseBuffer() {
-  _buf = std::make_unique_for_overwrite<byte_type[]>(kBufferSize);
-  _begin = _pos = _buf.get();
-  _end = _begin + kBufferSize;
+  const auto window = _writer->Window();
+  _begin = _pos = window.data;
+  _end = _begin + window.size;
 }
 
 void FileOutput::CommitWindow() {
@@ -146,14 +134,9 @@ void FileOutput::CommitWindow() {
   if (size == 0) {
     return;
   }
-  if (_in_place) {
-    _crc.process_bytes(_begin, size);
-    _handle->CommitWriteWindow(size);
-    _offset += size;
-  } else {
-    WriteHandle(_begin, size);
-    _cached->Commit(size);
-  }
+  _crc.process_bytes(_begin, size);
+  _writer->Commit(size);
+  Advance(size);
   _begin = _pos;
 }
 
@@ -163,9 +146,7 @@ uint32_t FileOutput::Checksum() {
 }
 
 void FileOutput::Release() noexcept {
-  if (_cached) {
-    FinishCache(false);
-  }
+  _writer.reset();
   _handle.reset();
   if (_remote) {
     gUploadingFiles.fetch_sub(1, std::memory_order_relaxed);
@@ -174,15 +155,16 @@ void FileOutput::Release() noexcept {
 }
 
 void FileOutput::Close() {
-  if (!_handle) {
+  if (!_writer && !_handle) {
     return;
   }
   const auto size = Position();
   absl::Cleanup release = [&] noexcept { Release(); };
   Flush();
-  _handle->Close();
-  if (_cached) {
-    FinishCache(true);
+  if (_writer) {
+    _writer->Close();
+  } else {
+    _handle->Close();
   }
   for (auto* observer : _observers) {
     observer->Written(size);
@@ -190,7 +172,7 @@ void FileOutput::Close() {
 }
 
 void FileOutput::Overflow(const byte_type* data, size_t size) {
-  if (!_buf) {
+  if (_writer) {
     for (;;) {
       const auto chunk = std::min(size, Remain());
       if (chunk != 0) {
@@ -204,9 +186,6 @@ void FileOutput::Overflow(const byte_type* data, size_t size) {
       }
       CommitWindow();
       NextWindow();
-      if (_buf) {
-        return WriteData(data, size);
-      }
       SDB_ASSERT(_begin != _end);
     }
   }
@@ -235,10 +214,7 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   _handle->Write(duckdb::QueryContext{}, const_cast<byte_type*>(b), len,
                  _offset);
   _crc.process_bytes(b, len);
-  if (_remote) {
-    gUploadingBytes.fetch_add(len, std::memory_order_relaxed);
-  }
-  _offset += len;
+  Advance(len);
   _unhinted += len;
   if (_unhinted >= kWritebackHintBytes) {
     _handle->HintWriteback(_offset - _unhinted, _unhinted);
@@ -246,18 +222,11 @@ void FileOutput::WriteHandle(const byte_type* b, size_t len) {
   }
 }
 
-void FileOutput::FinishCache(bool published) noexcept {
-  try {
-    if (published) {
-      auto& fs = _handle->file_system;
-      _cached->Finish(fs.GetVersionTag(*_handle),
-                      fs.GetLastModifiedTime(*_handle));
-    } else {
-      _cached->Abandon();
-    }
-  } catch (...) {
+void FileOutput::Advance(size_t size) noexcept {
+  if (_remote) {
+    gUploadingBytes.fetch_add(size, std::memory_order_relaxed);
   }
-  _cached.reset();
+  _offset += size;
 }
 
 }  // namespace irs

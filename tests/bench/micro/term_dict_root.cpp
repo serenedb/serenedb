@@ -25,7 +25,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/formats/index/field_reader.hpp>
@@ -195,14 +194,14 @@ void Write(Data& data) {
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   const irs::FileObservers observers;
   const irs::FlushState state{
-    .fs = &fs,
+    .fs = fs,
     .root = data.root,
-    .observers = &observers,
-    .cache = &duckdb::BlockCache::Get(db),
+    .observers = observers,
+    .keep_cached = true,
     .name = "segment",
     .doc_count = data.keys.size(),
   };
-  irs::IdxWriter idx{db, fs, data.root, observers, "segment"};
+  irs::IdxWriter idx{fs, data.root, observers, "segment"};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
@@ -219,15 +218,13 @@ void Open(Data& data) {
   }()};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  data.idx = std::make_unique<irs::IdxReader>(db, fs, data.root, "segment",
-                                              true, nullptr);
-  data.fields =
-    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  data.idx =
+    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
+  data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
-    .fs = &fs,
+    .fs = fs,
     .root = data.root,
-    .cache = &duckdb::BlockCache::Get(db),
-    .meta = &kMeta,
+    .meta = kMeta,
     .idx = data.idx.get(),
   });
   data.field = data.fields->fields(1).front();

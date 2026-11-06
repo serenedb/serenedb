@@ -125,10 +125,8 @@ struct OneRowIndex {
   }();
   irs::DirectoryReader reader = [this] {
     irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
-    auto writer =
-      irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(options));
+    auto writer = irs::IndexWriter::Make(EngineDb(), fs, root, irs::kOmCreate,
+                                         std::move(options));
     for (int64_t value = 0; value != 8; ++value) {
       auto trx = writer->GetBatch(/*exclusive_segment=*/true);
       WriteValues(trx, std::array{value});

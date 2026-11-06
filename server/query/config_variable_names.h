@@ -53,5 +53,7 @@ inline constexpr std::string_view kWalRetrieveRetryIntervalSetting =
   "wal_retrieve_retry_interval";
 inline constexpr std::string_view kMaxSyncWorkersPerSubscriptionSetting =
   "max_sync_workers_per_subscription";
+inline constexpr std::string_view kDefaultTablespaceSetting =
+  "default_tablespace";
 
 }  // namespace sdb

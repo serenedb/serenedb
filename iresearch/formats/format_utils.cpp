@@ -149,13 +149,10 @@ Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read) {
   return ReadFooterImpl(BytesFile{.bytes = file}, name, &read);
 }
 
-void PrepareOutput(std::string& str, std::unique_ptr<FileOutput>& out,
-                   const FlushState& state, std::string_view ext) {
-  SDB_ASSERT(!out);
-
-  FileName(str, state.name, ext);
-  out =
-    FileOutput::Open(*state.fs, state.root, str, *state.observers, state.cache);
+std::unique_ptr<FileOutput> PrepareOutput(const FlushState& state,
+                                          std::string_view ext) {
+  return FileOutput::Open(state.fs, state.root, FileName(state.name, ext),
+                          state.observers, state.keep_cached);
 }
 
 }  // namespace irs::format_utils

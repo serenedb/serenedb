@@ -30,7 +30,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <filesystem>
 #include <iresearch/formats/index/field_reader.hpp>
 #include <iresearch/formats/index/field_writer.hpp>
@@ -268,14 +267,14 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   const irs::FileObservers observers;
   const irs::FlushState state{
-    .fs = &fs,
+    .fs = fs,
     .root = root,
-    .observers = &observers,
-    .cache = &duckdb::BlockCache::Get(db),
+    .observers = observers,
+    .keep_cached = true,
     .name = "segment",
     .doc_count = rows,
   };
-  irs::IdxWriter idx{db, fs, root, observers, "segment"};
+  irs::IdxWriter idx{fs, root, observers, "segment"};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
@@ -295,10 +294,9 @@ uint64_t DirectoryBytes(std::string_view root) {
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   uint64_t total = 0;
   irs::ListIndexFiles(fs, root, [&](std::string_view name) {
-    total +=
-      irs::OpenInput(duckdb::BlockCache::Get(db), fs, irs::PathOf(root, name),
-                     duckdb::MappedFileAccess::NORMAL)
-        ->Length();
+    total += irs::OpenInput(fs, irs::PathOf(root, name),
+                            duckdb::MappedFileAccess::NORMAL)
+               ->Length();
   });
   return total;
 }
@@ -500,15 +498,13 @@ void Prepare(Data& data, const Shape& shape,
   }()};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  data.idx = std::make_unique<irs::IdxReader>(db, fs, data.root, "segment",
-                                              true, nullptr);
-  data.fields =
-    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  data.idx =
+    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
+  data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
-    .fs = &fs,
+    .fs = fs,
     .root = data.root,
-    .cache = &duckdb::BlockCache::Get(db),
-    .meta = &kMeta,
+    .meta = kMeta,
     .idx = data.idx.get(),
   });
   data.field = data.fields->fields(1).front();

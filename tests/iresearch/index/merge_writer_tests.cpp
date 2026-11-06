@@ -267,17 +267,15 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
     writer.Reset(reader.begin(), reader.end());
 
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
 
     auto segment = irs::SegmentReaderImpl::Open(
-      dir.Fs(), dir.Root(), index_segment,
-      dir.ReaderOptions(irs::IndexReaderOptions{
-        .db = &::irs::DuckDBEngine::Instance().instance()}));
+      dir.Db(), dir.Fs(), dir.Root(), index_segment, dir.ReaderOptions());
     ASSERT_EQ(33, segment->docs_count());
     ASSERT_EQ(33, segment->field(kNameId)->docs_count());
     ASSERT_EQ(33, segment->field(kSeqId, kNumeric)->docs_count());
@@ -322,9 +320,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
                         TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -335,9 +333,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.version);
 
     auto segment = irs::SegmentReaderImpl::Open(
-      dir.Fs(), dir.Root(), index_segment,
-      dir.ReaderOptions(irs::IndexReaderOptions{
-        .db = &::irs::DuckDBEngine::Instance().instance()}));
+      dir.Db(), dir.Fs(), dir.Root(), index_segment, dir.ReaderOptions());
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -347,9 +343,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
                         TestEnv::MemoryRoot()};
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_FALSE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -374,9 +370,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       ++progress_call_count;
       return true;
     };
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
 
     writer.Reset(reader.begin(), reader.end());
     ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment, progress)));
@@ -387,9 +383,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     ASSERT_EQ(0, index_segment.version);
 
     auto segment = irs::SegmentReaderImpl::Open(
-      dir.Fs(), dir.Root(), index_segment,
-      dir.ReaderOptions(irs::IndexReaderOptions{
-        .db = &::irs::DuckDBEngine::Instance().instance()}));
+      dir.Db(), dir.Fs(), dir.Root(), index_segment, dir.ReaderOptions());
     ASSERT_EQ(2, segment->docs_count());
   }
 
@@ -406,9 +400,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::MergeWriter::FlushProgress progress = [&call_count]() -> bool {
       return --call_count;
     };
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
 
     index_segment.name = "merged";
     writer.Reset(reader.begin(), reader.end());
@@ -485,9 +479,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
       &reader[0]   // assume 0 is segment with string field
     };
 
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
     writer.Reset(segments.begin(), segments.end());
 
     irs::SegmentMeta index_segment;
@@ -502,9 +496,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
       &reader[1]   // segment with text field (Offs|Pos|Freq)
     };
 
-    const irs::SegmentWriterOptions options{
-      .db = &::irs::DuckDBEngine::Instance().instance()};
-    irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+    const irs::SegmentWriterOptions options;
+    irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                            options);
     writer.Reset(segments.begin(), segments.end());
 
     irs::SegmentMeta index_segment;
@@ -1175,15 +1169,15 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                          options);
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
 
   auto segment = irs::SegmentReaderImpl::Open(
-    dir.Fs(), dir.Root(), index_segment,
+    dir.Db(), dir.Fs(), dir.Root(), index_segment,
     dir.ReaderOptions(irs::tests::DefaultReaderOptions()));
 
   ASSERT_EQ(3, segment->docs_count());  // doc4 removed during merge
@@ -2213,15 +2207,13 @@ TEST_P(MergeWriterTestCase, merges_every_dictionary_of_a_layout) {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+  const irs::SegmentWriterOptions options;
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                          options);
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
   auto segment = irs::SegmentReaderImpl::Open(
-    dir.Fs(), dir.Root(), index_segment,
-    dir.ReaderOptions(irs::IndexReaderOptions{
-      .db = &::irs::DuckDBEngine::Instance().instance()}));
+    dir.Db(), dir.Fs(), dir.Root(), index_segment, dir.ReaderOptions());
   ASSERT_EQ(2 * kDocs - 1, segment->docs_count());
 
   const auto docs_of = [&](irs::field_id id, irs::DictRef dict) {
@@ -2322,15 +2314,13 @@ TEST_P(MergeWriterTestCase, merges_every_member_of_a_json_list) {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+  const irs::SegmentWriterOptions options;
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                          options);
   writer.Reset(reader.begin(), reader.end());
   ASSERT_TRUE(irs::GetReady(writer.Flush(index_segment)));
   auto segment = irs::SegmentReaderImpl::Open(
-    dir.Fs(), dir.Root(), index_segment,
-    dir.ReaderOptions(irs::IndexReaderOptions{
-      .db = &::irs::DuckDBEngine::Instance().instance()}));
+    dir.Db(), dir.Fs(), dir.Root(), index_segment, dir.ReaderOptions());
   ASSERT_EQ(2 * kDocs, segment->docs_count());
 
   const auto dicts = segment->fields(kField);
@@ -2395,9 +2385,9 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::SegmentMeta index_segment;
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
-  irs::MergeWriter writer(dir.Fs(), dir.Root(), dir.Observers(), options);
+  const irs::SegmentWriterOptions options;
+  irs::MergeWriter writer(dir.Db(), dir.Fs(), dir.Root(), dir.Observers(),
+                          options);
   writer.Reset(reader.begin(), reader.end());
   ASSERT_SQL_ERROR(irs::GetReady(writer.Flush(index_segment)),
                    ERRCODE_INDEX_CORRUPTED);

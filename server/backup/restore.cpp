@@ -32,7 +32,6 @@
 #include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
-#include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>

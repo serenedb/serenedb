@@ -357,9 +357,9 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
 
   const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
                                    2 * kRgSize + 5};
-  std::vector<irs::ByteExtent> extents;
+  std::vector<duckdb::BlockCacheRange> extents;
   plain->CollectBlocks(rows.front(), rows.back(), extents);
-  std::vector<irs::ByteExtent> expected;
+  std::vector<duckdb::BlockCacheRange> expected;
   for (const auto* column : {plain, plain->Validity()}) {
     const auto blocks = column->DataBlocks();
     for (size_t block = 0; block != blocks.size(); ++block) {
@@ -372,7 +372,7 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
     }
   }
   ASSERT_LT(4, expected.size());
-  const auto key = [](const irs::ByteExtent& e) {
+  const auto key = [](const duckdb::BlockCacheRange& e) {
     return std::pair{e.offset, e.size};
   };
   ASSERT_EQ(expected.size(), extents.size());
@@ -444,7 +444,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
 
   const std::vector<uint64_t> rows{kRgSize + 10, kRgSize + 30000,
                                    2 * kRgSize + 5};
-  std::vector<irs::ByteExtent> extents;
+  std::vector<duckdb::BlockCacheRange> extents;
   column->CollectBlocks(rows.front(), rows.back(), extents);
   ASSERT_FALSE(extents.empty());
   auto& cache = duckdb::BlockCache::Get(Db());
@@ -707,7 +707,7 @@ TEST(ObjectStoreIndexTest, a_write_short_of_cache_blocks_uploads_every_byte) {
   {
     auto out = dir.Create("values");
     WriteValues(*out, 0, kValues / 2);
-    ASSERT_TRUE(duckdb::FaultPoints::Arm("FileOutput::CacheWindow"));
+    ASSERT_TRUE(duckdb::FaultPoints::Arm("remote_write_cache_block"));
     WriteValues(*out, kValues / 2, kValues);
     checksum = out->Checksum();
     out->WriteU64(kValues);

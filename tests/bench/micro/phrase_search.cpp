@@ -217,10 +217,8 @@ Index BuildIndex(const std::vector<std::string>& docs,
   Index index{.strategy = &strategy, .tokenizer = MakeTokenizer(strategy)};
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
@@ -240,8 +238,7 @@ Index BuildIndex(const std::vector<std::string>& docs,
                DirSize(path));
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  index.reader = irs::DirectoryReader{fs, root, reader_opts};
+  index.reader = irs::DirectoryReader{*db, fs, root, reader_opts};
   return index;
 }
 

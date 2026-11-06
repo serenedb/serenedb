@@ -1532,7 +1532,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "default_tablespace",
+      kDefaultTablespaceSetting,
       {
         LogicalTypeId::VARCHAR,
         "The tablespace search tables and search indexes are created in when "

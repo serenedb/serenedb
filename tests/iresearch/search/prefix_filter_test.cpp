@@ -192,7 +192,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
-    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
     if (score_prune) {
       opts.reader_options.scorer = score;
     }

@@ -38,12 +38,11 @@
 
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
 namespace irs {
-
-class DataOutput;
 
 inline constexpr uint32_t kHnswInvalidNode =
   std::numeric_limits<uint32_t>::max();

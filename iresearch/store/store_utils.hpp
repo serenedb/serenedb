@@ -22,24 +22,15 @@
 
 #pragma once
 
-#include "data_input.hpp"
+#include <cstdint>
+#include <limits>
+
 #include "data_output.hpp"
-#include "iresearch/utils/attributes.hpp"
-#include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/number_utils.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/std.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
-
-IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
-  out.WriteV32(irs::ZigZagEncode32(v));
-}
-
-int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(in.ReadV32()); }
 
 template<typename StringType>
 IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const StringType& str) {

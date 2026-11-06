@@ -35,13 +35,12 @@
 
 namespace irs {
 
-inline std::unique_ptr<InputFile> PrepareInput(std::string& str,
-                                               const ReaderState& state,
+inline std::unique_ptr<InputFile> PrepareInput(const ReaderState& state,
                                                std::string_view ext) {
-  irs::FileName(str, state.meta->name, ext);
-  auto file = OpenInput(*state.cache, *state.fs, PathOf(state.root, str),
+  const auto name = irs::FileName(state.meta.name, ext);
+  auto file = OpenInput(state.fs, PathOf(state.root, name),
                         duckdb::MappedFileAccess::RANDOM);
-  format_utils::ReadFooter(*file, str);
+  format_utils::ReadFooter(*file, name);
   return file;
 }
 
@@ -80,21 +79,19 @@ class PostingsReader final {
 
 inline void PostingsReader::prepare(const ReaderState& state,
                                     IndexFeatures features) {
-  std::string buf;
-
   const bool needs_pay =
     IndexFeatures::None !=
     (features & (IndexFeatures::Offs | IndexFeatures::Vec));
 
   // prepare document input
-  _doc_file = PrepareInput(buf, state, PostingsWriter::kDocExt);
+  _doc_file = PrepareInput(state, PostingsWriter::kDocExt);
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    _pos_file = PrepareInput(buf, state, PostingsWriter::kPosExt);
+    _pos_file = PrepareInput(state, PostingsWriter::kPosExt);
   }
 
   if (needs_pay) {
-    _pay_file = PrepareInput(buf, state, PostingsWriter::kPayExt);
+    _pay_file = PrepareInput(state, PostingsWriter::kPayExt);
   }
 }
 

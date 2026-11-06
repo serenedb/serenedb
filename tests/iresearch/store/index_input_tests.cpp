@@ -45,8 +45,7 @@ irs::byte_type ExpectedByte(uint64_t offset) {
   return static_cast<irs::byte_type>(offset * 31 + offset / kBlock * 7);
 }
 
-void AppendBlocks(duckdb::BlockCache& cache,
-                  const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
+void AppendBlocks(const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
                   uint64_t blocks, bool expected = true) {
   std::vector<irs::byte_type> bytes(blocks * kBlock);
   if (expected) {
@@ -54,7 +53,7 @@ void AppendBlocks(duckdb::BlockCache& cache,
       bytes[i] = ExpectedByte(i);
     }
   }
-  duckdb::BlockCacheAppender appender{cache, file};
+  duckdb::BlockCacheAppender appender{file};
   appender.Append(bytes.data(), bytes.size());
   appender.Finish();
 }
@@ -68,11 +67,11 @@ TEST_F(IndexInputTest, pins_outlive_evictions) {
   duckdb::DuckDB db{nullptr, &config};
   duckdb::BlockCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/stable");
-  AppendBlocks(cache, file, kBlocks);
+  AppendBlocks(file, kBlocks);
   auto filler = cache.CreateUnbackedFile("memory://block_input_test/filler");
-  AppendBlocks(cache, filler, kBlocks, false);
+  AppendBlocks(filler, kBlocks, false);
 
-  const irs::InputFile blocks{cache, file};
+  const irs::InputFile blocks{file};
   irs::IndexInput in{blocks};
   std::vector<irs::PinnedBytes> pinned;
   for (uint64_t pass = 0; pass != 2; ++pass) {
@@ -131,7 +130,7 @@ TEST_F(IndexInputTest, reads_wait_for_an_eviction_writing_a_temporary_copy) {
   duckdb::DuckDB db{nullptr, &config};
   duckdb::BlockCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/unloading");
-  AppendBlocks(cache, file, 2);
+  AppendBlocks(file, 2);
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   ASSERT_TRUE(duckdb::FaultPoints::Arm("block_unload_before_temporary_write"));
   auto& buffer_manager = duckdb::BufferManager::GetBufferManager(*db.instance);
@@ -142,7 +141,7 @@ TEST_F(IndexInputTest, reads_wait_for_an_eviction_writing_a_temporary_copy) {
   AwaitParked("block_unload_before_temporary_write");
   const uint64_t victim = cache.TryPinRange(*file, 0, kBlock).empty() ? 0 : 1;
   ASSERT_TRUE(cache.TryPinRange(*file, victim * kBlock, kBlock).empty());
-  const irs::InputFile blocks{cache, file};
+  const irs::InputFile blocks{file};
   const auto read =
     ReadWhileParkedAt(blocks, victim, "block_unload_before_temporary_write");
   EXPECT_TRUE(evictor.get().IsValid());
@@ -157,13 +156,13 @@ TEST_F(IndexInputTest, reads_wait_for_another_reader_loading_a_spilled_block) {
   duckdb::DuckDB db{nullptr, &config};
   duckdb::BlockCache cache{*db.instance};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/loading");
-  AppendBlocks(cache, file, 2);
+  AppendBlocks(file, 2);
   duckdb::BufferManager::GetBufferManager(*db.instance).SetMemoryLimit(kBlock);
   cache.Pin(*file, 1);
   ASSERT_TRUE(cache.TryPinRange(*file, 0, kBlock).empty());
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   ASSERT_TRUE(duckdb::FaultPoints::Arm("block_load_before_loaded"));
-  const irs::InputFile blocks{cache, file};
+  const irs::InputFile blocks{file};
   auto loader = std::async(std::launch::async, [&] {
     const irs::IndexInput in{blocks};
     return in.Pin(0, kRead).bytes[0];
@@ -182,8 +181,8 @@ TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   duckdb::BlockCache cache{db};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/columns");
-  AppendBlocks(cache, file, 2);
-  const irs::InputFile blocks{cache, file};
+  AppendBlocks(file, 2);
+  const irs::InputFile blocks{file};
   auto& buffers = duckdb::BufferManager::GetBufferManager(db);
   irs::ReadContext ctx{db, &blocks};
   {
@@ -208,10 +207,10 @@ TEST_F(IndexInputTest, column_blocks_inside_a_cache_block_are_read_in_place) {
 TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/aligned");
-  AppendBlocks(cache, file, 2);
+  AppendBlocks(file, 2);
 
   constexpr uint64_t kAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
-  const irs::InputFile blocks{cache, file};
+  const irs::InputFile blocks{file};
   const irs::IndexInput in{blocks};
   for (const uint64_t count : {kAlign + 4, 4 * kAlign}) {
     const auto offset = kBlock - kAlign;
@@ -227,9 +226,9 @@ TEST_F(IndexInputTest, pins_across_blocks_keep_alignment) {
 TEST_F(IndexInputTest, peek_refills_an_empty_window_and_reads_cross_blocks) {
   duckdb::BlockCache cache{irs::DuckDBEngine::Instance().instance()};
   auto file = cache.CreateUnbackedFile("memory://block_input_test/peek");
-  AppendBlocks(cache, file, 3);
+  AppendBlocks(file, 3);
 
-  const irs::InputFile blocks{cache, file};
+  const irs::InputFile blocks{file};
   ASSERT_FALSE(blocks.Contiguous());
   irs::IndexInput in{blocks};
   in.Seek(kBlock + 10);

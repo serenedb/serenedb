@@ -23,7 +23,6 @@
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iterator>
 #include <memory>
@@ -32,15 +31,8 @@ namespace irs {
 
 class MemoryFile {
  public:
-  explicit MemoryFile(IResourceManager& /*rm*/) noexcept {}
-
   uint64_t Length() const noexcept { return _bytes.size(); }
   bytes_view Bytes() const noexcept { return _bytes; }
-
-  template<typename Visitor>
-  void Visit(const Visitor& visitor) const {
-    visitor(_bytes.data(), _bytes.size());
-  }
 
   void Append(const byte_type* data, size_t size) { _bytes.append(data, size); }
 

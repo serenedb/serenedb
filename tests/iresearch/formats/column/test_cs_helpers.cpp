@@ -41,15 +41,7 @@ std::unique_ptr<ColWriter> MakeCsWriter(const ::tests::IndexDir& dir,
 
 std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
                                         std::string_view segment_name) {
-  // Reader ctor throws on a missing file; tests that pattern an
-  // "absent column = empty index" probe afterwards via Has*(). Return
-  // nullptr on a missing .col file so callers see "no exception, empty
-  // result".
-  std::string filename;
-  filename.reserve(segment_name.size() + 4);
-  filename.append(segment_name);
-  filename.append(".col");
-  if (!dir.Has(filename)) {
+  if (!dir.Has(FileName(segment_name))) {
     return nullptr;
   }
   return std::make_unique<ColReader>(dir.Db(), dir.Fs(), dir.Root(),

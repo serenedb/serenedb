@@ -432,7 +432,7 @@ void PrefetchScanStart(const ScanGlobalState& g) {
   if (fields.empty()) {
     return;
   }
-  std::vector<irs::ByteExtent> extents;
+  std::vector<duckdb::BlockCacheRange> extents;
   uint64_t bytes = 0;
   for (const auto seg : g.segment_order) {
     const auto& sub = (*g.reader)[seg];

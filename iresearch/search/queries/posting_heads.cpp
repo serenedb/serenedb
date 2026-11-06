@@ -101,7 +101,9 @@ class PostingHeads final : public PreparedStateVisitor {
     }
   }
 
-  containers::FlatHashMap<const InputFile*, std::vector<ByteExtent>> _extents;
+  containers::FlatHashMap<const InputFile*,
+                          std::vector<duckdb::BlockCacheRange>>
+    _extents;
   uint32_t _lists = 0;
 };
 

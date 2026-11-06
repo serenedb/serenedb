@@ -24,6 +24,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,11 +40,6 @@
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
 
 namespace irs {
 
@@ -80,18 +76,15 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(duckdb::FileSystem& fs, std::string_view root,
-                       const FileObservers& observers,
+  explicit MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                       std::string_view root, const FileObservers& observers,
                        const SegmentWriterOptions& options)
     : _fs{fs},
       _root{root},
       _observers{observers},
-      _readers{{options.resource_manager}},
+      _readers{{IResourceManager::gNoop}},
       _scorer{options.scorer},
-      _db{[db = options.db] -> duckdb::DatabaseInstance& {
-        SDB_ASSERT(db);
-        return *db;
-      }()},
+      _db{db},
       _field_options{options.field_options},
       _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;

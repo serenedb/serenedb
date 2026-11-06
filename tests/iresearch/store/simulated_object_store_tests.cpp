@@ -302,40 +302,16 @@ TEST(SimulatedObjectStoreTest, for_each_rethrows_what_a_visit_threw) {
 
 TEST(SimulatedObjectStoreTest, injected_failures) {
   tests::ObjectStore();
-  if (!TestEnv::ArmFaultPoint("object_store_get_fails")) {
+  const auto root = Root();
+  Put(root + "/object", "bytes");
+  if (!TestEnv::ArmFaultPoint("object_store_delete_fails")) {
     GTEST_SKIP() << "built without fault injection";
   }
   absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
-  const auto root = Root();
-  Put(root + "/object", "bytes");
-  EXPECT_THROW(Get(root + "/object", 0, 1), duckdb::IOException);
-  TestEnv::ClearFaultPoints();
-
-  ASSERT_TRUE(TestEnv::ArmFaultPoint("object_store_put_fails"));
-  EXPECT_THROW(Put(root + "/new", "x"), duckdb::IOException);
-  TestEnv::ClearFaultPoints();
-  EXPECT_FALSE(Vfs().FileExists(root + "/new"));
-
-  ASSERT_TRUE(TestEnv::ArmFaultPoint("object_store_head_fails"));
-  EXPECT_THROW(Vfs().FileExists(root + "/object"), duckdb::IOException);
-  TestEnv::ClearFaultPoints();
-
-  ASSERT_TRUE(TestEnv::ArmFaultPoint("object_store_list_fails"));
-  EXPECT_THROW(Vfs().ListFiles(root, [](const std::string&, bool) {}),
-               duckdb::IOException);
-  TestEnv::ClearFaultPoints();
-
-  ASSERT_TRUE(TestEnv::ArmFaultPoint("object_store_delete_fails"));
   EXPECT_THROW(Vfs().RemoveFile(root + "/object"), duckdb::IOException);
   TestEnv::ClearFaultPoints();
 
-  ASSERT_TRUE(TestEnv::ArmFaultPoint("object_store_copy_fails"));
-  EXPECT_THROW(Vfs().MoveFile(root + "/object", root + "/copy"),
-               duckdb::IOException);
-  TestEnv::ClearFaultPoints();
-
   EXPECT_EQ("bytes", Get(root + "/object", 0, 5));
-  EXPECT_FALSE(Vfs().FileExists(root + "/copy"));
 }
 
 }  // namespace

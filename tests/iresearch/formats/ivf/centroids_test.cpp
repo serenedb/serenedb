@@ -153,8 +153,7 @@ std::vector<float> MakeRowMajor(uint32_t d, uint64_t n) {
 }
 
 size_t BuiltRootSize(const CentroidsBuilder& builder) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -184,8 +183,7 @@ void ExpectQueriesRouteToTrueNn(const CentroidsBuilder& builder,
     row_cluster[assigned.perm[j]] = assigned.ids[j];
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -267,8 +265,7 @@ TEST(centroids_builder_test, multilevel_build_search_id_consistency) {
     build_id[assigned.perm[j]] = assigned.ids[j];
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -308,8 +305,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
   auto assigned =
     builder.AssignCentroids({reordered.data(), reordered.size()}, d, gathered);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -341,8 +337,7 @@ TEST(centroids_builder_test, gathered_centroid_matches_search) {
 // window (child_offsets[i+1] == child_offsets[i]); Search must emit it as a
 // leaf candidate with the correct global id instead of descending.
 TEST(centroids_node_test, zero_size_window_emits_early_leaf) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
 
   constexpr uint32_t d = 1;
   // Root row 0 is a leaf (window [0,0)); row 1 has two children in the leaf
@@ -446,8 +441,7 @@ TEST(centroids_builder_test, single_cluster_has_mean_centroid) {
     }
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -539,8 +533,7 @@ TEST(centroids_builder_test, cosine_multilevel_build_search_id_consistency) {
     build_id[assigned.perm[j]] = assigned.ids[j];
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -623,8 +616,7 @@ TEST(centroids_builder_test, three_level_build_search_id_consistency) {
     build_id[assigned.perm[j]] = assigned.ids[j];
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -659,8 +651,7 @@ TEST(centroids_builder_test, open_reads_exactly_the_root_level) {
                          const CentroidsBuildParams& params) {
     const auto builder = CentroidsBuilder::CreateFromSample(
       sample, d, VectorMetric::L2Sqr, params);
-    SimpleMemoryAccounter memory;
-    MemoryFile file{memory};
+    MemoryFile file;
     CentroidsSpan span;
     {
       MemoryFileOutput out{file};
@@ -702,8 +693,7 @@ TEST(centroids_builder_test, multilevel_search_recall_matches_bruteforce) {
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -906,8 +896,7 @@ std::vector<CentroidsNode> MakeGreedyTrapTree(uint32_t d) {
 }  // namespace
 
 TEST(centroids_node_test, beam_escapes_greedy_trap) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
 
   constexpr uint32_t d = 1;
   const auto nodes = MakeGreedyTrapTree(d);
@@ -950,8 +939,7 @@ TEST(centroids_node_test, beam_escapes_greedy_trap) {
 }
 
 TEST(centroids_node_test, full_nprobe_reaches_every_leaf_under_wide_root) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
 
   constexpr uint32_t d = 1;
   constexpr size_t kRows = 32;
@@ -1017,8 +1005,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
   auto builder =
     CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -1244,8 +1231,7 @@ TEST(centroids_builder_test,
     build_id[assigned.perm[j]] = assigned.ids[j];
   }
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t offset;
   uint64_t byte_size;
   {
@@ -1307,8 +1293,7 @@ TEST(centroids_builder_test, root_fanout_capped_at_max_fanout) {
                                       .max_fanout = max_fanout};
     auto builder =
       CentroidsBuilder::CreateFromSample(data, d, VectorMetric::L2Sqr, params);
-    SimpleMemoryAccounter memory;
-    MemoryFile file{memory};
+    MemoryFile file;
     uint64_t offset;
     uint64_t byte_size;
     {

@@ -34,85 +34,55 @@
 
 namespace irs {
 
-struct HnswEntry {
-  field_id id;
-  HnswMeta meta;
-};
-
-struct IvfCentroidEntry {
-  field_id id;
-  IvfCentroidMeta meta;
-};
-
-struct IdxWriter::Impl {
-  duckdb::DatabaseInstance& db;
-  duckdb::FileSystem& fs;
-  std::string root;
-  FileObservers observers;
-  std::string filename;
-  std::unique_ptr<FileOutput> out;
-  std::vector<IvfCentroidEntry> ivf_entries;
-  std::vector<HnswEntry> hnsw_entries;
-  term_dict::TermsMeta terms;
-};
-
-IdxWriter::IdxWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-                     std::string_view root, const FileObservers& observers,
+IdxWriter::IdxWriter(duckdb::FileSystem& fs, std::string_view root,
+                     const FileObservers& observers,
                      std::string_view segment_name)
-  : _impl{std::make_unique<Impl>(
-      Impl{.db = db,
-           .fs = fs,
-           .root = std::string{root},
-           .observers = observers,
-           .filename = FileName(segment_name, kIdxFormatExt)})} {}
-
-IdxWriter::~IdxWriter() = default;
+  : _fs{fs},
+    _root{root},
+    _observers{observers},
+    _filename{FileName(segment_name, kIdxFormatExt)} {}
 
 void IdxWriter::EnsureOut() {
-  if (_impl->out) {
+  if (_out) {
     return;
   }
-  _impl->out =
-    FileOutput::Open(_impl->fs, _impl->root, _impl->filename, _impl->observers,
-                     &duckdb::BlockCache::Get(_impl->db));
+  _out = FileOutput::Open(_fs, _root, _filename, _observers, true);
 }
 
 DataOutput& IdxWriter::BlocksOut() {
   EnsureOut();
-  return *_impl->out;
+  return *_out;
 }
 
 void IdxWriter::AddIvf(field_id id, IvfCentroidMeta meta) {
-  _impl->ivf_entries.push_back(
-    IvfCentroidEntry{.id = id, .meta = std::move(meta)});
+  _ivf_entries.push_back(IvfCentroidEntry{.id = id, .meta = std::move(meta)});
 }
 
 void IdxWriter::AddHnsw(field_id id, HnswMeta meta) {
-  _impl->hnsw_entries.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
+  _hnsw_entries.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
 }
 
 void IdxWriter::SetTerms(term_dict::TermsMeta terms) noexcept {
-  _impl->terms = std::move(terms);
+  _terms = std::move(terms);
 }
 
 bool IdxWriter::Empty() const noexcept {
-  return _impl->ivf_entries.empty() && _impl->hnsw_entries.empty() &&
-         _impl->terms.fields.empty();
+  return _ivf_entries.empty() && _hnsw_entries.empty() && _terms.fields.empty();
 }
 
 void IdxWriter::Commit() {
-  if (Empty() && !_impl->out) {
+  if (Empty() && !_out) {
     return;
   }
 
   EnsureOut();
 
-  format_utils::WriteFooter(*_impl->out, [&](duckdb::BinarySerializer& footer) {
-    if (!_impl->ivf_entries.empty()) {
+  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+    if (!_ivf_entries.empty()) {
       footer.WriteList(
-        kIdxFieldIvf, "ivf", _impl->ivf_entries.size(),
+        kIdxFieldIvf, "ivf", _ivf_entries.size(),
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          const auto& e = _impl->ivf_entries[i];
+          const auto& e = _ivf_entries[i];
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<uint64_t>(0, "id", e.id);
             obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
@@ -126,11 +96,11 @@ void IdxWriter::Commit() {
           });
         });
     }
-    if (!_impl->hnsw_entries.empty()) {
+    if (!_hnsw_entries.empty()) {
       footer.WriteList(
-        kIdxFieldHnsw, "hnsw", _impl->hnsw_entries.size(),
+        kIdxFieldHnsw, "hnsw", _hnsw_entries.size(),
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          const auto& e = _impl->hnsw_entries[i];
+          const auto& e = _hnsw_entries[i];
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<uint64_t>(0, "id", e.id);
             obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
@@ -149,15 +119,15 @@ void IdxWriter::Commit() {
           });
         });
     }
-    if (!_impl->terms.fields.empty()) {
+    if (!_terms.fields.empty()) {
       footer.WriteObject(kIdxFieldTerms, "terms",
                          [&](duckdb::BinarySerializer& terms) {
-                           term_dict::WriteTerms(terms, _impl->terms);
+                           term_dict::WriteTerms(terms, _terms);
                          });
     }
   });
-  _impl->out->Close();
-  _impl->out.reset();
+  _out->Close();
+  _out.reset();
 }
 
 }  // namespace irs

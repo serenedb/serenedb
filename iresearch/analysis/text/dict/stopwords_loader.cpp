@@ -29,16 +29,16 @@
 #include <string>
 #include <vector>
 
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/slurp.hpp"
 
 namespace irs::analysis::dict {
 namespace {
 
 void LoadStopwordsFile(duckdb::FileSystem& fs, const std::string& file,
                        StringSet<std::string>& buf) {
-  const auto text = file_utils::Slurp(duckdb::QueryContext{}, fs, file);
+  const auto text = ReadWhole<std::string>(duckdb::QueryContext{}, fs, file);
   for (const std::string_view line : absl::StrSplit(text, '\n')) {
     const auto end =
       absl::c_find_if(line, [](char c) { return absl::ascii_isspace(c); });

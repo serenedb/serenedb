@@ -237,7 +237,7 @@ class PrunedLeafBase {
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -415,7 +415,7 @@ class PrunedLeafBase {
   detail::EncBuf _enc;
   detail::FreqBuf _freqs;
   DocsBuf _docs;
-  mutable InputType _in;
+  InputType _in;
   ColumnArgsFetcher* _fetcher = nullptr;
   ScoreFunction _score;
   detail::LeafProvider _provider;

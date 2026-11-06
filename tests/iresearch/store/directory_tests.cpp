@@ -4722,7 +4722,7 @@ TEST_P(DirectoryTestCase, remove_unreferenced) {
   // test empty references removed too
   size_t unused = 0;
   refs.RemoveUnused(
-    [&](std::vector<std::string>& names) { unused = names.size(); });
+    [&](std::span<const std::string> names) { unused = names.size(); });
   ASSERT_EQ(0, unused);
 }
 

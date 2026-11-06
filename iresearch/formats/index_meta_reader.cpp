@@ -66,7 +66,8 @@ std::optional<std::string> LastFile(duckdb::FileSystem& fs,
 uint64_t ReadFile(duckdb::FileSystem& fs, std::string_view root,
                   std::string_view filename, MetaPayloadReader& payload,
                   std::vector<IndexSegment>* segments) {
-  const auto bytes = ReadWhole(fs, PathOf(root, filename));
+  const auto bytes =
+    ReadWhole<bstring>(duckdb::QueryContext{}, fs, PathOf(root, filename));
 
   uint64_t cnt = 0;
   format_utils::ReadFooter(

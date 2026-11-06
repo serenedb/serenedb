@@ -28,11 +28,6 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/index_files.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
 
 // The scorer a score-bound-pruning iterator ranks by.
@@ -40,7 +35,6 @@ using ScorerPtr = const Scorer*;
 
 struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
-  duckdb::DatabaseInstance* db = nullptr;
   HnswBases* hnsw_bases = nullptr;
   std::shared_ptr<IndexFileRefs> refs;
   bool index = true;  // Open inverted index

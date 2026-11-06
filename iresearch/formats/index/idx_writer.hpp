@@ -22,7 +22,6 @@
 
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/main/database.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,17 +31,26 @@
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/store/file_output.hpp"
 #include "iresearch/store/index_files.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
+struct IvfCentroidEntry {
+  field_id id;
+  IvfCentroidMeta meta;
+};
+
+struct HnswEntry {
+  field_id id;
+  HnswMeta meta;
+};
+
 class IdxWriter final {
  public:
-  IdxWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-            std::string_view root, const FileObservers& observers,
-            std::string_view segment_name);
-  ~IdxWriter();
+  IdxWriter(duckdb::FileSystem& fs, std::string_view root,
+            const FileObservers& observers, std::string_view segment_name);
 
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
@@ -61,8 +69,14 @@ class IdxWriter final {
   void EnsureOut();
   bool Empty() const noexcept;
 
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  FileObservers _observers;
+  std::string _filename;
+  std::unique_ptr<FileOutput> _out;
+  std::vector<IvfCentroidEntry> _ivf_entries;
+  std::vector<HnswEntry> _hnsw_entries;
+  term_dict::TermsMeta _terms;
 };
 
 }  // namespace irs

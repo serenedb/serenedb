@@ -112,7 +112,7 @@ IndexFileRefs::ref_t Reference(duckdb::FileSystem& fs, std::string_view root,
 
 void RemoveUnreferenced(duckdb::FileSystem& fs, std::string_view root,
                         IndexFileRefs& refs) {
-  refs.RemoveUnused([&](std::vector<std::string>& names) {
+  refs.RemoveUnused([&](std::span<const std::string> names) {
     if (names.empty()) {
       return;
     }

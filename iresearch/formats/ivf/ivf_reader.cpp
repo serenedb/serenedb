@@ -119,8 +119,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
       ? effort
       : IvfAutoNprobe(segment.docs_count(), opts.posting_size, opts.top_k,
                       _tree.Levels() == 1 ? _tree.RootSize() : 0);
-  if (!PrepareVectorState(_tree, segment, ctx, opts, nprobe, state, inner,
-                          CodebookUse::Search,
+  if (!PrepareVectorState(_tree, _file, segment, ctx, opts, nprobe, state,
+                          inner, CodebookUse::Search,
                           IvfSearchBeam(nprobe, opts.min_search_fanout,
                                         opts.max_search_fanout))) {
     return QueryBuilder::Empty();
@@ -143,7 +143,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
                                          AnnQueryCache* /*cache*/) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
-  if (!PrepareVectorState(_tree, segment, ctx, opts,
+  if (!PrepareVectorState(_tree, _file, segment, ctx, opts,
                           std::numeric_limits<uint32_t>::max(), state, inner,
                           CodebookUse::Range)) {
     return QueryBuilder::Empty();

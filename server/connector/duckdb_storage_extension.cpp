@@ -215,8 +215,9 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
     const auto storages = InvertedStorages(db);
-    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
-    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+    duckdb::TaskExecutor executor{
+      duckdb::TaskScheduler::GetScheduler(db.GetDatabase()),
+      duckdb::TaskSchedulerType::ASYNC};
     for (const auto& storage : storages) {
       executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(
         executor,
@@ -245,8 +246,9 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
         _saves.erase(it);
       }
     }
-    auto& scheduler = duckdb::TaskScheduler::GetScheduler(db.GetDatabase());
-    duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+    duckdb::TaskExecutor executor{
+      duckdb::TaskScheduler::GetScheduler(db.GetDatabase()),
+      duckdb::TaskSchedulerType::ASYNC};
     for (const auto& save : saves) {
       if (auto storage = save.lock()) {
         executor.ScheduleTask(duckdb::make_uniq<duckdb::FunctionExecutorTask>(

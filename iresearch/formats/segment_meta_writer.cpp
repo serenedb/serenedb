@@ -69,7 +69,7 @@ void Write(duckdb::FileSystem& fs, std::string_view root,
   const uint64_t mask_size = has_mask ? docs_mask->FrozenSize() : 0;
 
   meta_file = FileName(meta);
-  auto out = FileOutput::Open(fs, root, meta_file, observers, nullptr);
+  auto out = FileOutput::Open(fs, root, meta_file, observers, false);
 
   if (has_mask) {
     WriteDocumentMask(*out, *docs_mask, mask_size);

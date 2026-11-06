@@ -32,7 +32,6 @@
 
 #include <algorithm>
 #include <array>
-#include <ctime>
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/object_cache.hpp>
@@ -202,13 +201,12 @@ irs::DirectoryReader LoadIndex(duckdb::DatabaseInstance& db,
                                std::span<const IndexFile> files) {
   const auto root = absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs");
   for (const auto& file : files) {
-    auto out = irs::FileOutput::Open(fs, root, file.name, {}, nullptr);
+    auto out = irs::FileOutput::Open(fs, root, file.name, {}, false);
     out->WriteData(file.bytes.data(), file.bytes.size());
     out->Close();
   }
   irs::IndexReaderOptions options;
-  options.db = &db;
-  return irs::DirectoryReader{fs, root, options,
+  return irs::DirectoryReader{db, fs, root, options,
                               [](duckdb::BinaryDeserializer& payload) {
                                 search::IndexStamp::Read(payload);
                               }};

@@ -40,11 +40,6 @@ class PrefixIndex {
  public:
   explicit PrefixIndex(std::vector<uint32_t> prefixes);
 
-  size_t MemoryBytes() const noexcept {
-    return sizeof(*this) +
-           (_prefixes.capacity() + _pair_starts.capacity()) * sizeof(uint32_t);
-  }
-
   uint32_t NextLabel(bytes_view head, uint32_t from,
                      const uint32_t*& at) const noexcept {
     if (head.empty()) {

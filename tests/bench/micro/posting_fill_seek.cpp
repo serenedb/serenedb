@@ -247,11 +247,9 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   const auto root = index.path.string();
 
   irs::IndexWriterOptions opts;
-  opts.db = db;
-  opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(opts));
+    irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate, std::move(opts));
 
   {
     auto trx = writer->GetBatch();
@@ -265,8 +263,7 @@ const Index& IndexOf(size_t docs, bool zipf = false) {
   }
   writer->RefreshCommit();
 
-  index.reader =
-    irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
+  index.reader = irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
   SDB_ASSERT(index.reader.size() == 1,
              "corpus must be one segment or the encodings get mixed");
   return index;

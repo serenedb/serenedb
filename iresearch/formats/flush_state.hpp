@@ -24,7 +24,6 @@
 
 #include <cstddef>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <string_view>
 
 #include "iresearch/index/index_features.hpp"
@@ -36,10 +35,10 @@ namespace irs {
 struct NormProvider;
 
 struct FlushState {
-  duckdb::FileSystem* const fs{};
+  duckdb::FileSystem& fs;
   const std::string_view root;
-  const FileObservers* const observers{};
-  duckdb::BlockCache* const cache{};
+  const FileObservers& observers;
+  const bool keep_cached = false;
   // In-flight norm reader source (SegmentWriter during initial flush,
   // null during merge). Posting writers consult it to read per-doc norms
   // for score bounds while the segment is still being written.

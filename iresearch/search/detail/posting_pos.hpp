@@ -215,7 +215,7 @@ class PostingPos {
  private:
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -258,7 +258,7 @@ class PostingPos {
   [[no_unique_address]] NeedEnc<InputType> _enc;
   FreqBuf _freqs;
   DocsBuf _docs;
-  mutable InputType _in;
+  InputType _in;
   Position _pos;
   BlockCursor<InputType> _cursor;
   GrowingHint _hint;

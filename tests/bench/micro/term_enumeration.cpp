@@ -107,13 +107,11 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -128,7 +126,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   writer->RefreshCommit();
 
   cached.reader =
-    irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
+    irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
   return cached;
 }
 

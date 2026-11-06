@@ -52,7 +52,8 @@ void Read(duckdb::FileSystem& fs, std::string_view root, SegmentMeta& meta,
 
   std::string name{segment_name};
 
-  const auto bytes = ReadWhole(fs, PathOf(root, filename));
+  const auto bytes =
+    ReadWhole<bstring>(duckdb::QueryContext{}, fs, PathOf(root, filename));
 
   std::vector<std::string> files;
   bool has_files = false;

@@ -79,8 +79,6 @@ using test::OneRowSegments;
 
 irs::IndexWriterOptions WriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &EngineDb();
-  options.reader_options.db = &EngineDb();
   options.key_column = term_dict::kPKFieldId;
   return options;
 }
@@ -163,7 +161,8 @@ class SearchRowRemovalTest : public ::testing::Test {
   }
 
   void Open(irs::OpenMode mode) {
-    _writer = irs::IndexWriter::Make(_fs, _root, mode, WriterOptions());
+    _writer =
+      irs::IndexWriter::Make(EngineDb(), _fs, _root, mode, WriterOptions());
   }
 
   void Reopen() {
@@ -750,14 +749,14 @@ TEST_F(SearchRowRemovalTest, LongRunsOfPositionsRemoveTheirRows) {
 TEST_F(SearchRowRemovalTest, SegmentIdsPast32BitsAreRemovedByPosition) {
   _writer.reset();
   {
-    auto out = irs::FileOutput::Open(_fs, _root, "_4294967294", {}, nullptr);
+    auto out = irs::FileOutput::Open(_fs, _root, "_4294967294", {}, false);
     ASSERT_TRUE(out);
     out->Close();
   }
   auto options = WriterOptions();
   options.cleanup_on_open = false;
-  _writer =
-    irs::IndexWriter::Make(_fs, _root, irs::kOmCreate, std::move(options));
+  _writer = irs::IndexWriter::Make(EngineDb(), _fs, _root, irs::kOmCreate,
+                                   std::move(options));
   InsertRange(0, 100);
   InsertRange(100, 100);
   const auto snapshot = _writer->GetSnapshot();

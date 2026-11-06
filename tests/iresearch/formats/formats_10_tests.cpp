@@ -24,7 +24,6 @@
 #include <gtest/gtest.h>
 
 #include <duckdb/common/serializer/binary_serializer.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/field_reader.hpp>
@@ -65,10 +64,10 @@ class Format10TestCase : public tests::FormatTestCase {
     // write postings for field
     {
       irs::FlushState state{
-        .fs = &dir->Fs(),
+        .fs = dir->Fs(),
         .root = dir->Root(),
-        .observers = &dir->Observers(),
-        .cache = &duckdb::BlockCache::Get(dir->Db()),
+        .observers = dir->Observers(),
+        .keep_cached = true,
         .name = "segment_name",
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
@@ -105,11 +104,11 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::SegmentMeta meta;
       meta.name = "segment_name";
 
-      irs::ReaderState state;
-      state.fs = &dir->Fs();
-      state.root = dir->Root();
-      state.cache = &duckdb::BlockCache::Get(dir->Db());
-      state.meta = &meta;
+      const irs::ReaderState state{
+        .fs = dir->Fs(),
+        .root = dir->Root(),
+        .meta = meta,
+      };
 
       const auto in_file =
         dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
@@ -265,10 +264,10 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
   // write postings
   {
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
@@ -334,11 +333,11 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::ReaderState state;
-    state.fs = &dir().Fs();
-    state.root = dir().Root();
-    state.cache = &duckdb::BlockCache::Get(dir().Db());
-    state.meta = &meta;
+    const irs::ReaderState state{
+      .fs = dir().Fs(),
+      .root = dir().Root(),
+      .meta = meta,
+    };
 
     const auto in_file =
       dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
@@ -425,10 +424,10 @@ TEST_P(Format10TestCase, postings_read_write) {
   // write postings
   {
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 150,
       .index_features = field.index_features,
@@ -477,11 +476,11 @@ TEST_P(Format10TestCase, postings_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::ReaderState state;
-    state.fs = &dir().Fs();
-    state.root = dir().Root();
-    state.cache = &duckdb::BlockCache::Get(dir().Db());
-    state.meta = &meta;
+    const irs::ReaderState state{
+      .fs = dir().Fs(),
+      .root = dir().Root(),
+      .meta = meta,
+    };
 
     const auto in_file =
       dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
@@ -574,10 +573,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "0",
       .doc_count = 10000,
       // all possible features in segment
@@ -607,10 +606,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "1",
       .doc_count = 10000,
       // all possible features in segment
@@ -639,10 +638,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "2",
       .doc_count = 10000,
       // all possible features in segment
@@ -671,10 +670,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "3",
       .doc_count = 10000,
       // all possible features in segment
@@ -702,10 +701,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "4",
       .doc_count = 10000,
       // all possible features in segment
@@ -733,10 +732,10 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "5",
       .doc_count = 10000,
     };
@@ -776,10 +775,10 @@ TEST_P(Format10TestCase, ires336) {
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
   irs::FlushState flush_state{
-    .fs = &dir->Fs(),
+    .fs = dir->Fs(),
     .root = dir->Root(),
-    .observers = &dir->Observers(),
-    .cache = &duckdb::BlockCache::Get(dir->Db()),
+    .observers = dir->Observers(),
+    .keep_cached = true,
     .name = segment_name,
     .doc_count = 10000,
   };
@@ -788,8 +787,7 @@ TEST_P(Format10TestCase, ires336) {
   field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{trms, field_meta};
-    irs::IdxWriter idx{dir->Db(), dir->Fs(), dir->Root(), dir->Observers(),
-                       segment_name};
+    irs::IdxWriter idx{dir->Fs(), dir->Root(), dir->Observers(), segment_name};
     irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state, 1);
@@ -801,15 +799,12 @@ TEST_P(Format10TestCase, ires336) {
   irs::SegmentMeta meta;
   meta.name = segment_name;
 
-  irs::IdxReader idx_reader{dir->Db(),    dir->Fs(), dir->Root(),
-                            segment_name, true,      nullptr};
-  irs::term_dict::FieldReader fr_obj{irs::IResourceManager::gNoop};
+  irs::IdxReader idx_reader{dir->Fs(), dir->Root(), segment_name, true,
+                            nullptr};
+  irs::term_dict::FieldReader fr_obj;
   auto* fr = &fr_obj;
-  fr->prepare(irs::ReaderState{.fs = &dir->Fs(),
-                               .root = dir->Root(),
-                               .cache = &duckdb::BlockCache::Get(dir->Db()),
-                               .meta = &meta,
-                               .idx = &idx_reader});
+  fr->prepare(irs::ReaderState{
+    .fs = dir->Fs(), .root = dir->Root(), .meta = meta, .idx = &idx_reader});
 
   const auto fields = fr->fields(field_meta.id);
   ASSERT_EQ(1, fields.size());
@@ -980,10 +975,10 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       // write postings
       {
         irs::FlushState state{
-          .fs = &dir->Fs(),
+          .fs = dir->Fs(),
           .root = dir->Root(),
-          .observers = &dir->Observers(),
-          .cache = &duckdb::BlockCache::Get(dir->Db()),
+          .observers = dir->Observers(),
+          .keep_cached = true,
           .name = "segment_name",
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
@@ -1012,11 +1007,11 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         irs::SegmentMeta meta;
         meta.name = "segment_name";
 
-        irs::ReaderState state;
-        state.fs = &dir->Fs();
-        state.root = dir->Root();
-        state.cache = &duckdb::BlockCache::Get(dir->Db());
-        state.meta = &meta;
+        const irs::ReaderState state{
+          .fs = dir->Fs(),
+          .root = dir->Root(),
+          .meta = meta,
+        };
 
         const auto in_file =
           dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
@@ -1148,10 +1143,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
     try {
       irs::PostingsReader reader;
       reader.prepare(
-        irs::ReaderState{.fs = &dir->Fs(),
-                         .root = dir->Root(),
-                         .cache = &duckdb::BlockCache::Get(dir->Db()),
-                         .meta = &meta},
+        irs::ReaderState{.fs = dir->Fs(), .root = dir->Root(), .meta = meta},
         irs::IndexFeatures::None);
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);

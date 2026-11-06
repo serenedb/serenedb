@@ -142,11 +142,6 @@ inline bytes_view SeparatorAt(SeparatorsView separators, size_t i) noexcept {
           separators.offsets[i + 1] - separators.offsets[i]};
 }
 
-inline size_t SeparatorBytes(const Separators& separators) noexcept {
-  return separators.arena.capacity() +
-         separators.offsets.capacity() * sizeof(uint32_t);
-}
-
 class SeparatorRoot {
  public:
   size_t Blocks() const noexcept { return SeparatorCount(_separators) + 1; }

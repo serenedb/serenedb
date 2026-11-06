@@ -88,9 +88,9 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 std::optional<MissingStorage> OpenSearchStorages(
   std::span<const duckdb::reference<catalog::SereneDBCatalog>> catalogs) {
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance());
-  duckdb::TaskExecutor executor{scheduler, scheduler.AsyncPool()};
+  duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
+                                  irs::DuckDBEngine::Instance().instance()),
+                                duckdb::TaskSchedulerType::ASYNC};
   absl::Mutex mutex;
   std::optional<MissingStorage> missing;
   const auto open = [&](const duckdb::CatalogEntry& entry,

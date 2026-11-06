@@ -27,6 +27,8 @@
 #include <absl/time/time.h>
 
 #include <iresearch/utils/ref_counter.hpp>
+#include <span>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -49,9 +51,9 @@ class RefCounterTests : public ::testing::Test {
 template<typename Key>
 std::vector<Key> RemoveUnused(irs::RefCounter<Key>& refs) {
   std::vector<Key> removed;
-  refs.RemoveUnused([&](std::vector<Key>& unused) {
-    absl::c_sort(unused);
-    removed = unused;
+  refs.RemoveUnused([&](std::span<const Key> unused) {
+    removed.assign(unused.begin(), unused.end());
+    absl::c_sort(removed);
   });
   return removed;
 }
@@ -165,7 +167,7 @@ TEST_F(RefCounterTests, test_ref_counter_waits_only_for_keys_being_removed) {
   std::vector<std::jthread> threads;
   absl::Cleanup release = [&] { proceed.Notify(); };
   threads.emplace_back([&] {
-    refs.RemoveUnused([&](std::vector<int>&) {
+    refs.RemoveUnused([&](std::span<const int>) {
       removing.Notify();
       proceed.WaitForNotification();
     });
@@ -188,13 +190,16 @@ TEST_F(RefCounterTests, test_ref_counter_waits_only_for_keys_being_removed) {
   EXPECT_TRUE(removed_added.WaitForNotificationWithTimeout(absl::Seconds(30)));
 }
 
-TEST_F(RefCounterTests, test_ref_counter_keeps_what_was_not_removed) {
+TEST_F(RefCounterTests, test_ref_counter_keeps_keys_a_failed_removal_claimed) {
   irs::RefCounter<int> refs;
   refs.add(1);
   refs.add(2);
 
-  refs.RemoveUnused([](std::vector<int>& unused) { std::erase(unused, 2); });
-  ASSERT_EQ(std::vector<int>{2}, RemoveUnused(refs));
+  ASSERT_THROW(refs.RemoveUnused([](std::span<const int>) {
+    throw std::runtime_error{"injected"};
+  }),
+               std::runtime_error);
+  ASSERT_EQ((std::vector<int>{1, 2}), RemoveUnused(refs));
   ASSERT_TRUE(RemoveUnused(refs).empty());
 }
 

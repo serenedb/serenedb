@@ -111,8 +111,6 @@ constexpr std::pair<std::string_view, std::string_view> kCorpus[] = {
 
 irs::IndexWriterOptions MakeWriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
   options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
@@ -125,7 +123,7 @@ irs::IndexWriterOptions MakeWriterOptions() {
 irs::DirectoryReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 std::vector<std::string>& names_out) {
   auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, MakeWriterOptions());
+    irs::IndexWriter::Make(Db(), fs, root, irs::kOmCreate, MakeWriterOptions());
 
   TextField body;
 
@@ -216,8 +214,8 @@ int TextFiltersMain() {
 
   irs::InitOptimizeRules();
 
-  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
-  // down the duckdb::DuckDB they were dispatching through.
+  // Nested scope so the reader destructs before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB it was dispatching through.
   {
     std::vector<std::string> names;
     auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),

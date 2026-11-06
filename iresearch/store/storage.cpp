@@ -50,12 +50,11 @@ std::string PathOf(std::string_view root, std::string_view name) {
   return absl::StrCat(root, "/", name);
 }
 
-std::unique_ptr<InputFile> OpenInput(duckdb::BlockCache& cache,
-                                     duckdb::FileSystem& fs,
+std::unique_ptr<InputFile> OpenInput(duckdb::FileSystem& fs,
                                      const std::string& path,
                                      duckdb::MappedFileAccess access) {
   if (auto blocks = fs.OpenBlockFile(path)) {
-    return std::make_unique<InputFile>(cache, std::move(blocks));
+    return std::make_unique<InputFile>(std::move(blocks));
   }
   auto mapping =
     fs.MemoryMapFile(duckdb::OpenFileInfo{path},
@@ -66,7 +65,8 @@ std::unique_ptr<InputFile> OpenInput(duckdb::BlockCache& cache,
   return std::make_unique<InputFile>(std::move(mapping));
 }
 
-bstring ReadWhole(duckdb::FileSystem& fs, const std::string& path) {
+duckdb::unique_ptr<duckdb::FileHandle> OpenWhole(duckdb::FileSystem& fs,
+                                                 const std::string& path) {
   duckdb::OpenFileInfo file{path};
   if (StorageKindOf(path) == StorageKind::Remote) {
     file.extended_info =
@@ -74,13 +74,7 @@ bstring ReadWhole(duckdb::FileSystem& fs, const std::string& path) {
     file.extended_info->options.emplace("force_full_download",
                                         duckdb::Value::BOOLEAN(true));
   }
-  auto handle = fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
-  bstring bytes(duckdb::NumericCast<size_t>(handle->GetFileSize()),
-                byte_type{0});
-  if (!bytes.empty()) {
-    handle->Read(duckdb::QueryContext{}, bytes.data(), bytes.size(), 0);
-  }
-  return bytes;
+  return fs.OpenFile(file, duckdb::FileFlags::FILE_FLAGS_READ);
 }
 
 void SyncFiles(duckdb::FileSystem& fs, std::string_view root,

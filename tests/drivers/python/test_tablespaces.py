@@ -18,6 +18,7 @@ import psycopg
 import pytest
 from fake_azure import FakeAzure
 from fake_s3 import FakeS3
+from serened import reserve_port  # type: ignore[import-untyped]
 
 SERENED_BIN = os.environ.get(
     "SDB_DRV_SERENED_BIN",
@@ -30,15 +31,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 class _Server:
     def __init__(self, datadir: Path) -> None:
-        self.port = _free_port()
+        self.reserved = reserve_port()
+        self.port = self.reserved.getsockname()[1]
         self.log = datadir.parent / f"serened-{self.port}.log"
         with self.log.open("w") as out:
             self.proc = subprocess.Popen(
@@ -67,6 +63,7 @@ class _Server:
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(timeout=60)
+        self.reserved.close()
 
     def output(self) -> str:
         return self.log.read_text()

@@ -174,7 +174,6 @@ struct SubReader : public IndexReader, public NormProvider {
     return nullptr;
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
-  virtual const InputFile* AnnFile() const { return nullptr; }
 };
 
 }  // namespace irs

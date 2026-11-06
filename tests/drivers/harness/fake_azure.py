@@ -4,8 +4,7 @@ Path-style URLs under one storage account, containers that exist on first use, b
 staged and committed by block lists, ranged reads with conditions, blob listings, same-account
 copies, single and batched deletes. Requests are not authenticated, except that while
 `sas_signatures` is set, a request whose SAS signature is not one of them is refused with 403
-AuthenticationFailed, as an expired SAS is. It counts requests by kind; `latency` delays every
-request.
+AuthenticationFailed, as an expired SAS is. It counts requests by kind.
 
 Point a secret at it with `connection_string`, or with `sas_connection_string(signature)`.
 """
@@ -13,16 +12,15 @@ Point a secret at it with `connection_string`, or with `sas_connection_string(si
 from __future__ import annotations
 
 import base64
-import collections
 import email.utils
 import hashlib
-import http.server
-import threading
 import time
 import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
+
+from fake_store import FakeStore, Handler, byte_range, list_page
 
 ACCOUNT = "devstoreaccount1"
 KEY = base64.b64encode(b"fake-azure-account-key-for-tests").decode()
@@ -32,27 +30,16 @@ class _Blob:
     def __init__(self, data: bytes, blocks: dict[str, bytes] | None = None) -> None:
         self.data = data
         self.blocks = blocks or {}
-        self.copy_id = ""
         self.etag = '"0x' + hashlib.md5(data + uuid.uuid4().bytes).hexdigest()[:16].upper() + '"'
         self.modified = time.time()
 
 
-class FakeAzure:
-    def __init__(self, latency: float = 0.0, port: int = 0) -> None:
-        self.latency = latency
+class FakeAzure(FakeStore):
+    def __init__(self) -> None:
+        super().__init__(_Handler)
         self.sas_signatures: set[str] | None = None
-        self.lock = threading.Lock()
         self.blobs: dict[tuple[str, str], _Blob] = {}
         self.staged: dict[tuple[str, str], dict[str, bytes]] = {}
-        self.requests: collections.Counter[str] = collections.Counter()
-        store = self
-
-        class Handler(_Handler):
-            fake = store
-
-        self.server = _Server(("127.0.0.1", port), Handler)
-        self.server.daemon_threads = True
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     @property
     def endpoint(self) -> str:
@@ -67,14 +54,6 @@ class FakeAzure:
         return (f"BlobEndpoint={self.endpoint};SharedAccessSignature=sv=2022-11-02&ss=b&srt=sco"
                 f"&sp=rwdlacx&se=2099-12-31T00:00:00Z&sig={signature}")
 
-    def __enter__(self) -> FakeAzure:
-        self.thread.start()
-        return self
-
-    def __exit__(self, *exc) -> None:
-        self.server.shutdown()
-        self.server.server_close()
-
     def names(self, container: str, prefix: str = "") -> list[str]:
         with self.lock:
             return sorted(name for c, name in self.blobs
@@ -84,26 +63,13 @@ class FakeAzure:
         with self.lock:
             self.blobs[(container, name)] = _Blob(data)
 
-    def count(self, kind: str) -> None:
-        with self.lock:
-            self.requests[kind] += 1
-
-
-class _Server(http.server.ThreadingHTTPServer):
-    request_queue_size = 1024
-
 
 def _http_date(seconds: float) -> str:
     return email.utils.formatdate(seconds, usegmt=True)
 
 
-class _Handler(http.server.BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-    disable_nagle_algorithm = True
+class _Handler(Handler):
     fake: FakeAzure
-
-    def log_message(self, *args) -> None:
-        pass
 
     def _target(self) -> tuple[str, str, dict[str, list[str]]]:
         url = urllib.parse.urlsplit(self.path)
@@ -114,14 +80,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         container, _, name = rest.partition("/")
         query = urllib.parse.parse_qs(url.query, keep_blank_values=True)
         return container, name, query
-
-    def _body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0"))
-        return self.rfile.read(length) if length else b""
-
-    def _wait(self) -> None:
-        if self.fake.latency:
-            time.sleep(self.fake.latency)
 
     def _forbidden(self) -> bool:
         signatures = self.fake.sas_signatures
@@ -161,14 +119,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return self.fake.blobs.get((container, name))
 
     def _properties(self, blob: _Blob) -> dict[str, str]:
-        headers = {"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
-                   "x-ms-creation-time": _http_date(blob.modified), "x-ms-blob-type": "BlockBlob",
-                   "x-ms-server-encrypted": "true", "Accept-Ranges": "bytes",
-                   "Content-Type": "application/octet-stream"}
-        if blob.copy_id:
-            headers["x-ms-copy-id"] = blob.copy_id
-            headers["x-ms-copy-status"] = "success"
-        return headers
+        return {"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
+                "x-ms-creation-time": _http_date(blob.modified), "x-ms-blob-type": "BlockBlob",
+                "x-ms-server-encrypted": "true", "Accept-Ranges": "bytes",
+                "Content-Type": "application/octet-stream"}
 
     def _conditions_fail(self, blob: _Blob) -> bool:
         if_match = self.headers.get("If-Match")
@@ -182,7 +136,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         container, name, _ = self._target()
         self.fake.count("HEAD")
-        self._wait()
         blob = self._find(container, name)
         if blob is None:
             self._error(404, "BlobNotFound")
@@ -195,11 +148,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         container, name, query = self._target()
         if query.get("comp", [""])[0] == "list":
             self.fake.count("LIST")
-            self._wait()
             self._list(container, query)
             return
         self.fake.count("GET")
-        self._wait()
         blob = self._find(container, name)
         if blob is None:
             self._error(404, "BlobNotFound")
@@ -208,33 +159,25 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._error(412, "ConditionNotMet")
             return
         headers = self._properties(blob)
-        ranged = self.headers.get("x-ms-range") or self.headers.get("Range")
+        ranged = self.headers.get("x-ms-range")
         if not ranged:
             self._reply(200, blob.data, headers)
             return
-        first, _, last = ranged.removeprefix("bytes=").partition("-")
-        start = int(first)
-        end = min(int(last) if last else len(blob.data) - 1, len(blob.data) - 1)
-        if start >= len(blob.data):
+        part = byte_range(ranged, blob.data)
+        if part is None:
             self._error(416, "InvalidRange")
             return
-        headers["Content-Range"] = f"bytes {start}-{end}/{len(blob.data)}"
-        self._reply(206, blob.data[start:end + 1], headers)
+        headers["Content-Range"] = part[1]
+        self._reply(206, part[0], headers)
 
     def _list(self, container: str, query: dict[str, list[str]]) -> None:
         prefix = query.get("prefix", [""])[0]
         delimiter = query.get("delimiter", [""])[0]
         marker = query.get("marker", [""])[0]
         max_results = int(query.get("maxresults", ["5000"])[0])
-        entries: list[tuple[str, bool]] = []
-        for name in self.fake.names(container, prefix):
-            cut = name.find(delimiter, len(prefix)) if delimiter else -1
-            entry = (name[:cut + len(delimiter)], True) if cut != -1 else (name, False)
-            if (marker and entry[0] <= marker) or (entries and entries[-1] == entry):
-                continue
-            entries.append(entry)
-        page, rest = entries[:max_results], entries[max_results:]
-        body = [f'<?xml version="1.0" encoding="utf-8"?><EnumerationResults '
+        page, truncated = list_page(self.fake.names(container, prefix), prefix, delimiter, marker,
+                                    max_results)
+        body =[f'<?xml version="1.0" encoding="utf-8"?><EnumerationResults '
                 f'ServiceEndpoint="{escape(self.fake.endpoint)}" ContainerName="{escape(container)}">'
                 f"<Prefix>{escape(prefix)}</Prefix><MaxResults>{max_results}</MaxResults>"]
         if delimiter:
@@ -254,7 +197,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                         "<Content-Type>application/octet-stream</Content-Type><BlobType>BlockBlob</BlobType>"
                         "<ServerEncrypted>true</ServerEncrypted></Properties></Blob>")
         body.append("</Blobs>")
-        body.append(f"<NextMarker>{escape(page[-1][0]) if rest else ''}</NextMarker></EnumerationResults>")
+        body.append(f"<NextMarker>{escape(page[-1][0]) if truncated else ''}</NextMarker></EnumerationResults>")
         self._reply(200, "".join(body).encode(), {"Content-Type": "application/xml"})
 
     def do_PUT(self) -> None:
@@ -265,14 +208,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         comp = query.get("comp", [""])[0]
         if comp == "block":
             self.fake.count("PUT_BLOCK")
-            self._wait()
             with self.fake.lock:
                 self.fake.staged.setdefault((container, name), {})[query["blockid"][0]] = body
             self._reply(201, headers={"x-ms-request-server-encrypted": "true"})
             return
         if comp == "blocklist":
             self.fake.count("PUT_BLOCK_LIST")
-            self._wait()
             ids = [element.text or "" for element in ET.fromstring(body)]
             with self.fake.lock:
                 exists = self._occupied(container, name)
@@ -297,7 +238,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         source = self.headers.get("x-ms-copy-source")
         if source:
             self.fake.count("COPY")
-            self._wait()
             path = urllib.parse.unquote(urllib.parse.urlsplit(source).path).lstrip("/")
             account, _, rest = path.partition("/")
             if account != ACCOUNT:
@@ -308,31 +248,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 self._error(404, "CannotVerifyCopySource")
                 return
             blob = _Blob(original.data, original.blocks)
-            blob.copy_id = str(uuid.uuid4())
             with self.fake.lock:
                 self.fake.blobs[(container, name)] = blob
             self._reply(202, headers={"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
-                                      "x-ms-copy-id": blob.copy_id, "x-ms-copy-status": "success"})
+                                      "x-ms-copy-id": str(uuid.uuid4()), "x-ms-copy-status": "success"})
             return
-        self.fake.count("PUT")
-        self._wait()
-        blob = _Blob(body)
-        with self.fake.lock:
-            exists = self._occupied(container, name)
-            if not exists:
-                self.fake.blobs[(container, name)] = blob
-        if exists:
-            self._error(409, "BlobAlreadyExists")
-            return
-        self._reply(201, headers={"ETag": blob.etag, "Last-Modified": _http_date(blob.modified),
-                                  "x-ms-request-server-encrypted": "true"})
+        self._error(400, "InvalidQueryParameterValue")
 
     def do_DELETE(self) -> None:
         if self._forbidden():
             return
         container, name, _ = self._target()
         self.fake.count("DELETE")
-        self._wait()
         with self.fake.lock:
             removed = self.fake.blobs.pop((container, name), None)
         if removed is None:
@@ -349,7 +276,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._error(400, "InvalidQueryParameterValue")
             return
         self.fake.count("DELETE_BATCH")
-        self._wait()
         boundary = self.headers.get("Content-Type", "").partition("boundary=")[2].strip('"')
         responses = []
         for part in body.split(f"--{boundary}".encode())[1:]:

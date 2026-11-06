@@ -161,7 +161,7 @@ class PostingBatch {
   }
 
  protected:
-  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
@@ -239,7 +239,7 @@ class PostingBatch {
 
   [[no_unique_address]] NeedEnc<InputType> _enc;
   [[no_unique_address]] utils::Need<Scored, FreqBuf> _freqs;
-  mutable InputType _in;
+  InputType _in;
   doc_id_t _last = 0;
   uint32_t _left_in_list = 0;
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;

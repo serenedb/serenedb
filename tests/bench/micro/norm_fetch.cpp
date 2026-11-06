@@ -80,8 +80,8 @@ const std::vector<uint32_t>& IndexNorms() {
     }
     const char* field = std::getenv("NORM_FIELD");
     auto& db = irs::DuckDBEngine::Instance().instance();
-    irs::DirectoryReader reader{duckdb::FileSystem::GetFileSystem(db), path,
-                                irs::IndexReaderOptions{.db = &db}};
+    irs::DirectoryReader reader{db, duckdb::FileSystem::GetFileSystem(db), path,
+                                irs::IndexReaderOptions{}};
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -252,7 +252,7 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  irs::MemoryFile file{irs::IResourceManager::gNoop};
+  irs::MemoryFile file;
   irs::bstring data;
   std::unique_ptr<irs::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;

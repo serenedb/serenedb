@@ -392,11 +392,9 @@ Corpus BuildIndex() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -427,8 +425,7 @@ Corpus BuildIndex() {
     inserted, data_path.string().c_str());
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
+  auto rdr = irs::DirectoryReader{*db, fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -447,11 +444,9 @@ Corpus BuildSyntheticIndex() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -486,8 +481,7 @@ Corpus BuildSyntheticIndex() {
                kSyntheticDocs);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
+  auto rdr = irs::DirectoryReader{*db, fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -506,11 +500,9 @@ Corpus BuildDense3Index() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -541,8 +533,7 @@ Corpus BuildDense3Index() {
                kDense3Docs, kDense3Reps);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
+  auto rdr = irs::DirectoryReader{*db, fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -558,11 +549,9 @@ Corpus BuildAllSameIndex() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -593,8 +582,7 @@ Corpus BuildAllSameIndex() {
                kAllSameDocs, kAllSameReps);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{fs, root, reader_opts};
+  auto rdr = irs::DirectoryReader{*db, fs, root, reader_opts};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
@@ -614,11 +602,9 @@ Corpus BuildFarApartIndex() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -655,8 +641,7 @@ Corpus BuildFarApartIndex() {
                kFarApartDocs, kFarApartReps, kFarApartGap, kFarApartReps);
 
   irs::IndexReaderOptions reader_opts2;
-  reader_opts2.db = db;
-  auto rdr2 = irs::DirectoryReader{fs, root, reader_opts2};
+  auto rdr2 = irs::DirectoryReader{*db, fs, root, reader_opts2};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr2)};
 }
 
@@ -1453,7 +1438,7 @@ void RegisterAll() {
 static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   // iresearch indexes require a process-wide duckdb::DatabaseInstance,
-  // wired into IndexWriterOptions::db / IndexReaderOptions::db. The
+  // passed to IndexWriter::Make and DirectoryReader. The
   // corpora are built lazily inside the benchmark lambdas, so the engine
   // must be up before RunSpecifiedBenchmarks. Not torn down here: the
   // cached Corpus statics (reader + directory) outlive main and touch the

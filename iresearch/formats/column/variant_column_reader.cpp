@@ -70,8 +70,9 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   FinishStats(std::move(stats));
 }
 
-void VariantColumnReader::CollectBlocks(uint64_t first, uint64_t last,
-                                        std::vector<ByteExtent>& out) const {
+void VariantColumnReader::CollectBlocks(
+  uint64_t first, uint64_t last,
+  std::vector<duckdb::BlockCacheRange>& out) const {
   ColumnReader::CollectBlocks(first, last, out);
   if (first >= _row_count) {
     return;

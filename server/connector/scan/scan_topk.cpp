@@ -376,7 +376,7 @@ void PrefetchColumns(
   }
   l.EnsureHitBatcher(g);
   const auto& batcher = *l.hit_batcher;
-  std::vector<irs::ByteExtent> extents;
+  std::vector<duckdb::BlockCacheRange> extents;
   for (size_t u = 0; u < units.size();) {
     const auto seg = units[u].seg;
     const auto* col_reader = (*g.reader)[seg].GetColReader();

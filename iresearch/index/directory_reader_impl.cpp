@@ -128,10 +128,10 @@ DirectoryReaderImpl::Init::Init(IndexFileRefs& refs, const DirectoryMeta& meta,
 
 namespace {
 
-IndexFileRefs::ref_t LoadNewestIndexMeta(duckdb::FileSystem& fs,
+IndexFileRefs::ref_t LoadNewestIndexMeta(duckdb::DatabaseInstance& db,
+                                         duckdb::FileSystem& fs,
                                          std::string_view root,
-                                         const IndexReaderOptions& opts,
-                                         IndexMeta& meta,
+                                         IndexFileRefs& refs, IndexMeta& meta,
                                          MetaPayloadReader payload) {
   IndexFileRefs::ref_t ref;
   while (!ref) {
@@ -139,36 +139,35 @@ IndexFileRefs::ref_t LoadNewestIndexMeta(duckdb::FileSystem& fs,
     if (!filename) {
       return nullptr;
     }
-    ref = Reference(fs, root, *opts.refs, *filename);
+    ref = Reference(fs, root, refs, *filename);
   }
 
   SDB_ASSERT(ref);
-  index_meta::Read(*opts.db, fs, root, meta, *ref, std::move(payload));
+  index_meta::Read(db, fs, root, meta, *ref, std::move(payload));
 
   return ref;
 }
 
 }  // namespace
 
-DirectoryReaderImpl::DirectoryReaderImpl(duckdb::FileSystem& fs,
-                                         std::string_view root,
-                                         const IndexReaderOptions& opts,
-                                         DirectoryMeta&& meta,
-                                         ReadersType&& readers)
+DirectoryReaderImpl::DirectoryReaderImpl(
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  const IndexReaderOptions& opts, DirectoryMeta&& meta, ReadersType&& readers)
   : DirectoryReaderImpl{Init{*opts.refs, meta, readers},
+                        db,
                         fs,
                         root,
                         opts,
                         std::move(meta),
                         std::move(readers)} {}
 
-DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, duckdb::FileSystem& fs,
-                                         std::string_view root,
-                                         const IndexReaderOptions& opts,
-                                         DirectoryMeta&& meta,
-                                         ReadersType&& readers)
+DirectoryReaderImpl::DirectoryReaderImpl(
+  Init&& init, duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+  std::string_view root, const IndexReaderOptions& opts, DirectoryMeta&& meta,
+  ReadersType&& readers)
   : CompositeReaderImpl{std::move(readers), init.live_docs_count,
                         init.docs_count},
+    _db{db},
     _fs{fs},
     _root{root},
     _file_refs{std::move(init.file_refs)},
@@ -178,20 +177,17 @@ DirectoryReaderImpl::DirectoryReaderImpl(Init&& init, duckdb::FileSystem& fs,
     _term_ranges{std::move(init.term_ranges)} {}
 
 std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
-  duckdb::FileSystem& fs, std::string_view root,
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
   const IndexReaderOptions& options,
   const std::shared_ptr<const DirectoryReaderImpl>& cached,
   MetaPayloadReader payload) {
-  SDB_ENSURE(options.db != nullptr,
-             "IndexReaderOptions::db must be set; iresearch indexes require a "
-             "duckdb::DatabaseInstance");
   auto opts = options;
   if (!opts.refs) {
     opts.refs = std::make_shared<IndexFileRefs>();
   }
   IndexMeta index_meta;
-  auto meta_file_ref =
-    LoadNewestIndexMeta(fs, root, opts, index_meta, std::move(payload));
+  auto meta_file_ref = LoadNewestIndexMeta(db, fs, root, *opts.refs, index_meta,
+                                           std::move(payload));
 
   if (!meta_file_ref) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
@@ -241,13 +237,13 @@ std::shared_ptr<const DirectoryReaderImpl> DirectoryReaderImpl::Open(
     }
   }
 
-  ForEach(*opts.db, root, fresh.size(), [&](size_t i) {
+  ForEach(db, root, fresh.size(), [&](size_t i) {
     readers[fresh[i]] = SegmentReader{
-      SegmentReaderImpl::Open(fs, root, segments[fresh[i]].meta, opts)};
+      SegmentReaderImpl::Open(db, fs, root, segments[fresh[i]].meta, opts)};
   });
 
   return std::make_shared<DirectoryReaderImpl>(
-    fs, root, opts,
+    db, fs, root, opts,
     DirectoryMeta{.filename = *meta_file_ref,
                   .index_meta = std::move(index_meta)},
     std::move(readers));

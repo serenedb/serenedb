@@ -345,10 +345,8 @@ Corpus BuildIndex() {
   const auto root = tmp_root.string();
 
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
-  auto writer =
-    irs::IndexWriter::Make(fs, root, irs::kOmCreate, std::move(writer_opts));
+  auto writer = irs::IndexWriter::Make(*db, fs, root, irs::kOmCreate,
+                                       std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -379,7 +377,7 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = irs::DirectoryReader{fs, root, irs::IndexReaderOptions{.db = db}};
+  auto rdr = irs::DirectoryReader{*db, fs, root, irs::IndexReaderOptions{}};
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 

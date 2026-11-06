@@ -29,7 +29,6 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
@@ -51,7 +50,6 @@
 #include <iresearch/store/index_files.hpp>
 #include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <roaring/roaring.hh>
@@ -716,10 +714,10 @@ TEST_P(FormatTestCase, fields_read_write) {
   // write fields
   {
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = "segment_name",
       .doc_count = 100,
       .index_features = field.index_features,
@@ -731,7 +729,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     tests::MockTermReader term_reader{
       terms, irs::FieldMeta{field.id, field.index_features}};
 
-    irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
+    irs::IdxWriter idx{dir().Fs(), dir().Root(), dir().Observers(),
                        "segment_name"};
     irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
@@ -746,16 +744,11 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir().Db(),     dir().Fs(), dir().Root(),
-                       "segment_name", true,       nullptr};
-    irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
+    irs::IdxReader idx{dir().Fs(), dir().Root(), "segment_name", true, nullptr};
+    irs::term_dict::FieldReader reader_obj;
     auto* reader = &reader_obj;
-    reader->prepare(
-      irs::ReaderState{.fs = &dir().Fs(),
-                       .root = dir().Root(),
-                       .cache = &duckdb::BlockCache::Get(dir().Db()),
-                       .meta = &meta,
-                       .idx = &idx});
+    reader->prepare(irs::ReaderState{
+      .fs = dir().Fs(), .root = dir().Root(), .meta = meta, .idx = &idx});
     ASSERT_EQ(1, reader->size());
 
     // check terms
@@ -2597,15 +2590,13 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   auto& db = ::irs::DuckDBEngine::Instance().instance();
   IndexDir dir{db, TestEnv::MemoryRoot()};
 
-  // Rollback path: the eagerly-created `.col` stays on disk as an orphan;
-  // the directory cleaner sweeps it later.
   {
     irs::ColWriter w{db, dir.Fs(), dir.Root(), dir.Observers(),
                      "_rollback_seg"};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
-  EXPECT_TRUE(dir.Has("_rollback_seg.col"));
+  EXPECT_FALSE(dir.Has("_rollback_seg.col"));
 
   // Three sequential segments.
   struct SegSpec {

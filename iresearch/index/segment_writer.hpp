@@ -24,6 +24,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <string>
 #include <string_view>
 
@@ -39,11 +40,6 @@
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
 
 struct SegmentMeta;
@@ -56,7 +52,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
  public:
   static std::unique_ptr<SegmentWriter> make(
-    duckdb::FileSystem& fs, std::string_view root,
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
     const FileObservers& observers, const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
@@ -150,7 +146,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return _batch_first_doc_id;
   }
 
-  SegmentWriter(ConstructToken, duckdb::FileSystem& fs, std::string_view root,
+  SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
+                duckdb::FileSystem& fs, std::string_view root,
                 const FileObservers& observers,
                 const SegmentWriterOptions& options);
 

@@ -50,7 +50,7 @@
 #include "examples.h"
 
 // This example demonstrates the core iresearch workflow:
-//   1. Create a directory and index writer
+//   1. Create an index writer over a memory:// root
 //   2. Define fields and index documents (inverted index + cs stored values)
 //   3. Parse Lucene-syntax queries and execute them (count + top-K with BM25)
 
@@ -128,7 +128,7 @@ void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
 
   auto* cs = doc.GetColWriter();
   if (cs == nullptr) {
-    return;  // cs disabled (no `options.db` plumbed through).
+    return;
   }
   if (title_cw == nullptr) {
     title_cw = &cs->OpenColumn(kTitleColumnId, duckdb::LogicalType::BLOB);
@@ -453,16 +453,14 @@ int BasicMain() {
     constexpr std::string_view kRoot = "memory://basic";
     auto refs = std::make_shared<irs::IndexFileRefs>();
     irs::IndexWriterOptions options;
-    options.db = &Db();
-    options.reader_options.db = &Db();
     options.reader_options.refs = refs;
     options.norm_column_id =
       [next = std::make_shared<std::atomic<irs::field_id>>(0)](
         irs::field_id) -> irs::field_id {
       return next->fetch_add(1, std::memory_order_relaxed);
     };
-    auto writer =
-      irs::IndexWriter::Make(fs, kRoot, irs::kOmCreate, std::move(options));
+    auto writer = irs::IndexWriter::Make(Db(), fs, kRoot, irs::kOmCreate,
+                                         std::move(options));
 
     BuildIndex(*writer);
 

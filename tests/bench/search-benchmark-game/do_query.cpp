@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/file_output.hpp>
@@ -108,11 +107,10 @@ std::string OpenIndex(std::string_view path, std::string_view memory) {
                       [&](std::string_view name) { names.emplace_back(name); });
   std::vector<irs::byte_type> buffer(1 << 20);
   for (const auto& name : names) {
-    const auto file =
-      irs::OpenInput(duckdb::BlockCache::Get(db), fs, irs::PathOf(path, name),
-                     duckdb::MappedFileAccess::SEQUENTIAL);
+    const auto file = irs::OpenInput(fs, irs::PathOf(path, name),
+                                     duckdb::MappedFileAccess::SEQUENTIAL);
     irs::IndexInput in{*file};
-    auto out = irs::FileOutput::Open(fs, kCopy, name, {}, nullptr);
+    auto out = irs::FileOutput::Open(fs, kCopy, name, {}, false);
     for (auto left = in.Length(); left != 0;) {
       const auto chunk = std::min<uint64_t>(left, buffer.size());
       in.ReadData(buffer.data(), chunk);

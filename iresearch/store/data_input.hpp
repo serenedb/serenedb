@@ -41,8 +41,6 @@
 
 namespace irs {
 
-using ByteExtent = duckdb::BlockCacheRange;
-
 struct PinnedBytes {
   bytes_view bytes;
   duckdb::BlockCachePin pin;
@@ -65,8 +63,7 @@ struct CursorBlock {
 class InputFile {
  public:
   explicit InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping);
-  InputFile(duckdb::BlockCache& cache,
-            duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept;
+  explicit InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> file) noexcept;
   InputFile(const InputFile&) = delete;
   InputFile& operator=(const InputFile&) = delete;
 
@@ -83,7 +80,8 @@ class InputFile {
 
   bool Hint(uint64_t offset, uint64_t size) const noexcept;
   void Prefetch(uint64_t offset, uint64_t size) const noexcept;
-  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept;
+  void PrefetchExtents(
+    std::span<duckdb::BlockCacheRange> extents) const noexcept;
   void Evict(uint64_t offset, uint64_t size) const noexcept;
   bool Resident(uint64_t offset, uint64_t size) const noexcept;
   uint64_t Warm(uint64_t offset, uint64_t size) const noexcept;
@@ -98,8 +96,7 @@ class InputFile {
   };
 
   struct CacheBlocks {
-    duckdb::BlockCache* cache;
-    duckdb::shared_ptr<duckdb::BlockCacheFile> blocks;
+    duckdb::shared_ptr<duckdb::BlockCacheFile> file;
   };
 
   uint64_t Warm(const MappedSpan& span, uint64_t offset,

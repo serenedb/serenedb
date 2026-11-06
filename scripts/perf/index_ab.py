@@ -9,41 +9,11 @@ import subprocess
 import sys
 import time
 
+from ab_common import cpu_busy, load_queries, node_cpus, pct
+
 COMMANDS = "count,top_10,top_100,top_100_count"
 HINT_CALLS = ("madvise", "fadvise64", "mincore", "sync_file_range")
 STRACE_LINE = re.compile(r"^(?:\[pid\s+\d+\]\s+)?(\w+)\((.*)\)\s+=\s+(-?\d+)")
-
-
-def load_queries(path, limit):
-    out = []
-    with open(path) as f:
-        for line in f:
-            q = json.loads(line)
-            out.append(q["query"])
-            if limit and len(out) == limit:
-                break
-    return out
-
-
-def node_cpus(node):
-    with open(f"/sys/devices/system/node/node{node}/cpulist") as f:
-        spec = f.read().strip()
-    cpus = []
-    for part in spec.split(","):
-        lo, _, hi = part.partition("-")
-        cpus.extend(range(int(lo), int(hi or lo) + 1))
-    return cpus
-
-
-def cpu_busy(cpus):
-    busy = 0
-    with open("/proc/stat") as f:
-        for line in f:
-            name, *fields = line.split()
-            if name.startswith("cpu") and name[3:].isdigit() and int(name[3:]) in cpus:
-                values = list(map(int, fields))
-                busy += sum(values) - values[3] - values[4]
-    return busy
 
 
 def process_ticks(pid):
@@ -56,10 +26,14 @@ def pinned(args):
     return ["numactl", f"--cpunodebind={args.node}", f"--membind={args.node}"]
 
 
+def query_command(binary, args):
+    return [binary, args.index] + (["--memory", args.memory] if args.memory else [])
+
+
 def run_warm(binary, args, queries, commands):
     lines = [f"{cmd}\t{q}" for q in queries for cmd in commands]
     cpus = node_cpus(args.node)
-    proc = subprocess.Popen(pinned(args) + [binary, args.index, "--repeat", str(args.repeat)],
+    proc = subprocess.Popen(pinned(args) + query_command(binary, args) + ["--repeat", str(args.repeat)],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     busy_before = cpu_busy(cpus)
     started = time.monotonic()
@@ -97,7 +71,7 @@ def io_counters(pid):
 
 
 def run_cold(binary, args, queries, commands):
-    proc = subprocess.Popen(pinned(args) + [binary, args.index], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(pinned(args) + query_command(binary, args), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
     proc.stdin.write("noop\n")
     proc.stdin.flush()
@@ -127,7 +101,7 @@ def run_hints(binary, args, queries, commands, scratch):
             evict(args.index)
             trace = os.path.join(scratch, "trace.txt")
             proc = subprocess.Popen(["strace", "-f", "-qq", "-o", trace, "-e", "trace=" + ",".join(HINT_CALLS),
-                                     binary, args.index], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     *query_command(binary, args)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
             proc.stdin.write("noop\n")
             proc.stdin.flush()
@@ -151,11 +125,6 @@ def run_hints(binary, args, queries, commands, scratch):
                     counts[name + "_bytes"] += int(length, 0) if length.lstrip("-").isdigit() or length.startswith("0x") else 0
             result[f"{cmd}|{i}"] = dict(counts)
     return result
-
-
-def pct(values, q):
-    values = sorted(values)
-    return values[min(len(values) - 1, int(q * (len(values) - 1) + 0.5))]
 
 
 def summarize_warm(runs, commands, queries):
@@ -205,6 +174,7 @@ def main():
     p.add_argument("--queries", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--mode", choices=("warm", "cold", "hints"), default="warm")
+    p.add_argument("--memory", choices=("blocks", "compacted"))
     p.add_argument("--commands", default=COMMANDS)
     p.add_argument("--repeat", type=int, default=10)
     p.add_argument("--pairs", type=int, default=5)

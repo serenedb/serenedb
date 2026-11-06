@@ -53,10 +53,8 @@ class IndexDir {
   irs::bstring ReadWhole(std::string_view name) const;
   bool Has(std::string_view name) const;
   bool Remove(std::string_view name) const;
-  void Remove(std::span<const std::string> names) const;
   void Rename(std::string_view src, std::string_view dst) const;
   void Sync(std::span<const std::string_view> names) const;
-  void SyncDirectory() const;
   void Compact(std::string_view name) const;
   void Visit(absl::FunctionRef<void(std::string_view)> visitor) const;
 
@@ -69,11 +67,8 @@ class IndexDir {
 
   irs::IndexReaderOptions ReaderOptions(
     irs::IndexReaderOptions options = {}) const;
-  irs::IndexWriterOptions WriterOptions(
-    irs::IndexWriterOptions options = {}) const;
 
   IndexDir Observed(irs::FileObserver& observer) const;
-  IndexDir Unobserved() const;
 
  private:
   struct State {

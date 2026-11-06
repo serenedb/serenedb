@@ -25,7 +25,6 @@
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
-#include <string_view>
 
 #include "catalog/database_directory.h"
 #include "pg/catalog/oids.h"

@@ -23,12 +23,9 @@
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
-#include <duckdb/main/database.hpp>
 #include <memory>
-#include <span>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
@@ -37,6 +34,7 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
@@ -75,26 +73,26 @@ inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
 class IdxReader final {
  public:
-  IdxReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
-            std::string_view root, std::string_view segment_name, bool present,
-            HnswBases* hnsw_bases, bool keep_terms = true);
+  IdxReader(duckdb::FileSystem& fs, std::string_view root,
+            std::string_view segment_name, bool present, HnswBases* hnsw_bases,
+            bool keep_terms = true);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  bool HasAnn(field_id id) const noexcept;
   const AnnIndex* Ann(field_id id) const noexcept;
 
-  term_dict::TermsMeta TakeTerms() noexcept;
+  term_dict::TermsMeta TakeTerms() noexcept {
+    return std::exchange(_terms, {});
+  }
 
-  std::span<const uint64_t> AnnEnds() const noexcept;
-
-  const std::shared_ptr<const InputFile>& File() const noexcept;
+  const InputFile* File() const noexcept { return _file.get(); }
 
  private:
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  std::unique_ptr<InputFile> _file;
+  containers::FlatHashMap<field_id, std::unique_ptr<AnnIndex>> _anns;
+  term_dict::TermsMeta _terms;
 };
 
 }  // namespace irs

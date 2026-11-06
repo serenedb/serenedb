@@ -40,11 +40,9 @@ class MemoryIndex {
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
     opts.lock_repository = false;
-    opts.db = _db;
-    opts.reader_options.db = _db;
     opts.reader_options.refs = _refs;
-    auto writer = irs::IndexWriter::Make(_fs, _root, irs::OpenMode::kOmCreate,
-                                         std::move(opts));
+    auto writer = irs::IndexWriter::Make(
+      _db, _fs, _root, irs::OpenMode::kOmCreate, std::move(opts));
     {
       irs::IndexWriter::Transaction trx{*writer};
       {
@@ -69,7 +67,7 @@ class MemoryIndex {
   }
 
  private:
-  duckdb::DatabaseInstance* _db;
+  duckdb::DatabaseInstance& _db;
   duckdb::MemoryFileSystem _fs;
   std::string _root;
   std::shared_ptr<irs::IndexFileRefs> _refs;

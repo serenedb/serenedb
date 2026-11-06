@@ -147,7 +147,7 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
                       .alive = src.alive_count};
   }
   if (best.index != nullptr) {
-    auto data = best.index->Load(*best.reader);
+    auto data = best.index->Load();
     if (!data || data->graph.Empty() || data->graph.M() != m) {
       return {};
     }
@@ -829,7 +829,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
                          uint32_t ef_construction, uint64_t seed,
                          const MergeDonor& donor, const AnnBuildEnv* env)
   -> yaclib::Future<bool> {
-  auto data = donor.index->Load(*donor.reader);
+  auto data = donor.index->Load();
   SDB_ASSERT(data);
   const auto& src_graph = data->graph;
   const auto src_rows = src_graph.Size();
@@ -1188,7 +1188,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
     basis = bases->Find(field);
   }
   if (!basis && donor.index) {
-    if (auto data = donor.index->Load(*donor.reader)) {
+    if (auto data = donor.index->Load()) {
       basis = data->rotation;
     }
   }

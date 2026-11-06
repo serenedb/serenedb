@@ -93,7 +93,7 @@ class VariantColumnReader final : public ColumnReader {
   }
 
   void CollectBlocks(uint64_t first, uint64_t last,
-                     std::vector<ByteExtent>& out) const final;
+                     std::vector<duckdb::BlockCacheRange>& out) const final;
 
   size_t VariantRgSpan(uint64_t row, uint64_t& begin, uint64_t& end) const {
     const auto it =

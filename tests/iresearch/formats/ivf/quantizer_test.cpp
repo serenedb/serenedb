@@ -123,8 +123,7 @@ bstring ReadPayload(MemoryFile& file, uint64_t start, uint64_t end) {
 
 bstring EncodeChunks(QuantizerWriter& writer, const std::vector<float>& points,
                      uint32_t d, std::span<const size_t> chunks) {
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {
@@ -257,8 +256,7 @@ std::array<score_t, 3> PqRoundtrip(uint32_t d, uint32_t pq_m,
   }
   writer->Train(residual_train.data(), residual_train.size() / d);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -307,8 +305,7 @@ TEST_P(none_quantizer_test, roundtrip_is_bit_exact) {
   EXPECT_EQ(writer->BlockSetting().group_size, 1);
   EXPECT_TRUE(SerializeStats(*writer).empty());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -394,14 +391,11 @@ std::vector<float> MakePanoramaData(uint32_t d, size_t n, uint32_t seed) {
 }
 
 struct PanoramaIndex {
-  SimpleMemoryAccounter memory;
   MemoryFile file;
   std::unique_ptr<QuantizerWriter> writer;
   bstring blob;
   uint64_t pay_start = 0;
   size_t n = 0;
-
-  PanoramaIndex() : file{memory} {}
 };
 
 // Trains and encodes `points` as one cluster, in several EncodeCluster batches
@@ -655,8 +649,7 @@ TEST_P(rabitq_quantizer_test, roundtrip_ranking_across_dims) {
             size_t{d} * d * sizeof(float));  // never a dense matrix
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -702,8 +695,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_l2) {
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -767,8 +759,7 @@ TEST(rabitq_quantizer_test, roundtrip_ranking_matches_exact_inner_product) {
   ASSERT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -808,8 +799,7 @@ std::vector<score_t> RaBitQRoundtrip(uint32_t d, uint32_t nb_bits,
   EXPECT_NE(writer, nullptr);
   writer->SetClusterCentroid(centroid.data());
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -887,8 +877,7 @@ TEST(rabitq_quantizer_test, one_bit_scores_comparable_across_clusters) {
     {.kind = VectorQuantization::RaBitQ, .nb_bits = 1}, d, metric);
   ASSERT_NE(writer, nullptr);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   PayloadStream::Cluster cl1;
   PayloadStream::Cluster cl2;
   {
@@ -1072,8 +1061,7 @@ TEST(pq_quantizer_test, l2_scores_comparable_across_clusters) {
   }
   writer->Train(train.data(), train.size() / d);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   PayloadStream::Cluster cl1;
   PayloadStream::Cluster cl2;
   {
@@ -1138,8 +1126,7 @@ TEST(pq_quantizer_test, cluster_spans_multiple_fastscan_blocks_with_odd_m) {
   writer->SetClusterCentroid(centroid.data());
   writer->Train(points.data(), n);
 
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t pay_start;
   {
     MemoryFileOutput out{file};
@@ -1240,8 +1227,7 @@ void ExpectSharedGroupsMatchSoloClusters(
   ASSERT_EQ(centroids.size(), sizes.size() * d);
   ASSERT_EQ(SerializeStats(*make()), SerializeStats(*make()));
 
-  SimpleMemoryAccounter memory;
-  MemoryFile shared_file{memory};
+  MemoryFile shared_file;
   std::vector<PayloadStream::Cluster> spans;
   auto shared_w = make();
   uint64_t shared_bytes = 0;
@@ -1283,7 +1269,7 @@ void ExpectSharedGroupsMatchSoloClusters(
     const float* cen = centroids.data() + c * d;
     shares = shares || spans[c].lane0 != 0;
 
-    MemoryFile solo_file{memory};
+    MemoryFile solo_file;
     auto solo_w = make();
     uint64_t solo_start = 0;
     {
@@ -1721,8 +1707,7 @@ TEST_P(code_rekey_test, encode_into_matches_encode) {
   if (QuantizerNeedsCentroid(quant)) {
     writer->SetClusterCentroid(centroid.data());
   }
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {
@@ -2765,8 +2750,7 @@ TEST(hnsw_pq_quantizer_test, encode_into_matches_encode) {
                         VectorMetric::InnerProduct, 0, /*row_major=*/true);
   ASSERT_NE(writer, nullptr);
   writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
-  SimpleMemoryAccounter memory;
-  MemoryFile file{memory};
+  MemoryFile file;
   uint64_t start = 0;
   uint64_t end = 0;
   {

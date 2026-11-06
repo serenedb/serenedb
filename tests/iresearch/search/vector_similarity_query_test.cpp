@@ -24,8 +24,10 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
@@ -154,12 +156,15 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // The bug only exists on the quantized path; assert the segment provides
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
-void AssertQuantizedPath(const irs::SubReader& segment) {
+void AssertQuantizedPath(const ::tests::IndexDir& dir,
+                         const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
   ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
-  const auto* idx_file = segment.AnnFile();
+  const auto idx_file =
+    dir.Open(irs::FileName(segment.Meta().name, irs::kIdxFormatExt),
+             duckdb::MappedFileAccess::RANDOM);
   ASSERT_NE(nullptr, idx_file);
   irs::IndexInput idx_in{*idx_file};
   const std::vector<float> query(kDim, 0.f);
@@ -183,7 +188,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     ASSERT_NE(nullptr, _reader);
     ASSERT_EQ(1U, _reader->size());
     ASSERT_EQ(n, _reader->docs_count());
-    AssertQuantizedPath((*_reader)[0]);
+    AssertQuantizedPath(_dir, (*_reader)[0]);
     _filter = MakeKnnFilter();
     _prepared.emplace(_filter, *_reader, nullptr, irs::IResourceManager::gNoop,
                       nullptr, ::tests::PreparedFilter::CollectMode::Single);

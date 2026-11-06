@@ -436,7 +436,7 @@ PublishResult AddIncoming(auto& incoming_segments, uint64_t all_tick,
 
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  duckdb::FileSystem& fs, std::string_view root,
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
   const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
@@ -468,7 +468,7 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       SDB_ASSERT(!flushed.meta.docs_mask);
 
       auto reader =
-        SegmentReaderImpl::Open(fs, root, flushed.meta, reader_options);
+        SegmentReaderImpl::Open(db, fs, root, flushed.meta, reader_options);
       SDB_ASSERT(reader);
 
       segment_ctxs.emplace_back(std::move(reader), flushed);
@@ -800,7 +800,7 @@ void IndexWriter::Transaction::Adopt(std::string_view meta_file) {
                     ERR_MSG("cannot adopt segment meta '", segment.filename,
                             "': it does not exist"));
   }
-  auto reader = SegmentReaderImpl::Open(fs, root, segment.meta,
+  auto reader = SegmentReaderImpl::Open(_writer->_db, fs, root, segment.meta,
                                         _writer->GetSnapshotImpl()->Options());
   [[maybe_unused]] uint64_t id = 0;
   SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
@@ -1049,16 +1049,16 @@ void IndexWriter::FlushContext::FlushPending() {
 }
 
 IndexWriter::SegmentContext::SegmentContext(
-  duckdb::FileSystem& fs, std::string_view root, IndexFileRefs& file_refs,
-  segment_meta_generator_t&& meta_generator,
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  IndexFileRefs& file_refs, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
   : refs{file_refs},
     fs{fs},
     root{root},
-    queries{{options.resource_manager}},
-    flushed{{options.resource_manager}},
+    queries{{IResourceManager::gNoop}},
+    flushed{{IResourceManager::gNoop}},
     meta_generator{std::move(meta_generator)},
-    writer{SegmentWriter::make(fs, root, FileObservers{&refs}, options)} {
+    writer{SegmentWriter::make(db, fs, root, FileObservers{&refs}, options)} {
   SDB_ASSERT(this->meta_generator);
 }
 
@@ -1100,11 +1100,11 @@ void IndexWriter::SegmentContext::Flush() {
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
-  duckdb::FileSystem& fs, std::string_view root, IndexFileRefs& file_refs,
-  segment_meta_generator_t&& meta_generator,
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  IndexFileRefs& file_refs, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& segment_writer_options) {
   return std::make_unique<SegmentContext>(
-    fs, root, file_refs, std::move(meta_generator), segment_writer_options);
+    db, fs, root, file_refs, std::move(meta_generator), segment_writer_options);
 }
 
 void IndexWriter::SegmentContext::Prepare() {
@@ -1227,11 +1227,12 @@ void IndexWriter::RootRelease::operator()(
 }
 
 IndexWriter::IndexWriter(
-  ConstructToken, duckdb::FileSystem& fs, std::string_view root,
-  RootClaim root_claim, size_t segment_pool_size,
+  ConstructToken, duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+  std::string_view root, RootClaim root_claim, size_t segment_pool_size,
   const SegmentOptions& segment_limits, MetaPayloadWriter&& meta_payload_writer,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _fs{fs},
+  : _db{db},
+    _fs{fs},
     _root{root},
     _refs{committed_reader->Options().refs},
     _committed_reader{std::move(committed_reader)},
@@ -1239,7 +1240,7 @@ IndexWriter::IndexWriter(
     _segment_writer_pool{segment_pool_size},
     _seg_counter{_committed_reader->Meta().index_meta.seg_counter},
     _last_gen{_committed_reader->Meta().index_meta.gen},
-    _writer{std::move(meta_payload_writer)},
+    _writer{_fs, _root, std::move(meta_payload_writer)},
     _root_claim{std::move(root_claim)},
     _flush_contexts{{FlushContext{*_refs}, FlushContext{*_refs}}} {
   _topk_scorer = _committed_reader->Options().scorer;
@@ -1298,15 +1299,10 @@ void IndexWriter::Clear(const SourcePosition& position) {
   _compacting.segments.clear();
 }
 
-IndexWriter::ptr IndexWriter::Make(duckdb::FileSystem& fs,
+IndexWriter::ptr IndexWriter::Make(duckdb::DatabaseInstance& db,
+                                   duckdb::FileSystem& fs,
                                    std::string_view root, OpenMode mode,
                                    IndexWriterOptions options) {
-  SDB_ENSURE(options.db != nullptr,
-             "IndexWriterOptions::db must be set; iresearch indexes require a "
-             "duckdb::DatabaseInstance");
-  if (!options.reader_options.db) {
-    options.reader_options.db = options.db;
-  }
   if (!options.reader_options.refs) {
     options.reader_options.refs = std::make_shared<IndexFileRefs>();
   }
@@ -1339,7 +1335,7 @@ IndexWriter::ptr IndexWriter::Make(duckdb::FileSystem& fs,
                       ERR_MSG("the directory holds no index to open"));
     } else {
       meta.filename = std::move(*last);
-      index_meta::Read(*options.db, fs, root, meta.index_meta, meta.filename,
+      index_meta::Read(db, fs, root, meta.index_meta, meta.filename,
                        std::move(options.meta_payload_reader));
     }
   }
@@ -1350,22 +1346,21 @@ IndexWriter::ptr IndexWriter::Make(duckdb::FileSystem& fs,
     const auto& segments = meta.index_meta.segments;
 
     std::vector<SegmentReader> readers(segments.size());
-    ForEach(*opts.db, root, segments.size(), [&](size_t i) {
+    ForEach(db, root, segments.size(), [&](size_t i) {
       // Segment reader holds refs to all segment files
       readers[i] = SegmentReader{
-        SegmentReaderImpl::Open(fs, root, segments[i].meta, opts)};
+        SegmentReaderImpl::Open(db, fs, root, segments[i].meta, opts)};
       SDB_ASSERT(readers[i]);
     });
 
     return std::make_shared<const DirectoryReaderImpl>(
-      fs, root, opts, std::move(meta), std::move(readers));
+      db, fs, root, opts, std::move(meta), std::move(readers));
   }(std::move(meta), options.reader_options);
 
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, fs, root, std::move(root_claim),
+    ConstructToken{}, db, fs, root, std::move(root_claim),
     options.segment_pool_size, SegmentOptions{options},
     std::move(options.meta_payload_writer), std::move(reader));
-  writer->_db = options.db;
   writer->_ann_env = options.ann_env;
   writer->_key_column = options.key_column;
   writer->_hnsw_bases = std::move(hnsw_bases);
@@ -1543,7 +1538,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   RefTracker tracker{*_refs};
   const FileObservers observers{&tracker};
 
-  MergeWriter merger{_fs, _root, observers,
+  MergeWriter merger{_db, _fs, _root, observers,
                      GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
 
@@ -1556,7 +1551,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
   auto opts = committed_reader->Options();
   auto pending_reader =
-    SegmentReaderImpl::Open(_fs, _root, compaction_segment.meta, opts);
+    SegmentReaderImpl::Open(_db, _fs, _root, compaction_segment.meta, opts);
   SDB_ASSERT(pending_reader);
 
   // Commit merge, ensure no concurrent Commit/etc
@@ -1674,7 +1669,7 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
   };
   const auto snapshot = GetSnapshotImpl();
   std::vector<Adopted> adopted(replacements.size());
-  ForEach(*_db, _root, replacements.size(), [&](size_t i) {
+  ForEach(_db, _root, replacements.size(), [&](size_t i) {
     auto& entry = adopted[i];
     entry.segment.filename = replacements[i].meta_file;
     segment_meta::Read(_fs, _root, entry.segment.meta,
@@ -1688,7 +1683,7 @@ void IndexWriter::ReplaceSegments(std::span<const SubReader* const> replaced,
                       ERR_MSG("cannot replace with segment meta '",
                               entry.segment.filename, "': it does not exist"));
     }
-    entry.reader = SegmentReaderImpl::Open(_fs, _root, entry.segment.meta,
+    entry.reader = SegmentReaderImpl::Open(_db, _fs, _root, entry.segment.meta,
                                            snapshot->Options());
     entry.refs.emplace_back(std::move(meta_ref));
   });
@@ -1839,7 +1834,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
 
   // should allocate a new segment_context from the pool
   std::shared_ptr<SegmentContext> segment_ctx = _segment_writer_pool.emplace(
-    _fs, _root, *_refs,
+    _db, _fs, _root, *_refs,
     [this] {
       SegmentMeta meta;
       meta.name = FileName(NextSegmentId());
@@ -1850,7 +1845,7 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext(
   // recreate writer if it reserved more memory than allowed by current limits
   if (_segment_limits.Memory() < segment_ctx->writer->memory_reserved()) {
     segment_ctx->writer =
-      SegmentWriter::make(segment_ctx->fs, segment_ctx->root,
+      SegmentWriter::make(_db, segment_ctx->fs, segment_ctx->root,
                           FileObservers{&segment_ctx->refs}, options);
   }
 
@@ -1866,8 +1861,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // later via SetFieldOptions, so non-owning here.
   return {
     .scorer = _topk_scorer,
-    .resource_manager = IResourceManager::gNoop,
-    .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
     .hnsw_bases = _hnsw_bases.get(),
@@ -1902,7 +1895,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   const FileObservers observers{&ctx->refs};
   const auto& committed_reader = *_committed_reader;
-  auto segment_ctxs = OpenFlushed(ctx->segments, _fs, _root,
+  auto segment_ctxs = OpenFlushed(ctx->segments, _db, _fs, _root,
                                   committed_reader.Options(), progress);
   std::vector<DocumentMaskBuilder> removed(committed_reader.size() +
                                            ctx->incoming.size());
@@ -1931,7 +1924,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   if (info.reopen_reader) {
     for (auto& entry : segments) {
       entry.reader = SegmentReader{SegmentReaderImpl::Open(
-        _fs, _root, entry.segment.meta, committed_reader.Options())};
+        _db, _fs, _root, entry.segment.meta, committed_reader.Options())};
     }
   }
 
@@ -1989,7 +1982,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     SDB_ASSERT(readers.size() == committed_reader.size());
     if (info.reopen_reader) {
       auto new_reader = std::make_shared<const DirectoryReaderImpl>(
-        _fs, _root, committed_reader.Options(),
+        _db, _fs, _root, committed_reader.Options(),
         DirectoryMeta{committed_reader.Meta()}, std::move(readers));
       std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
                                  std::memory_order_release);
@@ -2019,8 +2012,8 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   DirectoryMeta to_commit{.index_meta = std::move(context.meta)};
 
   // Execute 1st phase of index meta transaction
-  if (!_writer.prepare(_fs, _root, observers, to_commit.index_meta,
-                       to_commit.filename, index_meta_file, context.position)) {
+  if (!_writer.prepare(observers, to_commit.index_meta, to_commit.filename,
+                       index_meta_file, context.position)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("Failed to write index metadata for index: ", index_meta_file,
@@ -2047,7 +2040,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   to_commit.filename = std::move(index_meta_file);
   // Assemble directory reader
   _pending_state.commit = std::make_shared<const DirectoryReaderImpl>(
-    _fs, _root, _committed_reader->Options(), std::move(to_commit),
+    _db, _fs, _root, _committed_reader->Options(), std::move(to_commit),
     std::move(context.readers));
   SDB_ASSERT(context.ctx);
   static_cast<PendingBase&>(_pending_state) = std::move(context);

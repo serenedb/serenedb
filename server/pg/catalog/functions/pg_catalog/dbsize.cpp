@@ -44,6 +44,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "auth/role_closure.h"
@@ -400,29 +401,6 @@ void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     });
 }
 
-const catalog::TablespaceCatalogEntry& TablespaceEntry(
-  duckdb::ClientContext& context, int64_t oid) {
-  if (const auto tablespace = catalog::ClusterEntryById(
-        context, duckdb::CatalogType::TABLESPACE_ENTRY,
-        static_cast<duckdb::idx_t>(oid))) {
-    return tablespace->Cast<catalog::TablespaceCatalogEntry>();
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                  ERR_MSG("tablespace with OID ", oid, " does not exist"));
-}
-
-const catalog::TablespaceCatalogEntry& TablespaceEntry(
-  duckdb::ClientContext& context, duckdb::string_t name) {
-  if (const auto tablespace =
-        catalog::ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY,
-                              connector::AsView(name))) {
-    return tablespace->Cast<catalog::TablespaceCatalogEntry>();
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-    ERR_MSG("tablespace \"", connector::AsView(name), "\" does not exist"));
-}
-
 duckdb::idx_t SessionTablespace(const Session& session) {
   const auto database =
     session.database
@@ -472,7 +450,15 @@ void TablespaceSizeFunction(duckdb::DataChunk& args,
   const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) {
-      return TablespaceBytes(session, TablespaceEntry(*session.context, key));
+      if constexpr (std::is_same_v<Key, duckdb::string_t>) {
+        return TablespaceBytes(
+          session,
+          catalog::RequireTablespace(*session.context, connector::AsView(key)));
+      } else {
+        return TablespaceBytes(
+          session, catalog::RequireTablespace(*session.context,
+                                              static_cast<duckdb::idx_t>(key)));
+      }
     });
 }
 

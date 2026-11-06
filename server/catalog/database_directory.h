@@ -41,9 +41,7 @@ inline constexpr std::string_view kCatalogLog = "catalog.wal";
 inline constexpr std::string_view kDataFile = "data.db";
 
 duckdb::FileSystem& StorageFileSystem();
-// Creates [path], whose parent exists; throws when it exists already.
 void CreateDirectory(const std::filesystem::path& path);
-// Removes the files below [path] and it, logging what it could not remove.
 void RemoveTree(const std::string& path) noexcept;
 // While a backup runs, removals of dropped storages wait for ResumeRemovals.
 void DeferRemovals() noexcept;

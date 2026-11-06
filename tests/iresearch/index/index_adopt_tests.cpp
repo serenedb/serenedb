@@ -126,7 +126,7 @@ class IndexAdoptTest : public TestBase {
     _fs = std::make_unique<CountingFileSystem>();
     _dir.emplace(irs::DuckDBEngine::Instance().instance(), *_fs,
                  _path.string());
-    auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
+    auto options = tests::EnsureNormColumnId(tests::CsDefaultWriterOptions());
     options.cleanup_on_open = cleanup_on_open;
     options.segment_docs_max = segment_docs_max;
     _writer = tests::MakeWriter(*_dir, mode, std::move(options));

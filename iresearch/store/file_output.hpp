@@ -21,9 +21,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 #include "iresearch/store/data_output.hpp"
@@ -45,7 +43,7 @@ class FileOutput final : public DataOutput {
                                           std::string_view root,
                                           std::string_view name,
                                           const FileObservers& observers,
-                                          duckdb::BlockCache* cache);
+                                          bool keep_cached);
 
   ~FileOutput();
 
@@ -54,31 +52,29 @@ class FileOutput final : public DataOutput {
   void Close();
 
  private:
+  FileOutput(std::unique_ptr<duckdb::FileWriter> writer,
+             const FileObservers& observers, bool remote);
   FileOutput(std::unique_ptr<duckdb::FileHandle> handle,
-             const FileObservers& observers, bool remote,
-             duckdb::BlockCache* cache);
+             const FileObservers& observers, bool remote);
 
   void Flush();
   void Release() noexcept;
   void Overflow(const byte_type* data, size_t size) final;
-  void SetWindow(duckdb::FileWriteWindow window) noexcept;
   void NextWindow();
-  void UseBuffer();
   void CommitWindow();
   void WriteHandle(const byte_type* b, size_t len);
-  void FinishCache(bool published) noexcept;
+  void Advance(size_t size) noexcept;
 
   static constexpr size_t kBufferSize = 64 * 1024;
   static constexpr size_t kWritebackHintBytes = 8 << 20;
 
-  std::unique_ptr<byte_type[]> _buf;
+  std::unique_ptr<duckdb::FileWriter> _writer;
   std::unique_ptr<duckdb::FileHandle> _handle;
+  std::unique_ptr<byte_type[]> _buf;
   Crc32c _crc;
   uint64_t _unhinted = 0;
   FileObservers _observers;
   bool _remote;
-  bool _in_place = false;
-  std::optional<duckdb::BlockCacheAppender> _cached;
 };
 
 }  // namespace irs

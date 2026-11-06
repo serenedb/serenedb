@@ -29,6 +29,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -96,6 +97,17 @@ uint64_t MillisSince(std::chrono::steady_clock::time_point begin) {
     .count();
 }
 
+std::string StorageRoot(duckdb::AttachedDatabase& database,
+                        const std::optional<catalog::StorageDirectory>& parent,
+                        duckdb::idx_t id, bool is_new) {
+  if (database.GetStorageManager().InMemory()) {
+    return absl::StrCat(duckdb::MemoryFileSystem::PREFIX, database.oid, "/",
+                        id);
+  }
+  SDB_ASSERT(parent);
+  return is_new ? parent->CreateStorage(id) : parent->StoragePath(id);
+}
+
 }  // namespace
 
 struct Store::ReplaySession {
@@ -117,8 +129,8 @@ Store::Store(std::optional<catalog::StorageDirectory> parent,
     _segment_memory_max{options.segment_memory_max},
     _segment_docs_max{options.segment_docs_max},
     _topk_options{top_k_scorer},
-    _durability{database, absl::StrCat("inverted index ", id), _parent, id,
-                is_new} {
+    _durability{database, absl::StrCat("inverted index ", id),
+                StorageRoot(database, _parent, id, is_new)} {
   SDB_ASSERT(id != 0);
   SetTasksSettings(options);
   if (_topk_options) {
@@ -139,8 +151,8 @@ Store::Store(std::optional<catalog::StorageDirectory> parent,
     _parent{std::move(parent)},
     _read_only{database.IsReadOnly()},
     _segment_memory_max{options.segment_memory_max},
-    _durability{database, absl::StrCat("search table ", id), _parent, id,
-                is_new},
+    _durability{database, absl::StrCat("search table ", id),
+                StorageRoot(database, _parent, id, is_new)},
     _table_columns{TableColumns(columns)},
     _row_group_size{options.row_group_size},
     _compression{DeclaredCompression(columns)} {
@@ -166,7 +178,6 @@ Store::~Store() {
 
 irs::IndexReaderOptions Store::ReaderOptions() const {
   irs::IndexReaderOptions options;
-  options.db = &irs::DuckDBEngine::Instance().instance();
   options.scorer = _topk_scorer.get();
   return options;
 }
@@ -190,7 +201,6 @@ void Store::OpenWriter(bool is_new) {
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.segment_docs_max = _segment_docs_max;
   writer_options.reader_options = ReaderOptions();
-  writer_options.db = writer_options.reader_options.db;
   IndexDurability::ManifestSource manifest;
   if (IsSearchTable()) {
     writer_options.cleanup_on_open = is_new;
@@ -442,7 +452,8 @@ std::shared_ptr<const irs::IndexFieldOptions> Store::CompactionOptions() {
   // Cloned for this merge: the merge encodes against what it took for its
   // whole length, and an ALTER writes a new configuration rather than mutating
   // this one, while a DROP destroys the bound index but not this clone.
-  const auto attached = duckdb::AttachedDatabase::TryGetReference(Database());
+  const auto attached =
+    duckdb::AttachedDatabase::TryGetReference(_durability.Database());
   if (!attached) {
     return nullptr;
   }

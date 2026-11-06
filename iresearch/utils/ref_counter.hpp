@@ -30,6 +30,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
@@ -115,21 +116,18 @@ class RefCounter : public util::Noncopyable {
       }
       _removing.insert(claimed.begin(), claimed.end());
     }
-    auto removed = claimed;
-    bool finished = false;
+    bool removed = false;
     absl::Cleanup release = [&] noexcept {
       absl::MutexLock lock{&_lock};
-      if (finished) {
-        for (const auto& key : removed) {
+      for (const auto& key : claimed) {
+        if (removed) {
           _refs.erase(key);
         }
-      }
-      for (const auto& key : claimed) {
         _removing.erase(key);
       }
     };
-    remove(removed);
-    finished = true;
+    remove(std::span<const Key>{claimed});
+    removed = true;
   }
 
  private:

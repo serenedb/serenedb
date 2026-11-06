@@ -87,7 +87,6 @@ void ReadContext::Reset(const ColReader& reader) {
 }
 
 void ReadContext::ResetFile(const InputFile* file) {
-  _file = file;
   _in = file ? IndexInput{*file} : IndexInput{};
   _mapping = file ? file->Mapping() : nullptr;
   _ranges.clear();
@@ -98,7 +97,7 @@ duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
                                          int32_t offset) {
   SDB_ASSERT(offset == 0);
   if (_mapping) {
-    BytesViewInput in{*_file};
+    BytesViewInput in{*_in.File()};
     in.Seek(static_cast<uint64_t>(block));
     const auto len = static_cast<uint32_t>(in.ReadI32());
     const auto body = in.Pin(len);
@@ -142,7 +141,7 @@ bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
 
 bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
   constexpr uint64_t kBlock = duckdb::BlockCache::BLOCK_SIZE;
-  return !_mapping && _file && offset % 8 == 0 &&
+  return !_mapping && _in.File() && offset % 8 == 0 &&
          offset % kBlock + SectorAligned(size) <= kBlock;
 }
 
@@ -166,7 +165,7 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
                                             /*block_header_size=*/0);
   }
   if (Wraps(offset, size)) {
-    auto pinned = _file->Pin(offset, size);
+    auto pinned = _in.File()->Pin(offset, size);
     ColMapping bytes{pinned.bytes.data(), SectorAligned(size)};
     return duckdb::make_uniq<PinnedColBlock>(*_allocator, block_id, bytes, size,
                                              std::move(pinned.pin));
@@ -178,7 +177,7 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
 
 void ReadContext::Read(duckdb::QueryContext /*context*/, duckdb::Block& block) {
   const auto id = static_cast<size_t>(block.id);
-  SDB_ENSURE(id < _ranges.size() && _file,
+  SDB_ENSURE(id < _ranges.size() && _in.File(),
              "ReadContext::Read: unregistered block ", block.id);
   const auto [offset, size] = _ranges[id];
   SDB_ASSERT(block.Size() >= size, "block buffer sector-rounds up");

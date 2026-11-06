@@ -40,8 +40,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<ScanBindData>();
   auto state = duckdb::make_uniq<ScanGlobalState>();
-  InitScanState(*state, &context, bind, input);
-  UseSnapshot(*state, context, bind);
+  InitScanState(*state, context, bind, input);
   state->workers =
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
   ClassifyColumnstoreProjections(*state, bind);

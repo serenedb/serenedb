@@ -731,7 +731,7 @@ class Cursor {
     if (!_field->Small()) {
       Watch(block);
     }
-    _view = Parse(_field->Block(block, _buffer), _field->Fsst());
+    _view = Parse(_field->Block(block, _pinned), _field->Fsst());
     _stop =
       block + 1 == _field->Blocks() ? _field->LastEntry() + 1 : _view.count;
     _block = block;
@@ -1133,7 +1133,7 @@ class Cursor {
   KeyBuffer _peek;
   size_t _peeked = 0;
   PaddedKey _probe;
-  BlockBuffer _buffer;
+  PinnedBytes _pinned;
   ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
   ReadWindow _inline_ahead{
     .ahead = 0,

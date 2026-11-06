@@ -28,7 +28,6 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include <bit>
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <optional>
 #include <span>
 #include <vector>
@@ -926,7 +925,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{_db, _fs, _root, observers, segment.name};
+  IdxWriter idx{_fs, _root, observers, segment.name};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
@@ -937,9 +936,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
   auto ann_writers = col_writer->TakeAnnWriters();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(
-      _db, _fs, _root, segment.name, tracker.Contains(FileName(segment.name)),
-      duckdb::MappedFileAccess::SEQUENTIAL);
+    col_reader = col_writer->OpenReader();
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
@@ -954,10 +951,10 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   const FlushState state{
-    .fs = &_fs,
+    .fs = _fs,
     .root = _root,
-    .observers = &observers,
-    .cache = &duckdb::BlockCache::Get(_db),
+    .observers = observers,
+    .keep_cached = true,
     .norms = norm_provider.reader != nullptr ? &norm_provider : nullptr,
     .name = segment.name,
     .scorer = _scorer,

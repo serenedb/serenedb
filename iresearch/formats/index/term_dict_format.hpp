@@ -66,8 +66,6 @@ class RecordOutput final : public DataOutput {
     _begin = _pos = _bytes.data();
     _end = _bytes.data() + _bytes.size();
   }
-  RecordOutput(const RecordOutput&) = delete;
-  RecordOutput& operator=(const RecordOutput&) = delete;
 
   bytes_view View() const noexcept {
     return {_begin, static_cast<size_t>(_pos - _begin)};

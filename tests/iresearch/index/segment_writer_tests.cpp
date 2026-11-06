@@ -53,8 +53,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
   FieldT field;
 
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   {
     irs::SegmentMeta segment;
@@ -62,8 +61,8 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
@@ -89,8 +88,8 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
@@ -141,8 +140,7 @@ struct StoredField {
 }  // namespace
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
@@ -150,8 +148,8 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   {
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -176,8 +174,8 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   {
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -202,8 +200,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // Index + store: indexed field uses insert(field), stored bytes go to
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   struct IndexedField {
     irs::IndexFeatures GetIndexFeatures() const {
@@ -226,8 +223,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   {
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
@@ -251,8 +248,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   {
     tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                         TestEnv::MemoryRoot()};
-    auto writer =
-      irs::SegmentWriter::make(dir.Fs(), dir.Root(), dir.Observers(), options);
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           dir.Observers(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);

@@ -20,7 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <duckdb/storage/block_cache/block_cache.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/posting/reader.hpp>
@@ -345,10 +344,10 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   {
     const irs::FlushState state{
-      .fs = &dir.Fs(),
+      .fs = dir.Fs(),
       .root = dir.Root(),
-      .observers = &dir.Observers(),
-      .cache = &duckdb::BlockCache::Get(dir.Db()),
+      .observers = dir.Observers(),
+      .keep_cached = true,
       .norms = &irs::SubReader::empty(),
       .name = "segment_name",
       .scorer = scorer,
@@ -378,10 +377,8 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.fs = &dir.Fs(),
-                               .root = dir.Root(),
-                               .cache = &duckdb::BlockCache::Get(dir.Db()),
-                               .meta = &meta};
+  const irs::ReaderState state{
+    .fs = dir.Fs(), .root = dir.Root(), .meta = meta};
 
   const auto in_file = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
   irs::IndexInput in{*in_file};

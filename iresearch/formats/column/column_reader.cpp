@@ -347,8 +347,9 @@ BlockWindow ColumnReader::Locate(uint64_t row,
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 
-void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
-                                 std::vector<ByteExtent>& out) const {
+void ColumnReader::CollectBlocks(
+  uint64_t first, uint64_t last,
+  std::vector<duckdb::BlockCacheRange>& out) const {
   if (!_segments.empty() && first < _row_count) {
     const auto from = Locate(first).block;
     const auto to = Locate(std::min(last, _row_count - 1)).block;

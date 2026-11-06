@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -49,16 +50,6 @@
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/flat_hash_set.hpp"
-#include "iresearch/utils/noncopyable.hpp"
-#include "iresearch/utils/object_pool.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -68,7 +59,12 @@ class DatabaseInstance;
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/store/index_files.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
+#include "iresearch/utils/noncopyable.hpp"
+#include "iresearch/utils/object_pool.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -131,8 +127,6 @@ struct IndexWriterOptions : public SegmentOptions {
   bool lock_repository = true;
 
   bool cleanup_on_open = true;
-
-  duckdb::DatabaseInstance* db = nullptr;
 
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
@@ -461,7 +455,8 @@ class IndexWriter : private util::Noncopyable {
   void ReplaceSegments(std::span<const SubReader* const> replaced,
                        std::vector<Replacement> replacements);
 
-  static IndexWriter::ptr Make(duckdb::FileSystem& fs, std::string_view root,
+  static IndexWriter::ptr Make(duckdb::DatabaseInstance& db,
+                               duckdb::FileSystem& fs, std::string_view root,
                                OpenMode mode, IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
@@ -490,7 +485,8 @@ class IndexWriter : private util::Noncopyable {
 
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
-  IndexWriter(ConstructToken, duckdb::FileSystem& fs, std::string_view root,
+  IndexWriter(ConstructToken, duckdb::DatabaseInstance& db,
+              duckdb::FileSystem& fs, std::string_view root,
               RootClaim root_claim, size_t segment_pool_size,
               const SegmentOptions& segment_limits,
               MetaPayloadWriter&& meta_payload_writer,
@@ -595,12 +591,13 @@ class IndexWriter : private util::Noncopyable {
     IndexSegment writer_meta;
 
     static std::unique_ptr<SegmentContext> make(
-      duckdb::FileSystem& fs, std::string_view root, IndexFileRefs& file_refs,
+      duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+      std::string_view root, IndexFileRefs& file_refs,
       segment_meta_generator_t&& meta_generator,
       const SegmentWriterOptions& options);
 
-    SegmentContext(duckdb::FileSystem& fs, std::string_view root,
-                   IndexFileRefs& file_refs,
+    SegmentContext(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                   std::string_view root, IndexFileRefs& file_refs,
                    segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
@@ -785,7 +782,7 @@ class IndexWriter : private util::Noncopyable {
 
   IndexFeatures _score_bound_features{};
   ScorerPtr _topk_scorer;
-  duckdb::DatabaseInstance* _db = nullptr;
+  duckdb::DatabaseInstance& _db;
   const AnnBuildEnv* _ann_env = nullptr;
   field_id _key_column = field_limits::invalid();
   std::unique_ptr<HnswBases> _hnsw_bases;

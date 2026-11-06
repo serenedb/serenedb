@@ -32,8 +32,6 @@
 
 namespace irs::term_dict {
 
-FieldReader::~FieldReader() { _rm->DecreaseChecked(_bytes); }
-
 bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   if (_base) {
     return {_base + offset, size};
@@ -41,7 +39,6 @@ bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    Account(size);
     copy.resize(size);
     IndexInput{*_in}.ReadData(offset, copy.data(), size);
   }
@@ -53,7 +50,6 @@ bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    Account(size);
     copy.resize(size);
     _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
   }
@@ -142,9 +138,6 @@ void FieldReader::Bind(const TermsMeta& terms) {
     _inline_region = _base ? _base + _inline_offset
                            : Copy(_inline_offset, _inline_size + kSlack).data();
   }
-  Account(_spans.capacity() * sizeof(SpanningBlock) +
-          SeparatorBytes(_separators) + _inline_pages.MemoryBytes() +
-          (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0));
 }
 
 void FieldReader::prepare(const ReaderState& state) {
@@ -175,7 +168,6 @@ void FieldReader::prepare(const ReaderState& state) {
   }
   if (single_inline != 0) {
     _single_inline.reserve(single_inline + kSlack);
-    Account(_single_inline.capacity());
   }
   _by_id.reserve(heads.size());
   _dicts.reserve(heads.size());
@@ -187,8 +179,7 @@ void FieldReader::prepare(const ReaderState& state) {
     } else {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-      _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in, _separators));
+      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, _separators));
     }
     ++_by_id
         .try_emplace(

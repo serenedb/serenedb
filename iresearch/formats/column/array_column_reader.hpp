@@ -62,7 +62,7 @@ class ArrayColumnReader final : public ColumnReader {
   }
 
   void CollectBlocks(uint64_t first, uint64_t last,
-                     std::vector<ByteExtent>& out) const final {
+                     std::vector<duckdb::BlockCacheRange>& out) const final {
     ColumnReader::CollectBlocks(first, last, out);
     if (_array_size != 0 && !_children.empty()) {
       _children.front()->CollectBlocks(first * _array_size,

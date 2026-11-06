@@ -60,7 +60,7 @@ void BmCreateWhileCleaning(benchmark::State& state) {
   for (auto _ : state) {
     for (int i = 0; i != kUnused; ++i) {
       const auto name = absl::StrCat("unused_", round, "_", i);
-      irs::FileOutput::Open(fs, path, name, {}, nullptr)->Close();
+      irs::FileOutput::Open(fs, path, name, {}, false)->Close();
       refs.add(name);
     }
     absl::Notification started;
@@ -73,8 +73,7 @@ void BmCreateWhileCleaning(benchmark::State& state) {
     started.WaitForNotification();
     absl::SleepFor(absl::FromChrono(kRemoveLatency / 3));
     const auto began = std::chrono::steady_clock::now();
-    irs::FileOutput::Open(fs, path, absl::StrCat("new_", round), tracked,
-                          nullptr)
+    irs::FileOutput::Open(fs, path, absl::StrCat("new_", round), tracked, false)
       ->Close();
     state.SetIterationTime(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - began)

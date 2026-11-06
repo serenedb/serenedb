@@ -20,8 +20,6 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
@@ -122,20 +120,6 @@ void AssertDescription(
     candidates) {
   return AssertDescription(description, irs::kEmptyStringView<irs::byte_type>,
                            target, candidates);
-}
-
-void AssertReadWrite(const irs::ParametricDescription& description) {
-  irs::bstring buf;
-  {
-    irs::BytesOutput out;
-    description.Write(out);
-    buf = out.Bytes();
-    ASSERT_FALSE(buf.empty());
-  }
-  {
-    irs::IndexInput in(buf);
-    ASSERT_EQ(description, irs::ParametricDescription::Read(in));
-  }
 }
 
 }  // namespace
@@ -246,8 +230,6 @@ TEST(levenshtein_utils_test, test_description_0) {
     ASSERT_EQ(description, irs::MakeParametricDescription(0, false));
     assert_distance(description);
     assert_transitions(description);
-    AssertReadWrite(description);
-
     AssertDescription(
       description, irs::ViewCast<irs::byte_type>("alphabet"sv),
       {
@@ -283,8 +265,6 @@ TEST(levenshtein_utils_test, test_description_0) {
     ASSERT_EQ(description, irs::MakeParametricDescription(0, false));
     assert_distance(description);
     assert_transitions(description);
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alpha"sv),
                       irs::ViewCast<irs::byte_type>("bet"sv),
                       {
@@ -310,8 +290,6 @@ TEST(levenshtein_utils_test, test_description_0) {
     ASSERT_EQ(description, irs::MakeParametricDescription(0, false));
     assert_distance(description);
     assert_transitions(description);
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alphabet"sv),
                       {
                         {irs::ViewCast<irs::byte_type>("alphabet"sv), 0, 0, 0},
@@ -337,8 +315,6 @@ TEST(levenshtein_utils_test, test_description_0) {
     ASSERT_EQ(description, irs::MakeParametricDescription(0, false));
     assert_distance(description);
     assert_transitions(description);
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("al"sv),
                       irs::ViewCast<irs::byte_type>("phabet"sv),
                       {
@@ -498,8 +474,6 @@ TEST(levenshtein_utils_test, test_description_1) {
     ASSERT_EQ(description, irs::MakeParametricDescription(1, false));
     assert_distance(description);
     assert_transitions(description);
-    AssertReadWrite(description);
-
     AssertDescription(
       description, irs::ViewCast<irs::byte_type>("a"sv),
       {
@@ -707,8 +681,6 @@ TEST(levenshtein_utils_test, test_description_1) {
     ASSERT_EQ(1, description.max_distance());
     ASSERT_EQ(description, irs::MakeParametricDescription(1, true));
     ASSERT_NE(description, irs::MakeParametricDescription(1, false));
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alphabet"sv),
                       {
                         {irs::ViewCast<irs::byte_type>("alphabet"sv), 0, 0, 0},
@@ -905,8 +877,6 @@ TEST(levenshtein_utils_test, test_description_2) {
     ASSERT_EQ(32, description.chi_max());
     ASSERT_EQ(2, description.max_distance());
     ASSERT_NE(description, irs::MakeParametricDescription(2, true));
-    AssertReadWrite(description);
-
     AssertDescription(
       description, irs::ViewCast<irs::byte_type>("\xF0\x9F\x98\x81"sv),
       {
@@ -1040,8 +1010,6 @@ TEST(levenshtein_utils_test, test_description_2) {
     ASSERT_EQ(32, description.chi_max());
     ASSERT_EQ(2, description.max_distance());
     ASSERT_NE(description, irs::MakeParametricDescription(2, false));
-    AssertReadWrite(description);
-
     AssertDescription(
       description, irs::ViewCast<irs::byte_type>("\xF0\x9F\x98\x81"sv),
       {
@@ -1136,8 +1104,6 @@ TEST(levenshtein_utils_test, test_description_3) {
     ASSERT_EQ(7, description.chi_size());
     ASSERT_EQ(128, description.chi_max());
     ASSERT_EQ(3, description.max_distance());
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alphabet"sv),
                       {
                         {irs::ViewCast<irs::byte_type>("alphabet"sv), 0, 0, 0},
@@ -1234,8 +1200,6 @@ TEST(levenshtein_utils_test, test_description_3) {
     ASSERT_EQ(7, description.chi_size());
     ASSERT_EQ(128, description.chi_max());
     ASSERT_EQ(3, description.max_distance());
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alphabet"sv),
                       {
                         {irs::ViewCast<irs::byte_type>("alphabet"sv), 0, 0, 0},
@@ -1276,8 +1240,6 @@ TEST(levenshtein_utils_test, test_description_4) {
     ASSERT_EQ(512, description.chi_max());
     ASSERT_EQ(4, description.max_distance());
     ASSERT_EQ(description, description);
-    AssertReadWrite(description);
-
     AssertDescription(description, irs::ViewCast<irs::byte_type>("alphabet"sv),
                       {
                         {irs::ViewCast<irs::byte_type>("alphabet"sv), 0, 0, 0},

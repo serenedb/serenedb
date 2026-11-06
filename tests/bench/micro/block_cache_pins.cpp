@@ -38,9 +38,8 @@ duckdb::BlockCache& Cache() {
 }
 
 void Fill() {
-  auto& cache = Cache();
-  gFile = cache.CreateUnbackedFile("memory://bench/block_cache_pins");
-  duckdb::BlockCacheAppender appender{cache, gFile};
+  gFile = Cache().CreateUnbackedFile("memory://bench/block_cache_pins");
+  duckdb::BlockCacheAppender appender{gFile};
   std::vector<uint8_t> bytes(duckdb::BlockCache::BLOCK_SIZE);
   for (duckdb::idx_t block = 0; block != kBlocks; ++block) {
     std::memset(bytes.data(), static_cast<int>(block), bytes.size());

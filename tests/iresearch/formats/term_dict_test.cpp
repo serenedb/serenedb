@@ -137,9 +137,9 @@ const irs::term_dict::TermReaderImpl& Blocks(const irs::TermReader& reader) {
 
 std::array<size_t, 3> BlockKinds(const irs::term_dict::TermReaderImpl& reader) {
   std::array<size_t, 3> kinds{};
-  irs::term_dict::BlockBuffer buffer;
+  irs::PinnedBytes pinned;
   for (uint32_t block = 0; block != reader.Blocks(); ++block) {
-    ++kinds.at(*reader.Block(block, buffer));
+    ++kinds.at(*reader.Block(block, pinned));
   }
   return kinds;
 }
@@ -376,16 +376,15 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     }
     _docs = docs;
     irs::FlushState state{
-      .fs = &dir().Fs(),
+      .fs = dir().Fs(),
       .root = dir().Root(),
-      .observers = &dir().Observers(),
-      .cache = &duckdb::BlockCache::Get(dir().Db()),
+      .observers = dir().Observers(),
+      .keep_cached = true,
       .name = kSegment,
       .doc_count = docs,
       .index_features = irs::IndexFeatures::None,
     };
-    irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
-                       kSegment};
+    irs::IdxWriter idx{dir().Fs(), dir().Root(), dir().Observers(), kSegment};
     irs::term_dict::FieldWriter writer{compaction};
     writer.SetIdxWriter(idx);
     const uint64_t keyed = absl::c_count_if(
@@ -420,16 +419,11 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
   void Open(const tests::IndexDir& from) {
     _reader.reset();
     _meta.name = kSegment;
-    _idx = std::make_unique<irs::IdxReader>(from.Db(), from.Fs(), from.Root(),
-                                            kSegment, true, nullptr);
-    _reader = std::make_unique<irs::term_dict::FieldReader>(
-      irs::IResourceManager::gNoop);
-    _reader->prepare(
-      irs::ReaderState{.fs = &from.Fs(),
-                       .root = from.Root(),
-                       .cache = &duckdb::BlockCache::Get(from.Db()),
-                       .meta = &_meta,
-                       .idx = _idx.get()});
+    _idx = std::make_unique<irs::IdxReader>(from.Fs(), from.Root(), kSegment,
+                                            true, nullptr);
+    _reader = std::make_unique<irs::term_dict::FieldReader>();
+    _reader->prepare(irs::ReaderState{
+      .fs = from.Fs(), .root = from.Root(), .meta = _meta, .idx = _idx.get()});
   }
 
   const irs::TermReader* Get(
@@ -451,8 +445,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
   }
 
   irs::term_dict::TermsMeta TakeTerms() {
-    return irs::IdxReader{dir().Db(), dir().Fs(), dir().Root(),
-                          kSegment,   true,       nullptr}
+    return irs::IdxReader{dir().Fs(), dir().Root(), kSegment, true, nullptr}
       .TakeTerms();
   }
 
@@ -1370,8 +1363,8 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
     SCOPED_TRACE(testing::Message("field ") << field.id);
     const auto& impl = Blocks(*Get(field));
     ASSERT_EQ(field.id != 2, impl.Small());
-    irs::term_dict::BlockBuffer buffer;
-    const auto* block = impl.Block(0, buffer);
+    irs::PinnedBytes pinned;
+    const auto* block = impl.Block(0, pinned);
     ASSERT_EQ(impl.Small(), block < begin || end <= block);
     for (const auto& entry : field.entries) {
       const auto meta = impl.Lookup(entry.key);
@@ -1903,16 +1896,15 @@ TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
   ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
             irs::term_dict::OrdinalBytes(kLimit));
   const irs::FlushState state{
-    .fs = &dir().Fs(),
+    .fs = dir().Fs(),
     .root = dir().Root(),
-    .observers = &dir().Observers(),
-    .cache = &duckdb::BlockCache::Get(dir().Db()),
+    .observers = dir().Observers(),
+    .keep_cached = true,
     .name = kSegment,
     .doc_count = 10,
     .index_features = irs::IndexFeatures::None,
   };
-  irs::IdxWriter idx{dir().Db(), dir().Fs(), dir().Root(), dir().Observers(),
-                     kSegment};
+  irs::IdxWriter idx{dir().Fs(), dir().Root(), dir().Observers(), kSegment};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   ASSERT_SQL_ERROR(writer.prepare(state, kLimit + 1),

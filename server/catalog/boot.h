@@ -28,8 +28,6 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 namespace duckdb {
 
@@ -67,9 +65,6 @@ duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
                                        duckdb::idx_t oid);
 
 const DataDirectory& ClusterLayout(duckdb::AttachedDatabase& cluster);
-
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory);
 
 void RegisterClusterStorage(duckdb::DBConfig& config,
                             duckdb::shared_ptr<DataDirectory> layout);

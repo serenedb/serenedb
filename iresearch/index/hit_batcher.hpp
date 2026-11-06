@@ -59,7 +59,8 @@ class HitBatcher {
                     std::span<const ColFilterSpec> filters = {});
 
   void CollectBlocks(const irs::ColReader& col_reader, uint64_t first,
-                     uint64_t last, std::vector<ByteExtent>& out) const;
+                     uint64_t last,
+                     std::vector<duckdb::BlockCacheRange>& out) const;
 
   bool Bound(uint32_t seg_idx) const noexcept {
     return _bound && _seg_idx == seg_idx;
@@ -164,7 +165,7 @@ class HitBatcher {
 
   std::unique_ptr<irs::ReadContext> _ctx;
   std::vector<Column> _columns;
-  std::vector<ByteExtent> _extents;
+  std::vector<duckdb::BlockCacheRange> _extents;
   uint32_t _seg_idx = 0;
   const irs::ColumnReader* _rg_col = nullptr;
 

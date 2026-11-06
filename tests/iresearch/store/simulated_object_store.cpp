@@ -141,9 +141,6 @@ std::shared_ptr<const SimulatedObjectStore::Object> SimulatedObjectStore::Find(
 uint64_t SimulatedObjectStore::Publish(const std::string& path,
                                        std::string bytes, bool exclusive) {
   Request(_put);
-  SDB_IF_FAILURE("object_store_put_fails") {
-    throw duckdb::IOException("simulated PUT failure for \"%s\"", path);
-  }
   _bytes_written.fetch_add(bytes.size(), std::memory_order_relaxed);
   auto object = std::make_shared<Object>();
   object->bytes = std::move(bytes);
@@ -161,10 +158,6 @@ uint64_t SimulatedObjectStore::Publish(const std::string& path,
 std::shared_ptr<const SimulatedObjectStore::Object> SimulatedObjectStore::Fetch(
   std::string_view path, uint64_t version) {
   Request(_get);
-  SDB_IF_FAILURE("object_store_get_fails") {
-    throw duckdb::IOException("simulated GET failure for \"%s\"",
-                              std::string{path});
-  }
   auto object = Find(path);
   if (!object) {
     throw duckdb::IOException(MissingInfo(),
@@ -240,9 +233,6 @@ duckdb::unique_ptr<duckdb::FileHandle> SimulatedObjectStore::OpenFileExtended(
     return handle;
   }
   Request(_head);
-  SDB_IF_FAILURE("object_store_head_fails") {
-    throw duckdb::IOException("simulated HEAD failure for \"%s\"", path);
-  }
   auto object = Find(path);
   if (!object) {
     if (flags.ReturnNullIfNotExists()) {
@@ -351,9 +341,6 @@ duckdb::FileExistence SimulatedObjectStore::TryFileExists(
   const std::string& filename, duckdb::optional_ptr<duckdb::FileOpener> opener,
   duckdb::optional_ptr<duckdb::ErrorData> error) {
   Request(_head);
-  SDB_IF_FAILURE("object_store_head_fails") {
-    throw duckdb::IOException("simulated HEAD failure for \"%s\"", filename);
-  }
   return Find(filename) ? duckdb::FileExistence::EXISTS
                         : duckdb::FileExistence::MISSING;
 }
@@ -383,9 +370,6 @@ bool SimulatedObjectStore::ListFilesExtended(
   duckdb::optional_ptr<duckdb::FileOpener> opener,
   const duckdb::ListFilesOptions& options) {
   Request(_list);
-  SDB_IF_FAILURE("object_store_list_fails") {
-    throw duckdb::IOException("simulated LIST failure for \"%s\"", directory);
-  }
   const auto prefix = DirectoryPrefix(directory);
   absl::btree_map<std::string, std::shared_ptr<const Object>> listed;
   {
@@ -439,9 +423,6 @@ void SimulatedObjectStore::MoveFile(
     return;
   }
   Request(_copy);
-  SDB_IF_FAILURE("object_store_copy_fails") {
-    throw duckdb::IOException("simulated COPY failure for \"%s\"", source);
-  }
   auto object = Find(source);
   if (!object) {
     throw duckdb::IOException(MissingInfo(),

@@ -51,7 +51,7 @@ class ReadContext final : public BlockManager,
 
   void Reset(const ColReader& reader);
 
-  const InputFile* File() const noexcept { return _file; }
+  const InputFile* File() const noexcept { return _in.File(); }
   bool RandomAccess() const noexcept { return _random_access; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
@@ -90,7 +90,6 @@ class ReadContext final : public BlockManager,
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
   bool Wraps(uint64_t offset, uint64_t size) const noexcept;
 
-  const InputFile* _file = nullptr;
   IndexInput _in;
   duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;

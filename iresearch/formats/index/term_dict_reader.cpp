@@ -161,8 +161,7 @@ class TermIteratorImpl : public SeekTermIterator {
 }  // namespace
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               bytes_view prefix, const InputFile& in,
-                               const Separators& separators)
+                               bytes_view prefix, const Separators& separators)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
@@ -183,7 +182,6 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
   key_width = head.width;
-  uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));
   _max_key.assign(prefix);
@@ -201,11 +199,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   uint64_t inline_size = 0;
   if (_blocks > 1) {
     _root = Root{Slice(separators, _first_block, _blocks - 1), key_width != 0};
-    bytes += _root.MemoryBytes();
     if (!head.text.prefixes.empty()) {
       _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
         ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
-      bytes += _prefixes->MemoryBytes();
     }
   } else if (!head.text.prefixes.empty()) {
     corrupted();
@@ -218,12 +214,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     }
   }
   if (!head.ranges.counts.empty()) {
-    bytes += ReadRanges(owner, in, head.ranges);
+    ReadRanges(owner, head.ranges);
   } else if (head.ranges.size != 0) {
     corrupted();
   }
   if (_blocks == 1) {
-    _small = owner.CopyBlock(_first_block, in.Length());
+    _small = owner.CopyBlock(_first_block, owner.Input().Length());
     if (inline_size != 0) {
       _small_inline = {owner.InlineRegion() + _inline_base, inline_size};
       if (owner.Base()) {
@@ -234,11 +230,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       }
     }
   }
-  owner.Account(bytes);
 }
 
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, const InputFile& in,
-                                    const RangesHead& ranges) {
+void TermReaderImpl::ReadRanges(FieldReader& owner, const RangesHead& ranges) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = ranges.offset;
   const auto size = ranges.size;
@@ -285,7 +279,6 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, const InputFile& in,
   if (static_cast<uint64_t>(end - p) != kSlack) {
     corrupted();
   }
-  return _levels.capacity() * sizeof(RangeLevel);
 }
 
 void TermReaderImpl::SampleTerms(
@@ -322,7 +315,7 @@ void TermReaderImpl::SampleTerms(
 }
 
 const byte_type* TermReaderImpl::Block(size_t block,
-                                       BlockBuffer& buffer) const {
+                                       PinnedBytes& pinned) const {
   if (_small) {
     return _small;
   }
@@ -331,9 +324,9 @@ const byte_type* TermReaderImpl::Block(size_t block,
     return base + offset;
   }
   const auto& in = _owner->Input();
-  buffer.pinned =
+  pinned =
     in.Pin(offset, std::min(BlockOffset(block + 1), in.Length()) - offset);
-  return buffer.pinned.bytes.data();
+  return pinned.bytes.data();
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
@@ -389,8 +382,8 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(probe);
   PrefetchLookup(block);
-  BlockBuffer buffer;
-  const auto view = Parse(Block(block, buffer), Fsst());
+  PinnedBytes pinned;
+  const auto view = Parse(Block(block, pinned), Fsst());
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
     return {};
@@ -461,7 +454,7 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   }
   auto epoch = file_utils::ResidencyEpoch();
 
-  BlockBuffer buffer;
+  PinnedBytes pinned;
   BlockView view{};
   uint32_t parsed = kNoBlock;
   for (const auto& probe : probes) {
@@ -477,7 +470,7 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
         const auto budget = HintRanges(in, blocks);
         HintRanges(in, inlines, budget);
       }
-      view = Parse(Block(parsed, buffer), Fsst());
+      view = Parse(Block(parsed, pinned), Fsst());
     }
     const auto entry =
       Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst());

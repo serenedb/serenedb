@@ -53,7 +53,6 @@
 #include <string>
 
 #include "catalog/catalog.h"
-#include "catalog/entry/entries_of.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
@@ -796,14 +795,6 @@ bool InvertedIndexEntry::ScanColumnSegmentInfo(
   result =
     SearchTableEntry::ColumnSegmentRows(snapshot->reader, table, key_column);
   return true;
-}
-
-std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog) {
-  const auto inverted = [](duckdb::CatalogEntry& entry) {
-    return connector::IsInvertedIndex(entry.Cast<duckdb::IndexCatalogEntry>());
-  };
-  return EntriesOf<InvertedIndexEntry>(catalog, inverted);
 }
 
 }  // namespace sdb::catalog

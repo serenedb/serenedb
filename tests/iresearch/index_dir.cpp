@@ -20,8 +20,6 @@
 
 #include "index_dir.hpp"
 
-#include <duckdb/storage/block_cache/block_cache.hpp>
-
 namespace tests {
 
 IndexDir::State::~State() {
@@ -44,18 +42,17 @@ IndexDir::IndexDir(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
                                    std::make_shared<irs::IndexFileRefs>())} {}
 
 std::unique_ptr<irs::FileOutput> IndexDir::Create(std::string_view name) const {
-  return irs::FileOutput::Open(Fs(), Root(), name, _observers,
-                               &duckdb::BlockCache::Get(Db()));
+  return irs::FileOutput::Open(Fs(), Root(), name, _observers, true);
 }
 
 std::unique_ptr<irs::InputFile> IndexDir::Open(
   std::string_view name, duckdb::MappedFileAccess access) const {
-  return irs::OpenInput(duckdb::BlockCache::Get(Db()), Fs(),
-                        irs::PathOf(Root(), name), access);
+  return irs::OpenInput(Fs(), irs::PathOf(Root(), name), access);
 }
 
 irs::bstring IndexDir::ReadWhole(std::string_view name) const {
-  return irs::ReadWhole(Fs(), irs::PathOf(Root(), name));
+  return irs::ReadWhole<irs::bstring>(duckdb::QueryContext{}, Fs(),
+                                      irs::PathOf(Root(), name));
 }
 
 bool IndexDir::Has(std::string_view name) const {
@@ -72,23 +69,6 @@ bool IndexDir::Remove(std::string_view name) const {
   return true;
 }
 
-void IndexDir::Remove(std::span<const std::string> names) const {
-  if (names.empty()) {
-    return;
-  }
-  duckdb::vector<std::string> paths;
-  paths.reserve(names.size());
-  for (const auto& name : names) {
-    paths.push_back(irs::PathOf(Root(), name));
-  }
-  Fs().RemoveFiles(paths);
-  for (const auto& name : names) {
-    for (auto* observer : _observers) {
-      observer->Removed(name);
-    }
-  }
-}
-
 void IndexDir::Rename(std::string_view src, std::string_view dst) const {
   Fs().MoveFile(irs::PathOf(Root(), src), irs::PathOf(Root(), dst));
   for (auto* observer : _observers) {
@@ -100,8 +80,6 @@ void IndexDir::Sync(std::span<const std::string_view> names) const {
   irs::SyncFiles(Fs(), Root(), names);
 }
 
-void IndexDir::SyncDirectory() const { irs::SyncDirectory(Fs(), Root()); }
-
 void IndexDir::Compact(std::string_view name) const {
   Fs().Compact(irs::PathOf(Root(), name));
 }
@@ -112,21 +90,9 @@ void IndexDir::Visit(absl::FunctionRef<void(std::string_view)> visitor) const {
 
 irs::IndexReaderOptions IndexDir::ReaderOptions(
   irs::IndexReaderOptions options) const {
-  if (!options.db) {
-    options.db = &Db();
-  }
   if (!options.refs) {
     options.refs = _state->refs;
   }
-  return options;
-}
-
-irs::IndexWriterOptions IndexDir::WriterOptions(
-  irs::IndexWriterOptions options) const {
-  if (!options.db) {
-    options.db = &Db();
-  }
-  options.reader_options = ReaderOptions(std::move(options.reader_options));
   return options;
 }
 
@@ -136,23 +102,18 @@ IndexDir IndexDir::Observed(irs::FileObserver& observer) const {
   return result;
 }
 
-IndexDir IndexDir::Unobserved() const {
-  auto result = *this;
-  result._observers.clear();
-  return result;
-}
-
 irs::DirectoryReader OpenReader(const IndexDir& dir,
                                 const irs::IndexReaderOptions& options,
                                 irs::MetaPayloadReader payload) {
-  return irs::DirectoryReader{dir.Fs(), dir.Root(), dir.ReaderOptions(options),
-                              std::move(payload)};
+  return irs::DirectoryReader{dir.Db(), dir.Fs(), dir.Root(),
+                              dir.ReaderOptions(options), std::move(payload)};
 }
 
 irs::IndexWriter::ptr MakeWriter(const IndexDir& dir, irs::OpenMode mode,
                                  irs::IndexWriterOptions options) {
-  return irs::IndexWriter::Make(dir.Fs(), dir.Root(), mode,
-                                dir.WriterOptions(std::move(options)));
+  options.reader_options = dir.ReaderOptions(std::move(options.reader_options));
+  return irs::IndexWriter::Make(dir.Db(), dir.Fs(), dir.Root(), mode,
+                                std::move(options));
 }
 
 }  // namespace tests

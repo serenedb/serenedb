@@ -32,6 +32,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/index_files.hpp>
@@ -43,7 +44,6 @@
 #include <string_view>
 #include <utility>
 
-#include "catalog/database_directory.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
 
@@ -63,8 +63,7 @@ class IndexDurability {
     absl::AnyInvocable<std::shared_ptr<const FileManifest>() const>;
 
   IndexDurability(duckdb::AttachedDatabase& database, std::string name,
-                  const std::optional<catalog::StorageDirectory>& parent,
-                  duckdb::idx_t oid, bool is_new);
+                  std::string root);
   ~IndexDurability();
 
   const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
@@ -109,9 +108,6 @@ class IndexDurability {
   }
 
  private:
-  IndexDurability(duckdb::AttachedDatabase& database, std::string name,
-                  std::optional<std::string> path, duckdb::idx_t oid);
-
   void SyncDirectory();
   void MarkPublished();
   bool FinishRefresh(irs::IndexWriter& writer);
@@ -132,6 +128,7 @@ class IndexDurability {
 
   duckdb::weak_ptr<duckdb::AttachedDatabase> _database;
   std::string _name;
+  duckdb::DatabaseInstance& _db;
   duckdb::FileSystem& _fs;
   std::string _root;
   std::shared_ptr<irs::IndexFileRefs> _refs;

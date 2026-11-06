@@ -174,7 +174,8 @@ TablespaceCatalogEntry& ClusterCatalog::Tablespace(
     return entry->Cast<TablespaceCatalogEntry>();
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                  ERR_MSG("tablespace with OID ", oid, " does not exist"));
+                  ERR_MSG("tablespace with OID ", static_cast<int64_t>(oid),
+                          " does not exist"));
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::EntryById(
@@ -208,6 +209,18 @@ std::shared_ptr<DatabaseDirectory> ClusterCatalog::MakeDatabaseDirectory(
     (root->Remote() ? _default_root : root)->DatabaseDir(oid);
   return std::make_shared<DatabaseDirectory>(oid, std::move(root),
                                              std::move(path));
+}
+
+std::vector<std::shared_ptr<TablespaceRoot>> ClusterCatalog::TablespaceRoots(
+  duckdb::CatalogTransaction transaction) {
+  std::vector<std::shared_ptr<TablespaceRoot>> roots;
+  GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      if (const auto& root = entry.Cast<TablespaceCatalogEntry>().Root()) {
+        roots.push_back(root);
+      }
+    });
+  return roots;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
@@ -636,14 +649,7 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
   if (!directory) {
     return;
   }
-  std::vector<std::shared_ptr<TablespaceRoot>> roots;
-  GetCatalogSet(duckdb::CatalogType::TABLESPACE_ENTRY)
-    .Scan(transaction, [&](duckdb::CatalogEntry& tablespace) {
-      if (const auto& root = tablespace.Cast<TablespaceCatalogEntry>().Root()) {
-        roots.push_back(root);
-      }
-    });
-  directory->SetTablespaceRoots(std::move(roots));
+  directory->SetTablespaceRoots(TablespaceRoots(transaction));
 }
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context) {
@@ -680,15 +686,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
     cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
 }
 
-duckdb::CatalogEntry& RequireTablespace(duckdb::ClientContext& context,
-                                        std::string_view name) {
+TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                          std::string_view name) {
   auto tablespace =
     ClusterEntry(context, duckdb::CatalogType::TABLESPACE_ENTRY, name);
   if (!tablespace) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("tablespace \"", name, "\" does not exist"));
   }
-  return *tablespace;
+  return tablespace->Cast<TablespaceCatalogEntry>();
+}
+
+TablespaceCatalogEntry& RequireTablespace(duckdb::ClientContext& context,
+                                          duckdb::idx_t oid) {
+  auto& cluster = ClusterOf(context);
+  return cluster.Tablespace(cluster.GetCatalogTransaction(context), oid);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntryById(

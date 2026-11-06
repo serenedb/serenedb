@@ -323,7 +323,4 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   bool _retired = false;
 };
 
-std::vector<duckdb::reference<InvertedIndexEntry>> InvertedIndexEntries(
-  duckdb::DuckCatalog& catalog);
-
 }  // namespace sdb::catalog

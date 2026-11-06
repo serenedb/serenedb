@@ -88,6 +88,8 @@ class ColWriter final {
   yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
                                 absl::FunctionRef<bool()> progress);
 
+  std::unique_ptr<ColReader> OpenReader() const;
+
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }

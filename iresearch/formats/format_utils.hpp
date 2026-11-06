@@ -54,7 +54,7 @@ Footer ReadFooter(const InputFile& file, std::string_view name,
 
 Footer ReadFooter(bytes_view file, std::string_view name, FooterReader read);
 
-void PrepareOutput(std::string& str, std::unique_ptr<FileOutput>& out,
-                   const FlushState& state, std::string_view ext);
+std::unique_ptr<FileOutput> PrepareOutput(const FlushState& state,
+                                          std::string_view ext);
 
 }  // namespace irs::format_utils

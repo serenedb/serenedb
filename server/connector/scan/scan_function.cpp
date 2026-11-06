@@ -35,8 +35,6 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/nested_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
@@ -228,7 +226,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   auto& bind_data = input.bind_data->Cast<ScanBindData>();
   auto state = duckdb::make_uniq<ScanGlobalState>();
 
-  InitScanState(*state, &context, bind_data, input);
+  InitScanState(*state, context, bind_data, input);
 
   const auto& ss = bind_data;
   if (!ss.offsets.requests.empty() && !ss.search.filter) {
@@ -237,7 +235,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
-  UseSnapshot(*state, context, ss);
   if (ss.plan_cache.deferred) {
     ApplyDeferredClaim(*state, context, ss);
   }

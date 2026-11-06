@@ -41,6 +41,7 @@ TEST(index_meta_tests, read_write) {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
+    dir.Fs(), dir.Root(),
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       EXPECT_EQ(42, position.offset);
       out.WriteProperty<std::string>(0, "payload", "payload");
@@ -59,8 +60,8 @@ TEST(index_meta_tests, read_write) {
   std::string filename;
   std::string tmp_filename;
 
-  ASSERT_TRUE(writer.prepare(dir.Fs(), dir.Root(), dir.Observers(), meta_orig,
-                             tmp_filename, filename, {.offset = 42}));
+  ASSERT_TRUE(writer.prepare(dir.Observers(), meta_orig, tmp_filename, filename,
+                             {.offset = 42}));
   ASSERT_EQ("segments_1", filename);
   ASSERT_EQ("pending_segments_1", tmp_filename);
 
@@ -180,6 +181,7 @@ TEST(index_meta_tests, payload_is_read_whole) {
   tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
                       TestEnv::MemoryRoot()};
   irs::IndexMetaWriter writer{
+    dir.Fs(), dir.Root(),
     [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       out.WriteProperty<uint64_t>(0, "tick", position.offset);
       out.WriteProperty<std::string>(1, "name", "payload");
@@ -187,8 +189,8 @@ TEST(index_meta_tests, payload_is_read_whole) {
   irs::IndexMeta meta;
   std::string pending_filename;
   std::string filename;
-  ASSERT_TRUE(writer.prepare(dir.Fs(), dir.Root(), dir.Observers(), meta,
-                             pending_filename, filename, {.offset = 7}));
+  ASSERT_TRUE(writer.prepare(dir.Observers(), meta, pending_filename, filename,
+                             {.offset = 7}));
   ASSERT_TRUE(writer.commit());
 
   std::string message;

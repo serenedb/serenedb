@@ -32,9 +32,10 @@ namespace irs {
 namespace {
 
 template<typename... Args>
-void TryPrefetch(duckdb::BlockCache& cache, Args&&... args) noexcept {
+void TryPrefetch(const duckdb::shared_ptr<duckdb::BlockCacheFile>& file,
+                 Args&&... args) noexcept {
   try {
-    cache.Prefetch(std::forward<Args>(args)...);
+    file->GetCache().Prefetch(file, std::forward<Args>(args)...);
   } catch (...) {
   }
 }
@@ -74,16 +75,15 @@ InputFile::InputFile(std::unique_ptr<duckdb::MemoryMappedFile> mapping)
   }
 }
 
-InputFile::InputFile(duckdb::BlockCache& cache,
-                     duckdb::shared_ptr<duckdb::BlockCacheFile> blocks) noexcept
-  : _length{blocks->GetSize()},
-    _kind{std::in_place_type<CacheBlocks>, &cache, std::move(blocks)} {}
+InputFile::InputFile(duckdb::shared_ptr<duckdb::BlockCacheFile> file) noexcept
+  : _length{file->GetSize()},
+    _kind{std::in_place_type<CacheBlocks>, std::move(file)} {}
 
 const std::string& InputFile::Path() const noexcept {
   if (const auto* span = std::get_if<MappedSpan>(&_kind)) {
     return span->mapping->GetPath();
   }
-  return std::get_if<CacheBlocks>(&_kind)->blocks->GetPath();
+  return std::get_if<CacheBlocks>(&_kind)->file->GetPath();
 }
 
 duckdb::MemoryMappedFile* InputFile::Mapping() const noexcept {
@@ -109,8 +109,8 @@ bytes_view InputFile::Refill(uint64_t position, CursorBlock& block,
   }
   auto& pinned = *block.pinned;
   const auto number = position / duckdb::BlockCache::BLOCK_SIZE;
-  pinned.pin =
-    blocks->cache->PinInOrder(blocks->blocks, number, pinned.ahead, ahead);
+  pinned.pin = blocks->file->GetCache().PinInOrder(blocks->file, number,
+                                                   pinned.ahead, ahead);
   block.start = number * duckdb::BlockCache::BLOCK_SIZE;
   return {pinned.pin.Ptr(),
           std::min<uint64_t>(pinned.pin.Size(), _length - block.start)};
@@ -127,7 +127,7 @@ PinnedBytes InputFile::Pin(uint64_t offset, uint64_t size) const {
     return {};
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  auto pin = blocks->cache->PinBytes(*blocks->blocks, offset, size);
+  auto pin = blocks->file->GetCache().PinBytes(*blocks->file, offset, size);
   return {.bytes = {pin.Ptr(), size}, .pin = std::move(pin)};
 }
 
@@ -149,13 +149,12 @@ void InputFile::Prefetch(uint64_t offset, uint64_t size) const noexcept {
     return;
   }
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
-  TryPrefetch(*blocks->cache, blocks->blocks, offset, size,
-              duckdb::BlockCachePrefetch::HINT);
+  TryPrefetch(blocks->file, offset, size, duckdb::BlockCachePrefetch::HINT);
 }
 
 void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
   if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    blocks->cache->MarkUnused(*blocks->blocks, offset, size);
+    blocks->file->GetCache().MarkUnused(*blocks->file, offset, size);
     return;
   }
   if (const auto* span = std::get_if<MappedSpan>(&_kind); span->paged) {
@@ -163,7 +162,8 @@ void InputFile::Evict(uint64_t offset, uint64_t size) const noexcept {
   }
 }
 
-void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+void InputFile::PrefetchExtents(
+  std::span<duckdb::BlockCacheRange> extents) const noexcept {
   const auto* blocks = std::get_if<CacheBlocks>(&_kind);
   if (!blocks) {
     for (const auto& extent : extents) {
@@ -171,8 +171,7 @@ void InputFile::PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
     }
     return;
   }
-  TryPrefetch(*blocks->cache, blocks->blocks, extents,
-              duckdb::BlockCachePrefetch::NEED);
+  TryPrefetch(blocks->file, extents, duckdb::BlockCachePrefetch::NEED);
 }
 
 void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
@@ -183,7 +182,8 @@ void InputFile::MarkWarm(uint64_t offset, uint64_t size) const noexcept {
 
 uint64_t InputFile::Warm(uint64_t offset, uint64_t size) const noexcept {
   if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    return blocks->cache->IsCached(*blocks->blocks, offset, size) ? size : 0;
+    return blocks->file->GetCache().IsCached(*blocks->file, offset, size) ? size
+                                                                          : 0;
   }
   const auto& span = *std::get_if<MappedSpan>(&_kind);
   return span.paged ? Warm(span, offset, size) : size;
@@ -234,7 +234,7 @@ void InputFile::MarkWarm(const MappedSpan& span, uint64_t offset,
 
 bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
   if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    return blocks->cache->IsCached(*blocks->blocks, offset, size);
+    return blocks->file->GetCache().IsCached(*blocks->file, offset, size);
   }
   const auto window = SpanWindow(offset, size);
   return !window.empty() &&
@@ -243,7 +243,7 @@ bool InputFile::Resident(uint64_t offset, uint64_t size) const noexcept {
 
 bool InputFile::Hint(uint64_t offset, uint64_t size) const noexcept {
   if (const auto* blocks = std::get_if<CacheBlocks>(&_kind)) {
-    if (blocks->cache->IsCached(*blocks->blocks, offset, size)) {
+    if (blocks->file->GetCache().IsCached(*blocks->file, offset, size)) {
       return false;
     }
     Prefetch(offset, size);

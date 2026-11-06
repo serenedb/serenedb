@@ -71,7 +71,8 @@ class ColReader final {
   ReadContext& Ctx() noexcept { return _ctx; }
 
   const InputFile* File() const noexcept { return _file.get(); }
-  void PrefetchExtents(std::span<ByteExtent> extents) const noexcept {
+  void PrefetchExtents(
+    std::span<duckdb::BlockCacheRange> extents) const noexcept {
     if (_file) {
       _file->PrefetchExtents(extents);
     }
@@ -79,9 +80,6 @@ class ColReader final {
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
-  ColReader(duckdb::DatabaseInstance& db, std::string_view segment_name,
-            std::unique_ptr<InputFile> file);
-
   duckdb::DatabaseInstance* _db;
   std::unique_ptr<InputFile> _file;
   ReadContext _ctx;

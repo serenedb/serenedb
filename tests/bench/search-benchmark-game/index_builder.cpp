@@ -42,15 +42,12 @@ static irs::IndexWriterOptions MakeWriterOptions(
   irs::ScorerPtr scorer_ptr, std::shared_ptr<irs::IndexFileRefs> refs,
   size_t segment_pool_size, size_t segment_mem_max, uint32_t row_group_size,
   uint32_t segment_docs_max) {
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.reader_options.refs = std::move(refs);
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
   writer_opts.segment_docs_max = segment_docs_max;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.row_group_size = row_group_size;
   writer_opts.norm_column_id =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
@@ -75,7 +72,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
     _root{MakeDirectory(path)},
     _refs{std::make_shared<irs::IndexFileRefs>()},
     _writer{irs::IndexWriter::Make(
-      _fs, _root, irs::kOmCreate,
+      ::irs::DuckDBEngine::Instance().instance(), _fs, _root, irs::kOmCreate,
       MakeWriterOptions(_scorer_ptr, _refs, opts.indexer_threads,
                         config.segment_mem_max, opts.row_group_size,
                         opts.segment_docs_max))} {}

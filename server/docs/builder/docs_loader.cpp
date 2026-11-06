@@ -39,9 +39,9 @@
 #include <duckdb/main/query_result.hpp>
 #include <exception>
 #include <filesystem>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/slurp.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iterator>
 #include <memory>
@@ -434,7 +434,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
     });
     for (const auto& name : names) {
       image.push_back({.name = absl::StrCat(table_name, "/", name),
-                       .bytes = irs::file_utils::Slurp(
+                       .bytes = irs::ReadWhole<std::string>(
                          context, fs, fs.JoinPath(store, name))});
     }
     image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),

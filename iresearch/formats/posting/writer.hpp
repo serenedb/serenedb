@@ -346,19 +346,18 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
 }
 
 inline void PostingsWriter::Prepare(const FlushState& state) {
-  SDB_ASSERT(state.fs);
   SDB_ASSERT(!IsNull(state.name));
 
-  std::string name;
-
   // Prepare document stream
-  format_utils::PrepareOutput(name, _doc_out, state, kDocExt);
+  SDB_ASSERT(!_doc_out);
+  _doc_out = format_utils::PrepareOutput(state, kDocExt);
 
   if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
     // Prepare proximity stream
     _pos.Reset();
     _pos_group.Reset();
-    format_utils::PrepareOutput(name, _pos_out, state, kPosExt);
+    SDB_ASSERT(!_pos_out);
+    _pos_out = format_utils::PrepareOutput(state, kPosExt);
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
@@ -372,7 +371,8 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
     _pay_group.Reset();
   }
   if (has_offs || has_vec) {
-    format_utils::PrepareOutput(name, _pay_out, state, kPayExt);
+    SDB_ASSERT(!_pay_out);
+    _pay_out = format_utils::PrepareOutput(state, kPayExt);
   }
 
   _writer = PrepareScoreBoundWriter(state.scorer);

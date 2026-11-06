@@ -619,8 +619,8 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
     out->WriteData(bytes.data(), bytes.size());
     out->Close();
   }
-  const irs::IdxReader idx{zeroed.Db(),         zeroed.Fs(), zeroed.Root(),
-                           segment.Meta().name, true,        nullptr};
+  const irs::IdxReader idx{zeroed.Fs(), zeroed.Root(), segment.Meta().name,
+                           true, nullptr};
   const auto& header =
     static_cast<const irs::HnswIndex&>(*idx.Ann(kVec)).Header();
   EXPECT_EQ(kDim, header.d);
@@ -797,7 +797,7 @@ std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
   std::vector<std::shared_ptr<const std::vector<float>>> out;
   for (const auto& segment : reader) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    out.push_back(ann->Load(segment)->rotation);
+    out.push_back(ann->Load()->rotation);
   }
   return out;
 }
@@ -1035,7 +1035,7 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   EXPECT_EQ(flushed[0], flushed[1]);
   for (const auto& segment : writer->GetSnapshot()) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    EXPECT_EQ(ann->Load(segment)->tails.size(),
+    EXPECT_EQ(ann->Load()->tails.size(),
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
@@ -1635,7 +1635,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     EXPECT_EQ(1U, reader->size());
     const auto& segment = (*reader)[0];
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    const auto data = ann->Load(segment);
+    const auto data = ann->Load();
     const auto& graph = data->graph;
     size_t links = 0;
     size_t near = 0;

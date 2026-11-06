@@ -41,6 +41,30 @@ class HookFileHandle final : public duckdb::FileHandle {
   duckdb::unique_ptr<duckdb::FileHandle> inner;
 };
 
+class HookFileWriter final : public duckdb::FileWriter {
+ public:
+  HookFileWriter(HookFileSystem& fs,
+                 duckdb::unique_ptr<duckdb::FileWriter> inner,
+                 const std::string& path)
+    : _fs{fs}, _inner{std::move(inner)}, _path{path} {}
+
+  duckdb::FileWriteWindow Window() final { return _inner->Window(); }
+
+  void Commit(duckdb::idx_t nr_bytes) final { _inner->Commit(nr_bytes); }
+
+  void Close() final {
+    _fs.OnClose(HookFileSystem::Name(_path));
+    _inner->Close();
+  }
+
+  void Abort() noexcept final { _inner->Abort(); }
+
+ private:
+  HookFileSystem& _fs;
+  duckdb::unique_ptr<duckdb::FileWriter> _inner;
+  std::string _path;
+};
+
 duckdb::FileHandle& Inner(duckdb::FileHandle& handle) {
   return *handle.Cast<HookFileHandle>().inner;
 }
@@ -85,6 +109,19 @@ duckdb::shared_ptr<duckdb::BlockCacheFile> HookFileSystem::OpenBlockFile(
   const std::string& path) {
   OnOpen(Name(path));
   return _inner.OpenBlockFile(path);
+}
+
+duckdb::unique_ptr<duckdb::FileWriter> HookFileSystem::OpenFileWriter(
+  const std::string& path, bool keep_cached) {
+  OnCreate(Name(path));
+  auto inner = _inner.OpenFileWriter(path, keep_cached);
+  if (!inner) {
+    return nullptr;
+  }
+  auto writer =
+    duckdb::make_uniq<HookFileWriter>(*this, std::move(inner), path);
+  OnCreated(Name(path));
+  return writer;
 }
 
 void HookFileSystem::Compact(const std::string& path) { _inner.Compact(path); }
@@ -139,16 +176,6 @@ void HookFileSystem::HintWriteback(duckdb::FileHandle& handle,
                                    duckdb::idx_t location,
                                    duckdb::idx_t nr_bytes) {
   Inner(handle).HintWriteback(location, nr_bytes);
-}
-
-duckdb::FileWriteWindow HookFileSystem::GetWriteWindow(
-  duckdb::FileHandle& handle) {
-  return Inner(handle).GetWriteWindow();
-}
-
-void HookFileSystem::CommitWriteWindow(duckdb::FileHandle& handle,
-                                       duckdb::idx_t nr_bytes) {
-  Inner(handle).CommitWriteWindow(nr_bytes);
 }
 
 void HookFileSystem::Seek(duckdb::FileHandle& handle, duckdb::idx_t location) {

@@ -91,7 +91,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   static constexpr duckdb::transaction_t kNoLayoutOwner =
     std::numeric_limits<duckdb::transaction_t>::max();
 
-  // `is_new` opens a fresh index; otherwise Open() opens the durable one.
   // `database` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
@@ -111,13 +110,9 @@ class Store final : public std::enable_shared_from_this<Store>,
   duckdb::idx_t GetId() const noexcept { return _id; }
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  const duckdb::weak_ptr<duckdb::AttachedDatabase>& Database() const noexcept {
-    return _durability.Database();
-  }
   std::string Path() const { return _parent->StoragePath(_id); }
   bool ReadOnly() const noexcept { return !_writer; }
   bool Opened() const { return _writer || Snapshot(); }
-  // Opens the durable index; false when its storage is gone.
   [[nodiscard]] bool Open();
 
   // A drop commits while readers may still hold this store; the destructor
@@ -205,7 +200,6 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   [[nodiscard]] absl::Status Refresh(
     const irs::ProgressReportCallback& progress = nullptr);
-  // VACUUM (OPTIMIZE_IN_MEMORY_TABLE).
   [[nodiscard]] absl::Status OptimizeInMemory();
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();

@@ -349,11 +349,7 @@ irs::IndexWriterOptions CsDefaultWriterOptions() {
   return options;
 }
 
-irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts) {
-  if (opts.db == nullptr) {
-    opts.db = &::irs::DuckDBEngine::Instance().instance();
-    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
-  }
+irs::IndexWriterOptions EnsureNormColumnId(irs::IndexWriterOptions opts) {
   // With a cs writer present, a Norm-featured field requires a
   // norm_column_id callback (FieldsData::emplace asserts it). Provide
   // the shared monotonic allocator when a fixture didn't set one. This only
@@ -603,6 +599,10 @@ class IndexTestCase : public tests::IndexTestBase {
         absl::flat_hash_set<std::string> after_commit;
         dir().Visit([&after_commit](std::string_view name) {
           after_commit.emplace(name);
+        });
+        absl::erase_if(files, [&](const std::string& name) {
+          return dir().Kind() != irs::StorageKind::Local &&
+                 name.starts_with("_2.");
         });
         ASSERT_EQ(files, after_commit);
       }

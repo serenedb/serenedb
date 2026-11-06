@@ -175,7 +175,7 @@ class PostingLeaf {
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
 
-  IRS_FORCE_INLINE InputType& In() const noexcept { return _in; }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
   IRS_FORCE_INLINE uint32_t* Enc() noexcept {
     if constexpr (kEnc) {
@@ -527,7 +527,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.freqs, FreqBuf> _freqs;
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
   DocsBuf _docs;
-  mutable InputType _in;
+  InputType _in;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

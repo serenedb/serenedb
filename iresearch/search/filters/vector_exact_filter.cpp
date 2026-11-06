@@ -43,7 +43,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   }
   AnnExactCodes codes;
   if (const auto* ann = segment.Ann(opts.ann_id)) {
-    codes = ann->PrepareExact(segment, opts.query, opts.metric);
+    codes = ann->PrepareExact(opts.query, opts.metric);
   }
   std::optional<score_t> threshold;
   if (opts.radius != std::numeric_limits<float>::max()) {

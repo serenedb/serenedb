@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <limits>
+
+#include "iresearch/search/detail/score_filter.hpp"
 #include "iresearch/search/top/pruned_leaf.hpp"
 
 namespace irs::top {
@@ -32,6 +35,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
+  using Base::_fetcher;
   using Base::_freqs;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
@@ -114,6 +118,32 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     return _freqs.data[doc_limits::kBlockSize - _left_in_leaf - 1];
   }
 
+  template<typename Visitor>
+  void ForEachCompetitiveBlock(doc_id_t max, score_t required,
+                               Visitor&& visit) {
+    const auto least = LeastFreq(required);
+    if (least == 1) {
+      Base::ForEachScoredBlock(
+        max, [&](doc_id_t* docs, uint32_t len, score_t* scores)
+               IRS_FORCE_INLINE { visit(docs, len, scores, len); });
+      return;
+    }
+    Base::ForEachBlock(max, [&](doc_id_t* docs, uint32_t len) IRS_FORCE_INLINE {
+      ABSL_CACHELINE_ALIGNED doc_id_t kept_docs[doc_limits::kBlockSize];
+      ABSL_CACHELINE_ALIGNED uint32_t kept_freqs[doc_limits::kBlockSize];
+      ABSL_CACHELINE_ALIGNED score_t kept_scores[doc_limits::kBlockSize];
+      const auto kept =
+        irs::detail::FilterFreqs(docs, _freqs.data + (docs - std::begin(_docs)),
+                                 len, least, kept_docs, kept_freqs);
+      if (kept != 0) {
+        _provider.freq.value = kept_freqs;
+        FetchAndScore(*_fetcher, _score, kept_docs, kept_scores, kept);
+        _provider.freq.value = _freqs.data;
+      }
+      visit(kept_docs, kept, kept_scores, len);
+    });
+  }
+
   void ScoreFreqs(uint32_t* freqs, score_t* scores, uint32_t count) {
     _provider.freq.value = freqs;
     if (count == kScoreBlock) {
@@ -125,6 +155,28 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
   }
 
  private:
+  uint32_t LeastFreq(score_t required) {
+    if (required == _required) {
+      return _least_freq;
+    }
+    _required = required;
+    _least_freq = 1;
+    if (!_cursor.Armed() ||
+        Base::BoundScore({.freq = 1, .norm = 1}) > required) {
+      return _least_freq;
+    }
+    auto most = _cursor.Index().Root().freq + 1;
+    while (_least_freq < most) {
+      const auto mid = _least_freq + (most - _least_freq) / 2;
+      if (Base::BoundScore({.freq = mid, .norm = mid}) > required) {
+        most = mid;
+      } else {
+        _least_freq = mid + 1;
+      }
+    }
+    return _least_freq;
+  }
+
   doc_id_t SkipTo(doc_id_t target) {
     if (!_cursor.Armed() || (_left_in_leaf != 0 && target <= _max_in_leaf)) {
       return Seek(target);
@@ -176,6 +228,9 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
       ReadLeaf(*(std::end(_docs) - 1));
     }
   }
+
+  score_t _required = std::numeric_limits<score_t>::lowest();
+  uint32_t _least_freq = 1;
 };
 
 }  // namespace irs::top

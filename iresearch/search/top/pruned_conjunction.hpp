@@ -206,29 +206,46 @@ class PrunedConjunction : public Root {
     auto threshold = collector.ScoreThreshold();
     uint32_t seen = 0;
     uint32_t dropped = 0;
-    _lead.ForEachScoredBlock(last + 1, [&](doc_id_t* docs, uint32_t len,
-                                           score_t* scores) {
-      if (const auto required = threshold - others_max; required > 0) {
-        const auto kept =
-          irs::detail::FilterScores(docs, scores, len, required);
-        dropped += len - kept;
-        seen += len - kept;
-        len = kept;
-      }
-      if constexpr (kExcludes) {
-        len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
-      }
-      seen += len;
-      for (uint32_t off = 0; off < len; off += kChunk) {
-        const auto n = std::min<uint32_t>(kChunk, len - off);
-        const auto kept = _others.Apply(docs + off, scores + off, n, threshold);
-        if (kept != 0) {
-          _admit.AddDocs(collector, docs + off, kept, scores + off);
-          threshold = collector.ScoreThreshold();
+    ForEachLeadBlock(
+      last + 1, threshold - others_max,
+      [&](doc_id_t* docs, uint32_t len, score_t* scores, uint32_t block) {
+        dropped += block - len;
+        seen += block - len;
+        if (const auto required = threshold - others_max; required > 0) {
+          const auto kept =
+            irs::detail::FilterScores(docs, scores, len, required);
+          dropped += len - kept;
+          seen += len - kept;
+          len = kept;
         }
-      }
-    });
+        if constexpr (kExcludes) {
+          len = irs::detail::ExcludeBlock(_excludes, docs, scores, len);
+        }
+        seen += len;
+        for (uint32_t off = 0; off < len; off += kChunk) {
+          const auto n = std::min<uint32_t>(kChunk, len - off);
+          const auto kept =
+            _others.Apply(docs + off, scores + off, n, threshold);
+          if (kept != 0) {
+            _admit.AddDocs(collector, docs + off, kept, scores + off);
+            threshold = collector.ScoreThreshold();
+          }
+        }
+      });
     return {seen, dropped};
+  }
+
+  template<typename Visitor>
+  void ForEachLeadBlock(doc_id_t max, score_t required, Visitor&& visit) {
+    if constexpr (requires {
+                    _lead.ForEachCompetitiveBlock(max, required, visit);
+                  }) {
+      _lead.ForEachCompetitiveBlock(max, required, visit);
+    } else {
+      _lead.ForEachScoredBlock(
+        max, [&](doc_id_t* docs, uint32_t len, score_t* scores)
+               IRS_FORCE_INLINE { visit(docs, len, scores, len); });
+    }
   }
 
   doc_id_t Walk(doc_id_t doc, doc_id_t last, score_t stop,

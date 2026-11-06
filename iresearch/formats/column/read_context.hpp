@@ -40,8 +40,6 @@ namespace irs {
 
 class ColReader;
 
-bool StreamsFrames(const duckdb::LogicalType& type);
-
 class ReadContext final : public BlockManager,
                           public duckdb::OverflowStringReader,
                           public duckdb::ColumnStreamReader {
@@ -62,14 +60,7 @@ class ReadContext final : public BlockManager,
   const IndexInput& In() const noexcept { return *_in; }
   bool HasIn() const noexcept { return _in != nullptr; }
   bool RandomAccess() const noexcept { return _random_access; }
-  bool ReadAhead() const noexcept { return _read_ahead; }
-  void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
-  bool MergeRead() const noexcept { return _merge_read; }
-  void SetMergeRead(bool merge_read) noexcept { _merge_read = merge_read; }
   duckdb::ObjectCache* Cache() const noexcept { return _cache; }
-  void SetCache(duckdb::ObjectCache* cache) noexcept { _cache = cache; }
-  bool Streams() const noexcept { return _merge_read && _streams; }
-  void SetStreams(bool streams) noexcept { _streams = streams; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset) final;
@@ -85,7 +76,6 @@ class ReadContext final : public BlockManager,
     std::atomic<bool>* touched = nullptr;
     duckdb::ObjectCache* cache = nullptr;
     const codecs::TrainedDictionaries* dictionaries = nullptr;
-    bool streams = false;
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
@@ -126,10 +116,7 @@ class ReadContext final : public BlockManager,
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   std::deque<CacheSlot> _cache_slots;
   bool _random_access = false;
-  bool _read_ahead = true;
-  bool _merge_read = false;
   duckdb::ObjectCache* _cache;
-  bool _streams = false;
   std::atomic<size_t> _live_handles{0};
 };
 

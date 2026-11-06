@@ -59,15 +59,18 @@ ZSTD_DDict* LoadDictionary(std::string_view bytes) {
 TrainedDictionary::TrainedDictionary(std::string bytes)
   : _owned{std::move(bytes)},
     _bytes{_owned},
-    _ddict{LoadDictionary(_bytes)},
     _id{gNextDictionaryId.fetch_add(1, std::memory_order_relaxed)} {}
 
 TrainedDictionary::TrainedDictionary(std::string_view mapped,
                                      IndexInput::ptr mapping)
   : _mapping{std::move(mapping)},
     _bytes{mapped},
-    _ddict{LoadDictionary(_bytes)},
     _id{gNextDictionaryId.fetch_add(1, std::memory_order_relaxed)} {}
+
+const ZSTD_DDict* TrainedDictionary::ZstdDictionary() const {
+  _ddict_once.Call([&] { _ddict.reset(LoadDictionary(_bytes)); });
+  return _ddict.get();
+}
 
 void DictionarySampler::Add(std::span<const std::string_view> entries) {
   uint64_t total = 0;

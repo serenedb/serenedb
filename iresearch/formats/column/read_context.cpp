@@ -52,13 +52,6 @@ class ColMapping final : public duckdb::MemoryMappedFile {
 
 }  // namespace
 
-bool StreamsFrames(const duckdb::LogicalType& type) {
-  return !duckdb::TypeVisitor::Contains(type, [](const duckdb::LogicalType& t) {
-    return t.InternalType() == duckdb::PhysicalType::LIST ||
-           t.id() == duckdb::LogicalTypeId::VARIANT;
-  });
-}
-
 ReadContext::ReadContext(duckdb::DatabaseInstance& db) noexcept
   : BlockManager{db, /*block_header_size=*/0}, _cache{&db.GetObjectCache()} {}
 

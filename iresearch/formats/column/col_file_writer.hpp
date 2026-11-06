@@ -20,30 +20,22 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/synchronization/mutex.h>
-
-#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
 #include <string_view>
-#include <vector>
+#include <utility>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/types.hpp"
 
 namespace irs {
 
 class ColFileWriter final {
  public:
-  static constexpr size_t kChunkSize = size_t{64} << 10;
-  static constexpr size_t kMaxQueued = size_t{64} << 20;
+  explicit ColFileWriter(IndexOutput::ptr out) noexcept
+    : _out{std::move(out)} {}
 
-  explicit ColFileWriter(IndexOutput::ptr out);
-
-  uint64_t Position();
+  uint64_t Position() const noexcept { return _out->Position(); }
 
   uint64_t Append(std::string_view bytes);
 
@@ -54,26 +46,9 @@ class ColFileWriter final {
   void Finish(format_utils::FooterWriter footer);
 
  private:
-  struct Chunk {
-    std::unique_ptr<byte_type[]> data;
-    size_t size = 0;
-  };
-
   uint64_t Write(uint64_t alignment, std::span<const std::string_view> parts);
-  void Stage(std::string_view bytes) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  void TakeFull(std::vector<Chunk>& batch)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  void Drain();
-  bool HasRoom() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  bool Idle() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   IndexOutput::ptr _out;
-  absl::Mutex _mutex;
-  uint64_t _end ABSL_GUARDED_BY(_mutex);
-  size_t _queued ABSL_GUARDED_BY(_mutex) = 0;
-  bool _writing ABSL_GUARDED_BY(_mutex) = false;
-  Chunk _tail ABSL_GUARDED_BY(_mutex);
-  std::vector<Chunk> _full ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace irs

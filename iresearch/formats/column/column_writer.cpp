@@ -144,6 +144,19 @@ bool Applies(duckdb::DatabaseInstance& db, duckdb::CompressionType method,
                                                                    physical);
 }
 
+ColumnMeta TuningOf(ColumnMeta& from) {
+  ColumnMeta to;
+  to.id = from.id;
+  to.type = from.type;
+  to.write_string_tuning = std::move(from.write_string_tuning);
+  to.write_numeric_tuning = std::move(from.write_numeric_tuning);
+  to.children.reserve(from.children.size());
+  for (auto& child : from.children) {
+    to.children.emplace_back(TuningOf(child));
+  }
+  return to;
+}
+
 }  // namespace
 
 void EmitEmptyValidity(duckdb::DatabaseInstance& db, uint64_t rows,
@@ -528,12 +541,23 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
       shredded_type = stats.GetShreddedType();
     }
   }
+  ColumnMeta* prev_unshredded = nullptr;
+  ColumnMeta* prev_shredded = nullptr;
+  if (!meta.variant_rgs.empty()) {
+    prev_unshredded = meta.variant_rgs.back().unshredded.get();
+    prev_shredded = meta.variant_rgs.back().shredded.get();
+  }
+  const auto carried = [](ColumnMeta* prev, const duckdb::LogicalType& type) {
+    return std::make_unique<ColumnMeta>(
+      prev && prev->type == type ? TuningOf(*prev) : ColumnMeta{});
+  };
   auto& layout = meta.variant_rgs.emplace_back();
   layout.row_count = row_count;
-  layout.unshredded = std::make_unique<ColumnMeta>();
   if (shredded_type.id() != duckdb::LogicalTypeId::STRUCT ||
       duckdb::StructType::GetChildCount(shredded_type) != 2) {
-    SealColumn(duckdb::VariantShredding::GetUnshreddedType(), chunks, row_count,
+    const auto unshredded_type = duckdb::VariantShredding::GetUnshreddedType();
+    layout.unshredded = carried(prev_unshredded, unshredded_type);
+    SealColumn(unshredded_type, chunks, row_count,
                /*skip_validity=*/true, forced, *layout.unshredded);
     return;
   }
@@ -553,9 +577,10 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
     shredded_chunks.push_back(RefChunk(shred_entries[1], c.count));
   }
 
-  layout.shredded = std::make_unique<ColumnMeta>();
   const auto& shredded_children =
     duckdb::StructType::GetChildTypes(shredded_type);
+  layout.unshredded = carried(prev_unshredded, shredded_children[0].second);
+  layout.shredded = carried(prev_shredded, shredded_children[1].second);
   SealColumn(shredded_children[0].second, unshredded_chunks, row_count,
              /*skip_validity=*/false, forced, *layout.unshredded);
   SealColumn(shredded_children[1].second, shredded_chunks, row_count,

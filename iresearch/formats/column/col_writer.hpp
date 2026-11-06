@@ -66,7 +66,7 @@ class ColWriter final {
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
-                           const ColumnWriterOptions& options);
+                           ColumnWriterOptions options);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 

@@ -234,7 +234,7 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   const auto rows = Rows();
   const auto type = TypeOf(codec);
   {
-    irs::ColWriter w{seg->dir, kSeg, CsDb()};
+    irs::ColWriter w{seg->dir, kSeg, CsDb(), irs::WriteTier::Merge};
     auto& cw =
       w.OpenColumn(kField, type, {.compression = CompressionOf(codec)});
     Generator gen{codec};

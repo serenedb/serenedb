@@ -99,12 +99,6 @@ struct ColumnDictionaryMeta {
   uint64_t byte_size = 0;
 };
 
-struct ListPart {
-  uint64_t row = 0;
-  uint64_t code = 0;
-  uint64_t elem = 0;
-};
-
 struct ColumnMeta;
 
 struct VariantRgMeta {
@@ -121,7 +115,6 @@ struct ColumnMeta {
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
   std::vector<ColumnDictionaryMeta> dictionaries;
-  std::vector<ListPart> list_parts;
   duckdb::shared_ptr<duckdb::HyperLogLog> hyperloglog;
   uint64_t write_list_running = 0;
   std::unique_ptr<codecs::StringTuning> write_string_tuning;

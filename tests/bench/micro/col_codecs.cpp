@@ -156,7 +156,7 @@ struct Seg {
 
 uint64_t Build(irs::Directory& dir, Corpus corpus, const Arm& arm,
                uint64_t rows) {
-  irs::ColWriter w{dir, kSeg, CsDb()};
+  irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(
     kField, duckdb::LogicalType::VARCHAR,
     {.compression = arm.codec,

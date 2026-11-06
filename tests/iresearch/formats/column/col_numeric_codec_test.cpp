@@ -214,7 +214,7 @@ class ColNumericCodecTest : public TestBase {
   void Write(irs::Directory& dir, const duckdb::LogicalType& type,
              irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
              const Gen& gen) {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{dir, kSeg, Db(), params.tier};
     auto& cw = w.OpenColumn(
       kField, type, {.row_group_size = rg_size, .codec_params = params});
     uint64_t pos = 0;
@@ -572,6 +572,64 @@ TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
 #ifdef SDB_DEV
   GTEST_FLAG_SET(death_test_style, "threadsafe");
   EXPECT_DEATH(scan(), "numeric codec: corrupted");
+#else
+  EXPECT_ANY_THROW(scan());
+#endif
+}
+
+TEST_F(ColNumericCodecTest, DictFforBaseThatWrapsTheCodeRangeIsRejected) {
+  const auto path = test_dir() / "col_numeric_corrupt_dict_ffor";
+  std::filesystem::create_directories(path);
+  const auto& shape = *std::ranges::find_if(Shapes(), [](const auto& s) {
+    return s.name == std::string_view{"sparse_values"};
+  });
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  {
+    irs::MMapDirectory dir{path};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
+          60000, 60000, shape.gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    const auto& block = col->DataBlocks().front();
+    ASSERT_EQ(block.codec->type,
+              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    offset = block.file_offset;
+    size = block.byte_size;
+  }
+  const auto file = path / irs::FileName(kSeg);
+  std::string bytes;
+  {
+    std::ifstream in{file, std::ios::binary};
+    bytes.assign(std::istreambuf_iterator<char>{in}, {});
+  }
+  ASSERT_LE(offset + size, bytes.size());
+  auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+  const auto h = irs::codecs::NumericHeader::Parse(block, size);
+  ASSERT_EQ(h.transform, irs::codecs::NumericTransform::DictFfor);
+  const auto frame =
+    duckdb::Load<irs::codecs::NumericFrameMeta>(block + h.off_frames).frame;
+  auto* first_block = block + h.off_data + frame.comp_off;
+  const unsigned bits = first_block[sizeof(uint64_t)];
+  ASSERT_GT(bits, 0U);
+  duckdb::Store<uint64_t>(uint64_t{0} - ((uint64_t{1} << bits) - 1),
+                          first_block);
+  {
+    std::ofstream out{file, std::ios::binary | std::ios::trunc};
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+  irs::MMapDirectory dir{path};
+  const auto scan = [&] {
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, STANDARD_VECTOR_SIZE);
+  };
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(scan(), "numeric codec: corrupted codes");
 #else
   EXPECT_ANY_THROW(scan());
 #endif

@@ -575,7 +575,8 @@ class FrameDecoder {
       numeric::kUnpack<uint32_t>[bits](Words<uint32_t>(packed, bits),
                                        _codes.data(),
                                        static_cast<uint32_t>(base));
-      const auto largest = base + (uint64_t{1} << bits) - 1;
+      const auto largest =
+        uint64_t{static_cast<uint32_t>(base)} + (uint64_t{1} << bits) - 1;
       Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
                        static_cast<uint32_t>(rows), out,
                        largest >= _h.dict_count);

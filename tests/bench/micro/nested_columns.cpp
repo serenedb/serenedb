@@ -146,7 +146,7 @@ const Data& GetData(Shape shape) {
 }
 
 void Write(irs::Directory& dir, const Data& data, uint64_t gap = 0) {
-  irs::ColWriter w{dir, kSeg, CsDb()};
+  irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(kField, data.type);
   uint64_t row = 0;
   for (size_t i = 0; i < data.chunks.size(); ++i) {
@@ -266,7 +266,7 @@ void Rewrite(benchmark::State& state, Shape shape) {
   uint64_t bytes = 0;
   for (auto _ : state) {
     irs::MemoryDirectory dir{};
-    irs::ColWriter w{dir, kSeg, CsDb()};
+    irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(kField, seg.col->Type());
     auto st = seg.col->InitScan(ctx);
     uint64_t pos = 0;

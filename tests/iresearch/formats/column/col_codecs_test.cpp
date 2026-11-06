@@ -117,11 +117,17 @@ class ColCodecsTest : public TestBase {
   void Write(irs::Directory& dir, duckdb::CompressionType codec,
              irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
              const Value& value) {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{dir, kSeg, Db(), params.tier};
     auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                             {.row_group_size = rg_size,
                              .compression = codec,
                              .codec_params = params});
+    AppendValues(cw, rows, value);
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  static void AppendValues(irs::ColumnWriter& cw, uint64_t rows,
+                           const Value& value) {
     uint64_t pos = 0;
     while (pos < rows) {
       const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
@@ -140,7 +146,6 @@ class ColCodecsTest : public TestBase {
       cw.Append(vec, take);
       pos += take;
     }
-    ASSERT_TRUE(w.Commit(0));
   }
 
   static void ExpectRow(duckdb::Vector& out, duckdb::idx_t k, uint64_t g,
@@ -1555,51 +1560,6 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
   scan_all(reopened, *col);
 }
 
-TEST_F(ColCodecsTest, MergeReadsCacheInTheMergesOwnCache) {
-  const auto& value = kLowCardinalityWithNulls;
-  constexpr uint64_t kRows = 20000;
-  irs::MemoryDirectory dir{};
-  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 8192,
-        value);
-  auto& global = Db().GetObjectCache();
-  duckdb::ObjectCache merge{
-    global.GetMaxMemory(),
-    duckdb::BufferManager::GetBufferManager(Db()).GetBufferPool()};
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-  const auto* col = r.Column(kField);
-  ASSERT_NE(col, nullptr);
-  const auto keys = CacheKeys(r, *col);
-  ASSERT_GT(keys.size(), 1u);
-  const auto scan_all = [&](std::shared_ptr<irs::ReadContext> ctx) {
-    auto state = col->InitScan(std::move(ctx));
-    for (uint64_t pos = 0; pos < kRows;) {
-      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
-      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
-      col->Scan(state, out, take);
-      out.Flatten(take);
-      for (duckdb::idx_t k = 0; k < take; ++k) {
-        ExpectRow(out, k, pos + k, value);
-      }
-      pos += take;
-    }
-  };
-  const auto cached = [&](duckdb::ObjectCache& cache) {
-    size_t count = 0;
-    for (const auto& key : keys) {
-      count += cache.Get<irs::codecs::DecodedDictionary>(key) ? 1 : 0;
-    }
-    return count;
-  };
-  for (int i = 0; i != 2; ++i) {
-    auto ctx = std::make_shared<irs::ReadContext>(r);
-    ctx->SetMergeRead(true);
-    ctx->SetCache(&merge);
-    scan_all(std::move(ctx));
-  }
-  EXPECT_EQ(keys.size(), cached(merge));
-  EXPECT_EQ(0u, cached(global));
-}
-
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;
@@ -1917,7 +1877,7 @@ TEST_F(ColCodecsTest, MappedTrainedDictionariesStayInTheirFile) {
   {
     irs::MMapDirectory dir{path};
     {
-      irs::ColWriter w{dir, std::string{kSeg}, Db()};
+      irs::ColWriter w{dir, std::string{kSeg}, Db(), irs::WriteTier::Merge};
       auto& cw = w.OpenColumn(
         kField, duckdb::LogicalType::VARCHAR,
         {.row_group_size = 16384,
@@ -2801,6 +2761,34 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
             {.segment_target = kTarget}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
 }
 
+TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
+           std::to_string((g * 7919) % 100003) +
+           "/item?id=" + std::to_string(g) + "&ref=" + std::to_string(g % 13);
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    irs::MemoryDirectory dir{};
+    {
+      irs::ColWriter w{dir, kSeg, Db(), tier};
+      auto& cw = w.OpenColumn(
+        kField, duckdb::LogicalType::VARCHAR,
+        {.row_group_size = 16384,
+         .compression = duckdb::CompressionType::COMPRESSION_DICT_LZ4,
+         .codec_params = {.compression_level = 3,
+                          .tier = irs::WriteTier::Merge}});
+      AppendValues(cw, 120000, value);
+      ASSERT_TRUE(w.Commit(0));
+    }
+    const auto dictionaries = SegmentInfo(dir, "dictionary");
+    EXPECT_EQ(
+      tier == irs::WriteTier::Merge,
+      std::ranges::find(dictionaries, "trained:1") != dictionaries.end())
+      << ::testing::PrintToString(dictionaries);
+  }
+}
+
 TEST_F(ColCodecsTest, LargeColumnsTrainADictionary) {
   using duckdb::CompressionType;
   constexpr uint64_t kRows = 120000;
@@ -2881,254 +2869,6 @@ TEST_F(ColCodecsTest, AutoCompressesLogTextWithATrainedDictionary) {
   EXPECT_NE(std::ranges::find(dictionaries, "trained:1"), dictionaries.end())
     << ::testing::PrintToString(dictionaries);
   Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);
-}
-
-namespace {
-
-std::shared_ptr<irs::ReadContext> StreamingContext(const irs::ColReader& r) {
-  auto ctx = std::make_shared<irs::ReadContext>(r);
-  ctx->SetMergeRead(true);
-  ctx->SetStreams(true);
-  return ctx;
-}
-
-template<typename Visit>
-void VisitFrames(const duckdb::Vector& out, Visit&& visit) {
-  const auto& aux = out.GetBufferRef()->GetAuxiliaryData();
-  if (!aux) {
-    return;
-  }
-  for (const auto& holder : aux->data) {
-    if (holder->CertifiesImmutablePayloads() &&
-        holder->GetAllocationSize() != 0) {
-      visit(static_cast<const irs::codecs::text::FrameReference&>(*holder));
-    }
-  }
-}
-
-const Value kStreamedText = [](uint64_t g) -> std::optional<std::string> {
-  if (g % 17 == 0) {
-    return std::nullopt;
-  }
-  if (g % 17 == 9) {
-    return std::string{};
-  }
-  if (g % 5 == 0) {
-    return "s" + std::to_string(g % 11);
-  }
-  return "request /api/v1/items/" + std::to_string(g % 700) + " took " +
-         std::to_string(g % 97) + "ms " + Pseudo(g % 50, 40);
-};
-
-const Value kLeadingEmptyThenOversized =
-  [](uint64_t g) -> std::optional<std::string> {
-  if (g == 0) {
-    return std::string{};
-  }
-  if (g == 1) {
-    return Pseudo(g, 40000);
-  }
-  if (g % 13 == 0) {
-    return std::nullopt;
-  }
-  return "row-" + std::to_string(g) + "-" + Pseudo(g % 97, 60);
-};
-
-const Value kCatalogUrls = [](uint64_t g) -> std::optional<std::string> {
-  if (g % 211 == 0) {
-    return std::nullopt;
-  }
-  return "https://shop" + std::to_string(g % 997) + ".example.org/catalog/" +
-         std::to_string((g * 7919) % 100003) + "/item?id=" + std::to_string(g) +
-         "&ref=" + std::to_string(g % 13);
-};
-
-}  // namespace
-
-TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
-  using duckdb::CompressionType;
-  struct Data {
-    const char* name;
-    const Value* value;
-    uint64_t rows;
-    uint32_t row_group;
-    irs::ColCodecParams params;
-    bool trains;
-  };
-  const Data datasets[] = {
-    {"text", &kStreamedText, 12000, DEFAULT_ROW_GROUP_SIZE, {}, false},
-    {"small blocks",
-     &kStreamedText,
-     6000,
-     2048,
-     {.segment_target = 16 * 1024},
-     false},
-    {"leading empty then oversized",
-     &kLeadingEmptyThenOversized,
-     3000,
-     DEFAULT_ROW_GROUP_SIZE,
-     {},
-     false},
-    {"empty and short", &kEmptyAndShort, 3000, 1024, {}, false},
-    {"all null", &kAllNull, 3000, 1024, {}, false},
-    {"trained", &kCatalogUrls, 120000, 16384, {.compression_level = 3}, true},
-  };
-  struct Codec {
-    CompressionType type;
-    bool plain;
-    bool trainable;
-  };
-  const Codec codecs[] = {
-    {CompressionType::COMPRESSION_DICT_LZ4, false, true},
-    {CompressionType::COMPRESSION_LZ4, true, true},
-    {CompressionType::COMPRESSION_DICT_ZSTD, false, true},
-    {CompressionType::COMPRESSION_COL_ZSTD, true, true},
-    {CompressionType::COMPRESSION_DICT_ZXC, false, false},
-    {CompressionType::COMPRESSION_ZXC, true, false},
-    {CompressionType::COMPRESSION_DICT_FSST, false, false},
-    {CompressionType::COMPRESSION_FSST, true, false},
-    {CompressionType::COMPRESSION_AUTO, false, true},
-  };
-  std::set<std::string> layouts;
-  for (const auto& codec : codecs) {
-    for (const auto& data : datasets) {
-      if (data.trains && !codec.trainable) {
-        continue;
-      }
-      SCOPED_TRACE(std::string{duckdb::CompressionTypeToString(codec.type)} +
-                   " on " + data.name);
-      const auto& value = *data.value;
-      irs::MemoryDirectory dir{};
-      Write(dir, codec.type, data.params, data.rows, data.row_group, value);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-      const auto* col = r.Column(kField);
-      ASSERT_NE(col, nullptr);
-      {
-        irs::ReadContext ctx{r};
-        for (size_t block = 0; block != col->DataBlocks().size(); ++block) {
-          if (!duckdb::IsSereneDBCompressionType(
-                col->DataBlocks()[block].codec->type)) {
-            continue;
-          }
-          auto seg = col->OpenSegment(block, ctx);
-          auto info = seg->GetCompressionFunction().get_segment_info(
-            duckdb::QueryContext{}, *seg);
-          layouts.insert(info["dictionary"]);
-        }
-      }
-      for (const bool streams : {false, true}) {
-        SCOPED_TRACE(streams ? "streaming" : "block");
-        const auto context = [&] {
-          return streams ? StreamingContext(r)
-                         : std::make_shared<irs::ReadContext>(r);
-        };
-        std::vector<std::unique_ptr<duckdb::Vector>> batches;
-        uint64_t framed = 0;
-        {
-          auto state = col->InitScan(context());
-          for (uint64_t pos = 0; pos < data.rows; pos += STANDARD_VECTOR_SIZE) {
-            const auto take =
-              std::min<uint64_t>(data.rows - pos, STANDARD_VECTOR_SIZE);
-            auto& out = *batches.emplace_back(std::make_unique<duckdb::Vector>(
-              duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE));
-            col->Scan(state, out, take);
-            VisitFrames(out, [&](const auto& frame) {
-              framed += frame.GetAllocationSize();
-            });
-            if (!streams) {
-              out.Flatten(take);
-            }
-          }
-        }
-        for (size_t b = 0; b != batches.size(); ++b) {
-          const uint64_t pos = uint64_t{b} * STANDARD_VECTOR_SIZE;
-          const auto take =
-            std::min<uint64_t>(data.rows - pos, STANDARD_VECTOR_SIZE);
-          batches[b]->Flatten(take);
-          for (duckdb::idx_t k = 0; k < take; ++k) {
-            ExpectRow(*batches[b], k, pos + k, value);
-          }
-        }
-        if (!streams) {
-          EXPECT_EQ(framed, 0u);
-        } else if (codec.plain && data.value != &kAllNull) {
-          EXPECT_GT(framed, 0u);
-        }
-        auto state = col->InitScan(context());
-        uint64_t pos = 0;
-        for (uint64_t step = 1; pos < data.rows; ++step) {
-          const auto skip =
-            std::min<uint64_t>(data.rows - pos, step * 7919 % 1500);
-          col->Skip(state, skip);
-          pos += skip;
-          const auto take =
-            std::min<uint64_t>(data.rows - pos, 1 + step * 104729 % 900);
-          if (take == 0) {
-            break;
-          }
-          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
-                             STANDARD_VECTOR_SIZE};
-          col->Scan(state, out, take);
-          out.Flatten(take);
-          for (duckdb::idx_t k = 0; k < take; ++k) {
-            ExpectRow(out, k, pos + k, value);
-          }
-          pos += take;
-        }
-      }
-    }
-  }
-  EXPECT_TRUE(layouts.contains("first_frame"))
-    << ::testing::PrintToString(layouts);
-  EXPECT_TRUE(layouts.contains("trained:1"))
-    << ::testing::PrintToString(layouts);
-  EXPECT_TRUE(layouts.contains("")) << ::testing::PrintToString(layouts);
-}
-
-TEST_F(ColCodecsTest, StreamingPlainScanHoldsOnlyItsBatchesFrames) {
-  constexpr uint64_t kRows = 6000;
-  constexpr duckdb::idx_t kBatch = 256;
-  for (const auto codec : {duckdb::CompressionType::COMPRESSION_LZ4,
-                           duckdb::CompressionType::COMPRESSION_COL_ZSTD,
-                           duckdb::CompressionType::COMPRESSION_ZXC,
-                           duckdb::CompressionType::COMPRESSION_FSST}) {
-    SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
-    irs::MemoryDirectory dir{};
-    Write(dir, codec, {.segment_target = 1024 * 1024}, kRows, 4096,
-          kLongTextWithNulls);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    ASSERT_LT(1u, col->DataBlocks().size());
-    std::vector<duckdb::weak_ptr<const irs::codecs::text::FrameBytes>> seen;
-    uint64_t largest = 0;
-    auto state = col->InitScan(StreamingContext(r));
-    irs::ColumnReader::VectorScratch scratch{duckdb::LogicalType::VARCHAR};
-    for (uint64_t pos = 0; pos < kRows; pos += kBatch) {
-      const auto take = std::min<uint64_t>(kRows - pos, kBatch);
-      auto& out = scratch.Reset();
-      col->Scan(state, out, take);
-      uint64_t batch = 0;
-      VisitFrames(out, [&](const irs::codecs::text::FrameReference& ref) {
-        batch += ref.GetAllocationSize();
-        largest = std::max<uint64_t>(largest, ref.frame->size);
-        seen.emplace_back(ref.frame);
-      });
-      EXPECT_LT(0u, batch) << "batch at row " << pos;
-      absl::flat_hash_set<const irs::codecs::text::FrameBytes*> alive;
-      uint64_t held = 0;
-      for (const auto& weak : seen) {
-        if (const auto frame = weak.lock();
-            frame && alive.insert(frame.get()).second) {
-          held += frame->size;
-        }
-      }
-      EXPECT_LE(held, batch + 2 * largest) << "batch at row " << pos;
-      for (duckdb::idx_t k = 0; k < take; ++k) {
-        ExpectRow(out, k, pos + k, kLongTextWithNulls);
-      }
-    }
-  }
 }
 
 TEST_F(ColCodecsTest, SealedRowGroupsReleaseTheirInputs) {

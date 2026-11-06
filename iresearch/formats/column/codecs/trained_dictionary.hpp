@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs::codecs {
 
@@ -56,14 +57,15 @@ class TrainedDictionary {
   TrainedDictionary& operator=(const TrainedDictionary&) = delete;
 
   std::string_view Bytes() const noexcept { return _bytes; }
-  const ZSTD_DDict* ZstdDictionary() const noexcept { return _ddict.get(); }
+  const ZSTD_DDict* ZstdDictionary() const;
   uint64_t Id() const noexcept { return _id; }
 
  private:
   std::string _owned;
   IndexInput::ptr _mapping;
   std::string_view _bytes;
-  std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
+  mutable OnceFlag _ddict_once;
+  mutable std::unique_ptr<ZSTD_DDict, ZstdFree> _ddict;
   uint64_t _id;
 };
 

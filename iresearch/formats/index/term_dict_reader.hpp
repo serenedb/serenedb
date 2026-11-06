@@ -122,7 +122,7 @@ class TermReaderImpl final : public TermReader {
                                TermPostings::ptr reuse) const;
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept;
+  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   const Root& GetRoot() const noexcept { return _root; }
   uint32_t BlockOf(Probe key) const noexcept {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
@@ -193,6 +193,7 @@ class TermReaderImpl final : public TermReader {
   Root _root;
   std::vector<RangeLevel> _levels;
   std::unique_ptr<PrefixIndex> _prefixes;
+  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
   uint32_t _range_prefix = 0;
 };
 

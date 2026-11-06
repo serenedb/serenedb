@@ -60,15 +60,16 @@ struct BlockBuilder {
   std::vector<uint32_t> ends;
   bstring records;
   std::vector<uint16_t> record_starts;
-  VarColumns raw;
-  VarColumns coded;
+  std::vector<uint32_t> lcps;
+  VarColumns columns;
   uint64_t size = 0;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
+  uint64_t deferred = 0;
+  uint32_t deferred_max = 0;
+  uint32_t coded = 0;
   uint32_t width = 0;
   uint32_t prefix = 0;
   uint32_t head_skip = 0;
   BlockKind kind = BlockKind::Var;
-  bool all_coded = true;
 };
 
 class FieldWriter final {
@@ -89,15 +90,20 @@ class FieldWriter final {
   void Begin(field_id id, DictRef dict) noexcept;
   void BeginSlot(field_id id, DictRef dict);
   void EndSlot(field_id id, const PostingMeta& meta);
-  void SampleFsst(const BasicTermReader& reader);
+  duckdb_fsst_encoder_t* Encoder();
   void TrainFsst();
   bytes_view EncodeSuffix(bytes_view suffix);
+  void EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
+                     bytes_view last, size_t last_lcp);
+  void EncodeDeferred();
+  bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Commit(bytes_view term, const PostingMeta& meta);
   bool Append(bytes_view term, const PostingMeta& meta);
   bool AppendFixedKey(bytes_view key, uint64_t records);
   bool AppendVarKey(bytes_view key, uint64_t records);
-  void AppendVarColumns(uint32_t index, bytes_view key);
+  bool EncodeBlock(bytes_view key, size_t lcp, uint64_t records);
+  bool AppendCodedKey(bytes_view key, size_t lcp, uint64_t records);
   void Seal();
   void Cut();
   void WriteBlock();
@@ -113,9 +119,15 @@ class FieldWriter final {
   bstring _inline;
   FsstEncoder _fsst;
   std::string _fsst_table;
+  const BasicTermReader* _reader = nullptr;
   bstring _samples;
   std::vector<size_t> _sample_lengths;
   bstring _coded;
+  VarColumns _encoded;
+  std::vector<size_t> _batch_lengths;
+  std::vector<unsigned char*> _batch_starts;
+  std::vector<size_t> _coded_lengths;
+  std::vector<unsigned char*> _coded_starts;
   std::vector<SpanningBlock> _spans;
   std::string _separators;
   bstring _separator;
@@ -144,7 +156,8 @@ class FieldWriter final {
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
-  bool _encode = true;
+  bool _trained = false;
+  bool _fsst_used = false;
   bool _group_inline = false;
   const bool _compaction;
 };

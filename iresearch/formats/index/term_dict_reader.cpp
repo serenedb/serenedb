@@ -240,6 +240,16 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   } else if (head.ranges.size != 0) {
     corrupted();
   }
+  if (const auto& table = head.fsst_table; !table.empty()) {
+    _fsst = std::make_unique<duckdb_fsst_decoder_t>();
+    const auto consumed = duckdb_fsst_import(
+      _fsst.get(), reinterpret_cast<const unsigned char*>(table.data()),
+      table.size());
+    if (consumed != table.size()) {
+      Corrupted("FSST table", head.id);
+    }
+    bytes += sizeof(duckdb_fsst_decoder_t);
+  }
   if (_blocks == 1) {
     _small = owner.CopyBlock(_first_block, in.Length());
     if (inline_size != 0) {

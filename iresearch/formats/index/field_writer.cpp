@@ -42,9 +42,6 @@ namespace irs::term_dict {
 namespace {
 
 constexpr uint64_t kFsstSampleBytes = 32 << 10;
-constexpr size_t kFsstMinSamples = 64;
-constexpr uint64_t kFsstMinMeanSuffix = 2;
-constexpr uint64_t kFsstMaxMeanSuffix = 16;
 constexpr uint64_t kFsstMinRatioPct = 115;
 constexpr byte_type kZeros[kPage]{};
 
@@ -83,18 +80,21 @@ struct VarEntry {
   bool restart;
 };
 
-VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index,
-                    bytes_view key) noexcept {
+size_t LcpAt(const BlockBuilder& block, uint32_t index,
+             bytes_view key) noexcept {
+  return index == 0 ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
+}
+
+VarEntry VarEntryAt(const BlockBuilder& block, uint32_t index, bytes_view key,
+                    size_t lcp) noexcept {
   const bool restart = index % kRestartInterval == 0;
-  const size_t lcp =
-    restart ? 0 : CommonPrefixLength(KeyAt(block, index - 1), key);
   uint32_t head_skip = block.head_skip;
   if (restart) {
     head_skip = static_cast<uint32_t>(
       index == 0 ? key.size() : CommonPrefixLength(KeyAt(block, 0), key));
   }
   return {
-    .suffix = key.substr(lcp),
+    .suffix = restart ? key : key.substr(lcp),
     .lcp = lcp,
     .head_skip = head_skip,
     .restart = restart,
@@ -114,15 +114,16 @@ void Clear(BlockBuilder& block) noexcept {
   block.ends.clear();
   block.records.clear();
   block.record_starts.clear();
-  Clear(block.raw);
-  Clear(block.coded);
+  block.lcps.clear();
+  Clear(block.columns);
   block.size = 0;
-  block.coded_size = std::numeric_limits<uint64_t>::max();
+  block.deferred = 0;
+  block.deferred_max = 0;
+  block.coded = 0;
   block.width = 0;
   block.prefix = 0;
   block.head_skip = 0;
   block.kind = BlockKind::Var;
-  block.all_coded = true;
 }
 
 std::vector<unsigned char*> SampleStarts(bstring& arena,
@@ -191,18 +192,14 @@ void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
   }
 }
 
-uint64_t SerializedSize(const BlockBuilder& block) noexcept {
-  return block.kind == BlockKind::VarFsst ? block.coded_size : block.size;
-}
-
 void Serialize(const BlockBuilder& block, DataOutput& out) {
   const auto count = static_cast<uint32_t>(block.ends.size());
   SDB_ASSERT(block.record_starts.size() == RecordGroups(count));
   out.WriteByte(static_cast<byte_type>(block.kind));
   out.WriteV32(count);
-  const bool coded = block.kind == BlockKind::VarFsst;
   if (block.kind != BlockKind::FixedStride) {
-    const auto& columns = coded ? block.coded : block.raw;
+    SDB_ASSERT(block.kind == BlockKind::Var || block.coded == count);
+    const auto& columns = block.columns;
     const uint32_t width = ColumnWidth(columns.max);
     out.WriteV32(static_cast<uint32_t>(columns.restarts.size()));
     out.WriteByte(static_cast<byte_type>(width));
@@ -257,51 +254,29 @@ void FsstEncoderDelete::operator()(
   duckdb_fsst_destroy(encoder);
 }
 
-void FieldWriter::SampleFsst(const BasicTermReader& reader) {
-  reader.SampleTerms(kFsstSampleBytes, [&](std::span<const bytes_view> run) {
-    for (size_t i = 1; i < run.size(); ++i) {
-      const auto suffix = run[i].substr(CommonPrefixLength(run[i - 1], run[i]));
-      if (!suffix.empty()) {
-        _samples.append(suffix);
-        _sample_lengths.push_back(suffix.size());
-      }
-    }
-  });
-  const bool enough = _sample_lengths.size() >= kFsstMinSamples;
-  if (_fsst) {
-    _encode = !enough || Compresses(_fsst.get(), _samples, _sample_lengths, 0);
-    _samples.clear();
-    _sample_lengths.clear();
-    return;
+duckdb_fsst_encoder_t* FieldWriter::Encoder() {
+  if (!_trained) {
+    _trained = true;
+    TrainFsst();
   }
-  if (!enough) {
-    return;
-  }
-  TrainFsst();
-  _samples.clear();
-  _sample_lengths.clear();
-  auto& block = _block;
-  if (!_fsst || block.kind != BlockKind::Var || block.ends.empty()) {
-    return;
-  }
-  block.all_coded = true;
-  Clear(block.raw);
-  Clear(block.coded);
-  const auto count = static_cast<uint32_t>(block.ends.size());
-  for (uint32_t i = 0; i != count; ++i) {
-    AppendVarColumns(i, KeyAt(block, i));
-  }
-  block.coded_size =
-    VarBytes(count, block.head_skip, block.coded.max,
-             block.coded.suffixes.size(), block.records.size());
+  return _fsst.get();
 }
 
 void FieldWriter::TrainFsst() {
   auto& arena = _samples;
   auto& lengths = _sample_lengths;
-  const uint64_t raw = arena.size();
-  if (raw < kFsstMinMeanSuffix * lengths.size() ||
-      raw > kFsstMaxMeanSuffix * lengths.size()) {
+  arena.clear();
+  lengths.clear();
+  _reader->SampleTerms(kFsstSampleBytes, [&](std::span<const bytes_view> run) {
+    for (size_t i = 1; i < run.size(); ++i) {
+      const auto suffix = run[i].substr(CommonPrefixLength(run[i - 1], run[i]));
+      if (!suffix.empty()) {
+        arena.append(suffix);
+        lengths.push_back(suffix.size());
+      }
+    }
+  });
+  if (lengths.empty()) {
     return;
   }
   auto starts = SampleStarts(arena, lengths);
@@ -317,6 +292,67 @@ void FieldWriter::TrainFsst() {
   }
   _fsst = std::move(encoder);
   _fsst_table.assign(reinterpret_cast<const char*>(table), table_size);
+}
+
+bool FieldWriter::OwnsBlock() const noexcept {
+  return _first_block != kNoBlock &&
+         (_first_block != _blocks || _first_entry == 0);
+}
+
+void FieldWriter::EncodeEntries(VarColumns& columns, uint32_t from, uint32_t to,
+                                bytes_view last, size_t last_lcp) {
+  auto& block = _block;
+  const auto count = static_cast<uint32_t>(block.ends.size());
+  SDB_ASSERT(block.lcps.size() == count);
+  const auto entry_at = [&](uint32_t i) {
+    return i < count ? VarEntryAt(block, i, KeyAt(block, i), block.lcps[i])
+                     : VarEntryAt(block, i, last, last_lcp);
+  };
+  _batch_lengths.clear();
+  _batch_starts.clear();
+  uint64_t raw = 0;
+  for (uint32_t i = from; i != to; ++i) {
+    const auto entry = entry_at(i);
+    if (!entry.restart) {
+      _batch_lengths.push_back(entry.suffix.size());
+      _batch_starts.push_back(const_cast<unsigned char*>(entry.suffix.data()));
+      raw += entry.suffix.size();
+    }
+  }
+  const size_t n = _batch_lengths.size();
+  _coded_lengths.resize(n);
+  _coded_starts.resize(n);
+  if (n != 0) {
+    utils::StrResizeAmortized(_coded, 7 * n + 2 * raw);
+    const size_t done =
+      duckdb_fsst_compress(_fsst.get(), n, _batch_lengths.data(),
+                           _batch_starts.data(), _coded.size(), _coded.data(),
+                           _coded_lengths.data(), _coded_starts.data());
+    SDB_ASSERT(done == n);
+  }
+  size_t coded = 0;
+  for (uint32_t i = from; i != to; ++i) {
+    const auto entry = entry_at(i);
+    if (entry.restart) {
+      AppendEntry(columns, true, entry.lcp, entry.suffix);
+    } else {
+      AppendEntry(columns, false, entry.lcp,
+                  {_coded_starts[coded], _coded_lengths[coded]});
+      ++coded;
+    }
+  }
+}
+
+void FieldWriter::EncodeDeferred() {
+  auto& block = _block;
+  const auto count = static_cast<uint32_t>(block.ends.size());
+  if (block.coded == count) {
+    return;
+  }
+  EncodeEntries(block.columns, block.coded, count, {}, 0);
+  block.coded = count;
+  block.deferred = 0;
+  block.deferred_max = 0;
 }
 
 bytes_view FieldWriter::EncodeSuffix(bytes_view suffix) {
@@ -410,9 +446,8 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   _pw.BeginField(props);
   _group_inline = false;
   _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
-  if (_width == 0) {
-    SampleFsst(reader);
-  }
+  _reader = &reader;
+  _trained = _width != 0;
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
     _ranges.Begin(_pw, _docs);
@@ -467,6 +502,9 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   }
 
   EndField(id, props, total_freq, docs_sum, first_inline);
+  if (_block.kind == BlockKind::VarFsst) {
+    Cut();
+  }
   ResetField();
 }
 
@@ -565,67 +603,117 @@ bool FieldWriter::AppendFixedKey(bytes_view key, uint64_t records) {
   return true;
 }
 
-void FieldWriter::AppendVarColumns(uint32_t index, bytes_view key) {
-  auto& block = _block;
-  const auto entry = VarEntryAt(block, index, key);
-  block.head_skip = entry.head_skip;
-  AppendEntry(block.raw, entry.restart, entry.lcp, entry.suffix);
-  if (_fsst && _encode && block.all_coded) {
-    AppendEntry(block.coded, entry.restart, entry.lcp,
-                entry.restart ? entry.suffix : EncodeSuffix(entry.suffix));
-  }
-}
-
 bool FieldWriter::AppendVarKey(bytes_view key, uint64_t records) {
   auto& block = _block;
   const auto count = static_cast<uint32_t>(block.ends.size());
+  const auto lcp = LcpAt(block, count, key);
+  if (block.kind == BlockKind::VarFsst) {
+    if (!AppendCodedKey(key, lcp, records)) {
+      return false;
+    }
+    block.lcps.push_back(static_cast<uint32_t>(lcp));
+    return true;
+  }
   const bool converts = block.kind == BlockKind::FixedStride;
   if (converts) {
     for (uint32_t i = 0; i != count; ++i) {
-      AppendVarColumns(i, KeyAt(block, i));
+      const auto at = KeyAt(block, i);
+      const auto entry = VarEntryAt(block, i, at, LcpAt(block, i, at));
+      block.head_skip = entry.head_skip;
+      block.lcps.push_back(static_cast<uint32_t>(entry.lcp));
+      AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
     }
   }
-  const auto entry = VarEntryAt(block, count, key);
-  const auto size_with = [&](const VarColumns& columns, size_t suffix_size) {
-    return VarBytes(count + 1, entry.head_skip,
-                    ColumnMax(columns, entry.lcp, suffix_size),
-                    columns.suffixes.size() + suffix_size, records);
-  };
-  const uint64_t size = size_with(block.raw, entry.suffix.size());
-  const bool encode = _fsst && _encode && block.all_coded;
-  bytes_view coded;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
-  if (encode) {
-    coded = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
-    coded_size = size_with(block.coded, coded.size());
-  }
-  if (count != 0 && std::min(size, coded_size) > kPage) {
+  const auto entry = VarEntryAt(block, count, key, lcp);
+  const uint64_t size =
+    VarBytes(count + 1, entry.head_skip,
+             ColumnMax(block.columns, entry.lcp, entry.suffix.size()),
+             block.columns.suffixes.size() + entry.suffix.size(), records);
+  if (count != 0 && size > kPage) {
     if (converts) {
-      Clear(block.raw);
-      Clear(block.coded);
+      Clear(block.columns);
+      block.lcps.clear();
       block.head_skip = 0;
+      return false;
     }
+    if (!OwnsBlock() || !EncodeBlock(key, lcp, records)) {
+      return false;
+    }
+  } else {
+    block.kind = BlockKind::Var;
+    AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
+    block.size = size;
+    block.head_skip = entry.head_skip;
+  }
+  block.lcps.push_back(static_cast<uint32_t>(lcp));
+  return true;
+}
+
+bool FieldWriter::EncodeBlock(bytes_view key, size_t lcp, uint64_t records) {
+  if (!Encoder()) {
     return false;
   }
-  block.kind = BlockKind::Var;
-  AppendEntry(block.raw, entry.restart, entry.lcp, entry.suffix);
-  if (encode) {
-    AppendEntry(block.coded, entry.restart, entry.lcp, coded);
-    block.coded_size = coded_size;
-  } else if (block.all_coded) {
-    block.all_coded = false;
-    Clear(block.coded);
-    block.coded_size = std::numeric_limits<uint64_t>::max();
+  auto& block = _block;
+  const auto count = static_cast<uint32_t>(block.ends.size());
+  Clear(_encoded);
+  EncodeEntries(_encoded, 0, count + 1, key, lcp);
+  const auto head_skip = VarEntryAt(block, count, key, lcp).head_skip;
+  const uint64_t size = VarBytes(count + 1, head_skip, _encoded.max,
+                                 _encoded.suffixes.size(), records);
+  if (size > kPage) {
+    return false;
   }
+  std::swap(block.columns, _encoded);
+  block.kind = BlockKind::VarFsst;
+  block.size = size;
+  block.coded = count + 1;
+  block.head_skip = head_skip;
+  _fsst_used = true;
+  return true;
+}
+
+bool FieldWriter::AppendCodedKey(bytes_view key, size_t lcp, uint64_t records) {
+  auto& block = _block;
+  const auto count = static_cast<uint32_t>(block.ends.size());
+  const auto entry = VarEntryAt(block, count, key, lcp);
+  const uint64_t worst = entry.suffix.size() * (entry.restart ? 1 : 2);
+  const auto deferred_max =
+    std::max({block.deferred_max, static_cast<uint32_t>(entry.lcp),
+              static_cast<uint32_t>(worst)});
+  const uint64_t bound = VarBytes(
+    count + 1, entry.head_skip, std::max(block.columns.max, deferred_max),
+    block.columns.suffixes.size() + block.deferred + worst, records);
+  if (bound <= kPage) {
+    block.deferred += worst;
+    block.deferred_max = deferred_max;
+    block.size = bound;
+    block.head_skip = entry.head_skip;
+    return true;
+  }
+  EncodeDeferred();
+  const auto suffix = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
+  const uint64_t size =
+    VarBytes(count + 1, entry.head_skip,
+             ColumnMax(block.columns, entry.lcp, suffix.size()),
+             block.columns.suffixes.size() + suffix.size(), records);
+  if (size > kPage) {
+    return false;
+  }
+  AppendEntry(block.columns, entry.restart, entry.lcp, suffix);
+  block.coded = count + 1;
   block.size = size;
   block.head_skip = entry.head_skip;
   return true;
 }
 
 void FieldWriter::Seal() {
-  if (_block.kind == BlockKind::Var && _block.coded_size < _block.size) {
-    _block.kind = BlockKind::VarFsst;
+  auto& block = _block;
+  if (block.kind != BlockKind::VarFsst) {
+    return;
   }
+  EncodeDeferred();
+  block.size = VarBytes(block.ends.size(), block.head_skip, block.columns.max,
+                        block.columns.suffixes.size(), block.records.size());
 }
 
 void FieldWriter::Cut() {
@@ -658,7 +746,7 @@ void FieldWriter::WriteBlock() {
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
   }
-  const uint64_t size = SerializedSize(_block);
+  const uint64_t size = _block.size;
   const auto pages = static_cast<uint32_t>((size + kPage - 1) / kPage);
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
@@ -710,6 +798,9 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
   head.first_record = _first_record;
   head.last_block = _blocks;
   head.last_entry = static_cast<uint32_t>(_block.ends.size() - 1);
+  if (_fsst_used) {
+    head.fsst_table = std::move(_fsst_table);
+  }
   if (_first_block == _blocks) {
     head.inline_base = first_inline;
     head.inline_size = _inline.size() - first_inline;
@@ -742,14 +833,16 @@ void FieldWriter::ResetField() noexcept {
   _min.clear();
   _terms = 0;
   _first_block = kNoBlock;
-  _encode = true;
+  _fsst.reset();
+  _fsst_table.clear();
+  _reader = nullptr;
+  _trained = false;
+  _fsst_used = false;
 }
 
 void FieldWriter::Reset() noexcept {
   ResetField();
   Clear(_block);
-  _fsst.reset();
-  _fsst_table.clear();
   _samples.clear();
   _sample_lengths.clear();
   _inline.clear();
@@ -780,7 +873,6 @@ void FieldWriter::end() {
       .first_page = _first_page,
       .spans = std::move(_spans),
       .separators = std::move(_separators),
-      .fsst_table = std::move(_fsst_table),
       .inline_offset = out.Position(),
       .inline_size = _inline.size(),
       .ranges_size = _range_regions.size(),

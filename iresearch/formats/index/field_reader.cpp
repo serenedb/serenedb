@@ -126,16 +126,6 @@ void FieldReader::Bind(const TermsMeta& terms) {
   } else if (!separators.empty()) {
     Corrupted("separators");
   }
-  if (const auto& table = terms.fsst_table; !table.empty()) {
-    auto decoder = std::make_unique<duckdb_fsst_decoder_t>();
-    const auto consumed = duckdb_fsst_import(
-      decoder.get(), reinterpret_cast<const unsigned char*>(table.data()),
-      table.size());
-    if (consumed != table.size()) {
-      Corrupted("FSST table");
-    }
-    _fsst = std::move(decoder);
-  }
   if (terms.inline_starts.empty() != (_inline_size == 0)) {
     Corrupted("inline starts");
   }
@@ -150,8 +140,7 @@ void FieldReader::Bind(const TermsMeta& terms) {
                            : Copy(_inline_offset, _inline_size + kSlack).data();
   }
   Account(_spans.capacity() * sizeof(SpanningBlock) +
-          SeparatorBytes(_separators) + _inline_pages.MemoryBytes() +
-          (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0));
+          SeparatorBytes(_separators) + _inline_pages.MemoryBytes());
 }
 
 void FieldReader::prepare(const ReaderState& state) {

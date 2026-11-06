@@ -65,6 +65,7 @@ struct FieldHead {
   uint32_t last_entry = 0;
   uint64_t inline_base = 0;
   uint64_t inline_size = 0;
+  std::string fsst_table;
   TextHead text;
   RangesHead ranges;
   bool single_valued = false;
@@ -80,7 +81,6 @@ struct TermsMeta {
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
   std::string separators;
-  std::string fsst_table;
   uint64_t inline_offset = 0;
   uint64_t inline_size = 0;
   uint64_t ranges_size = 0;

@@ -38,7 +38,8 @@
 
 /*
 lz4 frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or
+to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or the
+same frames, each compressed with the segment's trained dictionary; or
 64 KiB frames without a dictionary.
 */
 

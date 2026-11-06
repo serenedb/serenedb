@@ -53,8 +53,9 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
 }
 
 enum class FrameLayout : uint8_t {
-  Dictionary = 0,
+  FirstFrame = 0,
   Wide = 1,
+  Local = 2,
 };
 
 struct StringTuning {

@@ -35,6 +35,7 @@ namespace irs::codecs {
 enum class FrameDictionary : uint8_t {
   None = 0,
   FirstFrame = 1,
+  Local = 2,
 };
 
 inline constexpr uint8_t kSegmentVersion = 1;
@@ -44,6 +45,7 @@ inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
 inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
 inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
 inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
+inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
 inline constexpr duckdb::idx_t kGroup =
   duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
@@ -73,11 +75,20 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   one entry per row, empty for a NULL row            |
 +------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   lz4 block of bytes[dictionary_size]        |   |
+|   +----------------------------------------------+   |
+|   trained on the frames of this segment,             |
+|   symtab_size bytes; empty unless flags is           |
+|   Local                                              |
++------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   leaf frames of the concatenated entries    |   |
 |   +----------------------------------------------+   |
-|   frame 0 is the dictionary of the later             |
+|   each frame compressed with the Dictionary;         |
+|   or frame 0 is the dictionary of the later          |
 |   frames; or frames without a dictionary;            |
 |   the leaf's file gives the frame sizes              |
 +------------------------------------------------------+
@@ -116,6 +127,14 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   row -> entry, code 0 is NULL                       |
 +------------------------------------------------------+
+|                      Dictionary                      |
+|   +----------------------------------------------+   |
+|   |   lz4 block of bytes[dictionary_size]        |   |
+|   +----------------------------------------------+   |
+|   trained on the frames of this segment,             |
+|   symtab_size bytes; empty unless flags is           |
+|   Local                                              |
++------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   leaf frames of the concatenated entries    |   |
@@ -136,7 +155,7 @@ struct Header {
   uint32_t row_count = 0;
   uint32_t entry_count = 0;
   uint32_t frame_count = 0;
-  uint32_t reserved2 = 0;
+  uint32_t dictionary_size = 0;
   uint32_t off_frames = 0;
   uint32_t off_lengths = 0;
   uint32_t off_lcps = 0;
@@ -164,6 +183,9 @@ struct Header {
         h.length_width <= 32 && h.lcp_width <= 32 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
+          h.codec != ByteCodec::Fsst) ||
+         (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
+          h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
           h.codec != ByteCodec::Fsst)) &&
         static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
         h.off_frames >= kHeaderSize &&
@@ -193,7 +215,7 @@ static_assert(offsetof(Header, reserved1) == 6);
 static_assert(offsetof(Header, row_count) == 8);
 static_assert(offsetof(Header, entry_count) == 12);
 static_assert(offsetof(Header, frame_count) == 16);
-static_assert(offsetof(Header, reserved2) == 20);
+static_assert(offsetof(Header, dictionary_size) == 20);
 static_assert(offsetof(Header, off_frames) == 24);
 static_assert(offsetof(Header, off_lengths) == 28);
 static_assert(offsetof(Header, off_lcps) == 32);

@@ -25,6 +25,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
@@ -91,5 +93,8 @@ struct Zstd {
     std::string_view _raw_bytes;
   };
 };
+
+void TrainDictionary(std::string_view samples, std::span<const size_t> sizes,
+                     size_t capacity, std::string& dictionary);
 
 }  // namespace irs::codecs

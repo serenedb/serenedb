@@ -24,7 +24,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string_view>
 
@@ -41,8 +40,7 @@ struct Zxc {
   static constexpr ByteCodec kCodec = ByteCodec::Zxc;
   static constexpr uint8_t kDefaultLevel = 3;
   static constexpr uint8_t kMaxLevel = 7;
-  static constexpr uint32_t kFirstWindowed =
-    std::numeric_limits<uint32_t>::max();
+  static constexpr uint32_t kFirstWindowed = kNeverWindowed;
 
   static size_t Bound(size_t raw_size) noexcept {
     return zxc_compress_bound(raw_size);

@@ -92,7 +92,7 @@ class DedupScratch {
 struct Config {
   StringChoice choice{};
   uint8_t level = 0;
-  FrameLayout layout = FrameLayout::Dictionary;
+  FrameLayout layout = FrameLayout::FirstFrame;
 
   bool operator==(const Config&) const = default;
 };
@@ -128,6 +128,7 @@ struct EncodedFrames {
   std::span<uint32_t> lcps;
   uint32_t max_lcp = 0;
   std::string_view symtab;
+  uint32_t dictionary_size = 0;
   FrameDictionary flags = FrameDictionary::None;
 };
 
@@ -278,7 +279,7 @@ class SegmentBuilder {
   NumericTuning& _codes_tuning;
   Shape _shape = Shape::Dedup;
   uint8_t _level = 0;
-  FrameLayout _layout = FrameLayout::Dictionary;
+  FrameLayout _layout = FrameLayout::FirstFrame;
   uint64_t _next = 0;
 
   std::vector<std::string_view> _entries;

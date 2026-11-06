@@ -156,7 +156,8 @@ class SegmentWriter {
       return {
         .choice = *_named,
         .level = _params.compression_level,
-        .layout = FrameLayout::Dictionary,
+        .layout = _params.tier == WriteTier::Flush ? FrameLayout::FirstFrame
+                                                   : FrameLayout::Local,
       };
     }
     if (_tuning.choice) {
@@ -172,7 +173,7 @@ class SegmentWriter {
     return {
       .choice = {repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
       .level = kLz4Fast,
-      .layout = FrameLayout::Dictionary,
+      .layout = FrameLayout::FirstFrame,
     };
   }
 
@@ -182,7 +183,7 @@ class SegmentWriter {
     _live.clear();
     _live.push_back(cut);
     const auto layout =
-      retune ? FrameLayout::Dictionary : _tuning.layout[Index(ByteCodec::Lz4)];
+      retune ? FrameLayout::FirstFrame : _tuning.layout[Index(ByteCodec::Lz4)];
     auto* dedup = Trial({
       .choice = {Shape::Dedup, ByteCodec::Lz4},
       .level = kLz4Fast,
@@ -216,7 +217,7 @@ class SegmentWriter {
       if (auto* fsst = Cached({
             .choice = {shape, ByteCodec::Fsst},
             .level = 0,
-            .layout = FrameLayout::Dictionary,
+            .layout = FrameLayout::FirstFrame,
           });
           fsst &&
           static_cast<double>(fsst->Size()) <=
@@ -265,7 +266,7 @@ class SegmentWriter {
       const auto it = absl::c_find(ladder, tuned);
       rung = it == ladder.end() ? 0 : static_cast<size_t>(it - ladder.begin());
     }
-    auto layout = retune ? FrameLayout::Dictionary : tuned_layout;
+    auto layout = retune ? FrameLayout::FirstFrame : tuned_layout;
     std::optional<uint64_t> bytes;
     if (retune && leaf != ByteCodec::Fsst) {
       SDB_ASSERT(ladder.size() <= kMaxRungs);
@@ -275,7 +276,7 @@ class SegmentWriter {
         prices[r] = PriceOf({
           .choice = {shape, leaf},
           .level = ladder[r],
-          .layout = FrameLayout::Dictionary,
+          .layout = FrameLayout::FirstFrame,
         });
         lowest = std::min(lowest, prices[r]);
       }
@@ -296,6 +297,9 @@ class SegmentWriter {
           bytes = price;
         }
       };
+      if (_params.tier != WriteTier::Flush) {
+        prefer(FrameLayout::Local, 0.0);
+      }
       prefer(FrameLayout::Wide, kWideFramesGain);
       tuned_layout = layout;
     }

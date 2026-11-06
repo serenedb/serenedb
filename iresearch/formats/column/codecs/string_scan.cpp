@@ -180,8 +180,8 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);
-  if (h.flags == FrameDictionary::FirstFrame) {
-    info["dictionary"] = "first_frame";
+  if (h.flags != FrameDictionary::None) {
+    info["dictionary"] = std::string{SnakeCaseName(h.flags)};
   }
   info["raw_bytes"] = absl::StrCat(h.raw_bytes);
   info["data_bytes"] = absl::StrCat(h.data_size);

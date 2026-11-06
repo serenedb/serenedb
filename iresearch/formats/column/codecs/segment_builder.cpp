@@ -117,6 +117,7 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
     .row_count = static_cast<uint32_t>(_rows),
     .entry_count = static_cast<uint32_t>(entry_count),
     .frame_count = static_cast<uint32_t>(frames.frames.size()),
+    .dictionary_size = frames.dictionary_size,
     .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
     .data_size = static_cast<uint32_t>(data.size()),
     .lcp_width =

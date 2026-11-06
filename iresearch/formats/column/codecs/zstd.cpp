@@ -21,8 +21,12 @@
 #include "iresearch/formats/column/codecs/zstd.hpp"
 
 #define ZSTD_STATIC_LINKING_ONLY
+#define ZDICT_STATIC_LINKING_ONLY
 
+#include <zdict.h>
 #include <zstd.h>
+
+#include <utility>
 
 #include "iresearch/formats/column/codecs/blob_leaf.tpp"
 #include "iresearch/formats/column/codecs/dictionary_scan.tpp"
@@ -34,11 +38,25 @@
 
 /*
 zstd frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 32 KiB; or
+to 32 KiB and is the dictionary of the later frames of up to 32 KiB; or the
+same frames, each compressed with the segment's trained dictionary; or
 64 KiB frames without a dictionary.
 */
 
 namespace irs::codecs {
+namespace {
+
+constexpr ZDICT_fastCover_params_t kTrainParams{
+  .k = 256,
+  .d = 8,
+  .f = 18,
+  .nbThreads = 1,
+  .splitPoint = 1.0,
+  .accel = 10,
+  .zParams = {.compressionLevel = 1},
+};
+
+}  // namespace
 
 const duckdb::CompressionFunction& ZstdFunction() {
   static const auto kFunction =
@@ -109,6 +127,27 @@ bool Zstd::Decompressor::Run(const char* src, size_t size, char* dst,
   const auto n = ZSTD_decompress_usingDDict(_ctx.get(), dst, raw_size, src,
                                             size, dictionary);
   return !ZSTD_isError(n) && n == raw_size;
+}
+
+void TrainDictionary(std::string_view samples, std::span<const size_t> sizes,
+                     size_t capacity, std::string& dictionary) {
+  SDB_ASSERT(std::in_range<unsigned>(sizes.size()));
+  dictionary.resize_and_overwrite(capacity, [&](char* buf, size_t size) {
+    const auto n = ZDICT_trainFromBuffer_fastCover(
+      buf, size, samples.data(), sizes.data(),
+      static_cast<unsigned>(sizes.size()), kTrainParams);
+    return ZDICT_isError(n) ? 0 : n;
+  });
+  if (dictionary.empty()) {
+    return;
+  }
+  const auto header =
+    ZDICT_getDictHeaderSize(dictionary.data(), dictionary.size());
+  if (ZDICT_isError(header) || header >= dictionary.size()) {
+    dictionary.clear();
+    return;
+  }
+  dictionary.erase(0, header);
 }
 
 }  // namespace irs::codecs

@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -31,13 +32,25 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/segment_builder.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
+#include "iresearch/formats/column/codecs/zstd.hpp"
 
 namespace irs::codecs::text {
 
 inline constexpr size_t kPriceFrames = 8;
+inline constexpr size_t kLocalMinFrames = 8;
+inline constexpr uint64_t kLocalDictionaryShare = 25;
+inline constexpr uint64_t kLocalDictionaryMinBytes = 256;
+inline constexpr uint64_t kLocalDictionaryMaxBytes = kMaxDictionaryBytes;
+inline constexpr uint64_t kLocalDictionaryPacking = 2;
+
+constexpr size_t LocalDictionaryBytes(uint64_t raw, uint64_t cap) noexcept {
+  return static_cast<size_t>(
+    std::clamp(raw / kLocalDictionaryShare, kLocalDictionaryMinBytes, cap));
+}
 
 template<typename Codec>
 class BlobEncoder {
@@ -50,14 +63,15 @@ class BlobEncoder {
   void Begin(Shape shape, uint8_t level, FrameLayout layout) {
     _shape = shape;
     _layout = Configure(level, layout);
+    _local = layout == FrameLayout::Local;
     _dictionary.clear();
     _data.clear();
     _frames.clear();
   }
 
   void Append(std::string_view sv, uint32_t entry) {
-    if (_frame_entries != 0 &&
-        _frame.size() + sv.size() > Limit(_layout, _frames.empty())) {
+    if (_frame_entries != 0 && _frame.size() - _frame_begin + sv.size() >
+                                 Limit(_layout, _frames.empty())) {
       CloseFrame();
     }
     if (_frame_entries == 0) {
@@ -69,6 +83,9 @@ class BlobEncoder {
 
   uint64_t Estimate(const SegmentBuilder&) const noexcept {
     return (_frames.size() + 1) * kFrameMetaSize + _data.size() +
+           (_local ? LocalDictionaryBytes(_frame.size(), kDictionaryCap) /
+                       kLocalDictionaryPacking
+                   : 0) +
            static_cast<uint64_t>(
              static_cast<double>(_frame.size()) *
              Ratio(_history[static_cast<size_t>(_shape)], 1.0));
@@ -79,14 +96,21 @@ class BlobEncoder {
     if (_frame_entries != 0) {
       CloseFrame();
     }
+    if (_local) {
+      CompressHeld();
+    }
     absl::c_transform(rows.Entries(), lengths.begin(), [](std::string_view e) {
       return static_cast<uint32_t>(e.size());
     });
+    const auto flags = Flags();
+    const bool local = flags == FrameDictionary::Local;
     return {
       .codec = kCodec,
       .frames = _frames,
       .max_length = rows.MaxLen(),
-      .flags = Flags(),
+      .symtab = local ? std::string_view{_packed} : std::string_view{},
+      .dictionary_size = local ? static_cast<uint32_t>(_dictionary.size()) : 0,
+      .flags = flags,
     };
   }
 
@@ -98,10 +122,13 @@ class BlobEncoder {
     SplitFrames(p, frame_shape);
     uint64_t data = 0;
     if (!_spans.empty()) {
+      if (frame_layout == FrameLayout::Local) {
+        data += PriceDictionary(p);
+      }
       Assemble(p, _spans[0], _price_dictionary);
       data += CompressFrame(_price_dictionary);
-      if (frame_shape.dictionary != 0 && !_price_dictionary.empty() &&
-          _spans.size() > 1) {
+      if (!_active && frame_shape.dictionary != 0 &&
+          !_price_dictionary.empty() && _spans.size() > 1) {
         _active = &_first.emplace(level, _price_dictionary);
       }
       const size_t rest = _spans.size() - 1;
@@ -161,6 +188,9 @@ class BlobEncoder {
     uint64_t raw;
   };
 
+  static constexpr uint64_t kDictionaryCap =
+    kCodec == ByteCodec::Zxc ? kFrameDictionaryBytes : kLocalDictionaryMaxBytes;
+
   static constexpr FrameShape DictionaryShape() noexcept {
     if constexpr (kCodec == ByteCodec::Zstd) {
       return {kZstdDictionaryFrameBytes, kFrameDictionaryBytes};
@@ -180,6 +210,7 @@ class BlobEncoder {
   FrameShape Configure(uint8_t level, FrameLayout layout) {
     _active = nullptr;
     _first.reset();
+    _trained = false;
     if (!_codec || _level != level) {
       _codec.emplace(level);
       _level = level;
@@ -191,26 +222,104 @@ class BlobEncoder {
   }
 
   FrameDictionary Flags() const noexcept {
+    if (_trained) {
+      return FrameDictionary::Local;
+    }
     return !_dictionary.empty() && _frames.size() > 1
              ? FrameDictionary::FirstFrame
              : FrameDictionary::None;
   }
 
   void CloseFrame() {
-    const auto comp_off = _data.size();
-    const auto n = AppendCompressed(_frame, _data);
-    _frames.push_back(
-      FrameMeta{_frame_first, static_cast<uint32_t>(_frame.size()),
-                static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)});
-    auto& hist = _history[static_cast<size_t>(_shape)];
-    hist.raw += _frame.size();
-    hist.comp += n;
+    if (_local) {
+      _frames.push_back(
+        FrameMeta{_frame_first,
+                  static_cast<uint32_t>(_frame.size() - _frame_begin), 0, 0});
+      _frame_begin = _frame.size();
+      _frame_entries = 0;
+      return;
+    }
+    _frames.push_back(Compress(_frame_first, _frame));
     if (_frames.size() == 1 && _layout.dictionary != 0 && !_frame.empty()) {
       _dictionary.swap(_frame);
       _active = &_first.emplace(_level, _dictionary);
     }
     _frame.clear();
     _frame_entries = 0;
+  }
+
+  void CompressHeld() {
+    if (_frames.size() >= kLocalMinFrames) {
+      _sizes.clear();
+      for (const auto& m : _frames) {
+        _sizes.push_back(m.raw_len);
+      }
+      TrainDictionary(_frame, _sizes,
+                      LocalDictionaryBytes(_frame.size(), kDictionaryCap),
+                      _dictionary);
+      if (!_dictionary.empty()) {
+        _active = &_first.emplace(_level, _dictionary);
+        _trained = true;
+        Pack(_dictionary, _packed);
+      }
+    }
+    std::string_view rest = _frame;
+    for (auto& m : _frames) {
+      const auto raw = rest.substr(0, m.raw_len);
+      rest.remove_prefix(m.raw_len);
+      m = Compress(m.first_entry, raw);
+      if (!_active && !raw.empty() && _frames.size() > 1) {
+        _dictionary.assign(raw);
+        _active = &_first.emplace(_level, _dictionary);
+      }
+    }
+    _frame.clear();
+    _frame_begin = 0;
+  }
+
+  uint64_t PriceDictionary(const Profile& p) {
+    if (_spans.size() < kLocalMinFrames) {
+      return 0;
+    }
+    _price_samples.clear();
+    _price_samples.reserve(p.raw);
+    for (const auto entry : p.entries) {
+      _price_samples.append(entry);
+    }
+    _sizes.clear();
+    for (const auto& span : _spans) {
+      _sizes.push_back(span.raw);
+    }
+    TrainDictionary(_price_samples, _sizes,
+                    LocalDictionaryBytes(p.raw, kDictionaryCap),
+                    _price_trained);
+    if (_price_trained.empty()) {
+      return 0;
+    }
+    _active = &_first.emplace(_level, _price_trained);
+    Pack(_price_trained, _price_packed);
+    return _price_packed.size();
+  }
+
+  void Pack(std::string_view dictionary, std::string& out) {
+    if (!_packer) {
+      _packer.emplace(Lz4::kDefaultLevel);
+    }
+    const auto bound = Lz4::Bound(dictionary.size());
+    out.resize_and_overwrite(bound, [&](char* buf, size_t) {
+      return _packer->Compress(dictionary.data(), dictionary.size(), buf,
+                               bound);
+    });
+  }
+
+  FrameMeta Compress(uint32_t first, std::string_view raw) {
+    const auto comp_off = _data.size();
+    const auto n = AppendCompressed(raw, _data);
+    auto& hist = _history[static_cast<size_t>(_shape)];
+    hist.raw += raw.size();
+    hist.comp += n;
+    return {first, static_cast<uint32_t>(raw.size()),
+            static_cast<uint32_t>(comp_off), static_cast<uint32_t>(n)};
   }
 
   static size_t Limit(const FrameShape& shape, bool first) noexcept {
@@ -269,16 +378,25 @@ class BlobEncoder {
   uint8_t _level = 0;
   Shape _shape = Shape::Dedup;
   FrameShape _layout{kFrameRawBytes, 0};
+  bool _local = false;
+  bool _trained = false;
   std::string _frame;
+  size_t _frame_begin = 0;
   std::string _dictionary;
   uint32_t _frame_first = 0;
   uint32_t _frame_entries = 0;
   std::vector<FrameMeta> _frames;
   std::string _data;
+  std::vector<size_t> _sizes;
   std::vector<Span> _spans;
   std::string _price_dictionary;
   std::string _price_frame;
   std::string _price_out;
+  std::string _price_samples;
+  std::string _price_trained;
+  std::string _price_packed;
+  std::string _packed;
+  std::optional<Lz4::Compressor> _packer;
 };
 
 }  // namespace irs::codecs::text

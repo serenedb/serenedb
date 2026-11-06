@@ -76,7 +76,8 @@ class Transaction : public Config {
   }
 
   void ClaimSearchLayout(std::shared_ptr<search::Store> table,
-                         duckdb::transaction_t owner, std::string_view name);
+                         duckdb::transaction_t owner, std::string_view name,
+                         search::TableChange change);
 
   void AddCreatedIndex(duckdb::idx_t database,
                        std::shared_ptr<search::Store> storage) {
@@ -125,7 +126,7 @@ class Transaction : public Config {
   // tied to the view they were written through. Returns whether it dropped.
   bool TryDropSearchReader(duckdb::idx_t database_id, duckdb::idx_t shard_id);
 
-  void Destroy(duckdb::transaction_t owner) noexcept;
+  void Destroy(duckdb::transaction_t owner, bool committed) noexcept;
 
  private:
   // The cases a single snapshot serves a whole transaction: an explicit

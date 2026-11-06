@@ -26,22 +26,16 @@ otel_metrics_sum_idx
 otel_metrics_summary_idx
 otel_traces_idx
 
-statement error
+statement ok
 ALTER TABLE otel_logs ADD COLUMN extra VARCHAR;
-----
-db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
 
-
-statement error
-ALTER TABLE otel_logs DROP COLUMN body;
-----
-db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
-
+statement ok
+ALTER TABLE otel_logs DROP COLUMN extra;
 
 statement error
 ALTER TABLE otel_logs ALTER COLUMN body TYPE TEXT;
 ----
-db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
+db error: ERROR: Cannot change the type of column "body": index "otel_logs_idx" depends on it
 
 
 statement ok

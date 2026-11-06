@@ -166,7 +166,7 @@ store's metadata index (or drop the operator).
 Unlike the plain operators, these have no exact-scan fallback.
 
 :::caution
-Passing the index check is necessary but not sufficient. Whether an operator actually matches depends on the column's [text search dictionary](../../sql/indexes/inverted/text-analysis.md). A column indexed *verbatim* (no dictionary) is a single whole-value token, so `$startswith` and `$regex` match against the entire value, while `$phrase` and `$ngram` need an analyzed column — and `$ngram` specifically needs an n-gram dictionary. Attach one with [`MetadataColumnIndex(name, dictionary=...)`](./indexes.md#metadatacolumnindex), remembering that doing so defeats plain-equality pushdown on that column.
+Passing the index check is necessary but not sufficient. Whether an operator actually matches depends on the column's [text search dictionary](../../sql/indexes/inverted/text-analysis.md). A column indexed *verbatim* (no dictionary) is a single whole-value token, so `$startswith` and `$regex` match against the entire value, while `$phrase` and `$ngram` need an analyzed column — and `$ngram` specifically needs an n-gram dictionary of a single gram size. Attach one with [`MetadataColumnIndex(name, dictionary=...)`](./indexes.md#metadatacolumnindex), remembering that doing so defeats plain-equality pushdown on that column.
 :::
 
 The document text itself is not a metadata field, so full-text search over page content goes through [hybrid search](./hybrid-search.md), not this filter.
@@ -220,13 +220,15 @@ N-gram similarity match, via [`ts_ngram`](../../sql/functions/search/full-text.m
 | `"hello"` | `ts_ngram('hello')` |
 | `{"text": "hello", "threshold": 0.3}` | `ts_ngram('hello', 0.3)` |
 
-`threshold` is the minimum similarity, a number in `[0, 1]`. The column must be indexed with an n-gram dictionary carrying `frequency = true` and `position = true`; the client cannot enforce that, so create the dictionary yourself:
+`threshold` is the minimum similarity, a number in `[0, 1]`. The column must be indexed with a [`generate_ngrams`](../../sql/functions/search/tokenizers/generate_ngrams.md) dictionary of **one gram size** — `min_gram` equal to `max_gram` — carrying `frequency` and `position`. The client cannot enforce that, so create the dictionary yourself:
 
 ```sql
 CREATE TEXT SEARCH DICTIONARY "public"."ngram_dict" AS
-    generate_ngrams(2, 3)
+    generate_ngrams(2, 2)
     WITH (frequency, position);
 ```
+
+A range such as `generate_ngrams(2, 3)` puts several grams at one position, which n-gram similarity cannot score, so the query fails with `ts_ngram needs a dictionary that emits one token per position`. Use `(2, 2)` for bigrams (more matches) or `(3, 3)` for trigrams (more precise).
 
 ```python
 from langchain_serenedb import MetadataColumnIndex, MetadataIndexConfig
@@ -330,7 +332,7 @@ Indexing metadata never changes which rows match — provided the declared types
 | `$regex` | `str` | `@@ ts_regexp(...)` | Required |
 | `$fuzzy` | `str` | `@@ ts_levenshtein(...)` | Required |
 | `$match` | `list` or `tokens`/`min_match` mapping | `@@ ts_any(...)` | Required |
-| `$ngram` | `str` or `text`/`threshold` mapping | `@@ ts_ngram(...)` | Required (n-gram dictionary) |
+| `$ngram` | `str` or `text`/`threshold` mapping | `@@ ts_ngram(...)` | Required (n-gram dictionary, one gram size) |
 | `$phrase` | `str`, list, or `text`/`slop` mapping | `@@ ts_phrase(...)` | Required (`position = true`, or the column's text in the index) |
 
 :::note

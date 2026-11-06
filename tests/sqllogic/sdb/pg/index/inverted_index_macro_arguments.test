@@ -160,17 +160,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE twice(lower(s)) @@ ts_regexp('data engineer');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: docs                        │
-│ Lookup: search                     │
-│ Index Filter:                      │
-│ ╭─ Term ─────────────────────────╮ │
-│ │ Field: twice(lower(s))(string) │ │
-│ │ Value: data engineer           │ │
-│ ╰────────────────────────────────╯ │
-│ Projections: id                    │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: docs                               │
+│ Lookup: search                            │
+│ Index Filter:                             │
+│ ╭─ Term ────────────────────────────────╮ │
+│ │ Field: public.twice(lower(s))(string) │ │
+│ │ Value: data engineer                  │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
 
 statement ok
 CREATE MACRO both_match(x, a, b) AS x @@ ts_regexp(a) AND x @@ ts_regexp(b);
@@ -185,20 +185,20 @@ query
 EXPLAIN SELECT id FROM docs WHERE both_match(twice(lower(s)), 'data.*', '.*engineer');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────╮
-│ Index: docs                                                            │
-│ Lookup: search                                                         │
-│ Index Filter:                                                          │
-│ ╭─ And ──────────────────────────╮                                     │
-│ ╰────────────────┬───────────────╯                                     │
-│                  ├───────────────────────────────────╮                 │
-│ ╭─ Starts With ──┴───────────────╮  ╭─ Automaton ────┴───────────────╮ │
-│ │ Field: twice(lower(s))(string) │  │ Field: twice(lower(s))(string) │ │
-│ │ Prefix: data                   │  │ Pattern: .*engineer            │ │
-│ ╰────────────────────────────────╯  ╰────────────────────────────────╯ │
-│ Projections: id                                                        │
-│ ~1 row                                                                 │
-╰────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────────╮
+│ Index: docs                                                                          │
+│ Lookup: search                                                                       │
+│ Index Filter:                                                                        │
+│ ╭─ And ─────────────────────────────────╮                                            │
+│ ╰───────────────────┬───────────────────╯                                            │
+│                     ├──────────────────────────────────────────╮                     │
+│ ╭─ Starts With ─────┴───────────────────╮  ╭─ Automaton ───────┴───────────────────╮ │
+│ │ Field: public.twice(lower(s))(string) │  │ Field: public.twice(lower(s))(string) │ │
+│ │ Prefix: data                          │  │ Pattern: .*engineer                   │ │
+│ ╰───────────────────────────────────────╯  ╰───────────────────────────────────────╯ │
+│ Projections: id                                                                      │
+│ ~1 row                                                                               │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE joined(l) @@ ts_regexp('chef sous') ORDER BY id;
@@ -210,17 +210,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE joined(l) @@ ts_regexp('chef sous');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: docs                  │
-│ Lookup: search               │
-│ Index Filter:                │
-│ ╭─ Term ───────────────────╮ │
-│ │ Field: joined(l)(string) │ │
-│ │ Value: chef sous         │ │
-│ ╰──────────────────────────╯ │
-│ Projections: id              │
-│ ~1 row                       │
-╰──────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: docs                         │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ Term ──────────────────────────╮ │
+│ │ Field: public.joined(l)(string) │ │
+│ │ Value: chef sous                │ │
+│ ╰─────────────────────────────────╯ │
+│ Projections: id                     │
+│ ~1 row                              │
+╰─────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE lower(array_to_string(list_transform(l, lambda x: x.a), ' ')) @@ ts_regexp('data') ORDER BY id;
@@ -232,17 +232,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE lower(array_to_string(list_transform(l, lambda x: x.a), ' ')) @@ ts_regexp('data');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────╮
-│ Index: docs                  │
-│ Lookup: search               │
-│ Index Filter:                │
-│ ╭─ Term ───────────────────╮ │
-│ │ Field: joined(l)(string) │ │
-│ │ Value: data              │ │
-│ ╰──────────────────────────╯ │
-│ Projections: id              │
-│ ~1 row                       │
-╰──────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: docs                         │
+│ Lookup: search                      │
+│ Index Filter:                       │
+│ ╭─ Term ──────────────────────────╮ │
+│ │ Field: public.joined(l)(string) │ │
+│ │ Value: data                     │ │
+│ ╰─────────────────────────────────╯ │
+│ Projections: id                     │
+│ ~1 row                              │
+╰─────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE edu(l) @@ ts_regexp('data.engineer') ORDER BY id;
@@ -300,17 +300,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE suffixes(l) @@ ts_regexp('Sous ous us s');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: docs              │
-│ Lookup: search           │
-│ Index Filter:            │
-│ ╭─ Term ───────────────╮ │
-│ │ Field: suffixes(l)   │ │
-│ │ Value: Sous ous us s │ │
-│ ╰──────────────────────╯ │
-│ Projections: id          │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: docs                   │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.suffixes(l) │ │
+│ │ Value: Sous ous us s      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE tails(l, s) @@ ts_regexp('Data Engineer:x') ORDER BY id;
@@ -322,17 +322,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE tails(l, s) @@ ts_regexp('Data Engineer:x');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────╮
-│ Index: docs                │
-│ Lookup: search             │
-│ Index Filter:              │
-│ ╭─ Term ─────────────────╮ │
-│ │ Field: tails(l, s)     │ │
-│ │ Value: Data Engineer:x │ │
-│ ╰────────────────────────╯ │
-│ Projections: id            │
-│ ~1 row                     │
-╰────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: docs                   │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.tails(l, s) │ │
+│ │ Value: Data Engineer:x    │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM docs
@@ -352,17 +352,17 @@ WHERE flatten(list_transform(l, lambda x: list_transform(
     lambda sx: s || ':' || sx))) @@ ts_regexp('Chef:p');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────╮
-│ Index: docs            │
-│ Lookup: search         │
-│ Index Filter:          │
-│ ╭─ Term ─────────────╮ │
-│ │ Field: tails(l, s) │ │
-│ │ Value: Chef:p      │ │
-│ ╰────────────────────╯ │
-│ Projections: id        │
-│ ~1 row                 │
-╰────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: docs                   │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.tails(l, s) │ │
+│ │ Value: Chef:p             │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM docs
@@ -378,17 +378,17 @@ WHERE list_transform(l, lambda x: array_to_string(list_transform(range(1, len(x.
   @@ ts_regexp('Data ata ta a');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: docs              │
-│ Lookup: search           │
-│ Index Filter:            │
-│ ╭─ Term ───────────────╮ │
-│ │ Field: suffixes(l)   │ │
-│ │ Value: Data ata ta a │ │
-│ ╰──────────────────────╯ │
-│ Projections: id          │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────╮
+│ Index: docs                   │
+│ Lookup: search                │
+│ Index Filter:                 │
+│ ╭─ Term ────────────────────╮ │
+│ │ Field: public.suffixes(l) │ │
+│ │ Value: Data ata ta a      │ │
+│ ╰───────────────────────────╯ │
+│ Projections: id               │
+│ ~1 row                        │
+╰───────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE tagged(l, v) @@ ts_regexp('Sous:chef x') ORDER BY id;
@@ -400,17 +400,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE tagged(l, v) @@ ts_regexp('Sous:chef x');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────╮
-│ Index: docs             │
-│ Lookup: search          │
-│ Index Filter:           │
-│ ╭─ Term ──────────────╮ │
-│ │ Field: tagged(l, v) │ │
-│ │ Value: Sous:chef x  │ │
-│ ╰─────────────────────╯ │
-│ Projections: id         │
-│ ~1 row                  │
-╰─────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: docs                    │
+│ Lookup: search                 │
+│ Index Filter:                  │
+│ ╭─ Term ─────────────────────╮ │
+│ │ Field: public.tagged(l, v) │ │
+│ │ Value: Sous:chef x         │ │
+│ ╰────────────────────────────╯ │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE list_transform(l, lambda x: x.a || ':' || array_to_string(list_sort(v), ' ')) @@ ts_regexp('Data:data eng') ORDER BY id;
@@ -422,17 +422,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE list_transform(l, lambda x: x.a || ':' || array_to_string(list_sort(v), ' ')) @@ ts_regexp('Data:data eng');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────╮
-│ Index: docs              │
-│ Lookup: search           │
-│ Index Filter:            │
-│ ╭─ Term ───────────────╮ │
-│ │ Field: tagged(l, v)  │ │
-│ │ Value: Data:data eng │ │
-│ ╰──────────────────────╯ │
-│ Projections: id          │
-│ ~1 row                   │
-╰──────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: docs                    │
+│ Lookup: search                 │
+│ Index Filter:                  │
+│ ╭─ Term ─────────────────────╮ │
+│ │ Field: public.tagged(l, v) │ │
+│ │ Value: Data:data eng       │ │
+│ ╰────────────────────────────╯ │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('eng/2') ORDER BY id;
@@ -444,17 +444,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('eng/2');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: docs                        │
-│ Lookup: search                     │
-│ Index Filter:                      │
-│ ╭─ Term ─────────────────────────╮ │
-│ │ Field: annotated(list_sort(v)) │ │
-│ │ Value: eng/2                   │ │
-│ ╰────────────────────────────────╯ │
-│ Projections: id                    │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: docs                               │
+│ Lookup: search                            │
+│ Index Filter:                             │
+│ ╭─ Term ────────────────────────────────╮ │
+│ │ Field: public.annotated(list_sort(v)) │ │
+│ │ Value: eng/2                          │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('x/2') ORDER BY id;
@@ -466,17 +466,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE annotated(list_sort(v)) @@ ts_regexp('x/2');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────╮
-│ Index: docs                        │
-│ Lookup: search                     │
-│ Index Filter:                      │
-│ ╭─ Term ─────────────────────────╮ │
-│ │ Field: annotated(list_sort(v)) │ │
-│ │ Value: x/2                     │ │
-│ ╰────────────────────────────────╯ │
-│ Projections: id                    │
-│ ~1 row                             │
-╰────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ──────────────────────────╮
+│ Index: docs                               │
+│ Lookup: search                            │
+│ Index Filter:                             │
+│ ╭─ Term ────────────────────────────────╮ │
+│ │ Field: public.annotated(list_sort(v)) │ │
+│ │ Value: x/2                            │ │
+│ ╰───────────────────────────────────────╯ │
+│ Projections: id                           │
+│ ~1 row                                    │
+╰───────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ ts_regexp('Chef Sous\|2') ORDER BY id;
@@ -488,18 +488,18 @@ query
 EXPLAIN SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ ts_regexp('Chef Sous\|2');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────────────╮
-│ Index: docs                                             │
-│ Lookup: search                                          │
-│ Index Filter:                                           │
-│ ╭─ Term ──────────────────────────────────────────────╮ │
-│ │ Field:                                              │ │
-│ │ counted(list_transform(l, (lambda x: x.a)))(string) │ │
-│ │ Value: Chef Sous|2                                  │ │
-│ ╰─────────────────────────────────────────────────────╯ │
-│ Projections: id                                         │
-│ ~1 row                                                  │
-╰─────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
+│ Index: docs                                                    │
+│ Lookup: search                                                 │
+│ Index Filter:                                                  │
+│ ╭─ Term ─────────────────────────────────────────────────────╮ │
+│ │ Field:                                                     │ │
+│ │ public.counted(list_transform(l, (lambda x: x.a)))(string) │ │
+│ │ Value: Chef Sous|2                                         │ │
+│ ╰────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ ts_regexp('\|0') ORDER BY id;
@@ -511,18 +511,18 @@ query
 EXPLAIN SELECT id FROM docs WHERE counted(list_transform(l, lambda x: x.a)) @@ ts_regexp('\|0');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────────────╮
-│ Index: docs                                             │
-│ Lookup: search                                          │
-│ Index Filter:                                           │
-│ ╭─ Term ──────────────────────────────────────────────╮ │
-│ │ Field:                                              │ │
-│ │ counted(list_transform(l, (lambda x: x.a)))(string) │ │
-│ │ Value: |0                                           │ │
-│ ╰─────────────────────────────────────────────────────╯ │
-│ Projections: id                                         │
-│ ~1 row                                                  │
-╰─────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────╮
+│ Index: docs                                                    │
+│ Lookup: search                                                 │
+│ Index Filter:                                                  │
+│ ╭─ Term ─────────────────────────────────────────────────────╮ │
+│ │ Field:                                                     │ │
+│ │ public.counted(list_transform(l, (lambda x: x.a)))(string) │ │
+│ │ Value: |0                                                  │ │
+│ ╰────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                │
+│ ~1 row                                                         │
+╰────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE reduced(list_sort(v)) @@ ts_regexp('\+data\+eng#2') ORDER BY id;
@@ -539,7 +539,8 @@ QUERY PLAN
 │ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
-│ │ Field: reduced(list_sort(v))(string) │ │
+│ │ Field:                               │ │
+│ │ public.reduced(list_sort(v))(string) │ │
 │ │ Value: +data+eng#2                   │ │
 │ ╰──────────────────────────────────────╯ │
 │ Projections: id                          │
@@ -561,7 +562,8 @@ QUERY PLAN
 │ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Term ───────────────────────────────╮ │
-│ │ Field: reduced(list_sort(v))(string) │ │
+│ │ Field:                               │ │
+│ │ public.reduced(list_sort(v))(string) │ │
 │ │ Value: #0                            │ │
 │ ╰──────────────────────────────────────╯ │
 │ Projections: id                          │
@@ -583,7 +585,8 @@ QUERY PLAN
 │ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Term ──────────────────────────────────╮ │
-│ │ Field: typed_join(list_sort(v))(string) │ │
+│ │ Field:                                  │ │
+│ │ public.typed_join(list_sort(v))(string) │ │
 │ │ Value: chef;x                           │ │
 │ ╰─────────────────────────────────────────╯ │
 │ Projections: id                             │
@@ -605,7 +608,8 @@ QUERY PLAN
 │ Lookup: search                              │
 │ Index Filter:                               │
 │ ╭─ Term ──────────────────────────────────╮ │
-│ │ Field: typed_join(list_sort(v))(string) │ │
+│ │ Field:                                  │ │
+│ │ public.typed_join(list_sort(v))(string) │ │
 │ │ Value: data;eng                         │ │
 │ ╰─────────────────────────────────────────╯ │
 │ Projections: id                             │
@@ -645,17 +649,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: docs                       │
-│ Lookup: search                    │
-│ Index Filter:                     │
-│ ╭─ Term ────────────────────────╮ │
-│ │ Field: dup0(lower(s))(string) │ │
-│ │ Value: chefchef               │ │
-│ ╰───────────────────────────────╯ │
-│ Projections: id                   │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: docs                              │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field: public.dup0(lower(s))(string) │ │
+│ │ Value: chefchef                      │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 statement ok
 SET disabled_optimizers = 'expression_rewriter';
@@ -670,17 +674,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE dup0(lower(s)) @@ ts_regexp('chefchef');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────╮
-│ Index: docs                       │
-│ Lookup: search                    │
-│ Index Filter:                     │
-│ ╭─ Term ────────────────────────╮ │
-│ │ Field: dup0(lower(s))(string) │ │
-│ │ Value: chefchef               │ │
-│ ╰───────────────────────────────╯ │
-│ Projections: id                   │
-│ ~1 row                            │
-╰───────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: docs                              │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Term ───────────────────────────────╮ │
+│ │ Field: public.dup0(lower(s))(string) │ │
+│ │ Value: chefchef                      │ │
+│ ╰──────────────────────────────────────╯ │
+│ Projections: id                          │
+│ ~1 row                                   │
+╰──────────────────────────────────────────╯
 
 statement ok
 SET disabled_optimizers = '';
@@ -799,18 +803,18 @@ query
 EXPLAIN SELECT id FROM docs WHERE once(list_transform(l, lambda y: y.a)) @@ ts_regexp('Chef Sous');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────╮
-│ Index: docs                                          │
-│ Lookup: search                                       │
-│ Index Filter:                                        │
-│ ╭─ Term ───────────────────────────────────────────╮ │
-│ │ Field:                                           │ │
-│ │ once(list_transform(l, (lambda y: y.a)))(string) │ │
-│ │ Value: Chef Sous                                 │ │
-│ ╰──────────────────────────────────────────────────╯ │
-│ Projections: id                                      │
-│ ~1 row                                               │
-╰──────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────╮
+│ Index: docs                                                 │
+│ Lookup: search                                              │
+│ Index Filter:                                               │
+│ ╭─ Term ──────────────────────────────────────────────────╮ │
+│ │ Field:                                                  │ │
+│ │ public.once(list_transform(l, (lambda y: y.a)))(string) │ │
+│ │ Value: Chef Sous                                        │ │
+│ ╰─────────────────────────────────────────────────────────╯ │
+│ Projections: id                                             │
+│ ~1 row                                                      │
+╰─────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM docs WHERE either(v) @@ ts_regexp('chef') ORDER BY id;
@@ -822,17 +826,17 @@ query
 EXPLAIN SELECT id FROM docs WHERE either(v) @@ ts_regexp('chef');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────╮
-│ Index: docs          │
-│ Lookup: search       │
-│ Index Filter:        │
-│ ╭─ Term ───────────╮ │
-│ │ Field: either(v) │ │
-│ │ Value: chef      │ │
-│ ╰──────────────────╯ │
-│ Projections: id      │
-│ ~1 row               │
-╰──────────────────────╯
+╭─ IRESEARCH_SCAN ────────────╮
+│ Index: docs                 │
+│ Lookup: search              │
+│ Index Filter:               │
+│ ╭─ Term ──────────────────╮ │
+│ │ Field: public.either(v) │ │
+│ │ Value: chef             │ │
+│ ╰─────────────────────────╯ │
+│ Projections: id             │
+│ ~1 row                      │
+╰─────────────────────────────╯
 
 # A shared argument that the optimizer rewrites, a || chain or a cast of a
 # constant, matches too, also where the body uses it inside its own lambda.
@@ -861,18 +865,18 @@ query
 EXPLAIN SELECT id FROM rewritten WHERE annotated(string_split(s || '-' || s || '-x', '-')) @@ ts_regexp('x/3');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
-│ Index: rewritten                                              │
-│ Lookup: search                                                │
-│ Index Filter:                                                 │
-│ ╭─ Term ────────────────────────────────────────────────────╮ │
-│ │ Field:                                                    │ │
-│ │ annotated(string_split((((s || '-') || s) || '-x'), '-')) │ │
-│ │ Value: x/3                                                │ │
-│ ╰───────────────────────────────────────────────────────────╯ │
-│ Projections: id                                               │
-│ ~1 row                                                        │
-╰───────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────╮
+│ Index: rewritten                                                     │
+│ Lookup: search                                                       │
+│ Index Filter:                                                        │
+│ ╭─ Term ───────────────────────────────────────────────────────────╮ │
+│ │ Field:                                                           │ │
+│ │ public.annotated(string_split((((s || '-') || s) || '-x'), '-')) │ │
+│ │ Value: x/3                                                       │ │
+│ ╰──────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                      │
+│ ~1 row                                                               │
+╰──────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM rewritten WHERE twice(s || '-' || CAST(1 AS VARCHAR) || '-' || s) @@ ts_regexp('b-1-b') ORDER BY id;
@@ -884,18 +888,18 @@ query
 EXPLAIN SELECT id FROM rewritten WHERE twice(s || '-' || CAST(1 AS VARCHAR) || '-' || s) @@ ts_regexp('b-1-b');
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
-│ Index: rewritten                                                      │
-│ Lookup: search                                                        │
-│ Index Filter:                                                         │
-│ ╭─ Term ────────────────────────────────────────────────────────────╮ │
-│ │ Field:                                                            │ │
-│ │ twice(((((s || '-') || CAST(1 AS VARCHAR)) || '-') || s))(string) │ │
-│ │ Value: b-1-b                                                      │ │
-│ ╰───────────────────────────────────────────────────────────────────╯ │
-│ Projections: id                                                       │
-│ ~1 row                                                                │
-╰───────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────╮
+│ Index: rewritten                                                             │
+│ Lookup: search                                                               │
+│ Index Filter:                                                                │
+│ ╭─ Term ───────────────────────────────────────────────────────────────────╮ │
+│ │ Field:                                                                   │ │
+│ │ public.twice(((((s || '-') || CAST(1 AS VARCHAR)) || '-') || s))(string) │ │
+│ │ Value: b-1-b                                                             │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                              │
+│ ~1 row                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
 statement ok
 CREATE TABLE checked (id BIGINT, s VARCHAR) WITH (storage = 'search');

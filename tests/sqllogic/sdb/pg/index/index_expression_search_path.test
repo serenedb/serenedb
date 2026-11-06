@@ -1,0 +1,53 @@
+statement ok
+CREATE SCHEMA iesp_s;
+
+
+statement ok
+CREATE FUNCTION iesp_s.iesp_f(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE TABLE iesp_s.iesp_t (a INT);
+
+
+statement ok
+SET search_path = iesp_s;
+
+
+statement ok
+CREATE INDEX iesp_i ON iesp_t ((iesp_f(a)));
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT attnum, attname, format_type(atttypid, atttypmod) AS type FROM pg_attribute
+WHERE attrelid = 'iesp_s.iesp_i'::regclass ORDER BY attnum;
+----
+attnum	attname	type
+1	iesp_f	integer
+
+
+query
+SELECT attname FROM pg_attribute WHERE attrelid = 'iesp_s.iesp_t'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname
+a
+
+
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'iesp_s' AND table_name = 'iesp_t' ORDER BY column_name;
+----
+column_name
+a
+
+
+statement ok
+INSERT INTO iesp_s.iesp_t VALUES (1);
+
+
+statement ok
+DROP SCHEMA iesp_s CASCADE;

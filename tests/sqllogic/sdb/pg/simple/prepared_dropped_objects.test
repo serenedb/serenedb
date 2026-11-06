@@ -1,0 +1,80 @@
+statement ok
+CREATE TABLE pdo_t (id INT, v TEXT);
+
+
+statement ok
+INSERT INTO pdo_t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE INDEX pdo_art ON pdo_t (id);
+
+
+statement ok
+PREPARE pdo_q AS SELECT count(*) AS n FROM pdo_art;
+
+
+query
+EXECUTE pdo_q;
+----
+n
+2
+
+
+statement ok
+DROP INDEX pdo_art;
+
+
+statement error
+EXECUTE pdo_q;
+----
+db error: ERROR: Table with name pdo_art does not exist!
+Did you mean "pdo_t"?
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdo_dict AS split_text(case := 'lower');
+
+
+statement ok
+PREPARE pdo_lex AS SELECT ts_lexize('pdo_dict', 'The Runner') AS tokens;
+
+
+query
+EXECUTE pdo_lex;
+----
+tokens
+{the,runner}
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pdo_dict;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdo_dict AS split_text();
+
+
+query
+EXECUTE pdo_lex;
+----
+tokens
+{The,Runner}
+
+
+statement ok
+CALL es_create_index('pdo_es', '{"mappings":{"properties":{"n":{"type":"long"}}}}');
+
+
+statement ok
+PREPARE pdo_doc AS SELECT * FROM es_doc('pdo_es', 'a', '{"n":1}');
+
+
+statement ok
+ALTER TABLE es.pdo_es ADD COLUMN extra INT;
+
+
+statement error
+EXECUTE pdo_doc;
+----
+db error: ERROR: cached plan must not change result type

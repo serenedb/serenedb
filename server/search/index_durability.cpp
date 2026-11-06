@@ -228,7 +228,8 @@ void IndexDurability::MarkPublished() {
 absl::Status IndexDurability::Refresh(
   irs::IndexWriter& writer, bool wait,
   const irs::ProgressReportCallback& progress, RefreshResult& code,
-  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published) {
+  absl::FunctionRef<void()> unchanged, absl::FunctionRef<void()> published,
+  const RefreshGate* gate) {
   code = RefreshResult::NoChanges;
 
   try {
@@ -256,11 +257,19 @@ absl::Status IndexDurability::Refresh(
     SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh");
     bool were_changes = false;
     try {
+      std::optional<absl::MutexLock> gate_lock;
+      if (gate) {
+        gate_lock.emplace(&gate->mutex);
+        if (!gate->open()) {
+          return absl::OkStatus();
+        }
+      }
       were_changes = writer.RefreshBegin({
         .progress = progress,
         .reopen_reader = /* TODO(codeworse) */ false,
         .payload_changed = PayloadChanged(),
       });
+      gate_lock.reset();
       if (were_changes) {
         _directory_dirty.store(true, std::memory_order_relaxed);
       }
@@ -436,6 +445,14 @@ absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
       absl::StrCat("caught exception while cleaning up ", _name));
   }
   return absl::OkStatus();
+}
+
+bool IndexDurability::SyncPublished() {
+  if (!CanPersist()) {
+    return false;
+  }
+  SyncDirectory();
+  return true;
 }
 
 bool IndexDurability::PayloadChanged() const {

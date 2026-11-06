@@ -75,6 +75,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   _compact = false;
   _compact_dense = false;
   _columns.clear();
+  _absent.clear();
   _filters.Clear();
   _score_filter = nullptr;
   _score_state = nullptr;
@@ -127,6 +128,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   for (const auto& p : _projections) {
     const auto* r = col_reader->Column(static_cast<irs::field_id>(p.column_id));
     if (r == nullptr) {
+      _absent.push_back(p.output_slot);
       continue;
     }
     // A projected column that is also a `.col` filter column materializes as
@@ -186,6 +188,14 @@ std::pair<uint64_t, duckdb::idx_t> HitBatcher::BuildSel(duckdb::idx_t first,
     _sel.set_index(i, Row(first + i) - anchor);
   }
   return {anchor, span};
+}
+
+void HitBatcher::FillAbsent(duckdb::DataChunk& output) const {
+  for (const auto slot : _absent) {
+    auto& out = output.data[slot];
+    out.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    duckdb::ConstantVector::SetNull(out, true);
+  }
 }
 
 void HitBatcher::FinishBatch(Batch& batch, duckdb::idx_t count) {
@@ -406,6 +416,7 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
     }
   }
 
+  FillAbsent(output);
   FinishBatch(batch, survivors);
   return batch;
 }
@@ -435,6 +446,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
       }
     }
   }
+  FillAbsent(output);
   FinishBatch(batch, _batch);
   return batch;
 }

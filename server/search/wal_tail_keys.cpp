@@ -54,12 +54,14 @@ std::vector<WalTailFile> OpenTailFiles(duckdb::AttachedDatabase& db,
   std::vector<WalTailFile> files;
 
   // Every generation the span covers but the live one, oldest first. Their
-  // files are whole: a retired WAL is never appended to again.
+  // files are whole: a retired WAL is never appended to again. Which file a
+  // generation is in is the storage manager's to say: a checkpoint in flight
+  // has closed the WAL it retired without renaming it yet.
   for (auto generation =
          std::max(from.generation,
                   static_cast<uint64_t>(storage.GetOldestWALGeneration()));
        generation < live; ++generation) {
-    auto handle = OpenWal(fs, storage.GetRetainedWALPath(generation));
+    auto handle = OpenWal(fs, storage.GetWALGenerationPath(generation));
     if (!handle) {
       continue;
     }
@@ -98,10 +100,14 @@ WalTailCursor ReadTailKeys(duckdb::AttachedDatabase& db,
                       ERR_MSG("cannot read the WAL of generation ",
                               file.generation, ": ", read.error));
     }
-    // A retired WAL decides every batch it holds, so a span moving on to the
-    // next generation resumes at its head; only the live WAL can end on a
-    // batch that is still being decided.
     cursor = {.generation = file.generation, .offset = read.boundary};
+    if (read.stopped_undecided) {
+      // Where a read stops is where the next one has to start, so a span ends
+      // at the first batch whose fate the commit lock has yet to settle rather
+      // than carrying on into the generations after it and leaving that batch
+      // behind the cursor.
+      break;
+    }
   }
   return cursor;
 }

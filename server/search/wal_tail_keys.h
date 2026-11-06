@@ -121,11 +121,13 @@ struct WalTailFile {
 // of its own, so a span is one file per generation: the one `from` names, every
 // generation after it, and the WAL in use now.
 //
-// Resolving and opening belong together and must happen under the commit lock,
-// which the caller holds: only that lock fixes which file a WAL path names, and
-// an open handle then keeps the file it was opened on through any later rename
-// or unlink. Reading them does not, which is what lets a pass that is not
-// committing give the lock back before it reads.
+// Resolving and opening belong together and must happen under the commit lock
+// or a shared checkpoint key, one of which the caller holds: a checkpoint is
+// the only thing that moves these files, and it moves them under the commit
+// lock, so either excludes it from moving one while the file is being found and
+// opened. An open handle then keeps the file it was opened on through any later
+// rename or unlink, which is what lets a pass that is not committing give its
+// lock back before it reads.
 std::vector<WalTailFile> OpenTailFiles(duckdb::AttachedDatabase& db,
                                        const WalTailCursor& from);
 

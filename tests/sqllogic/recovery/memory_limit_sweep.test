@@ -1,0 +1,13 @@
+# Every write and maintenance statement on search tables with and without an
+# inverted index, run under memory_limit set from 1 MB to 128 MB above the
+# memory in use: a statement either succeeds or fails with out-of-memory and
+# leaves nothing behind, the index stays in sync with its table, CHECKPOINT
+# works, and a restart keeps it.
+
+control substitution on
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 recovery/memory_pressure.py "$port" '$__DATABASE__' '$__TEST_DIR__' limits
+----
+limits: ok
+restart: ok

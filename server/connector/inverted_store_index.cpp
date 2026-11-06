@@ -67,8 +67,6 @@
 namespace sdb::connector {
 namespace {
 
-constexpr size_t kRemovalBytesPerRow = 2 * sizeof(int64_t);
-
 // The index entry one id names in the database holding it, or null when no
 // entry there carries it -- an online CREATE INDEX feeds a concurrent writer
 // before its own transaction has committed, so a miss is ordinary.
@@ -561,41 +559,29 @@ void InvertedStoreIndex::Delete(duckdb::IndexLock&, duckdb::DataChunk& chunk,
   duckdb::UnifiedVectorFormat fmt;
   row_ids.ToUnifiedFormat(count, fmt);
   const auto* data = duckdb::UnifiedVectorFormat::GetData<duckdb::row_t>(fmt);
-  auto& trx =
-    conn->SearchTxn().EnsureIndexTransaction(_index_id, _storage, _config);
-  try {
-    irs::TrackedVector<int64_t> rows{irs::TrackedAllocator<int64_t>{
-      trx.TakeRemoval(count * kRemovalBytesPerRow)}};
-    rows.reserve(count);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      rows.push_back(data[fmt.sel->get_index(i)]);
-    }
-    SDB_PARK_ONCE_ON_FAILURE("inverted_delete_rows_logged");
-    auto native = _storage->AppendDeleteLog(std::move(rows));
-    if (!native.empty()) {
+  irs::TrackedVector<int64_t> rows;
+  rows.reserve(count);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    rows.push_back(data[fmt.sel->get_index(i)]);
+  }
+  SDB_PARK_ONCE_ON_FAILURE("inverted_delete_rows_logged");
+  auto native = _storage->AppendDeleteLog(std::move(rows));
+  if (!native.empty()) {
+    auto& trx =
+      conn->SearchTxn().EnsureIndexTransaction(_index_id, _storage, _config);
+    try {
       SDB_IF_FAILURE("inverted_rows_remove_fails") {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
                         ERR_MSG("debug failure point"));
       }
       trx.Remove(irs::KeyRemoval{std::move(native)});
+    } catch (const std::exception& e) {
+      SDB_ERROR(SEARCH, "removing rows from index '", _index_id,
+                "' failed: ", e.what(),
+                "; the index replays them from the WAL on next boot");
+      _storage->MarkOutOfSync();
     }
-  } catch (const std::exception& e) {
-    SDB_ERROR(SEARCH, "removing rows from index '", _index_id,
-              "' failed: ", e.what(),
-              "; the index replays them from the WAL on next boot");
-    _storage->MarkOutOfSync();
   }
-}
-
-void InvertedStoreIndex::ReserveDelete(duckdb::ClientContext& context,
-                                       duckdb::idx_t count) {
-  auto* conn = GetSereneDBContextPtr(context);
-  if (!conn || _config->pk != PkColumnKind::Has) {
-    return;
-  }
-  conn->SearchTxn()
-    .EnsureIndexTransaction(_index_id, _storage, _config)
-    .ReserveRemoval(count * kRemovalBytesPerRow);
 }
 
 idx_t InvertedStoreIndex::TryDelete(

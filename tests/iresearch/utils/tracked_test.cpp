@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/flat_hash_set.h>
 
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
@@ -211,9 +212,45 @@ TEST(TrackedTest, BudgetOverflowChargesThePool) {
     EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
     EXPECT_EQ(3 * kMiB, budget.Overflow());
     charge.Resize(0);
+    EXPECT_EQ(base + kMiB, TrackedMemory());
     budget.Release();
     EXPECT_EQ(base, TrackedMemory());
   }
+  EXPECT_EQ(base, TrackedMemory());
+}
+
+TEST(TrackedTest, HashSetSurvivesAFailedGrowth) {
+  absl::flat_hash_set<uint64_t, absl::Hash<uint64_t>, std::equal_to<>,
+                      irs::TrackedAllocator<uint64_t>>
+    set;
+  {
+    MemoryLimit limit{0};
+    EXPECT_THROW(set.reserve(kMiB), duckdb::OutOfMemoryException);
+  }
+  for (uint64_t i = 0; i < 1000; ++i) {
+    set.insert(i);
+  }
+  {
+    MemoryLimit limit{0};
+    EXPECT_THROW(set.reserve(kMiB), duckdb::OutOfMemoryException);
+  }
+  ASSERT_EQ(1000, set.size());
+  for (uint64_t i = 0; i < 1000; ++i) {
+    EXPECT_TRUE(set.contains(i));
+  }
+}
+
+TEST(TrackedTest, BudgetFreesWhatIsReturnedAfterItsRelease) {
+  const auto base = TrackedMemory();
+  irs::MemoryBudget budget;
+  budget.Reserve(4 * kMiB);
+  {
+    irs::MemoryCharge charge{&budget, 4 * kMiB};
+    budget.Release(kMiB);
+    EXPECT_EQ(base + 4 * kMiB, TrackedMemory());
+  }
+  EXPECT_EQ(base + kMiB, TrackedMemory());
+  budget.Release();
   EXPECT_EQ(base, TrackedMemory());
 }
 

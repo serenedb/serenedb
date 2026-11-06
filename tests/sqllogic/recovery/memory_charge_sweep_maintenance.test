@@ -1,0 +1,14 @@
+# CREATE INDEX over a search table's rows, a merge and a refresh, each run once
+# for every memory charge it makes with that charge failing: the work either
+# completes or fails with out-of-memory and leaves nothing behind, the index
+# stays in sync with its table, CHECKPOINT works, and a restart keeps it.
+
+control substitution on
+
+system ok
+port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); python3 recovery/memory_pressure.py "$port" '$__DATABASE__' '$__TEST_DIR__' charges maintenance
+----
+create index: ok
+compact: ok
+refresh: ok
+restart: ok

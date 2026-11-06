@@ -22,10 +22,14 @@
 
 #include <absl/base/no_destructor.h>
 
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
+#include "iresearch/utils/fault_hits.hpp"
 
 namespace irs {
 namespace {
@@ -134,24 +138,26 @@ MemoryBudget::~MemoryBudget() {
   FreeReservedMemory(kMemoryTag, _reserved);
 }
 
+void MemoryBudget::Trim() noexcept {
+  if (const auto available = _reserved - _lent; available > _kept) {
+    FreeReservedMemory(kMemoryTag, available - _kept);
+    _reserved = _lent + _kept;
+  }
+}
+
 void MemoryBudget::Reserve(size_t bytes) {
   absl::MutexLock lock{&_mutex};
-  const auto available = _reserved - _lent;
-  if (bytes <= available) {
-    return;
+  if (const auto available = _reserved - _lent; bytes > available) {
+    ReserveMemory(kMemoryTag, bytes - available);
+    _reserved += bytes - available;
   }
-  ReserveMemory(kMemoryTag, bytes - available);
-  _reserved += bytes - available;
+  _kept = std::max(_kept, bytes);
 }
 
 void MemoryBudget::Release(size_t keep) noexcept {
   absl::MutexLock lock{&_mutex};
-  const auto available = _reserved - _lent;
-  if (available <= keep) {
-    return;
-  }
-  FreeReservedMemory(kMemoryTag, available - keep);
-  _reserved = _lent + keep;
+  _kept = keep;
+  Trim();
 }
 
 void MemoryBudget::Take(size_t bytes) {
@@ -169,6 +175,7 @@ void MemoryBudget::Return(size_t bytes) noexcept {
   absl::MutexLock lock{&_mutex};
   SDB_ASSERT(bytes <= _lent);
   _lent -= bytes;
+  Trim();
 }
 
 duckdb::BufferPoolReservation MemoryBudget::Detach(size_t bytes) {
@@ -185,6 +192,7 @@ void MemoryBudget::Attach(duckdb::BufferPoolReservation& reservation) noexcept {
   SDB_ASSERT(reservation.tag == kMemoryTag);
   absl::MutexLock lock{&_mutex};
   _reserved += std::exchange(reservation.size, 0);
+  Trim();
 }
 
 void MemoryBudget::Reclaim(size_t bytes) noexcept {
@@ -227,6 +235,13 @@ duckdb::Allocator& TrackedDuckAllocator() {
 }
 
 void ReserveMemory(duckdb::MemoryTag tag, size_t size) {
+  SDB_IF_FAILURE("irs::ReserveMemory") {
+    if (FaultHitFires("irs::ReserveMemory")) {
+      throw duckdb::OutOfMemoryException(
+        "failed to reserve memory data of size %s (fault point)",
+        duckdb::StringUtil::BytesToHumanReadableString(size));
+    }
+  }
   auto* manager = DuckDBEngine::TrackingBufferManager();
   SDB_ASSERT(manager);
   manager->ReserveMemory(tag, size);

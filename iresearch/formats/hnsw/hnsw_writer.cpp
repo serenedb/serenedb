@@ -1031,8 +1031,10 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     crew.Join();
   };
 
+  const auto window_rows =
+    static_cast<size_t>(std::min<uint64_t>(kHnswOriginalsWindow, rows));
   TrackedVector<float> window{TrackedAllocator<float>{graph.Budget()}};
-  window.reserve(static_cast<size_t>(kHnswOriginalsWindow) * d);
+  window.reserve(window_rows * d);
   std::vector<float> batch_buf;
   size_t next = 0;
   uint64_t warmed = 0;
@@ -1060,15 +1062,15 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
   ScanVectors(*src.col, *src.ctx, rows, d, src.normalize, batch_buf,
               [&](const float* src_rows, size_t n, uint64_t first,
                   const duckdb::ValidityMask&) {
+                if (const auto have = window.size() / d;
+                    have != 0 && have + n > window_rows) {
+                  flush_window(win_first, static_cast<uint32_t>(have));
+                  window.clear();
+                }
                 if (window.empty()) {
                   win_first = static_cast<uint32_t>(first);
                 }
                 window.insert(window.end(), src_rows, src_rows + n * d);
-                const auto have = static_cast<uint32_t>(window.size() / d);
-                if (have >= kHnswOriginalsWindow) {
-                  flush_window(win_first, have);
-                  window.clear();
-                }
               });
   if (!window.empty()) {
     flush_window(win_first, static_cast<uint32_t>(window.size() / d));
@@ -1249,18 +1251,18 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) {
   }
   const bool quant = _info.quant.kind != VectorQuantization::None;
   if (quant && !_bound_qw) {
-    _bound_qw = MakeQuantizerWriter(_info.quant, d,
-                                    EffectiveQuantMetric(_info.metric), 0,
-                                    /*row_major=*/true);
+    _bound_qw =
+      MakeQuantizerWriter(_info.quant, d, EffectiveQuantMetric(_info.metric), 0,
+                          /*row_major=*/true);
   }
   const uint64_t floats = sizeof(float) * rows * d;
-  const uint64_t graph = rows * (sizeof(uint8_t) + sizeof(uint64_t) +
-                                 2 * m * sizeof(uint32_t)) +
-                         sizeof(uint64_t) + m * sizeof(uint32_t) * _upper_levels;
+  const uint64_t graph =
+    rows * (sizeof(uint8_t) + sizeof(uint64_t) + 2 * m * sizeof(uint32_t)) +
+    sizeof(uint64_t) + m * sizeof(uint32_t) * _upper_levels;
   const uint64_t codes =
     quant ? rows * _bound_qw->BlockSetting().record_size + 16 : 0;
-  const bool rotated = quant ? RotatesCodes(_info, d)
-                             : RotationApplies(_info.metric, d);
+  const bool rotated =
+    quant ? RotatesCodes(_info, d) : RotationApplies(_info.metric, d);
   const uint64_t tails =
     quant && rotated ? sizeof(float) * rows * HnswCodeTails(d) : 0;
   const uint64_t norms = !quant && rotated ? sizeof(float) * rows : 0;
@@ -1269,17 +1271,18 @@ AnnFlushBound HnswWriter::FlushBound(uint64_t rows) {
   uint64_t streamed = 0;
   if (quant) {
     const auto train = _bound_qw->TrainSamples(rows);
-    streamed = 2 * sizeof(float) * rows +
-               sizeof(float) * uint64_t{kHnswOriginalsWindow} * d +
-               4096 * uint64_t{d};
+    streamed =
+      2 * sizeof(float) * rows +
+      sizeof(float) * std::min<uint64_t>(kHnswOriginalsWindow, rows) * d +
+      4096 * uint64_t{d};
     if (train != QuantizerWriter::kTrainStreaming) {
       streamed += sizeof(float) * std::min<uint64_t>(train, rows) * d;
     }
   }
   const uint64_t seed = sizeof(uint32_t) * rows;
   return {
-    .compute = rows + floats + codes + tails + norms + basis + streamed +
-               graph + seed,
+    .compute =
+      rows + floats + codes + tails + norms + basis + streamed + graph + seed,
     .kept = graph + codes + tails + (quant ? 0 : floats + norms),
   };
 }

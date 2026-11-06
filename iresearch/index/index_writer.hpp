@@ -321,16 +321,6 @@ class IndexWriter : private util::Noncopyable {
       }
     }
 
-    void ReserveRemoval(size_t bytes) {
-      UpdateSegment(true);
-      _active.Segment()->writer->ReserveRemoval(bytes);
-    }
-
-    MemoryBudget* TakeRemoval(size_t bytes) noexcept {
-      auto* segment = _active.Segment();
-      return segment ? segment->writer->TakeRemoval(bytes) : nullptr;
-    }
-
     bool FlushRequired() const noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {

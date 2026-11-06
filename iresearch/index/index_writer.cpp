@@ -788,7 +788,6 @@ bool IndexWriter::Transaction::CommitImpl(
   SDB_ASSERT(_staged);
   SDB_IF_FAILURE("IndexWriter::Transaction::Commit") { throw std::bad_alloc{}; }
   segment->Commit(_queries, _first_tick + _queries);
-  segment->writer->DropRemovals();
   _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
@@ -805,7 +804,6 @@ void IndexWriter::Transaction::Abort() noexcept {
   if (segment == nullptr) {
     return;  // nothing to do
   }
-  segment->writer->DropRemovals();
   _queries = 0;
   _staged = false;
   if (_active.Flush() == nullptr) {

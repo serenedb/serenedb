@@ -64,9 +64,12 @@ class MemoryBudget {
   duckdb::Allocator& Allocator() noexcept { return _allocator; }
 
  private:
+  void Trim() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
   mutable absl::Mutex _mutex;
   size_t _reserved = 0;
   size_t _lent = 0;
+  size_t _kept = 0;
   size_t _overflow = 0;
   duckdb::Allocator _allocator;
 };

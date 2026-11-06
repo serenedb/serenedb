@@ -130,18 +130,8 @@ size_t SegmentWriter::FlushBound() {
 
 void SegmentWriter::ReserveFlush() {
   _flush_reserved = false;
-  _budget.Reserve(FlushBound() + _removal_reserve);
+  _budget.Reserve(FlushBound());
   _flush_reserved = true;
-}
-
-void SegmentWriter::ReserveRemoval(size_t bytes) {
-  _budget.Reserve(FlushBound() + _removal_reserve + bytes);
-  _removal_reserve += bytes;
-}
-
-MemoryBudget* SegmentWriter::TakeRemoval(size_t bytes) noexcept {
-  _removal_reserve -= std::min(bytes, _removal_reserve);
-  return &_budget;
 }
 
 bool SegmentWriter::TryReserveFlush() noexcept {
@@ -234,7 +224,7 @@ void SegmentWriter::SetFieldOptions(
 }
 
 void SegmentWriter::ResetState() noexcept {
-  _budget.Release(_removal_reserve);
+  _budget.Release();
   _flush_reserved = false;
   _initialized = false;
   _dir.ClearTracked();

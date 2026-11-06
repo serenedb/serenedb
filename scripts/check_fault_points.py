@@ -62,6 +62,7 @@ PARK_DEF = re.compile(
     r'\s*\(\s*"([^"]+)"'
 )
 PARK_SUFFIXES = (":parked", ":release")
+COUNTDOWN = re.compile(r"@\d+$")
 # Names referenced by C++/python tests (string literal in any of these calls,
 # or a SET sdb_faults activation).
 TESTNET_LITERAL = re.compile(
@@ -198,7 +199,7 @@ def main():
                         "(move this test to the recovery folder)"
                     )
             for m in SET_FAULT.finditer(text):
-                name = m.group(2)
+                name = COUNTDOWN.sub("", m.group(2))
                 if not name:  # RESET-like empty activation
                     continue
                 exercised.add(name)

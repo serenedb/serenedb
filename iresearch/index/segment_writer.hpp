@@ -131,10 +131,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   void ReserveFlush();
   bool TryReserveFlush() noexcept;
 
-  void ReserveRemoval(size_t bytes);
-  MemoryBudget* TakeRemoval(size_t bytes) noexcept;
-  void DropRemovals() noexcept { _removal_reserve = 0; }
-
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
   bool initialized() const noexcept { return _initialized; }
@@ -292,7 +288,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   bool _initialized = false;
   bool _valid = true;
   bool _flush_reserved = false;
-  size_t _removal_reserve = 0;
 };
 
 }  // namespace irs

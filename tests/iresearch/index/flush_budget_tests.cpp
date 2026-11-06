@@ -23,7 +23,6 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -113,7 +112,8 @@ std::span<const irs::IndexWriter::FlushedSegment> FlushAtTheLimit(
 TEST(FlushBudgetTest, TextFlushRunsInsideItsReservation) {
   irs::MemoryDirectory dir;
   auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate, tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+    dir, irs::kOmCreate,
+    tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
   auto trx = writer->GetBatch(/*exclusive_segment=*/true);
   InsertDistinctTerms(trx);
   const auto flushed = FlushAtTheLimit(trx);
@@ -121,47 +121,57 @@ TEST(FlushBudgetTest, TextFlushRunsInsideItsReservation) {
   EXPECT_EQ(kTermDocs, flushed.front().meta.docs_count);
 }
 
-constexpr size_t kRemovedKeys = 100000;
-constexpr size_t kRemovalBytes = kRemovedKeys * 2 * sizeof(int64_t);
+struct WriteSteps {
+  bool commit;
+  bool refresh;
+};
 
-TEST(FlushBudgetTest, RemovalQueuesInsideItsReservation) {
+size_t HeldAfter(WriteSteps steps, bool reserve) {
   irs::MemoryDirectory dir;
   auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate, tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
-  auto trx = writer->GetBatch();
-  trx.ReserveRemoval(kRemovalBytes);
+    dir, irs::kOmCreate,
+    tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+  writer->RefreshCommit();
+  const auto before = Manager().GetUsedMemory();
   {
-    NoMemoryHeadroom limit;
-    irs::TrackedVector<int64_t> keys{
-      irs::TrackedAllocator<int64_t>{trx.TakeRemoval(kRemovalBytes)}};
-    keys.reserve(kRemovedKeys);
-    for (size_t i = kRemovedKeys; i != 0; --i) {
-      keys.push_back(static_cast<int64_t>(i));
+    auto trx = writer->GetBatch();
+    InsertDistinctTerms(trx);
+    if (reserve) {
+      trx.ReserveFlush();
     }
-    trx.Remove(irs::KeyRemoval{std::move(keys)});
+    if (steps.commit) {
+      EXPECT_TRUE(trx.Commit());
+    } else {
+      trx.Abort();
+    }
   }
-  EXPECT_TRUE(trx.Commit());
+  if (steps.refresh) {
+    writer->RefreshCommit();
+  }
+  return Manager().GetUsedMemory() - before;
 }
 
-TEST(FlushBudgetTest, RemovalReservationOverTheLimitFails) {
-  irs::MemoryDirectory dir;
-  auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate, tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
-  auto trx = writer->GetBatch();
-  trx.ReserveRemoval(0);
-  {
-    NoMemoryHeadroom limit;
-    EXPECT_THROW(trx.ReserveRemoval(kRemovalBytes),
-                 duckdb::OutOfMemoryException);
-  }
-  trx.ReserveRemoval(kRemovalBytes);
-  EXPECT_TRUE(trx.Commit());
+class ReservationReleaseTest : public ::testing::TestWithParam<WriteSteps> {};
+
+TEST_P(ReservationReleaseTest, NothingStaysReservedOnceTheWorkIsDone) {
+  EXPECT_EQ(HeldAfter(GetParam(), false), HeldAfter(GetParam(), true));
 }
+
+std::string WriteStepsName(const ::testing::TestParamInfo<WriteSteps>& info) {
+  return absl::StrCat(info.param.commit ? "Commit" : "Abort",
+                      info.param.refresh ? "Refresh" : "");
+}
+
+INSTANTIATE_TEST_SUITE_P(FlushBudget, ReservationReleaseTest,
+                         ::testing::Values(WriteSteps{true, true},
+                                           WriteSteps{false, false}),
+                         WriteStepsName);
 
 TEST(FlushBudgetTest, FlushWithoutItsReservationFailsBeforeItStarts) {
   irs::MemoryDirectory dir;
   auto writer = irs::IndexWriter::Make(
-    dir, irs::kOmCreate, tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
+    dir, irs::kOmCreate,
+    tests::EnsureWriterDb(tests::CsDefaultWriterOptions()));
   auto trx = writer->GetBatch(/*exclusive_segment=*/true);
   InsertDistinctTerms(trx);
   {
@@ -217,7 +227,8 @@ TEST_P(VectorFlushBudgetTest, FlushRunsInsideItsReservation) {
 
 std::string VectorCaseName(const ::testing::TestParamInfo<VectorCase>& info) {
   return absl::StrCat(info.param.kind == irs::AnnKind::Ivf ? "Ivf" : "Hnsw",
-                      static_cast<int>(info.param.quant), "D", info.param.d);
+                      static_cast<int>(info.param.quant), "D", info.param.d,
+                      "Rows", info.param.rows);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -229,13 +240,15 @@ INSTANTIATE_TEST_SUITE_P(
     VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::RaBitQ, 64, 20000},
     VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::BQ, 64, 20000},
     VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::None, 256, 4000},
+    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::None, 8, 2000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::None, 64, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 64, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::PQ, 64, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::BQ, 64, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::TQ, 64, 3000},
     VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::None, 256, 3000},
-    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 256, 3000}),
+    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 256, 3000},
+    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 8, 40000}),
   VectorCaseName);
 
 }  // namespace

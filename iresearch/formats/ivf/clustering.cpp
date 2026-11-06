@@ -105,7 +105,9 @@ size_t SuperKMeansBound(size_t n, size_t k, size_t d) noexcept {
 }
 
 size_t LloydBound(size_t n, size_t k, size_t d) noexcept {
-  return sizeof(float) * 4 * k * d + 24 * n + kBlasScratch;
+  const bool blas =
+    n * d >= static_cast<size_t>(faiss::distance_compute_blas_threshold);
+  return sizeof(float) * 4 * k * d + 24 * n + (blas ? kBlasScratch : 0);
 }
 
 }  // namespace
@@ -193,10 +195,13 @@ void NormalizeRows(float* data, size_t n, uint32_t d) {
   }
 }
 
-size_t TrainCentroidsBound(VectorMetric /*metric*/, size_t n, uint32_t k,
+size_t TrainCentroidsBound(VectorMetric metric, size_t n, uint32_t k,
                            uint32_t d) noexcept {
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
-  return std::max(SuperKMeansBound(n, k, d), LloydBound(n, k, d));
+  const auto lloyd = LloydBound(n, k, d);
+  return UsesSuperKMeans(metric, n, k, d)
+           ? std::max(SuperKMeansBound(n, k, d), lloyd)
+           : lloyd;
 }
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
@@ -210,8 +215,8 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
   const bool use_skm = UsesSuperKMeans(metric, n, k, d, algo);
   k = static_cast<uint32_t>(std::min<size_t>(k, n));
   const bool angular = VectorMetricIsAngular(metric);
-  MemoryCharge charge{budget,
-                      use_skm ? SuperKMeansBound(n, k, d) : LloydBound(n, k, d)};
+  MemoryCharge charge{
+    budget, use_skm ? SuperKMeansBound(n, k, d) : LloydBound(n, k, d)};
   if (!use_skm) {
     return RunLloyd(data, n, k, d, seed, niter, nredo, /*spherical=*/angular);
   }

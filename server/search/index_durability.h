@@ -74,6 +74,10 @@ class IndexDurability {
     irs::Directory& dir, const irs::IndexReaderOptions& options);
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
+  // The position everything the index holds is published up to. Read on its
+  // own, without the lock a refresh holds for its whole length, because a
+  // commit asking this must never wait for one.
+  irs::SourcePosition PublishedPosition() const;
   void MarkStaged(const irs::SourcePosition& position);
   std::optional<uint64_t> NeededWAL() const;
 

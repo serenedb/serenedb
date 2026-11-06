@@ -32,10 +32,6 @@
 
 namespace sdb::connector {
 
-absl::Status SetupTermClause(irs::TermClause& clause,
-                             const SearchColumnInfo& column_info,
-                             const duckdb::Value& value);
-
 void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::Value& value) {

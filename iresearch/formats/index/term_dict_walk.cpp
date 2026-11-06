@@ -68,7 +68,8 @@ class SuffixFilter {
     if (const auto* pending = cursor.Pending();
         pending && pending->lcp >= prefix) {
       const auto match =
-        Classify(pending->data, pending->size, SuffixCodes(cursor),
+        Classify(pending->data, pending->size,
+                 pending->restart ? nullptr : SuffixCodes(cursor),
                  {.byte = cursor.View().befores[cursor.Entry()],
                   .known = pending->lcp > prefix});
       if (match == Match::Some) {
@@ -92,14 +93,15 @@ class SuffixFilter {
     for (;;) {
       auto last = Match::None;
       lcp = std::min(
-        lcp, cursor.SkipTails(prefix, _tails,
-                              [&](const byte_type* data, Header header,
-                                  byte_type before) IRS_FORCE_INLINE {
-                                last = Classify(data, header.len, fsst,
-                                                {.byte = before,
-                                                 .known = header.lcp > prefix});
-                                return last == Match::None;
-                              }));
+        lcp,
+        cursor.SkipTails(prefix, _tails,
+                         [&](const byte_type* data, Header header,
+                             byte_type before, bool restart) IRS_FORCE_INLINE {
+                           last = Classify(
+                             data, header.len, restart ? nullptr : fsst,
+                             {.byte = before, .known = header.lcp > prefix});
+                           return last == Match::None;
+                         }));
       if (last != Match::Unknown) {
         return lcp;
       }
@@ -322,28 +324,34 @@ class InfixFilter {
     size_t hit =
       SeekHit(_hit, static_cast<uint32_t>(cursor.NextSuffix() - base));
     uint32_t lcp;
+    const auto raw = [&](const byte_type* data, Header header,
+                         byte_type before) IRS_FORCE_INLINE {
+      const auto from = static_cast<uint32_t>(data - base);
+      while (hit != count && hits[hit] < from) {
+        ++hit;
+      }
+      return (_literals[data[0]] & Boundary(header.lcp, before)) == 0 &&
+             (header.len < m || hit == count ||
+              hits[hit] >= from + header.len - m + 1);
+    };
     if (view.coded) {
-      lcp = cursor.SkipWhile(
-        [&](const byte_type* data, Header header, byte_type before) {
-          const auto from = static_cast<uint32_t>(data - base);
-          while (hit != count && hits[hit] <= from) {
-            ++hit;
-          }
-          const auto* p = data;
-          return (NextCode(p) & (Boundary(header.lcp, before) | 1)) == 0 &&
-                 (hit == count || hits[hit] >= from + header.len);
-        });
+      lcp = cursor.SkipWhile([&](const byte_type* data, Header header,
+                                 byte_type before, bool restart) {
+        if (restart) [[unlikely]] {
+          return raw(data, header, before);
+        }
+        const auto from = static_cast<uint32_t>(data - base);
+        while (hit != count && hits[hit] <= from) {
+          ++hit;
+        }
+        const auto* p = data;
+        return (NextCode(p) & (Boundary(header.lcp, before) | 1)) == 0 &&
+               (hit == count || hits[hit] >= from + header.len);
+      });
     } else {
-      lcp = cursor.SkipWhile(
-        [&](const byte_type* data, Header header, byte_type before) {
-          const auto from = static_cast<uint32_t>(data - base);
-          while (hit != count && hits[hit] < from) {
-            ++hit;
-          }
-          return (_literals[data[0]] & Boundary(header.lcp, before)) == 0 &&
-                 (header.len < m || hit == count ||
-                  hits[hit] >= from + header.len - m + 1);
-        });
+      lcp = cursor.SkipWhile([&](const byte_type* data, Header header,
+                                 byte_type before,
+                                 bool) { return raw(data, header, before); });
     }
     _hit = hit;
     return lcp;
@@ -352,6 +360,12 @@ class InfixFilter {
  private:
   static constexpr uint32_t kInfixProbe = 256;
   static constexpr size_t kNone = std::numeric_limits<size_t>::max();
+
+  struct HitSpan {
+    uint32_t text = 0;
+    uint32_t source = 0;
+    bool coded = false;
+  };
 
   void BuildBytes() {
     const size_t m = _infix.size();
@@ -454,17 +468,7 @@ class InfixFilter {
       if (!_coded) {
         BuildCodes(decoder);
       }
-      for (uint32_t group = 0; group != view.restarts; ++group) {
-        const auto* restart = view.suffixes + SuffixOffset(view, group);
-        const auto* p = restart + HeaderAt(view, group * kRestartInterval).len;
-        RawHits(view.suffixes, {restart, p}, needle);
-        const auto* end = group + 1 == view.restarts
-                            ? view.records
-                            : view.suffixes + SuffixOffset(view, group + 1);
-        if (p < end && MayHold({p, end})) {
-          GroupHits(decoder, view.suffixes, {p, end}, needle);
-        }
-      }
+      CodedHits(decoder, view, needle);
     } else {
       RawHits(view.suffixes, {view.suffixes, view.records}, needle);
     }
@@ -481,25 +485,73 @@ class InfixFilter {
     }
   }
 
-  void GroupHits(const duckdb_fsst_decoder_t& decoder, const byte_type* base,
-                 bytes_view codes, std::string_view needle) {
-    const size_t capacity = codes.size() * sizeof(uint64_t) + 32;
+  void CodedHits(const duckdb_fsst_decoder_t& decoder, const BlockView& view,
+                 std::string_view needle) {
+    const auto* base = view.suffixes;
+    const size_t capacity =
+      static_cast<size_t>(view.records - base) * sizeof(uint64_t) + 32;
     if (_decoded.size() < capacity) {
       _decoded.resize(capacity);
     }
-    const size_t size = duckdb_fsst_decompress(
-      const_cast<duckdb_fsst_decoder_t*>(&decoder), codes.size(), codes.data(),
-      _decoded.size(), _decoded.data());
-    if (size > _decoded.size()) [[unlikely]] {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                      ERR_MSG("term dictionary: bad FSST-coded suffixes"));
+    auto* text = _decoded.data();
+    size_t size = 0;
+    if (_spans.size() < 2 * size_t{view.restarts} + 1) {
+      _spans.resize(2 * size_t{view.restarts} + 1);
     }
-    const auto* text = reinterpret_cast<const char*>(_decoded.data());
-    const auto* code = codes.data();
+    auto* spans = _spans.data();
+    size_t count = 0;
+    for (uint32_t group = 0; group != view.restarts; ++group) {
+      const auto* restart = base + SuffixOffset(view, group);
+      const auto* p = restart + HeaderAt(view, group * kRestartInterval).len;
+      const auto* end = group + 1 == view.restarts
+                          ? view.records
+                          : base + SuffixOffset(view, group + 1);
+      spans[count++] = {.text = static_cast<uint32_t>(size),
+                        .source = static_cast<uint32_t>(restart - base),
+                        .coded = false};
+      std::memcpy(text + size, restart, p - restart);
+      size += p - restart;
+      if (p < end && MayHold({p, end})) {
+        spans[count++] = {.text = static_cast<uint32_t>(size),
+                          .source = static_cast<uint32_t>(p - base),
+                          .coded = true};
+        const size_t decoded =
+          duckdb_fsst_decompress(const_cast<duckdb_fsst_decoder_t*>(&decoder),
+                                 end - p, p, capacity - size, text + size);
+        if (decoded > capacity - size) [[unlikely]] {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                          ERR_MSG("term dictionary: bad FSST-coded suffixes"));
+        }
+        size += decoded;
+      }
+    }
+    spans[count] = {.text = static_cast<uint32_t>(size)};
+    const auto* chars = reinterpret_cast<const char*>(text);
+    size_t span = 0;
+    const byte_type* code = nullptr;
     size_t at = 0;
-    for (const char* hit = text; (hit = _finder.Find(needle, hit, text + size));
-         ++hit) {
-      const size_t last = static_cast<size_t>(hit - text) + needle.size() - 1;
+    for (const char* hit = chars;
+         (hit = _finder.Find(needle, hit, chars + size)); ++hit) {
+      const auto start = static_cast<uint32_t>(hit - chars);
+      if (start >= spans[span + 1].text) {
+        do {
+          ++span;
+        } while (start >= spans[span + 1].text);
+        code = nullptr;
+      }
+      const auto& from = spans[span];
+      const size_t last = start + needle.size() - 1 - from.text;
+      if (from.text + last >= spans[span + 1].text) {
+        continue;
+      }
+      if (!from.coded) {
+        _hits.push_back(from.source + (start - from.text));
+        continue;
+      }
+      if (!code) {
+        code = base + from.source;
+        at = 0;
+      }
       for (;;) {
         const bool escaped = *code == FSST_ESC;
         const size_t length = escaped ? 1 : decoder.len[*code];
@@ -551,30 +603,10 @@ class InfixFilter {
     return false;
   }
 
-  IRS_NO_INLINE bool RestartContains(Cursor& cursor) {
-    const auto& view = cursor.View();
-    if (_hits_block != cursor.BlockIndex()) {
-      LoadHits(cursor);
-    }
-    const size_t m = _infix.size();
-    const auto key = cursor.Key();
-    const auto from = static_cast<uint32_t>(
-      SuffixOffset(view, cursor.Entry() / kRestartInterval));
-    if (key.size() < m || !HitIn(from, from + key.size() - m + 1)) {
-      _end = kNone;
-      return false;
-    }
-    _end = _hits[_hit] - from + m;
-    return true;
-  }
-
   IRS_FORCE_INLINE bool Contains(Cursor& cursor) {
     const auto* suffix = cursor.Pending();
     const auto& view = cursor.View();
     if (!suffix) {
-      if (!view.fixed && cursor.Entry() % kRestartInterval == 0) {
-        return RestartContains(cursor);
-      }
       return Confirm(cursor);
     }
     if (_hits_block != cursor.BlockIndex()) [[unlikely]] {
@@ -583,7 +615,7 @@ class InfixFilter {
     const size_t m = _infix.size();
     const uint64_t across = Boundary(suffix->lcp, view.befores[cursor.Entry()]);
     const auto from = static_cast<uint32_t>(suffix->data - view.suffixes);
-    if (view.coded) {
+    if (view.coded && !suffix->restart) {
       const auto* p = suffix->data;
       if ((NextCode(p) & (across | 1)) != 0 ||
           HitIn(from + 1, from + suffix->size)) {
@@ -613,6 +645,7 @@ class InfixFilter {
   uint32_t _hits_block = kNoEntry;
   size_t _hit = 0;
   std::vector<uint32_t> _hits;
+  std::vector<HitSpan> _spans;
   analysis::classify::ByteSet _anchors;
   bstring _decoded;
   bytes_view _infix;

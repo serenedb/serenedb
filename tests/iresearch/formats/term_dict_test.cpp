@@ -1203,7 +1203,7 @@ TEST_P(TermDictTest, fsst_on_and_off) {
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
     const auto& impl = Blocks(*reader);
-    ASSERT_NE(nullptr, impl.Fsst());
+    ASSERT_EQ(field.sample, impl.Fsst() != nullptr);
     const auto kinds = BlockKinds(impl);
     ASSERT_EQ(
       0, kinds[static_cast<size_t>(irs::term_dict::BlockKind::FixedStride)]);
@@ -1211,7 +1211,7 @@ TEST_P(TermDictTest, fsst_on_and_off) {
       field.sample,
       kinds[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] > 1);
     ASSERT_EQ(field.id != 2,
-              kinds[static_cast<size_t>(irs::term_dict::BlockKind::Var)] != 0);
+              kinds[static_cast<size_t>(irs::term_dict::BlockKind::Var)] > 2);
     AssertField(*reader, field.entries);
     for (const std::string_view pattern :
          {"inter.*", ".*ation", ".*stand.*", "[a-c].*ing[0-9]+"}) {
@@ -1222,13 +1222,12 @@ TEST_P(TermDictTest, fsst_on_and_off) {
   }
 }
 
-TEST_P(TermDictTest, fsst_trained_inside_open_block) {
+TEST_P(TermDictTest, fsst_codes_only_overflowing_blocks_a_dictionary_owns) {
   const auto keys = Words(30000, 3);
   const Field fields[]{
-    {.id = 1,
-     .entries = MakeEntries({keys.begin(), keys.begin() + 60}),
-     .sample = false},
+    {.id = 1, .entries = MakeEntries({keys.begin(), keys.begin() + 60})},
     {.id = 2, .entries = MakeEntries(keys)},
+    {.id = 3, .entries = MakeEntries({keys.begin(), keys.begin() + 60})},
   };
   Write(fields);
   for (const auto& field : fields) {
@@ -1237,11 +1236,30 @@ TEST_P(TermDictTest, fsst_trained_inside_open_block) {
     ASSERT_NE(nullptr, reader);
     AssertField(*reader, field.entries);
   }
-  const auto& first = Blocks(*Get(1));
-  ASSERT_EQ(1, first.Blocks());
+  const auto kind_of = [](const irs::term_dict::TermReaderImpl& reader,
+                          uint32_t block) {
+    irs::term_dict::BlockBuffer buffer;
+    return static_cast<irs::term_dict::BlockKind>(*reader.Block(block, buffer));
+  };
+  for (const auto id : {1, 3}) {
+    SCOPED_TRACE(testing::Message("field ") << id);
+    const auto& small = Blocks(*Get(id));
+    ASSERT_EQ(1, small.Blocks());
+    ASSERT_EQ(nullptr, small.Fsst());
+    ASSERT_EQ(irs::term_dict::BlockKind::Var, kind_of(small, 0));
+  }
+  const auto& words = Blocks(*Get(2));
+  ASSERT_NE(nullptr, words.Fsst());
+  ASSERT_LT(2, words.Blocks());
+  ASSERT_NE(0, words.FirstEntry());
+  ASSERT_EQ(irs::term_dict::BlockKind::Var, kind_of(words, 0));
+  for (uint32_t block = 1; block + 1 < words.Blocks(); ++block) {
+    SCOPED_TRACE(testing::Message("block ") << block);
+    ASSERT_EQ(irs::term_dict::BlockKind::VarFsst, kind_of(words, block));
+  }
   ASSERT_EQ(
-    1,
-    BlockKinds(first)[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)]);
+    kind_of(words, words.Blocks() - 1) == irs::term_dict::BlockKind::VarFsst,
+    Blocks(*Get(3)).FirstEntry() == 0);
 }
 
 TEST_P(TermDictTest, fsst_skips_incompressible_fields) {
@@ -1266,12 +1284,14 @@ TEST_P(TermDictTest, fsst_skips_incompressible_fields) {
     SCOPED_TRACE(testing::Message("field ") << field.id);
     const auto* reader = Get(field);
     ASSERT_NE(nullptr, reader);
-    const auto kinds = BlockKinds(Blocks(*reader));
+    const auto& impl = Blocks(*reader);
+    ASSERT_EQ(field.id != 2, impl.Fsst() != nullptr);
+    const auto kinds = BlockKinds(impl);
     ASSERT_EQ(
       field.id != 2,
       kinds[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] != 0);
     ASSERT_EQ(field.id == 2,
-              kinds[static_cast<size_t>(irs::term_dict::BlockKind::Var)] > 1);
+              kinds[static_cast<size_t>(irs::term_dict::BlockKind::Var)] > 2);
     AssertField(*reader, field.entries);
   }
 }
@@ -1459,6 +1479,71 @@ TEST_P(TermDictTest, infix_walks_across_front_coding) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
                  irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+  }
+}
+
+TEST_P(TermDictTest, skips_report_the_prefix_a_restart_shares) {
+  std::vector<irs::bstring> keys{Bytes("a"), Bytes("b")};
+  for (size_t i = 0; i != 40; ++i) {
+    keys.push_back(Bytes(absl::StrCat("c", std::string(20, 'x'), 100 + i)));
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(keys), .sample = false},
+    {.id = 2, .entries = MakeEntries(keys)},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto& impl = Blocks(*Get(field));
+    const size_t prefix = impl.KeyPrefix().size();
+    irs::term_dict::Cursor cursor{impl};
+    cursor.First();
+    for (size_t i = 1; i != keys.size(); ++i) {
+      SCOPED_TRACE(testing::Message("entry ") << i);
+      ASSERT_FALSE(cursor.AtBlockEnd());
+      ASSERT_EQ(prefix + irs::CommonPrefixLength(irs::bytes_view{keys[i - 1]},
+                                                 irs::bytes_view{keys[i]}),
+                cursor.Skip());
+    }
+  }
+}
+
+TEST_P(TermDictTest, keys_skipped_across_restarts_materialize) {
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(Words(3000, 17)), .sample = false},
+    {.id = 2, .entries = MakeEntries(Words(3000, 17))},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto& impl = Blocks(*Get(field));
+    ASSERT_EQ(
+      field.sample,
+      BlockKinds(
+        impl)[static_cast<size_t>(irs::term_dict::BlockKind::VarFsst)] > 1);
+    const auto& entries = field.entries;
+    for (const size_t stride : {size_t{1}, size_t{5}, size_t{23}}) {
+      SCOPED_TRACE(testing::Message("stride ") << stride);
+      irs::term_dict::Cursor cursor{impl};
+      cursor.First();
+      for (size_t i = 1; i != entries.size(); ++i) {
+        SCOPED_TRACE(testing::Message("entry ") << i);
+        if (cursor.AtBlockEnd()) {
+          cursor.Load(cursor.BlockIndex() + 1);
+          cursor.Skip();
+        } else {
+          ASSERT_EQ(
+            impl.KeyPrefix().size() +
+              irs::CommonPrefixLength(irs::bytes_view{entries[i - 1].key},
+                                      irs::bytes_view{entries[i].key}),
+            cursor.Skip());
+        }
+        if (i % stride == 0) {
+          cursor.Materialize();
+          ASSERT_EQ(irs::bytes_view{entries[i].key}, cursor.Term());
+        }
+      }
     }
   }
 }
@@ -1802,13 +1887,15 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   refused(
     [](Terms& t) { t.inline_offset = std::numeric_limits<uint64_t>::max(); },
     ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.fields[1].fsst_table = "garbage"; },
+          ERRCODE_INDEX_CORRUPTED);
 
   const auto refused_field = [&](auto&& write_field,
                                  int code = ERRCODE_INDEX_CORRUPTED) {
     RewriteTermsWith([&](duckdb::BinarySerializer& object) {
       object.WriteProperty<uint32_t>(0, "restart_interval",
                                      irs::term_dict::kRestartInterval);
-      object.WriteList(9, "fields", 1,
+      object.WriteList(8, "fields", 1,
                        [&](duckdb::BinarySerializer::List& list,
                            duckdb::idx_t) { list.WriteObject(write_field); });
     });
@@ -1893,6 +1980,13 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     field.WriteObject(2, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
       text(dict);
+    });
+  });
+  refused_field([&](duckdb::BinarySerializer& field) {
+    field.WriteProperty<uint64_t>(0, "id", 1);
+    field.WriteObject(2, "string", [&](duckdb::BinarySerializer& dict) {
+      single_record(dict);
+      dict.WriteProperty(17, "fsst_table", std::string{"table"});
     });
   });
   refused_field(

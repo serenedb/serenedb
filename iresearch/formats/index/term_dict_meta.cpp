@@ -43,13 +43,12 @@ constexpr duckdb::field_id_t kTermsBlocks = 1;
 constexpr duckdb::field_id_t kTermsFirstPage = 2;
 constexpr duckdb::field_id_t kTermsSpans = 3;
 constexpr duckdb::field_id_t kTermsSeparators = 4;
-constexpr duckdb::field_id_t kTermsFsst = 5;
-constexpr duckdb::field_id_t kTermsInlineOffset = 6;
-constexpr duckdb::field_id_t kTermsInlineSize = 7;
-constexpr duckdb::field_id_t kTermsRangesSize = 8;
-constexpr duckdb::field_id_t kTermsFields = 9;
-constexpr duckdb::field_id_t kTermsInlineStarts = 10;
-constexpr duckdb::field_id_t kTermsOrdinalBytes = 11;
+constexpr duckdb::field_id_t kTermsInlineOffset = 5;
+constexpr duckdb::field_id_t kTermsInlineSize = 6;
+constexpr duckdb::field_id_t kTermsRangesSize = 7;
+constexpr duckdb::field_id_t kTermsFields = 8;
+constexpr duckdb::field_id_t kTermsInlineStarts = 9;
+constexpr duckdb::field_id_t kTermsOrdinalBytes = 10;
 
 constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
@@ -91,6 +90,7 @@ constexpr duckdb::field_id_t kDictInlineBase = 13;
 constexpr duckdb::field_id_t kDictInlineSize = 14;
 constexpr duckdb::field_id_t kDictText = 15;
 constexpr duckdb::field_id_t kDictRanges = 16;
+constexpr duckdb::field_id_t kDictFsst = 17;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
@@ -201,6 +201,8 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
                       WriteRanges(object, head.ranges);
                     });
   }
+  SDB_ASSERT(head.term_count != 1 || head.fsst_table.empty());
+  WriteOptionalBytes(out, kDictFsst, "fsst_table", head.fsst_table);
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -306,6 +308,11 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
                             ReadRanges(object, head.ranges);
                           });
   }
+  head.fsst_table =
+    in.ReadPropertyWithDefault<std::string>(kDictFsst, "fsst_table");
+  if (head.term_count == 1 && !head.fsst_table.empty()) {
+    Corrupted("FSST table", head.id);
+  }
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   const bool has_ranges = !head.ranges.counts.empty() || head.ranges.size != 0;
@@ -368,7 +375,6 @@ void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms) {
                   });
   }
   WriteOptionalBytes(out, kTermsSeparators, "separators", terms.separators);
-  WriteOptionalBytes(out, kTermsFsst, "fsst_table", terms.fsst_table);
   out.WritePropertyWithDefault<uint64_t>(kTermsInlineOffset, "inline_offset",
                                          terms.inline_offset, 0);
   out.WritePropertyWithDefault<uint64_t>(kTermsInlineSize, "inline_size",
@@ -422,8 +428,6 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
     });
   terms.separators =
     in.ReadPropertyWithDefault<std::string>(kTermsSeparators, "separators");
-  terms.fsst_table =
-    in.ReadPropertyWithDefault<std::string>(kTermsFsst, "fsst_table");
   terms.inline_offset = in.ReadPropertyWithExplicitDefault<uint64_t>(
     kTermsInlineOffset, "inline_offset", 0);
   terms.inline_size = in.ReadPropertyWithExplicitDefault<uint64_t>(

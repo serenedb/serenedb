@@ -23,6 +23,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iostream>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
@@ -429,10 +430,11 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
     }
   };
   bool busy = false;
+  auto pool = duckdb::TaskScheduler::GetScheduler(Db()).CreateDedicatedPool(1);
   for (auto& ticket : writer.ReserveMerges(everything, busy)) {
     irs::CompactionResult result;
     irs::GetReady(
-      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, result));
+      writer.RunMerge(std::move(ticket), nullptr, {}, nullptr, pool, result));
   }
   writer.RefreshCommit();
 

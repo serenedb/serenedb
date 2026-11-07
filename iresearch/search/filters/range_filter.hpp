@@ -104,8 +104,7 @@ class ByRange : public FilterWithField<ByRangeOptions> {
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const TermReader* reader,
-                                          const options_type::range_type& rng,
-                                          score_t boost);
+                                          const options_type::range_type& rng);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

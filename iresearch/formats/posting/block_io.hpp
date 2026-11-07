@@ -173,13 +173,13 @@ struct FillLeaf {
   bool IsBitset() const noexcept { return kind == Kind::Bitset; }
 };
 
-IRS_FORCE_INLINE inline uint32_t* MaterializeBitsetFrom(
-  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t first_word,
-  uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
-  SDB_ASSERT(first_word < words);
+IRS_FORCE_INLINE inline uint32_t* MaterializeBitset(
+  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t words,
+  uint32_t* IRS_RESTRICT out) {
+  SDB_ASSERT(words != 0);
   constexpr auto kBits = BitsRequired<uint64_t>();
-  auto word = first_mask;
-  for (auto i = first_word;;) {
+  uint64_t word = bitset[0];
+  for (uint32_t i = 0;;) {
     out = block_codec::MaterializeBits(prev + 1 + i * kBits, word, out);
     if (++i == words) {
       return out;

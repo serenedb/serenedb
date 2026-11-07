@@ -70,7 +70,7 @@ class MaskedLeaf {
     }
     uint64_t words[block_codec::kMaxBitsetWords];
     std::memcpy(words, _bitset, size_t{_words} * sizeof(uint64_t));
-    block_io::MaterializeBitsetFrom(base, words, 0, words[0], _words, out);
+    block_io::MaterializeBitset(base, words, _words, out);
   }
 
   IRS_FORCE_INLINE doc_id_t Find(const doc_id_t* docs, doc_id_t base,

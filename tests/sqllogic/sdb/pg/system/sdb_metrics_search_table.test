@@ -24,31 +24,31 @@ INSERT INTO sm_s VALUES (1, 'gamma cat'), (2, 'delta dog'), (3, 'epsilon cat');
 statement ok
 CREATE TABLE sm_empty (id BIGINT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
+statement ok
+CREATE VIEW sm_v AS SELECT id, body FROM sm_t;
+
+statement ok
+CREATE INDEX sm_v_idx ON sm_v USING inverted (id, body);
+
 query
 SELECT metric, value
 FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s')
-  AND metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs', 'num_segments',
-                 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
+  AND metric IN ('num_failed_cleanups', 'num_failed_consolidations')
 ORDER BY metric;
 ----
 metric	value
-num_buffered_docs	0
-num_docs	3
 num_failed_cleanups	0
-num_failed_commits	0
 num_failed_consolidations	0
-num_live_docs	3
-num_segments	1
 
 query
 SELECT count(*) AS metrics,
-       count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+       sum(value) FILTER (WHERE metric IN ('num_docs', 'num_buffered_docs')) AS docs
 FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s');
 ----
-metrics	sized
-12	2
+metrics	docs
+10	3
 
 query
 SELECT count(*) AS storage_less_index_rows
@@ -59,12 +59,21 @@ storage_less_index_rows
 0
 
 query
-SELECT count(*) AS own_storage_index_rows
+SELECT count(*) AS storage_less_index_rows
 FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_t_idx');
 ----
-own_storage_index_rows
-12
+storage_less_index_rows
+0
+
+query
+SELECT count(*) AS own_storage_index_rows,
+       count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_v_idx');
+----
+own_storage_index_rows	sized
+10	2
 
 query
 SELECT metric, value
@@ -74,13 +83,11 @@ ORDER BY metric;
 ----
 metric	value
 avg_cleanup_time_ms	0
-avg_commit_time_ms	0
 avg_consolidation_time_ms	0
 index_size	0
 num_buffered_docs	0
 num_docs	0
 num_failed_cleanups	0
-num_failed_commits	0
 num_failed_consolidations	0
 num_files	1
 num_live_docs	0

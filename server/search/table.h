@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "search/hot_keys.h"
+#include "search/store_stats.h"
 
 namespace sdb::search {
 
@@ -216,8 +217,7 @@ class Table final {
   irs::DirectoryReader SettledView(Tick snapshot) const {
     return Assemble(snapshot, {}, Scope::Settled);
   }
-  irs::doc_id_t BufferedDocs(Tick snapshot) const;
-  size_t DataFiles(Tick snapshot) const;
+  StoreStats Stats(Tick snapshot) const;
   std::shared_ptr<const irs::SegmentReaderImpl> UnitReader(
     const TableUnit& unit) const {
     return unit.hot ? unit.hot->Reader(*_options.db, unit.docs) : unit.reader;

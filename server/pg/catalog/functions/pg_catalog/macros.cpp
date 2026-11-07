@@ -360,7 +360,7 @@ constexpr SystemMacro kMacros[] = {
           WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
           WHEN 'can_include' THEN false END
         WHEN 'inverted' THEN CASE lower(property)
-          WHEN 'can_order' THEN false WHEN 'can_unique' THEN false
+          WHEN 'can_order' THEN false WHEN 'can_unique' THEN true
           WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
           WHEN 'can_include' THEN true END
       END)"},

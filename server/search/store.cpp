@@ -745,10 +745,7 @@ void Store::AwaitMerges(duckdb::ClientContext& context) {
 StoreStats Store::GetStats() const {
   StoreStats stats;
   if (_table) {
-    const auto tick = catalog::Transactions::Get().LastCommit();
-    stats = StoreStats::FromReader(_table->ColdView(tick));
-    stats.numFiles += _table->DataFiles(tick);
-    stats.numBufferedDocs = _table->BufferedDocs(tick);
+    stats = _table->Stats(catalog::Transactions::Get().LastCommit());
   } else {
     stats = StoreStats::FromReader(GetDirectoryReader());
     stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;

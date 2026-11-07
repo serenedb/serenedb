@@ -499,24 +499,18 @@ irs::DirectoryReader Table::Build(const TableState& state, Tick snapshot,
     _dir, _options, std::move(meta), std::move(readers))};
 }
 
-irs::doc_id_t Table::BufferedDocs(Tick snapshot) const {
-  irs::doc_id_t docs = 0;
-  for (const auto& unit : State()->units) {
+StoreStats Table::Stats(Tick snapshot) const {
+  const auto state = State();
+  auto stats = StoreStats::FromReader(Build(*state, snapshot, {}, Scope::Cold));
+  for (const auto& unit : state->units) {
+    const auto visible = VisibleEnd(*unit, snapshot);
     if (unit->hot) {
-      docs += VisibleEnd(*unit, snapshot);
+      stats.numBufferedDocs += visible;
+    } else if (visible != 0) {
+      stats.numFiles += unit->segment.meta.files.size();
     }
   }
-  return docs;
-}
-
-size_t Table::DataFiles(Tick snapshot) const {
-  size_t files = 0;
-  for (const auto& unit : State()->units) {
-    if (!unit->hot && VisibleEnd(*unit, snapshot) != 0) {
-      files += unit->segment.meta.files.size();
-    }
-  }
-  return files;
+  return stats;
 }
 
 std::shared_ptr<HotContext> Table::AcquireHot(irs::IndexWriter& writer) {

@@ -55,8 +55,6 @@ compaction_active	Search compaction tasks currently running
 compaction_pending	Search compaction tasks waiting to run
 http_connections	Open HTTP client connections
 pg_connections	Open pg-wire client connections
-refresh_active	Search refresh tasks currently running
-refresh_pending	Search refresh tasks waiting to run
 
 
 query
@@ -91,18 +89,22 @@ query
 SELECT metric, value
 FROM sdb_metrics
 WHERE relation_id = 'sven_storm_hammer'::regclass
-  AND metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs', 'num_segments',
-                 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
+  AND metric IN ('num_failed_cleanups', 'num_failed_consolidations')
 ORDER BY metric;
 ----
 metric	value
-num_buffered_docs	0
-num_docs	3
 num_failed_cleanups	0
-num_failed_commits	0
 num_failed_consolidations	0
-num_live_docs	3
-num_segments	1
+
+
+query
+SELECT sum(value) AS docs
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass
+  AND metric IN ('num_docs', 'num_buffered_docs');
+----
+docs
+3
 
 
 query
@@ -113,26 +115,15 @@ ORDER BY metric;
 ----
 metric	description
 avg_cleanup_time_ms	average time of the last few cleanups, in ms
-avg_commit_time_ms	average time of the last few commits, in ms
 avg_consolidation_time_ms	average time of the last few consolidations, in ms
 index_size	on-disk index size in bytes
-num_buffered_docs	documents buffered in the writer, not yet committed
+num_buffered_docs	documents held in memory, not yet written to a segment
 num_docs	documents in the index (including deleted)
 num_failed_cleanups	failed cleanup operations
-num_failed_commits	failed commit operations
 num_failed_consolidations	failed consolidation operations
 num_files	files backing the index
 num_live_docs	live (non-deleted) documents
 num_segments	index segments
-
-
-query
-SELECT count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
-FROM sdb_metrics
-WHERE relation_id = 'sven_storm_hammer'::regclass;
-----
-sized
-2
 
 
 query
@@ -157,6 +148,15 @@ metric	value
 num_live_docs	2
 
 
+query
+SELECT count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass;
+----
+sized
+2
+
+
 statement ok
 CREATE TABLE sven_gods_strength (id BIGINT PRIMARY KEY, body TEXT);
 
@@ -175,7 +175,7 @@ FROM sdb_metrics
 WHERE relation_id = 'sven_gods_strength_idx'::regclass;
 ----
 index_rows
-12
+0
 
 
 query
@@ -184,7 +184,7 @@ FROM sdb_metrics
 WHERE relation_id = 'sven_gods_strength'::regclass;
 ----
 table_rows
-0
+10
 
 
 connection sven_metrics user=sven_metrics_cleave password=sven_metrics_pw

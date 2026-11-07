@@ -163,10 +163,7 @@ QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
@@ -211,10 +208,7 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
                                                     StatsArena& stats,
                                                     uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {

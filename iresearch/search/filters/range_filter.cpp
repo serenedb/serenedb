@@ -107,10 +107,7 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByRange::MakeCollectorImpl(const Scorer* scorer,
                                                  StatsArena& stats,
                                                  uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 void ByRange::visit(const SubReader& segment, const TermReader& reader,

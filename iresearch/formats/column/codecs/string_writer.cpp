@@ -37,6 +37,7 @@
 #include "iresearch/formats/column/codecs/fsst_plus_encoder.hpp"
 #include "iresearch/formats/column/codecs/lz4.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
+#include "iresearch/formats/column/codecs/onpair_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_builder.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/zstd.hpp"
@@ -55,6 +56,7 @@ using text::DedupScratch;
 using text::FsstChainEncoder;
 using text::FsstPlusEncoder;
 using text::kDriftMinFraction;
+using text::OnPairEncoder;
 using text::Profile;
 using text::Segment;
 using text::SegmentBuilder;
@@ -135,6 +137,10 @@ class SegmentWriter {
           if (auto& fsst =
                 std::get<std::optional<FsstPlusEncoder>>(_encoders)) {
             fsst->Retrain();
+          }
+          if (auto& onpair =
+                std::get<std::optional<OnPairEncoder>>(_encoders)) {
+            onpair->Retrain();
           }
         }
         if (scheduled || drift) {
@@ -478,6 +484,8 @@ class SegmentWriter {
         return f(Get<FsstChainEncoder>());
       case ByteCodec::FsstPlus:
         return f(Get<FsstPlusEncoder>());
+      case ByteCodec::OnPair:
+        return f(Get<OnPairEncoder>());
     }
     SDB_UNREACHABLE();
   }
@@ -514,7 +522,8 @@ class SegmentWriter {
   SegmentBuilder _builder;
   std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
              std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
-             std::optional<FsstChainEncoder>, std::optional<FsstPlusEncoder>>
+             std::optional<FsstChainEncoder>, std::optional<FsstPlusEncoder>,
+             std::optional<OnPairEncoder>>
     _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;

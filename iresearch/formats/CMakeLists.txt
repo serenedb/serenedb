@@ -7,6 +7,8 @@ target_sources(
         column/codecs/fsst_plus_encoder.cpp
         column/codecs/lz4.cpp
         column/codecs/numeric.cpp
+        column/codecs/onpair.cpp
+        column/codecs/onpair_encoder.cpp
         column/codecs/registry.cpp
         column/codecs/segment_builder.cpp
         column/codecs/segment_dictionary.cpp

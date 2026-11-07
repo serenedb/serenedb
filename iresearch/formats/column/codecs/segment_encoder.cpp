@@ -36,6 +36,62 @@ void RetrainState(std::optional<State>& state) noexcept {
   }
 }
 
+template<typename State>
+IRS_NO_INLINE void CutRows(State& state, const Config& config,
+                           const StringAccumulator& acc, uint64_t begin,
+                           uint32_t target, Segment& seg) {
+  const std::span<const uint32_t> codes = acc.codes;
+  const std::span<const duckdb::string_t* const> values = acc.values;
+  state.Begin(config, begin, values.size(), seg);
+  for (auto row = begin; row < codes.size();) {
+    state.AddCode(codes[row++], values);
+    if (state.Full(target)) {
+      break;
+    }
+  }
+  state.Finish();
+}
+
+template<typename State>
+IRS_NO_INLINE void SealRows(State& state, const Config& config,
+                            std::span<const WriteChunk> chunks, uint32_t target,
+                            Segment& seg, SegmentSink sink) {
+  const auto seal = [&] {
+    state.Finish();
+    sink(seg.config.choice, std::move(*seg.stats), seg.rows, seg.bytes.View());
+  };
+  uint64_t row = 0;
+  uint64_t first = 0;
+  state.Begin(config, first, 0, seg);
+  for (const auto& chunk : chunks) {
+    for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
+      state.AddValue(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
+      ++row;
+      if (state.Full(target)) {
+        seal();
+        first = row;
+        state.Begin(config, first, 0, seg);
+      }
+    }
+  }
+  if (row != first) {
+    seal();
+  }
+}
+
+template<typename State>
+IRS_NO_INLINE void EncodeRows(State& state, const Config& config,
+                              const StringAccumulator& acc, uint64_t begin,
+                              uint64_t end, Segment& seg) {
+  const std::span<const uint32_t> codes = acc.codes;
+  const std::span<const duckdb::string_t* const> values = acc.values;
+  state.Begin(config, begin, values.size(), seg);
+  for (auto row = begin; row < end; ++row) {
+    state.AddCode(codes[row], values);
+  }
+  state.Finish();
+}
+
 }  // namespace
 
 template<typename F>
@@ -78,17 +134,7 @@ Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
                              uint64_t begin) {
   auto* seg = Acquire();
   With(config, [&](auto& state) {
-    const std::span<const uint32_t> codes = acc.codes;
-    const std::span<const duckdb::string_t* const> values = acc.values;
-    const auto target = _params.segment_target;
-    state.Begin(config, begin, values.size(), *seg);
-    for (auto row = begin; row < codes.size();) {
-      state.AddCode(codes[row++], values);
-      if (state.Full(target)) {
-        break;
-      }
-    }
-    state.Finish();
+    CutRows(state, config, acc, begin, _params.segment_target, *seg);
   });
   return seg;
 }
@@ -98,29 +144,7 @@ void SegmentEncoder::SealChunks(const Config& config,
                                 SegmentSink sink) {
   auto* seg = Acquire();
   With(config, [&](auto& state) {
-    const auto seal = [&] {
-      state.Finish();
-      sink(seg->config.choice, std::move(*seg->stats), seg->rows,
-           seg->bytes.View());
-    };
-    const auto target = _params.segment_target;
-    uint64_t row = 0;
-    uint64_t first = 0;
-    state.Begin(config, first, 0, *seg);
-    for (const auto& chunk : chunks) {
-      for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
-        state.AddValue(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
-        ++row;
-        if (state.Full(target)) {
-          seal();
-          first = row;
-          state.Begin(config, first, 0, *seg);
-        }
-      }
-    }
-    if (row != first) {
-      seal();
-    }
+    SealRows(state, config, chunks, _params.segment_target, *seg, sink);
   });
   Release(seg);
 }
@@ -129,15 +153,8 @@ Segment* SegmentEncoder::Encode(const Config& config,
                                 const StringAccumulator& acc, uint64_t begin,
                                 uint64_t end) {
   auto* seg = Acquire();
-  With(config, [&](auto& state) {
-    const std::span<const uint32_t> codes = acc.codes;
-    const std::span<const duckdb::string_t* const> values = acc.values;
-    state.Begin(config, begin, values.size(), *seg);
-    for (auto row = begin; row < end; ++row) {
-      state.AddCode(codes[row], values);
-    }
-    state.Finish();
-  });
+  With(config,
+       [&](auto& state) { EncodeRows(state, config, acc, begin, end, *seg); });
   return seg;
 }
 

@@ -151,9 +151,9 @@ CREATE VIEW ck_tv AS SELECT id FROM ck_t;
 statement error
 CREATE OR REPLACE TABLE ck_t (id INT);
 ----
-db error: ERROR: Cannot drop entry "ck_t" because there are entries that depend on it.
-view "ck_tv" depends on table "ck_t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table ck_t because other objects depend on it
+DETAIL: view ck_tv depends on table ck_t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -189,9 +189,9 @@ CREATE TABLE ck_dq (id INT DEFAULT nextval('ck_q'));
 statement error
 CREATE OR REPLACE SEQUENCE ck_q START 1;
 ----
-db error: ERROR: Cannot drop entry "ck_q" because there are entries that depend on it.
-table "ck_dq" depends on sequence "ck_q".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence ck_q because other objects depend on it
+DETAIL: default value for column id of table ck_dq depends on sequence ck_q
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -307,28 +307,28 @@ DROP SCHEMA ck_sc;
 
 
 statement ok
-CREATE TYPE main.ck_main_type AS (x INT);
+CREATE TYPE public.ck_main_type AS (x INT);
 
 
 statement error
-CREATE TABLE main.ck_main_type (a INT);
+CREATE TABLE public.ck_main_type (a INT);
 ----
-db error: ERROR: Type with name "ck_main_type" already exists!
+db error: ERROR: type "ck_main_type" already exists
 
 
 statement ok
-CREATE TABLE main.ck_main_table (a INT);
+CREATE TABLE public.ck_main_table (a INT);
 
 
 statement error
-CREATE TYPE main.ck_main_table AS ENUM ('x');
+CREATE TYPE public.ck_main_table AS ENUM ('x');
 ----
-db error: ERROR: Table with name "ck_main_table" already exists!
+db error: ERROR: type "ck_main_table" already exists
 
 
 statement ok
-DROP TABLE main.ck_main_table;
+DROP TABLE public.ck_main_table;
 
 
 statement ok
-DROP TYPE main.ck_main_type;
+DROP TYPE public.ck_main_type;

@@ -120,6 +120,10 @@ class Schema final : public duckdb::SchemaCatalogEntry {
 
   EntrySet& Set(duckdb::CatalogType type);
 
+  duckdb::optional_ptr<duckdb::CatalogEntry> NamespaceEntry(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    const duckdb::Identifier& name);
+
   duckdb::optional_ptr<duckdb::CatalogEntry> Add(
     duckdb::CatalogTransaction transaction,
     duckdb::unique_ptr<duckdb::CatalogEntry> entry,
@@ -157,13 +161,11 @@ class Schema final : public duckdb::SchemaCatalogEntry {
   bool AlterExisting(duckdb::CatalogTransaction transaction,
                      duckdb::CreateInfo& info, const duckdb::Identifier& name);
 
+  std::vector<EntrySet*> SiblingSets(duckdb::CatalogType type);
+
   duckdb::optional_ptr<duckdb::CatalogEntry> SiblingEntry(
     duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
     const duckdb::Identifier& name, bool types);
-
-  duckdb::optional_ptr<duckdb::CatalogEntry> NamespaceEntry(
-    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
-    const duckdb::Identifier& name);
 
   void CheckRelationName(duckdb::CatalogTransaction transaction,
                          duckdb::CatalogType type,

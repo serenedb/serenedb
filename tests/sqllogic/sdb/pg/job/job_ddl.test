@@ -136,7 +136,7 @@ manual	t
 statement error
 CREATE JOB jd_babsky AFTER 1 HOUR AS SELECT 1;
 ----
-db error: ERROR: Job with name "jd_babsky" already exists!<slt:ignore>
+db error: ERROR: job "jd_babsky" already exists<slt:ignore>
 
 
 statement ok

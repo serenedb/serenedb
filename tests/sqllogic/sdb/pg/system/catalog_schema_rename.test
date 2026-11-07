@@ -177,7 +177,7 @@ DROP VIEW csr_b.v;
 statement error
 ALTER SCHEMA csr_b RENAME TO public;
 ----
-db error: ERROR: Schema with name "public" already exists!
+db error: ERROR: schema "public" already exists
 
 
 # Two renames of one schema conflict like any two alters of one entry, and the

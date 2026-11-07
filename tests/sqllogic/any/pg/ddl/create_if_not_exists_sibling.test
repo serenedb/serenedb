@@ -44,7 +44,7 @@ onlyif serenedb
 statement error
 CREATE TABLE IF NOT EXISTS cine_mood (a INT);
 ----
-db error: ERROR: Type with name "cine_mood" already exists!
+db error: ERROR: type "cine_mood" already exists
 
 
 statement ok

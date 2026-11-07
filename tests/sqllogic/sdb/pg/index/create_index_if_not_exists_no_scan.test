@@ -197,13 +197,13 @@ db error: ERROR: only inverted indexes are supported on a table
 statement error
 CREATE INDEX cinx_seq ON cinx_t (i);
 ----
-db error: ERROR: Sequence with name "cinx_seq" already exists!
+db error: ERROR: relation "cinx_seq" already exists
 
 
 statement error
 CREATE INDEX cinx_t_art ON cinx_t USING inverted (i);
 ----
-db error: ERROR: Index with name "cinx_t_art" already exists!
+db error: ERROR: relation "cinx_t_art" already exists
 
 
 query

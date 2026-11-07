@@ -411,7 +411,7 @@ connection s2
 statement error
 CREATE SCHEMA cst_dup2
 ----
-db error: ERROR: Schema with name "cst_dup2" already exists!
+db error: ERROR: schema "cst_dup2" already exists
 
 
 connection s2

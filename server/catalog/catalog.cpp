@@ -435,6 +435,16 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
       absl::EqualsIgnoreCase(info.index_type, "btree")) {
     info.index_type = kInvertedIndexTypeName;
   }
+  if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
+    if (const auto holder =
+          table.ParentSchema(binder.context)
+            .Cast<Schema>()
+            .NamespaceEntry(GetCatalogTransaction(binder.context),
+                            duckdb::CatalogType::INDEX_ENTRY,
+                            info.GetIndexName())) {
+      ThrowEntryExists(holder->type, info.GetIndexName());
+    }
+  }
   const bool inverted = info.index_type == kInvertedIndexTypeName;
   const auto names = connector::SortedOptionNames(info.options);
   for (const auto name : names) {

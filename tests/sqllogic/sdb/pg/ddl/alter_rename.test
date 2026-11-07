@@ -206,37 +206,37 @@ db error: ERROR: Macro Function with name nonexistent does not exist!
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: Table with name "invoker" already exists!
+db error: ERROR: relation "invoker" already exists
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge;
 ----
-db error: ERROR: View with name "pudge" already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER INDEX deadinside RENAME TO pudge;
 ----
-db error: ERROR: Table with name "pudge" already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: Table with name "pudge" already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
 ----
-db error: ERROR: View with name "pudge_view" already exists!
+db error: ERROR: relation "pudge_view" already exists
 
 
 statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
 ----
-db error: ERROR: Table Macro Function with name "clickclack" already exists!
+db error: ERROR: function "clickclack" already exists
 
 
 statement error

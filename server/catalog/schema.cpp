@@ -266,15 +266,31 @@ EntrySet& Schema::Set(duckdb::CatalogType type) {
   }
 }
 
+std::vector<EntrySet*> Schema::SiblingSets(duckdb::CatalogType type) {
+  using enum duckdb::CatalogType;
+  if (type == TYPE_ENTRY) {
+    return {&_sets->tables};
+  }
+  std::vector<EntrySet*> sets;
+  for (auto* set : {&_sets->tables, &_sets->indexes, &_sets->sequences}) {
+    if (set != &Set(type)) {
+      sets.push_back(set);
+    }
+  }
+  if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
+    sets.push_back(&_sets->types);
+  }
+  return sets;
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> Schema::SiblingEntry(
   duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
   const duckdb::Identifier& name, bool types) {
   if (!catalog.IsCaseSensitive() || !IsRelation(type)) {
     return nullptr;
   }
-  for (auto* set :
-       {&_sets->tables, &_sets->indexes, &_sets->sequences, &_sets->types}) {
-    if (set == &Set(type) || (set == &_sets->types && !types)) {
+  for (auto* set : SiblingSets(type)) {
+    if (set == &_sets->types && !types) {
       continue;
     }
     if (auto taken = set->Get(transaction, name)) {
@@ -297,16 +313,14 @@ void Schema::CheckRelationName(duckdb::CatalogTransaction transaction,
                                duckdb::CatalogType type,
                                const duckdb::Identifier& entry_name) {
   if (auto taken = SiblingEntry(transaction, type, entry_name, true)) {
-    ThrowEntryExists(taken->type, entry_name);
+    ThrowEntryExists(
+      type == duckdb::CatalogType::TYPE_ENTRY ? type : taken->type, entry_name);
   }
   if (!catalog.IsCaseSensitive() || !IsRelation(type)) {
     return;
   }
-  for (auto* set :
-       {&_sets->tables, &_sets->indexes, &_sets->sequences, &_sets->types}) {
-    if (set != &Set(type)) {
-      set->CheckNameWritable(transaction, entry_name);
-    }
+  for (auto* set : SiblingSets(type)) {
+    set->CheckNameWritable(transaction, entry_name);
   }
 }
 

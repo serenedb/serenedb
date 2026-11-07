@@ -237,14 +237,36 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
         Reference(kPgClassTable, index.oid, object, 'n');
         return;
       }
-      const auto* table = object.type == duckdb::CatalogType::TABLE_ENTRY
-                            ? &object.Cast<duckdb::TableCatalogEntry>()
-                            : nullptr;
-      for (const auto column : index.column_ids) {
-        Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid,
-               table ? Attnum(table->GetColumns().GetColumn(
-                         duckdb::PhysicalIndex{column}))
-                     : static_cast<int32_t>(column + 1),
+      std::vector<int32_t> attnums;
+      if (object.type == duckdb::CatalogType::TABLE_ENTRY) {
+        const auto& table = object.Cast<duckdb::TableCatalogEntry>();
+        const auto collect = [&](const duckdb::ParsedExpression& expression) {
+          duckdb::ParsedExpressionIterator::VisitExpression<
+            duckdb::ColumnRefExpression>(
+            expression, [&](const duckdb::ColumnRefExpression& ref) {
+              const auto& name = ref.GetColumnName();
+              if (!table.ColumnExists(name)) {
+                return;
+              }
+              const auto attnum = Attnum(table.GetColumn(name));
+              if (!absl::c_contains(attnums, attnum)) {
+                attnums.push_back(attnum);
+              }
+            });
+        };
+        for (const auto& expression : index.parsed_expressions) {
+          collect(*expression);
+        }
+        if (index.where_clause) {
+          collect(*index.where_clause);
+        }
+      } else {
+        for (const auto column : index.column_ids) {
+          attnums.push_back(static_cast<int32_t>(column + 1));
+        }
+      }
+      for (const auto attnum : attnums) {
+        Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid, attnum,
                'a');
       }
       if (absl::c_none_of(index.parsed_expressions, [](const auto& expression) {

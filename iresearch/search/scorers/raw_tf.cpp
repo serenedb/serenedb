@@ -33,33 +33,32 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void RawTfImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t num) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    Merge<MergeType>(res[i], num * ScaledFreq<HasScale>(freq, scale, i));
+struct RawTfFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept {
+    return boost * tf;
   }
-}
+
+  score_t boost;
+};
 
 template<bool HasScale>
 struct RawTfScore : public ScoreOperatorOf<RawTfScore<HasScale>> {
   RawTfScore(score_t boost, const FreqBlockAttr* freq,
              const score_t* scale) noexcept
-    : freq{freq}, scale{scale}, boost{boost} {
+    : freq{freq}, scale{scale}, formula{boost} {
     SDB_ASSERT(this->freq);
   }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    RawTfImpl<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale),
-                                   boost);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, nullptr,
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t boost;
+  RawTfFormula formula;
 };
 
 }  // namespace

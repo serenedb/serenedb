@@ -33,8 +33,10 @@ class ByNestedQuery;
 class MultiTermQuery;
 class MultiTermState;
 struct TermState;
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
+template<bool Fixed>
+class PhraseQueryOf;
+using FixedPhraseQuery = PhraseQueryOf<true>;
+using VariadicPhraseQuery = PhraseQueryOf<false>;
 class NGramSimilarityQuery;
 struct PhraseState;
 struct NGramState;

@@ -58,12 +58,14 @@
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <ranges>
 #include <vector>
 
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/record.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
 
@@ -81,34 +83,6 @@ bool IsRelation(duckdb::CatalogType type) {
     default:
       return false;
   }
-}
-
-void RefuseIndexDependents(duckdb::CatalogTransaction transaction,
-                           duckdb::CatalogEntry& entry) {
-  std::vector<std::string> lines;
-  ScanDependents(
-    transaction, entry,
-    [&](duckdb::CatalogEntry& dependent,
-        const duckdb::DependencyDependentFlags&) {
-      if (dependent.type == duckdb::CatalogType::INDEX_ENTRY) {
-        lines.push_back(absl::StrCat(
-          "index ", duckdb::SQLQuotedIdentifier::ToString(dependent.name),
-          " depends on ",
-          absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
-          duckdb::SQLQuotedIdentifier::ToString(entry.name), "."));
-      }
-    });
-  if (lines.empty()) {
-    return;
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-    ERR_MSG("Cannot alter entry ",
-            duckdb::SQLQuotedIdentifier::ToString(entry.name),
-            " because there are entries that depend on it.\n",
-            absl::StrJoin(lines, "\n"),
-            "\nDrop the dependent entries first and recreate them after the "
-            "change."));
 }
 
 bool InKind(const duckdb::CatalogEntry& entry, duckdb::CatalogType kind) {
@@ -336,7 +310,10 @@ bool Schema::AlterExisting(duckdb::CatalogTransaction transaction,
   }
   if (!current->internal &&
       InKind(*current, duckdb::CatalogType::MACRO_ENTRY)) {
-    RefuseIndexDependents(transaction, *current);
+    RefuseDependents(
+      transaction, *current, [](const duckdb::CatalogEntry& dependent) {
+        return dependent.type == duckdb::CatalogType::INDEX_ENTRY;
+      });
   }
   auto alter = info.GetAlterInfo();
   Alter(transaction, *alter);
@@ -744,16 +721,44 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
       ERR_MSG("Cannot alter entry \"", entry->name.GetIdentifierName(),
               "\" because it is an internal system entry"));
   }
-  if (const auto new_name = info.GetNewName(); new_name) {
+  if (const auto new_schema = info.GetNewSchema()) {
+    if (type == duckdb::CatalogType::VIEW_ENTRY &&
+        entry->type != duckdb::CatalogType::VIEW_ENTRY) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+        ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a view"));
+    }
+    auto target = catalog.Cast<BaseCatalog>()
+                    .Set(duckdb::CatalogType::SCHEMA_ENTRY)
+                    .Get(transaction, *new_schema);
+    if (!target) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                      ERR_MSG("schema \"", new_schema->GetIdentifierName(),
+                              "\" does not exist"));
+    }
+    if (target->oid == oid) {
+      return;
+    }
+    DeclareModified(transaction, catalog,
+                    duckdb::DatabaseModificationType::ALTER_TABLE);
+    Move(transaction, set, type, *entry, target->Cast<Schema>(), info);
+    return;
+  }
+  const bool replay = info.bind_mode == duckdb::AlterBindMode::SKIP_BINDING;
+  std::vector<PendingDefault> defaults;
+  const auto new_name = info.GetNewName();
+  if (new_name) {
     if (new_name->GetIdentifierName() == entry->name.GetIdentifierName()) {
       ThrowEntryExists(entry->type, *new_name);
     }
     if (!set.SameName(*new_name, entry->name)) {
       CheckRelationName(transaction, type, *new_name);
-      FollowRename(transaction, *entry, *new_name);
+      if (!replay) {
+        FollowRename(transaction, *entry, *new_name, defaults);
+      }
     }
   }
-  if (info.type == duckdb::AlterType::ALTER_TABLE &&
+  if (!replay && info.type == duckdb::AlterType::ALTER_TABLE &&
       info.Cast<duckdb::AlterTableInfo>().alter_table_type ==
         duckdb::AlterTableType::RENAME_COLUMN) {
     const auto& rename = info.Cast<duckdb::RenameColumnInfo>();
@@ -768,18 +773,80 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, catalog,
                   duckdb::DatabaseModificationType::ALTER_TABLE);
   auto result = catalog::AlterEntry(transaction, set, *entry, info);
-  if (result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
-      info.type == duckdb::AlterType::ALTER_TABLE &&
-      info.bind_mode != duckdb::AlterBindMode::SKIP_BINDING) {
+  if (!replay) {
+    SetDefaults(transaction, catalog, defaults);
+  }
+  if (!replay && result && new_name) {
+    FollowReferences(transaction, *result, name, entry->name);
+  }
+  if (!replay && result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
+      info.type == duckdb::AlterType::ALTER_TABLE) {
     FollowColumnOids(transaction, entry->Cast<duckdb::TableCatalogEntry>(),
                      result->Cast<duckdb::TableCatalogEntry>());
   }
   if (result && info.type == duckdb::AlterType::CHANGE_OWNERSHIP) {
     auto& owned = result->Cast<duckdb::StandardEntry>();
     auto& oids = catalog.Cast<BaseCatalog>().Oids();
-    oids.RemoveDependents(owned);
-    absl::Cleanup reindex = [&] { oids.AddDependents(owned); };
+    oids.RemoveDependents(owned, owned.oid);
+    absl::Cleanup reindex = [&] { oids.AddDependents(owned, owned.oid); };
     Own(transaction, owned, info.Cast<duckdb::ChangeOwnershipInfo>());
+  }
+}
+
+void Schema::Move(duckdb::CatalogTransaction transaction, EntrySet& set,
+                  duckdb::CatalogType type, duckdb::CatalogEntry& entry,
+                  Schema& target, const duckdb::AlterInfo& info) {
+  const bool replay = info.bind_mode == duckdb::AlterBindMode::SKIP_BINDING;
+  struct Moving {
+    EntrySet& set;
+    duckdb::CatalogType type;
+    duckdb::CatalogEntry& entry;
+  };
+  std::vector<Moving> moving;
+  if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
+    auto& indexes = Set(duckdb::CatalogType::INDEX_ENTRY);
+    indexes.Scan(transaction, [&](duckdb::CatalogEntry& index) {
+      if (index.Cast<duckdb::IndexCatalogEntry>().table_oid == entry.oid) {
+        moving.push_back({indexes, duckdb::CatalogType::INDEX_ENTRY, index});
+      }
+    });
+  }
+  for (auto& owned : OwnedEntries(transaction, entry)) {
+    if (owned.get().type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+        owned.get().ParentSchema(transaction).oid == oid) {
+      moving.push_back({Set(duckdb::CatalogType::SEQUENCE_ENTRY),
+                        duckdb::CatalogType::SEQUENCE_ENTRY, owned});
+    }
+  }
+  moving.push_back({set, type, entry});
+  std::vector<duckdb::idx_t> oids;
+  for (const auto& item : std::views::reverse(moving)) {
+    target.CheckRelationName(transaction, item.type, item.entry.name);
+    oids.push_back(item.entry.oid);
+  }
+  std::vector<PendingDefault> defaults;
+  if (!replay) {
+    for (const auto& item : moving) {
+      FollowSchemaMove(transaction, item.entry, target.name, oids, defaults);
+    }
+  }
+  duckdb::optional_ptr<duckdb::CatalogEntry> result;
+  for (const auto& item : moving) {
+    auto moved = item.entry.Copy(*transaction.context);
+    moved->Cast<duckdb::StandardEntry>().schema_info = target.GetSchemaInfo();
+    moved->oid = item.entry.oid;
+    moved->permissions = item.entry.permissions;
+    result = moved.get();
+    if (!item.set.Move(transaction, item.entry.name, target.Set(item.type),
+                       std::move(moved),
+                       &item.entry == &entry ? SerializeAlter(info) : "")) {
+      ThrowEntryExists(item.entry.type, item.entry.name);
+    }
+    result->SetAsRoot(&transaction, &item.entry);
+  }
+  if (!replay) {
+    SetDefaults(transaction, catalog, defaults);
+    FollowReferences(transaction, *result, name, entry.name);
   }
 }
 
@@ -834,10 +901,18 @@ void Schema::Own(duckdb::CatalogTransaction transaction,
   const auto& column = owner.back();
   const auto& table_name = owner[owner.size() - 2];
   if (owner.size() > 2) {
-    const duckdb::vector<duckdb::Identifier> path{owner.begin(),
-                                                  owner.end() - 2};
-    const auto schema = catalog.GetSchema(transaction, path,
-                                          duckdb::OnEntryNotFound::RETURN_NULL);
+    const auto owner_table =
+      duckdb::QualifiedName::FromPath({owner.begin(), owner.end() - 1});
+    const auto& owner_catalog = owner_table.Catalog();
+    const duckdb::vector<duckdb::Identifier> path{
+      owner.begin() + (owner_catalog.empty() ? 0 : 1), owner.end() - 2};
+    const auto schema =
+      owner_catalog.empty() ||
+          duckdb::IdentifierEquality{catalog.IsCaseSensitive()}(
+            owner_catalog, catalog.GetName())
+        ? catalog.GetSchema(transaction, path,
+                            duckdb::OnEntryNotFound::RETURN_NULL)
+        : nullptr;
     if (!schema || schema->oid != oid) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

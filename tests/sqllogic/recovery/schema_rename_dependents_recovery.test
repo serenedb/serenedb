@@ -52,36 +52,8 @@ statement ok
 INSERT INTO srd.st_numbered VALUES ('numbered one'), ('numbered two');
 
 
-statement error
-ALTER SCHEMA srd RENAME TO srd2;
-----
-db error: ERROR: Cannot alter entry "srd" because there are entries that depend on it.
-table "child" depends on table "parent".
-Drop the dependent entries first and recreate them after the change.
-
-
-statement ok
-CREATE TABLE srd.child_copy AS SELECT * FROM srd.child;
-
-
-statement ok
-DROP TABLE srd.child;
-
-
 statement ok
 ALTER SCHEMA srd RENAME TO srd2;
-
-
-statement ok
-CREATE TABLE srd2.child (id INT PRIMARY KEY, parent_id INT REFERENCES srd2.parent (id));
-
-
-statement ok
-INSERT INTO srd2.child SELECT * FROM srd2.child_copy;
-
-
-statement ok
-DROP TABLE srd2.child_copy;
 
 
 statement ok
@@ -167,7 +139,8 @@ connection after_crash
 statement error
 INSERT INTO srd2.child VALUES (99, 99);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
+DETAIL: Key (parent_id)=(99) is not present in table "parent".
 
 
 connection after_crash

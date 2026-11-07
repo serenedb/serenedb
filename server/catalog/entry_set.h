@@ -102,9 +102,13 @@ class OidIndex {
   duckdb::optional_ptr<duckdb::CatalogEntry> Find(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
 
-  void AddDependents(const duckdb::CatalogEntry& version);
+  duckdb::idx_t SetOwner(duckdb::idx_t oid);
 
-  void RemoveDependents(const duckdb::CatalogEntry& version);
+  void AddDependents(const duckdb::CatalogEntry& version,
+                     duckdb::idx_t dependent);
+
+  void RemoveDependents(const duckdb::CatalogEntry& version,
+                        duckdb::idx_t dependent);
 
   void ForEachDependent(
     duckdb::CatalogTransaction transaction, duckdb::idx_t subject,
@@ -173,6 +177,10 @@ class EntrySet {
               const duckdb::Identifier& name,
               duckdb::unique_ptr<duckdb::CatalogEntry> entry,
               std::string alter);
+  bool Move(duckdb::CatalogTransaction transaction,
+            const duckdb::Identifier& name, EntrySet& target,
+            duckdb::unique_ptr<duckdb::CatalogEntry> entry,
+            std::string alter) ABSL_NO_THREAD_SAFETY_ANALYSIS;
 
   bool Drop(duckdb::CatalogTransaction transaction,
             const duckdb::Identifier& name);

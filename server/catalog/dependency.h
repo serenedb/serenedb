@@ -27,6 +27,9 @@
 #include <duckdb/catalog/catalog_entry_map.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/dependency.hpp>
+#include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_expression.hpp>
+#include <span>
 #include <vector>
 
 namespace sdb::catalog {
@@ -49,9 +52,38 @@ duckdb::catalog_entry_vector_t OwnedEntries(
 duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
   duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& owned);
 
+void RefuseDependents(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& entry,
+  absl::FunctionRef<bool(const duckdb::CatalogEntry&)> refuses);
+
+struct PendingDefault {
+  duckdb::idx_t table = 0;
+  duckdb::Identifier column;
+  duckdb::unique_ptr<duckdb::ParsedExpression> value;
+};
+
 void FollowRename(duckdb::CatalogTransaction transaction,
                   duckdb::CatalogEntry& entry,
-                  const duckdb::Identifier& new_name);
+                  const duckdb::Identifier& new_name,
+                  std::vector<PendingDefault>& defaults);
+
+void FollowSchemaMove(duckdb::CatalogTransaction transaction,
+                      duckdb::CatalogEntry& entry,
+                      const duckdb::Identifier& new_schema,
+                      std::span<const duckdb::idx_t> moving,
+                      std::vector<PendingDefault>& defaults);
+
+void SetDefaults(duckdb::CatalogTransaction transaction,
+                 duckdb::Catalog& catalog,
+                 std::vector<PendingDefault>& defaults);
+
+void FollowReferences(duckdb::CatalogTransaction transaction,
+                      duckdb::CatalogEntry& table,
+                      const duckdb::Identifier& old_schema,
+                      const duckdb::Identifier& old_name);
+
+duckdb::idx_t ReferencedTableOid(const duckdb::TableCatalogEntry& table,
+                                 const duckdb::ForeignKeyConstraint& fk);
 
 void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
@@ -60,7 +92,8 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
 
 void FollowSchemaRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& schema,
-                        const duckdb::Identifier& new_name);
+                        const duckdb::Identifier& new_name,
+                        std::vector<PendingDefault>& defaults);
 
 // Re-links the sequences `previous` owned through a column that `current`
 // keeps under a new oid.

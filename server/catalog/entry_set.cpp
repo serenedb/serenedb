@@ -123,6 +123,20 @@ bool DependsOn(const duckdb::CatalogEntry& member, duckdb::idx_t subject,
   return depends;
 }
 
+bool TriggersDependOn(duckdb::CatalogTransaction transaction,
+                      duckdb::CatalogEntry& member, duckdb::idx_t subject,
+                      const duckdb::Identifier& catalog, bool local) {
+  if (member.type != duckdb::CatalogType::TABLE_ENTRY) {
+    return false;
+  }
+  bool depends = false;
+  member.Cast<duckdb::TableCatalogEntry>().ScanTriggers(
+    transaction, [&](duckdb::CatalogEntry& trigger) {
+      depends |= DependsOn(trigger, subject, catalog, local);
+    });
+  return depends;
+}
+
 }  // namespace
 
 void DependentIndex::Add(duckdb::idx_t subject, duckdb::idx_t dependent,
@@ -220,21 +234,32 @@ duckdb::optional_ptr<duckdb::CatalogEntry> OidIndex::Find(
   for (auto slot = slots.rbegin(); slot != slots.rend(); ++slot) {
     if (auto entry = slot->set->Get(transaction, slot->name);
         entry && entry->oid == oid) {
+      if (const auto owner = slot->set->Owner();
+          owner && !Find(transaction, owner)) {
+        return nullptr;
+      }
       return entry;
     }
   }
   return nullptr;
 }
 
-void OidIndex::AddDependents(const duckdb::CatalogEntry& version) {
+duckdb::idx_t OidIndex::SetOwner(duckdb::idx_t oid) {
+  const auto slot = Newest(oid);
+  return slot.set ? slot.set->Owner() : 0;
+}
+
+void OidIndex::AddDependents(const duckdb::CatalogEntry& version,
+                             duckdb::idx_t dependent) {
   ForEachSubject(version, [&](duckdb::idx_t subject) {
-    _dependents->Add(subject, version.oid, *this);
+    _dependents->Add(subject, dependent, *this);
   });
 }
 
-void OidIndex::RemoveDependents(const duckdb::CatalogEntry& version) {
+void OidIndex::RemoveDependents(const duckdb::CatalogEntry& version,
+                                duckdb::idx_t dependent) {
   ForEachSubject(version, [&](duckdb::idx_t subject) {
-    _dependents->Remove(subject, version.oid);
+    _dependents->Remove(subject, dependent);
   });
 }
 
@@ -249,9 +274,11 @@ void OidIndex::ForEachDependent(
         continue;
       }
     }
+    const bool local = dependent.index == this;
     if (auto member = dependent.index->Find(transaction, dependent.oid);
-        member && DependsOn(*member, subject, _database.GetName(),
-                            dependent.index == this)) {
+        member && (DependsOn(*member, subject, _database.GetName(), local) ||
+                   TriggersDependOn(transaction, *member, subject,
+                                    _database.GetName(), local))) {
       callback(*member);
     }
   }
@@ -403,13 +430,13 @@ void EntrySet::Index(const duckdb::CatalogEntry& entry) {
 
 void EntrySet::IndexDependents(const duckdb::CatalogEntry& version) {
   if (_members) {
-    _oids.AddDependents(version);
+    _oids.AddDependents(version, _owner ? _owner : version.oid);
   }
 }
 
 void EntrySet::UnindexDependents(const duckdb::CatalogEntry& version) {
   if (_members) {
-    _oids.RemoveDependents(version);
+    _oids.RemoveDependents(version, _owner ? _owner : version.oid);
   }
 }
 
@@ -584,6 +611,26 @@ bool EntrySet::Rename(duckdb::CatalogTransaction transaction,
   PushTombstone(transaction, name, ChangeKind::Rename);
   return PushNew(transaction, std::move(entry), ChangeKind::Alter,
                  std::move(alter));
+}
+
+bool EntrySet::Move(duckdb::CatalogTransaction transaction,
+                    const duckdb::Identifier& name, EntrySet& target,
+                    duckdb::unique_ptr<duckdb::CatalogEntry> entry,
+                    std::string alter) {
+  SDB_ASSERT(&target != this);
+  const bool ours_first = this < &target;
+  absl::MutexLock first{ours_first ? &_mutex : &target._mutex};
+  absl::MutexLock second{ours_first ? &target._mutex : &_mutex};
+  const auto it = target._entries.find(entry->name);
+  if (it != target._entries.end()) {
+    CheckWritable(transaction.view, *it->second);
+    if (!it->second->deleted) {
+      return false;
+    }
+  }
+  PushTombstone(transaction, name, ChangeKind::Rename);
+  return target.PushNew(transaction, std::move(entry), ChangeKind::Alter,
+                        std::move(alter));
 }
 
 bool EntrySet::Drop(duckdb::CatalogTransaction transaction,

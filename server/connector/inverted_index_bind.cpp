@@ -233,15 +233,12 @@ void ParseBitsOption(std::string_view kind, std::string_view column_name,
 // "auto" is the writer default (analyze tournament). Other names map
 // 1:1 to duckdb codecs; the writer throws at flush time if the named
 // codec doesn't accept the column's physical type.
-duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
-                                             std::string_view column_name,
+duckdb::CompressionType ParseCompressionName(std::string_view column_name,
                                              std::string_view name) {
   const auto type = duckdb::EnumUtil::FromString<duckdb::CompressionType>(name);
-  auto& storage =
-    duckdb::Catalog::GetCatalog(context, duckdb::Identifier::InvalidCatalog())
-      .GetAttached()
-      .GetStorageManager();
-  if (!duckdb::CompressionTypeIsAvailable(type, &storage).IsAvailable()) {
+  if (!duckdb::CompressionTypeIsAvailable(type,
+                                          duckdb::StorageVersion::DUCKDB_LATEST)
+         .IsAvailable()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Column '", column_name, "': compression '", name,
                             "' is not available"));
@@ -293,7 +290,7 @@ duckdb::CompressionType ParseCompressionOption(
   std::string_view owner_label, std::string_view key, const duckdb::Value& v,
   const duckdb::LogicalType& value_type) {
   auto str = GetIndexStringOption(kind, owner_label, key, v);
-  auto parsed = ParseCompressionName(context, owner_label, str);
+  auto parsed = ParseCompressionName(owner_label, str);
   ValidateColumnCompression(context, owner_label, parsed, value_type);
   return parsed;
 }

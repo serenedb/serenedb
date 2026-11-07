@@ -49,7 +49,8 @@ struct KeySpec {
   std::vector<duckdb::LogicalType> types;
   // Reference only: the referenced table and the field of its unique key the
   // values must be held in. The key's columns follow that unique key's order.
-  duckdb::Identifier referenced_schema;
+  duckdb::idx_t referenced_table = 0;
+  bool self_reference = false;
   duckdb::Identifier referenced;
   irs::field_id referenced_field = 0;
 };

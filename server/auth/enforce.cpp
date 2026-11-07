@@ -141,13 +141,13 @@ std::string KindName(CatalogType type) {
                           entry.name.GetIdentifierName()));
 }
 
-void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
+void RequireUserSchema(duckdb::idx_t schema, const duckdb::Identifier& name) {
   if (const auto* system =
         pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to create \"", system->name, ".",
-              info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+              name.GetIdentifierName(), "\""),
       ERR_DETAIL("System catalog modifications are currently disallowed."));
   }
 }
@@ -449,7 +449,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
-        RequireUserSchema(create.schema.oid, info);
+        RequireUserSchema(create.schema.oid, info.GetQualifiedName().Name());
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -469,7 +469,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
+        RequireUserSchema(create.schema->oid,
+                          create.info->GetQualifiedName().Name());
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
         if (_enforce) {
@@ -506,7 +507,8 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
+        RequireUserSchema(create.schema->oid,
+                          create.info->GetQualifiedName().Name());
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
           CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
@@ -572,6 +574,13 @@ class Enforcer {
             CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
           }
         } else {
+          if (const auto new_schema = info.GetNewSchema()) {
+            if (auto target = duckdb::Catalog::GetSchema(
+                  _context, info.GetQualifiedName().Catalog(), *new_schema,
+                  duckdb::OnEntryNotFound::RETURN_NULL)) {
+              RequireUserSchema(target->oid, info.GetQualifiedName().Name());
+            }
+          }
           if (_enforce) {
             CheckAlter(info);
           }

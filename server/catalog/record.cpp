@@ -159,9 +159,9 @@ void ReplayChange(duckdb::ClientContext& context,
       catalog.Alter(context, *info);
       if (!dependencies.Set().empty()) {
         auto& table = LoggedTable(catalog, transaction, oid);
-        catalog.Oids().RemoveDependents(table);
+        catalog.Oids().RemoveDependents(table, table.oid);
         table.dependencies = std::move(dependencies);
-        catalog.Oids().AddDependents(table);
+        catalog.Oids().AddDependents(table, table.oid);
       }
       return;
     }

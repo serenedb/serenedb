@@ -33,8 +33,6 @@
 
 namespace irs {
 
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class NGramSimilarityQuery;
 struct SubReader;
 struct TermReader;

@@ -35,14 +35,13 @@
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/node.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 
 namespace irs {
 
 class TermQuery;
 class MultiTermQuery;
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;

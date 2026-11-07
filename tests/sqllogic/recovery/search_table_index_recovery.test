@@ -64,14 +64,13 @@ query
 EXPLAIN SELECT id FROM sidx WHERE tag = 'red';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─╮
-│ Index: sidx      │
-│ Lookup: search   │
-│ Index Filter:    │
-│ ╭─ Term ─────╮   │
-│ │ Field: tag │   │
-│ │ Value: red │   │
-│ ╰────────────╯   │
-│ Projections: id  │
-│ ~1 row           │
-╰──────────────────╯
+╭─ IRESEARCH_SCAN ───────╮
+│ Table: sidx            │
+│ Index Filter:          │
+│ ╭─ Term ─────────────╮ │
+│ │ Field: tag(string) │ │
+│ │ Value: red         │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯

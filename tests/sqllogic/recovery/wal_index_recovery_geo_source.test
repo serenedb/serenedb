@@ -36,7 +36,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: wal_geo_src_idx   │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -49,8 +49,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (l),     │
-│              geo (i)     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 

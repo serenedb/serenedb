@@ -45,8 +45,7 @@ EXPLAIN SELECT id FROM rk WHERE body @@ ts_phrase('fox') ORDER BY BM25(rk.tableo
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
-│ Index: rk                   │
-│ Lookup: search              │
+│ Table: rk                   │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │

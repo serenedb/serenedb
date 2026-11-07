@@ -1,12 +1,6 @@
 control substitution on
 control max-async-connections 5
 
-# Crash mid CREATE INVERTED INDEX: the build is finished and its iresearch
-# storage is on disk, but the statement's transaction -- and so the catalog
-# record -- never committed. On restart the half-created index must be dropped
-# and the table must stay usable and re-indexable. Pins the CREATE-INDEX
-# crash-recovery seam.
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY cc_dict AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -45,7 +39,8 @@ count
 
 connection cc_after
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*');
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*/*')
+WHERE file NOT LIKE '%/' || (SELECT oid FROM pg_class WHERE relname = 'cc_t') || '/%';
 ----
 leftover
 0

@@ -60,14 +60,13 @@ CREATE INDEX wal_inc_idx ON wal_inc_t
   USING inverted(txt wal_inc_dict, dual wal_inc_dict)
   INCLUDE (pk, v, dual, ints, triple, pt, m, nest);
 
-# All projections served from the inverted index (cs for INCLUDE columns,
-# inverted-index for txt filter, RocksDB for nothing).
 query
 EXPLAIN SELECT pk, v, dual FROM wal_inc_idx WHERE txt @@ ts_phrase('alpha');
 ----
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────╮
 │ Index: wal_inc_idx     │
+│ Lookup: search         │
 │ Index Filter:          │
 │ ╭─ Term ─────────────╮ │
 │ │ Field: txt(string) │ │

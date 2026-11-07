@@ -31,7 +31,7 @@ EXPLAIN SELECT pk FROM wal_hnsw_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] L
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: wal_hnsw_idx               │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │

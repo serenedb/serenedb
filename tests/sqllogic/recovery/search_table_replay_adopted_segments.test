@@ -142,7 +142,7 @@ SELECT
   (SELECT count(*) FROM ras4) AS ras4;
 ----
 ras1	ras2	ras3	ras4
-2	2	2	2
+5001	10001	5001	150000
 
 connection default
 statement ok

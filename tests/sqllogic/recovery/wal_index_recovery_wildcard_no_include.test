@@ -30,7 +30,7 @@ EXPLAIN SELECT pk, b FROM wal_wild_ni_idx WHERE b @@ ts_like('percent_alpha_one'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: wal_wild_ni_idx                     │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │

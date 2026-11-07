@@ -31,7 +31,7 @@ EXPLAIN SELECT pk FROM wal_ivf_idx ORDER BY emb <-> [1.0, 0.0, 0.0]::FLOAT[3] LI
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: wal_ivf_idx                │
-│ Lookup: table                     │
+│ Lookup: search                    │
 │ Score: l2_distance(emb, FLOAT[3]) │
 │ Top: 1                            │
 │ Projections: pk                   │

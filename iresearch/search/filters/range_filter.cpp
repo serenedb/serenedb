@@ -34,21 +34,11 @@
 namespace irs {
 namespace {
 
-enum class RangeKind {
-  Term,
-  Empty,
-  Range,
-};
-
-RangeKind Classify(const ByRangeOptions::range_type& rng) noexcept {
-  if (rng.min_type != BoundType::Unbounded &&
-      rng.max_type != BoundType::Unbounded && rng.min == rng.max) {
-    if (rng.min_type == rng.max_type && rng.min_type == BoundType::Inclusive) {
-      return RangeKind::Term;
-    }
-    return RangeKind::Empty;
-  }
-  return RangeKind::Range;
+bool IsEmptyRange(const ByRangeOptions::range_type& rng) noexcept {
+  return rng.min_type != BoundType::Unbounded &&
+         rng.max_type != BoundType::Unbounded && rng.min == rng.max &&
+         (rng.min_type != BoundType::Inclusive ||
+          rng.max_type != BoundType::Inclusive);
 }
 
 class ByRangeIterator : public WrappedTermIterator {
@@ -93,23 +83,14 @@ QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
   auto sub_ctx = ctx;
   sub_ctx.boost *= GetBoost();
   return PrepareSegment(segment, sub_ctx, segment.field(field_id(), dict()),
-                        options().range, GetBoost());
+                        options().range);
 }
 
 QueryBuilder::ptr ByRange::PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const TermReader* reader,
-                                          const options_type::range_type& rng,
-                                          score_t boost) {
-  switch (Classify(rng)) {
-    case RangeKind::Empty:
-      return QueryBuilder::Empty();
-    case RangeKind::Term:
-    case RangeKind::Range:
-      break;
-  }
-
-  if (!reader) {
+                                          const options_type::range_type& rng) {
+  if (IsEmptyRange(rng) || !reader) {
     return QueryBuilder::Empty();
   }
   auto query = memory::make_tracked<MultiTermQuery>(

@@ -67,9 +67,6 @@ struct RawTfScore : public ScoreOperatorOf<RawTfScore<HasScale>> {
 ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
   if (!freq) {
-    if (0.f == ctx.boost) {
-      return ScoreFunction::Default();
-    }
     return ScoreFunction::Default();
   }
 

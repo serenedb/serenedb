@@ -2,6 +2,8 @@ target_sources(
     iresearch
     PRIVATE
         column/codecs/fsst.cpp
+        column/codecs/fsst12.cpp
+        column/codecs/fsst12_chain_encoder.cpp
         column/codecs/fsst_chain_encoder.cpp
         column/codecs/fsst_plus.cpp
         column/codecs/fsst_plus_encoder.cpp

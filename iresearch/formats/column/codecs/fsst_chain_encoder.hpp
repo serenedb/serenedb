@@ -39,7 +39,7 @@ class FsstChainEncoder {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
 
   explicit FsstChainEncoder(StringTuning& tuning, uint32_t target) noexcept
-    : FsstChainEncoder{tuning, target, kCodec, FsstCodes::Byte} {}
+    : _history{tuning.history[static_cast<size_t>(kCodec)]}, _target{target} {}
 
   void Begin(Shape shape, uint8_t, FrameLayout) noexcept {
     _shape = shape;
@@ -56,18 +56,9 @@ class FsstChainEncoder {
 
   std::string& Data() noexcept { return _data; }
 
- protected:
-  FsstChainEncoder(StringTuning& tuning, uint32_t target, ByteCodec leaf,
-                   FsstCodes codes) noexcept
-    : _history{tuning.history[static_cast<size_t>(leaf)]},
-      _target{target},
-      _leaf{leaf},
-      _codec{codes} {}
-
  private:
   RatioHistory* _history;
   uint32_t _target;
-  ByteCodec _leaf;
   Shape _shape = Shape::Dedup;
   FsstEncoder _codec;
   std::vector<FrameMeta> _frames;
@@ -75,14 +66,6 @@ class FsstChainEncoder {
   std::vector<uint32_t> _entry_lengths;
   std::vector<std::string_view> _suffixes;
   std::vector<uint32_t> _lcp_stream;
-};
-
-class Fsst12ChainEncoder final : public FsstChainEncoder {
- public:
-  static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
-
-  explicit Fsst12ChainEncoder(StringTuning& tuning, uint32_t target) noexcept
-    : FsstChainEncoder{tuning, target, kCodec, FsstCodes::Twelve} {}
 };
 
 }  // namespace irs::codecs::text

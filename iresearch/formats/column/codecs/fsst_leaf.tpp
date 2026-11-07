@@ -60,9 +60,8 @@ inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
   return capacity;
 }
 
-template<typename Decoder>
-uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
-                      uint64_t lcp, std::string& buf) {
+inline uint64_t DecodeSuffix(const FsstDecoder& fsst, const char* in,
+                             uint64_t enc, uint64_t lcp, std::string& buf) {
   if (const auto need = lcp + enc * kFsstMaxExpansion; buf.size() < need) {
     buf.resize(std::max<uint64_t>(need, buf.size() * 2));
   }
@@ -72,10 +71,10 @@ uint64_t DecodeSuffix(const Decoder& fsst, const char* in, uint64_t enc,
   return lcp + dec;
 }
 
-template<typename Decoder, typename Visit>
-ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
-                   PackedReader& lcps, uint32_t first, uint32_t end,
-                   uint64_t enc_off, uint64_t enc_end, char* out,
+template<typename Visit>
+ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
+                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
                    uint64_t capacity, Visit&& visit) {
   uint64_t off = 0;
   uint64_t prev_off = 0;
@@ -101,11 +100,11 @@ ChainEnd WalkChain(const Decoder& fsst, const char* in, PackedReader& lengths,
   return {off, enc_off};
 }
 
-template<typename Decoder, typename Visit>
-uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
-                     PackedReader& lcps, uint32_t first, uint32_t end,
-                     uint64_t enc_off, uint64_t enc_end, std::string& buf,
-                     Visit&& visit) {
+template<typename Visit>
+uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
+                     PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                     uint32_t end, uint64_t enc_off, uint64_t enc_end,
+                     std::string& buf, Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
@@ -121,7 +120,6 @@ uint32_t WalkInPlace(const Decoder& fsst, const char* in, PackedReader& lengths,
   return end;
 }
 
-template<typename Decoder>
 struct FsstScan {
   template<typename Frames>
   FsstScan(duckdb::ColumnSegment&, const Frames& s)
@@ -245,7 +243,7 @@ struct FsstScan {
 
   uint64_t HeapBytes() const noexcept { return group_heap_bytes; }
 
-  Decoder decoder;
+  FsstDecoder decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
@@ -254,7 +252,6 @@ struct FsstScan {
   std::string probe;
 };
 
-template<typename Decoder>
 struct FsstFetch {
   void Reset(const Header& h, duckdb::data_ptr_t base) {
     decoder.reset();
@@ -333,21 +330,17 @@ struct FsstFetch {
     });
   }
 
-  std::optional<Decoder> decoder;
+  std::optional<FsstDecoder> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;
 };
 
-template<ByteCodec Codec, typename Decoder>
-struct FsstChainLeaf {
-  static constexpr ByteCodec kCodec = Codec;
-  using Scan = FsstScan<Decoder>;
-  using Fetch = FsstFetch<Decoder>;
+struct FsstLeaf {
+  static constexpr ByteCodec kCodec = ByteCodec::Fsst;
+  using Scan = FsstScan;
+  using Fetch = FsstFetch;
 };
-
-using FsstLeaf = FsstChainLeaf<ByteCodec::Fsst, FsstDecoder>;
-using Fsst12Leaf = FsstChainLeaf<ByteCodec::Fsst12, Fsst12Decoder>;
 
 }  // namespace irs::codecs::text

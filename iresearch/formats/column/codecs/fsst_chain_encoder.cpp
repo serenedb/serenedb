@@ -90,7 +90,7 @@ EncodedFrames FsstChainEncoder::Finish(const SegmentBuilder& rows,
   RecordRatio(_history[static_cast<size_t>(_shape)], rows.Raw(),
               _data.size() + symtab.size(), _target);
   return {
-    .codec = _leaf,
+    .codec = kCodec,
     .frames = _frames,
     .max_length = max_enc,
     .lcps = _lcp_stream,

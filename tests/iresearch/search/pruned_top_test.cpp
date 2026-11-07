@@ -35,6 +35,7 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
+#include <iresearch/search/scorers/indri_dirichlet.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -233,7 +234,7 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   std::vector<irs::QueryBuilder::ptr> Prepare(const irs::Filter& filter) {
-    irs::PreparedCollector collector{filter, _scorer, _stats, 1};
+    irs::PreparedCollector collector{filter, *_ranking, _stats, 1};
     std::vector<irs::QueryBuilder::ptr> queries;
     for (const auto& segment : _reader) {
       queries.emplace_back(
@@ -251,7 +252,8 @@ class PrunedTopTest : public tests::IndexTestBase {
       return out;
     }
     irs::ColumnArgsFetcher fetcher;
-    auto plan = queries[0]->PlanScored({.scorer = _scorer, .fetcher = fetcher});
+    auto plan =
+      queries[0]->PlanScored({.scorer = *_ranking, .fetcher = fetcher});
     constexpr uint32_t kBatch = irs::doc_limits::kMinCapacity;
     irs::SlackBuf<doc_id_t, kBatch, irs::doc_limits::kDocsSlack> docs;
     irs::SlackBuf<irs::score_t, kBatch, irs::doc_limits::kScoresSlack> scores;
@@ -278,7 +280,7 @@ class PrunedTopTest : public tests::IndexTestBase {
     if (queries[0] && !irs::QueryBuilder::IsEmpty(*queries[0])) {
       const auto end = irs::doc_limits::min() + kDocs;
       const auto plan_top = [&](irs::ColumnArgsFetcher& fetcher) {
-        return queries[0]->PlanTop({.scorer = _scorer,
+        return queries[0]->PlanTop({.scorer = *_ranking,
                                     .fetcher = fetcher,
                                     .prune = prune,
                                     .bounds = bounds,
@@ -418,6 +420,7 @@ class PrunedTopTest : public tests::IndexTestBase {
   }
 
   irs::BM25 _scorer;
+  const irs::Scorer* _ranking = &_scorer;
   irs::StatsArena _stats{duckdb::Allocator::DefaultAllocator()};
   irs::DirectoryReader _reader;
 };
@@ -793,6 +796,29 @@ TEST_P(PrunedTopTest, phrases_bound_candidates_before_reading_dense_terms) {
 TEST_P(PrunedTopTest, phrases_probe_dense_terms_when_most_candidates_pass) {
   Build(PhrasesText);
   CheckRanking(*PhraseOf(std::vector<std::string_view>{"brass", "band"}));
+}
+
+TEST_P(PrunedTopTest, phrases_ranked_by_a_scorer_without_bounds) {
+  Build(PhrasesText);
+  const irs::IndriDirichlet indri;
+  _ranking = &indri;
+  for (const auto& parts : std::vector<std::vector<std::string_view>>{
+         {"brass", "band"},
+         {"of", "of"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(parts, " "));
+    CheckRanking(*PhraseOf(parts));
+  }
+}
+
+TEST_P(PrunedTopTest, a_lone_phrase_beside_an_unscored_all) {
+  Build(PhrasesText);
+  irs::BooleanFilter filter;
+  auto all = std::make_unique<irs::All>();
+  all->SetBoost(0.f);
+  filter.Add(std::move(all), irs::Occur::Must);
+  filter.Add(PhraseOf({"brass", "band"}), irs::Occur::Must);
+  CheckRanking(filter);
 }
 
 TEST_P(PrunedTopTest, phrases_with_repeated_terms) {

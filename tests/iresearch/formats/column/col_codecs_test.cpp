@@ -3437,6 +3437,10 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
     {CompressionType::COMPRESSION_FSST, true, false},
     {CompressionType::COMPRESSION_COL_DICT_FSST_PLUS, false, false},
     {CompressionType::COMPRESSION_COL_FSST_PLUS, true, false},
+    {CompressionType::COMPRESSION_COL_DICT_FSST12, false, false},
+    {CompressionType::COMPRESSION_COL_FSST12, true, false},
+    {CompressionType::COMPRESSION_COL_DICT_ONPAIR, false, false},
+    {CompressionType::COMPRESSION_COL_ONPAIR, true, false},
     {CompressionType::COMPRESSION_AUTO, false, true},
   };
   std::set<std::string> layouts;
@@ -3537,12 +3541,13 @@ TEST_F(ColCodecsTest, StreamingScanMatchesBlockScan) {
 TEST_F(ColCodecsTest, StreamingPlainScanHoldsOnlyItsBatchesFrames) {
   constexpr uint64_t kRows = 6000;
   constexpr duckdb::idx_t kBatch = 256;
-  for (const auto codec :
-       {duckdb::CompressionType::COMPRESSION_LZ4,
-        duckdb::CompressionType::COMPRESSION_COL_ZSTD,
-        duckdb::CompressionType::COMPRESSION_ZXC,
-        duckdb::CompressionType::COMPRESSION_FSST,
-        duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS}) {
+  for (const auto codec : {duckdb::CompressionType::COMPRESSION_LZ4,
+                           duckdb::CompressionType::COMPRESSION_COL_ZSTD,
+                           duckdb::CompressionType::COMPRESSION_ZXC,
+                           duckdb::CompressionType::COMPRESSION_FSST,
+                           duckdb::CompressionType::COMPRESSION_COL_FSST_PLUS,
+                           duckdb::CompressionType::COMPRESSION_COL_FSST12,
+                           duckdb::CompressionType::COMPRESSION_COL_ONPAIR}) {
     SCOPED_TRACE(duckdb::CompressionTypeToString(codec));
     irs::MemoryDirectory dir{};
     Write(dir, codec, {.segment_target = 1024 * 1024}, kRows, 4096,

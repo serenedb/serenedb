@@ -1031,13 +1031,11 @@ std::vector<irs::WriteChunk> WriteChunks(
   return out;
 }
 
-irs::codecs::StringAccumulator Accumulate(
-  const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
-  irs::codecs::StringAccumulator acc;
+void Accumulate(irs::codecs::StringAccumulator& acc,
+                const std::vector<std::unique_ptr<duckdb::Vector>>& chunks) {
   for (const auto& c : chunks) {
     acc.Add(*c);
   }
-  return acc;
 }
 
 const Value kWordSoup = [](uint64_t g) -> std::optional<std::string> {
@@ -1084,7 +1082,8 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     {Shape::Plain, ByteCodec::OnPair},   {Shape::Plain, ByteCodec::Fsst12},
   };
   const auto chunks = Chunks(20000, kWordSoup);
-  const auto acc = Accumulate(chunks);
+  irs::codecs::StringAccumulator acc;
+  Accumulate(acc, chunks);
   const auto write_chunks = WriteChunks(chunks);
   for (const auto choice : choices) {
     irs::codecs::StringTuning tuning;
@@ -1125,7 +1124,8 @@ TEST_F(ColCodecsTest, AutoChoosesPerSegment) {
     return "status-" + std::to_string(g % 4);
   };
   const auto chunks = Chunks(60000, value);
-  const auto acc = Accumulate(chunks);
+  irs::codecs::StringAccumulator acc;
+  Accumulate(acc, chunks);
   irs::codecs::StringTuning tuning;
   std::vector<Shape> shapes;
   const auto outcome = irs::codecs::SealSegments(
@@ -1421,7 +1421,8 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   constexpr uint64_t kRowGroup = 1024;
   const auto seal = [](const Chunked& chunks,
                        irs::codecs::StringTuning& tuning) {
-    const auto acc = Accumulate(chunks);
+    irs::codecs::StringAccumulator acc;
+    Accumulate(acc, chunks);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,
@@ -3114,7 +3115,8 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   using irs::codecs::Shape;
   const auto seal = [](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                        irs::codecs::StringTuning& tuning) {
-    const auto acc = Accumulate(in);
+    irs::codecs::StringAccumulator acc;
+    Accumulate(acc, in);
     const auto outcome = irs::codecs::SealSegments(
       acc, nullptr, irs::ColCodecParams{}, duckdb::LogicalType::VARCHAR, tuning,
       [](irs::codecs::StringChoice, duckdb::BaseStatistics, uint64_t,

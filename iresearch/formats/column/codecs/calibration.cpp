@@ -117,7 +117,7 @@ Config Calibration::CutConfig() const noexcept {
     };
   }
   const bool repeats =
-    Repeats(_acc.entries.size(), _acc.Rows() - _acc.null_count);
+    Repeats(_acc.values.size(), _acc.Rows() - _acc.null_count);
   return {
     .choice = {repeats ? Shape::Dedup : Shape::Plain, ByteCodec::Lz4},
     .level = kLz4Fast,

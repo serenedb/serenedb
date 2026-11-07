@@ -47,13 +47,11 @@ uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   return absl::big_endian::Load64(buf);
 }
 
-bool LessAfter(const string_t& a, const string_t& b, size_t equal) noexcept {
+bool Less(const string_t& a, const string_t& b) noexcept {
   const size_t a_size = a.GetSize();
   const size_t b_size = b.GetSize();
-  const size_t size = std::min(a_size, b_size);
-  const size_t skip = std::min(equal, size);
   const int cmp =
-    std::memcmp(a.GetData() + skip, b.GetData() + skip, size - skip);
+    std::memcmp(a.GetData(), b.GetData(), std::min(a_size, b_size));
   return cmp < 0 || (cmp == 0 && a_size < b_size);
 }
 
@@ -78,8 +76,7 @@ void SegmentBuilder::SortEntries() {
     if (a.prefix != b.prefix) {
       return a.prefix < b.prefix;
     }
-    return LessAfter(_entries[a.entry], _entries[b.entry],
-                     common + sizeof(uint64_t));
+    return Less(_entries[a.entry], _entries[b.entry]);
   });
   _remap.assign(n + 1, 0);
   _sorted.resize(n);

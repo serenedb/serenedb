@@ -26,7 +26,6 @@
 #include <array>
 #include <bit>
 #include <cstdint>
-#include <duckdb/common/string_map_set.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
@@ -38,7 +37,7 @@
 #include "iresearch/formats/column/codecs/string_tuning.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
@@ -50,30 +49,63 @@ struct SealOutcome {
 
 class StringAccumulator {
  public:
+  StringAccumulator() = default;
+  StringAccumulator(const StringAccumulator&) = delete;
+  StringAccumulator& operator=(const StringAccumulator&) = delete;
+
   void Reserve(uint64_t rows, uint64_t distinct);
   void Add(const duckdb::Vector& input);
 
   uint64_t Rows() const noexcept { return codes.size(); }
 
   uint64_t null_count = 0;
-  std::vector<duckdb::string_t> entries;
+  std::vector<const duckdb::string_t*> values;
   ScratchVector<uint32_t> codes;
 
  private:
+  using Values = std::vector<const duckdb::string_t*>;
+
   struct Hash {
+    using is_transparent = void;
+
     size_t operator()(const duckdb::string_t& value) const noexcept {
       if (value.IsInlined()) {
         return absl::HashOf(std::bit_cast<std::array<uint64_t, 2>>(value));
       }
       return absl::HashOf(std::string_view{value.GetData(), value.GetSize()});
     }
+
+    size_t operator()(uint32_t code) const noexcept {
+      return (*this)(*(*values)[code - 1]);
+    }
+
+    const Values* values;
   };
 
-  containers::FlatHashMap<duckdb::string_t, uint32_t, Hash,
-                          duckdb::StringEquality>
-    _map;
+  struct Eq {
+    using is_transparent = void;
+
+    bool operator()(uint32_t lhs, uint32_t rhs) const noexcept {
+      return lhs == rhs;
+    }
+
+    bool operator()(uint32_t code,
+                    const duckdb::string_t& value) const noexcept {
+      return *(*values)[code - 1] == value;
+    }
+
+    bool operator()(const duckdb::string_t& value,
+                    uint32_t code) const noexcept {
+      return *(*values)[code - 1] == value;
+    }
+
+    const Values* values;
+  };
+
+  containers::FlatHashSet<uint32_t, Hash, Eq> _distinct{0, Hash{&values},
+                                                        Eq{&values}};
   uint32_t _last_code = 0;
-  duckdb::string_t _last;
+  const duckdb::string_t* _last = nullptr;
 };
 
 using SegmentSink = absl::FunctionRef<void(

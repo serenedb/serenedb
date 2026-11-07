@@ -75,13 +75,13 @@ struct Profile {
   uint64_t runs = 0;
   uint64_t raw = 0;
   uint32_t max_len = 0;
-  std::span<const duckdb::string_t> values;
+  std::span<const duckdb::string_t* const> values;
   std::span<const uint32_t> codes;
 };
 
 inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
   const auto code = p.codes[i];
-  return code == 0 ? duckdb::string_t{} : p.values[code - 1];
+  return code == 0 ? duckdb::string_t{} : *p.values[code - 1];
 }
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,

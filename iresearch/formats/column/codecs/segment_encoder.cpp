@@ -79,7 +79,7 @@ Segment* SegmentEncoder::Cut(const Config& config, const StringAccumulator& acc,
   auto* seg = Acquire();
   With(config, [&](auto& enc) {
     const std::span<const uint32_t> codes = acc.codes;
-    const std::span<const duckdb::string_t> values = acc.entries;
+    const std::span<const duckdb::string_t* const> values = acc.values;
     const auto target = _params.segment_target;
     _builder.Begin(enc, config, begin, values.size());
     for (auto row = begin; row < codes.size();) {
@@ -132,7 +132,7 @@ Segment* SegmentEncoder::Encode(const Config& config,
   auto* seg = Acquire();
   With(config, [&](auto& enc) {
     const std::span<const uint32_t> codes = acc.codes;
-    const std::span<const duckdb::string_t> values = acc.entries;
+    const std::span<const duckdb::string_t* const> values = acc.values;
     _builder.Begin(enc, config, begin, values.size());
     for (auto row = begin; row < end; ++row) {
       _builder.AddCode(enc, codes[row], values);
@@ -178,9 +178,9 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
   p.runs = 0;
   p.raw = 0;
   p.max_len = 0;
-  p.values = acc.entries;
+  p.values = acc.values;
   const auto add = [&](uint32_t code) {
-    const auto size = static_cast<uint32_t>(acc.entries[code - 1].GetSize());
+    const auto size = static_cast<uint32_t>(acc.values[code - 1]->GetSize());
     p.raw += size;
     p.max_len = std::max(p.max_len, size);
   };
@@ -194,7 +194,7 @@ const Profile& SegmentEncoder::Measure(const StringAccumulator& acc,
     return p;
   }
   _profile_codes.clear();
-  _dedup.Begin(acc.entries.size());
+  _dedup.Begin(acc.values.size());
   uint32_t last = 0;
   for (auto row = begin; row < end; ++row) {
     const auto code = acc.codes[row];

@@ -44,8 +44,8 @@ uint64_t PlainStorageBytes(const text::Segment& seg) noexcept {
 void StringAccumulator::Reserve(uint64_t rows, uint64_t distinct) {
   codes.reserve(rows);
   const auto expected = distinct == 0 ? rows : std::min(rows, distinct);
-  entries.reserve(expected);
-  _map.reserve(expected);
+  values.reserve(expected);
+  _distinct.reserve(expected);
 }
 
 void StringAccumulator::Add(const duckdb::Vector& input) {
@@ -59,19 +59,17 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       ++null_count;
       continue;
     }
-    const auto& value = entry.GetValue();
-    if (_last_code != 0 && value == _last) {
+    const auto& value = entry.GetValueUnsafe();
+    if (_last && value == *_last) {
       code = _last_code;
       continue;
     }
-    auto& mapped = _map[value];
-    if (mapped == 0) {
-      entries.push_back(value);
-      mapped = static_cast<uint32_t>(entries.size());
-    }
-    _last = value;
-    _last_code = mapped;
-    code = mapped;
+    code = *_distinct.lazy_emplace(value, [&](const auto& construct) {
+      values.push_back(&value);
+      construct(static_cast<uint32_t>(values.size()));
+    });
+    _last = &value;
+    _last_code = code;
   }
 }
 

@@ -141,10 +141,11 @@ class SegmentBuilder {
   }
 
   template<typename Leaf>
-  IRS_FORCE_INLINE void AddCode(Leaf& leaf, uint32_t code,
-                                std::span<const duckdb::string_t> values) {
+  IRS_FORCE_INLINE void AddCode(
+    Leaf& leaf, uint32_t code,
+    std::span<const duckdb::string_t* const> values) {
     if (_shape == Shape::Plain) {
-      AddValue(leaf, code == 0 ? nullptr : &values[code - 1]);
+      AddValue(leaf, code == 0 ? nullptr : values[code - 1]);
       return;
     }
     ++_next;
@@ -155,7 +156,7 @@ class SegmentBuilder {
       ++_rows;
       return;
     }
-    const auto& value = values[code - 1];
+    const auto& value = *values[code - 1];
     _input += value.GetSize();
     const auto [local, fresh] =
       _dedup.Local(code, static_cast<uint32_t>(_entries.size()) + 1);

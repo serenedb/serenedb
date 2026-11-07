@@ -284,7 +284,7 @@ bool ColumnWriter::SealString(const duckdb::LogicalType& type,
   for (auto& c : chunks) {
     acc.Add(c.data);
   }
-  tuning.last_distinct = acc.entries.size();
+  tuning.last_distinct = acc.values.size();
   const auto outcome =
     codecs::SealSegments(acc, named, _codec_params, type, tuning, sink);
   if (outcome.sealed) {

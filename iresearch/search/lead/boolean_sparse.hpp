@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -83,28 +82,12 @@ class BooleanSparse {
   }
 
   uint64_t Count(doc_id_t min, doc_id_t max)
-    requires(!kProbes && !kOptional &&
-             requires(Lead& lead) {
-               lead.Leaf();
-               lead.NextLeaf();
-             })
+    requires(!kProbes && !kOptional && LeafType<Lead>)
   {
-    uint64_t total = 0;
-    for (auto doc = _lead.Seek(min); doc < max;) {
-      const auto leaf = _lead.Leaf();
-      if (leaf.back() < max) {
-        const auto len = static_cast<uint32_t>(leaf.size());
-        total += len - detail::CountExcluded(_excludes, leaf.data(), len);
-        doc = _lead.NextLeaf();
-        continue;
-      }
-      const auto len = static_cast<uint32_t>(
-        std::lower_bound(leaf.begin(), leaf.end(), max) - leaf.begin());
-      total += len - detail::CountExcluded(_excludes, leaf.data(), len);
-      _lead.Seek(max);
-      break;
-    }
-    return total;
+    return CountLeaves(
+      _lead, min, max, [&](const doc_id_t* docs, uint32_t len) {
+        return len - detail::CountExcluded(_excludes, docs, len);
+      });
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot)

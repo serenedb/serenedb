@@ -26,6 +26,7 @@
 
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/hits/root.hpp"
+#include "iresearch/search/lead/concept.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -111,13 +112,7 @@ class ConstantWalk : public Root {
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {
-    uint32_t n = 0;
-
-    auto doc = _node.Seek(min);
-    while (doc < max) {
-      out[n++] = doc;
-      doc = _node.Next();
-    }
+    const auto n = lead::GatherAll(_node, min, max, out);
     std::fill_n(scores, n, _score);
     return n;
   }

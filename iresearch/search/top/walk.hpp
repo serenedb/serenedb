@@ -78,25 +78,28 @@ class ConstantWalk : public Root {
   static constexpr uint32_t kBatch = kScoreBlock;
 
   template<typename... Args>
-  explicit ConstantWalk(Table table, score_t score, Args&&... args)
-    : _node{std::forward<Args>(args)...}, _score{score}, _admit{table} {}
+  explicit ConstantWalk(Table table, bool prune, score_t score, Args&&... args)
+    : _node{std::forward<Args>(args)...},
+      _score{score},
+      _admit{table},
+      _prune{prune} {}
 
   void Run(doc_id_t min, doc_id_t max, LoserScoreCollector& collector) final {
+    if (_prune && !collector.Admits(_score)) {
+      return;
+    }
     ABSL_CACHELINE_ALIGNED doc_id_t docs[kBatch];
     ABSL_CACHELINE_ALIGNED score_t scores[kBatch];
     std::fill_n(scores, kBatch, _score);
-    scores_size_t batch = 0;
-
-    for (auto doc = _node.Seek(min); doc < max; doc = _node.Next()) {
-      docs[batch] = doc;
-      if (++batch == kBatch) {
-        _admit.AddDocs(collector, docs, kBatch, scores);
-        batch = 0;
+    for (auto doc = lead::SeekBelow(_node, min, max); doc < max;) {
+      const auto n = lead::Gather(_node, doc, max, docs, kBatch);
+      _admit.AddDocs(collector, docs, n, scores);
+      if (_prune) {
+        _admit.Flush(collector);
+        if (!collector.Admits(_score)) {
+          return;
+        }
       }
-    }
-
-    if (batch != 0) {
-      _admit.AddDocs(collector, docs, batch, scores);
     }
     _admit.Flush(collector);
   }
@@ -105,6 +108,7 @@ class ConstantWalk : public Root {
   Node _node;
   score_t _score;
   [[no_unique_address]] Admit<Table> _admit;
+  bool _prune;
 };
 
 }  // namespace irs::top

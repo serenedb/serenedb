@@ -47,7 +47,7 @@ query
 SELECT min(rowid & 4294967295) AS first_doc, max(rowid & 4294967295) AS last_doc FROM pe;
 ----
 first_doc	last_doc
-1	20000
+0	19999
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE pe.rowid = pe_before.pos) AS same FROM pe JOIN pe_before USING (id);
@@ -109,7 +109,7 @@ BEGIN;
 statement count 2000
 DELETE FROM pe WHERE grp = 3;
 
-statement count 2000
+statement count 0
 DELETE FROM pe WHERE grp = 3;
 
 statement ok
@@ -263,14 +263,17 @@ statement ok
 COMMIT;
 
 connection second
-statement ok
+statement error
 COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
 
 query
 SELECT count(*) AS n FROM pc;
 ----
 n
-9850
+9900
 
 connection reader
 statement ok
@@ -281,7 +284,7 @@ query
 SELECT count(*) AS n FROM pc;
 ----
 n
-9850
+9900
 
 statement ok
 VACUUM (COMPACT_TABLE) pc;
@@ -304,7 +307,7 @@ query
 SELECT count(*) AS n, count(*) FILTER (WHERE id % 200 = 3 AND v <> 'c') AS gone, count(*) FILTER (WHERE id % 200 = 3 AND v = 'c') AS newer, count(*) FILTER (WHERE v = 'c') AS fresh FROM pc;
 ----
 n	gone	newer	fresh
-10800	0	5	1000
+10850	0	5	1000
 
 connection reader
 statement ok

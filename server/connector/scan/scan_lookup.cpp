@@ -26,6 +26,7 @@
 
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
+#include "connector/row_position.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/scan/scan_plan.h"
@@ -86,8 +87,9 @@ duckdb::OperatorResultType LookupFunction(duckdb::ExecutionContext& context,
   l.hits.resize(count);
   for (duckdb::idx_t r = 0; r < count; ++r) {
     const auto address = addresses[l.order[r]].GetValue();
-    l.hits[r] = {.doc = static_cast<irs::doc_id_t>(address),
-                 .segment_idx = static_cast<uint32_t>(address >> 32)};
+    l.hits[r] = {
+      .doc = RowPositionDoc(static_cast<uint64_t>(address)),
+      .segment_idx = RowPositionIndex(static_cast<uint64_t>(address))};
   }
   l.fetched.Reset();
   duckdb::idx_t appended = 0;

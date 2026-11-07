@@ -2993,7 +2993,7 @@ INSERT INTO vedernikoff_idx_scan VALUES (5, NULL, 'e');
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx ORDER BY pid;
 ----
 pid	score	name
 1	30	c
@@ -3004,7 +3004,7 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 10 ORDER BY pid;
 ----
 pid	score	name
 2	10	a
@@ -3025,13 +3025,13 @@ DELETE FROM vedernikoff_idx_scan WHERE pid = 4;
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx ORDER BY pid;
 ----
 pid	score	name
+1	5	c
 2	10	a
 3	10	b
 5	NULL	e
-1	5	c
 
 onlyif serenedb
 query
@@ -3057,13 +3057,13 @@ INSERT INTO vedernikoff_idx_scan VALUES (10, 50, 'j');
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx ORDER BY pid;
 ----
 pid	score	name
+1	5	c
 2	10	a
 3	10	b
 5	NULL	e
-1	5	c
 6	10	f
 7	40	g
 8	NULL	h
@@ -3072,18 +3072,18 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10);
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10) ORDER BY pid;
 ----
 pid	score	name
+1	5	c
 2	10	a
 3	10	b
-1	5	c
 6	10	f
 9	5	i
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 5 OR score = 40;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score = 5 OR score = 40 ORDER BY pid;
 ----
 pid	score	name
 1	5	c
@@ -3092,18 +3092,18 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (10, 10, 5);
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (10, 10, 5) ORDER BY pid;
 ----
 pid	score	name
+1	5	c
 2	10	a
 3	10	b
-1	5	c
 6	10	f
 9	5	i
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL ORDER BY pid;
 ----
 pid	score	name
 5	NULL	e
@@ -3111,7 +3111,7 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL OR score = 50;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IS NULL OR score = 50 ORDER BY pid;
 ----
 pid	score	name
 5	NULL	e
@@ -3127,7 +3127,7 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE (score = 5 AND name = 'c') OR score = 40;
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE (score = 5 AND name = 'c') OR score = 40 ORDER BY pid;
 ----
 pid	score	name
 1	5	c
@@ -3135,7 +3135,7 @@ pid	score	name
 
 onlyif serenedb
 query
-SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10) AND name >= 'c';
+SELECT pid, score, name FROM vedernikoff_idx_scan_score_idx WHERE score IN (5, 10) AND name >= 'c' ORDER BY pid;
 ----
 pid	score	name
 1	5	c

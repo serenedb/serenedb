@@ -235,14 +235,21 @@ void Transactions::Collect() {
   }
   for (auto& garbage : ready) {
     auto database = garbage.database.lock();
-    if (!database || garbage.set_alive.expired()) {
+    if (!database) {
       continue;
     }
-    if (auto older = garbage.set->Trim(*garbage.version)) {
-      freed.push_back(std::move(older));
+    if (!garbage.set_alive.expired()) {
+      if (auto older = garbage.set->Trim(*garbage.version)) {
+        freed.push_back(std::move(older));
+      }
     }
     databases.push_back(std::move(database));
   }
+}
+
+void Transactions::ExpireSet(std::shared_ptr<const char>& alive) {
+  absl::MutexLock collect{&_collect_mutex};
+  alive.reset();
 }
 
 void Transactions::Commit(SessionTransaction& transaction,

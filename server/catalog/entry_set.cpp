@@ -363,6 +363,8 @@ void OidIndex::CheckDropped(const duckdb::SnapshotView& view,
   }
 }
 
+EntrySet::~EntrySet() { Transactions::Get().ExpireSet(_alive); }
+
 void EntrySet::CheckSubjectLive(const duckdb::Identifier& name,
                                 duckdb::idx_t oid) {
   absl::ReaderMutexLock lock{&_mutex};

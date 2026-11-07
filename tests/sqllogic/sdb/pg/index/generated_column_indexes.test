@@ -10,12 +10,14 @@ statement ok
 CREATE INDEX gci_inv ON gci USING inverted (id, b, v, s, v included(), s included());
 
 
-statement ok
+statement error
 CREATE UNIQUE INDEX gci_art_v ON gci (v);
+----
+db error: ERROR: indexes on virtual generated columns are not supported
 
 
 statement ok
-CREATE INDEX gci_art_s ON gci (s);
+CREATE UNIQUE INDEX gci_art_s ON gci (s);
 
 
 query
@@ -39,7 +41,8 @@ INSERT INTO gci (id, a, b) VALUES (4, 4, 'red');
 statement error
 INSERT INTO gci (id, a, b) VALUES (5, 4, 'dup');
 ----
-db error: ERROR: Duplicate key "v: 40" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "gci_art_s"
+DETAIL: Key (s)=(400) already exists.
 
 
 query

@@ -265,8 +265,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                             ERR_MSG("unique indexes on expressions are not "
                                     "supported"));
           }
-          columns.push_back(
-            expr.Cast<duckdb::ColumnRefExpression>().GetColumnName());
+          const auto& name =
+            expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+          if (table.GetColumn(name).Category() ==
+              duckdb::TableColumnType::GENERATED_VIRTUAL) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+              ERR_MSG(
+                "indexes on virtual generated columns are not supported"));
+          }
+          columns.push_back(name);
         }
         state->unique_key = search::UniqueIndexKey(
           table, static_cast<irs::field_id>(index_entry.oid), state->index_name,

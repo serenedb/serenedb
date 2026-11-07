@@ -1056,7 +1056,7 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       .Scan(*this->_conn->context, duckdb::CatalogType::INDEX_ENTRY,
             [&](duckdb::CatalogEntry& entry) {
               const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-              if (!index.IsUnique() || index.GetTableName() != table->name) {
+              if (!index.IsUnique() || index.table_oid != table->oid) {
                 return;
               }
               std::vector<std::string_view> names;

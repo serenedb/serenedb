@@ -553,7 +553,8 @@ connection after_crash
 statement error
 INSERT INTO dm.pk VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash
@@ -567,14 +568,16 @@ connection after_crash
 statement error
 INSERT INTO dm.uq (id, code) VALUES (9, 'x');
 ----
-db error: ERROR: Duplicate key "code: x" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "uq_code_key"
+DETAIL: Key (code)=(x) already exists.
 
 
 connection after_crash
 statement error
 INSERT INTO dm.child VALUES (99, 99);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 99" does not exist in the referenced table
+db error: ERROR: insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
+DETAIL: Key (parent_id)=(99) is not present in table "parent".
 
 
 connection after_crash
@@ -588,7 +591,8 @@ connection after_crash
 statement error
 INSERT INTO dm.parent VALUES (3, 'dup parent');
 ----
-db error: ERROR: Duplicate key "id: 3" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "parent_pkey"
+DETAIL: Key (id)=(3) already exists.
 
 
 connection after_crash

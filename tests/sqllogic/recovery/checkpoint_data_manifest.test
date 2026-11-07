@@ -102,7 +102,8 @@ connection after_crash
 statement error
 INSERT INTO cdm_pk VALUES (1, 'dup');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "cdm_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_crash

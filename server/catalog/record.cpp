@@ -29,6 +29,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -127,6 +128,26 @@ duckdb::TableCatalogEntry& LoggedTable(BaseCatalog& catalog,
   return table->Cast<duckdb::TableCatalogEntry>();
 }
 
+void QualifyInLoggedSchema(BaseCatalog& catalog,
+                           duckdb::CatalogTransaction transaction,
+                           duckdb::CreateInfo& info) {
+  if (!info.schema_oid) {
+    return;
+  }
+  const auto entry = catalog.LookupOid(transaction, info.schema_oid);
+  SDB_ENSURE(entry && entry->type == duckdb::CatalogType::SCHEMA_ENTRY,
+             "the log creates in a missing schema ", info.schema_oid);
+  const auto& schema = entry->Cast<duckdb::SchemaCatalogEntry>();
+  auto path = schema.GetParentSchemaPath(transaction);
+  path.push_back(schema.name);
+  auto name = info.GetQualifiedName().Name();
+  if (info.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    path.push_back(info.Cast<duckdb::CreateSchemaInfo>().SchemaName());
+  }
+  info.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
+    catalog.GetName(), std::move(path), std::move(name)));
+}
+
 void ReplayChange(duckdb::ClientContext& context,
                   duckdb::Deserializer& object) {
   auto& catalog =
@@ -151,6 +172,7 @@ void ReplayChange(duckdb::ClientContext& context,
           .CreateTrigger(transaction, info->Cast<duckdb::CreateTriggerInfo>());
         return;
       }
+      QualifyInLoggedSchema(catalog, transaction, *info);
       catalog.ReplayCreate(context, std::move(info));
       return;
     case ChangeKind::Alter: {

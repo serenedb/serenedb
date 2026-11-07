@@ -192,7 +192,7 @@ class EntrySet {
 
   void Commit(duckdb::CatalogEntry& version);
 
-  void Undo(duckdb::CatalogEntry& version);
+  void Undo(duckdb::CatalogEntry& version, ChangeKind kind);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Trim(duckdb::CatalogEntry& version);
 

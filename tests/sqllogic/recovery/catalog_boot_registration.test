@@ -106,9 +106,9 @@ connection after_crash
 statement error
 DROP TABLE bootreg.t;
 ----
-db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
-view "v" depends on table "t".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table bootreg.t because other objects depend on it
+DETAIL: view bootreg.v depends on table bootreg.t
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # Post-boot DDL goes back to cloning the snapshot, so a mutation now must not

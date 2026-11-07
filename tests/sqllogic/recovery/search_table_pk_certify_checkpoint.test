@@ -29,7 +29,8 @@ connection writer
 statement async error
 INSERT INTO ckpt_pk VALUES (9, 'parked');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "ckpt_pk"
+db error: ERROR: duplicate key value violates unique constraint "ckpt_pk_pkey"
+DETAIL: Key (i)=(9) already exists.
 
 
 connection default
@@ -153,7 +154,8 @@ INSERT INTO ckpt_fail.public.r VALUES (1);
 statement error
 INSERT INTO ckpt_fail.public.s VALUES (1, 'after');
 ----
-db error: ERROR: duplicate key value violates the primary key of table "s"
+db error: ERROR: duplicate key value violates unique constraint "s_pkey"
+DETAIL: Key (i)=(1) already exists.
 
 
 # A key of its own still goes in. What the table holds is not asked here: an

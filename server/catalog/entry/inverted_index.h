@@ -285,6 +285,9 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
 
   duckdb::Identifier GetTableName() const final;
 
+  duckdb::optional_ptr<duckdb::CatalogEntry> GetRelation(
+    duckdb::CatalogTransaction transaction) const final;
+
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;

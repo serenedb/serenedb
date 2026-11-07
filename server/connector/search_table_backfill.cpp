@@ -356,10 +356,10 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                                       target.table_id);
 
   shard.DrainPriorWriters(context);
-  shard.Publish();
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
+    shard.Publish();
     floor = shard.ArmCompactionFloor();
     if (floor.Held()) {
       break;
@@ -370,6 +370,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                               "search table ",
                               target.table_id));
     }
+    SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_floor_retry");
     absl::SleepFor(kArmRetry);
   }
 

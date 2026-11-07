@@ -55,9 +55,9 @@ class PrunedPhrase : public Root {
  public:
   template<typename... Args>
   PrunedPhrase(Table table, const SubReader& segment, const TermReader& field,
-               const irs::detail::ScoreArgs& args, Args&&... slots)
+               const irs::detail::ScoreArgs& args, bool stored, Args&&... slots)
     : _slots{std::forward<Args>(slots)...},
-      _bound{segment, field, args},
+      _bound{segment, field, args, stored},
       _fetcher{*args.fetcher},
       _admit{table} {
     _provider.freq.value = _freqs;

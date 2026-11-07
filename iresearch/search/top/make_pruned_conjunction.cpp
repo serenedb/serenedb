@@ -80,7 +80,7 @@ Root::ptr MakePrunedConjunction(
                         const auto& joined_args) -> Root::ptr {
       if (excludes.empty() && exclude_filters.empty()) {
         return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
-          ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
+          ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
           std::forward_as_tuple());
       }
       const uint64_t lead = terms.front().state.cookie.docs_count;
@@ -88,7 +88,7 @@ Root::ptr MakePrunedConjunction(
         excludes, exclude_filters, nullptr, segment, lead, lead,
         [&]<typename Exclude>(auto&& negated) -> Root::ptr {
           return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
-            ctx, ctx.fetcher, !ctx.prune, size, init, joined_args,
+            ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
             std::forward<decltype(negated)>(negated));
         });
     };

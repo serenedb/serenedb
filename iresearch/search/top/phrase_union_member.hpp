@@ -46,9 +46,10 @@ class PhraseUnionMember : public UnionMember,
  public:
   template<typename... Args>
   PhraseUnionMember(const SubReader& segment, const TermReader& field,
-                    const irs::detail::ScoreArgs& args, Args&&... slots)
+                    const irs::detail::ScoreArgs& args, bool stored,
+                    Args&&... slots)
     : Base{segment, field, args, std::forward<Args>(slots)...},
-      _bound{segment, field, args},
+      _bound{segment, field, args, stored},
       _fetcher{*args.fetcher} {
     _func = Base::PrepareScore();
   }

@@ -128,6 +128,7 @@ struct Family {
                           .fetcher = ctx.fetcher,
                           .table = ctx.table,
                           .prune = ctx.prune,
+                          .bounds = ctx.bounds,
                           .k = ctx.k});
   }
 

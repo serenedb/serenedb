@@ -34,9 +34,14 @@ struct Context {
   ColumnArgsFetcher& fetcher;
   detail::TableFilter* table = nullptr;
   bool prune = false;
+  bool bounds = false;
   uint32_t k = 0;
   doc_id_t span = 0;
 };
+
+inline bool PruneByBounds(const Context& ctx) noexcept {
+  return ctx.prune && ctx.bounds;
+}
 
 inline detail::ScoredCtx ScoredOf(const Context& ctx) noexcept {
   return {

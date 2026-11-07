@@ -76,6 +76,7 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                                         .scorer = scorer,
                                         .fetcher = fetcher,
                                         .prune = score_prune,
+                                        .bounds = true,
                                         .k = static_cast<uint32_t>(k),
                                       });
     if (!plan) {

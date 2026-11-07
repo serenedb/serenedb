@@ -35,9 +35,10 @@ class PhrasePrunedClause : public probe::TwoPhase<Slots, true, true> {
  public:
   template<typename... Args>
   PhrasePrunedClause(const SubReader& segment, const TermReader& field,
-                     const irs::detail::ScoreArgs& args, Args&&... slots)
+                     const irs::detail::ScoreArgs& args, bool stored,
+                     Args&&... slots)
     : Base{segment, field, args, std::forward<Args>(slots)...},
-      _bound{segment, field, args} {}
+      _bound{segment, field, args, stored} {}
 
   doc_id_t AdvanceBlock(doc_id_t target) {
     return _bound.AdvanceBlock(_slots, target);

@@ -1823,6 +1823,7 @@ Top TopOf(const Index& index, const irs::Filter& filter,
                                .fetcher = fetcher,
                                .table = table,
                                .prune = prune,
+                               .bounds = true,
                                .k = static_cast<uint32_t>(k)});
     top->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
   }

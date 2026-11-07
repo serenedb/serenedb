@@ -51,7 +51,7 @@ Result BuildPrunedPhrase(const Query& query, const Context& ctx, Make&& make) {
   return irs::detail::BuildPhrase<M, true, false, false>(
     query, [&]<typename Slots>(auto&&... rest) -> Result {
       return make.template operator()<Slots>(
-        query.Segment(), *query.state.reader, args,
+        query.Segment(), *query.state.reader, args, ctx.bounds,
         std::forward<decltype(rest)>(rest)...);
     });
 }

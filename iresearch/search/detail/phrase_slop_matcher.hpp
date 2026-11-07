@@ -28,6 +28,7 @@
 #include <compare>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <vector>
 
@@ -47,9 +48,16 @@ struct MatchResult {
   uint64_t freq = 0;
   double weight = 0.0;
   score_t boost = 0.f;
-  PosAttr::value_t best_distance = 0;
   bool any = false;
 };
+
+inline uint32_t FreqOf(const MatchResult& res) noexcept {
+  return std::saturate_cast<uint32_t>(res.freq);
+}
+
+inline score_t ScaleOf(const MatchResult& res) noexcept {
+  return static_cast<score_t>(res.weight / static_cast<double>(res.freq));
+}
 
 struct MatchScratch {
   std::vector<int64_t> shift;
@@ -109,10 +117,6 @@ MatchResult SweepOf(Cursors& cur, std::span<const int64_t> offsets,
     ++res.freq;
     res.weight += 1.0 / (1.0 + static_cast<double>(width));
     res.boost = std::max(res.boost, cur.Boost());
-    const auto distance = static_cast<PosAttr::value_t>(width);
-    if (!res.any || distance < res.best_distance) {
-      res.best_distance = distance;
-    }
     res.any = true;
     collect();
     return !early_exit;
@@ -559,9 +563,8 @@ class PhraseSlopMatcher {
 
   void Take(const detail::slop::MatchResult& res) {
     if constexpr (HasFreq) {
-      _phrase_freq = static_cast<uint32_t>(res.freq);
-      _phrase_scale =
-        static_cast<score_t>(res.weight / static_cast<double>(res.freq));
+      _phrase_freq = detail::slop::FreqOf(res);
+      _phrase_scale = detail::slop::ScaleOf(res);
       if constexpr (HasBoost) {
         _phrase_boost = res.boost;
       }

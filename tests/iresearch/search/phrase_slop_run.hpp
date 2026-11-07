@@ -22,19 +22,25 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
+#include <limits>
 #include <vector>
 
 namespace irs::detail::slop {
 
+struct RunResult : MatchResult {
+  PosAttr::value_t best_distance = 0;
+};
+
 template<size_t N = 0>
-MatchResult Run(const std::vector<std::vector<PosAttr::value_t>>& slot_pos,
-                PosAttr::value_t slop,
-                const std::vector<PosAttr::value_t>& expected_steps,
-                MatchScratch& scratch, bool early_exit,
-                const std::vector<uint32_t>& groups = {},
-                std::vector<MatchSpan>* out = nullptr) {
+RunResult Run(const std::vector<std::vector<PosAttr::value_t>>& slot_pos,
+              PosAttr::value_t slop,
+              const std::vector<PosAttr::value_t>& expected_steps,
+              MatchScratch& scratch, bool early_exit,
+              const std::vector<uint32_t>& groups = {},
+              std::vector<MatchSpan>* out = nullptr) {
   if (out) {
     out->clear();
   }
@@ -53,11 +59,24 @@ MatchResult Run(const std::vector<std::vector<PosAttr::value_t>>& slot_pos,
   std::vector<GroupPair> pairs;
   BuildGroupPairs(
     n, [&](size_t i) { return groups.empty() ? 0 : groups[i]; }, pairs);
-  auto res = Sweep<N>(cur, offsets, slop, pairs, scratch, early_exit, [&] {
-    if (out) {
-      out->push_back(SpanOf(cur.Snapshot()));
+  auto best = std::numeric_limits<int64_t>::max();
+  RunResult res{Sweep<N>(cur, offsets, slop, pairs, scratch, early_exit, [&] {
+    const auto& snap = cur.Snapshot();
+    auto lo = std::numeric_limits<int64_t>::max();
+    auto hi = std::numeric_limits<int64_t>::min();
+    for (size_t i = 0; i != n; ++i) {
+      const auto shift = static_cast<int64_t>(snap[i]) - offsets[i];
+      lo = std::min(lo, shift);
+      hi = std::max(hi, shift);
     }
-  });
+    best = std::min(best, hi - lo);
+    if (out) {
+      out->push_back(SpanOf(snap));
+    }
+  })};
+  if (res.any) {
+    res.best_distance = static_cast<PosAttr::value_t>(best);
+  }
 
   if (early_exit) {
     res.freq = res.any ? 1 : 0;

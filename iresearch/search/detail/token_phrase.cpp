@@ -368,8 +368,8 @@ PhraseVerdict PhraseCheck::PositionsMatch::Finish(State& state) {
       return {.freq = 1};
     }
     return {
-      .freq = std::saturate_cast<uint32_t>(res.freq),
-      .scale = static_cast<score_t>(res.weight / static_cast<double>(res.freq)),
+      .freq = detail::slop::FreqOf(res),
+      .scale = detail::slop::ScaleOf(res),
     };
   }
 

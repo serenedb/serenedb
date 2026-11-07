@@ -48,7 +48,7 @@ The synchronous factory. `engine`, `embedding_service` and `table_name` are posi
 | `k` | `int` | `4` | Default number of results. |
 | `fetch_k` | `int` | `20` | Default candidate pool for MMR. |
 | `lambda_mult` | `float` | `0.5` | Default MMR diversity weight (`0` = maximal diversity, `1` = pure relevance). |
-| `index_query_options` | `Optional[QueryOptions]` | `None` | Per-query index tuning. See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions). |
+| `index_query_options` | `Optional[QueryOptions]` | `None` | Per-query index tuning: [`IVFQueryOptions`](./indexes.md#ivfqueryoptions) for an IVF index, [`HNSWQueryOptions`](./indexes.md#hnswqueryoptions) for an HNSW one. Options for the other type [raise `ValueError`](./indexes.md#query-options-type). |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | `None` | Query-time fusion settings. The combined index must already exist — see [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | Which indexed metadata this store filters on. May be a subset of what the index covers, but each declared field must use the type the index was built with. |
 | `sync_load` | `bool` | `True` | When `False`, writes do not auto-refresh the inverted index. |

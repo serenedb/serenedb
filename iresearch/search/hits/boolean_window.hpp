@@ -28,6 +28,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/boolean_groups.hpp"
+#include "iresearch/search/detail/boolean_window_base.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -38,12 +39,20 @@
 namespace irs::hits {
 
 template<typename Lead, typename Optional, typename Excludes>
-class BooleanWindow : public Root {
+class BooleanWindow
+  : public Root,
+    irs::detail::WindowClauses<Lead, utils::Empty, Optional, Excludes> {
+  using Clauses =
+    irs::detail::WindowClauses<Lead, utils::Empty, Optional, Excludes>;
+  using Clauses::_excludes;
+  using Clauses::_lead;
+  using Clauses::_optional;
+
  public:
   static constexpr int kSparseWord = 32;
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  using Clauses::kExcludes;
+  using Clauses::kLead;
+  using Clauses::kOptional;
   static constexpr bool kResets =
     kOptional && !irs::detail::LazyReset<Optional>();
   static constexpr bool kTally = kOptional && irs::detail::Tallies<Optional>();
@@ -54,17 +63,12 @@ class BooleanWindow : public Root {
   BooleanWindow(std::piecewise_construct_t, LeadArgs&& lead,
                 OptionalArgs&& optional, ExcludesArgs&& excludes,
                 score_t constant)
-    : _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))},
+    : Clauses{std::piecewise_construct, std::forward<LeadArgs>(lead),
+              std::tuple<>{}, std::forward<OptionalArgs>(optional),
+              std::forward<ExcludesArgs>(excludes)},
       _constant{constant} {
     std::fill_n(_window, irs::detail::kWindowDocs, _constant);
   }
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
 
   uint32_t Run(doc_id_t begin, doc_id_t end, doc_id_t* IRS_RESTRICT out,
                score_t* IRS_RESTRICT scores) final {
@@ -273,9 +277,6 @@ class BooleanWindow : public Root {
 
   ABSL_CACHELINE_ALIGNED uint64_t _mask[irs::detail::kWindowWords]{};
   ABSL_CACHELINE_ALIGNED score_t _window[irs::detail::kWindowDocs];
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
   doc_id_t _min = 0;
   doc_id_t _next = doc_limits::min();
   uint32_t _word = 0;

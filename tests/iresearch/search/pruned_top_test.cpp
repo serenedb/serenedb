@@ -595,6 +595,43 @@ TEST_P(PrunedTopTest, unions_with_exclusions) {
   }
 }
 
+TEST_P(PrunedTopTest, unions_merging_by_max) {
+  Build();
+  for (const auto& terms : std::vector<std::vector<std::string_view>>{
+         {"single", "rare", "mid"},
+         {"single", "edge", "dense"},
+         {"run", "holes", "sparse"},
+         {"cluster", "half"},
+       }) {
+    SCOPED_TRACE(absl::StrJoin(terms, " "));
+    irs::BooleanFilter filter;
+    absl::flat_hash_map<doc_id_t, irs::score_t> best;
+    for (const auto term : terms) {
+      filter.Add(Clause(term), irs::Occur::Should);
+      irs::BooleanFilter alone;
+      alone.Add(Clause(term), irs::Occur::Should);
+      alone.SetMinShouldMatch(1);
+      for (const auto& [doc, score] : Matches(alone)) {
+        auto [it, fresh] = best.try_emplace(doc, score);
+        if (!fresh) {
+          it->second = std::max(it->second, score);
+        }
+      }
+    }
+    filter.SetMinShouldMatch(1);
+    filter.SetMergeType(irs::ScoreMergeType::Max);
+    const auto matches = Matches(filter);
+    ASSERT_EQ(best.size(), matches.size());
+    for (const auto& [doc, score] : matches) {
+      const auto it = best.find(doc);
+      ASSERT_NE(it, best.end()) << doc;
+      ASSERT_TRUE(AlmostEqual(it->second, score))
+        << doc << " " << it->second << " " << score;
+    }
+    CheckRanking(filter);
+  }
+}
+
 TEST_P(PrunedTopTest, prefix_exclusions) {
   Build();
   for (const auto& shape : std::vector<Shape>{

@@ -31,14 +31,14 @@
 namespace irs::codecs::text {
 
 uint64_t Fsst12ChainEncoder::Estimate(
-  const SegmentBuilder& rows) const noexcept {
+  const SegmentEntries& rows) const noexcept {
   return EstimateEntries(rows, _history[static_cast<size_t>(_shape)]);
 }
 
-EncodedFrames Fsst12ChainEncoder::Finish(const SegmentBuilder& rows,
+EncodedFrames Fsst12ChainEncoder::Finish(const SegmentEntries& rows,
                                          std::span<uint32_t> lengths) {
-  const auto entries = rows.Entries();
-  const auto first_entry = rows.FirstEntry();
+  const auto entries = rows.entries;
+  const auto first_entry = rows.first_entry;
   _suffixes.clear();
   _lcp_stream.assign(first_entry, 0);
   _frames.clear();
@@ -84,11 +84,11 @@ EncodedFrames Fsst12ChainEncoder::Finish(const SegmentBuilder& rows,
     frame.first_entry += first_entry;
   }
   absl::c_copy(_entry_lengths, lengths.begin());
-  _lcp_stream.resize(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
-                       rows.EntryCount()),
-                     0);
+  _lcp_stream.resize(
+    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
+    0);
   const auto symtab = _codec.SymbolTable();
-  RecordRatio(_history[static_cast<size_t>(_shape)], rows.Raw(),
+  RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
               _data.size() + symtab.size(), _target);
   return {
     .codec = kCodec,

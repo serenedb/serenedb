@@ -51,10 +51,10 @@ void AppendU32(std::string& out, uint32_t value) {
 
 }  // namespace
 
-EncodedFrames FsstPlusEncoder::Finish(const SegmentBuilder& rows,
+EncodedFrames FsstPlusEncoder::Finish(const SegmentEntries& rows,
                                       std::span<uint32_t> lengths) {
-  const auto entries = rows.Entries();
-  const auto first_entry = rows.FirstEntry();
+  const auto entries = rows.entries;
+  const auto first_entry = rows.first_entry;
   const auto n = entries.size();
   _codec.Encode(entries, _encoded, _encoded_lengths);
   _codes.resize(n);
@@ -103,10 +103,10 @@ EncodedFrames FsstPlusEncoder::Finish(const SegmentBuilder& rows,
     AppendU32(_side, end);
   }
   _side.append(_prefixes);
-  _ids.resize(duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(
-                rows.EntryCount()),
-              0);
-  RecordRatio(_history[static_cast<size_t>(_shape)], rows.Raw(),
+  _ids.resize(
+    duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
+    0);
+  RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
               _data.size() + _side.size(), _target);
   return {
     .codec = kCodec,

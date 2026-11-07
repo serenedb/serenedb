@@ -36,6 +36,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
@@ -47,14 +48,6 @@ namespace irs::codecs::text {
 
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
-inline constexpr uint64_t kDriftMinFraction = 4;
-
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
-                    const NumericTuning& tuning) noexcept;
-
-void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, uint64_t codes_bytes,
-            uint64_t symtab_bytes) noexcept;
 
 class DedupScratch {
  public:
@@ -112,26 +105,6 @@ struct Segment {
   uint64_t Size() const noexcept { return head.size() + data.size(); }
 };
 
-struct Profile {
-  Shape shape = Shape::Dedup;
-  uint64_t rows = 0;
-  uint64_t runs = 0;
-  uint64_t raw = 0;
-  uint32_t max_len = 0;
-  std::vector<std::string_view> entries;
-};
-
-struct EncodedFrames {
-  ByteCodec codec = ByteCodec::Lz4;
-  std::span<const FrameMeta> frames;
-  uint32_t max_length = 0;
-  std::span<uint32_t> lcps;
-  uint32_t max_lcp = 0;
-  std::string_view symtab;
-  uint32_t dictionary_size = 0;
-  FrameDictionary flags = FrameDictionary::None;
-};
-
 class SegmentBuilder {
  public:
   explicit SegmentBuilder(const StringAccumulator& acc,
@@ -166,7 +139,7 @@ class SegmentBuilder {
         continue;
       }
       estimated_raw = _raw;
-      if (Estimate() + leaf.Estimate(*this) >= target) {
+      if (Estimate() + leaf.Estimate(View()) >= target) {
         break;
       }
     }
@@ -192,25 +165,26 @@ class SegmentBuilder {
       duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount()),
       0);
     const auto frames = leaf.Finish(
-      *this, std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
+      View(), std::span{_lengths}.subspan(FirstEntry(), _entries.size()));
     WriteSegment(frames, leaf.Data(), out);
   }
 
+ private:
   uint32_t FirstEntry() const noexcept {
     return _shape == Shape::Dedup ? 1 : 0;
   }
 
   size_t EntryCount() const noexcept { return _entries.size() + FirstEntry(); }
 
-  std::span<const std::string_view> Entries() const noexcept {
-    return _entries;
+  SegmentEntries View() const noexcept {
+    return {
+      .entries = _entries,
+      .first_entry = FirstEntry(),
+      .raw = _raw,
+      .max_len = _max_len,
+    };
   }
 
-  uint64_t Raw() const noexcept { return _raw; }
-
-  uint32_t MaxLen() const noexcept { return _max_len; }
-
- private:
   struct SortKey {
     uint64_t prefix;
     uint32_t entry;
@@ -297,11 +271,5 @@ class SegmentBuilder {
   std::vector<std::string_view> _sorted;
   std::vector<uint32_t> _lengths;
 };
-
-uint64_t EstimateEntries(const SegmentBuilder& rows,
-                         const RatioHistory& hist) noexcept;
-
-void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
-                 uint32_t target) noexcept;
 
 }  // namespace irs::codecs::text

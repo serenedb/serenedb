@@ -31,7 +31,7 @@
 
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/segment_builder.hpp"
+#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/string_layout.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
@@ -67,8 +67,8 @@ class BlobEncoder {
     _frame.append(sv);
   }
 
-  uint64_t Estimate(const SegmentBuilder& rows) const noexcept {
-    const auto raw = rows.Raw();
+  uint64_t Estimate(const SegmentEntries& rows) const noexcept {
+    const auto raw = rows.raw;
     return (_spans.size() + 1) * kFrameMetaSize + _data.size() +
            (_layout == FrameLayout::Local
               ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
@@ -79,9 +79,9 @@ class BlobEncoder {
              Ratio(_history[static_cast<size_t>(_shape)], 1.0));
   }
 
-  EncodedFrames Finish(const SegmentBuilder& rows,
+  EncodedFrames Finish(const SegmentEntries& rows,
                        std::span<uint32_t> lengths) {
-    SDB_ASSERT(_packed + _frame.size() == rows.Raw());
+    SDB_ASSERT(_packed + _frame.size() == rows.raw);
     Close();
     if (_layout == FrameLayout::Local && _spans.size() >= kLocalMinFrames) {
       Sizes();
@@ -96,7 +96,7 @@ class BlobEncoder {
       CompressRest();
     }
     Count();
-    absl::c_transform(rows.Entries(), lengths.begin(), [](std::string_view e) {
+    absl::c_transform(rows.entries, lengths.begin(), [](std::string_view e) {
       return static_cast<uint32_t>(e.size());
     });
     const auto flags = Flags();
@@ -104,7 +104,7 @@ class BlobEncoder {
     return {
       .codec = kCodec,
       .frames = _frames,
-      .max_length = rows.MaxLen(),
+      .max_length = rows.max_len,
       .symtab = local ? _codec->Stored() : std::string_view{},
       .dictionary_size =
         local ? static_cast<uint32_t>(_codec->Dictionary().size()) : 0,

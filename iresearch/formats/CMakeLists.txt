@@ -7,6 +7,7 @@ target_sources(
         column/codecs/fsst_chain_encoder.cpp
         column/codecs/fsst_plus.cpp
         column/codecs/fsst_plus_encoder.cpp
+        column/codecs/leaf_encoder.cpp
         column/codecs/lz4.cpp
         column/codecs/numeric.cpp
         column/codecs/onpair.cpp

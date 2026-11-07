@@ -26,11 +26,11 @@
 
 namespace irs::codecs::text {
 
-EncodedFrames OnPairEncoder::Finish(const SegmentBuilder& rows,
+EncodedFrames OnPairEncoder::Finish(const SegmentEntries& rows,
                                     std::span<uint32_t> lengths) {
-  const auto entries = rows.Entries();
-  const auto first_entry = rows.FirstEntry();
-  _codec.Train(entries, rows.Raw());
+  const auto entries = rows.entries;
+  const auto first_entry = rows.first_entry;
+  _codec.Train(entries, rows.raw);
   uint64_t total = 0;
   for (const auto entry : entries) {
     total += entry.size();
@@ -67,7 +67,7 @@ EncodedFrames OnPairEncoder::Finish(const SegmentBuilder& rows,
     close(entries.size());
   }
   _codec.Export(_side);
-  RecordRatio(_history[static_cast<size_t>(_shape)], rows.Raw(),
+  RecordRatio(_history[static_cast<size_t>(_shape)], rows.raw,
               _data.size() + _side.size(), _target);
   return {
     .codec = kCodec,

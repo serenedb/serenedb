@@ -29,7 +29,7 @@
 #include "iresearch/formats/column/codecs/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/fsst.hpp"
-#include "iresearch/formats/column/codecs/segment_builder.hpp"
+#include "iresearch/formats/column/codecs/leaf_encoder.hpp"
 #include "iresearch/formats/column/codecs/string_writer.hpp"
 
 namespace irs::codecs::text {
@@ -50,9 +50,9 @@ class FsstChainEncoder {
 
   void Append(std::string_view, uint32_t) noexcept {}
 
-  uint64_t Estimate(const SegmentBuilder& rows) const noexcept;
+  uint64_t Estimate(const SegmentEntries& rows) const noexcept;
 
-  EncodedFrames Finish(const SegmentBuilder& rows, std::span<uint32_t> lengths);
+  EncodedFrames Finish(const SegmentEntries& rows, std::span<uint32_t> lengths);
 
   std::string& Data() noexcept { return _data; }
 

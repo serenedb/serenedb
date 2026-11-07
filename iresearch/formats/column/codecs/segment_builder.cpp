@@ -38,9 +38,6 @@ namespace {
 using duckdb::BitpackingPrimitives;
 using duckdb::string_t;
 
-constexpr double kEntriesFirstRatio = 0.5;
-constexpr double kMispredicted = 2.0;
-
 uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
   char buf[8] = {};
   if (sv.size() > skip) {
@@ -51,23 +48,6 @@ uint64_t PrefixKey(std::string_view sv, size_t skip) noexcept {
 }
 
 }  // namespace
-
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries, uint64_t runs,
-                    const NumericTuning& tuning) noexcept {
-  return shape == Shape::Dedup ? EstimateCodes(tuning, rows, entries, runs) : 0;
-}
-
-void LayOut(Header& h, uint64_t frames, uint64_t lengths_bytes,
-            uint64_t lcps_bytes, uint64_t codes_bytes,
-            uint64_t symtab_bytes) noexcept {
-  h.off_frames = kHeaderSize;
-  h.off_lengths =
-    duckdb::AlignValue<uint64_t, 8>(kHeaderSize + frames * kFrameMetaSize);
-  h.off_lcps = duckdb::AlignValue<uint64_t, 8>(h.off_lengths + lengths_bytes);
-  h.off_codes = duckdb::AlignValue<uint64_t, 8>(h.off_lcps + lcps_bytes);
-  h.off_symtab = duckdb::AlignValue<uint64_t, 8>(h.off_codes + codes_bytes);
-  h.off_data = duckdb::AlignValue<uint64_t, 8>(h.off_symtab + symtab_bytes);
-}
 
 uint64_t SegmentBuilder::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
@@ -180,30 +160,6 @@ void SegmentBuilder::WriteSegment(const EncodedFrames& frames,
   _max_len = 0;
   _nulls = 0;
   _input = 0;
-}
-
-uint64_t EstimateEntries(const SegmentBuilder& rows,
-                         const RatioHistory& hist) noexcept {
-  return Packed(rows.EntryCount(), rows.MaxLen()) +
-         (rows.Raw() / kFsstFrameRawBytes + 1) * kFrameMetaSize +
-         static_cast<uint64_t>(static_cast<double>(rows.Raw()) *
-                               Ratio(hist, kEntriesFirstRatio));
-}
-
-void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
-                 uint32_t target) noexcept {
-  if (hist.raw != 0 && raw != 0 && comp * kDriftMinFraction >= target) {
-    const auto predicted = static_cast<double>(raw) *
-                           static_cast<double>(hist.comp) /
-                           static_cast<double>(hist.raw);
-    const auto actual = static_cast<double>(comp);
-    if (actual > predicted * kMispredicted ||
-        actual * kMispredicted < predicted) {
-      hist = {};
-    }
-  }
-  hist.raw += raw;
-  hist.comp += comp;
 }
 
 }  // namespace irs::codecs::text

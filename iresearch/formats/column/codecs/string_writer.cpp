@@ -28,7 +28,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -101,6 +100,24 @@ constexpr size_t Index(ByteCodec leaf) noexcept {
   return static_cast<size_t>(leaf);
 }
 
+struct LeafEncoders {
+  std::optional<BlobEncoder<Lz4>> lz4;
+  std::optional<BlobEncoder<Lz4Hc>> lz4_hc;
+  std::optional<BlobEncoder<Zstd>> zstd;
+  std::optional<BlobEncoder<Zxc>> zxc;
+  std::optional<FsstChainEncoder> fsst;
+  std::optional<FsstPlusEncoder> fsst_plus;
+  std::optional<OnPairEncoder> onpair;
+  std::optional<Fsst12ChainEncoder> fsst12;
+};
+
+template<typename Encoder>
+void Retrain(std::optional<Encoder>& encoder) noexcept {
+  if (encoder) {
+    encoder->Retrain();
+  }
+}
+
 class SegmentWriter {
  public:
   SegmentWriter(const StringAccumulator& acc, const StringChoice* named,
@@ -132,22 +149,10 @@ class SegmentWriter {
           !scheduled && Drifted(*seg, first || end < _acc.codes.size());
         const bool retune = drift && !first;
         if (retune) {
-          if (auto& fsst =
-                std::get<std::optional<FsstChainEncoder>>(_encoders)) {
-            fsst->Retrain();
-          }
-          if (auto& fsst =
-                std::get<std::optional<FsstPlusEncoder>>(_encoders)) {
-            fsst->Retrain();
-          }
-          if (auto& onpair =
-                std::get<std::optional<OnPairEncoder>>(_encoders)) {
-            onpair->Retrain();
-          }
-          if (auto& fsst =
-                std::get<std::optional<Fsst12ChainEncoder>>(_encoders)) {
-            fsst->Retrain();
-          }
+          Retrain(_encoders.fsst);
+          Retrain(_encoders.fsst_plus);
+          Retrain(_encoders.onpair);
+          Retrain(_encoders.fsst12);
         }
         if (scheduled || drift) {
           seg = Calibrate(seg, !_tuning.levels_tuned || retune, drift);
@@ -479,28 +484,27 @@ class SegmentWriter {
     switch (config.choice.leaf) {
       case ByteCodec::Lz4:
         if (EffectiveLevel<Lz4>(config.level) > 1) {
-          return f(Get<BlobEncoder<Lz4Hc>>());
+          return f(Get(_encoders.lz4_hc));
         }
-        return f(Get<BlobEncoder<Lz4>>());
+        return f(Get(_encoders.lz4));
       case ByteCodec::Zstd:
-        return f(Get<BlobEncoder<Zstd>>());
+        return f(Get(_encoders.zstd));
       case ByteCodec::Zxc:
-        return f(Get<BlobEncoder<Zxc>>());
+        return f(Get(_encoders.zxc));
       case ByteCodec::Fsst:
-        return f(Get<FsstChainEncoder>());
+        return f(Get(_encoders.fsst));
       case ByteCodec::FsstPlus:
-        return f(Get<FsstPlusEncoder>());
+        return f(Get(_encoders.fsst_plus));
       case ByteCodec::OnPair:
-        return f(Get<OnPairEncoder>());
+        return f(Get(_encoders.onpair));
       case ByteCodec::Fsst12:
-        return f(Get<Fsst12ChainEncoder>());
+        return f(Get(_encoders.fsst12));
     }
     SDB_UNREACHABLE();
   }
 
   template<typename Encoder>
-  Encoder& Get() {
-    auto& slot = std::get<std::optional<Encoder>>(_encoders);
+  Encoder& Get(std::optional<Encoder>& slot) {
     if (!slot) {
       if constexpr (Sorted(Encoder::kCodec)) {
         slot.emplace(_tuning, _params.segment_target);
@@ -528,11 +532,7 @@ class SegmentWriter {
   StringTuning& _tuning;
   DedupScratch _dedup;
   SegmentBuilder _builder;
-  std::tuple<std::optional<BlobEncoder<Lz4>>, std::optional<BlobEncoder<Lz4Hc>>,
-             std::optional<BlobEncoder<Zstd>>, std::optional<BlobEncoder<Zxc>>,
-             std::optional<FsstChainEncoder>, std::optional<FsstPlusEncoder>,
-             std::optional<OnPairEncoder>, std::optional<Fsst12ChainEncoder>>
-    _encoders;
+  LeafEncoders _encoders;
   std::vector<std::unique_ptr<Segment>> _pool;
   std::vector<Segment*> _free;
   std::vector<Segment*> _live;

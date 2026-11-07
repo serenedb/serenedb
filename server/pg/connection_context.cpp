@@ -52,7 +52,6 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
-#include "connector/functions/ai/common.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "pg/catalog/oids.h"
 #include "server/utils/app_server.h"
@@ -125,8 +124,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
-    _progress{std::make_shared<pg::ProgressSource>()},
-    _ai{std::make_unique<connector::ai::AIQuery>()} {
+    _progress{std::make_shared<pg::ProgressSource>()} {
   session_user = _user;
   _progress->pid = _backend_pid;
   _progress->datid = static_cast<int64_t>(_database_id);
@@ -462,7 +460,6 @@ void ConnectionContext::OnQueryBegin() {
 void ConnectionContext::OnQueryEnd() {
   copy_stdin_open_count = 0;
   copy_stdin_done = false;
-  _ai->End();
   _progress->EndQuery();
   RefreshCatalogEpoch();
   const bool dml = std::exchange(_statement_is_dml, false);
